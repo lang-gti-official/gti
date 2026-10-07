@@ -734,6 +734,15 @@ add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_fai
 add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
 target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
 add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
+add_executable(gti_generic_discovery_tests generic_discovery_tests.cpp)
+target_link_libraries(gti_generic_discovery_tests PRIVATE gti_compiler)
+add_test(NAME generic_discovery COMMAND gti_generic_discovery_tests)
+set_tests_properties(generic_discovery PROPERTIES TIMEOUT 60)
+add_test(NAME generic_discovery_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/generic_discovery_runtime_test.py"
+          "$<TARGET_FILE:gti>")
+set_tests_properties(generic_discovery_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
 target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_cpp_backend)

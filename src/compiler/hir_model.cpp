@@ -920,7 +920,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
   }
 
-  const auto verifyRangeIterations = [&](const HirBody &body) {
+  const auto verifyRangeIterations = [&](const HirBody &body,
+                                         bool concreteReanalysis = false) {
     for (const HirStatement &statement : body.statements) {
       const auto *source = stmtAs<RangeForStmt>(statement.source);
       if (statement.kind != HirStatementKind::RangeFor) {
@@ -990,12 +991,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            containsUnresolvedGeneric(semantic->elementType));
       const bool exactLoanProvenance =
           semantic != nullptr && range != nullptr &&
-          ((genericSemantic &&
+          (((genericSemantic || concreteReanalysis) &&
             (range->rangeLoan != 0) == (semantic->rangeLoan != 0) &&
             (range->elementLoan != 0) == (semantic->elementLoan != 0) &&
             (range->rangeLoan == range->elementLoan) ==
                 (semantic->rangeLoan == semantic->elementLoan)) ||
-           (!genericSemantic && range->rangeLoan == semantic->rangeLoan &&
+           (!genericSemantic && !concreteReanalysis &&
+            range->rangeLoan == semantic->rangeLoan &&
             range->elementLoan == semantic->elementLoan));
       const bool exactSemantic =
           semantic != nullptr && range != nullptr && exactConcreteTypes &&
@@ -1089,21 +1091,46 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   };
   verifyRangeIterations(program.module());
   for (const HirClassInstance &instance : program.classInstances()) {
-    verifyRangeIterations(instance.fieldInitializers);
-    verifyRangeIterations(instance.staticFieldInitializers);
+    const bool reanalyzed =
+        !instance.typeArguments.empty() || !instance.valueArguments.empty();
+    verifyRangeIterations(instance.fieldInitializers, reanalyzed);
+    verifyRangeIterations(instance.staticFieldInitializers, reanalyzed);
   }
   for (const HirFunctionInstance &instance : program.functionInstances()) {
-    verifyRangeIterations(instance.body);
+    const FunctionInfo *function = semantics.findFunction(instance.declaration);
+    const ClassTypeInfo *owner =
+        function == nullptr || function->ownerClass == 0
+            ? nullptr
+            : semantics.findClassType(function->ownerClass);
+    // Reanalysis starts a new body-local loan domain even when the range's
+    // type happens not to mention any generic parameter. Compare the loan
+    // relationship, not numeric identities allocated in the primary body.
+    verifyRangeIterations(
+        instance.body,
+        function != nullptr &&
+            (!function->genericParameters.empty() ||
+             (owner != nullptr && !owner->genericParameters.empty())));
   }
   for (const HirConstructorInstance &instance :
        program.constructorInstances()) {
-    verifyRangeIterations(instance.body);
+    verifyRangeIterations(instance.body, !instance.generatedDefault);
   }
   for (const HirDestructorInstance &instance : program.destructorInstances()) {
-    verifyRangeIterations(instance.body);
+    const HirClassInstance *owner =
+        instance.owner == 0 || instance.owner > program.classInstances().size()
+            ? nullptr
+            : &program.classInstances()[instance.owner - 1];
+    verifyRangeIterations(instance.body,
+                          owner != nullptr && (!owner->typeArguments.empty() ||
+                                               !owner->valueArguments.empty()));
   }
   for (const HirLambda &instance : program.lambdaInstances()) {
-    verifyRangeIterations(instance.body);
+    verifyRangeIterations(
+        instance.body,
+        !instance.type.lambdaEnclosingClassTypes.empty() ||
+            !instance.type.lambdaEnclosingClassValues.empty() ||
+            !instance.type.lambdaEnclosingFunctionTypes.empty() ||
+            !instance.type.lambdaEnclosingFunctionValues.empty());
   }
   const ProgramInitializationPlan &semanticInitialization =
       semantics.programInitializationPlan();
