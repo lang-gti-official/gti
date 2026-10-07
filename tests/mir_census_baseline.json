@@ -28,7 +28,7 @@
     "115-discardable-results.gti": 43,
     "116-optional-raw-audit.gti": 34,
     "117-unsafe-member-contracts.gti": 37,
-    "118-cleanup-bound-guards.gti": 34,
+    "118-cleanup-bound-guards.gti": 35,
     "119-runtime-object-layout.gti": 50,
     "12-fixed-arrays.gti": 28,
     "120-immovable-storage.gti": 364,
@@ -119,5 +119,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16069
+  "total": 16070
 }

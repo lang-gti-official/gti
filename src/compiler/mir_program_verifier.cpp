@@ -9039,7 +9039,8 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
         source->root == MirPlaceRootKind::Binding &&
         source->projections.empty() &&
         source->type.kind == SemanticType::Class &&
-        loan.carriers == std::vector<HirBindingId>{source->binding} &&
+        std::find(loan.carriers.begin(), loan.carriers.end(),
+                  source->binding) != loan.carriers.end() &&
         parameters && parameterTypes) {
       for (std::size_t index = 0;
            index < parameters->size() && index < parameterTypes->size();
@@ -9323,6 +9324,29 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
           "lifecycle-bound borrowed carrier has no exact drop obligation",
           producer ? producer->block->id : 0,
           producer ? producer->instruction->id : 0);
+    }
+
+    if (ownedEntry) {
+      // Local carriers may retain an entry dependency only by moving that
+      // formal's exact owned obligation. A same-typed unrelated local is not
+      // evidence of a transfer and must not acquire the formal's provenance.
+      for (const auto binding : loan.carriers) {
+        const bool transferred = std::any_of(
+            carrierObligations.begin(), carrierObligations.end(),
+            [&](MirDropObligationId id) {
+              const auto *drop = body.findDropObligation(id);
+              const auto *place = drop ? body.findPlace(drop->place) : nullptr;
+              return drop && drop->kind == MirDropObligationKind::Binding &&
+                     drop->binding == binding && place &&
+                     place->root == MirPlaceRootKind::Binding &&
+                     place->binding == binding && place->projections.empty();
+            });
+        if (!transferred)
+          return verificationFailure(
+              body, owner,
+              "owned entry carrier lacks an exact lifecycle transfer from "
+              "its formal parameter");
+      }
     }
 
     std::vector<InstructionLocation> carrierDrops;
