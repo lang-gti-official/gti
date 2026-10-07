@@ -3676,7 +3676,8 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
     validateReferenceReferent(
         resolved, type.reference ? *type.reference : type.name.last(),
         allowDefaultLibraryStorageReference);
-  if (baseTypeOf(type, currentNamespace).kind != SemanticType::Class) {
+  const auto nominalKind = baseTypeOf(type, currentNamespace).kind;
+  if (nominalKind != SemanticType::Class && nominalKind != SemanticType::Enum) {
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
       const TypeRef &argument = type.arguments[index];
       if (containsReference(argument)) {

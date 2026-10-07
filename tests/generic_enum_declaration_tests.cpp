@@ -1,5 +1,6 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
 
@@ -43,7 +44,7 @@ void testDeclarationSyntax() {
 }
 
 void testDependentPayloads() {
-  auto result = lang::Frontend().analyze("generic-enum-declaration.gti", R"(
+  const std::string source = R"(
 struct Box<T> { T value; };
 enum class Message<T, U = T> {
   empty,
@@ -51,7 +52,9 @@ enum class Message<T, U = T> {
   boxed(Box<T> value)
 };
 int main() { return 0; }
-)");
+)";
+  auto result =
+      lang::Frontend().analyze("generic-enum-declaration.gti", source);
   for (const auto &diagnostic : result.diagnostics) {
     if (diagnostic.severity == lang::DiagnosticSeverity::Error)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -59,6 +62,28 @@ int main() { return 0; }
   expect(result.canGenerateCode(),
          "unused generic declarations retain dependent fields without "
          "emitting a symbolic enum representation");
+  const auto nameHover = lang::LanguageQueries().hover(
+      result, result.sourceGraph.entryUnit(), source.find("Message<T"));
+  expect(nameHover && nameHover->signature.starts_with("enum class Message<"),
+         "generic enum declaration hover retains the primary descriptor");
+  const std::string callSource =
+      "enum Message<T> { idle, item(T payload) }; "
+      "using Count = Message<int>; "
+      "int main() { auto result = Count::item(7); return 0; }";
+  const auto callResult = lang::Frontend().analyze("enum-hover.gti", callSource);
+  const auto offset = callSource.find("item(7");
+  const auto variantHover = lang::LanguageQueries().hover(
+      callResult, callResult.sourceGraph.entryUnit(), offset);
+  expect(variantHover && variantHover->signature.find("::item(int32_t payload)") != std::string::npos,
+         "generic variant hover uses the exact occurrence signature");
+  if (!variantHover || variantHover->signature.find("::item(") == std::string::npos) {
+    const auto *occurrence = callResult.semantics.database().findOccurrence(
+        callResult.sourceGraph.entryUnit(), offset);
+    const auto *symbol = occurrence ? callResult.semantics.database().findSymbol(occurrence->symbol) : nullptr;
+    std::cerr << "hover=" << (variantHover ? variantHover->signature : "none")
+              << " occurrence=" << (occurrence ? int(occurrence->kind) : -1)
+              << " symbol=" << (symbol ? int(symbol->kind) : -1) << '\n';
+  }
   const auto *declaration =
       lang::stmtAs<lang::EnumDecl>(result.program.declarations()[1].get());
   const auto *info =
@@ -164,46 +189,64 @@ void testExactTypeIdentity() {
 }
 
 void testForwardDefaultsAndLatePayloadValidation() {
-  for (const auto source : {
-           "enum First<T, U = Later<int>> { item(T value) }; "
-           "enum Later<T> { item(T value) }; "
-           "int main() { auto event = First<int>::item(7); return 0; }",
-           "enum Later<T> { item(T value) }; "
-           "enum First<T, U = Later<int>> { item(T value) }; "
-           "int main() { auto event = First<int>::item(7); return 0; }",
-           "enum First<T = Box<int>> { item(T value) }; "
-           "struct Box<T> { T value; }; int main() { return 0; }",
-           "enum Event<T, uint64_t N = 3> { idle, item(T value) }; "
-           "int read<T, uint64_t N>(Event<T, N>& value) { return 0; } "
-           "int main() { auto event = Event<int>::item(7); return read(event); }",
-           "struct Tagged<T, uint64_t N> { T value; Tagged(T input) : value(input) {} }; "
-           "int read<T, uint64_t N>(Tagged<T, N>& value) { return 0; } "
-           "int main() { Tagged<int, 3> value{7}; return read(value); }",
-           "enum Event<T, Rest...> { item(T value) }; "
-           "int read<T, Rest...>(Event<T, Rest...>& value) { return 0; } "
-           "int main() { auto event = Event<int, bool>::item(7); return read(event); }"}) {
-    const auto result = lang::Frontend().analyze("enum-defaults-and-inference.gti", source);
-    expect(result.canGenerateCode(),
-           "nominal defaults and type/value/pack inference share exact generic semantics");
+  for (const auto source :
+       {"enum First<T, U = Later<int>> { item(T value) }; "
+        "enum Later<T> { item(T value) }; "
+        "int main() { auto event = First<int>::item(7); return 0; }",
+        "enum Later<T> { item(T value) }; "
+        "enum First<T, U = Later<int>> { item(T value) }; "
+        "int main() { auto event = First<int>::item(7); return 0; }",
+        "enum First<T = Box<int>> { item(T value) }; "
+        "struct Box<T> { T value; }; int main() { return 0; }",
+        "enum Event<T, uint64_t N = 3> { idle, item(T value) }; "
+        "int read<T, uint64_t N>(Event<T, N>& value) { return 0; } "
+        "int main() { auto event = Event<int>::item(7); return read(event); }",
+        "enum Phantom<T> { idle, item(int value) }; "
+        "int main() { Phantom<int&> first = Phantom<int&>::item(3); "
+        "Phantom<void> second = Phantom<void>::idle; return 0; }",
+        "struct Tagged<T, uint64_t N> { T value; Tagged(T input) : "
+        "value(input) {} }; "
+        "int read<T, uint64_t N>(Tagged<T, N>& value) { return 0; } "
+        "int main() { Tagged<int, 3> value{7}; return read(value); }",
+        "enum Event<T, Rest...> { item(T value) }; "
+        "int read<T, Rest...>(Event<T, Rest...>& value) { return 0; } "
+        "int main() { auto event = Event<int, bool>::item(7); return "
+        "read(event); }"}) {
+    const auto result =
+        lang::Frontend().analyze("enum-defaults-and-inference.gti", source);
+    expect(result.canGenerateCode(), "nominal defaults and type/value/pack "
+                                     "inference share exact generic semantics");
     if (!result.canGenerateCode()) {
       std::cerr << source << '\n';
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     }
   }
-  for (const auto source : {
-           "enum Event<T> { idle, item(T value) }; using Invalid = Event<Event<int>>; "
-           "int main() { Invalid value = Invalid::idle; return 0; }",
-           "enum First<T = Later<>> { item(T value) }; "
-           "enum Later<T = First<>> { item(T value) }; int main() { return 0; }"}) {
-    const auto result = lang::Frontend().analyze("invalid-enum-alias-or-default.gti", source);
-    expect(!result.semanticValid && std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-        [](const auto &diagnostic) { return diagnostic.phase == lang::DiagnosticPhase::Semantics &&
-                                           diagnostic.severity == lang::DiagnosticSeverity::Error; }),
-        "invalid aliases and cyclic defaults reject before HIR/MIR/backend entry");
+  for (const auto source :
+       {"enum Event<T> { idle, item(T value) }; using Invalid = "
+        "Event<Event<int>>; "
+        "int main() { Invalid value = Invalid::idle; return 0; }",
+        "enum First<T = Later<>> { item(T value) }; "
+        "enum Later<T = First<>> { item(T value) }; int main() { return 0; "
+        "}"}) {
+    const auto result =
+        lang::Frontend().analyze("invalid-enum-alias-or-default.gti", source);
+    expect(!result.semanticValid &&
+               std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.phase ==
+                                        lang::DiagnosticPhase::Semantics &&
+                                    diagnostic.severity ==
+                                        lang::DiagnosticSeverity::Error;
+                           }),
+           "invalid aliases and cyclic defaults reject before HIR/MIR/backend "
+           "entry");
     expect(std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
-        [](const auto &diagnostic) { return diagnostic.code == "GTI-B0001"; }),
-        "invalid nominal applications do not escape as compiler integrity errors");
+                        [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-B0001";
+                        }),
+           "invalid nominal applications do not escape as compiler integrity "
+           "errors");
   }
 }
 } // namespace

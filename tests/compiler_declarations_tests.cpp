@@ -10392,9 +10392,8 @@ int main() {
   lang::Parser parser(
       lexer.scan("enum Legacy { Value }; int main() { return 0; }"));
   const lang::Program recovered = parser.parse();
-  expect(parser.hadError() && recovered.declarations().size() == 1,
-         "unscoped enums should be rejected without preventing parser "
-         "recovery");
+  expect(!parser.hadError() && recovered.declarations().size() == 2,
+         "optional class spelling parses as the same scoped enum construct");
 
   const std::string formatted = lang::Formatter().format(
       "enum class State:uint8_t{Idle,Running=4,Stopped,};");

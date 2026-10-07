@@ -946,9 +946,9 @@ std::optional<EnumTypeInfo>
 SemanticModel::enumTypeFor(const SemanticType &type) const {
   if (type.kind != SemanticType::Enum)
     return std::nullopt;
-  const auto found = std::find_if(
-      enumInstanceTypes.begin(), enumInstanceTypes.end(),
-      [&](const auto &row) { return row.first == type; });
+  const auto found =
+      std::find_if(enumInstanceTypes.begin(), enumInstanceTypes.end(),
+                   [&](const auto &row) { return row.first == type; });
   if (found != enumInstanceTypes.end())
     return found->second;
   const auto *primary = findEnumType(type.enumId);
@@ -1798,16 +1798,17 @@ void SemanticModel::record(const TypeAliasDecl &declaration,
 void SemanticModel::recordEnumType(const EnumDecl &declaration,
                                    EnumTypeInfo info) {
   std::erase_if(enumInstanceTypes,
-               [&](const auto &row) { return row.first.enumId == info.id; });
+                [&](const auto &row) { return row.first.enumId == info.id; });
   const auto [found, _] =
       enumTypes.insert_or_assign(&declaration, std::move(info));
   enumTypesById.insert_or_assign(found->second.id, &declaration);
 }
 
-void SemanticModel::recordEnumInstanceType(SemanticType type, EnumTypeInfo info) {
-  const auto found = std::find_if(
-      enumInstanceTypes.begin(), enumInstanceTypes.end(),
-      [&](const auto &row) { return row.first == type; });
+void SemanticModel::recordEnumInstanceType(SemanticType type,
+                                           EnumTypeInfo info) {
+  const auto found =
+      std::find_if(enumInstanceTypes.begin(), enumInstanceTypes.end(),
+                   [&](const auto &row) { return row.first == type; });
   if (found == enumInstanceTypes.end())
     enumInstanceTypes.emplace_back(std::move(type), std::move(info));
   else

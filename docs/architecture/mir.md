@@ -459,6 +459,13 @@ derives and compares the complete recipe. Borrowed `PayloadExtract` values are
 places, not owning copies: the verifier checks the exact selected switch edge,
 payload type/access, and source loan; backends spell an address into that original
 variant. Loan conflicts conservatively protect the whole matched enum.
+Projected payload reborrows name their immediate live parent loan as the
+`Borrow` operand, rather than a read of the parent's value. Identity-only
+canonical containment follows place-valued reference forwarding while still
+checking the selected variant/field. A shared local child may reborrow a shared
+parent without gaining mutable access; parent activity, CFG containment,
+non-escape and child-before-parent endpoints remain mandatory and independently
+verified.
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in
