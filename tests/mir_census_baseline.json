@@ -4,7 +4,7 @@
     "02-control-flow.gti": 23,
     "03-functions.gti": 26,
     "04-integers.gti": 24,
-    "05-objects.gti": 31,
+    "05-objects.gti": 35,
     "06-namespaces.gti": 24,
     "07-generics.gti": 35,
     "08-expected.gti": 27,
@@ -122,5 +122,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16201
+  "total": 16205
 }

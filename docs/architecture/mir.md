@@ -1910,31 +1910,39 @@ Emission preserves the MIR argument order and only retires the moved-from
 native shell at the consuming operation; it does not defer argument evaluation
 into a C++ call expression.
 
-The first base-subobject family now uses an entry `InitializeBase` followed by
-an `Invoke`. It covers a selected zero-argument base constructor,
-parameterless derived construction, cleanup-free derived fields, and generated
-base/derived destruction. Both trivial-cleanup and owning bases carry the exact
+The base-subobject family uses one `InitializeBase` after its exact typed
+argument values. A fallible selected constructor has an `Invoke`; a
+failure-free constructor or passive generated default arms the rollback token
+at the instruction itself. Scalar parameter reads and literals are supported
+base arguments, including derived constructors with owning fields and declared
+base/derived cleanup bodies. Both trivial-cleanup and owning bases carry the exact
 base cleanup bit in their rollback descriptor. The bounded source-free
 generated-derived HIR constructor lowers through the same body schedule; it is
 not a native-only default constructor or a terminal containment adapter.
 A base that fails is not armed in the derived body;
 later derived failure drains the completed base last, while successful
 construction transfers its obligation to the enclosing object. Independent
-verification binds the exact base relation, constructor, place, rollback type,
-entry position, activation and retirement, and forbids aliases or ordinary
+verification binds the exact base relation, constructor, arguments, place, rollback type,
+activation and retirement, and forbids aliases or ordinary
 value/borrow uses of the base place. Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
 remain visible in the derived constructor's summary and to the optimizer.
 
-The C++ backend fuses this operation into the exact native base status overload
-and branches on the retained result before executing derived MIR. Passive
+The C++ backend fuses observation-free scalar parameter/literal prefixes into
+the exact native base initializer, using its status overload when fallible,
+and branches on the retained result before executing derived MIR. Its independent
+prefix proof rejects any checked operation or other effect; those require a
+pre-native-base MIR preparation runner, not reconstructed C++ expressions.
+Passive
 field defaults include plain read-only enum values. For the selected
-aggregate schedule, a fallible base cleanup runs at the explicit MIR `Drop`
+aggregate schedule, observable base cleanup runs at the explicit MIR `Drop`
 and returns its secondary record before the caller tears down the empty native
 representation. Other admitted base rollback finishes when the allocation
 caller destroys the unpublished native object. That deferral is bounded to
-constructors without owning parameters or derived fields; it cannot cross
-their cleanup order. No base is destroyed and placement-reconstructed as an
+trivial-cleanup bases; it cannot cross any observable cleanup order. Declared
+base cleanup disarms its native lifecycle guard, and owning base fields retain
+the existing emptied-shell proof, preventing duplicate native destruction.
+No base is destroyed and placement-reconstructed as an
 ordinary field.
 
 `tests/fixtures/inherited_constructor_cleanup_failure.gti` covers the original
@@ -1946,9 +1954,12 @@ complete aggregate schedule rather than deferred native cleanup. Generated
 pointees may themselves contain several supported active fields. Collection
 destruction now composes through the v61 element recipe, including the
 vector-owning base in `inherited_collection_cleanup_failure.gti`. This still
-does not establish cyclic ownership-type graphs, base arguments, owning derived
-fields, declared base/derived destructors, or
-static-field initializer bodies. Those remain M-FAIL-01 work.
+does not establish cyclic ownership-type graphs, owning or borrowed base
+arguments, checked/effectful base-argument prefixes, or static-field initializer
+bodies. Constructors with historical entry-active declaration-field rollback
+tokens remain ineligible: each declared field needs the typed constructor
+schedule that arms it only after the base and that field successfully complete.
+Those remain M-FAIL-01 prerequisites, rather than native representation exemptions.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters

@@ -2014,31 +2014,29 @@
       "outcome": "bad-diagnostic"
     },
     "a45-base-plus-string-field-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-base-state-rollback-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-derived-destructor-explicit-base": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a45-derived-destructor-generated-ctor": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "link"
+      "outcome": "pass"
     },
     "a45-literal-base-argument": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a46-chained-subscript-compound": {
       "finding": "A46",

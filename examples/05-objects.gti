@@ -26,13 +26,23 @@ public:
   }
 };
 
+// A selected state-bearing base initializes before derived fields. A declared
+// cleanup body does not prevent explicit or generated base construction.
+class MeasuredCounter : public Counter {
+public:
+  int limit;
+  MeasuredCounter(int initial, int limit) : Counter(initial), limit(limit) {}
+  ~MeasuredCounter() {}
+};
+
 int main() {
   Point origin{};
   Point offset{2, 3};
   mut Counter counter{origin.x};
   int next = counter.tick();
+  MeasuredCounter measured{2, 5};
 
-  if (next == counter.current() and offset.x == 2) {
+  if (next == counter.current() and offset.x == 2 and measured.current() == 2 and measured.limit == 5) {
     std::println("objects use explicit construction");
     return 0;
   }
