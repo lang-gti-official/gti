@@ -427,6 +427,16 @@ from repeatedly triggering whole-body searches; applicable values still pass
 the complete lifetime, publication, use, and failure-edge checks. Neither MIR
 semantics nor emitted C++ changes as a result of these early rejections.
 
+The same necessary-condition filtering applies to direct class temporary
+borrows: scalar values cannot be their producers, and slot candidates must
+match the existing mutable class slot's exact source-value identity and type
+before call, materialization, activation and cleanup searches run. A terminal
+subscript boundary query first requires an existing source-defined GTI
+subscript member with an owner and one index parameter; an unrelated function
+cannot be selected by the existing whole-program subscript proof. These
+filters do not memoize admission, discharge a safety check, or change the
+complete proof for any potentially applicable candidate.
+
 Each body plan owns its readiness and issues, canonical plain and failure text
 templates, the deduced-callable variants where target family spelling differs,
 boundary-declaration decision, initializer schedule and field spellings, and
