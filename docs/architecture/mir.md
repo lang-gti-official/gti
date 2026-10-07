@@ -272,6 +272,13 @@ future wrapper and header backends can consume one sealed source of truth.
 Exact generic enum identity and dormant embedding rows share the current
 combined schema, which preserves embedding rows for dormant library snapshots
 and uses the same current version for executable and library programs.
+Storage ownership and conditional capability verification query enum traits by
+the full concrete `SemanticType`, including type/value arguments. A primary
+enum declaration ID does not identify a generic instance. Payload catalogs
+provide the authoritative ownership, borrowing and concurrency facts folded
+from actual alternative fields; nominal generic metadata does not become a
+stored component. Missing exact rows remain invalid rather than granting a
+storage or capability exemption.
 The program header retains the selected target's identity, pointer width and
 execution profile. Every serialized type retains its native C primitive
 discriminator separately from its numeric kind; equal-width `long` and

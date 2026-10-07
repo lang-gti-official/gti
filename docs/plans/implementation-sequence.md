@@ -7315,6 +7315,13 @@ consumer, and release refreshes remain outstanding for the full campaign.
   The broader base unit fixtures and an old inheritance-spelling assertion
   still require reconciliation with the allocator agent's next checkpoint;
   the earlier aggregate pass precedes this newer base-stage integration.
+  The combined 29-fixture matrix first exposes four container clients failing
+  MIR storage verification: new allocator trait helpers queried only a primary
+  enum ID, losing concrete arguments. All three lookup sites now use exact
+  enum types. General conditional-capability tests cover distinct real payload
+  policies and metadata-only parameters; no storage or borrow permission is
+  relaxed. All six focused gates then pass (110.63 seconds), including every
+  one of the 232 native enum configurations and 19 source rejections.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling

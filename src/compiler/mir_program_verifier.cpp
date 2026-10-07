@@ -651,10 +651,9 @@ concretePackElementTraits(const MirProgram &program, const SemanticType &type,
                : std::optional{owner->traits};
   }
   if (type.kind == SemanticType::Enum) {
-    if (const auto *enumeration = program.findPayloadEnum(type.enumId))
-      return enumeration->type == type ? std::optional{enumeration->traits}
-                                       : std::nullopt;
-    return program.findIntegralEnum(type.enumId) != nullptr
+    if (const auto *enumeration = program.findPayloadEnum(type))
+      return enumeration->traits;
+    return program.findIntegralEnum(type) != nullptr
                ? std::optional{semanticTraits(type)}
                : std::nullopt;
   }
@@ -782,7 +781,7 @@ conditionalCapabilities(const MirProgram &program, const SemanticType &type,
     return result;
   }
   if (type.kind == SemanticType::Enum) {
-    if (const auto *enumeration = program.findPayloadEnum(type.enumId))
+    if (const auto *enumeration = program.findPayloadEnum(type))
       return ConcurrencyCapabilities{
           .transferCapable = enumeration->traits.transferCapable,
           .shareCapable = enumeration->traits.shareCapable};
