@@ -94,7 +94,7 @@ def classify(paths: Iterable[str]) -> dict[str, list[str]]:
         "build/release": [],
         "tests/examples/benchmarks": [],
         "documentation/plans": [],
-        "codex automation": [],
+        "agent automation": [],
         "other": [],
     }
 
@@ -131,10 +131,13 @@ def classify(paths: Iterable[str]) -> dict[str, list[str]]:
             add("build/release")
         if under(path, "tests/", "examples/", "benchmarks/"):
             add("tests/examples/benchmarks")
-        if path == "README.md" or path == "AGENTS.md" or under(path, "docs/"):
+        if path in {"README.md", "AGENTS.md", "CLAUDE.md"} or under(path, "docs/"):
             add("documentation/plans")
-        if under(path, ".codex/", ".agents/"):
-            add("codex automation")
+        if under(path, ".codex/", ".claude/", ".agents/") or path in {
+            "scripts/agent_workflow.py",
+            "tests/agent_workflow_test.py",
+        }:
+            add("agent automation")
         if not matched:
             groups["other"].append(path)
 
@@ -232,6 +235,17 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
                 "stdlib-runtime",
                 "ctest --test-dir build --output-on-failure -R '^(compiler_pipeline|cli_workflow|project_cli_workflow)$'",
                 "stdlib or runtime behavior changed; expand for the owning feature suite",
+            )
+        )
+    if any(
+        path in {"scripts/agent_workflow.py", "tests/agent_workflow_test.py"}
+        for path in paths
+    ):
+        checks.append(
+            Check(
+                "agent-workflow",
+                "ctest --test-dir build --output-on-failure -R '^agent_workflow$'",
+                "the agent task lifecycle helper or its regression changed",
             )
         )
     if "build/release" in groups:

@@ -12,12 +12,15 @@ agent procedure and `finish-release` supplies version/publication policy.
 ## Task identity and operations
 
 `scripts/agent_workflow.py` uses Python's standard library and Git. One task
-owns a unique `codex/` branch, a separate worktree and one PR. Gitea PRs and
-published commits are authoritative inventory; token-free JSON records under
-the common Git directory's `gti-agent-workflow/` retain operation state and
-recovery pointers. They are shared across worktrees, never committed, and
-contain no credentials. HTTP redirects are refused. Canonical fetch and push
-URLs are both checked before credentials or code are sent.
+owns a unique `codex/` branch, a separate worktree and one PR. The worktree
+must lie outside the primary checkout: `start` refuses nested paths, including
+Claude Code's managed `.claude/worktrees/`, so such clients let `start` create
+the task worktree elsewhere. Gitea PRs and published commits are authoritative
+inventory; token-free JSON records under the common Git directory's
+`gti-agent-workflow/` retain operation state and recovery pointers. They are
+shared across worktrees, never committed, and contain no credentials. HTTP
+redirects are refused. Canonical fetch and push URLs are both checked before
+credentials or code are sent.
 
 All shared operations hold an atomic directory lock with PID/time metadata;
 an interrupted lock must be inspected before its exact directory is removed.
