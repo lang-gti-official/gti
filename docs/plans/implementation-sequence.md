@@ -4158,6 +4158,191 @@ implementation choices remain delegated. Follow the normal repository PR
 lifecycle and local-main synchronization, without installing the toolchain
 unless requested.
 
+### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
+
+- **State/role:** planned follow-on campaign, after the `S-ALLOC-06` public
+  lifetime facilities and sparse-storage migration. The owner delegates the
+  source/compiler/platform split described here. This is not a claim that
+  process allocation already calls libc directly from GTI.
+- **Outcome:** the default typed-storage and process-resource paths acquire
+  bytes through source-defined GTI policy and ordinary native bindings, rather
+  than specialized C++ allocation policy. Application pools and resource-backed
+  containers retain the same checked ownership, failure and cleanup contracts.
+- **Continuation:** reuse the preceding campaign and Phase 2 context. Do not
+  reopen their accepted lifetime or unsafe boundaries, or duplicate their
+  construction/destruction/relocation machinery.
+
+#### Starting Point And Architectural Purpose
+
+At the planning baseline, `stdlib/std/resource.gti`'s `process_resource` calls
+`gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1`. That is already an
+ordinary C ABI boundary, not nominal compiler recognition of the public class.
+`runtime/src/memory.cpp` validates requests and uses aligned C++
+`operator new`/`operator delete`. Replacing those two native calls alone is
+not this campaign's architectural outcome: move expressible request validation,
+failure translation and provider selection into GTI source as well.
+
+Calling libc from GTI still uses the selected backend for ordinary code and C
+interop. Independence means that the backend does not own the allocator's
+policy or invent ownership from `malloc`; it does not mean executing source
+without lowering. Another backend must implement GTI's general lifetime and C
+ABI contracts, not reimplement a bespoke storage allocator.
+
+#### Chosen Boundary
+
+| Responsibility | Owner |
+| --- | --- |
+| Validate requests, normalize zero size, check arithmetic/native-size conversion, map failures and publish descriptors | Ordinary GTI provider source |
+| Slot state, metadata policy, construction sequencing, growth and rollback | Source-defined storage/container code from `S-ALLOC-06` |
+| Acquire/release byte regions and expose necessary target ABI facts | Ordinary native bindings, with minimal platform adapters where necessary |
+| Resolve constructors/destructors, layout and structural transfer eligibility | General GTI semantic/type facilities |
+| Preserve checked loans, transfer/drop obligations, effects and failure edges | Existing HIR and verified MIR contracts |
+| Emit those operations and marshal native calls | Backend representation and execution support |
+
+Compiler facilities are justified for object validity, layout and execution of
+the selected GTI lifecycle. They are not justified merely because an existing
+container happens to call a C++ helper. Public spelling must never confer
+allocation or lifetime meaning. Do not add a `malloc` intrinsic or recognize a
+particular libc package, allocator or resource name in semantic analysis.
+
+#### Source Provider And Platform Adapter Contract
+
+Keep the existing public `memory_resource`, `raw_allocation`, process-resource,
+lease and typed-storage APIs compatible. The hosted default provider is a
+source-defined resource with a small target-selected implementation. Selection
+uses the compilation target, not the compiler host, and belongs to ordinary
+source/build configuration rather than a special backend allocation path.
+
+Use libc/CRT byte allocation rather than C++ object allocation on the migrated
+paths. The initial aligned paths are POSIX `posix_memalign` paired with `free`,
+and the Windows CRT `_aligned_malloc` paired with `_aligned_free`. Normalize
+POSIX alignment to satisfy both the GTI request and the native pointer-size
+constraint. Prevalidate Windows arguments and handle zero bytes before calling
+the CRT so invalid requests do not invoke its invalid-parameter handler.
+See [the POSIX-conforming aligned-allocation contract](https://man.openbsd.org/posix_memalign.3)
+and [the Windows aligned-allocation contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/aligned-malloc?view=msvc-170).
+
+Ordinary `malloc`/`free` is also a valid source provider and should be exercised
+by an unrelated raw-region example. An optimized default path may use it when
+the target's documented alignment guarantee covers the request. Do not guess
+that guarantee from GTI object layout or pointer width alone. A single aligned
+allocation family is an acceptable initial default; family selection must be
+recoverable from the unchanged descriptor and immutable target policy, or
+retained explicitly by the implementation. Never free an aligned CRT block
+with ordinary `free`, or a libc block with native `delete`.
+
+Provide the minimal canonical bindings needed by the stdlib; reuse existing
+libc declarations where available and correct. Do not require an independently
+downloaded third-party package to bootstrap default stdlib allocation. Preserve
+target-native signatures, particularly `size_t` width and output pointers;
+`uint64_t` is not a universal C ABI substitute. Where a header macro, target
+constant, calling convention or unsupported ABI shape needs a native shim,
+permit a small reviewed C ABI adapter. That shim supplies native facts or
+forwards a call; it must not conceal storage algorithms, typed construction,
+bitmap policy, GTI cleanup or application resource selection. Document every
+remaining shim and why an ordinary binding is insufficient.
+
+Do not promise that every target has libc. Keep this hosted provider separate
+from the generic resource protocol and the later freestanding profile. Custom
+resources may use another allocator or OS service without changing language
+semantics. No runtime-selected global allocator, replacement-`new` framework,
+allocator traits or dynamic provider erasure is required.
+
+#### Observable Allocation And Release Contract
+
+- Validate nonzero power-of-two alignment before native calls. Stronger actual
+  alignment is allowed; preserve the descriptor's contract and matching release.
+- Preserve successful zero-size allocation without a native allocation request,
+  using the existing empty-descriptor convention and harmless empty release.
+- Reject arithmetic or target-native size conversion overflow before allocation,
+  including any padding/rounding used by an adapter. Do not wrap a request into
+  a smaller allocation. Native exhaustion remains recoverable and distinct
+  from invalid requests and GTI construction failure.
+- Normalize native return/status conventions in GTI source. Publish a complete
+  descriptor only after successful byte acquisition. A failed request must not
+  leak a region, mutate a live owner's release authority or consume its contents.
+- Returned bytes initially contain no live GTI objects. Start/end lifetimes
+  only with the general facilities from `S-ALLOC-06`; destroy every required
+  object before releasing its region. Moving an owner transfers its original
+  descriptor/provider and does not move its elements.
+- Release receives an outstanding descriptor from the same allocation family.
+  It does not throw native exceptions across C ABI, execute object destructors,
+  read destroyed elements or authorize duplicate release. Preserve GTI's
+  existing destructor/failure cleanup scheduling around that call.
+
+Do not use `realloc` to grow a region containing arbitrary live GTI objects.
+Container growth obtains a new region, performs the approved typed transfer,
+and releases the old region in the established order. Preserve immovable and
+failure-atomicity restrictions. Byte-only reallocation is separate future
+breadth, not permission to bypass those rules.
+
+#### Metadata, Bootstrap And Unsafe Obligations
+
+Use `S-ALLOC-06`'s explicit source metadata policy; do not reintroduce a hidden
+backend process-heap bitmap through this adapter. The byte-provider bootstrap
+must not depend on allocating the typed container it is intended to support.
+Validate independent object/metadata extents and clean acquired regions if a
+later acquisition fails. Counting/failure-injection evidence must see the
+allocations promised by the documented policy, including padding and metadata.
+
+Native allocation establishes bytes, not compiler-proved allocator correctness.
+Unsafe implementation obligations still cover truthful extents, alignment,
+disjointness, initialization, owner association and matching release. Safe
+leases and element references remain checked after their explicit trust step.
+Optional raw auditing stays optional and must not change executable acceptance
+or behavior in Off/Warn. Do not broaden shared mutation or thread-safety
+promises merely because the underlying native heap supports concurrent calls.
+
+Source-defined code improves attribution of type, access, borrow and ordinary
+control-flow errors to GTI source. It does not turn every allocator bug into a
+compile-time diagnostic: false unsafe assertions, incorrect release and other
+logic errors still need runtime tests/sanitizers. General lifetime lowering
+errors remain compiler defects. Preserve source locations through ordinary
+calls and panic paths without disguising an internal compiler failure as a
+user allocator error.
+
+#### Migration And Completion Gates
+
+1. Inventory actual bindings, supported target ABIs and all remaining allocation
+   sites. Separate GTI-program allocation from the compiler's own host memory
+   and unavoidable representation mechanisms. Classify each residual helper
+   and identify which migrated users previously called the runtime C++ path.
+2. Implement the canonical bindings/minimal adapters and source-defined process
+   provider, with ordinary raw allocation/release tests before typed clients.
+   Test target selection, native signatures and null/status conversion rather
+   than assuming that a declaration with a familiar name matches the ABI.
+3. Route the default sparse-storage factories and existing process-resource
+   clients through the source provider. Preserve public contracts, Phase 2
+   resource leases, construction/failure identity and metadata policy. Retire
+   subsumed runtime/backend allocation policy after parity tests pass. Keep an
+   old exported ABI only if it still has a compatibility consumer; document
+   that reason rather than leaving a second permanent policy implementation.
+4. Prove zero-size, invalid/natural/over-alignment, native-size overflow,
+   exhaustion and injected failure, simultaneous regions, allocation/release
+   family pairing, metadata rollback, owner movement, constructor/destructor
+   failure, failed growth and exactly-once region release. Exercise owning and
+   immovable elements and unrelated application providers/containers.
+5. Add a runnable source-defined libc provider example and validate migrated
+   storage/resource examples with an optimized GTI compiler. Update their
+   index/corpus/census and public-source inventories. Run relevant C++20/C++23,
+   optimization, no-elide and sanitizer matrices, mandatory borrow/escape
+   negatives, Off/Warn parity, installed consumers and broader production gates.
+   Verify each supported hosted platform through available native CI; identify
+   unavailable evidence and do not present local macOS success as Windows/Linux
+   execution. Maintain target/ABI tests even when native execution is unavailable.
+6. Compare representative allocation/storage workloads and compilation costs;
+   explain changed allocation counts or regressions. Update canonical stdlib,
+   native-interop, runtime and ADR 022 descriptions to actual support. Report
+   source-owned policy, retired private paths, justified remaining shims and
+   any other stdlib allocation clients still awaiting their own migration.
+
+Completion is not merely a change from `operator new` to `malloc` inside a C++
+helper. It requires source-owned provider policy on the named typed clients and
+unchanged safety/cleanup behavior. It does not require moving compiler host
+allocation into GTI, migrating every distinct owning representation, inventing
+a second backend or implementing freestanding allocation. Follow the existing
+PR lifecycle and local-main synchronization; installation remains opt-in.
+
 ### S-FREE-01: Freestanding Target Profile
 
 - **State/role:** later breadth; `S-LAYOUT-01`, `D-LANG-01`, and `D-FAIL-01`
