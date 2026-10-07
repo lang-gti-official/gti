@@ -4,6 +4,8 @@
 #include "gti/program_request.h"
 #include "gti/semantic_core.h"
 
+#include <functional>
+
 namespace lang {
 
 enum class SemanticLoanKind {
@@ -2152,9 +2154,15 @@ private:
 
 class SemanticTypePrinter {
 public:
+  using GenericParameterLookup =
+      std::function<const GenericParameterInfo *(GenericParameterId)>;
   explicit SemanticTypePrinter(const SemanticModel &semantics);
 
   [[nodiscard]] std::string print(const SemanticType &type) const;
+  // Registration may supply declaration-owned parameters not yet published
+  // in the completed model. The lookup only supplies spelling and is not kept.
+  [[nodiscard]] std::string print(const SemanticType &type,
+                                  const GenericParameterLookup &lookup) const;
 
 private:
   const SemanticModel &semantics;

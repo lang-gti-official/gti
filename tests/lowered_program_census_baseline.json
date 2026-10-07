@@ -556,8 +556,8 @@
       }
     },
     "14-operators.gti": {
-      "declarations": 152,
-      "bodies": 38,
+      "declarations": 159,
+      "bodies": 44,
       "generated_items": 3,
       "generated_kinds": {
         "program_initialization": 0,
@@ -841,9 +841,9 @@
       }
     },
     "33-source-concepts.gti": {
-      "declarations": 145,
-      "bodies": 32,
-      "generated_items": 6,
+      "declarations": 152,
+      "bodies": 37,
+      "generated_items": 9,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -852,7 +852,7 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
-        "thread_task_adapter": 3
+        "thread_task_adapter": 6
       }
     },
     "34-do-while.gti": {
@@ -1546,9 +1546,9 @@
       }
     },
     "80-function-items.gti": {
-      "declarations": 739,
-      "bodies": 98,
-      "generated_items": 50,
+      "declarations": 741,
+      "bodies": 100,
+      "generated_items": 51,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -1557,7 +1557,7 @@
         "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 0,
-        "thread_task_adapter": 13
+        "thread_task_adapter": 14
       }
     },
     "83-complete-ranges.gti": {
@@ -1817,8 +1817,8 @@
     }
   },
   "totals": {
-    "declarations": 51814,
-    "bodies": 16221,
-    "generated_items": 3406
+    "declarations": 51830,
+    "bodies": 16234,
+    "generated_items": 3410
   }
 }

@@ -70,6 +70,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testDependentRequiresArgumentAdmission",
+      "suite": "declarations"
+    },
+    {
       "name": "testStructuralClassConstraints",
       "suite": "declarations"
     },
@@ -602,7 +606,35 @@
       "suite": "constexpr"
     },
     {
+      "name": "testGenericAdvisorySoundness",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testSemanticVisitorRequestReuse",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testUnknownFunctionAttributeClassification",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testUnknownTypeCascadeSuppression",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testRecoveryFindingDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testGenericArgumentDiagnosticGuidance",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testConversionDiagnosticGuidance",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testRawAuditDiagnosticPublication",
       "suite": "diagnostics"
     },
     {
