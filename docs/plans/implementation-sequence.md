@@ -7038,8 +7038,11 @@ consumer, and release refreshes remain outstanding for the full campaign.
   gates and nested/receiver/sibling native matrices pass. Two valid-source
   composition gaps remain follow-ups, not new source restrictions: a nested
   local reborrow while two shared sibling payload bindings remain live reaches
-  a MIR sibling-conflict error; two fresh class constructors with enum arguments
-  inside one alternative call exceed the current fused emission staging proof.
+  a MIR sibling-conflict error
+  ([#121](https://git.internal.howetotech.dev/gti-lang/gti/issues/121)); two
+  fresh class constructors with enum arguments inside one alternative call
+  exceed the current fused emission staging proof
+  ([#122](https://git.internal.howetotech.dev/gti-lang/gti/issues/122)).
   Preconstructing those class inputs is supported. Combined corpus/full-suite
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
