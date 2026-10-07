@@ -1,5 +1,5 @@
 namespace shapes {
-  struct Layer<uint64_t N> { Layer<N - 1> inner; int value = 1; };
+  struct Layer<uint64_t N> { Layer<N - 1> inner; int value = int(N); };
 }
 struct shapes::Layer<0> { int value = 100; };
 
@@ -18,7 +18,7 @@ int main() {
   if (object.inner.inner.value != 100 || object.inner.value != int(runtime_count - 1)) return 1;
   if (object.values[0] != 0 || object.values[2] != 0) return 2;
   if (shallow.inner.value != 100 || shallow.values.size() != 2) return 4;
-  if (deeper.inner.value != 1 || deeper.inner.inner.value != 1 ||
+  if (deeper.inner.value != 2 || deeper.inner.inner.value != 1 ||
       deeper.inner.inner.inner.value != 100 || deeper.values.size() != 4) return 5;
   return 0;
 }
