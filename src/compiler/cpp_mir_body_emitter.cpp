@@ -13411,6 +13411,37 @@ exactMemberBorrowReceiver(const MirProgram &program, const MirBody &body,
          classTypeIsOrDerivesFrom(program, receiver->type, owner->id);
 }
 
+// A consuming source member uses the same materialized receiver identity as
+// ordinary call admission. Its receiver lifetime stays active until MIR's
+// scheduled Drop; unlike an owning argument, it is not transferred at Call.
+[[nodiscard]] bool
+exactMemberConsumingReceiver(const MirProgram &program, const MirBody &body,
+                             const MirInstruction &call,
+                             const MirFunctionInstance &target) {
+  if (!call.receiver || !target.owner || target.staticMember ||
+      target.receiverMutability != ReceiverMutability::Consuming ||
+      call.callableInvocation != CallableInvocationCapability::Once ||
+      call.receiver->kind != MirOperandKind::Value || call.callSite == 0 ||
+      !hasExactCallInput(body, *call.receiver, call.callSite,
+                         MirCallInputRole::Receiver, 0))
+    return false;
+  const auto *receiver = consumedReceiverStageSlot(body, call.receiver->value);
+  if (receiver == nullptr) {
+    if (const auto *stage = copyStagedCallInput(body, call.receiver->value)) {
+      const auto source = stagedTemporarySourceFor(body, *stage);
+      if (source.moved)
+        receiver = source.place;
+    }
+  }
+  if (receiver == nullptr)
+    receiver = directTemporaryReceiver(body, call).slot;
+  const auto *owner = program.findClassInstance(*target.owner);
+  return receiver != nullptr && owner != nullptr &&
+         receiver->type == call.receiver->type &&
+         receiver->access == AccessMode::Mutable &&
+         classTypeIsOrDerivesFrom(program, receiver->type, owner->id);
+}
+
 // A generated empty class default has no observable construction or cleanup,
 // but its MIR value must still publish at the exact selected field initializer.
 // In particular, it may follow a fallible owning-field constructor: that makes
@@ -17780,10 +17811,12 @@ valueRootedClassCallResultSlot(const MirProgram &program,
       producer->result && *producer->result == valueId &&
       !producer->destination && callee != nullptr &&
       ((!producer->receiver && (!callee->owner || callee->staticMember)) ||
-       exactMemberBorrowReceiver(program, body, *producer, *callee)) &&
+       exactMemberBorrowReceiver(program, body, *producer, *callee) ||
+       exactMemberConsumingReceiver(program, body, *producer, *callee)) &&
       producer->functionTarget && !producer->constructorTarget &&
       !producer->lambdaTarget && !producer->bodyTarget &&
-      !producer->callableInvocation &&
+      (!producer->callableInvocation ||
+       exactMemberConsumingReceiver(program, body, *producer, *callee)) &&
       producer->intrinsic == IntrinsicKind::None &&
       ((producer->dispatch == CallDispatch::Static &&
         producer->definedFailure.propagation ==

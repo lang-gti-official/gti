@@ -1,6 +1,62 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
 int main() {
+  {
+    const auto path = std::filesystem::path(__FILE__).parent_path() /
+                      "fixtures/consuming_call_assignment.gti";
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(),
+           "consuming result assignment has verified MIR");
+    if (!frontend.canGenerateCode())
+      return 1;
+    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    std::size_t checked = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &block : function.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (!instruction.functionTarget ||
+              instruction.callableInvocation !=
+                  lang::CallableInvocationCapability::Once ||
+              instruction.info.type.kind != lang::SemanticType::Class)
+            continue;
+          ++checked;
+          expect(lang::CppMirBodyEmitter(frontend.mir, rows)
+                     .supportsFailureBodyText(
+                         {lang::MirBodyKind::Function, function.id}),
+                 "source consuming receivers share the class result "
+                 "publication proof");
+          for (int mutation = 0; mutation != 3; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &changedBlock : changed->body.blocks)
+              for (auto &candidate : changedBlock.instructions) {
+                if (candidate.id != instruction.id)
+                  continue;
+                if (mutation == 0)
+                  candidate.callableInvocation =
+                      lang::CallableInvocationCapability::Mutable;
+                else if (mutation == 1)
+                  candidate.receiver->type = lang::SemanticType::Bool;
+                else
+                  candidate.successResultDrop = 999;
+              }
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "consuming receiver retains access, exact owner, and result "
+                   "activation");
+            expect(!lang::CppMirBodyEmitter(malformed, rows)
+                        .supportsFailureBodyText(
+                            {lang::MirBodyKind::Function, function.id}),
+                   "consuming result admission rejects forged "
+                   "receiver/publication facts");
+          }
+        }
+      }
+    }
+    expect(checked == 2, "fixture reaches named and fresh consuming receivers");
+  }
   for (const std::string source : {
            "struct Value { int number; Value(int n) : number(n) {} };\n"
            "expected<Value, int> attempt() { return Value(7); }\n"
