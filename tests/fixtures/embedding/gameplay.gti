@@ -1,0 +1,19 @@
+[[c_opaque]] struct Engine;
+
+[[c_abi]]
+struct Frame {
+  mut int32_t frame;
+  mut double delta_seconds;
+};
+
+namespace game {
+int32_t add_one(int32_t value) { return value + 1; }
+
+int32_t update(Engine* engine, Frame frame) {
+  return add_one(frame.frame);
+}
+
+void initialize(Engine* engine) {}
+
+int32_t unused(int32_t value) { return value; }
+}

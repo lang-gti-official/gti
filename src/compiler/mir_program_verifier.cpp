@@ -9881,6 +9881,61 @@ verifyMirProgramContracts(const MirProgram &program) {
                              .message = "invalid failure metadata: " + error});
   }
 
+  const std::optional<MirEmbeddingPlan> &embedding = program.embeddingPlan();
+  const auto addEmbeddingError = [&](std::string message,
+                                     HirFunctionInstanceId function = 0) {
+    result.errors.push_back({.bodyKind = function == 0 ? MirBodyKind::Module
+                                                       : MirBodyKind::Function,
+                             .owner = function,
+                             .message = std::move(message)});
+  };
+  if (program.programKind() == ProgramKind::Executable && embedding) {
+    addEmbeddingError("executable MIR carries a host embedding plan");
+  }
+  if (program.programKind() == ProgramKind::Library && !embedding) {
+    addEmbeddingError("library MIR lacks its host embedding plan");
+  }
+  if (embedding) {
+    if (program.programKind() != ProgramKind::Library ||
+        embedding->abiVersion != embeddingAbiVersionV1 ||
+        embedding->exports.empty()) {
+      addEmbeddingError("MIR embedding plan has an invalid kind or ABI");
+    }
+    std::string previousSymbol;
+    std::unordered_set<HirFunctionInstanceId> selectedFunctions;
+    for (std::size_t index = 0; index < embedding->exports.size(); ++index) {
+      const MirEmbeddingExport &selected = embedding->exports[index];
+      const MirFunctionInstance *function =
+          program.findFunctionInstance(selected.function);
+      const bool sorted = index == 0 || previousSymbol < selected.symbol;
+      const bool uniqueFunction =
+          selectedFunctions.insert(selected.function).second;
+      if (!sorted || !uniqueFunction || selected.declaration == 0 ||
+          selected.function == 0 || selected.qualifiedName.empty() ||
+          selected.symbol.empty() || selected.requestSource.source.empty() ||
+          function == nullptr || function->id != selected.function ||
+          function->declaration != selected.declaration || function->owner ||
+          !function->typeArguments.empty() ||
+          !function->valueArguments.empty() ||
+          function->returnType != selected.returnType ||
+          function->parameterTypes != selected.parameterTypes ||
+          function->entryKind != ProgramEntryKind::None ||
+          function->linkage != LanguageLinkage::Gti ||
+          function->definitionKind != MirDefinitionKind::Source) {
+        addEmbeddingError(
+            "MIR embedding export has no exact source function root",
+            selected.function);
+      }
+      previousSymbol = selected.symbol;
+    }
+  }
+  if (program.programKind() == ProgramKind::Library &&
+      (program.hostedStartupPlan() || program.hostedStartup() != nullptr ||
+       !program.nativeCallbackAdapters().empty())) {
+    addEmbeddingError(
+        "library MIR retains hosted startup or process-lifetime callbacks");
+  }
+
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
     const auto verifyStorageType = [&](const SemanticType &type) {
       if (!storageOwnershipTypeValid(program, type))

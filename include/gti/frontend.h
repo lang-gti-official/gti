@@ -9,6 +9,7 @@
 #include "gti/include_suggestions.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
+#include "gti/program_request.h"
 #include "gti/progress.h"
 #include "gti/semantic_model.h"
 #include "gti/source_graph.h"
@@ -33,6 +34,7 @@ enum class FrontendPhase {
 
 struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
+  ProgramRequest program;
   ConfigurationFlags configurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   bool analyzeRecoveredProgram = false;

@@ -65,6 +65,8 @@ verifyMirOptimizationCoherence(const MirProgram &source,
   }
 
   if (source.executionProfile() != optimized.executionProfile() ||
+      source.programKind() != optimized.programKind() ||
+      source.embeddingPlan() != optimized.embeddingPlan() ||
       source.classInstances().size() != optimized.classInstances().size() ||
       source.functionInstances().size() !=
           optimized.functionInstances().size() ||
@@ -73,8 +75,8 @@ verifyMirOptimizationCoherence(const MirProgram &source,
       source.destructorInstances().size() !=
           optimized.destructorInstances().size() ||
       source.lambdaInstances().size() != optimized.lambdaInstances().size()) {
-    reject({}, "optimized MIR changed program profile or concrete instance "
-               "cardinality");
+    reject({}, "optimized MIR changed program/export policy or concrete "
+               "instance cardinality");
     return result;
   }
 

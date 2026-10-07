@@ -74,8 +74,10 @@ struct ProjectFactsProfile {
 struct ProjectFactsTarget {
   std::string name;
   ProjectTargetKind kind = ProjectTargetKind::Executable;
+  ProjectTargetLinkage linkage = ProjectTargetLinkage::None;
   // The target's entry source, resolved against the package source root.
   std::filesystem::path root;
+  std::vector<ProjectExport> exports;
 };
 
 class ProjectFacts final {
@@ -105,8 +107,8 @@ public:
 
   [[nodiscard]] const std::vector<ProjectFactsTarget> &targets() const;
 
-  // Package-level `[build] defines`, the same flags the build path seeds a
-  // compilation with before CLI overrides apply.
+  // Selected-package and transitive-dependency `[build] defines`, the same
+  // program-wide flags the build path seeds before CLI overrides apply.
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
 
   // The analysis configuration for one declared profile, assembled exactly as
@@ -169,7 +171,8 @@ struct ProjectFactsResult {
 // native tool, no git process, and no build, and creates no directories.
 [[nodiscard]] ProjectFactsResult resolveProjectFacts(
     const std::filesystem::path &startDirectory,
-    const std::optional<std::string> &requestedPackage = std::nullopt);
+    const std::optional<std::string> &requestedPackage = std::nullopt,
+    ManifestFeaturePolicy manifestFeatures = {});
 
 // Describes an already-resolved workspace. Callers that have resolved a
 // workspace for another purpose reuse it instead of resolving twice.

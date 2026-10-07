@@ -80,7 +80,7 @@ statement spans against the **optimized** MIR's retained HIR identities.
 Each `LoweredBody::sourceLocations` row owns its source path/span and exact
 block/instruction identity; instruction zero identifies a terminator. These
 optional rows are verified and sealed with the lowered contract (printer
-version 12), survive destruction of AST/HIR, and are never executable,
+version 13), survive destruction of AST/HIR, and are never executable,
 ownership, type, or optimization authority. The default contract has no rows.
 
 The C++ backend consumes only those lowered rows. Body/template planning emits
@@ -108,7 +108,7 @@ remain later slices; this metadata does not bypass MIR verification.
 ## Backend Contract
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
-checked against the embedded MIR. Lowered-program serialization version 12
+checked against the embedded MIR. Lowered-program serialization version 13
 includes both flags and optional source debug locations. The C++ representation
 passes an explicit artifact-local caller-site parameter through supported
 tracked signatures and calls. An

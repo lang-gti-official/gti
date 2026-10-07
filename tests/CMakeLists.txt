@@ -140,6 +140,30 @@ target_link_libraries("gti_runtime_failure_header_smoke"
 add_test(NAME runtime_failure_header_coexistence
          COMMAND gti_runtime_failure_header_smoke)
 
+add_executable("gti_embedding_header_c_smoke"
+               "${PROJECT_SOURCE_DIR}/tests/embedding_header_c_smoke.c")
+target_include_directories(
+  "gti_embedding_header_c_smoke"
+  PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/runtime/include"
+)
+target_compile_features("gti_embedding_header_c_smoke" PRIVATE c_std_17)
+add_test(NAME embedding_header_c17_oracle COMMAND gti_embedding_header_c_smoke)
+
+add_executable("gti_embedding_header_cpp_smoke"
+               "${PROJECT_SOURCE_DIR}/tests/embedding_header_cpp_smoke.cpp")
+target_include_directories(
+  "gti_embedding_header_cpp_smoke"
+  PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/runtime/include"
+)
+target_compile_features("gti_embedding_header_cpp_smoke" PRIVATE cxx_std_20)
+add_test(NAME embedding_header_cpp20_oracle
+         COMMAND gti_embedding_header_cpp_smoke)
+
+add_executable("gti_embedding_foundation_tests"
+               "${PROJECT_SOURCE_DIR}/tests/embedding_foundation_tests.cpp")
+target_link_libraries("gti_embedding_foundation_tests" PRIVATE gti_driver)
+add_test(NAME embedding_foundation COMMAND gti_embedding_foundation_tests)
+
 add_executable("gti_runtime_failure_helper"
                "${PROJECT_SOURCE_DIR}/tests/runtime_failure_helper.cpp")
 target_link_libraries("gti_runtime_failure_helper"
@@ -2257,6 +2281,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(hosted_constructor_identity_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME hosted_exit_status_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/hosted_exit_status_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(hosted_exit_status_runtime PROPERTIES TIMEOUT 480)
+  add_test(
     NAME discarded_nominal_result_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/discarded_nominal_result_test.py"
@@ -2480,6 +2511,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(executable_entry_cli_lsp PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME missing_definition_cli_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/missing_definition_test.py"
+              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(missing_definition_cli_lsp PROPERTIES TIMEOUT 180)
   endif()
     add_test(
       NAME owner_tied_by_value_argument_runtime

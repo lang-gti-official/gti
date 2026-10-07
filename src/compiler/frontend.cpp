@@ -107,6 +107,18 @@ std::string cacheContext(const FrontendOptions &options) {
               std::to_string(layout->abiAlignmentBytes) + ':' +
               std::to_string(layout->preferredAlignmentBytes);
   }
+  result += options.program.kind == ProgramKind::Library
+                ? "\nprogram:library"
+                : "\nprogram:executable";
+  std::vector<std::pair<std::string, std::string>> exports;
+  exports.reserve(options.program.exports.size());
+  for (const EmbeddingExportRequest &exportRequest : options.program.exports) {
+    exports.emplace_back(exportRequest.symbol, exportRequest.function);
+  }
+  std::sort(exports.begin(), exports.end());
+  for (const auto &[symbol, function] : exports) {
+    result += "\nexport:" + symbol + '=' + function;
+  }
   return result;
 }
 
@@ -408,7 +420,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
   SemanticVisitor semantic(options.target, &result.sourceGraph,
                            options.toolingOccurrences, options.workMetrics,
-                           &result.sources, options.rawPointerAudit);
+                           &result.sources, options.rawPointerAudit,
+                           options.requireEntryPoint ||
+                               options.program.kind == ProgramKind::Library);
   if (options.workMetrics != nullptr) {
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
@@ -422,6 +436,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     const PhaseTimeScope timeScope("gti-semantics");
     const ProgressScope progress(options.progress, ProgressPhase::Checking);
     result.semanticValid = semantic.check(result.program);
+    if (result.semanticValid) {
+      result.semanticValid =
+          semantic.applyProgramRequest(result.program, options.program);
+    }
   }
   if (options.workMetrics != nullptr) {
     options.workMetrics->semanticMicroseconds = static_cast<std::size_t>(

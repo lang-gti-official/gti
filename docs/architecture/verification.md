@@ -1,5 +1,45 @@
 # Compiler Verification
 
+## Reconciled dormant engine embedding foundation
+
+The PR #102 foundation is reconciled with the native scalar/nested-pointer
+compiler and merged PRs #50/#52. Public library targets remain disabled; no
+wrapper, context runtime or shared artifact is implemented. The shipped SDK
+request/root facts and explicit disabled-library diagnostics advance VERSION
+to 0.382.0. ADR 026 and GTI-S2104 have distinct identities. Library snapshots
+use mir-v92/lowered-program-v12 while ordinary executable serialization retains
+mir-v91/lowered-program-v11 and all current native type/target facts.
+
+Release/Ninja, AppleClang 21/LLVM 22.1.8 on macOS arm64 passes 81 distinct
+selected CTest gates: 63 compiler/driver/MIR/backend/optimizer/native/corpus
+gates, 18 supplemental interface/CLI/registry/diagnostic/LSP gates with one
+overlap, and the relocated installed-toolchain gate. The extended foundation
+regression proves dirty manifest overlays preserve internal feature policy and
+cannot activate the public target. The frozen ABI rejects bool and distinct
+native scalar families even though ordinary C interop now admits them; nested
+pointers are rejected by embedding policy, not obsolete general pointer rules.
+All original assertions, modes and timeouts remain intact.
+
+The emission corpus covers 121 sources and 16,166 bodies; the independent native
+oracle builds/runs all 121 examples at O0/C++20 and O3/C++23, retaining 16,159
+reviewed body identities and identical observations/ownership. All 427 language
+coverage cases pass their unchanged expectations, including 104 explicitly
+unresolved known findings. Twelve external installed SDK consumers pass,
+including the new embedding request through installed compiler headers. The
+relocation gate clears all GTI/DYLD overrides; the active user installation is
+not changed. Source hashes bind retained broad evidence to unchanged production
+inputs; final focused and SDK gates are repeated on the published clean head.
+Pinned clang-format checks 464 first-party files, plus release-version and
+whitespace gates. This is selected macOS evidence, not a full 475-gate rerun or
+Linux/Windows validation.
+
+The concurrent allocator/lifetime campaign's unpublished mir-v92/body-v78 and
+lowered-program-v12 conditional-assertion schema overlaps these version numbers.
+Its owner will advance the combined serialization during reconciliation and
+retain both embedding rows and conditional fields; equal version numbers from
+those separate branches do not imply equal schemas. That unfinished campaign
+is not included in this foundation.
+
 ## Reconciled language coverage corpus
 
 PR #52's complete corpus passes against the optimized Release compiler from
@@ -2741,6 +2781,8 @@ upstream code.
 | `native_header_c_cpp_oracle` | generated C17/C++20/C++23 declarations and real calls, including mutation of a GTI handle binding through an exact C `OpaqueHandle**` out parameter at O0/O3 |
 | `native_record_c_oracle` | generated record layout and by-value/one-level-pointer calls against an independently compiled C translation unit at O0/O3 and C++20/C++23, including record copy initialization, direct parameter/local/native-call returns, passive scalar argument shapes, and repeated result-slot publication |
 | `native_callback_pipeline` | named callback syntax and exact conversion, null state, passive-record/C-boundary admission, HIR/MIR adapter identity and containment, formatter, diagnostics, generated thunk/header shape, and malformed-adapter rejection |
+| `embedding_header_c17_oracle` / `embedding_header_cpp20_oracle` | Frozen embedding ABI v1 status ordinals, exact 64-bit record sizes/offsets, descriptor/context/wrapper prototypes, and representative opaque-handle/passive-record projection in both C17 and C++20 |
+| `embedding_foundation` | Dormant shared-library manifest gating and immutable project/cache facts; exact export selection, symbol and signature rejection matrix, declaration/request-order independence, semantic/HIR/MIR/lowered root identity, failure metadata closure, optimizer preservation, and forged-plan rejection without publishing an incomplete artifact |
 | `glfw_3_4_c_oracle` | exact 124-function GLFW 3.4 inventory, all five records and callback/Vulkan types, generated C17/C++20/C++23 header checks, linked representative calls at O0/O3, and failing-callback containment |
 | `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, exact integer and checked-result constexpr constants, HIR/MIR intrinsic identity, effects, diagnostics, and backend helper selection |
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |

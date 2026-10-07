@@ -659,6 +659,31 @@ struct HirHostedProgramEntryPlan {
   DefinedFailureOperation convertCount;
 };
 
+// Executable-root authority for a library snapshot. The semantic declaration
+// and its one concrete HIR function instance are both retained so MIR and
+// lowered-program verification can prove that wrapper planning never reopens
+// name lookup.
+struct HirEmbeddingExport {
+  FunctionId semanticFunction = 0;
+  HirFunctionInstanceId function = 0;
+  std::string qualifiedName;
+  std::string symbol;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  SourceSpan requestSource;
+
+  friend bool operator==(const HirEmbeddingExport &,
+                         const HirEmbeddingExport &) = default;
+};
+
+struct HirEmbeddingPlan {
+  std::uint32_t abiVersion = embeddingAbiVersionV1;
+  std::vector<HirEmbeddingExport> exports;
+
+  friend bool operator==(const HirEmbeddingPlan &,
+                         const HirEmbeddingPlan &) = default;
+};
+
 class HirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
@@ -666,6 +691,8 @@ public:
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
   }
+
+  [[nodiscard]] ProgramKind programKind() const { return programKind_; }
 
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const {
     return semanticAnalysisSeal;
@@ -720,6 +747,10 @@ public:
     return hostedProgramEntry;
   }
 
+  [[nodiscard]] const std::optional<HirEmbeddingPlan> &embeddingPlan() const {
+    return embeddingPlan_;
+  }
+
   [[nodiscard]] std::size_t valueCount() const;
 
   [[nodiscard]] std::size_t statementCount() const;
@@ -763,6 +794,7 @@ private:
 
   bool valid_ = true;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
+  ProgramKind programKind_ = ProgramKind::Executable;
   SemanticAnalysisSeal semanticAnalysisSeal;
   std::vector<HirEnum> enums;
   std::vector<HirClassInstance> classes;
@@ -774,6 +806,7 @@ private:
   std::vector<HirLambda> lambdas;
   HirProgramInitializationPlan programInitialization;
   std::optional<HirHostedProgramEntryPlan> hostedProgramEntry;
+  std::optional<HirEmbeddingPlan> embeddingPlan_;
   HirBody moduleBody;
   std::unordered_map<const Expr *, std::vector<HirValueId>> sourceValueIds;
 };

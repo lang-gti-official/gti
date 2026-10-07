@@ -319,10 +319,11 @@ contract. `semantic_analyzer_impl.h` contains the single
 it is not a public or cross-phase header. `semantic_analyzer.cpp` owns only the
 public facade. Body/constexpr visitation, ownership and borrow rules, call
 resolution, type/generic resolution, declaration/catalog processing, and
-program/value-flow finalization compile respectively in the six
-`semantic_*_analysis.cpp`/`semantic_*_resolution.cpp` units. Snapshot/database
-operations compile in `semantic_model.cpp`; canonical type rendering compiles
-in `semantic_type_printer.cpp`.
+program/value-flow finalization compile in the specialized
+`semantic_*_analysis.cpp`/`semantic_*_resolution.cpp` units. Post-check
+artifact export selection compiles separately in `semantic_embedding.cpp`.
+Snapshot/database operations compile in `semantic_model.cpp`; canonical type
+rendering compiles in `semantic_type_printer.cpp`.
 
 ## Structural Relocation Facts
 
@@ -378,6 +379,26 @@ on declaration-wide registration. It currently:
    and analyzes declaration bodies in lexical scopes;
 9. finalizes callable forwarding and argument contracts; and
 10. finalizes the program-initialization plan and semantic occurrences.
+
+After an otherwise valid program check, `Frontend` applies the immutable
+artifact `ProgramRequest`. Executable requests admit no exports. A dormant
+library request rejects `main` and process-lifetime callback adapters, resolves
+each requested qualified name to exactly one non-generic namespace source
+function with a body, validates the ADR 026 signature and C-symbol families,
+and publishes a public-symbol-sorted `SemanticEmbeddingPlan`. This is artifact
+policy rather than GTI source meaning, but semantics remains the sole authority
+for declaration identity and boundary-type eligibility. HIR and later phases
+consume the selected `FunctionId`; they never repeat lookup by spelling.
+
+Closed executable requests (the explicit `requireEntryPoint` policy) and
+embedding library requests enable source-definition checks in the semantic
+visitor, including concrete instance reanalysis. Once call/operator resolution
+selects an exact ordinary GTI declaration, `GTI-S2106` diagnoses a missing body
+at the use and relates the declaration. Unused declarations, pure virtual
+contracts, registered runtime bindings and compiler intrinsic definitions are
+not rejected. Default fragment analysis still resolves bodyless signatures
+without promising executable closure. Function items/native callbacks already
+require bodies through their structural eligibility rules.
 
 This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
