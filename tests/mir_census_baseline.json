@@ -21,7 +21,7 @@
     "109-borrowed-aggregates.gti": 37,
     "11-overloads.gti": 29,
     "110-integral-enums.gti": 471,
-    "111-final-address-storage.gti": 46,
+    "111-final-address-storage.gti": 48,
     "112-raw-owner-witness.gti": 38,
     "113-erased-addresses.gti": 40,
     "114-owning-storage-view.gti": 371,
@@ -122,5 +122,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16500
+  "total": 16502
 }
