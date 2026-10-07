@@ -4983,6 +4983,14 @@ private:
     const ResolvedOperatorInfo *resolvedValueOperator =
         model.findOperator(*raw);
     if (resolvedValueOperator == nullptr &&
+        (value.kind == HirValueKind::DereferenceSet ||
+         value.kind == HirValueKind::IndexSet)) {
+      // A built-in compound update still has a separately selected target
+      // accessor. Preserve that exact call instead of manufacturing a raw
+      // dereference/index projection of the accessor's class receiver.
+      resolvedValueOperator = model.findProjectionOperator(*raw);
+    }
+    if (resolvedValueOperator == nullptr &&
         value.kind == HirValueKind::MemberSet) {
       const ResolvedOperatorInfo *projection =
           model.findProjectionOperator(*raw);

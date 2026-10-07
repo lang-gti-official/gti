@@ -5549,9 +5549,18 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
       compoundOperator(expr.oper().kind);
   const bool overloadedMutation = !simpleAssignment && mutationOperator &&
                                   valueTarget.kind == SemanticType::Class;
+  const bool preferReadOnlyRhsProjection =
+      simpleAssignment && ownerType.kind != SemanticType::RawPointer &&
+      mutableTarget;
+  if (preferReadOnlyRhsProjection) {
+    ++preferReadOnlySubscriptReceiverDepth;
+  }
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), valueTarget)
                        : analyze(expr.value());
+  if (preferReadOnlyRhsProjection) {
+    --preferReadOnlySubscriptReceiverDepth;
+  }
   if (!mutableTarget) {
     report(expr.dereference(),
            ownerType.kind == SemanticType::RawPointer
@@ -7674,9 +7683,14 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
                (rightType.kind == SemanticType::TypeParameter &&
                 hasSymbolicOperatorRequirement(OverloadedOperator::Dereference,
                                                rightType))) {
-      const std::optional<CallableCandidate> selected =
-          resolveOperator(expr, OverloadedOperator::Dereference, expr.right(),
-                          rightType, expr.oper());
+      const std::optional<CallableCandidate> selected = resolveOperator(
+          expr, OverloadedOperator::Dereference, expr.right(), rightType,
+          expr.oper(), {}, {}, false, std::nullopt, std::nullopt, false,
+          preferReadOnlySubscriptReceiverDepth != 0 &&
+              !(contextualInitializerType &&
+                contextualInitializerType->kind == SemanticType::Reference &&
+                contextualInitializerType->referenceAccess ==
+                    AccessMode::Mutable));
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
     } else {

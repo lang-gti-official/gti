@@ -7508,7 +7508,11 @@ private:
         value.info.traits.drop != DropKind::Trivial ||
         value.info.traits.containsBorrowedState || value.ownership ||
         value.unsafeOperation != UnsafeOperationKind::None ||
-        value.definedFailure.propagation != FailurePropagationKind::None) {
+        (value.definedFailure.propagation != FailurePropagationKind::None &&
+         !((value.kind == HirValueKind::IndexSet ||
+            value.kind == HirValueKind::DereferenceSet) &&
+           value.functionTarget &&
+           value.borrowOrigin != BorrowOriginKind::None))) {
       return std::nullopt;
     }
 

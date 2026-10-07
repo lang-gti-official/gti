@@ -1165,6 +1165,24 @@ does not mutate the same global. The C++ representation consumes the verified
 schedule and erases activation as a no-op; it does not reconstruct evaluation
 order or loan state from source syntax.
 
+Nested plain stores retain one terminal two-phase loan. Loan-flow verification
+derives its reservation group from the exact unretained mutable `CallResult`
+parent chain; it never infers a group from public container names. Intermediate
+loans enter the reserved flow state together, leaving a lexical mutable parent
+active. Terminal activation checks the entire group, suspends its ancestors,
+and must still be followed immediately by the terminal assignment. An
+unactivated failure restores the original exclusive ancestry before ordinary
+child-first cleanup. A live sibling, retained carrier, escape, stored
+dependency or ambiguous authority prevents this conversion. Every origin and
+exact physical referent remains represented by the existing loan records.
+
+HIR preserves a separately selected dereference/subscript projection operator
+even when the mutation itself is built-in scalar arithmetic. MIR stages that
+accessor result as one loan-rooted place and uses the ordinary ordered
+load/arithmetic/conversion/assign schedule. The propagation of the target call
+belongs to the call; it does not force the scalar update back into an opaque
+compound helper or make a backend manufacture the target from syntax.
+
 Because the entry loan is self-sourced at the carrier binding — MIR cannot
 name the caller's owner storage — its canonical protected place collides with
 the carrier object itself. Verification therefore exempts whole-carrier

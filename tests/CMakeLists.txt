@@ -37,6 +37,9 @@ add_test(NAME charconv_runtime_boundary COMMAND gti_runtime_charconv_tests)
 add_executable(gti_mir_full_expression_tests mir_full_expression_tests.cpp)
 target_link_libraries(gti_mir_full_expression_tests PRIVATE gti_compiler)
 add_test(NAME mir_full_expression COMMAND gti_mir_full_expression_tests)
+add_executable(gti_operator_place_composition_tests operator_place_composition_tests.cpp)
+target_link_libraries(gti_operator_place_composition_tests PRIVATE gti_cpp_backend)
+add_test(NAME operator_place_composition_pipeline COMMAND gti_operator_place_composition_tests)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
@@ -2004,6 +2007,21 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(subscript_store_read_order_runtime
                        PROPERTIES TIMEOUT 300)
+  add_test(NAME operator_place_composition_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_runtime_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(operator_place_composition_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME operator_place_failure_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/operator_place_failure_runtime_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(operator_place_failure_runtime PROPERTIES TIMEOUT 180)
+  add_test(NAME operator_place_composition_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_lsp_test.py"
+      "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(operator_place_composition_lsp PROPERTIES TIMEOUT 60)
   add_test(
     NAME owner_tied_reference_argument_runtime
     COMMAND "${Python3_EXECUTABLE}"
