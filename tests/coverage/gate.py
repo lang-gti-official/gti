@@ -8,14 +8,27 @@ Every program is compiled with the GTI compiler under test and classified:
   ice           GTI-B0001 internal compiler error
   backend       the generated C++ failed to compile
   link          the native link reported undefined symbols
-  silent        nonzero compiler exit with no diagnostic at all
+  silent        nonzero compiler exit without any coded GTI diagnostic
   hang          the compiler or program exceeded its time limit
   crash         the compiler was killed by a signal
   bad-location  rejected, but a diagnostic has no source location
+  bad-diagnostic  the output contains text the expectation forbids, or more
+                occurrences of a text than its `at_most` limit
+  nondeterministic  repeated emission (`deterministic`, e.g. "--emit-mir")
+                produced different bytes
   rejected      rejected with located GTI diagnostics
+  wrong-result  a project command's status or output differs (projects only)
 
 `expectations.json` states the expected outcome of each program. Corpus
-programs default to `pass`; reproducers and rejections must be listed.
+programs default to `pass`; reproducers, rejections and projects must be
+listed. A project is a directory under `projects/` with a `gti.toml`; it is
+copied to the output directory and its `command` (for example `["test"]`) is
+run there, comparing the process `exit` (an integer or "nonzero") and the
+strings in `contains`. Any entry may list `forbid` strings that must not appear
+in the compiler output (for example a misleading help text), `at_most` limits
+on how often a text may appear (for example a duplicated error), and a compile
+`timeout` in seconds (for example for a known hang), and extra compiler
+`flags`.
 
 An entry without `finding` describes correct behavior. An entry with
 `finding` is a known, unresolved defect: it records the outcome the defect
@@ -31,6 +44,7 @@ import concurrent.futures
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,9 +54,12 @@ GROUPS = {
     "programs": (ROOT, "c*.gti"),
     "reproducers": (ROOT / "reproducers", "*.gti"),
     "rejections": (ROOT / "rejections", "*.gti"),
+    "projects": (ROOT / "projects", "*/gti.toml"),
 }
 OUTCOMES = {"pass", "runtime", "ice", "backend", "link", "silent", "hang",
-            "crash", "bad-location", "rejected"}
+            "crash", "bad-location", "bad-diagnostic", "rejected", "wrong-result",
+            "nondeterministic"}
+COMMON_FLAGS = ["--progress", "never", "--color", "never"]
 COMPILE_SECONDS = 180
 RUN_SECONDS = 60
 CODE = re.compile(r"(?:error|warning)\[(GTI-[A-Z][0-9]{4})\]")
@@ -50,20 +67,85 @@ UNLOCATED = re.compile(r"^<source>:", re.MULTILINE)
 BACKEND_LOG = re.compile(r"backend diagnostics saved at (\S+)")
 
 
-def classify(gti: Path, source: Path, output: Path, expected_exit: int) -> tuple[str, str]:
+def diagnostic_problem(text: str, expectation: dict) -> str | None:
+    """Return why output violates `forbid` / `at_most`, or None."""
+    for forbidden in expectation.get("forbid", []):
+        if forbidden in text:
+            return f"forbidden text {forbidden!r}"
+    for needle, limit in expectation.get("at_most", {}).items():
+        if text.count(needle) > limit:
+            return f"{needle!r} appears {text.count(needle)} times (at most {limit})"
+    return None
+
+
+def classify_determinism(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[str, str]:
+    """Emit the same artifact repeatedly and require identical bytes."""
+    flag = expectation["deterministic"]
+    emitted = set()
+    for run in range(expectation.get("runs", 6)):
+        artifact = output.with_name(f"{output.name}.{run}")
+        command = [str(gti), str(source), flag, "-o", str(artifact), *COMMON_FLAGS]
+        try:
+            compiled = subprocess.run(command, capture_output=True, text=True,
+                                      timeout=expectation.get("timeout", COMPILE_SECONDS))
+        except subprocess.TimeoutExpired:
+            return "hang", "emission exceeded its time limit"
+        if compiled.returncode != 0 or not artifact.is_file():
+            return "rejected", " ".join(sorted(set(CODE.findall(compiled.stderr))))
+        emitted.add(artifact.read_bytes())
+    if len(emitted) == 1:
+        return "pass", ""
+    return "nondeterministic", f"{len(emitted)} distinct {flag} outputs"
+
+
+def classify_project(gti: Path, project: Path, output: Path, expectation: dict) -> tuple[str, str]:
+    """Run one project command in a scratch copy and compare status and output."""
+    if output.exists():
+        shutil.rmtree(output)
+    shutil.copytree(project, output, ignore=shutil.ignore_patterns("build", "gti.lock"))
+    command = [str(gti), *expectation["command"], *COMMON_FLAGS]
+    try:
+        ran = subprocess.run(command, cwd=output, capture_output=True, text=True,
+                             timeout=COMPILE_SECONDS + RUN_SECONDS)
+    except subprocess.TimeoutExpired:
+        return "hang", "project command exceeded its time limit"
+    text = ran.stdout + ran.stderr
+    (output / "gate.log").write_text(text, encoding="utf-8")
+    if "GTI-B0001" in text:
+        return "ice", " ".join(sorted(set(CODE.findall(text))))
+    problem = diagnostic_problem(text, expectation)
+    if problem:
+        return "bad-diagnostic", problem
+    expected_exit = expectation.get("exit", 0)
+    status_ok = (ran.returncode != 0) if expected_exit == "nonzero" else ran.returncode == expected_exit
+    missing = [item for item in expectation.get("contains", []) if item not in text]
+    if status_ok and not missing:
+        return "pass", ""
+    return "wrong-result", f"exit {ran.returncode}" + (f", missing {missing}" if missing else "")
+
+
+def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[str, str]:
     """Return (outcome, detail) for one program."""
+    if "deterministic" in expectation:
+        return classify_determinism(gti, source, output, expectation)
+    expected_exit = expectation.get("exit", 0)
+    compile_seconds = expectation.get("timeout", COMPILE_SECONDS)
     command = [str(gti)]
     if "@coverage-profile: concurrent" in source.read_text(encoding="utf-8"):
         command += ["--execution-profile", "concurrent"]
-    command += [str(source), "-o", str(output), "--progress", "never", "--color", "never"]
+    command += [str(source), "-o", str(output), *COMMON_FLAGS,
+                *expectation.get("flags", [])]
     try:
         compiled = subprocess.run(command, capture_output=True, text=True,
-                                  timeout=COMPILE_SECONDS)
+                                  timeout=compile_seconds)
     except subprocess.TimeoutExpired:
-        return "hang", f"compiler exceeded {COMPILE_SECONDS}s"
+        return "hang", f"compiler exceeded {compile_seconds}s"
     text = compiled.stdout + compiled.stderr
     output.with_suffix(".log").write_text(text, encoding="utf-8")
     codes = sorted(set(CODE.findall(text)))
+    problem = diagnostic_problem(text, expectation)
+    if problem:
+        return "bad-diagnostic", " ".join(codes + [problem])
     if compiled.returncode == 0:
         try:
             ran = subprocess.run([str(output)], capture_output=True, text=True,
@@ -85,7 +167,7 @@ def classify(gti: Path, source: Path, output: Path, expected_exit: int) -> tuple
         return "link", ""
     if "native C++ compiler" in text or "backend failed" in text:
         return "backend", ""
-    if not text.strip():
+    if not codes:
         return "silent", f"exit {compiled.returncode}"
     if UNLOCATED.search(text):
         return "bad-location", " ".join(codes)
@@ -96,15 +178,16 @@ def check(name: str, expectation: dict, outcome: str, detail: str) -> str | None
     """Return a failure message, or None when the outcome meets expectation."""
     expected = expectation.get("outcome", "pass")
     finding = expectation.get("finding")
-    if outcome != expected:
+    code = expectation.get("code")
+    code_matches = not code or code in detail.split()
+    if outcome != expected or (finding and not code_matches):
         if finding:
             return (f"{name}: known finding {finding} now produces '{outcome}' "
                     f"({detail or 'no detail'}), recorded as '{expected}'. If it is "
                     f"resolved, update FINDINGS.md, expectations.json and any "
                     f"linked issue.")
         return f"{name}: expected '{expected}', got '{outcome}' ({detail or 'no detail'})"
-    code = expectation.get("code")
-    if code and code not in detail.split():
+    if not code_matches:
         return f"{name}: expected diagnostic {code}, got {detail or 'none'}"
     return None
 
@@ -122,7 +205,11 @@ def main() -> int:
     for group, (directory, pattern) in GROUPS.items():
         listed = dict(expectations.get(group, {}))
         for source in sorted(directory.glob(pattern)):
-            name = source.stem
+            if group == "projects":
+                source = source.parent
+                name = source.name
+            else:
+                name = source.stem
             if group != "programs" and name not in listed:
                 failures.append(f"{group}/{name}: missing from expectations.json")
                 continue
@@ -139,7 +226,10 @@ def main() -> int:
     def run(item):
         group, name, source, expectation = item
         target = args.output / f"{group}-{name}"
-        outcome, detail = classify(args.gti, source, target, expectation.get("exit", 0))
+        if group == "projects":
+            outcome, detail = classify_project(args.gti, source, target, expectation)
+        else:
+            outcome, detail = classify(args.gti, source, target, expectation)
         return group, name, expectation, outcome, detail
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:

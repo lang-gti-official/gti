@@ -1,0 +1,7 @@
+// A03: a concrete generic call in a program-wide initializer is rejected with
+// GTI-S2068 although it reads no program-wide storage.
+#include <std/algorithm>
+
+int biggest = std::max(3, 4);
+
+int main() { return biggest == 4 ? 0 : 1; }

@@ -1,0 +1,18 @@
+// A44: --raw-pointer-audit=warn reports one GTI-S2102 warning three times.
+#include <std/memory>
+class Cell {
+  mut int32_t v = 1;
+public:
+  Cell() {}
+  void bump() mut { this.v += 1; }
+  int32_t& get() { return this.v; }
+};
+int main() {
+  mut Cell c{};
+  const int32_t* first = &c.get();
+  c.bump();
+  unsafe {
+    int32_t& r = std::assume_ref(first, c);
+    return r - 2;
+  }
+}

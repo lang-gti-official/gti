@@ -1,0 +1,14 @@
+// A26: '*c = *c + 1' through an overloaded operator* is a MIR ICE (write conflicts with
+// an active mutable loan); the two-phase dereference store is not applied.
+class Cell {
+  mut int v = 1;
+public:
+  Cell() {}
+  int& operator*() { return this.v; }
+  mut int& operator*() mut { return this.v; }
+};
+int main() {
+  mut Cell c{};
+  *c = *c + 1;
+  return *c == 2 ? 0 : 1;
+}

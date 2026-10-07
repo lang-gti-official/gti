@@ -1,0 +1,11 @@
+// A32: vector<move_only_function>::push_back selects the generic Callable constructor
+// with Callable = itself and emits invalid C++.
+#include <std/functional>
+#include <std/vector>
+int main() {
+  mut std::vector<std::move_only_function<int(int)>> handlers{};
+  handlers.push_back(std::move_only_function<int(int)>([](int x) -> int { return x + 1; }));
+  mut int total = 0;
+  for (auto& h : handlers) { total += h(1); }
+  return total == 2 ? 0 : 1;
+}

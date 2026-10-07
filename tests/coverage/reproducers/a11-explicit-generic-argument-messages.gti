@@ -1,0 +1,14 @@
+// A11: explicitly supplied generic arguments are described as inferred.
+T identity<T>(T value) {
+  return value;
+}
+
+constexpr uint64_t extent<uint64_t N>() {
+  return N;
+}
+
+int main() {
+  int a = identity<int>("x");
+  uint64_t b = extent<int>();
+  return a + int32_t(b);
+}

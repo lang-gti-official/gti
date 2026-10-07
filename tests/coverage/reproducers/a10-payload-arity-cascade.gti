@@ -1,0 +1,18 @@
+// A10: a payload-pattern arity error is followed by a false missing-return error.
+enum class Command {
+  stop,
+  move(int32_t x, int32_t y),
+};
+
+int run(Command c) {
+  switch (c) {
+  case Command::stop:
+    return 0;
+  case Command::move(x):
+    return 1;
+  }
+}
+
+int main() {
+  return run(Command::stop);
+}

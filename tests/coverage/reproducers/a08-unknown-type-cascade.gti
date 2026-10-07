@@ -1,0 +1,5 @@
+// A08: after the correct unknown-type error, a cascade reports the internal 'unknown' type.
+int main() {
+  Missing d{};
+  return 0;
+}

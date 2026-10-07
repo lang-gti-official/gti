@@ -1,41 +1,445 @@
 {
   "programs": {
-    "c52_higher_order_lambdas": {"finding": "F14", "outcome": "rejected", "code": "GTI-S2015"},
-    "c55_iterator_utilities": {"finding": "F16", "outcome": "rejected", "code": "GTI-S2022"}
+    "c52_higher_order_lambdas": {
+      "code": "GTI-S2015",
+      "finding": "F14",
+      "outcome": "rejected"
+    },
+    "c55_iterator_utilities": {
+      "code": "GTI-S2022",
+      "finding": "F16",
+      "outcome": "rejected"
+    }
   },
+  "projects": {
+    "a02-test-status-truncation": {
+      "command": [
+        "test"
+      ],
+      "contains": [
+        "Failed counts-failures"
+      ],
+      "exit": "nonzero",
+      "finding": "A02",
+      "issue": 54,
+      "outcome": "wrong-result"
+    },
+    "a04-dependency-defines": {
+      "command": [
+        "run"
+      ],
+      "exit": 0,
+      "finding": "A04",
+      "issue": 56,
+      "outcome": "wrong-result"
+    }
+  },
+  "rejections": {},
   "reproducers": {
-    "f1-generic-range-for-silent": {"outcome": "pass"},
-    "f2-generic-callable-by-reference": {"outcome": "pass"},
-    "f3-propagation-in-loop": {"outcome": "pass"},
-    "f4-algorithm-class-functor": {"outcome": "pass"},
-    "f5-nested-generic-chained-get": {"outcome": "pass"},
-    "f6-file-scope-static-assert": {"outcome": "pass"},
-    "f7-scaffold-operation-link-error": {"outcome": "pass"},
-    "f7-declaration-only-weak-ptr": {"finding": "F7", "issue": 51, "outcome": "link"},
-    "f7-undefined-user-function": {"finding": "F7", "issue": 51, "outcome": "link"},
-    "f8-view-from-returned-owner": {"outcome": "pass"},
-    "f9-propagation-on-method-call": {"outcome": "pass"},
-    "f10-assign-through-mut-ref-method": {"finding": "F10", "outcome": "rejected", "code": "GTI-P0001"},
-    "f11-pair-nested-in-pair": {"outcome": "pass"},
-    "f12-span-returned-by-plain-copy": {"outcome": "pass"},
-    "f13-string-ctor-in-member-init-list": {"outcome": "pass"},
-    "f14-nested-callable-invocation": {"finding": "F14", "outcome": "rejected", "code": "GTI-S2015"},
-    "f15-method-on-operator-result": {"outcome": "pass"},
-    "f16-canonical-iterator-loop": {"finding": "F16", "outcome": "rejected", "code": "GTI-S2022"},
-    "f17-unnamed-parameter-bad-span": {"finding": "F17", "outcome": "bad-location", "code": "GTI-S2045"},
-    "s01-parenthesized-constructor": {"finding": "S01", "outcome": "ice"},
-    "s02-ternary-class-value": {"finding": "S02", "outcome": "ice"},
-    "s03-method-on-moved-value": {"outcome": "pass"},
-    "s04-bodyless-decl-unnamed-param": {"finding": "S04", "outcome": "ice"},
-    "s05-owning-enum-assign-invalid-cpp": {"outcome": "pass"},
-    "s06-constexpr-unnamed-param-no-span": {"finding": "S06", "outcome": "bad-location", "code": "GTI-S2057"},
-    "s07-alias-as-scope-qualifier": {"outcome": "pass"},
-    "s08-exponential-method-chain": {"outcome": "pass"},
-    "s09-uninitialized-mut-scalar": {"finding": "S09", "outcome": "ice"},
-    "s10-ctor-by-value-copy": {"outcome": "pass"},
-    "s11-nested-generic-class-arg": {"outcome": "pass"},
-    "s12-lossy-implicit-int-to-float": {"finding": "S12", "outcome": "pass"},
-    "s15-payload-enum-plain-class": {"finding": "S15", "outcome": "ice"}
-  },
-  "rejections": {}
+    "a01-call-result-into-field": {
+      "finding": "A01",
+      "issue": 53,
+      "outcome": "ice"
+    },
+    "a01-class-value-into-field": {
+      "finding": "A01",
+      "issue": 53,
+      "outcome": "ice"
+    },
+    "a03-generic-call-in-global-initializer": {
+      "code": "GTI-S2068",
+      "finding": "A03",
+      "issue": 55,
+      "outcome": "rejected"
+    },
+    "a05-string-view-help-suggests-invalid-form": {
+      "code": "GTI-S2003",
+      "finding": "A05",
+      "forbid": [
+        "std::string_view(value)"
+      ],
+      "issue": 69,
+      "outcome": "bad-diagnostic"
+    },
+    "a06-polymorphic-recursion-hang": {
+      "finding": "A06",
+      "issue": 57,
+      "outcome": "hang",
+      "timeout": 20
+    },
+    "a07-unknown-function-attribute": {
+      "code": "GTI-P0001",
+      "finding": "A07",
+      "issue": 58,
+      "outcome": "rejected"
+    },
+    "a08-unknown-type-cascade": {
+      "code": "GTI-S2000",
+      "finding": "A08",
+      "forbid": [
+        "of type 'unknown'"
+      ],
+      "issue": 68,
+      "outcome": "bad-diagnostic"
+    },
+    "a09-bad-if-condition-cascade": {
+      "code": "GTI-P0003",
+      "finding": "A09",
+      "forbid": [
+        "without a matching '#if'"
+      ],
+      "issue": 68,
+      "outcome": "bad-diagnostic"
+    },
+    "a10-payload-arity-cascade": {
+      "code": "GTI-S2067",
+      "finding": "A10",
+      "forbid": [
+        "can reach the end"
+      ],
+      "issue": 68,
+      "outcome": "bad-diagnostic"
+    },
+    "a11-explicit-generic-argument-messages": {
+      "finding": "A11",
+      "forbid": [
+        "Conflicting types inferred",
+        "from a fixed-array argument extent"
+      ],
+      "issue": 69,
+      "outcome": "bad-diagnostic"
+    },
+    "a12-extern-c-overload-duplicate": {
+      "at_most": {
+        "error[GTI-S2054]": 1
+      },
+      "code": "GTI-S2054",
+      "finding": "A12",
+      "issue": 68,
+      "outcome": "bad-diagnostic"
+    },
+    "a13-mir-field-symbol-order": {
+      "deterministic": "--emit-mir",
+      "finding": "A13",
+      "issue": 59,
+      "outcome": "nondeterministic",
+      "runs": 20
+    },
+    "a14-generated-ctor-field-in-user-ctor": {
+      "finding": "A14",
+      "issue": 60,
+      "outcome": "ice"
+    },
+    "a15-dependent-if-constexpr-local": {
+      "finding": "A15",
+      "issue": 61,
+      "outcome": "ice"
+    },
+    "a16-relay-copyable-lambda": {
+      "finding": "A16",
+      "issue": 62,
+      "outcome": "backend"
+    },
+    "a17-narrow-negative-array-literal": {
+      "finding": "A17",
+      "issue": 63,
+      "outcome": "backend"
+    },
+    "a18-function-item-pack-invoke": {
+      "code": "GTI-S2090",
+      "finding": "A18",
+      "issue": 64,
+      "outcome": "rejected"
+    },
+    "a19-trailing-clause-dependent-compound": {
+      "code": "GTI-S2029",
+      "finding": "A19",
+      "issue": 65,
+      "outcome": "rejected"
+    },
+    "a20-unnecessary-mut-per-instance": {
+      "finding": "A20",
+      "forbid": [
+        "warning[GTI-S2096]"
+      ],
+      "issue": 66,
+      "outcome": "bad-diagnostic"
+    },
+    "a21-value-argument-resolved-as-type": {
+      "finding": "A21",
+      "forbid": [
+        "Unknown type 'runtime'"
+      ],
+      "issue": 69,
+      "outcome": "bad-diagnostic"
+    },
+    "a22-spurious-s2068-after-constexpr-failure": {
+      "code": "GTI-S2057",
+      "finding": "A22",
+      "forbid": [
+        "GTI-S2068"
+      ],
+      "issue": 68,
+      "outcome": "bad-diagnostic"
+    },
+    "a23-recursive-value-generic-layout": {
+      "code": "GTI-S2082",
+      "finding": "A23",
+      "issue": 67,
+      "outcome": "rejected"
+    },
+    "a24-unreachable-warning-per-instance": {
+      "finding": "A24",
+      "forbid": [
+        "warning[GTI-S2095]"
+      ],
+      "issue": 66,
+      "outcome": "bad-diagnostic"
+    },
+    "a25-expected-ref-relay-wrong-referent": {
+      "finding": "A25",
+      "outcome": "runtime"
+    },
+    "a25-ref-return-from-expected-value": {
+      "finding": "A25",
+      "outcome": "ice"
+    },
+    "a26-overloaded-deref-store-reads-owner": {
+      "finding": "A26",
+      "outcome": "ice"
+    },
+    "a27-compound-assign-overloaded-deref": {
+      "finding": "A27",
+      "outcome": "ice"
+    },
+    "a28-range-element-field-overloaded-operator": {
+      "finding": "A28",
+      "outcome": "ice"
+    },
+    "a29-method-on-returned-string-view": {
+      "finding": "A29",
+      "outcome": "ice"
+    },
+    "a30-assign-consuming-call-result": {
+      "finding": "A30",
+      "outcome": "ice"
+    },
+    "a31-move-on-break-path-then-reinit": {
+      "finding": "A31",
+      "outcome": "ice"
+    },
+    "a32-optional-emplace-move-only-function": {
+      "finding": "A32",
+      "outcome": "ice"
+    },
+    "a32-vector-push-back-move-only-function": {
+      "finding": "A32",
+      "outcome": "backend"
+    },
+    "a33-unnecessary-mut-deref-store": {
+      "finding": "A33",
+      "forbid": [
+        "warning[GTI-S2096]"
+      ],
+      "outcome": "bad-diagnostic"
+    },
+    "a34-view-relay-through-subscript": {
+      "code": "GTI-S2045",
+      "finding": "A34",
+      "outcome": "rejected"
+    },
+    "a35-expected-ref-field-stale-message": {
+      "finding": "A35",
+      "forbid": [
+        "may contain only one stored-reference dependency"
+      ],
+      "outcome": "bad-diagnostic"
+    },
+    "a36-unique-ptr-member-init-nullptr": {
+      "code": "GTI-S2003",
+      "finding": "A36",
+      "outcome": "rejected"
+    },
+    "a37-libc-qsort-link-name-conflict": {
+      "finding": "A37",
+      "outcome": "backend"
+    },
+    "a37-libc-strlen-prototype-conflict": {
+      "finding": "A37",
+      "outcome": "backend"
+    },
+    "a38-return-call-value-class": {
+      "finding": "A38",
+      "outcome": "ice"
+    },
+    "a38-return-expected-value-class": {
+      "finding": "A38",
+      "outcome": "ice"
+    },
+    "a39-ctor-address-of-struct-field": {
+      "finding": "A39",
+      "outcome": "ice"
+    },
+    "a40-c-abi-record-pointer-array-field": {
+      "finding": "A40",
+      "outcome": "ice"
+    },
+    "a40-raw-pointer-fixed-array-field-index": {
+      "finding": "A40",
+      "outcome": "ice"
+    },
+    "a41-storage-emplace-fixed-array-silent": {
+      "finding": "A41",
+      "outcome": "silent"
+    },
+    "a41-vector-emplace-back-fixed-array-silent": {
+      "finding": "A41",
+      "outcome": "silent"
+    },
+    "a42-c-abi-record-array-from-named-values": {
+      "finding": "A42",
+      "outcome": "ice"
+    },
+    "a42-struct-array-from-named-values": {
+      "finding": "A42",
+      "outcome": "ice"
+    },
+    "a42-struct-array-two-named-values": {
+      "finding": "A42",
+      "outcome": "ice"
+    },
+    "a43-callback-argument-unknown-type": {
+      "finding": "A43",
+      "forbid": [
+        "type 'unknown'"
+      ],
+      "outcome": "bad-diagnostic"
+    },
+    "a44-raw-audit-duplicate-warning": {
+      "at_most": {
+        "warning[GTI-S2102]": 1
+      },
+      "finding": "A44",
+      "flags": [
+        "--raw-pointer-audit=warn"
+      ],
+      "outcome": "bad-diagnostic"
+    },
+    "f1-generic-range-for-silent": {
+      "outcome": "pass"
+    },
+    "f10-assign-through-mut-ref-method": {
+      "code": "GTI-P0001",
+      "finding": "F10",
+      "outcome": "rejected"
+    },
+    "f11-pair-nested-in-pair": {
+      "outcome": "pass"
+    },
+    "f12-span-returned-by-plain-copy": {
+      "outcome": "pass"
+    },
+    "f13-string-ctor-in-member-init-list": {
+      "outcome": "pass"
+    },
+    "f14-nested-callable-invocation": {
+      "code": "GTI-S2015",
+      "finding": "F14",
+      "outcome": "rejected"
+    },
+    "f15-method-on-operator-result": {
+      "outcome": "pass"
+    },
+    "f16-canonical-iterator-loop": {
+      "code": "GTI-S2022",
+      "finding": "F16",
+      "outcome": "rejected"
+    },
+    "f17-unnamed-parameter-bad-span": {
+      "code": "GTI-S2045",
+      "finding": "F17",
+      "outcome": "bad-location"
+    },
+    "f2-generic-callable-by-reference": {
+      "outcome": "pass"
+    },
+    "f3-propagation-in-loop": {
+      "outcome": "pass"
+    },
+    "f4-algorithm-class-functor": {
+      "outcome": "pass"
+    },
+    "f5-nested-generic-chained-get": {
+      "outcome": "pass"
+    },
+    "f6-file-scope-static-assert": {
+      "outcome": "pass"
+    },
+    "f7-declaration-only-weak-ptr": {
+      "finding": "F7",
+      "issue": 51,
+      "outcome": "link"
+    },
+    "f7-scaffold-operation-link-error": {
+      "outcome": "pass"
+    },
+    "f7-undefined-user-function": {
+      "finding": "F7",
+      "issue": 51,
+      "outcome": "link"
+    },
+    "f8-view-from-returned-owner": {
+      "outcome": "pass"
+    },
+    "f9-propagation-on-method-call": {
+      "outcome": "pass"
+    },
+    "s01-parenthesized-constructor": {
+      "finding": "S01",
+      "outcome": "ice"
+    },
+    "s02-ternary-class-value": {
+      "finding": "S02",
+      "outcome": "ice"
+    },
+    "s03-method-on-moved-value": {
+      "outcome": "pass"
+    },
+    "s04-bodyless-decl-unnamed-param": {
+      "finding": "S04",
+      "outcome": "ice"
+    },
+    "s05-owning-enum-assign-invalid-cpp": {
+      "outcome": "pass"
+    },
+    "s06-constexpr-unnamed-param-no-span": {
+      "code": "GTI-S2057",
+      "finding": "S06",
+      "outcome": "bad-location"
+    },
+    "s07-alias-as-scope-qualifier": {
+      "outcome": "pass"
+    },
+    "s08-exponential-method-chain": {
+      "outcome": "pass"
+    },
+    "s09-uninitialized-mut-scalar": {
+      "finding": "S09",
+      "outcome": "ice"
+    },
+    "s10-ctor-by-value-copy": {
+      "outcome": "pass"
+    },
+    "s11-nested-generic-class-arg": {
+      "outcome": "pass"
+    },
+    "s12-lossy-implicit-int-to-float": {
+      "finding": "S12",
+      "outcome": "pass"
+    },
+    "s15-payload-enum-plain-class": {
+      "finding": "S15",
+      "outcome": "ice"
+    }
+  }
 }
