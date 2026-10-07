@@ -1,0 +1,41 @@
+mut int32_t default_constructions = 0;
+
+struct Pair {
+  mut int32_t value = 0;
+  Pair() { default_constructions += 1; }
+  Pair(int32_t value) : value(value) {}
+};
+
+struct NoDefault {
+  int64_t value;
+  NoDefault(int64_t value) : value(value) {}
+};
+
+union Payload { mut int32_t integer; mut float real; };
+struct Envelope { Payload payload{}; };
+
+[[c_abi]] struct NativeAddress { mut int32_t stamp; };
+extern "C" { NativeAddress empty_native(); }
+
+int main() {
+  int8_t bytes[3] = {-128, +1, (-2)};
+  int16_t words[3] = {(-32768), -2, +32767};
+  Pair source{9};
+  Pair copies[2] = {source, source};
+  NoDefault negative{int64_t(-9)};
+  NoDefault positive{int64_t(2)};
+  NoDefault records[2] = {negative, positive};
+  NativeAddress native = empty_native();
+  NativeAddress native_records[2] = {native, native};
+  Payload payloads[2] = {};
+  Envelope envelopes[2] = {};
+  unsafe {
+    if (payloads[1].integer != 0 || envelopes[1].payload.integer != 0)
+      return 1;
+  }
+  return bytes[0] == -128 && bytes[2] == -2 && words[0] == -32768 &&
+                 words[2] == 32767 && copies[1].value == 9 &&
+                 default_constructions == 0 && records[0].value == -9 &&
+                 records[1].value == 2 && native_records[1].stamp == 0
+             ? 0 : 2;
+}

@@ -7791,6 +7791,27 @@ inlineNestedCallResult(const MirProgram &program,
 // cleanup-free representation shell. Once materialized, intervening
 // instructions cannot change the already-copied value; same-block order and
 // the single consuming use are the complete sequencing proof.
+[[nodiscard]] const MirClassInstance *
+uniqueClassInstanceForType(const MirProgram &program, const SemanticType &type);
+
+[[nodiscard]] bool cleanupFreeCopyableFixedArray(const MirProgram &program,
+                                                 const SemanticType &type) {
+  if (type.kind != SemanticType::Array || type.arguments.size() != 1 ||
+      type.arrayLengthParameterId != 0)
+    return false;
+  const SemanticType &element = type.arguments.front();
+  if (element.kind == SemanticType::Array)
+    return cleanupFreeCopyableFixedArray(program, element);
+  const MirClassInstance *owner = uniqueClassInstanceForType(program, element);
+  return owner != nullptr && owner->traits.copyable && owner->traits.movable &&
+         !owner->traits.containsBorrowedState &&
+         !owner->requiresActiveCleanup && !owner->requiresActiveDropState &&
+         !owner->destructor &&
+         owner->copyConstructor == SpecialMemberStatus::Generated &&
+         owner->moveConstructor == SpecialMemberStatus::Generated &&
+         owner->destructorStatus == SpecialMemberStatus::Generated;
+}
+
 [[nodiscard]] const MirInstruction *
 sequencedCopiedArgument(const MirProgram &program, const MirBody &body,
                         MirValueId valueId, bool acrossBlocks = false) {
@@ -7852,7 +7873,8 @@ sequencedCopiedArgument(const MirProgram &program, const MirBody &body,
       consumer->info.type.kind == SemanticType::Array &&
       consumer->info.type.arguments.size() == 1 &&
       consumer->info.type.arguments.front() == value->info.type &&
-      cppRequiresIndirectValueTransport(program, consumer->info.type);
+      (cppRequiresIndirectValueTransport(program, consumer->info.type) ||
+       cleanupFreeCopyableFixedArray(program, consumer->info.type));
   if (consumer == nullptr ||
       (consumer->kind != MirInstructionKind::Call && !nativeArrayElement)) {
     return nullptr;
@@ -14519,8 +14541,16 @@ passiveFixedArrayConstructAggregate(const MirProgram &program,
             ? program.findConstructorInstance(*construct->constructorTarget)
             : nullptr;
     const MirClassInstance *owner =
-        constructor == nullptr ? nullptr
-                               : program.findClassInstance(constructor->owner);
+        constructor == nullptr
+            ? uniqueClassInstanceForType(program, elementType)
+            : program.findClassInstance(constructor->owner);
+    const bool generatedDefault =
+        constructor == nullptr && owner != nullptr && construct != nullptr &&
+        !construct->constructorTarget && !construct->functionTarget &&
+        construct->constructorKind == ConstructorKind::Ordinary &&
+        construct->operands.empty() && construct->parameterTypes.empty() &&
+        owner->defaultConstructor == SpecialMemberStatus::Generated &&
+        !owner->requiresActiveCleanup && !owner->requiresActiveDropState;
     if (operand.type != elementType || value == nullptr ||
         value->info.type != elementType || body.usesOf(value->id).size() != 1 ||
         body.usesOf(value->id).front().kind !=
@@ -14531,12 +14561,14 @@ passiveFixedArrayConstructAggregate(const MirProgram &program,
         construct->kind != MirInstructionKind::Construct ||
         !construct->result || *construct->result != value->id ||
         construct->destination || construct->receiver ||
-        construct->info.type != elementType || !construct->constructorTarget ||
-        constructor == nullptr || constructor->owner == 0 ||
-        constructor->definitionKind != MirDefinitionKind::Source ||
-        constructor->mayRaiseDefinedFailure || owner == nullptr ||
-        owner->type != elementType ||
-        construct->parameterTypes != constructor->parameterTypes ||
+        construct->info.type != elementType ||
+        (!generatedDefault &&
+         (constructor == nullptr || constructor->owner == 0 ||
+          constructor->definitionKind != MirDefinitionKind::Source ||
+          constructor->mayRaiseDefinedFailure)) ||
+        owner == nullptr || owner->type != elementType ||
+        (!generatedDefault &&
+         construct->parameterTypes != constructor->parameterTypes) ||
         construct->operands.size() != construct->parameterTypes.size() ||
         !construct->localFailureSites.empty() ||
         !construct->definedFailure.empty() || !construct->lifecycle.empty() ||
@@ -14647,7 +14679,7 @@ passiveFixedArrayConstructAggregate(const MirProgram &program,
     }
   }
   if (initialize == nullptr || destination == nullptr ||
-      bindingDrop == nullptr || bindingDrop->initiallyActive ||
+      (bindingDrop != nullptr && bindingDrop->initiallyActive) ||
       initialize->kind != MirInstructionKind::Initialize ||
       initialize->operands.size() != 1 ||
       initialize->operands.front().kind != MirOperandKind::Value ||
@@ -14656,10 +14688,21 @@ passiveFixedArrayConstructAggregate(const MirProgram &program,
       destination->root != MirPlaceRootKind::Binding ||
       !destination->projections.empty() ||
       destination->type != instruction.info.type ||
-      initialize->info.type != instruction.info.type ||
-      initialize->lifecycle.size() != 1) {
+      initialize->info.type != instruction.info.type) {
     return {};
   }
+  if (bindingDrop == nullptr) {
+    return instruction.info.traits.drop == DropKind::Trivial &&
+                   initialize->lifecycle.empty()
+               ? PassiveFixedArrayConstructAggregate{.aggregate = &instruction,
+                                                     .initialize = initialize,
+                                                     .destination = destination,
+                                                     .elements =
+                                                         std::move(elements)}
+               : PassiveFixedArrayConstructAggregate{};
+  }
+  if (initialize->lifecycle.size() != 1)
+    return {};
   const MirLifecycleEvent &activation = initialize->lifecycle.front();
   return activation.kind == MirLifecycleEventKind::Initialize &&
                  activation.source == 0 &&
@@ -14709,6 +14752,98 @@ passiveFixedArrayConstructInput(const MirProgram &program, const MirBody &body,
     }
   }
   return nullptr;
+}
+
+// Already-staged passive elements initialize the array's final storage. A
+// lexical lifetime is not an active cleanup recipe, and must not cause either
+// invented default construction or an owning rollback protocol.
+[[nodiscard]] const MirPlace *
+passiveFixedArrayStagedDestination(const MirProgram &program,
+                                   const MirBody &body,
+                                   const MirInstruction &aggregate) {
+  if (aggregate.kind != MirInstructionKind::Compute ||
+      aggregate.operation != MirOperation::Aggregate || !aggregate.result ||
+      !cleanupFreeCopyableFixedArray(program, aggregate.info.type) ||
+      aggregate.operands.size() != aggregate.info.type.arrayLength ||
+      !aggregate.definedFailure.empty() ||
+      !aggregate.localFailureSites.empty() || aggregate.destination ||
+      aggregate.receiver || aggregate.literal)
+    return nullptr;
+  const auto &elementType = aggregate.info.type.arguments.front();
+  for (const auto &operand : aggregate.operands) {
+    const auto *value = operand.kind == MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    if (!value || value->info.type != elementType ||
+        operand.type != elementType)
+      return nullptr;
+  }
+  const auto *resultDrop =
+      uniqueValueLifetimeDrop(body, *aggregate.result, aggregate.info.type);
+  if (resultDrop) {
+    if (resultDrop->dropType.requiresActiveCleanup ||
+        aggregate.lifecycle.size() != 1)
+      return nullptr;
+    const auto &activation = aggregate.lifecycle.front();
+    if (activation.kind != MirLifecycleEventKind::Initialize ||
+        activation.source != 0 || activation.target != resultDrop->id ||
+        activation.conditional || activation.failureCleanup)
+      return nullptr;
+  } else if (!aggregate.lifecycle.empty()) {
+    return nullptr;
+  }
+  const auto uses = nonRootRecordUses(body, *aggregate.result);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand ||
+      uses.front().operandIndex != 0)
+    return nullptr;
+  const auto *initialize = findInstruction(body, uses.front().instruction);
+  const auto *destination = initialize && initialize->destination
+                                ? body.findPlace(*initialize->destination)
+                                : nullptr;
+  if (!initialize || initialize->kind != MirInstructionKind::Initialize ||
+      initialize->operands.size() != 1 ||
+      initialize->operands.front().kind != MirOperandKind::Value ||
+      initialize->operands.front().value != *aggregate.result ||
+      initialize->operands.front().type != aggregate.info.type ||
+      initialize->info.type != aggregate.info.type || !destination ||
+      destination->type != aggregate.info.type ||
+      destination->root != MirPlaceRootKind::Binding ||
+      !destination->projections.empty())
+    return nullptr;
+  const MirDropObligation *drop = nullptr;
+  for (const auto &candidate : body.dropObligations) {
+    if (candidate.place != destination->id)
+      continue;
+    if (drop || candidate.kind != MirDropObligationKind::Binding ||
+        candidate.initiallyActive || candidate.dropType.requiresActiveCleanup ||
+        candidate.dropType.type != aggregate.info.type)
+      return nullptr;
+    drop = &candidate;
+  }
+  if (!drop)
+    return initialize->lifecycle.empty() ? destination : nullptr;
+  if (initialize->lifecycle.size() != 1)
+    return nullptr;
+  const auto &activation = initialize->lifecycle.front();
+  return activation.kind == (resultDrop ? MirLifecycleEventKind::Reparent
+                                        : MirLifecycleEventKind::Initialize) &&
+                 activation.source == (resultDrop ? resultDrop->id : 0) &&
+                 activation.target == drop->id && !activation.conditional &&
+                 !activation.failureCleanup
+             ? destination
+             : nullptr;
+}
+
+[[nodiscard]] bool passiveFixedArrayStagedPlace(const MirProgram &program,
+                                                const MirBody &body,
+                                                const MirPlace &place) {
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (passiveFixedArrayStagedDestination(program, body, instruction) ==
+          &place)
+        return true;
+  return false;
 }
 
 [[nodiscard]] const MirPlace *
@@ -19183,6 +19318,8 @@ lifetimeSlotPlace(const MirProgram &program,
   if (passiveFixedArrayConstructDestination(program, body, place) != nullptr) {
     return true;
   }
+  if (passiveFixedArrayStagedPlace(program, body, place))
+    return true;
   if (place.type.kind == SemanticType::Class ||
       place.type.kind == SemanticType::Storage ||
       place.type.kind == SemanticType::PrefixStorage ||
@@ -20669,6 +20806,7 @@ private:
       requireCapability(CppMirEmissionCapabilityKind::Aggregate, block.id,
                         instruction.id);
       if (instruction.info.traits.drop != DropKind::Trivial &&
+          !cleanupFreeCopyableFixedArray(program, instruction.info.type) &&
           !failureFreeFixedArrayAggregateMove(program, body, instruction) &&
           !passiveFixedArrayConstructAggregate(program, body, instruction)) {
         add(CppMirBodyEmissionIssueKind::MissingAggregateRollbackMir, block.id,
@@ -27368,7 +27506,9 @@ public:
           (fixedArrayValueDestinationSlot(program, facts.body,
                                           *valueDefinition) != nullptr ||
            passiveFixedArrayConstructAggregate(program, facts.body,
-                                               *valueDefinition))) {
+                                               *valueDefinition) ||
+           passiveFixedArrayStagedDestination(program, facts.body,
+                                              *valueDefinition))) {
         // The Aggregate constructs its unique consuming binding slot in place.
         continue;
       }
@@ -29558,6 +29698,23 @@ private:
         output << "__gti_mir_p_" << slot << ".mark_constructed();\n";
         return;
       }
+      if (const auto *destination = passiveFixedArrayStagedDestination(
+              program, facts.body, instruction)) {
+        const auto slot = canonicalSlotPlaceId(facts.body, *destination);
+        output << "::new (static_cast<void *>(__gti_mir_p_" << slot
+               << ".construction_address())) "
+               << typeSpelling(instruction.info.type) << '{';
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (index)
+            output << ", ";
+          emitOperand(instruction.operands[index]);
+        }
+        output << "};\n";
+        writeIndent();
+        output << "__gti_mir_p_" << slot << ".mark_constructed();\n";
+        return;
+      }
       // The aggregate constructs either its consuming binding's slot or — as
       // one nested element of an enclosing owning aggregate — its own
       // value-rooted result slot, which the outer aggregate moves from.
@@ -31612,6 +31769,9 @@ private:
         if (directAggregate == nullptr && passiveAggregate) {
           directAggregate = passiveAggregate.destination;
         }
+        if (directAggregate == nullptr && aggregate)
+          directAggregate = passiveFixedArrayStagedDestination(
+              program, facts.body, *aggregate);
         if (directAggregate != nullptr && directAggregate->id == slot->id) {
           output << "// GTI MIR aggregate reparent into p"
                  << canonicalSlotPlaceId(facts.body, *directAggregate) << "\n";
@@ -44345,6 +44505,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         owningDefinition->operation == MirOperation::Aggregate &&
         (value.info.traits.drop == DropKind::Lexical ||
          uniqueValueLifetimeDrop(body, value.id, value.info.type) != nullptr) &&
+        !passiveFixedArrayConstructAggregate(program_, body,
+                                             *owningDefinition) &&
+        !passiveFixedArrayStagedDestination(program_, body,
+                                            *owningDefinition) &&
         fixedArrayAggregateInputSlot(program_, body, value.id) == nullptr) {
       // An owning aggregate has no ordinary scalar SSA representation. If its
       // exact field/binding publication, nested aggregate input, or owned
@@ -46277,7 +46441,22 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // initialization; a fixed-array aggregate spells its staged
           // elements in operand order inside the braces, exactly like
           // the compatibility aggregate initialization.
-          if ((!instruction.operands.empty() &&
+          if ((instruction.info.type.kind == SemanticType::Array &&
+               (instruction.info.type.arguments.size() != 1 ||
+                instruction.info.type.arrayLengthParameterId != 0 ||
+                (!instruction.operands.empty() &&
+                 instruction.operands.size() !=
+                     instruction.info.type.arrayLength) ||
+                std::any_of(instruction.operands.begin(),
+                            instruction.operands.end(),
+                            [&](const MirOperand &operand) {
+                              const auto &element =
+                                  instruction.info.type.arguments.front();
+                              return (element.kind == SemanticType::Class ||
+                                      element.kind == SemanticType::Array) &&
+                                     operand.type != element;
+                            }))) ||
+              (!instruction.operands.empty() &&
                (instruction.info.type.kind != SemanticType::Array ||
                 !std::all_of(
                     instruction.operands.begin(), instruction.operands.end(),

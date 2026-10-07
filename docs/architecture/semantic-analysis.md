@@ -374,7 +374,8 @@ on declaration-wide registration. It currently:
    summaries;
 6. derives transfer/share facts and validates inherited interface capability
    requirements;
-7. records class types and lifecycle facts, then seals the declaration catalog;
+7. records class types and lifecycle facts, validates alias target constraints,
+   then seals the declaration catalog;
 8. copies namespace-symbol value state into the body-owned value-flow session
    and analyzes declaration bodies in lexical scopes;
 9. finalizes callable forwarding and argument contracts; and
@@ -446,7 +447,12 @@ walks active conditional members while tracking access labels and records the
 owner declaration before alias targets are resolved. Once primary class IDs
 exist, resolution binds each alias to its direct owner, enters the owner's
 generic-parameter scope, resolves the transparent target, and installs a
-separate type-member map. Value and callable collection consults that map for
+separate type-member map. Constraint checks on these alias targets defer until
+the class member and lifecycle inventory is complete; every resolved target is
+then validated before catalog sealing, even if the alias is never used. This
+separates exact type registration from structural constraint validity without
+changing alias identity or making constraints optional.
+Value and callable collection consults that map for
 same-owner name collisions but does not turn aliases into storage members or
 inherit them with base value/function members. Type lookup, concrete generic
 reanalysis, and tooling all consume the same resolved target. Type lookup

@@ -58,6 +58,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   allowPayloadEnumeratorReference = false;
   currentStaticMemberFunction = false;
   allowPackTypeReference = false;
+  deferringTypeAliasConstraints = false;
   loanFlow = {};
   instanceClassContextActive = false;
   instanceAnalysisActive = false;
@@ -133,6 +134,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   validateInterfaceCapabilities();
   recordClassTypes();
   recordClassLifecycles();
+  validateTypeAliasConstraints();
   registerDesignatedConstructors();
   catalog.seal();
   valueFlow.beginBody(catalog);
