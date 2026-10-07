@@ -101,7 +101,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 
 | Kind | Findings |
 | --- | --- |
-| Silent miscompile | A25: an `expected<T&, E>` relay returns the parameter, not the referent |
+| Silent miscompile | A25 resolved: reference relays preserve the exact referent |
 | Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256; A13: nondeterministic `--emit-mir` |
 | Compiler hang or silent failure | A06 and A57 resolved; A41 now reports a located internal failure but its forwarding defect remains unresolved |
 | ICE or invalid generated C++ on valid code | A01, A14–A17, A26–A32, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
@@ -135,7 +135,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A22 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a22-spurious-s2068-after-constexpr-failure` |
 | A23 | [#67](https://git.internal.howetotech.dev/gti-lang/gti/issues/67) Finite value-generic recursion ended by a specialization is rejected as self-containing | rejected | `reproducers/a23-recursive-value-generic-layout` |
 | A24 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a24-unreachable-warning-per-instance` |
-| A25 | [#70](https://git.internal.howetotech.dev/gti-lang/gti/issues/70) Miscompile: returning a local reference through expected<T&, E> yields the parameter, not the referent | ice, runtime | `reproducers/a25-expected-ref-relay-wrong-referent`<br>`reproducers/a25-ref-return-from-expected-value` |
+| A25 | [#70](https://git.internal.howetotech.dev/gti-lang/gti/issues/70) Miscompile: returning a local reference through expected<T&, E> yields the parameter, not the referent | resolved: pass | `reproducers/a25-expected-ref-relay-wrong-referent`<br>`reproducers/a25-ref-return-from-expected-value` |
 | A26 | [#71](https://git.internal.howetotech.dev/gti-lang/gti/issues/71) MIR ICE: overloaded dereference store whose right side reads the same owner | ice | `reproducers/a26-overloaded-deref-store-reads-owner` |
 | A27 | [#72](https://git.internal.howetotech.dev/gti-lang/gti/issues/72) C++ backend ICE: compound assignment through an overloaded operator* or a subscript on a call result | ice | `reproducers/a27-compound-assign-overloaded-deref` |
 | A28 | [#73](https://git.internal.howetotech.dev/gti-lang/gti/issues/73) C++ backend ICE: overloaded operator on a field of a range-for element | ice | `reproducers/a28-map-range-for-key-view`<br>`reproducers/a28-range-element-field-overloaded-operator`<br>`reproducers/a28-range-element-field-ref-method` |

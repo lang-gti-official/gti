@@ -4484,6 +4484,81 @@ namespace {
   return found == block->instructions.end() ? nullptr : &*found;
 }
 
+// Checked reference extraction transports an external dependency, independently
+// of whether its carrier is a binding or a fresh SSA call result. The same
+// proof also validates an extracted address stored in a local return alias.
+[[nodiscard]] bool
+fallibleReferenceOwnerTransport(const MirBody &body,
+                                const MirInstruction &instruction,
+                                const MirLoan &extracted) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ExpectedValue ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || !instruction.loan ||
+      *instruction.loan != extracted.id ||
+      instruction.hirValue != extracted.producedBy || !instruction.receiver ||
+      instruction.receiver->type.kind != SemanticType::Expected ||
+      instruction.receiver->type.arguments.size() != 2)
+    return false;
+  const auto &reference = instruction.receiver->type.arguments.front();
+  const MirPlace *origin = body.findPlace(extracted.source);
+  if (reference.kind != SemanticType::Reference ||
+      reference.arguments.size() != 1 ||
+      reference.referenceAccess != AccessMode::ReadOnly ||
+      instruction.info.type != reference.arguments.front() ||
+      instruction.borrowAccess != AccessMode::ReadOnly || origin == nullptr ||
+      origin->root == MirPlaceRootKind::Value ||
+      origin->root == MirPlaceRootKind::Temporary ||
+      extracted.source == instruction.receiver->place ||
+      extracted.access != AccessMode::ReadOnly ||
+      instruction.borrowOrigin != BorrowOriginKind::Receiver)
+    return false;
+  const auto sameOwner = [&](const MirLoan &dependency) {
+    return dependency.id != extracted.id &&
+           dependency.access == AccessMode::ReadOnly &&
+           sameCanonicalPlace(
+               canonicalBorrowOriginPlace(body, dependency.source, {}, false),
+               canonicalBorrowOriginPlace(body, extracted.source, {}, false));
+  };
+  std::unordered_set<MirPlaceId> places;
+  std::unordered_set<MirValueId> values;
+  const auto preservesOwner = [&](const auto &self,
+                                  const MirOperand &operand) -> bool {
+    MirValueId valueId = operand.value;
+    if (operand.kind != MirOperandKind::Value) {
+      const MirPlace *carrier = body.findPlace(operand.place);
+      if (carrier == nullptr || !places.insert(carrier->id).second)
+        return false;
+      if (carrier->root == MirPlaceRootKind::Binding)
+        return std::any_of(body.loans.begin(), body.loans.end(),
+                           [&](const MirLoan &dependency) {
+                             return std::find(dependency.carriers.begin(),
+                                              dependency.carriers.end(),
+                                              carrier->binding) !=
+                                        dependency.carriers.end() &&
+                                    sameOwner(dependency);
+                           });
+      if (carrier->root != MirPlaceRootKind::Value)
+        return false;
+      valueId = carrier->value;
+    }
+    if (!values.insert(valueId).second)
+      return false;
+    const MirInstruction *producer = linearValueDefinition(body, valueId);
+    if (producer == nullptr || producer->info.type != operand.type)
+      return false;
+    if (producer->loan) {
+      const MirLoan *dependency = body.findLoan(*producer->loan);
+      return dependency != nullptr && sameOwner(*dependency);
+    }
+    return (producer->kind == MirInstructionKind::Move ||
+            producer->kind == MirInstructionKind::Load) &&
+           producer->operands.size() == 1 &&
+           self(self, producer->operands.front());
+  };
+  return preservesOwner(preservesOwner, *instruction.receiver);
+}
+
 [[nodiscard]] bool hasOneExactValueUse(const MirBody &body, MirValueId valueId,
                                        MirValueUseKind expectedKind,
                                        MirInstructionId expectedInstruction,
@@ -9836,67 +9911,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         // Follow only explicit loan publication and copy/move transport.
         const MirLoan *extracted =
             instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
-        std::unordered_set<MirPlaceId> visiting;
-        const auto preservesOwner = [&](auto &&self, MirPlaceId id) -> bool {
-          const MirPlace *carrier = body.findPlace(id);
-          if (carrier == nullptr || extracted == nullptr ||
-              !visiting.insert(id).second)
-            return false;
-          const auto sameOwner = [&](const MirLoan &dependency) {
-            return dependency.id != extracted->id &&
-                   dependency.access == AccessMode::ReadOnly &&
-                   sameCanonicalPlace(canonicalBorrowOriginPlace(
-                                          body, dependency.source, {}, false),
-                                      canonicalBorrowOriginPlace(
-                                          body, extracted->source, {}, false));
-          };
-          if (carrier->root == MirPlaceRootKind::Binding) {
-            return std::any_of(body.loans.begin(), body.loans.end(),
-                               [&](const MirLoan &dependency) {
-                                 return std::find(dependency.carriers.begin(),
-                                                  dependency.carriers.end(),
-                                                  carrier->binding) !=
-                                            dependency.carriers.end() &&
-                                        sameOwner(dependency);
-                               });
-          }
-          if (carrier->root != MirPlaceRootKind::Value)
-            return false;
-          const MirValue *value = body.findValue(carrier->value);
-          const MirBlock *definition =
-              value ? body.findBlock(value->definitionBlock) : nullptr;
-          if (definition == nullptr)
-            return false;
-          const auto producer = std::find_if(
-              definition->instructions.begin(), definition->instructions.end(),
-              [&](const MirInstruction &candidate) {
-                return candidate.id == value->definition;
-              });
-          if (producer == definition->instructions.end())
-            return false;
-          if (producer->loan) {
-            const MirLoan *dependency = body.findLoan(*producer->loan);
-            return dependency != nullptr && sameOwner(*dependency);
-          }
-          return (producer->kind == MirInstructionKind::Move ||
-                  producer->kind == MirInstructionKind::Load) &&
-                 producer->operands.size() == 1 &&
-                 self(self, producer->operands.front().place);
-        };
-        const MirPlace *origin =
-            extracted ? body.findPlace(extracted->source) : nullptr;
-        const SemanticType &reference =
-            instruction.receiver->type.arguments.front();
-        if (reference.arguments.size() != 1 ||
-            reference.referenceAccess != AccessMode::ReadOnly ||
-            instruction.info.type != reference.arguments.front() ||
-            instruction.borrowAccess != AccessMode::ReadOnly ||
-            origin == nullptr || origin->root == MirPlaceRootKind::Value ||
-            origin->root == MirPlaceRootKind::Temporary ||
-            extracted->source == instruction.receiver->place ||
-            extracted->access != AccessMode::ReadOnly ||
-            instruction.borrowOrigin != BorrowOriginKind::Receiver ||
-            !preservesOwner(preservesOwner, instruction.receiver->place)) {
+        if (extracted == nullptr ||
+            !fallibleReferenceOwnerTransport(body, instruction, *extracted)) {
           return failure(
               body, owner,
               "fallible reference extraction lost its carrier's external owner",
@@ -10343,7 +10359,19 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           if (source.place == 0) {
             // With no explicit address, only the parameter pointer itself
             // can be published, with its exact referent type.
-            if (carrier->type.arguments.front() != instruction.info.type)
+            const bool selectedAlias = std::any_of(
+                body.places.begin(), body.places.end(),
+                [&](const MirPlace &place) {
+                  return place.root == MirPlaceRootKind::Binding &&
+                         place.binding != carrier->binding &&
+                         place.sourceValue == instruction.hirValue &&
+                         place.type == source.type &&
+                         std::find(retained->carriers.begin(),
+                                   retained->carriers.end(),
+                                   place.binding) != retained->carriers.end();
+                });
+            if (selectedAlias ||
+                carrier->type.arguments.front() != instruction.info.type)
               return false;
           } else {
             const auto exactRuntimeAlias =
@@ -10432,10 +10460,24 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                             depth + 1);
               }
               const auto *resultLoan = body.findLoan(address->loan);
+              const bool extractedAddress = [&] {
+                if (resultLoan == nullptr || resultLoan->parent != 0 ||
+                    resultLoan->access != AccessMode::ReadOnly ||
+                    produced.access != AccessMode::ReadOnly)
+                  return false;
+                for (const auto &candidateBlock : body.blocks)
+                  for (const auto &candidate : candidateBlock.instructions)
+                    if (candidate.loan == resultLoan->id &&
+                        candidate.info.type == runtime->type &&
+                        fallibleReferenceOwnerTransport(body, candidate,
+                                                        *resultLoan))
+                      return true;
+                return false;
+              }();
               return address->root == MirPlaceRootKind::Loan &&
                      address->projections.empty() && resultLoan != nullptr &&
                      resultLoan->kind == MirLoanKind::CallResult &&
-                     resultLoan->parent == retained->id &&
+                     (resultLoan->parent == retained->id || extractedAddress) &&
                      resultLoan->source == retained->source &&
                      resultLoan->storedDependency ==
                          retained->storedDependency &&
@@ -10488,6 +10530,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           }
           const MirLoan *retained = body.findLoan(source.loan);
           if (retained == nullptr || retained->id == produced.id ||
+              // Referent publication uses the stronger runtime-alias proof.
+              // A complete carrier already stores its exact runtime pointer.
+              (retained->kind == MirLoanKind::Parameter &&
+               source.type != body.returnType) ||
               retained->escapes || retained->source != produced.source ||
               (retained->access != produced.access &&
                retained->access != AccessMode::Mutable)) {

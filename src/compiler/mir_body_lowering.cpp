@@ -10085,6 +10085,26 @@ private:
     bindingLoans = std::move(exitBindingLoans);
   }
 
+  // A parameter loan describes the caller-owned dependency, not necessarily
+  // the address returned by an accessor. Local reference bindings retain that
+  // exact runtime address separately. Both plain and fallible reference
+  // publication must forward it; matching referent types cannot recover it.
+  [[nodiscard]] MirPlaceId referenceReturnRuntimeAlias(HirValueId valueId,
+                                                       const MirLoan &loan) {
+    const HirValue *value = findValue(valueId);
+    if (value == nullptr || loan.kind != MirLoanKind::Parameter || !loan.entry)
+      return 0;
+    const MirPlaceId selectedPlace = placeForValue(valueId);
+    const MirPlace *selected = output.findPlace(selectedPlace);
+    const MirPlace *parameter = output.findPlace(loan.source);
+    return selected != nullptr && parameter != nullptr &&
+                   selected->root == MirPlaceRootKind::Binding &&
+                   selected->binding != parameter->binding &&
+                   selected->type == value->info.type
+               ? selectedPlace
+               : 0;
+  }
+
   void lowerReturn(const HirStatement &statement) {
     const std::vector<Scope> incomingScopes = scopes;
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
@@ -10116,6 +10136,9 @@ private:
           return;
         }
         const MirLoan retainedLoan = output.loans[borrow.loan - 1];
+        if (retainedLoan.kind == MirLoanKind::Parameter && retainedLoan.entry)
+          borrow.place =
+              referenceReturnRuntimeAlias(*statement.value, retainedLoan);
         if (retainedLoan.kind == MirLoanKind::Stored && retainedLoan.entry &&
             !retainedLoan.designatedFields.empty()) {
           // A by-value carrier's loan protects its external owner, not its
@@ -10131,6 +10154,8 @@ private:
         const MirLoanId published =
             createLoan(MirLoanKind::Return, retainedLoan.source,
                        retainedLoan.access, *statement.value);
+        output.loans[published - 1].storedDependency =
+            retainedLoan.storedDependency;
         (void)appendInstruction({.kind = MirInstructionKind::Borrow,
                                  .hirValue = *statement.value,
                                  .operands = {borrow},
@@ -10234,16 +10259,8 @@ private:
               // by-value carrier and nested-call cases above do.
               const MirLoan retainedLoan =
                   output.loans[referenceParameterEntry - 1];
-              const MirPlaceId selectedPlace = placeForValue(*statement.value);
-              const MirPlace *selected = output.findPlace(selectedPlace);
-              const MirPlace *parameter = output.findPlace(retainedLoan.source);
               const MirPlaceId runtimeAlias =
-                  selected != nullptr && parameter != nullptr &&
-                          selected->root == MirPlaceRootKind::Binding &&
-                          selected->binding != parameter->binding &&
-                          selected->type == value->info.type
-                      ? selectedPlace
-                      : 0;
+                  referenceReturnRuntimeAlias(*statement.value, retainedLoan);
               // A local reference may share the parameter's coarse owner
               // authority while storing a call's different runtime address.
               // Publish that exact address, not the parameter pointer. The
