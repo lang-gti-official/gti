@@ -1043,6 +1043,9 @@ auto SemanticVisitor::Impl::statementSourceUnit(const Stmt &statement) const
   if (const auto *classDecl = stmtAs<ClassDecl>(&statement)) {
     return sourceUnitFor(classDecl->name());
   }
+  if (const auto *enumDecl = stmtAs<EnumDecl>(&statement)) {
+    return sourceUnitFor(enumDecl->name());
+  }
   if (const auto *function = stmtAs<FunctionDecl>(&statement)) {
     return sourceUnitFor(function->name());
   }
@@ -2292,6 +2295,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   bool mutableBinding = false;
   bool staticMember = false;
   SymbolId symbolId = 0;
+  bool enumeratorOccurrence = false;
   OccurrenceRole roles = requestedRoles;
   if (kind == ExprKind::Variable) {
     const Variable &variable = static_cast<const Variable &>(expr);
@@ -2343,6 +2347,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     if (const ResolvedEnumeratorInfo *enumerator =
             semanticModel.findEnumerator(qualified);
         enumerator != nullptr && enumerator->declaration != nullptr) {
+      enumeratorOccurrence = true;
       symbolId = symbolForDeclaration(enumerator->declaration->name);
       if (symbolId == 0) {
         const EnumTypeInfo *owner =
@@ -2435,9 +2440,10 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(token),
-         .kind = functionItemDeclaration == nullptr
-                     ? SemanticOccurrenceKind::Expression
-                     : SemanticOccurrenceKind::Function,
+         .kind = functionItemDeclaration != nullptr
+                     ? SemanticOccurrenceKind::Function
+                     : enumeratorOccurrence ? SemanticOccurrenceKind::Symbol
+                                            : SemanticOccurrenceKind::Expression,
          .symbol = symbolId,
          .roles = roles,
          .name = token.lexeme,

@@ -301,7 +301,7 @@ int main() {
 }
 """, 70, "7\n9\n"),
         "nested-result-later-argument-success": (OWNING + """
-void accept<T>(T first, int32_t second) {
+void accept(Event<Resource> first, int32_t second) {
   if (id(first) != 7 || second != 3) { std::println(99); }
 }
 int main() {
