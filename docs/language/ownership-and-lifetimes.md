@@ -1627,6 +1627,48 @@ storage is freshly allocated and wholly uninitialized; application code cannot
 forge the token or bypass the factories. The seal has no intrinsic behavior
 and does not make either public class compiler-recognized.
 
+## Programmable Resource Leases
+
+`<std/resource>` separates four lifetimes that a C++ allocator usually blurs:
+
+- **Keeping the resource alive.** `unsafe std::bind_resource(resource)` yields
+  a `resource_ref<R>`, an ordinary checked shared borrow of the provider. Every
+  owner built from it retains that borrow through its own cleanup, even when
+  empty, so the provider cannot be moved, destroyed, or reached through a
+  mutable method while any owner is live.
+- **Mutating bookkeeping.** The protocol's `allocate` and `release` take a
+  read-only receiver. A stateful provider mutates separately allocated
+  bookkeeping through its own raw pointers inside `unsafe`. This is a provider
+  obligation, not a new interior-mutability rule: ordinary fields of a shared
+  resource stay read-only and no checked reference into the bookkeeping exists.
+- **Owning a region.** Each `resource_storage<T,R>` holds a move-only lease
+  that owns exactly one region and its matching release authority. Many leases
+  from one resource coexist; none needs an exclusive borrow of the resource.
+  Moving an owner transfers its region and release obligation without moving
+  its elements.
+- **Borrowing objects in a region.** Element references and iterators borrow
+  the owning storage, not merely the resource. They block growth, release,
+  clearing and movement of that owner until their last use. Keeping the
+  resource alive alone never justifies resetting or reusing a live region.
+
+Who guarantees what:
+
+| Guarantee | Enforcement |
+| --- | --- |
+| Binding requires explicit `unsafe` and cannot outlive the resource | static |
+| Provider reset, move or mutable access while an owner is live | rejected statically (exclusive access against a live shared borrow) |
+| Element references and iterators versus growth, release, clear and owner movement | rejected statically |
+| Element type capabilities: relocation and growth need movable, relocatable elements; immovable elements use fixed-address storage | static |
+| Destruction before region release; exactly-once element cleanup; constructor rollback | verified MIR lifecycle and cleanup |
+| Count overflow, invalid alignment, region shape, slot bounds and initialization | dynamic checks, reported as `alloc_errc` or a runtime failure |
+| Provider returns writable, aligned, disjoint regions valid until matching release; truthful identity; release retires exactly that region; no independent raw reset, reentrancy or race invalidates a live region | unsafe obligation of the provider, accepted once at the binding |
+
+The optional raw-pointer audit may report findings inside a provider's
+implementation, but it never decides acceptance or code generation. The
+binding obligations are listed in full in
+[raw pointers](raw-pointers.md#explicit-resource-binding), and the library API
+in [the standard library](standard-library.md#custom-resource-protocol).
+
 ## Standard-Library Storage
 
 Built-in fixed arrays provide initialized inline storage with compile-time
@@ -1810,8 +1852,10 @@ its hidden loop owner. Reserve, push, clear, movement, and every other
 overlapping owner operation are rejected while the mutable range is active.
 This is conservative whole-owner invalidation exclusion, not a
 container-specific invalidation trait. Iterator categories, iterator-position
-insertion/erasure, allocator policy, and mutable or multi-owner spans remain
-future work. The bounded read-only single-owner span is described below.
+insertion/erasure, and mutable or multi-owner spans remain future work.
+`std::vector` itself always uses the process allocator; programmable placement
+is provided by the separate `resource_vector` described under
+[programmable resource leases](#programmable-resource-leases). The bounded read-only single-owner span is described below.
 
 ## Owning Text
 

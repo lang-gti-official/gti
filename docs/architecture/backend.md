@@ -1146,6 +1146,18 @@ type selects direct binding initialization. Semantic lifecycle facts still
 decide whether copying, movement and assignment are available; this does not
 introduce reference reseating.
 
+A targetless generated move construction consumes its staged input through one
+leading `TransferOut` of that input's value obligation, followed by the
+result's own activation. When the moved binding feeds the construction
+directly, the backend spells `std::move` over the binding's slot and never
+materializes the staging input, so the transfer is a native no-op: the
+generated move disarms the source's active cleanup and its ordinary scope drop
+retires the shell. Only a materialized value-rooted staging slot is destroyed
+explicitly after publication. In both forms, a provenance-only `EndBorrow`
+retiring the source's lifecycle-bound stored loan may sit between the
+construction and its publication when the old and new loans have identical
+sources, access, ancestry and dependency sets.
+
 A generated default constructor of a non-generic class with no declared
 instance fields or destructor has a selected HIR constructor instance when
 its state-bearing non-generic base has an exact zero-parameter source
@@ -1861,6 +1873,11 @@ must retain full definitions of its exact specializations as well as their
 forward declarations. The source and direct-concrete definition schedules are
 exclusive for each selected instance; a primary application and an exact
 application in the same program cannot silently select different carrier ABIs.
+Lifecycle members follow the same exclusivity. A directly represented concrete
+instance of a generic active-drop class defines its cleanup adapter and
+destructor failure entries in its own deferred concrete row; the primary's
+lifecycle pass leaves that instance alone and emits explicit specializations
+only for instances that remain specializations of the primary.
 
 C++ type syntax, include selection, helper names, failure ABI syntax, and
 representation choices remain inside the C++ backend. C++ source fragments do

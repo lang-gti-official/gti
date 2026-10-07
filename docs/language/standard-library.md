@@ -850,6 +850,14 @@ supported. Explicit `relocate_to` may transfer elements between distinct
 resources of the same `R` type, but each region is still released through its
 own binding. There is no implicit rebinding, shared ownership or reference count.
 
+Resource owners compose like other borrowed carriers: a class may hold a
+`resource_vector` field constructed from a `resource_ref` parameter, and
+functions may fill a container through a `mut` reference. A free function
+cannot yet return a new owner built from a `resource_ref` parameter
+(`GTI-S2085`); that is the general rule for returning any borrowed carrier
+constructed from a by-value carrier parameter, not a resource-specific
+restriction. Construct the owner in the caller, or pass it by `mut` reference.
+
 `process_resource` is a source wrapper over a narrow aligned raw allocation
 runtime interface, with distinct invalid-alignment, size-overflow and
 resource-exhaustion results. Direct `allocate` and `release` remain unsafe;
@@ -1146,8 +1154,9 @@ The following component families remain planned or incomplete:
   atomics and fences, safe scoped condition variables, safe recursive mutexes,
   read/write mutexes, stop tokens, detached/scoped tasks, typed argument packs,
   and broader threading;
-- stateful allocator policy, allocator-aware growing containers,
-  generation-bearing pool handles, and heterogeneous arenas;
+- allocator-aware variants of containers other than `resource_vector`,
+  runtime-polymorphic or concurrent resources, returning resource owners from
+  factory functions, generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque
   handles, pointers, C strings, returned fixed arrays, and same-thread
   callbacks, including general pointer nesting and ownership transfer, array
