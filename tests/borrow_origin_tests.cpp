@@ -6,6 +6,7 @@ void checkReferents() {
   const auto root = std::filesystem::path(__FILE__).parent_path();
   for (const auto &relative :
        {"fixtures/borrow_return_exact_referent.gti",
+        "fixtures/borrow_projected_parameter_return.gti",
         "fixtures/fallible_borrow.gti",
         "coverage/reproducers/a25-expected-ref-relay-wrong-referent.gti",
         "coverage/reproducers/a25-ref-return-from-expected-value.gti"}) {
@@ -219,6 +220,127 @@ int main() {
            "lowering context reports its cause, not absent startup");
   }
 }
+
+void checkNestedReadonlyReferences() {
+  const auto root = std::filesystem::path(__FILE__).parent_path();
+  std::size_t publications = 0;
+  for (const auto &relative :
+       {"coverage/reproducers/a59-readonly-ref-into-mut-nested-container.gti",
+        "coverage/reproducers/a59-map-at-then-element-ref.gti",
+        "fixtures/borrow_nested_readonly.gti"}) {
+    const auto path = root / relative;
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(),
+           "nested read-only reference captures the exact child address");
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "nested read-only loan flow independently verifies");
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "nested read-only reference reaches production emission");
+    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    std::size_t checked = 0;
+    for (const auto &function : frontend.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Initialize ||
+              !instruction.destination || instruction.operands.size() != 1)
+            continue;
+          const auto &operand = instruction.operands.front();
+          const auto *destination =
+              function.body.findPlace(*instruction.destination);
+          const auto *address = function.body.findPlace(operand.place);
+          const auto *retained = function.body.findLoan(operand.loan);
+          const auto *child =
+              address && address->root == lang::MirPlaceRootKind::Loan
+                  ? function.body.findLoan(address->loan)
+                  : nullptr;
+          if (operand.kind != lang::MirOperandKind::Loan || !destination ||
+              destination->type.kind != lang::SemanticType::Reference ||
+              !retained || retained->access != lang::AccessMode::Mutable ||
+              !child || child->parent != retained->id ||
+              child->access != lang::AccessMode::ReadOnly)
+            continue;
+          ++checked;
+          ++publications;
+          for (unsigned mutation = 0; mutation < 7; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &changedBlock : changed->body.blocks)
+              for (auto &candidate : changedBlock.instructions) {
+                if (candidate.id != instruction.id)
+                  continue;
+                if (mutation == 0)
+                  candidate.operands.front().place = retained->source;
+                if (mutation == 1)
+                  candidate.operands.front().loan = child->id;
+                if (mutation == 2)
+                  changed->body.loans[child->id - 1].access =
+                      lang::AccessMode::Mutable;
+                if (mutation == 3)
+                  changed->body.loans[child->id - 1].parent = 0;
+                if (mutation == 4)
+                  changed->body.places[destination->id - 1]
+                      .type.referenceAccess = lang::AccessMode::Mutable;
+                if (mutation == 5)
+                  candidate.kind = lang::MirInstructionKind::Load;
+                if (mutation == 6)
+                  changed->body.places[address->id - 1].type =
+                      lang::SemanticType::Bool;
+              }
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "nested reference rejects forged provenance, type, access "
+                   "or parent-use operation " +
+                       std::to_string(mutation));
+            expect(!lang::CppMirBodyEmitter(malformed, rows)
+                        .supportsFailureBodyText(
+                            {lang::MirBodyKind::Function, function.id}),
+                   "representation rejects forged nested reference " +
+                       std::to_string(mutation));
+          }
+        }
+    expect(checked != 0,
+           "fixture exercises suspended parent provenance publication");
+  }
+  std::ifstream declarationsInput(root / "fixtures/borrow_nested_readonly.gti");
+  const std::string fixture{std::istreambuf_iterator<char>(declarationsInput),
+                            {}};
+  const auto entry = fixture.find("int main()");
+  expect(entry != std::string::npos, "nested negative fixture has an entry");
+  if (entry != std::string::npos) {
+    const std::string declarations = fixture.substr(0, entry);
+    for (const auto &body :
+         {"int main() { mut Table table{}; Cell& row = table[std::size_t(0)]; "
+          "int32_t& value = row[std::size_t(0)]; table.cell.selected = 5; "
+          "return value; }",
+          "int main() { mut Table table{}; Cell& row = table[std::size_t(0)]; "
+          "int32_t& value = row[std::size_t(0)]; value = 5; return value; }",
+          "int main() { mut Table table{}; Cell& row = table[std::size_t(0)]; "
+          "int32_t& value = row[std::size_t(0)]; mut int32_t& writable = "
+          "value; writable = 5; return value; }"}) {
+      const auto invalid = analyzeWithStandardLibrary(
+          "invalid-nested-reference.gti", declarations + body);
+      expect(invalid.syntaxValid && !invalid.semanticValid &&
+                 !invalid.canGenerateCode(),
+             "nested references retain owner/access restrictions");
+      expect(std::none_of(invalid.diagnostics.begin(),
+                          invalid.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code.starts_with("GTI-B");
+                          }),
+             "invalid nested access is rejected before MIR/backend");
+    }
+  }
+  std::cout << "nested references: " << publications << " publications, "
+            << publications * 7
+            << " mutations checked by MIR and C++ admission\n";
+}
 } // namespace
 
 int main() {
@@ -226,5 +348,6 @@ int main() {
   checkInvalidEscapes();
   checkOwnedFieldPlaces();
   checkLoweringFailureContext();
+  checkNestedReadonlyReferences();
   return failures == 0 ? 0 : 1;
 }

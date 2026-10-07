@@ -26469,6 +26469,7 @@ provenanceOnlyReceiverPlace(const MirProgram &program,
       destination->type.kind != SemanticType::Reference ||
       destination->type.arguments.size() != 1 || address == nullptr ||
       retained == nullptr || address->type != source.type ||
+      !mir_detail::referenceAddressRetainsLoan(body, *address, *retained) ||
       loanCarriedByBinding(body, destination->binding) != retained) {
     return nullptr;
   }

@@ -3131,6 +3131,62 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                            });
       };
 
+      const auto permitsSuspendedReferenceAddress = [&](const MirOperand
+                                                            &operand) {
+        // Reference initialization publishes an already checked child
+        // address. Its retained loan is provenance, not an executable
+        // access through the temporarily suspended parent. No other
+        // operand family gains permission to use that parent.
+        if (instruction.kind != MirInstructionKind::Initialize ||
+            instruction.operands.size() != 1 || !instruction.destination ||
+            operand.kind != MirOperandKind::Loan || operand.value != 0)
+          return false;
+        const MirPlace *destination = body.findPlace(*instruction.destination);
+        const MirPlace *address = body.findPlace(operand.place);
+        const MirLoan *retained = body.findLoan(operand.loan);
+        if (destination == nullptr ||
+            destination->root != MirPlaceRootKind::Binding ||
+            !destination->projections.empty() ||
+            destination->type.kind != SemanticType::Reference ||
+            destination->type.referenceAccess != AccessMode::ReadOnly ||
+            destination->type.arguments.size() != 1 ||
+            destination->type.arguments.front() != operand.type ||
+            instruction.info.type != destination->type || address == nullptr ||
+            address->root != MirPlaceRootKind::Loan ||
+            !address->projections.empty() || address->type != operand.type ||
+            address->access != AccessMode::ReadOnly || retained == nullptr ||
+            active[retained->id - 1] != MirLoanFlowState::Suspended ||
+            std::find(retained->carriers.begin(), retained->carriers.end(),
+                      destination->binding) == retained->carriers.end() ||
+            requireStoredDependency(
+                retained->id, "reference address provenance", instruction.id))
+          return false;
+        MirLoanId link = address->loan;
+        std::unordered_set<MirLoanId> visited;
+        while (link != retained->id) {
+          const MirLoan *child = body.findLoan(link);
+          if (child == nullptr || !visited.insert(link).second ||
+              child->kind != MirLoanKind::CallResult || child->entry ||
+              child->escapes || !child->carriers.empty() ||
+              child->producedBy == 0 || child->access != AccessMode::ReadOnly ||
+              active[child->id - 1] != MirLoanFlowState::Active ||
+              requireStoredDependency(
+                  child->id, "reference address publication", instruction.id))
+            return false;
+          link = child->parent;
+        }
+        if (visited.empty())
+          return false;
+        return std::all_of(
+            children[retained->id - 1].begin(),
+            children[retained->id - 1].end(), [&](MirLoanId siblingId) {
+              const MirLoan &sibling = body.loans[siblingId - 1];
+              return active[siblingId - 1] == MirLoanFlowState::Inactive ||
+                     (sibling.kind == MirLoanKind::CallResult &&
+                      sibling.access == AccessMode::ReadOnly);
+            });
+      };
+
       if (instruction.receiver) {
         const bool selectedOrigin =
             instruction.borrowOrigin == BorrowOriginKind::Receiver;
@@ -3148,7 +3204,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         const bool selectedOrigin =
             instruction.borrowOrigin == BorrowOriginKind::Argument &&
             instruction.borrowArgument == operandIndex;
-        if (!permitsSuspendedSharedOrigin(operand, selectedOrigin)) {
+        if (!permitsSuspendedSharedOrigin(operand, selectedOrigin) &&
+            !permitsSuspendedReferenceAddress(operand)) {
           if (auto invalid = checkOperand(operand, "an instruction operand",
                                           instruction.id)) {
             return *invalid;
@@ -8370,6 +8427,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               ? body.findLoan(address->loan)
               : nullptr;
       return address != nullptr && loan != nullptr &&
+             mir_detail::referenceAddressRetainsLoan(body, *address, *loan) &&
              // A Stored loan describes external provenance, not a runtime
              // address. A reference may name the actual carrier's place or
              // a separately produced child address, but not that metadata.
