@@ -295,8 +295,9 @@ the target generic's constraints. A class argument therefore has the same
 constraint meaning in an alias and in an ordinary declaration.
 
 Concrete generic discovery has deterministic compilation-resource bounds: 64
-new-instance levels in a request chain and 16,384 distinct class, function,
-constructor and destructor instances per HIR request. Exact recursion reuses
+new-instance levels in a request chain and 16,384 distinct generic class, function,
+constructor and destructor instances per HIR request (including generic-owner
+members and empty packs, not ordinary declaration roots). Exact recursion reuses
 one instance. Type- or value-changing recursion must terminate within those
 bounds through a selected compile-time branch or exact specialization; a
 runtime `if` does not prevent instantiation of the other branch. Exceeding a

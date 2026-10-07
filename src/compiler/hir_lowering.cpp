@@ -157,6 +157,7 @@ private:
     discoveryDepth = 0;
     discoverySite.reset();
     discoveryLimitReached = false;
+    discoveredGenericInstances = 0;
     classDiscoveryDepths.clear();
     functionDiscoveryDepths.clear();
     constructorDiscoveryDepths.clear();
@@ -200,15 +201,13 @@ private:
   };
 
   [[nodiscard]] bool admitInstance(const Token &declaration,
-                                   const std::optional<SourceSpan> &site) {
+                                   const std::optional<SourceSpan> &site,
+                                   bool generic) {
     if (discoveryLimitReached) {
       return false;
     }
-    const std::size_t count =
-        output.program.classes.size() + output.program.functions.size() +
-        output.program.constructors.size() + output.program.destructors.size();
     if (discoveryDepth < maximumDiscoveryDepth &&
-        count < maximumDiscoveredInstances) {
+        (!generic || discoveredGenericInstances < maximumDiscoveredInstances)) {
       return true;
     }
     const bool depthLimit = discoveryDepth >= maximumDiscoveryDepth;
@@ -382,7 +381,8 @@ private:
         CompilerCapabilityTypeKind::NativeCScalar) {
       return std::nullopt;
     }
-    if (!admitInstance(declaration->declaration->name(), site)) {
+    const bool generic = !declaration->genericParameters.empty();
+    if (!admitInstance(declaration->declaration->name(), site, generic)) {
       return std::nullopt;
     }
     const ClassLifecycleInfo *lifecycle =
@@ -469,6 +469,7 @@ private:
     instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,
                               resolvedType.valueArguments, id);
     classDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     return id;
   }
 
@@ -522,7 +523,14 @@ private:
              : (declarationToken.lexeme.empty()
                     ? std::optional<SourceSpan>{}
                     : std::optional<SourceSpan>{tokenSpan(declarationToken)});
-    if (!admitInstance(declarationToken, site)) {
+    const ClassTypeInfo *genericOwner =
+        declaration.ownerClass == 0
+            ? nullptr
+            : baseModel->findClassType(declaration.ownerClass);
+    const bool generic =
+        !declaration.genericParameters.empty() ||
+        (genericOwner != nullptr && !genericOwner->genericParameters.empty());
+    if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
     if (declaration.ownerClass != 0) {
@@ -537,11 +545,12 @@ private:
     }
     // Discovering signature classes may consume the final inventory entry.
     // Recheck immediately before publication, as well as before expansion.
-    if (!admitInstance(declarationToken, site)) {
+    if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
     functionDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     if (freeFunction || owner.has_value()) {
       // An instance whose owner failed to resolve was never matchable by the
       // previous scan; leave it out of the index for exact equivalence.
@@ -702,10 +711,14 @@ private:
     const Token &declarationToken = construction.declaration == nullptr
                                         ? ownerType->declaration->name()
                                         : construction.declaration->name();
-    if (!admitInstance(declarationToken, site)) {
+    const bool generic =
+        !ownerType->genericParameters.empty() ||
+        (declaration != nullptr && !declaration->genericParameters.empty());
+    if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
     constructorDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     output.program.constructors.push_back(
         {.id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
@@ -751,11 +764,13 @@ private:
       return *existing;
     }
     const HirDestructorInstanceId id = output.program.destructors.size() + 1;
+    const bool generic = !classType->genericParameters.empty();
     if (!admitInstance(lifecycle->declaredDestructor->declaration->name(),
-                       classInstance.instantiationSite)) {
+                       classInstance.instantiationSite, generic)) {
       return std::nullopt;
     }
     destructorDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     output.program.destructors.push_back(
         {.id = id,
          .sourceUnit = classInstance.sourceUnit,
@@ -5715,6 +5730,7 @@ private:
   std::size_t discoveryDepth = 0;
   std::optional<SourceSpan> discoverySite;
   bool discoveryLimitReached = false;
+  std::size_t discoveredGenericInstances = 0;
   std::vector<std::size_t> classDiscoveryDepths;
   std::vector<std::size_t> functionDiscoveryDepths;
   std::vector<std::size_t> constructorDiscoveryDepths;
