@@ -7074,6 +7074,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   has no diff, all 76 corpus cases and 187 shipped sources parse, and
   highlight/locals/source-text checks pass with the correct rebuilt worktree
   parser rather than another worktree's shared cached grammar.
+  A subsequent combined-release fixture adds distinct owning enum instances
+  in base, derived and enclosing fields, requiring reverse-order cleanup after
+  a later derived-field construction fails. This 29th fixture is pending the
+  allocator campaign's selected-base-stage implementation; the standalone
+  branch reports the existing located backend-vocabulary rejection. The prior
+  224-configuration evidence does not claim this new integration fixture passed.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
