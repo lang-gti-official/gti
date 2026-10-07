@@ -2334,6 +2334,17 @@ Without an explicit runtime place, only the exact parameter referent type is
 valid. Carrier membership or a same-typed unrelated alias cannot substitute
 for this executable address evidence.
 
+A body-local reference may share an existing semantic owner identity while
+capturing an accessor's different runtime referent. Lowering accepts that
+address only when its live, nonescaping call-result chain reaches exactly the
+retained owner without widening access. The reference `Initialize` records both
+the owner loan and the actual returned-address place. A later field projection
+through this binding (or a direct reference alias of it) stays rooted at its
+captured address; canonicalization must not append the referent's fields to the
+enclosing owner or range. The transient accessor loans still end normally,
+while the reference retains the owner's checked lifetime and overlap authority.
+This applies equally to source-defined accessors and allocation-backed members.
+
 `MirRangeIteration` owns the bounded range exceptions. It names the exact
 owner/range/iterator/sentinel bindings, strategy, access mode, parent range
 loan, child element loan, condition/body/increment/cleanup blocks, and

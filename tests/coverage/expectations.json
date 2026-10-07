@@ -2128,14 +2128,10 @@
       "outcome": "pass"
     },
     "a58-map-unique-ptr-value-deref": {
-      "finding": "A58",
-      "issue": 99,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a58-ref-to-owner-field-pointee-via-local-ref": {
-      "finding": "A58",
-      "issue": 99,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a59-map-at-then-element-ref": {
       "finding": "A59",

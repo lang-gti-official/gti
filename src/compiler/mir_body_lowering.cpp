@@ -4175,6 +4175,13 @@ private:
                           ? nullptr
                           : output.findLoan(found->second));
         projectionOffset = loan == nullptr ? 0 : 1;
+        if (projectionOffset < place->projections.size() &&
+            referenceAccessorBindings.contains(place->binding)) {
+          // The binding captured an accessor's exact returned address while
+          // retaining its coarser owner loan. Its fields belong to that
+          // referent, not to the protected enclosing owner or range.
+          return current;
+        }
       } else if (place->root == MirPlaceRootKind::Value) {
         const MirValue *value = output.findValue(place->value);
         const MirLoanId loanId =
@@ -8267,9 +8274,15 @@ private:
         if (existing != 0 && existing != found->second) {
           const MirLoan *transient = output.findLoan(existing);
           const MirLoan *retained = output.findLoan(found->second);
+          // Several shared aliases can retain one semantic owner identity
+          // even when an accessor selects a different runtime referent. Keep
+          // the owner loan here; reference initialization separately captures
+          // the checked descendant call-result address before its loan ends.
           if (transient == nullptr || retained == nullptr ||
               desired->access != AccessMode::ReadOnly ||
-              !sameBorrowSource(transient->source, retained->source)) {
+              (!sameBorrowSource(transient->source, retained->source) &&
+               !retainableCallResultChain(existing, found->second, valueId,
+                                          desired->access))) {
             valid = false;
           }
         }
@@ -9164,6 +9177,18 @@ private:
         // the source expression from carrier topology.
         reference.place = placeForValue(*statement.value);
         retainedLoan = reference.loan;
+        const auto *address = output.findPlace(reference.place);
+        if (address != nullptr &&
+            ((address->root == MirPlaceRootKind::Loan &&
+              retainableCallResultChain(address->loan, retainedLoan,
+                                        *statement.value,
+                                        binding->info.type.referenceAccess)) ||
+             (address->root == MirPlaceRootKind::Binding &&
+              address->projections.size() == 1 &&
+              address->projections.front().kind ==
+                  MirProjectionKind::Dereference &&
+              referenceAccessorBindings.contains(address->binding))))
+          referenceAccessorBindings.insert(*statement.binding);
         operands.push_back(std::move(reference));
       } else {
         MirOperand initializer = valueOperand(*statement.value);
@@ -10690,6 +10715,7 @@ private:
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
+  std::unordered_set<HirBindingId> referenceAccessorBindings;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
   std::unordered_map<SemanticLoanId, MirPlaceId> semanticLoanPlaces;
