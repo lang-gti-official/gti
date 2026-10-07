@@ -4149,8 +4149,9 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       source == nullptr ? nullptr : findInstruction(body, source->definition);
   const bool functionCallProducer =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      producer->functionTarget && !producer->constructorTarget &&
-      !producer->lambdaTarget && !producer->bodyTarget &&
+      (producer->functionTarget || producer->nativeCalleeType) &&
+      !producer->constructorTarget && !producer->lambdaTarget &&
+      !producer->bodyTarget &&
       // A resolved nominal operator() is an ordinary function-target call.
       // Its receiver capability is checked by call admission; it does not
       // change the exact result-slot/consumer proof below.
@@ -4541,6 +4542,9 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
   const bool directCallableCall = definition != nullptr &&
                                   callableValueInvocation(*definition) &&
                                   definition->result == valueId;
+  const bool directNativeCall =
+      definition != nullptr && definition->kind == MirInstructionKind::Call &&
+      definition->nativeCalleeType && definition->result == valueId;
   const bool directDefaultConstruction =
       definition != nullptr && definition->kind == MirInstructionKind::Call &&
       definition->result && *definition->result == valueId &&
@@ -4560,8 +4564,9 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
       expectedOwnedClassExtractionDestination(body, valueId);
   const StagedClassResult staged = stagedClassResultForSource(body, valueId);
   if (!directConstruct && !directMove && !directCopy && !directFunctionCall &&
-      !directCallableCall && !directDefaultConstruction && !restoringExchange &&
-      ownedExpectedExtraction == nullptr && staged.producer != definition) {
+      !directCallableCall && !directNativeCall && !directDefaultConstruction &&
+      !restoringExchange && ownedExpectedExtraction == nullptr &&
+      staged.producer != definition) {
     return nullptr;
   }
   if (ownedExpectedExtraction != nullptr) {
@@ -4969,6 +4974,13 @@ directTemporaryArgumentForValue(const MirBody &body, MirValueId valueId) {
 
 [[nodiscard]] DirectTemporaryBorrow
 directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  // Both receiver and argument proofs require an exact class temporary.
+  // Scalars cannot satisfy that contract; do not scan every call in the body
+  // to rediscover the same necessary exclusion for each scalar value.
+  if (value == nullptr || value->info.type.kind != SemanticType::Class) {
+    return {};
+  }
   const DirectTemporaryBorrow receiver =
       directTemporaryReceiverForValue(body, valueId);
   return receiver ? receiver : directTemporaryArgumentForValue(body, valueId);
@@ -4976,7 +4988,17 @@ directTemporaryBorrowForValue(const MirBody &body, MirValueId valueId) {
 
 [[nodiscard]] DirectTemporaryBorrow
 directTemporaryBorrowForSlot(const MirBody &body, const MirPlace &slot) {
+  // A successful directTemporaryBorrow proves these exact slot/value facts.
+  // Restrict candidates before the expensive call/lifecycle proof, retaining
+  // that complete proof for every potentially matching materialization.
+  if (slot.type.kind != SemanticType::Class ||
+      slot.access != AccessMode::Mutable || slot.sourceValue == 0) {
+    return {};
+  }
   for (const MirValue &value : body.values) {
+    if (value.sourceValue != slot.sourceValue || value.info.type != slot.type) {
+      continue;
+    }
     const DirectTemporaryBorrow temporary =
         directTemporaryBorrowForValue(body, value.id);
     if (temporary.slot == &slot) {
@@ -22108,22 +22130,27 @@ passiveCAbiCallAssignmentResult(const MirProgram &program, const MirBody &body,
       call != nullptr && call->functionTarget
           ? program.findFunctionInstance(*call->functionTarget)
           : nullptr;
+  const bool native =
+      call != nullptr && isMirNativeIndirectCall(program, body, *call);
   if (value == nullptr ||
       passiveCAbiRecordInstance(program, value->info.type) == nullptr ||
       value->info.traits.drop != DropKind::Trivial ||
       value->info.traits.containsBorrowedState || call == nullptr ||
       call->kind != MirInstructionKind::Call || !call->result ||
-      *call->result != valueId || call->destination || call->receiver ||
-      call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
-      call->callableInvocation || call->intrinsic != IntrinsicKind::None ||
+      *call->result != valueId || call->destination ||
+      (call->receiver && !native) || call->constructorTarget ||
+      call->lambdaTarget || call->bodyTarget ||
+      (call->callableInvocation && !native) ||
+      call->intrinsic != IntrinsicKind::None ||
       !call->localFailureSites.empty() ||
       !call->definedFailure.localOrigins.empty() ||
       call->definedFailure.propagation != FailurePropagationKind::None ||
-      target == nullptr || target->returnType != value->info.type ||
-      !((target->linkage == LanguageLinkage::C) ||
-        (target->linkage == LanguageLinkage::Gti &&
-         target->definitionKind == MirDefinitionKind::Source &&
-         !target->mayRaiseDefinedFailure))) {
+      (!native &&
+       (target == nullptr || target->returnType != value->info.type ||
+        !((target->linkage == LanguageLinkage::C) ||
+          (target->linkage == LanguageLinkage::Gti &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           !target->mayRaiseDefinedFailure))))) {
     return {};
   }
 
@@ -34232,88 +34259,6 @@ private:
         output << ')';
       }
     };
-    // Contextual &handle arguments name internal integer-address storage, not
-    // native T* storage. Stage exactly those slots at the foreign boundary;
-    // never reinterpret a raw_address<T> object as a T* object. Preserve
-    // repeated arguments' alias identity by sharing their native slot.
-    std::vector<const MirPlace *> nativeOutSlots;
-    std::vector<std::optional<std::size_t>> nativeOutArguments(
-        instruction.operands.size());
-    const auto *nativeTarget =
-        instruction.functionTarget
-            ? program.findFunctionInstance(*instruction.functionTarget)
-            : nullptr;
-    if (nativeTarget && nativeTarget->linkage == LanguageLinkage::C) {
-      for (std::size_t index = 0; index < instruction.operands.size();
-           ++index) {
-        MirOperand operand = instruction.operands[index];
-        if (operand.type.kind != SemanticType::RawPointer ||
-            operand.type.arguments.size() != 1 ||
-            operand.type.arguments.front().kind != SemanticType::RawPointer)
-          continue;
-        const MirPlace *slot = nullptr;
-        std::unordered_set<MirValueId> visited;
-        while (operand.kind == MirOperandKind::Value &&
-               visited.insert(operand.value).second) {
-          const MirValue *value = facts.body.findValue(operand.value);
-          const MirInstruction *producer =
-              value ? findInstruction(facts.body, value->definition) : nullptr;
-          if (!producer || producer->operands.size() != 1)
-            break;
-          if (producer->kind == MirInstructionKind::Compute &&
-              producer->operation == MirOperation::AddressOf &&
-              producer->operands.front().kind == MirOperandKind::Address) {
-            slot = facts.body.findPlace(producer->operands.front().place);
-            break;
-          }
-          if (producer->kind != MirInstructionKind::CallInput &&
-              !(producer->kind == MirInstructionKind::Compute &&
-                producer->operation == MirOperation::Identity))
-            break;
-          operand = producer->operands.front();
-        }
-        if (!slot || slot->type.kind != SemanticType::RawPointer)
-          continue;
-        // A foreign record's actual native pointer field needs no staging:
-        // passing its real address also preserves aliasing with record args.
-        bool nativeStorage = false;
-        for (auto projection = slot->projections.rbegin();
-             projection != slot->projections.rend(); ++projection) {
-          if (projection->kind == MirProjectionKind::RawDereference ||
-              projection->kind == MirProjectionKind::RawIndex) {
-            nativeStorage = true;
-            break;
-          }
-          if (projection->kind != MirProjectionKind::Field)
-            continue;
-          for (const auto &owner : program.classInstances())
-            if (owner.cAbiRecord &&
-                std::any_of(owner.declaredFields.begin(),
-                            owner.declaredFields.end(), [&](const auto &field) {
-                              return field.symbol == projection->field;
-                            }))
-              nativeStorage = true;
-          break;
-        }
-        if (nativeStorage)
-          continue;
-        const auto sameSlot = [&](const MirPlace *other) {
-          if (slot->key && other->key)
-            return *slot->key == *other->key;
-          return slot->root == other->root && slot->binding == other->binding &&
-                 slot->symbol == other->symbol && slot->value == other->value &&
-                 slot->loan == other->loan && slot->capture == other->capture &&
-                 slot->temporary == other->temporary &&
-                 slot->projections == other->projections;
-        };
-        const auto found = std::find_if(nativeOutSlots.begin(),
-                                        nativeOutSlots.end(), sameSlot);
-        nativeOutArguments[index] =
-            static_cast<std::size_t>(found - nativeOutSlots.begin());
-        if (found == nativeOutSlots.end())
-          nativeOutSlots.push_back(slot);
-      }
-    }
     const auto emitCallOperands = [&](const MirFunctionInstance *target,
                                       bool cBoundary, bool transformed) {
       bool emitted = false;
@@ -34323,12 +34268,6 @@ private:
           output << ", ";
         }
         const MirOperand &operand = instruction.operands[index];
-        if (cBoundary && nativeOutArguments[index]) {
-          output << "&__gti_native_out_" << instruction.id << '_'
-                 << *nativeOutArguments[index];
-          emitted = true;
-          continue;
-        }
         const bool transformedCallable =
             transformed && target != nullptr &&
             std::any_of(target->callableParameters.begin(),
@@ -36404,7 +36343,7 @@ private:
              << typeSpelling(instruction.info.type) << "{};\n";
       return;
     }
-    if (!instruction.functionTarget) {
+    if (!instruction.functionTarget && !instruction.nativeCalleeType) {
       throw std::logic_error(
           "verified MIR direct call lost its exact target declaration");
     }
@@ -36426,7 +36365,7 @@ private:
         instruction.functionTarget
             ? program.findFunctionInstance(*instruction.functionTarget)
             : nullptr;
-    if (instruction.receiver) {
+    if (instruction.receiver && !instruction.nativeCalleeType) {
       // Staged through a CallInput, or borrowed directly on the receiver
       // operand (a self-member call); both name the spellable place.
       const MirInstruction *staged =
@@ -36979,47 +36918,28 @@ private:
       emitReceiverExpression();
       output << '.';
     }
-    if (!nativeOutSlots.empty()) {
-      output << "([&]() { ";
-      for (std::size_t index = 0; index < nativeOutSlots.size(); ++index) {
-        output << "decltype(::gti_internal::backend::native_pointer_value(";
-        emitStoragePlaceValue(facts, *nativeOutSlots[index]);
-        output << ")) __gti_native_out_" << instruction.id << '_' << index
-               << "{}; ::gti_internal::backend::raw_pointer_slot_copy("
-               << "__gti_native_out_" << instruction.id << '_' << index << ", ";
-        emitStoragePlaceValue(facts, *nativeOutSlots[index]);
-        output << "); ";
-      }
-      if (instruction.info.type != SemanticType::Void)
-        output << "auto __gti_native_result = ";
+    if (instruction.nativeCalleeType) {
+      output << '(';
+      emitOperand(*instruction.receiver);
+      output << ')';
+    } else {
+      const std::string calleeSpelling = selectedBodySpelling();
+      output << (instruction.dispatch == CallDispatch::Virtual
+                     ? unqualifiedBodySpelling(calleeSpelling)
+                     : std::string_view(calleeSpelling));
     }
-    const std::string calleeSpelling = selectedBodySpelling();
-    output << (instruction.dispatch == CallDispatch::Virtual
-                   ? unqualifiedBodySpelling(calleeSpelling)
-                   : std::string_view(calleeSpelling));
     if (target != nullptr) {
       emitThreadTaskTemplateArgument(*target);
       emitCallablePackTemplateArguments(facts.body, *target);
     }
     output << '(';
     const bool cBoundary =
-        target != nullptr && target->linkage == LanguageLinkage::C;
+        instruction.nativeCalleeType ||
+        (target != nullptr && target->linkage == LanguageLinkage::C);
     // The C prototype takes ::gti_c_string_view; the shared operand writer
     // marshals views and expands an exact trailing concrete GTI pack.
     (void)emitCallOperands(target, cBoundary, false);
     output << ')';
-    if (!nativeOutSlots.empty()) {
-      output << "; ";
-      for (std::size_t index = 0; index < nativeOutSlots.size(); ++index) {
-        output << "::gti_internal::backend::raw_pointer_slot_copy(";
-        emitStoragePlaceValue(facts, *nativeOutSlots[index]);
-        output << ", __gti_native_out_" << instruction.id << '_' << index
-               << "); ";
-      }
-      if (instruction.info.type != SemanticType::Void)
-        output << "return __gti_native_result; ";
-      output << "}())";
-    }
     if (pairedResultLoan != nullptr) {
       output << ')';
     }
@@ -42934,7 +42854,15 @@ bool cppMirNeedsFailureFreeBoundaryWrapper(
 bool cppMirNeedsTerminalSubscriptBoundaryWrapper(
     const MirProgram &program, const CppMirBodyEmissionMap &representations,
     HirFunctionInstanceId function) {
-  if (function == 0) {
+  const MirFunctionInstance *target = program.findFunctionInstance(function);
+  // containedSubscriptMember can only select this exact structural family.
+  // Most failure-capable functions are not subscript members and must not
+  // trigger a whole-program projection scan just to establish that fact.
+  if (target == nullptr || !target->overloadedOperator ||
+      *target->overloadedOperator != OverloadedOperator::Subscript ||
+      !target->owner || target->parameterTypes.size() != 1 ||
+      target->linkage != LanguageLinkage::Gti ||
+      target->definitionKind != MirFunctionInstance::DefinitionKind::Source) {
     return false;
   }
   const auto selectsFunction = [&](const MirBody &body, const MirPlace *place,
@@ -46904,6 +46832,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       case MirInstructionKind::Call: {
+        if (instruction.nativeCalleeType) {
+          if (!isMirNativeIndirectCall(program_, body, instruction) ||
+              !typeRow(*instruction.nativeCalleeType) ||
+              !typeRow(instruction.info.type) ||
+              !valueOperand(*instruction.receiver) ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand))
+            return false;
+          continue;
+        }
         if (simdIntrinsic(instruction.intrinsic)) {
           if (instruction.operands.size() != 3 || instruction.result ||
               instruction.receiver || instruction.functionTarget)
@@ -47995,7 +47933,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               const bool functionItemReady =
                   operand.type.hasFunctionItemShape() &&
                   valueOperand(operand) && typeRow(operand.type);
-              if (!lambdaReady && !classReady && !functionItemReady) {
+              const bool nativeReady = operand.type.hasNativeFunctionShape() &&
+                                       valueOperand(operand) &&
+                                       typeRow(operand.type);
+              if (!lambdaReady && !classReady && !functionItemReady &&
+                  !nativeReady) {
                 callableArgumentsReady = false;
                 break;
               }

@@ -1171,7 +1171,10 @@ callableSignatureMatches(const MirCallableSignature &signature,
        !instruction.lambdaTarget) ||
       (signature.lambdaTarget &&
        signature.lambdaTarget == instruction.lambdaTarget &&
-       !instruction.functionTarget);
+       !instruction.functionTarget) ||
+      (signature.nativeCalleeType &&
+       signature.nativeCalleeType == instruction.nativeCalleeType &&
+       !instruction.functionTarget && !instruction.lambdaTarget);
   return sameTarget && signature.selectedCapability &&
          instruction.callableInvocation == signature.selectedCapability &&
          callResultMatches(instruction.info, signature.returnType) &&
@@ -1335,6 +1338,12 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                           const MirFunctionInstance *caller = nullptr) {
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.nativeCalleeType &&
+          !isMirNativeIndirectCall(program, body, instruction)) {
+        return verificationFailure(body, owner,
+                                   "invalid native indirect call metadata",
+                                   block.id, instruction.id);
+      }
       if (instruction.kind == MirInstructionKind::Move &&
           instruction.operands.size() == 1) {
         const MirPlace *source =
@@ -1674,14 +1683,19 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
               receiverInput->callInputKind == HirCallInputKind::MoveValue))));
       const bool exactLambdaCallable =
           lambdaTarget != nullptr && !instruction.functionTarget;
-      const bool exactCallableTarget =
-          exactFunctionCallable != exactLambdaCallable;
+      const bool exactNativeCallable =
+          isMirNativeIndirectCall(program, body, instruction);
+      const bool exactCallableTarget = int(exactFunctionCallable) +
+                                           int(exactLambdaCallable) +
+                                           int(exactNativeCallable) ==
+                                       1;
 
       if (instruction.callableInvocation.has_value() != exactCallableTarget) {
         return verificationFailure(
             body, owner,
             "callable invocation capability does not match an "
-            "exact lambda, call operator, or consuming receiver target",
+            "exact lambda, native signature, call operator, or consuming "
+            "receiver target",
             block.id, instruction.id);
       }
       if (instruction.callableInvocation) {
@@ -2429,7 +2443,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           transfersOut(instruction) || preparedOwnershipTransfer;
       if (instruction.kind == MirInstructionKind::Call && transfersOwnership &&
           instruction.intrinsic == IntrinsicKind::None &&
-          !instruction.functionTarget && !instruction.lambdaTarget) {
+          !instruction.functionTarget && !instruction.lambdaTarget &&
+          !instruction.nativeCalleeType) {
         return verificationFailure(
             body, owner, "ordinary call is missing its exact target identity",
             block.id, instruction.id);
@@ -2476,6 +2491,14 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
 
       const MirFunctionInstance *target = nullptr;
+      if (instruction.nativeCalleeType &&
+          !isMirNativeIndirectCall(program, body, instruction)) {
+        return verificationFailure(
+            body, owner,
+            "native indirect call lost its exact signature, ordered callee "
+            "inputs or unsafe contract",
+            block.id, instruction.id);
+      }
       if (instruction.callerLocation &&
           program.failureMetadata().callerSiteFor(
               *instruction.callerLocation) != instruction.callerLocationSite) {
@@ -2762,6 +2785,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
       if (instruction.kind == MirInstructionKind::Call &&
           !instruction.functionTarget && !instruction.lambdaTarget &&
+          !instruction.nativeCalleeType &&
           instruction.intrinsic == IntrinsicKind::None &&
           instruction.callableInvocation &&
           instruction.definedFailure.propagation !=
@@ -11224,16 +11248,6 @@ verifyMirProgramContracts(const MirProgram &program) {
            .owner = instance.id,
            .message = "GTI-linkage function has an external C symbol"});
     }
-    const bool nestedPointerReturn =
-        instance.returnType.kind == SemanticType::RawPointer &&
-        instance.returnType.arguments.size() == 1 &&
-        instance.returnType.arguments.front().kind == SemanticType::RawPointer;
-    if (nestedPointerReturn && !instance.cArrayCountParameter) {
-      result.errors.push_back(
-          {.bodyKind = MirBodyKind::Function,
-           .owner = instance.id,
-           .message = "two-level pointer return lacks c_array metadata"});
-    }
     if (instance.cArrayCountParameter) {
       const std::size_t count = *instance.cArrayCountParameter;
       const SemanticType *countType = count < instance.parameterTypes.size()
@@ -11316,8 +11330,11 @@ verifyMirProgramContracts(const MirProgram &program) {
            signatureIndex < parameter.signatures.size(); ++signatureIndex) {
         const MirCallableSignature &signature =
             parameter.signatures[signatureIndex];
-        const bool hasTarget = signature.functionTarget.has_value() !=
-                               signature.lambdaTarget.has_value();
+        const bool hasTarget =
+            int(signature.functionTarget.has_value()) +
+                int(signature.lambdaTarget.has_value()) +
+                int(signature.nativeCalleeType.has_value()) ==
+            1;
         const std::string prefix =
             "signature " + std::to_string(signatureIndex) + " ";
         if (!hasTarget) {
@@ -11376,6 +11393,18 @@ verifyMirProgramContracts(const MirProgram &program) {
               target->type != parameter.callableType) {
             rejectCallableContract(prefix +
                                    "does not match an exact lambda target");
+          }
+        } else if (signature.nativeCalleeType) {
+          const auto &type = *signature.nativeCalleeType;
+          const auto parameters = type.nativeFunctionParameterTypes();
+          if (type != parameter.callableType ||
+              !type.hasNativeFunctionShape() ||
+              signature.returnType != *type.nativeFunctionReturnType() ||
+              signature.parameterTypes.size() != parameters.size() ||
+              !std::equal(parameters.begin(), parameters.end(),
+                          signature.parameterTypes.begin())) {
+            rejectCallableContract(prefix +
+                                   "does not match an exact native signature");
           }
         }
         if (*signature.selectedCapability != expected) {
@@ -12251,6 +12280,101 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     return result;
   }
 
+  const auto validScalarIdentity = [&](const auto &self,
+                                       const SemanticType &type) -> bool {
+    if (type.nativeCScalar != NativeCScalarKind::None &&
+        SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+            type) {
+      return false;
+    }
+    const auto validArguments = [&](const auto &arguments) {
+      return std::all_of(
+          arguments.begin(), arguments.end(),
+          [&](const auto &argument) { return self(self, argument); });
+    };
+    return validArguments(type.arguments) &&
+           validArguments(type.lambdaEnclosingClassTypes) &&
+           validArguments(type.lambdaEnclosingFunctionTypes);
+  };
+  const auto checkProgramType = [&](const SemanticType &type) {
+    if (!validScalarIdentity(validScalarIdentity, type)) {
+      result.errors.push_back(
+          {.message = "MIR native C scalar identity disagrees with the "
+                      "selected target"});
+    }
+  };
+  const auto checkTypes = [&](const auto &types) {
+    for (const SemanticType &type : types) {
+      checkProgramType(type);
+    }
+  };
+  for (const auto &function : program.functionInstances()) {
+    checkProgramType(function.returnType);
+    checkTypes(function.typeArguments);
+    checkTypes(function.parameterTypes);
+    for (const auto &parameter : function.callableParameters) {
+      checkProgramType(parameter.callableType);
+      for (const auto &signature : parameter.signatures) {
+        if (signature.nativeCalleeType) {
+          checkProgramType(*signature.nativeCalleeType);
+        }
+        checkProgramType(signature.returnType);
+        checkTypes(signature.parameterTypes);
+      }
+    }
+  }
+  for (const auto &instance : program.classInstances()) {
+    checkProgramType(instance.type);
+    for (const auto &field : instance.declaredFields) {
+      checkProgramType(field.type);
+    }
+    for (const auto &field : instance.fields) {
+      checkProgramType(field.type);
+    }
+    for (const auto &field : instance.fieldDropOrder) {
+      checkProgramType(field.type);
+    }
+    if (instance.cAbiLayout) {
+      for (const auto &field : instance.cAbiLayout->fields) {
+        checkProgramType(field.type);
+      }
+    }
+    if (instance.unionLayout) {
+      for (const auto &field : instance.unionLayout->fields) {
+        checkProgramType(field.type);
+      }
+    }
+  }
+  for (const auto &constructor : program.constructorInstances()) {
+    checkTypes(constructor.typeArguments);
+    checkTypes(constructor.parameterTypes);
+    for (const auto &initializer : constructor.initializers) {
+      checkProgramType(initializer.targetType);
+    }
+  }
+  for (const auto &lambda : program.lambdaInstances()) {
+    checkProgramType(lambda.type);
+    checkProgramType(lambda.returnType);
+    checkTypes(lambda.parameterTypes);
+    checkTypes(lambda.captureTypes);
+  }
+  for (const auto &adapter : program.nativeCallbackAdapters()) {
+    checkProgramType(adapter.type);
+  }
+  for (const auto &adapter : program.threadTaskAdapters()) {
+    checkProgramType(adapter.taskType);
+    checkProgramType(adapter.resultType);
+  }
+  for (const auto &enumeration : program.integralEnums()) {
+    checkProgramType(enumeration.underlyingType);
+  }
+  for (const auto &enumeration : program.payloadEnums()) {
+    checkProgramType(enumeration.type);
+    for (const auto &variant : enumeration.variants) {
+      checkTypes(variant.payloadTypes);
+    }
+  }
+
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {
@@ -12261,6 +12385,94 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       continue;
     }
     appendVerification(result, verifyMirBody(*body, address.owner));
+    const auto check = [&](const SemanticType &type,
+                           MirInstructionId instruction = 0) {
+      if (!validScalarIdentity(validScalarIdentity, type)) {
+        result.errors.push_back(
+            {.bodyKind = address.kind,
+             .owner = address.owner,
+             .instruction = instruction,
+             .message = "MIR native C scalar identity disagrees with the "
+                        "selected target"});
+      }
+    };
+    const auto checkDrop = [&](const auto &self,
+                               const MirDropType &drop) -> void {
+      check(drop.type);
+      if (drop.fixedArray) {
+        check(drop.fixedArray->leafType);
+      }
+      for (const auto &child : drop.aggregate) {
+        self(self, child);
+      }
+    };
+    check(body->returnType);
+    for (const auto &value : body->values) {
+      check(value.info.type);
+    }
+    for (const auto &iteration : body->rangeIterations) {
+      check(iteration.rangeType);
+      check(iteration.iteratorType);
+      check(iteration.sentinelType);
+      check(iteration.elementType);
+    }
+    for (const auto &obligation : body->dropObligations) {
+      checkDrop(checkDrop, obligation.dropType);
+    }
+    for (const MirPlace &place : body->places) {
+      check(place.type);
+    }
+    for (const MirBlock &block : body->blocks) {
+      for (const auto &parameter : block.parameters) {
+        check(parameter.type);
+      }
+      for (const MirInstruction &instruction : block.instructions) {
+        check(instruction.info.type, instruction.id);
+        check(instruction.dispatchOwner, instruction.id);
+        if (instruction.nativeCalleeType) {
+          check(*instruction.nativeCalleeType, instruction.id);
+        }
+        if (instruction.objectLayoutType) {
+          check(*instruction.objectLayoutType, instruction.id);
+        }
+        if (instruction.receiver) {
+          check(instruction.receiver->type, instruction.id);
+        }
+        for (const auto &operand : instruction.operands) {
+          check(operand.type, instruction.id);
+        }
+        for (const auto &type : instruction.parameterTypes) {
+          check(type, instruction.id);
+        }
+        for (const auto &type : instruction.closureCaptureTypes) {
+          check(type, instruction.id);
+        }
+        if (instruction.elementCleanup) {
+          checkDrop(checkDrop, *instruction.elementCleanup);
+        }
+        if (instruction.replacementCleanup) {
+          checkDrop(checkDrop, *instruction.replacementCleanup);
+        }
+      }
+      const auto &terminator = block.terminator;
+      if (terminator.value) {
+        check(terminator.value->type);
+      }
+      for (const auto &operand : terminator.targetArguments) {
+        check(operand.type);
+      }
+      for (const auto &operand : terminator.elseArguments) {
+        check(operand.type);
+      }
+      for (const auto &target : terminator.switchTargets) {
+        if (target.value) {
+          check(target.value->type);
+        }
+        for (const auto &operand : target.arguments) {
+          check(operand.type);
+        }
+      }
+    }
   }
   appendVerification(result, verifyMirProgramContracts(program));
   appendVerification(result, verifyMirEffectSummaries(program));

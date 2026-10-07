@@ -733,6 +733,7 @@ struct MirInstruction {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<SemanticType> nativeCalleeType;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
@@ -765,6 +766,14 @@ struct MirInstruction {
 
 [[nodiscard]] bool hasMirSafetyDischarge(const MirInstruction &instruction,
                                          MirSafetyDischarge discharge);
+// Shared verifier/backend/failure-proof admission of the native indirect call
+// family. The semantic signature remains authoritative; this independently
+// checks its ABI shape and ordered callee/argument staging against MIR.
+class MirProgram;
+struct MirBody;
+[[nodiscard]] bool isMirNativeIndirectCall(const MirProgram &program,
+                                           const MirBody &body,
+                                           const MirInstruction &instruction);
 [[nodiscard]] bool
 isMirFailureOutcomeDischarged(const MirInstruction &instruction,
                               std::size_t origin,
@@ -1212,6 +1221,7 @@ struct MirCallableSignature {
   std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
+  std::optional<SemanticType> nativeCalleeType;
 
   friend bool operator==(const MirCallableSignature &,
                          const MirCallableSignature &) = default;
@@ -1617,6 +1627,7 @@ struct MirPayloadEnum {
 class MirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
+  [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
   }
@@ -1759,6 +1770,7 @@ private:
   friend struct MirProgramTestAccess;
 
   bool valid_ = true;
+  TargetInfo target_ = TargetInfo::host();
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   FailureMetadata failureMetadata_;
   MirProgramInitializationPlan programInitialization;

@@ -2,6 +2,13 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_native_c_scalar_target_tests native_c_scalar_target_tests.cpp)
+target_link_libraries(gti_native_c_scalar_target_tests PRIVATE gti_compiler)
+add_test(NAME native_c_scalar_target COMMAND gti_native_c_scalar_target_tests)
+add_executable(gti_native_c_scalar_tests native_c_scalar_tests.cpp)
+target_link_libraries(gti_native_c_scalar_tests PRIVATE gti_cpp_backend)
+add_test(NAME native_c_scalar_pipeline COMMAND gti_native_c_scalar_tests)
+
 add_executable("gti_c_abi_smoke" "${PROJECT_SOURCE_DIR}/tests/c_abi_smoke.c")
 target_include_directories(
   "gti_c_abi_smoke"
@@ -376,6 +383,10 @@ add_test(NAME carrier_reference_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/carrier_reference_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(carrier_reference_runtime PROPERTIES TIMEOUT 180)
+add_test(NAME shared_accessor_range_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/shared_accessor_range_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(shared_accessor_range_runtime PROPERTIES TIMEOUT 240)
 
 add_test(
   NAME semantic_header_boundary
@@ -513,6 +524,8 @@ if(TARGET gti_lsp)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME raw_pointer_provenance_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_provenance_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME nested_raw_pointer_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_raw_pointer_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 endif()
 
 add_executable("gti_layout_query_tests" "${PROJECT_SOURCE_DIR}/tests/layout_query_tests.cpp")
@@ -535,6 +548,13 @@ add_executable("gti_native_callback_tests"
                "${PROJECT_SOURCE_DIR}/tests/native_callback_tests.cpp")
 target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_callback_pipeline COMMAND gti_native_callback_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME native_indirect_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/native_indirect_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(native_indirect_runtime PROPERTIES TIMEOUT 900)
+endif()
 
 add_executable(gti_cthread_tests "${PROJECT_SOURCE_DIR}/tests/cthread_tests.cpp")
 target_link_libraries(gti_cthread_tests PRIVATE gti_cpp_backend)
@@ -1867,14 +1887,16 @@ if(Python3_Interpreter_FOUND)
         "${PROJECT_SOURCE_DIR}/tests/composable_io_runtime_test.py"
         "$<TARGET_FILE:gti>")
     set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 600)
-    add_test(NAME extensible_formatting_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_lsp_test.py"
-        "$<TARGET_FILE:gti_lsp>")
-    add_test(NAME integral_enum_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/integral_enum_lsp_test.py"
-        "$<TARGET_FILE:gti_lsp>")
+    if(TARGET gti_lsp)
+      add_test(NAME extensible_formatting_lsp
+        COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_lsp_test.py"
+          "$<TARGET_FILE:gti_lsp>")
+      add_test(NAME integral_enum_lsp
+        COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/integral_enum_lsp_test.py"
+          "$<TARGET_FILE:gti_lsp>")
+    endif()
     add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"
@@ -2268,6 +2290,18 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(raw_pointer_conversion_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME native_c_scalar_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_c_scalar_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(native_c_scalar_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME nested_raw_pointer_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_raw_pointer_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(nested_raw_pointer_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME nested_raw_pointer_native_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_raw_pointer_native_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(nested_raw_pointer_native_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME raw_record_containers_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_record_containers_runtime_test.py"
             "$<TARGET_FILE:gti>")
@@ -3018,6 +3052,8 @@ if(Python3_Interpreter_FOUND)
     )
   endif()
 endif()
+
+include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
 
 # Release binaries intentionally contain no source-tree resource fallback.
 # Every build-tree test runs before staging, including newly registered CLI/LSP

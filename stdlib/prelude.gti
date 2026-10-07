@@ -13,6 +13,24 @@ namespace gti_internal {
   class prefix_storage<T> {};
   class text_view {};
   class c_string {};
+  class c_bool {};
+  class c_char {};
+  class c_schar {};
+  class c_uchar {};
+  class c_short {};
+  class c_ushort {};
+  class c_int {};
+  class c_uint {};
+  class c_long {};
+  class c_ulong {};
+  class c_longlong {};
+  class c_ulonglong {};
+  class c_float {};
+  class c_double {};
+  class c_size_t {};
+  class c_ptrdiff_t {};
+  class c_intptr_t {};
+  class c_uintptr_t {};
 
   @compiler_constraint("numeric") concept numeric_capability<T>;
   @compiler_constraint("signed_numeric") concept signed_numeric_capability<T>;
@@ -86,6 +104,25 @@ namespace gti_internal {
 }
 
 using c_string = gti_internal::c_string;
+using c_void = void;
+using c_bool = gti_internal::c_bool;
+using c_char = gti_internal::c_char;
+using c_schar = gti_internal::c_schar;
+using c_uchar = gti_internal::c_uchar;
+using c_short = gti_internal::c_short;
+using c_ushort = gti_internal::c_ushort;
+using c_int = gti_internal::c_int;
+using c_uint = gti_internal::c_uint;
+using c_long = gti_internal::c_long;
+using c_ulong = gti_internal::c_ulong;
+using c_longlong = gti_internal::c_longlong;
+using c_ulonglong = gti_internal::c_ulonglong;
+using c_float = gti_internal::c_float;
+using c_double = gti_internal::c_double;
+using c_size_t = gti_internal::c_size_t;
+using c_ptrdiff_t = gti_internal::c_ptrdiff_t;
+using c_intptr_t = gti_internal::c_intptr_t;
+using c_uintptr_t = gti_internal::c_uintptr_t;
 
 namespace std {
   /// Can initialize a new value by movement; assignment is not required.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/target.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -52,8 +54,8 @@ struct NativeScope {
 enum class NativeTypeKind {
   Void,
   Bool,
-  // Plain `char` stays distinct from the sized integers: the GTI ABI admits
-  // `const char*` as `c_string` but bare `char` is not an ABI scalar.
+  // Plain `char` has its own C declaration identity and selected-target value
+  // domain; it is not signed char, unsigned char, or a GTI code unit.
   Char,
   Integer,
   Floating,
@@ -70,6 +72,7 @@ enum class NativeTypeKind {
 
 struct NativeType {
   NativeTypeKind kind = NativeTypeKind::Void;
+  NativeCScalarKind scalarIdentity = NativeCScalarKind::None;
   // Integer / Floating.
   std::uint32_t bitWidth = 0;
   bool isSigned = false;

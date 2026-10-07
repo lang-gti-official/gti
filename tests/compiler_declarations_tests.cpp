@@ -7191,7 +7191,8 @@ int main() {
               "template <typename T, std::size_t N>\n  class StaticArray") ==
               std::string::npos &&
           generated.find("typename T =") == std::string::npos &&
-          generated.find("std::size_t N =") == std::string::npos,
+          generated.find("template <typename T, std::size_t N =") ==
+              std::string::npos,
       "the C++ backend should give each GTI-selected mixed type/value "
       "application an ordinary concrete class and should not rely on "
       "native template selection or defaults");

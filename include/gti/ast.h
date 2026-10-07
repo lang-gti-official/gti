@@ -98,9 +98,14 @@ struct TypeRef {
 
   NamePath name;
   std::vector<TypeRef> arguments;
-  std::optional<Token> pointeeConst;
-  std::optional<Token> pointer;
-  std::optional<Token> outerPointer;
+  struct PointerLayer {
+    Token star;
+    // Qualifies this layer's pointee, including another pointer object.
+    std::optional<Token> pointeeConst;
+  };
+  // Innermost first, matching written declarator order. Every layer retains
+  // its own source token and permission; depth is not a nominal ABI exception.
+  std::vector<PointerLayer> pointers;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
   // Explicit access on a function-signature reference parameter component.

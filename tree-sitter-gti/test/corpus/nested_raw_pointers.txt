@@ -1,0 +1,32 @@
+==================
+Independent nested pointer qualifiers
+==================
+
+using Slot = const c_char* const**;
+void reset(c_char*** slot, c_char* const* readonly);
+
+---
+
+(source_file
+  (type_alias_declaration
+    (identifier)
+    (type
+      (user_type
+        (identifier))
+      (pointer_declarator)))
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (pointer_declarator))
+        (identifier))
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (pointer_declarator))
+        (identifier)))))
