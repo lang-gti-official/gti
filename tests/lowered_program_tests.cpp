@@ -852,6 +852,99 @@ void testMutationRejection() {
   }
 }
 
+void testConcreteBranchSymbols() {
+  constexpr std::string_view source = R"gti(
+T select<T, uint64_t Mode>(T value) {
+  if constexpr (Mode == 0) {
+    T local = value;
+    { T local = value; }
+    return local;
+  } else {
+    T alternative = value;
+    return alternative;
+  }
+}
+int main() {
+  return select<int, 0>(7) == 7 && select<bool, 0>(true) &&
+         select<int, 1>(9) == 9 ? 0 : 1;
+}
+)gti";
+  auto frontend = lang::Frontend().analyze("concrete-branch-symbols.gti",
+                                           std::string(source));
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "selected branches retain semantic locals");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto &symbols = frontend.hir.instanceSymbols();
+  expect(symbols.size() == 5 &&
+             std::count_if(symbols.begin(), symbols.end(),
+                           [](const auto &s) {
+                             return s.name == "local" &&
+                                    s.type == lang::SemanticType::Bool;
+                           }) == 2 &&
+             std::count_if(symbols.begin(), symbols.end(),
+                           [](const auto &s) {
+                             return s.name == "local" &&
+                                    s.type == lang::SemanticType::Int32;
+                           }) == 2,
+         "two instances and shadowed locals retain separate typed identities");
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "concrete-only locals cross the lowered inventory");
+  if (!built.valid())
+    return;
+  for (const auto &symbol : symbols) {
+    const auto *lowered = built.program->findSymbol(symbol.id);
+    expect(lowered && lowered->type == symbol.type &&
+               lowered->nameSource == symbol.nameSpan,
+           "concrete symbol type and source identity survive lowering");
+  }
+  auto missing = *built.program;
+  std::erase_if(lang::LoweredProgramTestAccess::symbols(missing),
+                [&](const auto &symbol) { return symbol.id == symbols[0].id; });
+  expect(hasIssue(lang::verifyLoweredProgram(missing),
+                  lang::LoweredProgramIssueKind::InvalidSymbolInventory),
+         "missing selected-arm symbol still fails verification");
+  auto wrong = *built.program;
+  auto &wrongSymbols = lang::LoweredProgramTestAccess::symbols(wrong);
+  const auto record = std::find_if(
+      wrongSymbols.begin(), wrongSymbols.end(),
+      [&](const auto &symbol) { return symbol.id == symbols[0].id; });
+  record->type = lang::SemanticType::Unknown;
+  expect(hasIssue(lang::verifyLoweredProgram(wrong),
+                  lang::LoweredProgramIssueKind::InvalidSymbolInventory),
+         "a forged unresolved concrete local fails verification");
+  auto inactive = lang::Frontend().analyze("inactive-branch.gti", R"gti(
+int choose<uint64_t N>() {
+  if constexpr (N == 0) { int local = 2; return local; }
+  else { Missing type{}; return unknown_name; }
+}
+int main() { return choose<0>() - 2; }
+)gti");
+  expect(inactive.canGenerateCode(), "discarded arms remain unanalyzed");
+  auto invalidBorrow =
+      lang::Frontend().analyze("selected-borrow-escape.gti", R"gti(
+int& borrow<uint64_t N>() {
+  if constexpr (N == 0) { int local = 2; return local; }
+}
+int main() { return borrow<0>(); }
+)gti");
+  expect(!invalidBorrow.canGenerateCode() &&
+             std::any_of(invalidBorrow.diagnostics.begin(),
+                         invalidBorrow.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-S2045"; }),
+         "selected-arm locals still cannot escape by reference");
+  auto forged = frontend.hir;
+  auto &forgedSymbols =
+      const_cast<std::vector<lang::SymbolRecord> &>(forged.instanceSymbols());
+  forgedSymbols.front().type = lang::SemanticType::Bool;
+  expect(!lang::verifyHirProgramPlans(frontend.semantics, forged).valid(),
+         "a forged concrete symbol type fails HIR provenance verification");
+}
+
 } // namespace
 
 int main() {
@@ -859,6 +952,7 @@ int main() {
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
   testMutationRejection();
+  testConcreteBranchSymbols();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";
     return 1;

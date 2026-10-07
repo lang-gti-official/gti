@@ -705,6 +705,12 @@ public:
     return enums;
   }
 
+  // Semantic declarations created only by concrete body analysis (for example
+  // locals in a selected dependent constexpr arm), with request-wide IDs.
+  [[nodiscard]] const std::vector<SymbolRecord> &instanceSymbols() const {
+    return concreteSymbols;
+  }
+
   [[nodiscard]] const std::vector<HirFunctionInstance> &
   functionInstances() const {
     return functions;
@@ -796,6 +802,7 @@ private:
   ProgramKind programKind_ = ProgramKind::Executable;
   SemanticAnalysisSeal semanticAnalysisSeal;
   std::vector<HirEnum> enums;
+  std::vector<SymbolRecord> concreteSymbols;
   std::vector<HirClassInstance> classes;
   std::vector<HirFunctionInstance> functions;
   std::vector<HirNativeCallbackAdapter> nativeCallbacks;

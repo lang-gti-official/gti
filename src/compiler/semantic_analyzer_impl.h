@@ -146,7 +146,8 @@ public:
           savedSemanticLoanId(visitor.nextSemanticLoanId),
           savedPlaceSelectionId(visitor.nextPlaceSelectionId) {
       visitor.catalog.assertUnchangedSinceSeal();
-      visitor.semanticModel.beginInstanceDelta(baseModel);
+      visitor.semanticModel.beginInstanceDelta(baseModel,
+                                               visitor.instanceSymbolCeiling);
       visitor.diagnostics.clear();
     }
 
@@ -155,6 +156,8 @@ public:
     // Takes the delta and diagnostics, restores the visitor, and re-points
     // the delta at the restored base model. Call exactly once.
     [[nodiscard]] SemanticInstanceAnalysis finish() {
+      visitor.instanceSymbolCeiling =
+          visitor.semanticModel.database().symbolIdentityCeiling();
       SemanticInstanceAnalysis result{.model = std::move(visitor.semanticModel),
                                       .diagnostics =
                                           std::move(visitor.diagnostics)};
@@ -182,6 +185,11 @@ public:
     SemanticLoanId savedSemanticLoanId;
     std::size_t savedPlaceSelectionId;
   };
+
+  // New concrete-only declarations must not reuse another instance's IDs.
+  // Primary declaration IDs remain inherited; the base snapshot stays
+  // immutable.
+  SymbolId instanceSymbolCeiling = 0;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,

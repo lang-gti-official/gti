@@ -145,6 +145,10 @@ SemanticDatabase::symbols() const {
   return symbolRecords;
 }
 
+SymbolId SemanticDatabase::symbolIdentityCeiling() const {
+  return baseSymbolCount + symbolRecords.size();
+}
+
 [[nodiscard]] const SymbolRecord *
 SemanticDatabase::findSymbol(SymbolId id) const {
   if (id == 0) {
@@ -254,12 +258,12 @@ void SemanticDatabase::clear() {
 // Turns this database into an instance-analysis delta over baseDatabase:
 // lookups fall back to the base, and new symbol identities continue after
 // the base's so instance records never collide with base SymbolIds.
-void SemanticDatabase::beginInstanceDelta(
-    const SemanticDatabase &baseDatabase) {
+void SemanticDatabase::beginInstanceDelta(const SemanticDatabase &baseDatabase,
+                                          SymbolId reservedIdentityCeiling) {
   clear();
   base = &baseDatabase;
   baseSymbolCount =
-      baseDatabase.baseSymbolCount + baseDatabase.symbolRecords.size();
+      std::max(baseDatabase.symbolIdentityCeiling(), reservedIdentityCeiling);
 }
 
 void SemanticDatabase::rebase(const SemanticDatabase *baseDatabase) {
@@ -1416,14 +1420,16 @@ void SemanticModel::clearProgramConstantSubstitution(const Expr &expression) {
 // program's model. Loan tables deliberately do not fall back - instance
 // analysis restarts loan identities, mirroring the clearLoans() semantics
 // the previous whole-model copy relied on.
-void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel) {
+void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
+                                       SymbolId reservedIdentityCeiling) {
   clear();
   executionProfile_ = baseModel.executionProfile();
   placeSnapshot_ = baseModel.placeSnapshot();
   programKind_ = baseModel.programKind();
   embeddingPlan_ = baseModel.embeddingPlan();
   base = &baseModel;
-  semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase);
+  semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase,
+                                      reservedIdentityCeiling);
 }
 
 // Re-points an instance delta at a relocated base (the analyzer restores

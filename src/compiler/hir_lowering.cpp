@@ -1347,6 +1347,7 @@ private:
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);
+      retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
                                 snapshot.instantiationSite);
       model = &analysis.model;
@@ -1473,6 +1474,12 @@ private:
     }
   }
 
+  void retainInstanceSymbols(const SemanticModel &model) {
+    const auto &symbols = model.database().symbols();
+    output.program.concreteSymbols.insert(output.program.concreteSymbols.end(),
+                                          symbols.begin(), symbols.end());
+  }
+
   [[nodiscard]] SemanticInstanceAnalysis *
   ensureFunctionAnalysis(HirFunctionInstanceId id) {
     if (id == 0 || id > output.program.functions.size()) {
@@ -1512,6 +1519,7 @@ private:
         instanceProvider->analyzeFunctionInstance(
             declaration->id, classArguments, classValueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite);
     SemanticInstanceAnalysis *result = analysis.get();
@@ -1540,6 +1548,7 @@ private:
         instanceProvider->analyzeConstructorInstance(
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite);
     SemanticInstanceAnalysis *result = analysis.get();
@@ -1993,6 +2002,7 @@ private:
     if (!classArguments.empty() || !classValueArguments.empty()) {
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
+      retainInstanceSymbols(fieldAnalysis.model);
       // processPendingInstances completes this owner through processClass
       // before any constructor. That class-owned pass already publishes these
       // substitution diagnostics. Reanalysis supplies constructor-local field
@@ -2079,6 +2089,7 @@ private:
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
+      retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
       model = &analysis.model;
     }
@@ -4561,6 +4572,7 @@ private:
               (!target.arguments.empty() || !target.valueArguments.empty())) {
             defaults.emplace(instanceProvider->analyzeClassFieldInitializers(
                 target.classId, target.arguments, target.valueArguments));
+            retainInstanceSymbols(defaults->model);
             appendInstanceDiagnostics(std::move(defaults->diagnostics),
                                       tokenSpan(initializer->brace()));
           }

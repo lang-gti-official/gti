@@ -154,6 +154,39 @@ HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
   HirProgramPlanVerificationResult result;
+  std::unordered_map<SymbolId, const SymbolRecord *> instanceSymbols;
+  for (const SymbolRecord &symbol : program.instanceSymbols()) {
+    if (symbol.id == 0 ||
+        semantics.database().findSymbol(symbol.id) != nullptr ||
+        !instanceSymbols.emplace(symbol.id, &symbol).second ||
+        symbol.name.empty() || symbol.sourceUnit == 0 ||
+        symbol.nameSpan.end <= symbol.nameSpan.start) {
+      result.errors.emplace_back(
+          "HIR concrete symbol inventory has invalid or overlapping identity");
+    }
+  }
+  const auto verifyConcreteBindings = [&](const HirBody &body) {
+    for (const HirBinding &binding : body.bindings) {
+      const auto found = instanceSymbols.find(binding.info.symbol);
+      if (found != instanceSymbols.end() &&
+          (found->second->type != binding.info.type ||
+           found->second->traits != binding.info.traits ||
+           found->second->mutableBinding !=
+               (binding.info.access == AccessMode::Mutable))) {
+        result.errors.emplace_back(
+            "HIR concrete binding differs from its semantic symbol record");
+      }
+    }
+  };
+  verifyConcreteBindings(program.module());
+  for (const auto &instance : program.functionInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.constructorInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.destructorInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.lambdaInstances())
+    verifyConcreteBindings(instance.body);
   if (program.analysisSeal() != semantics.analysisSeal()) {
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");

@@ -662,6 +662,10 @@ add_executable("gti_lowered_program_tests"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_contract_client.cpp")
 target_link_libraries("gti_lowered_program_tests" PRIVATE gti_compiler)
 add_test(NAME lowered_program_contract COMMAND gti_lowered_program_tests)
+add_test(NAME generic_branch_locals_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/generic_branch_locals_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
 
 add_executable("gti_lowered_program_census"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_census.cpp"

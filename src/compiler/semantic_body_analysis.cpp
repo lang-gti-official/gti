@@ -31,6 +31,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   nextLambdaId = 1;
   nextSemanticLoanId = 1;
   nextPlaceSelectionId = 1;
+  instanceSymbolCeiling = 0;
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();

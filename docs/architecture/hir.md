@@ -20,6 +20,13 @@ access to that accessor's private storage.
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
 `SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
 Concrete generic validity is obtained through semantic instance reanalysis.
+`HirProgram::instanceSymbols` retains the exact ordered semantic symbol records
+introduced only by those concrete analyses. Their request-wide IDs are disjoint
+from primary and other instance symbols. HIR checks concrete binding types and
+access against these records; lowered-program construction copies them into the
+ordinary symbol inventory. The backend never discovers missing locals from AST
+or fabricates their types. Different substitutions and shadowed branch locals
+retain independent source/type identities; discarded arms contribute no facts.
 Every reanalyzed body has its own loan-number domain, including a range whose
 types do not depend on generic parameters. Plan verification retains exact
 non-dependent range types and selected protocol operations, compares loan
