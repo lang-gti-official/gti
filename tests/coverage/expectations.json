@@ -1349,9 +1349,7 @@
       "outcome": "rejected"
     },
     "diag-p10-unknown-attribute": {
-      "code": "GTI-P0001",
-      "finding": "A07",
-      "issue": 58,
+      "code": "GTI-S2099",
       "outcome": "rejected"
     },
     "diag-p11-unclosed-attribute": {
@@ -1703,12 +1701,10 @@
     },
     "a05-string-view-help-suggests-invalid-form": {
       "code": "GTI-S2003",
-      "finding": "A05",
       "forbid": [
         "std::string_view(value)"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a06-polymorphic-recursion-hang": {
       "code": "GTI-S2105",
@@ -1716,61 +1712,48 @@
       "timeout": 20
     },
     "a07-unknown-function-attribute": {
-      "code": "GTI-P0001",
-      "finding": "A07",
-      "issue": 58,
+      "code": "GTI-S2099",
       "outcome": "rejected"
     },
     "a08-unknown-type-cascade": {
       "code": "GTI-S2000",
-      "finding": "A08",
       "forbid": [
         "of type 'unknown'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a09-bad-if-condition-cascade": {
       "code": "GTI-P0003",
-      "finding": "A09",
       "forbid": [
         "without a matching '#if'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a10-payload-arity-cascade": {
       "code": "GTI-S2067",
-      "finding": "A10",
       "forbid": [
         "can reach the end"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a11-explicit-generic-argument-messages": {
-      "finding": "A11",
       "forbid": [
         "Conflicting types inferred",
         "from a fixed-array argument extent"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a12-extern-c-overload-duplicate": {
       "at_most": {
         "error[GTI-S2054]": 1
       },
       "code": "GTI-S2054",
-      "finding": "A12",
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a13-mir-field-symbol-order": {
       "deterministic": "--emit-mir",
-      "finding": "A13",
       "issue": 59,
-      "outcome": "nondeterministic",
+      "outcome": "pass",
       "runs": 20
     },
     "a14-generated-ctor-field-in-user-ctor": {
@@ -1784,50 +1767,41 @@
       "outcome": "ice"
     },
     "a16-relay-copyable-lambda": {
-      "finding": "A16",
       "issue": 62,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a17-narrow-negative-array-literal": {
       "issue": 63,
       "outcome": "pass"
     },
     "a18-function-item-pack-invoke": {
-      "code": "GTI-S2090",
-      "finding": "A18",
       "issue": 64,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a19-trailing-clause-dependent-compound": {
-      "code": "GTI-S2029",
-      "finding": "A19",
       "issue": 65,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a20-unnecessary-mut-per-instance": {
-      "finding": "A20",
       "forbid": [
         "warning[GTI-S2096]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a21-value-argument-resolved-as-type": {
-      "finding": "A21",
+      "code": "GTI-S2026",
       "forbid": [
         "Unknown type 'runtime'"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a22-spurious-s2068-after-constexpr-failure": {
       "code": "GTI-S2057",
-      "finding": "A22",
       "forbid": [
         "GTI-S2068"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a23-recursive-value-generic-layout": {
       "code": "GTI-S2082",
@@ -1836,12 +1810,11 @@
       "outcome": "rejected"
     },
     "a24-unreachable-warning-per-instance": {
-      "finding": "A24",
       "forbid": [
         "warning[GTI-S2095]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a25-expected-ref-relay-wrong-referent": {
       "finding": "A25",
@@ -1854,14 +1827,12 @@
       "outcome": "ice"
     },
     "a26-overloaded-deref-store-reads-owner": {
-      "finding": "A26",
       "issue": 71,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a27-compound-assign-overloaded-deref": {
-      "finding": "A27",
       "issue": 72,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-map-range-for-key-view": {
       "finding": "A28",
@@ -1899,22 +1870,19 @@
       "outcome": "pass"
     },
     "a32-optional-emplace-move-only-function": {
-      "finding": "A32",
       "issue": 77,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a32-vector-push-back-move-only-function": {
-      "finding": "A32",
       "issue": 77,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a33-unnecessary-mut-deref-store": {
-      "finding": "A33",
       "forbid": [
         "warning[GTI-S2096]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a34-view-relay-through-subscript": {
       "code": "GTI-S2045",
@@ -1923,12 +1891,14 @@
       "outcome": "rejected"
     },
     "a35-expected-ref-field-stale-message": {
-      "finding": "A35",
+      "code": "GTI-S2045",
+      "at_most": {
+        "error[GTI-S2045]": 1
+      },
       "forbid": [
         "may contain only one stored-reference dependency"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a36-unique-ptr-member-init-nullptr": {
       "code": "GTI-S2003",
@@ -1995,23 +1965,20 @@
       "outcome": "pass"
     },
     "a43-callback-argument-unknown-type": {
-      "finding": "A43",
+      "code": "GTI-S2076",
       "forbid": [
         "type 'unknown'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a44-raw-audit-duplicate-warning": {
       "at_most": {
         "warning[GTI-S2102]": 1
       },
-      "finding": "A44",
       "flags": [
         "--raw-pointer-audit=warn"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a45-base-plus-string-field-unsupported": {
       "finding": "A45",
@@ -2039,14 +2006,12 @@
       "outcome": "pass"
     },
     "a46-chained-subscript-compound": {
-      "finding": "A46",
       "issue": 87,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a46-chained-subscript-self-read": {
-      "finding": "A46",
       "issue": 87,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a47-mut-payload-binding-through-mut-ref": {
       "finding": "A47",

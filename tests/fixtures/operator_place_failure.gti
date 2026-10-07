@@ -1,0 +1,43 @@
+#include <std/string>
+#include <std/vector>
+class Guard { public: Guard() {} ~Guard() { std::println("guard"); } };
+class AccessGuard {
+public:
+  AccessGuard() {}
+  ~AccessGuard() { std::println("access guard"); }
+};
+class Row {
+  mut int32_t cells[2] = {1, 1};
+public:
+  Row() {}
+  mut int32_t& operator[](std::size_t i) mut {
+    AccessGuard guard{};
+    std::println("cell");
+    return this.cells[i];
+  }
+};
+class Grid {
+  mut Row rows[2] = {};
+public:
+  Grid() {}
+  mut Row& operator[](std::size_t i) mut {
+    std::println("row");
+    return this.rows[i];
+  }
+};
+int32_t rhs(int32_t divisor) {
+  std::println("rhs");
+  return 10 / divisor;
+}
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  mut Grid grid{};
+  if (argc == 1) {
+    grid[std::size_t(0)][std::size_t(0)] = rhs(argc - 1);
+  } else if (argc == 2) {
+    grid[std::size_t(0)][std::size_t(2)] = rhs(argc - 1);
+  } else {
+    grid[std::size_t(0)][std::size_t(0)] += rhs(argc - 3);
+  }
+  return 0;
+}

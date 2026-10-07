@@ -2,6 +2,18 @@
 
 Status: Current implementation.
 
+## Exact-owner construction
+
+For one completed value of a class's exact owner type, semantic construction
+selects that owner's copy or move lifecycle according to the analyzed value
+category. A generic by-value converting constructor instantiated with that
+same owner type cannot outrank or resurrect a deleted lifecycle operation;
+unrelated argument types retain ordinary inference/constraint selection. The
+selected `ConstructorKind`, declaration and argument facts continue through
+HIR/MIR. Completed-value optional publication therefore transports the selected
+lifecycle value rather than invoking another converting constructor at the
+private storage boundary. No public callable/container name defines this rule.
+
 ## Native C scalar target facts
 
 `NativeCScalarKind` identifies a C declaration family independently of numeric
@@ -86,8 +98,13 @@ summary imports conservatively retain this flag; exact direct linear copies
 can retain definite evidence. Potential facts cannot become demonstrated
 violations merely because merging removed duplicate origins.
 
-Class field symbols are established with declaration-owned field types before
-the catalog is sealed, in every audit mode. Isolated workers therefore retain
+Class field symbols are established in active declaration order immediately
+after member collection, before layout, stored-reference, borrow-summary, or
+instance queries can first-reference them through lookup maps. This includes
+interleaved static and instance fields; inherited lookup aliases and concrete
+instances reuse the primary declaration identity. Hash/address iteration cannot
+assign identities later consumed by printed IR. Symbols retain declaration-owned
+field types before the catalog is sealed, in every audit mode. Isolated workers therefore retain
 canonical projected field identities even when a constructor's class body has
 not yet been visited by the caller; worker-local symbol allocation cannot
 silently lose a returned field's provenance.
@@ -1027,6 +1044,18 @@ fully general allocation and failure cleanup through erased owners remain
 incomplete. This does not claim that
 public owning wrappers are implemented.
 
+Contextual namespace-function selection deduces ordinary fixed arguments and
+the final value pack before comparing a confined invocation signature.
+Substitution precedes `concreteCallArguments` expansion; forwarded elements
+use the same value/read-only-reference matching as ordinary pack invocation.
+An effect-free function name may defer its own selection without postponing
+later typed arguments. Effectful contextual producers still defer their suffix,
+and concrete HIR/MIR retain source-order call-input stages. An open forwarding
+pack cannot distinguish overload arities; a unique eligible item can remain
+symbolic until the ordinary concrete invocation check. Failed contextual
+selection owns its diagnostic instead of suggesting an unspellable explicit
+function-item type.
+
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter
 requires read-callable invocation. A `mut` by-value parameter permits mutable
@@ -1209,8 +1238,15 @@ remain ordinary source-defined generic bodies and verified-MIR calls.
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
-non-pack parameters or closed concrete types; unresolved dependent compound
-types fail before candidate selection. During symbolic body analysis, a
+non-pack parameters, closed concrete types, or dependent compounds.
+`resolveRequirements` first forms the complete application identities and
+types, then validates the written arguments within that same clause's ordinary
+guaranteed-fact scope. This makes conjunction order irrelevant without assuming
+facts from only one disjunction alternative. Invalid and unknown arguments
+still receive ordinary type diagnostics; concrete admission is rechecked.
+Only dependent applications supply provisional admission facts; a closed
+clause assertion cannot replace a closed argument's actual capabilities.
+During symbolic body analysis, a
 requirement scope contributes unary facts to ordinary constrained operations
 and supplies synthetic exact operator or callable candidates for the bounded
 structural relationships. Callable requirements carry unary/binary argument
@@ -1219,6 +1255,12 @@ capability; iterator-aware predicate and operation relations derive the exact
 checked-dereference referent privately. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
+
+Registration-time constraint diagnostics use the canonical semantic type
+printer with a read-only lookup into declaration-owned generic parameter
+records when completed model rows are not available yet. The reporter consumes
+that spelling operation without owning proof or registration state; it does
+not manufacture incomplete `FunctionInfo` rows to obtain a parameter name.
 
 Unary structural annotations on class generic parameters reuse those same
 applications. The parameter's resolved `conceptId` remains the concrete

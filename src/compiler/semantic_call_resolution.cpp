@@ -346,6 +346,15 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
              "GTI-S2046");
       valid = false;
     }
+    // An unresolved callable may take this place by mutable reference. Until
+    // an exact declaration supplies its access contract, removing mut is not
+    // a declaration-wide semantics-preserving edit.
+    if (const auto *info =
+            semanticModel.findExpression(*call.arguments()[index]);
+        info != nullptr && info->category == ValueCategory::Place &&
+        info->access == AccessMode::Mutable) {
+      recordMutableBindingUse(call.arguments()[index]);
+    }
   }
   if (!valid) {
     currentType = SemanticType::Unknown;
@@ -1768,7 +1777,9 @@ auto SemanticVisitor::Impl::hasConstraintFailure(
 
 auto SemanticVisitor::Impl::reportConstraintFailure(
     const Token &site, const ConstraintFailure &failure) -> void {
-  reporter.reportConstraintFailure(site, failure);
+  reporter.reportConstraintFailure(
+      site, failure,
+      [&](const SemanticType &type) { return typeSpelling(type); });
 }
 
 auto SemanticVisitor::Impl::attachConstraintCallContext(
@@ -2094,11 +2105,14 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
   }
   const std::size_t count =
       std::min(argumentTypes.size(), function.parameterTypes.size());
+  const GenericSubstitution explicitSubstitution = substitution;
   for (std::size_t index = 0; index < count; ++index) {
-    valid = inferTypeArguments(
-                function.parameterTypes[index], argumentTypes[index],
-                function.record().genericParameters, substitution,
-                expressionToken(arguments[index]), &arguments[index]) &&
+    valid = inferTypeArguments(substituteType(function.parameterTypes[index],
+                                              explicitSubstitution),
+                               argumentTypes[index],
+                               function.record().genericParameters,
+                               substitution, expressionToken(arguments[index]),
+                               &arguments[index]) &&
             valid;
   }
 
@@ -2117,8 +2131,9 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
                  std::string(parameter.value ? "value" : "type") +
                  " parameter '" + parameter.name.lexeme +
                  (parameter.value
-                      ? "' from a fixed-array argument extent and no default "
-                        "is declared; provide it explicitly."
+                      ? "' from the supplied arguments and no default "
+                        "is declared; provide a uint64_t compile-time value "
+                        "explicitly."
                       : "' and no default is declared; provide explicit type "
                         "arguments."),
              parameter.value ? "GTI-S2026" : "GTI-S2023");
@@ -4165,13 +4180,11 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
                                     : contract.pointerParameter;
       if (std::find(checkedPointers.begin(), checkedPointers.end(),
                     pointerIndex) == checkedPointers.end()) {
-        diagnostics.insert(diagnostics.end(),
-                           pointer.lifetimeDiagnostics.begin(),
-                           pointer.lifetimeDiagnostics.end());
+        for (const auto &diagnostic : pointer.lifetimeDiagnostics)
+          publishRawLifetimeDiagnostic(diagnostic);
         if (pointer.loopUse)
-          diagnostics.insert(diagnostics.end(),
-                             pointer.loopUse->diagnostics.begin(),
-                             pointer.loopUse->diagnostics.end());
+          for (const auto &diagnostic : pointer.loopUse->diagnostics)
+            publishRawLifetimeDiagnostic(diagnostic);
         checkedPointers.push_back(pointerIndex);
       }
       if (!contract.ownerParameter && !contract.ownerReceiver)
@@ -5639,6 +5652,9 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
   validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
                                receiverPlace, receiverAccess, false);
+  if (receiverAccess == AccessMode::Mutable) {
+    recordMutableBindingUse(receiverPlace.root);
+  }
 
   ResolvedOperatorInfo resolved{
       .kind = kind,
@@ -6089,6 +6105,9 @@ auto SemanticVisitor::Impl::resolveOperator(
   validateCallPlaceExclusivityImpl(ordinaryParameters, ordinaryArguments, token,
                                    receiverPlace, callReceiverAccess,
                                    receiverProduction.has_value());
+  if (receiverPlace && callReceiverAccess == AccessMode::Mutable) {
+    recordMutableBindingUse(receiverPlace->root);
+  }
 
   ResolvedOperatorInfo resolved{
       .function = selected.id,

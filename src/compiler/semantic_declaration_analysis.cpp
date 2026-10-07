@@ -4925,10 +4925,12 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       if (member != owner.members.end() &&
           typeTraits(member->second.symbol.type).containsBorrowedState &&
           !storedReferencePath(SemanticType::classType(owner.id))) {
-        report(field.declaration->name(),
-               "A class or struct may contain only one stored-reference "
-               "dependency, through direct or nested nominal fields.",
-               "GTI-S2045");
+        report(
+            field.declaration->name(),
+            "Borrowed field state must use checked stored-reference paths "
+            "through ordinary nominal fields; fallible and other non-nominal "
+            "carriers cannot be stored as fields.",
+            "GTI-S2045");
       }
     }
     if (!owner.storedReference) {
@@ -6959,6 +6961,34 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .kind = owner.kind,
             .compilerPrivate = owner.compilerPrivate,
             .compilerCapability = owner.compilerCapability});
+  }
+}
+
+auto SemanticVisitor::Impl::recordClassFieldSymbols() -> void {
+  for (const ClassInfo &owner : classes) {
+    if (owner.declaration == nullptr)
+      continue;
+    // The catalog owns active declaration order. Reserve physical field
+    // identities before summaries/layout queries can first-reference them in
+    // pointer-keyed lookup order; inherited lookup aliases reuse the same ID.
+    const auto visit = [&](const auto &self, const StmtList &members) -> void {
+      for (const StmtPtr &statement : members) {
+        if (const auto *conditional =
+                stmtAs<ConditionalStmt>(statement.get())) {
+          if (const StmtList *active = conditional->activeBranch(target))
+            self(self, *active);
+        } else if (const auto *field = stmtAs<VariableDecl>(statement.get())) {
+          const auto member = owner.members.find(field->name().lexeme);
+          if (member != owner.members.end() &&
+              (member->second.symbol.bindingKind ==
+                   SemanticBindingKind::Field ||
+               member->second.symbol.bindingKind ==
+                   SemanticBindingKind::StaticField))
+            toolingSymbolFor(member->second.symbol);
+        }
+      }
+    };
+    visit(visit, owner.declaration->members());
   }
 }
 

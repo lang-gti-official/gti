@@ -3177,6 +3177,7 @@ private:
 
   void recordClassTypeIdentities();
 
+  void recordClassFieldSymbols();
   void recordClassTypes();
 
   [[nodiscard]] static bool
@@ -3913,6 +3914,7 @@ private:
   [[nodiscard]] std::optional<Diagnostic>
   rawPointerLifetimeDiagnostic(const RawPointerOrigin &origin,
                                const Token &site);
+  void publishRawLifetimeDiagnostic(const Diagnostic &diagnostic);
 
   [[nodiscard]] static bool containsRawPointer(const SemanticType &type);
 
@@ -4294,6 +4296,8 @@ private:
     std::vector<std::string> currentNamespace;
     SourceUnitId currentSourceUnit = 0;
     std::unordered_set<const VariableDecl *> structuredBindingElements;
+    // Recovery-only flow facts: never published as valid exhaustive matches.
+    std::unordered_set<const SwitchStmt *> recoveredExhaustiveSwitches;
     std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
     bool measureTopLevelStatements = false;
     SemanticType currentType = SemanticType::Unknown;
