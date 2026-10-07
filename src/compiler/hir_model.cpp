@@ -187,6 +187,53 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.lambdaInstances())
     verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.classInstances()) {
+    const ClassTypeInfo *owner = semantics.findClassType(instance.declaration);
+    if (owner == nullptr ||
+        owner->typeAliases.size() != instance.typeAliases.size()) {
+      result.errors.emplace_back(
+          "HIR class alias inventory differs from semantics");
+      continue;
+    }
+    GenericSubstitution substitution;
+    std::size_t typeIndex = 0, valueIndex = 0;
+    for (const auto &parameter : owner->genericParameters) {
+      if (!parameter.typeArgumentPath.empty()) {
+        if (auto type = projectGenericTypeArgument(
+                instance.typeArguments, parameter.typeArgumentPath,
+                parameter.id, parameter.pack))
+          substitution.types.emplace(parameter.id, std::move(*type));
+      } else if (parameter.value) {
+        if (valueIndex < instance.valueArguments.size())
+          substitution.values.emplace(parameter.id,
+                                      instance.valueArguments[valueIndex++]);
+      } else if (parameter.pack) {
+        std::vector<SemanticType> elements(
+            instance.typeArguments.begin() +
+                static_cast<std::ptrdiff_t>(typeIndex),
+            instance.typeArguments.end());
+        substitution.types.emplace(
+            parameter.id,
+            SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+        typeIndex = instance.typeArguments.size();
+      } else if (typeIndex < instance.typeArguments.size()) {
+        substitution.types.emplace(parameter.id,
+                                   instance.typeArguments[typeIndex++]);
+      }
+    }
+    for (std::size_t index = 0; index < instance.typeAliases.size(); ++index) {
+      const auto &alias = instance.typeAliases[index];
+      const TypeAliasInfo *primary =
+          semantics.findTypeAlias(*owner->typeAliases[index]);
+      if (primary == nullptr || alias.source != owner->typeAliases[index] ||
+          alias.declaration != primary->id || alias.declaration == 0 ||
+          containsUnresolvedGeneric(alias.type) ||
+          alias.type !=
+              substituteSemanticType(primary->type, substitution, &semantics))
+        result.errors.emplace_back(
+            "HIR class alias differs from its exact semantic owner/type");
+    }
+  }
   if (program.analysisSeal() != semantics.analysisSeal()) {
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");

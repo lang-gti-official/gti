@@ -574,6 +574,7 @@ private:
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
       if (const TypeAliasInfo *info = semantics_.findTypeAlias(*declaration)) {
+        row.semanticIdentity = info->id;
         row.payload = LoweredTypeAliasDeclaration{
             .sourceUnit = info->sourceUnit,
             .qualifiedName = info->qualifiedName,
@@ -936,6 +937,14 @@ private:
         info->sourceUnit != source.sourceUnit ||
         info->cOpaqueHandle != source.cOpaqueHandle) {
       return reject("class instance " + std::to_string(index + 1) + " differs");
+    }
+    if (source.typeAliases.size() != lowered.typeAliases.size())
+      return reject("class alias inventory differs");
+    for (std::size_t alias = 0; alias < source.typeAliases.size(); ++alias) {
+      if (source.typeAliases[alias].declaration !=
+              lowered.typeAliases[alias].declaration ||
+          source.typeAliases[alias].type != lowered.typeAliases[alias].type)
+        return reject("class alias identity or concrete type differs");
     }
   }
   for (std::size_t index = 0; index < hir.functionInstances().size(); ++index) {

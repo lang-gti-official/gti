@@ -436,6 +436,12 @@ struct HirBaseInstance {
                          const HirBaseInstance &) = default;
 };
 
+struct HirClassTypeAlias {
+  TypeAliasId declaration = 0;
+  const TypeAliasDecl *source = nullptr;
+  SemanticType type = SemanticType::Unknown;
+};
+
 struct HirClassInstance {
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -469,6 +475,7 @@ struct HirClassInstance {
   SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
   SpecialMemberStatus destructorStatus = SpecialMemberStatus::Generated;
   std::vector<HirClassField> fields;
+  std::vector<HirClassTypeAlias> typeAliases;
   HirBody fieldInitializers;
   std::vector<HirClassField> staticFields;
   HirBody staticFieldInitializers;

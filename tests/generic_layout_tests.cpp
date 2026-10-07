@@ -44,8 +44,11 @@ int main() { shapes::Layer<63> stack{}; return stack.value - 1; }
 )gti",
         true, "finite concrete layout at the positive depth boundary");
   check(std::string(layers) + R"gti(
-using Previous<uint64_t N> = shapes::Layer<N - 1>;
-struct Box<uint64_t N = 2> { Previous<N> inner; int[N + 1] values = {}; };
+struct Box<uint64_t N = 2, uint64_t Extent = N + 1> {
+  using Previous = shapes::Layer<N - 1>;
+  Previous inner;
+  int values[Extent] = {};
+};
 int main() { Box<> object{}; return object.inner.inner.value - 100; }
 )gti",
         true,
@@ -99,12 +102,17 @@ int main() { Underflow<0> object{}; return 0; }
 )gti",
         false, "closed substituted arithmetic remains checked", "GTI-S2026");
   std::optional<lang::CompileTimeValue> retained;
+  check(R"gti(
+struct Overflow<uint64_t N> { Overflow<N + 1> next; int value = 1; };
+int main() { Overflow<18446744073709551615> object{}; return 0; }
+)gti",
+        false, "closed substituted overflow remains checked", "GTI-S2026");
   {
     auto snapshot = lang::Frontend().analyze(
         "owned-expression.gti",
         std::string(layers) +
             "int main() { shapes::Layer<2> value{}; return value.value - 1; }");
-    for (const auto &instance : snapshot.hir.classes) {
+    for (const auto &instance : snapshot.hir.classInstances()) {
       const auto *owner =
           snapshot.semantics.findClassType(instance.declaration);
       if (owner != nullptr && !owner->fields.empty() &&

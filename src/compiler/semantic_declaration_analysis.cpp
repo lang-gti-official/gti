@@ -1489,7 +1489,8 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
     alias.resolution = TypeAliasResolution::Resolved;
     semanticModel.record(
         *alias.declaration,
-        TypeAliasInfo{.sourceUnit = alias.sourceUnit,
+        TypeAliasInfo{.id = id,
+                      .sourceUnit = alias.sourceUnit,
                       .declaration = alias.declaration,
                       .qualifiedName = alias.qualifiedName,
                       .type = alias.type,
@@ -3649,6 +3650,7 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
       continue;
     const auto member = owner->members.find(field.declaration->name().lexeme);
     if (member == owner->members.end() ||
+        member->second.symbol.type.kind != SemanticType::Class ||
         !available(substituteType(member->second.symbol.type, substitution))) {
       valid = false;
       break;
@@ -6989,6 +6991,12 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
     }
     std::vector<ClassFieldTypeInfo> fields;
     std::vector<ClassFieldTypeInfo> staticFields;
+    std::vector<const TypeAliasDecl *> aliases;
+    for (const RegisteredTypeAlias &alias : typeAliases) {
+      if (alias.ownerClass == owner.id &&
+          alias.resolution == TypeAliasResolution::Resolved)
+        aliases.push_back(alias.declaration);
+    }
     fields.reserve(owner.fields.size());
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr) {
@@ -7034,6 +7042,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .genericArgumentPatterns = owner.genericArgumentPatterns,
             .fields = std::move(fields),
             .staticFields = std::move(staticFields),
+            .typeAliases = std::move(aliases),
             .storedReference = owner.storedReference,
             .lifecycleBoundBorrowCarrier =
                 lifecycleBoundBorrowCarrierFor(openClassType(owner.id)),

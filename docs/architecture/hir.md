@@ -1,5 +1,16 @@
 # Typed HIR
 
+Class instances retain an ordered type-alias catalog pairing the primary
+semantic `TypeAliasId` with the exact owner-substituted type. Semantic instance
+analysis resolves aliases, including checked value-generic expressions and
+exact nominal specializations; HIR verifies the declaration order and closed
+types against the primary semantic catalog. MIR preserves these rows without
+source pointers. Detached lowering checks them independently against the
+resolved declaration inventory. The C++ representation planner can therefore
+publish ordinary concrete classes containing aliases without substituting a
+representative instantiation's field type or construction operation into a
+source template.
+
 Status: Implemented concrete-instance, typed-value, normal-exit lifecycle, and
 defined-failure identity foundation.
 
@@ -20,6 +31,12 @@ access to that accessor's private storage.
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
 `SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
 Concrete generic validity is obtained through semantic instance reanalysis.
+Concrete class fields retain that analysis's exact binding type, traits and
+selected initializer, including checked owned value-expression substitution and
+nominal-field defaults. Open-primary lifecycle unavailability is not an explicit
+source `= delete`: the concrete structural trait query determines copy/move
+availability while preserving written policy. HIR does not ask a backend to
+evaluate generic arithmetic or synthesize missing field initialization.
 `HirProgram::instanceSymbols` retains the exact ordered semantic symbol records
 introduced only by those concrete analyses. Their request-wide IDs are disjoint
 from primary and other instance symbols. HIR checks concrete binding types and

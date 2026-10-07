@@ -734,6 +734,9 @@ struct ClassTypeInfo {
   std::vector<SemanticType> genericArgumentPatterns;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
+  // Active source declaration order; instance analysis resolves each alias in
+  // the exact owner scope before HIR publishes a concrete class catalog.
+  std::vector<const TypeAliasDecl *> typeAliases;
   std::optional<StoredReferenceInfo> storedReference;
   bool lifecycleBoundBorrowCarrier = false;
   // Separate trusted lock authority from general dependency retention.
@@ -828,6 +831,7 @@ struct ResolvedPayloadPatternInfo {
 };
 
 struct TypeAliasInfo {
+  TypeAliasId id = 0;
   SourceUnitId sourceUnit = 0;
   const TypeAliasDecl *declaration = nullptr;
   std::string qualifiedName;
@@ -2145,5 +2149,13 @@ struct SemanticInstanceAnalysis {
 
   [[nodiscard]] bool valid() const { return !hasErrorDiagnostics(diagnostics); }
 };
+
+// Shared semantic substitution kernel. Consumers preserve declaration-bound
+// parameter identities; an optional semantic catalog resolves exact nominal
+// specializations after substitution, including nested type arguments.
+[[nodiscard]] SemanticType
+substituteSemanticType(const SemanticType &type,
+                       const GenericSubstitution &substitution,
+                       const SemanticModel *model = nullptr);
 
 } // namespace lang

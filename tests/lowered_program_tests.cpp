@@ -945,6 +945,69 @@ int main() { int value = 1; return borrow<0>(value); }
          "a forged concrete symbol type fails HIR provenance verification");
 }
 
+void testConcreteClassAliases() {
+  auto frontend = lang::Frontend().analyze("concrete-class-aliases.gti", R"gti(
+namespace shapes {
+struct Layer<uint64_t N> { Layer<N - 1> inner; int value = 1; };
+}
+struct shapes::Layer<0> { int value = 100; };
+struct Box<uint64_t N> {
+  using Previous = shapes::Layer<N - 1>;
+  Previous inner;
+};
+int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "concrete class aliases analyze independently");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &d : frontend.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return;
+  }
+  std::vector<const lang::HirClassInstance *> owners;
+  for (const auto &owner : frontend.hir.classInstances())
+    if (!owner.typeAliases.empty())
+      owners.push_back(&owner);
+  expect(owners.size() == 3 && owners[0]->typeAliases[0].declaration != 0 &&
+             owners[0]->typeAliases[0].declaration ==
+                 owners[1]->typeAliases[0].declaration &&
+             owners[0]->typeAliases[0].type != owners[1]->typeAliases[0].type &&
+             owners[1]->typeAliases[0].type != owners[2]->typeAliases[0].type,
+         "one primary alias identity retains three exact owner-specific types");
+  if (owners.size() != 3)
+    return;
+  auto forgedHir = frontend.hir;
+  auto &hirClasses = const_cast<std::vector<lang::HirClassInstance> &>(
+      forgedHir.classInstances());
+  hirClasses[owners[0]->id - 1].typeAliases[0].type =
+      owners[1]->typeAliases[0].type;
+  expect(!lang::verifyHirProgramPlans(frontend.semantics, forgedHir).valid(),
+         "another owner's closed alias type fails HIR verification");
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "concrete aliases survive detached lowering");
+  if (!built.valid())
+    return;
+  for (int mutation = 0; mutation < 4; ++mutation) {
+    auto forged = *built.program;
+    auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+        lang::LoweredProgramTestAccess::mir(forged).classInstances());
+    auto &aliases = classes[owners[0]->id - 1].typeAliases;
+    if (mutation == 0)
+      aliases.clear();
+    if (mutation == 1)
+      aliases.push_back(aliases.front());
+    if (mutation == 2)
+      aliases[0].declaration += 10000;
+    if (mutation == 3)
+      aliases[0].type = owners[1]->typeAliases[0].type;
+    expect(!lang::verifyLoweredProgram(forged).empty(),
+           "missing, duplicate, foreign or another owner's alias facts fail "
+           "detached verification");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -953,6 +1016,7 @@ int main() {
   testDetachedDebugLocations();
   testMutationRejection();
   testConcreteBranchSymbols();
+  testConcreteClassAliases();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";
     return 1;
