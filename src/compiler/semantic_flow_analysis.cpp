@@ -2541,11 +2541,13 @@ auto SemanticVisitor::Impl::analyzeInitializer(const ExprPtr &expr,
   const Expr *enclosingExpression = contextualInitializerExpression;
   contextualInitializerType = expectedType;
   contextualInitializerExpression = expr.get();
-  const auto literal = integerConstant(expr.get());
+  const auto literal =
+      isIntegral(expectedType) && isContextualIntegerLiteral(expr.get())
+          ? integerConstant(expr.get())
+          : std::nullopt;
   SemanticType result =
-      isIntegral(expectedType) && isContextualIntegerLiteral(expr.get()) &&
-              (!isInteger(expectedType) ||
-               (literal && integerFits(expectedType, *literal)))
+      literal &&
+              (!isInteger(expectedType) || integerFits(expectedType, *literal))
           ? analyzeContextualIntegerOperand(expr, expectedType)
           : analyzeExpectedCallableResult(expr, expectedType);
   if (allowExactNullConstruction && expr &&

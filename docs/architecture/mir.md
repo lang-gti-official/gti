@@ -1647,6 +1647,12 @@ Valid passive unions retain their checked size, ABI alignment, and ordered
 field layout on semantic, HIR, and MIR class records. MIR does not infer an
 active field or add a union operation: member access remains an ordinary place
 operation carrying the frontend's unsafe classification.
+Their verified generated movement is failure-free, including when composed
+inside another passive record. A fixed-array aggregate of staged copyable
+passive records constructs its final storage directly in MIR operand order.
+Its lexical result/binding tokens and exact publication remain mandatory, but
+no active per-element cleanup is invented. Named inputs are copied when their
+MIR Loads execute; native default construction is not used as SSA staging.
 
 Each defined integer operation lowers as an ordinary call with one of nine
 exact intrinsic identities. Its effect-table entry is speculatable, removable
