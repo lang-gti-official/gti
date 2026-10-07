@@ -646,7 +646,7 @@ ProjectBuildPlan makeBuildPlan(
       overrides.debugInfo.value_or(selectedProfile.debugInfo);
   const RawPointerAuditMode rawPointerAudit =
       overrides.rawPointerAudit.value_or(selectedProfile.rawPointerAudit);
-  ConfigurationFlags configurationFlags = manifest.build().defines;
+  ConfigurationFlags configurationFlags = workspace.configurationFlags();
   configurationFlags.insert(configurationFlags.end(),
                             overrides.configurationFlags.begin(),
                             overrides.configurationFlags.end());
@@ -680,8 +680,19 @@ ProjectBuildPlan makeBuildPlan(
   outputDirectory /= selectedProfile.name;
   outputDirectory /= targetTriple(resolvedTarget);
   std::string executableName = selectedTarget.name;
+  if (selectedTarget.kind == ProjectTargetKind::Library) {
+    if (resolvedTarget.os == "windows") {
+      executableName += ".dll";
+    } else if (resolvedTarget.os == "macos") {
+      executableName = "lib" + executableName + ".dylib";
+    } else {
+      executableName = "lib" + executableName + ".so";
+    }
+  }
 #if defined(_WIN32)
-  executableName += ".exe";
+  if (selectedTarget.kind != ProjectTargetKind::Library) {
+    executableName += ".exe";
+  }
 #endif
   const std::filesystem::path output = outputDirectory / executableName;
   const std::filesystem::path generatedSource =
@@ -717,6 +728,21 @@ ProjectBuildPlan makeBuildPlan(
   }
   for (const std::string &flag : configuration.configurationFlags()) {
     modelIdentity += "\nconfiguration-flag:" + flag;
+  }
+  if (selectedTarget.kind == ProjectTargetKind::Library) {
+    modelIdentity += "\nprogram-kind:library";
+    modelIdentity +=
+        "\nlinkage:" +
+        std::string(projectTargetLinkageName(selectedTarget.linkage));
+    std::vector<ProjectExport> canonicalExports = selectedTarget.exports;
+    std::sort(canonicalExports.begin(), canonicalExports.end(),
+              [](const ProjectExport &left, const ProjectExport &right) {
+                if (left.symbol != right.symbol)
+                  return left.symbol < right.symbol;
+                return left.function < right.function;
+              });
+    for (const ProjectExport &selected : canonicalExports)
+      modelIdentity += "\nexport:" + selected.symbol + '=' + selected.function;
   }
   for (const BuildScriptPlan &script : buildScripts) {
     modelIdentity += "\nbuild-script:" + script.packageIdentity;
@@ -813,7 +839,8 @@ ProjectBuildPlan makeBuildPlan(
       configuration.configurationFlags(), std::move(warningPolicy),
       std::move(modelIdentity), std::move(bindgenImports),
       std::move(buildScripts), std::move(toolchain), debugInfo,
-      std::move(packageWarningPolicy), rawPointerAudit);
+      std::move(packageWarningPolicy), rawPointerAudit, selectedTarget.linkage,
+      selectedTarget.exports);
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -923,7 +950,8 @@ ProjectBuildRequest::ProjectBuildRequest(
     std::optional<std::string> packageName,
     WorkspaceDependencyPolicy dependencyPolicy, RuntimeProfile runtimeProfile,
     ToolchainSelectionPolicy toolchainPolicy,
-    ProjectToolchainOverrides toolchainOverrides)
+    ProjectToolchainOverrides toolchainOverrides,
+    ManifestFeaturePolicy manifestFeatures)
     : discoveryStart(std::move(startDirectory)),
       selectedTarget(std::move(targetName)),
       selectedProfile(std::move(profileName)), targetInfo(std::move(target)),
@@ -932,7 +960,8 @@ ProjectBuildRequest::ProjectBuildRequest(
       workspaceDependencyPolicy(dependencyPolicy),
       selectedRuntimeProfile(runtimeProfile),
       selectedToolchainPolicy(toolchainPolicy),
-      nativeToolchainOverrides(toolchainOverrides) {}
+      nativeToolchainOverrides(toolchainOverrides),
+      enabledManifestFeatures(manifestFeatures) {}
 
 const WorkspaceDependencyPolicy &ProjectBuildRequest::dependencyPolicy() const {
   return workspaceDependencyPolicy;
@@ -949,6 +978,10 @@ ToolchainSelectionPolicy ProjectBuildRequest::toolchainPolicy() const {
 const ProjectToolchainOverrides &
 ProjectBuildRequest::toolchainOverrides() const {
   return nativeToolchainOverrides;
+}
+
+ManifestFeaturePolicy ProjectBuildRequest::manifestFeatures() const {
+  return enabledManifestFeatures;
 }
 
 const std::filesystem::path &ProjectBuildRequest::startDirectory() const {
@@ -988,13 +1021,15 @@ ProjectBuildPlan::ProjectBuildPlan(
     std::vector<BindgenImportPlan> bindgenImports,
     std::vector<BuildScriptPlan> buildScripts,
     ResolvedProjectToolchain toolchain, bool debugInfo,
-    PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit)
+    PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit,
+    ProjectTargetLinkage targetLinkage, std::vector<ProjectExport> exports)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
       projectPackageName(std::move(packageName)),
       projectPackageVersion(std::move(packageVersion)),
       projectTargetName(std::move(targetName)), projectTargetKind(targetKind),
+      projectTargetLinkage(targetLinkage),
       buildProfileName(std::move(profileName)), entryPath(std::move(entry)),
       outputPath(std::move(output)),
       generatedSourcePath(std::move(generatedSource)),
@@ -1008,7 +1043,8 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
       resolvedBindgenImports(std::move(bindgenImports)),
       resolvedBuildScripts(std::move(buildScripts)),
-      resolvedToolchain(std::move(toolchain)), sourceDebugInfo(debugInfo),
+      resolvedToolchain(std::move(toolchain)),
+      resolvedExports(std::move(exports)), sourceDebugInfo(debugInfo),
       rawPointerAuditMode(rawPointerAudit) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
@@ -1037,6 +1073,31 @@ const std::string &ProjectBuildPlan::targetName() const {
 
 ProjectTargetKind ProjectBuildPlan::targetKind() const {
   return projectTargetKind;
+}
+
+ProjectTargetLinkage ProjectBuildPlan::targetLinkage() const {
+  return projectTargetLinkage;
+}
+
+const std::vector<ProjectExport> &ProjectBuildPlan::exports() const {
+  return resolvedExports;
+}
+
+ProgramRequest ProjectBuildPlan::programRequest() const {
+  ProgramRequest request;
+  request.kind = projectTargetKind == ProjectTargetKind::Library
+                     ? ProgramKind::Library
+                     : ProgramKind::Executable;
+  request.exports.reserve(resolvedExports.size());
+  for (const ProjectExport &selected : resolvedExports) {
+    request.exports.push_back(
+        {.function = selected.function,
+         .symbol = selected.symbol,
+         .declaration = selected.declaration,
+         .functionDeclaration = selected.functionDeclaration,
+         .symbolDeclaration = selected.symbolDeclaration});
+  }
+  return request;
 }
 
 const std::string &ProjectBuildPlan::profileName() const {
@@ -1158,9 +1219,9 @@ std::string targetTriple(const TargetInfo &target) {
 ProjectResolutionResult
 resolveProjectBuild(const ProjectBuildRequest &request) {
   ProjectResolutionResult result;
-  WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(request.startDirectory(), request.packageName(),
-                              request.dependencyPolicy());
+  WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
+      request.startDirectory(), request.packageName(),
+      request.dependencyPolicy(), std::nullopt, request.manifestFeatures());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -1304,9 +1365,9 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
 ProjectTestResolutionResult
 resolveProjectTests(const ProjectBuildRequest &request) {
   ProjectTestResolutionResult result;
-  WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(request.startDirectory(), request.packageName(),
-                              request.dependencyPolicy());
+  WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
+      request.startDirectory(), request.packageName(),
+      request.dependencyPolicy(), std::nullopt, request.manifestFeatures());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -1451,8 +1512,9 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
     return result;
   }
 
-  WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(request.startDirectory(), request.packageName());
+  WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
+      request.startDirectory(), request.packageName(),
+      request.dependencyPolicy(), std::nullopt, request.manifestFeatures());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -1547,10 +1609,12 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
 
 ProjectMetadataResult resolveProjectMetadata(
     const std::filesystem::path &startDirectory, TargetInfo target,
-    std::optional<std::string> packageName, RuntimeProfile runtimeProfile) {
+    std::optional<std::string> packageName, RuntimeProfile runtimeProfile,
+    ManifestFeaturePolicy manifestFeatures) {
   ProjectMetadataResult result;
   WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
-      startDirectory, packageName, {.allowAcquisition = false});
+      startDirectory, packageName, {.allowAcquisition = false}, std::nullopt,
+      manifestFeatures);
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {

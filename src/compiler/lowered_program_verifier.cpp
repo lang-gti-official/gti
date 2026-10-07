@@ -567,6 +567,61 @@ verifyLoweredProgram(const LoweredProgram &program) {
     addIssue(issues, LoweredProgramIssueKind::FrontendMismatch,
              "lowered target and MIR execution profiles differ");
   }
+  if (program.programKind_ != program.mir_.programKind() ||
+      program.embeddingPlan_.has_value() !=
+          program.mir_.embeddingPlan().has_value()) {
+    addIssue(issues, LoweredProgramIssueKind::InvalidEmbeddingPlan,
+             "lowered program/export policy differs from verified MIR");
+  } else if (program.embeddingPlan_ && program.mir_.embeddingPlan()) {
+    const LoweredEmbeddingPlan &lowered = *program.embeddingPlan_;
+    const MirEmbeddingPlan &mir = *program.mir_.embeddingPlan();
+    if (program.programKind_ != ProgramKind::Library ||
+        lowered.abiVersion != embeddingAbiVersionV1 ||
+        lowered.abiVersion != mir.abiVersion || lowered.exports.empty() ||
+        lowered.exports.size() != mir.exports.size()) {
+      addIssue(issues, LoweredProgramIssueKind::InvalidEmbeddingPlan,
+               "lowered embedding plan has invalid ABI provenance");
+    }
+    for (std::size_t index = 0;
+         index < lowered.exports.size() && index < mir.exports.size();
+         ++index) {
+      const LoweredEmbeddingExport &selected = lowered.exports[index];
+      const MirEmbeddingExport &mirSelected = mir.exports[index];
+      const LoweredFunctionInstance *instance =
+          program.findFunctionInstance(selected.function);
+      const LoweredFunctionDeclaration *declaration =
+          program.findFunctionDeclaration(selected.declaration);
+      const bool exactParameters =
+          declaration != nullptr &&
+          declaration->parameters.size() == selected.parameterTypes.size() &&
+          std::equal(
+              declaration->parameters.begin(), declaration->parameters.end(),
+              selected.parameterTypes.begin(),
+              [](const LoweredParameter &parameter, const SemanticType &type) {
+                return parameter.type == type;
+              });
+      if (selected.declaration != mirSelected.declaration ||
+          selected.function != mirSelected.function ||
+          selected.qualifiedName != mirSelected.qualifiedName ||
+          selected.symbol != mirSelected.symbol ||
+          selected.returnType != mirSelected.returnType ||
+          selected.parameterTypes != mirSelected.parameterTypes ||
+          selected.requestSource != mirSelected.requestSource ||
+          instance == nullptr || declaration == nullptr ||
+          instance->declaration != selected.declaration || instance->owner ||
+          !instance->typeArguments.empty() ||
+          !instance->valueArguments.empty() ||
+          declaration->qualifiedName != selected.qualifiedName ||
+          declaration->returnType != selected.returnType ||
+          declaration->ownerClass != 0 ||
+          declaration->definitionKind != MirDefinitionKind::Source ||
+          declaration->linkage != LanguageLinkage::Gti || !exactParameters) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidEmbeddingPlan,
+                 "lowered embedding export differs from its MIR/declaration "
+                 "root");
+      }
+    }
+  }
   const MirVerificationResult mirVerification = verifyMirProgram(program.mir_);
   if (!program.mir_.valid() || !mirVerification.valid()) {
     addIssue(issues, LoweredProgramIssueKind::InvalidOptimizedMir,

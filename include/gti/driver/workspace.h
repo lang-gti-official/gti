@@ -79,7 +79,8 @@ struct WorkspaceManifestOverlay {
     const std::filesystem::path &startDirectory,
     const std::optional<std::string> &requestedPackage = std::nullopt,
     const WorkspaceDependencyPolicy &dependencyPolicy = {},
-    const std::optional<WorkspaceManifestOverlay> &overlay = std::nullopt);
+    const std::optional<WorkspaceManifestOverlay> &overlay = std::nullopt,
+    ManifestFeaturePolicy manifestFeatures = {});
 
 // The lock closure `gti fetch` records: one entry per Git/registry package in
 // the resolved workspace, with its verified checksums and the identities of its
@@ -96,14 +97,16 @@ public:
   [[nodiscard]] const ResolvedProjectPackage *
   findPackage(std::string_view identity) const;
   [[nodiscard]] std::vector<PackageSourceRoot> packageSourceRoots() const;
+  // Program-wide manifest flags from the selected package and its transitive
+  // dependency closure; unrelated workspace members do not contribute.
+  [[nodiscard]] ConfigurationFlags configurationFlags() const;
   [[nodiscard]] std::string modelIdentity() const;
 
 private:
-  friend WorkspaceResolutionResult
-  resolveProjectWorkspace(const std::filesystem::path &,
-                          const std::optional<std::string> &,
-                          const WorkspaceDependencyPolicy &,
-                          const std::optional<WorkspaceManifestOverlay> &);
+  friend WorkspaceResolutionResult resolveProjectWorkspace(
+      const std::filesystem::path &, const std::optional<std::string> &,
+      const WorkspaceDependencyPolicy &,
+      const std::optional<WorkspaceManifestOverlay> &, ManifestFeaturePolicy);
 
   ProjectWorkspace(std::filesystem::path root,
                    std::vector<ResolvedProjectPackage> packages,

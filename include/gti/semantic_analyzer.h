@@ -63,7 +63,8 @@ public:
       const SourceGraph *sourceGraph = nullptr, bool toolingOccurrences = true,
       FrontendWorkMetrics *workMetrics = nullptr,
       const SourceManager *sources = nullptr,
-      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+      bool requireFunctionDefinitions = false);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;
@@ -73,6 +74,10 @@ public:
 
   bool check(const Program &program);
   bool check(const Expr &expr);
+  // Applies artifact-level entry/export policy after ordinary language
+  // semantics have resolved every declaration.
+  bool applyProgramRequest(const Program &program,
+                           const ProgramRequest &request);
 
   [[nodiscard]] bool hadError() const;
   [[nodiscard]] const std::vector<SemanticDiagnostic> &errors() const;

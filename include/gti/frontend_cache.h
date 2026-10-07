@@ -26,7 +26,8 @@ struct FrontendCacheStats {
 };
 
 // Identity shared by lexical and parsed-unit cache rows. `context` is the
-// normalized target and initial configuration-flag identity;
+// normalized target, initial configuration-flag, and artifact program/export
+// identity;
 // `sourceGeneration` is supplied by the snapshot coordinator and changes
 // whenever disk or an overlay changes. Parsed rows additionally use the exact
 // post-directive `syntaxDigest` and the transitive `dependencyDigest` for the
