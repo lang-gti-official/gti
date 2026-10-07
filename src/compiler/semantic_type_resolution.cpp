@@ -850,6 +850,15 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
   const std::string argumentLabel = callable == "Function"
                                         ? "Argument "
                                         : std::string(callable) + " argument ";
+  if (parameter.kind == SemanticType::NativeFunction &&
+      isContextualNativeFunctionArgument(expression)) {
+    if (const auto symbol = resolveExpressionSymbol(expression);
+        symbol && symbol->type == SemanticType::Function) {
+      (void)analyzeNativeFunctionItem(*expression, *symbol, parameter,
+                                      expressionToken(expression));
+      return;
+    }
+  }
   if (parameter.kind == SemanticType::Reference &&
       parameter.arguments.size() == 1 && parameter.arguments[0] == argument &&
       expression) {
@@ -996,11 +1005,32 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
               "exact compatible pointer, with only T* to const T* "
               "qualification permitted.");
   } else if (parameter.kind != SemanticType::Reference) {
+    bool hasView = false;
+    if (const auto *owner = classInfo(argument)) {
+      if (const auto member = owner->members.find("view");
+          member != owner->members.end() &&
+          member->second.access == AccessModifier::Public) {
+        const Symbol concrete =
+            substituteSymbol(member->second.symbol, argument);
+        hasView =
+            concrete.overloads.size() == 1 &&
+            concrete.overloads.front().returnType == parameter &&
+            concrete.overloads.front().parameterTypes.empty() &&
+            concrete.overloads.front().record().genericParameters.empty() &&
+            concrete.overloads.front().requirements.empty() &&
+            !concrete.overloads.front().staticMember &&
+            !concrete.overloads.front().record().requiresUnsafe &&
+            concrete.overloads.front().receiverMutability ==
+                ReceiverMutability::ReadOnly;
+      }
+    }
     diagnostic.hints.emplace_back(
-        "Calls require exact argument types; use an explicit "
-        "conversion such as '" +
-        typeSpelling(parameter) +
-        "(value)' when the conversion is intentional.");
+        hasView
+            ? "Pass 'value.view()' to obtain the exact parameter type; keep "
+              "the "
+              "source value alive while the view is used."
+            : "Calls require exact argument types; pass the required type or "
+              "use a supported explicit conversion when intentional.");
   }
   diagnostics.emplace_back(std::move(diagnostic));
 }
@@ -1280,12 +1310,24 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   const SemanticType constructedType = selectedClass;
   if (typeTraits(constructedType).containsBorrowedState &&
       storedReferencePaths(constructedType).empty()) {
-    report(paren,
-           "A borrowed aggregate must contain checked stored-reference "
-           "paths through ordinary nominal fields and cannot declare a "
-           "custom destructor.",
-           "GTI-S2045");
-    currentType = constructedType;
+    const bool fieldAlreadyRejected = std::any_of(
+        owner.fields.begin(), owner.fields.end(), [&](const FieldInfo &field) {
+          return field.declaration != nullptr &&
+                 std::any_of(diagnostics.begin(), diagnostics.end(),
+                             [&](const Diagnostic &diagnostic) {
+                               return diagnostic.code == "GTI-S2045" &&
+                                      diagnostic.primary ==
+                                          tokenSpan(field.declaration->name());
+                             });
+        });
+    if (!fieldAlreadyRejected) {
+      report(paren,
+             "A borrowed aggregate must contain checked stored-reference "
+             "paths through ordinary nominal fields and cannot declare a "
+             "custom destructor.",
+             "GTI-S2045");
+    }
+    currentType = SemanticType::Unknown;
     return;
   }
   if (!isCompilerTrustedRequester(paren) &&
