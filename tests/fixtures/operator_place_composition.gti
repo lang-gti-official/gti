@@ -1,0 +1,79 @@
+// Accessors are ordinary user code; an update invokes each written accessor
+// once, stabilizes its exact referent and preserves target-before-RHS order.
+mut int32_t trace = 0;
+
+class Cell {
+  mut int32_t value = 1;
+public:
+  Cell() {}
+  int32_t read() { return this.value; }
+  int32_t& operator*() { return this.value; }
+  mut int32_t& operator*() mut {
+    trace = trace * 10 + 1;
+    return this.value;
+  }
+};
+class Row {
+  mut int32_t cells[4] = {};
+public:
+  Row() {}
+  int32_t& operator[](std::size_t i) { return this.cells[i]; }
+  mut int32_t& operator[](std::size_t i) mut {
+    trace = trace * 10 + 2;
+    return this.cells[i];
+  }
+};
+class Grid {
+  mut Row rows[3] = {};
+public:
+  Grid() {}
+  Row& operator[](std::size_t i) { return this.rows[i]; }
+  mut Row& operator[](std::size_t i) mut {
+    trace = trace * 10 + 3;
+    return this.rows[i];
+  }
+  mut Row& get() mut { return this.rows[0]; }
+  int32_t read(std::size_t r, std::size_t c) { return this.rows[r][c]; }
+};
+int32_t rhs() {
+  trace = trace * 10 + 4;
+  return 7;
+}
+std::size_t index() {
+  trace = trace * 10 + 5;
+  return std::size_t(0);
+}
+void dereference_update(mut Cell& cell) { *cell = *cell + 1; }
+void indexed_update(mut Grid& grid) {
+  grid[std::size_t(2)][std::size_t(0)] =
+      grid[std::size_t(0)][std::size_t(3)] + 1;
+}
+void failure_update(mut Grid& grid, int32_t divisor) {
+  grid[std::size_t(0)][std::size_t(0)] = 10 / divisor;
+}
+int main() {
+  mut Cell cell{};
+  *cell = *cell + 1;
+  if (cell.read() != 2 || trace != 1) { return 1; }
+  trace = 0;
+  *cell += rhs();
+  if (cell.read() != 9 || trace != 14) { return 2; }
+  trace = 0;
+  dereference_update(cell);
+  if (cell.read() != 10 || trace != 1) { return 3; }
+  trace = 0;
+  mut Grid grid{};
+  grid[std::size_t(0)][std::size_t(3)] += rhs();
+  if (trace != 324) { return 4; }
+  trace = 0;
+  indexed_update(grid);
+  if (trace != 32 || grid.read(std::size_t(2), std::size_t(0)) != 8) { return 5; }
+  trace = 0;
+  grid.get()[index()] += rhs();
+  if (trace != 524 || grid.read(std::size_t(0), std::size_t(0)) != 7) { return 6; }
+  trace = 0;
+  mut Row& parent = grid[std::size_t(0)];
+  parent[std::size_t(0)] = parent[std::size_t(0)] + 1;
+  if (parent[std::size_t(0)] != 8) { return 7; }
+  return 0;
+}

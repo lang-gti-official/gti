@@ -53,12 +53,33 @@ public:
   }
 };
 
+// Returning a mutable row composes with another selected subscript. Each
+// accessor runs once; a plain store reserves the chain until its RHS reads end.
+class Handles {
+  mut Handle rows[2] = {};
+public:
+  Handles() {}
+  Handle& operator[](uint64_t index) { return this.rows[index]; }
+  mut Handle& operator[](uint64_t index) mut { return this.rows[index]; }
+  mut Handle& get() mut { return this.rows[0]; }
+};
+
 int main() {
   mut Handle handle = Handle();
   handle->increment();
   *handle = 7;
+  *handle = *handle + 1;
+  *handle -= 1;
   handle[uint64_t(1)] += 2;
   int called = handle(uint64_t(0));
+
+  mut Handles handles{};
+  handles[uint64_t(0)][uint64_t(1)] += 4;
+  handles[uint64_t(1)][uint64_t(0)] =
+      handles[uint64_t(0)][uint64_t(1)] + 1;
+  handles.get()[uint64_t(0)] += 3;
+  if (handles[uint64_t(1)][uint64_t(0)] != 8 ||
+      handles[uint64_t(0)][uint64_t(0)] != 5) { return 2; }
 
   if (handle and handle != nullptr and !(handle == nullptr)) {
     return *handle + handle[uint64_t(1)] + called - 14;

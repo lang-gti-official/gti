@@ -1309,6 +1309,37 @@ does not mutate the same global. The C++ representation consumes the verified
 schedule and erases activation as a no-op; it does not reconstruct evaluation
 order or loan state from source syntax.
 
+Nested plain stores retain one terminal two-phase loan. Loan-flow verification
+derives its reservation group from the exact unretained mutable `CallResult`
+parent chain; it never infers a group from public container names. Intermediate
+loans enter the reserved flow state together, leaving a lexical mutable parent
+active. Terminal activation checks the entire group, suspends its ancestors,
+and must still be followed immediately by the terminal assignment. An
+unactivated failure restores the original exclusive ancestry before ordinary
+child-first cleanup. A live sibling, retained carrier, escape, stored
+dependency or ambiguous authority prevents this conversion. Every origin and
+exact physical referent remains represented by the existing loan records.
+Eligibility follows that ancestry to its canonical root; a global cannot gain
+reservation access merely by being hidden behind an intermediate loan place.
+
+HIR preserves a separately selected dereference/subscript projection operator
+even when the mutation itself is built-in scalar arithmetic. MIR stages that
+accessor result as one loan-rooted place and uses the ordinary ordered
+load/arithmetic/conversion/assign schedule. The propagation of the target call
+belongs to the call; it does not force the scalar update back into an opaque
+compound helper or make a backend manufacture the target from syntax.
+
+Checked fixed-array reference formation retains its semantic bounds origin on
+the `Borrow` itself, not on an omitted scalar load or an eventual return. It
+has an exact `Invoke` and failure record before reference publication. A failed
+producer retires its provisional loan before receiver ancestry and callee
+locals drain; successful reference return publishes the already-checked
+pointer. The backend uses the existing typed-place bound-status operation and
+the same success/failure routing as checked address formation. It does not
+call a terminal aborting array helper to perform an unproven reference return.
+Scalar and class referents use the same rule, preserving `GTI-R0007`, status
+70 and deterministic cleanup in the caller as well as the accessor.
+
 Because the entry loan is self-sourced at the carrier binding — MIR cannot
 name the caller's owner storage — its canonical protected place collides with
 the carrier object itself. Verification therefore exempts whole-carrier
