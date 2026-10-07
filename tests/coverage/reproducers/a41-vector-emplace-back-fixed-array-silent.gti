@@ -1,0 +1,14 @@
+// A41: the same through vector::emplace_back.
+#include <std/vector>
+class Holder {
+  int32_t values[3];
+public:
+  Holder(int32_t initial[3]) : values(initial) {}
+  int32_t sum() { return this.values[0] + this.values[1] + this.values[2]; }
+};
+int main() {
+  mut std::vector<Holder> v{};
+  int32_t seed[3] = {1, 2, 3};
+  [[discard]] v.emplace_back(seed);
+  return v[std::size_t(0)].sum() - 6;
+}

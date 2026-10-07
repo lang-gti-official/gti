@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/concurrency.h"
+#include "gti/program_request.h"
 #include "gti/semantic_core.h"
 
 namespace lang {
@@ -441,6 +442,7 @@ enum class CompilerCapabilityTypeKind {
   MutexLockToken,
   SharedOwner,
   UninitializedStorage,
+  NativeCScalar,
 };
 
 enum class ProgramEntryKind {
@@ -635,6 +637,30 @@ struct FunctionInfo {
   [[nodiscard]] std::vector<CallableParameterContract>
   instantiatedCallableParameters(
       const std::vector<SemanticType> &concreteParameters) const;
+};
+
+// One semantically selected host export. This is the first point where a
+// manifest spelling becomes an exact GTI declaration and signature. Rows are
+// canonicalized by public symbol so later phases never repeat name lookup or
+// ABI eligibility decisions.
+struct SemanticEmbeddingExport {
+  FunctionId function = 0;
+  std::string qualifiedName;
+  std::string symbol;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  SourceSpan requestSource;
+
+  friend bool operator==(const SemanticEmbeddingExport &,
+                         const SemanticEmbeddingExport &) = default;
+};
+
+struct SemanticEmbeddingPlan {
+  std::uint32_t abiVersion = embeddingAbiVersionV1;
+  std::vector<SemanticEmbeddingExport> exports;
+
+  friend bool operator==(const SemanticEmbeddingPlan &,
+                         const SemanticEmbeddingPlan &) = default;
 };
 
 struct LambdaCaptureInfo {
@@ -965,6 +991,10 @@ enum class CallReceiverMode {
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
+  // A native indirect target is a value with this exact C signature, never
+  // a selected GTI function or a callback-adapter declaration.
+  std::optional<SemanticType> nativeCalleeType;
+  std::optional<CallableBoundary> callableBoundary;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<const Expr *> defaultArguments;
@@ -1531,6 +1561,12 @@ public:
   [[nodiscard]] const std::optional<HostedProgramEntryPlan> &
   hostedProgramEntryPlan() const;
 
+  [[nodiscard]] ProgramKind programKind() const;
+
+  [[nodiscard]] const std::optional<SemanticEmbeddingPlan> &
+  embeddingPlan() const;
+  [[nodiscard]] bool hasNativeFunctionConversions() const;
+
   [[nodiscard]] bool
   isProgramConstantSubstitution(const Expr &expression) const;
 
@@ -1772,6 +1808,10 @@ private:
   void setProgramInitializationPlan(ProgramInitializationPlan plan);
 
   void setHostedProgramEntryPlan(std::optional<HostedProgramEntryPlan> plan);
+
+  void setProgramKind(ProgramKind kind);
+
+  void setEmbeddingPlan(std::optional<SemanticEmbeddingPlan> plan);
 
   void recordProgramConstantSubstitution(const Expr &expression);
   void clearProgramConstantSubstitution(const Expr &expression);
@@ -2017,6 +2057,8 @@ private:
   std::unordered_map<const Expr *, CallerLocationOrigin> callerLocations;
   ProgramInitializationPlan programInitialization;
   std::optional<HostedProgramEntryPlan> hostedProgramEntry;
+  ProgramKind programKind_ = ProgramKind::Executable;
+  std::optional<SemanticEmbeddingPlan> embeddingPlan_;
   std::unordered_set<const Expr *> programConstantSubstitutions;
   std::unordered_map<const Expr *, PlaceKey> places;
   std::unordered_map<const Expr *, OwnershipEvent> ownershipEvents;

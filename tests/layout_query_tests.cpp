@@ -182,8 +182,8 @@ void testParserAndAst() {
   expect(alignmentQuery != nullptr && !alignmentParser.hadError() &&
              alignmentQuery->kind() == lang::LayoutQueryKind::Alignment &&
              alignmentQuery->keyword().kind == lang::TokenKind::ALIGNOF &&
-             alignmentQuery->type().pointeeConst.has_value() &&
-             alignmentQuery->type().pointer.has_value() &&
+             alignmentQuery->type().pointers.size() == 1 &&
+             alignmentQuery->type().pointers.front().pointeeConst.has_value() &&
              lang::AstPrinter().print(*alignment) ==
                  "(alignof const uint32_t*)",
          "alignof(type) should retain pointee const and raw-pointer syntax");

@@ -1,0 +1,7 @@
+// A42: a fixed array of a passive struct initialized from named values is a backend ICE.
+struct Pair { mut int32_t quot = 0; };
+int main() {
+  Pair a{.quot = 9};
+  Pair copies[1] = {a};
+  return 0;
+}

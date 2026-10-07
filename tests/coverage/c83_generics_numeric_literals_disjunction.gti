@@ -1,0 +1,84 @@
+// Contextual integer literals in numeric generic bodies, across narrow,
+// unsigned, wide and floating instances, with a user disjunction concept and
+// generic value parameters.
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+concept counter<T> = std::integral<T> && std::copyable<T>;
+
+// Only facts common to both disjunction branches: comparison and arithmetic.
+T halve_toward_zero<T>(T value) requires scalar<T> {
+  if (value == 0) { return value; }
+  return T(value / 2);
+}
+
+bool is_negative<std::numeric T>(T value) { return value < 0; }
+
+T collatz_step<T>(T value) requires counter<T> {
+  if (value % 2 == 0) { return T(value / 2); }
+  return T(value * 3 + 1);
+}
+
+int32_t collatz_length<T>(T start) requires counter<T> {
+  mut T value = start;
+  mut int32_t steps = 0;
+  while (value != 1) {
+    value = collatz_step(value);
+    steps++;
+  }
+  return steps;
+}
+
+T clamp_to<std::numeric T>(T value) {
+  if (value < -100) { return T(-100); }
+  if (value > +100) { return T(100); }
+  return value;
+}
+
+T scale_by<std::numeric T, uint64_t N>(T value) {
+  mut T result = value;
+  for (mut uint64_t i = 1; i < N; i++) {
+    result = T(result + value);
+  }
+  return result;
+}
+
+int main() {
+  int8_t narrow = -7;
+  uint16_t wide_unsigned = 4000;
+  int64_t big = 9000000000;
+  double real = 7.0d;
+
+  int8_t h1 = halve_toward_zero(narrow);
+  uint16_t h2 = halve_toward_zero(wide_unsigned);
+  int64_t h3 = halve_toward_zero(big);
+  double h4 = halve_toward_zero(real);
+  std::println(h1);
+  std::println(h2);
+  std::println(h3);
+  if (h1 != -3) { return 1; }
+  if (h2 != 2000) { return 2; }
+  if (h3 != 4500000000) { return 3; }
+  if (h4 != 3.5d) { return 4; }
+
+  if (!is_negative(narrow)) { return 5; }
+  if (is_negative(wide_unsigned)) { return 6; }
+  if (!is_negative(-0.5d)) { return 7; }
+
+  uint8_t start8 = 27;
+  int32_t len_u8 = collatz_length(uint16_t(start8));
+  int32_t len_i64 = collatz_length(int64_t(27));
+  std::println(len_u8);
+  if (len_u8 != 111) { return 8; }
+  if (len_i64 != 111) { return 9; }
+
+  if (clamp_to(int16_t(-3000)) != -100) { return 10; }
+  if (clamp_to(int8_t(55)) != 55) { return 11; }
+  if (clamp_to(250.0d) != 100.0d) { return 12; }
+
+  int32_t tripled = scale_by<int32_t, 3>(14);
+  uint8_t doubled = scale_by<uint8_t, 2>(uint8_t(100));
+  std::println(tripled);
+  std::println(doubled);
+  if (tripled != 42) { return 13; }
+  if (doubled != 200) { return 14; }
+  return 0;
+}

@@ -729,6 +729,7 @@ struct MirInstruction {
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<SemanticType> nativeCalleeType;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
@@ -761,6 +762,14 @@ struct MirInstruction {
 
 [[nodiscard]] bool hasMirSafetyDischarge(const MirInstruction &instruction,
                                          MirSafetyDischarge discharge);
+// Shared verifier/backend/failure-proof admission of the native indirect call
+// family. The semantic signature remains authoritative; this independently
+// checks its ABI shape and ordered callee/argument staging against MIR.
+class MirProgram;
+struct MirBody;
+[[nodiscard]] bool isMirNativeIndirectCall(const MirProgram &program,
+                                           const MirBody &body,
+                                           const MirInstruction &instruction);
 [[nodiscard]] bool
 isMirFailureOutcomeDischarged(const MirInstruction &instruction,
                               std::size_t origin,
@@ -1214,6 +1223,7 @@ struct MirCallableSignature {
   std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
+  std::optional<SemanticType> nativeCalleeType;
 
   friend bool operator==(const MirCallableSignature &,
                          const MirCallableSignature &) = default;
@@ -1406,6 +1416,30 @@ struct MirLambdaInstance {
 
   friend bool operator==(const MirLambdaInstance &,
                          const MirLambdaInstance &) = default;
+};
+
+// Pointer-free public-root authority for one host embedding export. These
+// rows are selected in semantics and copied through HIR; MIR never reopens
+// source-level name lookup when establishing an ABI root.
+struct MirEmbeddingExport {
+  FunctionId declaration = 0;
+  HirFunctionInstanceId function = 0;
+  std::string qualifiedName;
+  std::string symbol;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  SourceSpan requestSource;
+
+  friend bool operator==(const MirEmbeddingExport &,
+                         const MirEmbeddingExport &) = default;
+};
+
+struct MirEmbeddingPlan {
+  std::uint32_t abiVersion = embeddingAbiVersionV1;
+  std::vector<MirEmbeddingExport> exports;
+
+  friend bool operator==(const MirEmbeddingPlan &,
+                         const MirEmbeddingPlan &) = default;
 };
 
 struct MirProgramInitializationUnit {
@@ -1619,9 +1653,11 @@ struct MirPayloadEnum {
 class MirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
+  [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
   }
+  [[nodiscard]] ProgramKind programKind() const { return programKind_; }
   [[nodiscard]] bool requiresCThreadRuntime() const {
     if (executionProfile_ != ExecutionProfile::Concurrent) {
       return false;
@@ -1639,6 +1675,10 @@ public:
     return false;
   }
   [[nodiscard]] const MirBody &module() const { return moduleBody; }
+
+  [[nodiscard]] const std::optional<MirEmbeddingPlan> &embeddingPlan() const {
+    return embeddingPlan_;
+  }
 
   [[nodiscard]] const MirProgramInitializationPlan &
   programInitializationPlan() const {
@@ -1761,8 +1801,11 @@ private:
   friend struct MirProgramTestAccess;
 
   bool valid_ = true;
+  TargetInfo target_ = TargetInfo::host();
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
+  ProgramKind programKind_ = ProgramKind::Executable;
   FailureMetadata failureMetadata_;
+  std::optional<MirEmbeddingPlan> embeddingPlan_;
   MirProgramInitializationPlan programInitialization;
   std::optional<MirHostedStartupPlan> hostedStartupPlan_;
   std::optional<MirBody> hostedStartupBody;

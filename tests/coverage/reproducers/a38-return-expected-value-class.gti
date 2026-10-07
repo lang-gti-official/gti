@@ -1,0 +1,17 @@
+// A38: 'return std::move(result).value();' of a class is a backend ICE.
+enum class errc { bad };
+class Owner {
+  int32_t v;
+public:
+  Owner(int32_t v) : v(v) {}
+  int32_t get() { return this.v; }
+};
+expected<Owner, errc> attempt(int32_t v) { return Owner(v); }
+Owner make(int32_t v) {
+  mut auto a = attempt(v);
+  return std::move(a).value();
+}
+int main() {
+  Owner o = make(3);
+  return o.get() == 3 ? 0 : 1;
+}

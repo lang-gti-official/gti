@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "cb8b796d01d2b7251bc4d405fd01e9264bddc4818ca63cbd6a8f4cb51c1da717",
+    "stdlib/prelude.gti": "6e2aa103ec9193cbd6492724885cce3b019c67baa4704a194f3ffdbe5d4b9f28",
     "stdlib/std/algorithm.gti": "f989a6357efa6e9d4be6c0b99747794f6c93bc3a918e9890ea01d27df5328f19",
     "stdlib/std/array.gti": "6b738e22e49dc45108dc3c1b90c90f19b765b4fc8bca48a63a9d565818b45233",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
@@ -720,6 +720,13 @@
       "mode": "run",
       "source": "tests/fixtures/mutex_move_only.gti",
       "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "native-c-scalars",
+      "mode": "run",
+      "source": "examples/123-native-c-scalars.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2319,6 +2326,15 @@
       "case_ids": ["panic-expected"],
       "required_instantiations": ["raw counted message", "formatted int argument"],
       "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/panic_runtime_test.py", "tests/panic_contract_tests.cpp", "stdlib/std/panic.gti"]
+    },
+    {
+      "id": "prelude.c-scalars",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["c_bool", "c_char", "c_double", "c_float", "c_int", "c_intptr_t", "c_long", "c_longlong", "c_ptrdiff_t", "c_schar", "c_short", "c_size_t", "c_uchar", "c_uint", "c_uintptr_t", "c_ulong", "c_ulonglong", "c_ushort", "c_void"],
+      "case_ids": ["native-c-scalars"],
+      "required_instantiations": ["LP64 and LLP64 C declaration identities", "plain-char numeric conversion and indexing", "unrelated generic aggregates"],
+      "evidence": ["tests/native_c_scalar_tests.cpp", "tests/native_c_scalar_target_tests.cpp", "tests/native_c_scalar_runtime_test.py", "examples/123-native-c-scalars.gti", "docs/language/native-c-interop.md"]
     },
     {
       "id": "prelude.enum-underlying",

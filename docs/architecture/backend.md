@@ -145,16 +145,17 @@ ABI or permit converting between distinct opaque handle types.
 
 ### Raw Address Representation
 
-Ordinary GTI raw-pointer values use an artifact-private typed `raw_address<T>`
-containing `uintptr_t`, not a native `T*` data member. Address formation captures
-the native address while the addressed storage is live. Native pointer fields
-are captured by reference-based byte copy, including pointee qualification,
-without first evaluating a possibly expired pointer value. Copying, aggregate
-transport, pointee qualification, explicit erasure/restoration and equality
-operate on the stored integer without reconstructing a pointer. This is what
-allows an expired address to remain an inert value; semantic provenance still
-rejects its subsequent access. A runtime test passing on one C++ compiler is
-not the justification for that property.
+Ordinary GTI raw-pointer values use an artifact-private union
+`raw_address<T>` with one live native `T*` member. Its implicit union
+copy/move operations copy the object representation, rather than evaluating
+that member ([C++ union copy construction](https://eel.is/c++draft/class.copy.ctor#16)).
+Qualification, erasure/restoration, native-field capture and assignment use
+reference-based byte transfer; equality reads address bits by byte copy.
+These operations remain inert after a pointee expires. Native pointer values
+are reconstructed only for verified unsafe access/arithmetic or an explicit
+foreign boundary. Optional provenance auditing does not make lifetime proof
+mandatory for unsafe code. Passing one runtime test is not the justification
+for representation-preserving transport.
 
 Verified raw access/arithmetic and native-call boundaries recover a native
 pointer. The carrier does not add source integer conversions, lifetime checks,
@@ -166,12 +167,21 @@ are explicitly rejected. Equal pointer/integer size alone is not the authority
 for treating arbitrary C++ pointer representations as integer addresses.
 
 Native declarations, callbacks and C-compatible fields retain native pointer
-types. Contextual opaque-handle output parameters use native pointer slots,
-with reference-based byte transfer into and out of those slots. Repeated
-arguments for the same verified MIR place share a slot, preserving native
-alias identity. Its address cannot be retained by the foreign call. Staging
-does not read an expired native pointer value; a foreign implementation that
-accesses its old pointee still has its normal unsafe caller obligations.
+types. Addressing an ordinary pointer carrier addresses its actual native
+member, so a nested raw address can be stored, forwarded, returned and passed
+to C without contextual out-parameter staging. Repeated addresses retain real
+slot identity and writes are immediately visible through all aliases.
+Foreign retention is permitted only while the unsafe caller maintains the
+slot's lifetime and access contract.
+
+Ordinary fixed arrays of raw pointers use a private union around a real
+`std::array<T*, N>`. This provides actual adjacent pointer objects for C/GTI
+raw indexing and arithmetic; adjacent members of separate carrier unions
+would not constitute one native pointer array. Union transport preserves bytes
+for the whole array without evaluating possibly expired elements. MIR still
+owns source bounds checks, place identity and array initialization/cleanup.
+Checked references to raw pointers remain outside the current language slice;
+the backend must not alias a native `T*` slot as a `raw_address<T>&`.
 
 Pointer-bearing passive C-compatible records use byte-preserving construction
 and assignment internally. Verified source calls snapshot value arguments
@@ -416,6 +426,16 @@ cached admission decisions. This keeps unrelated scalar aggregate elements
 from repeatedly triggering whole-body searches; applicable values still pass
 the complete lifetime, publication, use, and failure-edge checks. Neither MIR
 semantics nor emitted C++ changes as a result of these early rejections.
+
+The same necessary-condition filtering applies to direct class temporary
+borrows: scalar values cannot be their producers, and slot candidates must
+match the existing mutable class slot's exact source-value identity and type
+before call, materialization, activation and cleanup searches run. A terminal
+subscript boundary query first requires an existing source-defined GTI
+subscript member with an owner and one index parameter; an unrelated function
+cannot be selected by the existing whole-program subscript proof. These
+filters do not memoize admission, discharge a safety check, or change the
+complete proof for any potentially applicable candidate.
 
 Each body plan owns its readiness and issues, canonical plain and failure text
 templates, the deduced-callable variants where target family spelling differs,

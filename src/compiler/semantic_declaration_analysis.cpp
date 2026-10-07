@@ -1077,9 +1077,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         const auto parameter = std::find_if(
             declaration.typeParameters().begin(),
             declaration.typeParameters().end(), [&](const Token &candidate) {
-              return argument.arguments.empty() && !argument.pointer &&
-                     !argument.outerPointer && !argument.reference &&
-                     argument.arrayExtents.empty() &&
+              return argument.arguments.empty() && argument.pointers.empty() &&
+                     !argument.reference && argument.arrayExtents.empty() &&
                      candidate.lexeme == argumentToken.lexeme;
             });
         if (parameter == declaration.typeParameters().end()) {
@@ -1436,7 +1435,7 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
     targetFormValid = false;
   }
   if (targetFormValid) {
-    validateType(target, false, target.isNativeFunction());
+    validateType(target, target.isNativeFunction());
   }
   const SemanticType resolved = typeOf(target, alias.lookupScope);
   if (targetFormValid && !isCompilerTrustedUnit(alias.sourceUnit) &&
@@ -2334,6 +2333,10 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  classDecl->genericParameters().empty() &&
                  classDecl->name().lexeme == "c_string") {
         compilerCapability = CompilerCapabilityTypeKind::CString;
+      } else if (trustedPreludeCapabilityScope &&
+                 classDecl->genericParameters().empty() &&
+                 parseNativeCScalarKind(classDecl->name().lexeme)) {
+        compilerCapability = CompilerCapabilityTypeKind::NativeCScalar;
       } else if (trustedThreadCapabilityScope &&
                  classDecl->genericParameters().empty() &&
                  classDecl->name().lexeme == "thread_handle") {
@@ -2375,28 +2378,32 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         capabilityPolicies =
             registerClassAttributes(*classDecl, genericParameters);
       }
-      classes.push_back(
-          ClassInfo{.id = id,
-                    .sourceUnit = currentSourceUnit,
-                    .declaration = classDecl,
-                    .name = classDecl->name(),
-                    .kind = classDecl->kind(),
-                    .namespaceScope = scope,
-                    .signatureFamilyPrimary = familyPrimary,
-                    .genericParameters = std::move(genericParameters),
-                    .cAbiRecord = capabilityPolicies.cAbiRecord,
-                    .cAbiAttribute = capabilityPolicies.cAbiSource,
-                    .cOpaqueHandle = capabilityPolicies.cOpaqueHandle,
-                    .cOpaqueAttribute = capabilityPolicies.cOpaqueSource,
-                    .transferPolicy = capabilityPolicies.transfer,
-                    .sharePolicy = capabilityPolicies.share,
-                    .transferPolicySource = capabilityPolicies.transferSource,
-                    .sharePolicySource = capabilityPolicies.shareSource,
-                    .transferCondition = capabilityPolicies.transferCondition,
-                    .shareCondition = capabilityPolicies.shareCondition,
-                    .compilerPrivate =
-                        compilerPrivateDeclaration(currentSourceUnit, scope),
-                    .compilerCapability = compilerCapability});
+      classes.push_back(ClassInfo{
+          .id = id,
+          .sourceUnit = currentSourceUnit,
+          .declaration = classDecl,
+          .name = classDecl->name(),
+          .kind = classDecl->kind(),
+          .namespaceScope = scope,
+          .signatureFamilyPrimary = familyPrimary,
+          .genericParameters = std::move(genericParameters),
+          .cAbiRecord = capabilityPolicies.cAbiRecord,
+          .cAbiAttribute = capabilityPolicies.cAbiSource,
+          .cOpaqueHandle = capabilityPolicies.cOpaqueHandle,
+          .cOpaqueAttribute = capabilityPolicies.cOpaqueSource,
+          .transferPolicy = capabilityPolicies.transfer,
+          .sharePolicy = capabilityPolicies.share,
+          .transferPolicySource = capabilityPolicies.transferSource,
+          .sharePolicySource = capabilityPolicies.shareSource,
+          .transferCondition = capabilityPolicies.transferCondition,
+          .shareCondition = capabilityPolicies.shareCondition,
+          .compilerPrivate =
+              compilerPrivateDeclaration(currentSourceUnit, scope),
+          .compilerCapability = compilerCapability,
+          .nativeCScalar =
+              compilerCapability == CompilerCapabilityTypeKind::NativeCScalar
+                  ? *parseNativeCScalarKind(classDecl->name().lexeme)
+                  : NativeCScalarKind::None});
       if (familyPrimary != 0) {
         auto &members = classInfo(familyPrimary).signatureFamilyMembers;
         if (members.empty()) {
@@ -3799,8 +3806,9 @@ auto SemanticVisitor::Impl::reportCAbiRecord(const Token &location,
       "GTI-S2064", DiagnosticPhase::Semantics, location, std::move(message));
   diagnostic.hints.emplace_back(
       "A [[c_abi]] struct is a non-generic, inheritance-free passive record "
-      "containing only public instance fields of fixed-width integer or "
-      "floating types, one-level raw pointers, or other [[c_abi]] "
+      "containing only public instance fields of admitted C scalar types, "
+      "recursive raw pointers, native callbacks, fixed arrays, or other "
+      "[[c_abi]] "
       "records.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
@@ -4164,9 +4172,12 @@ auto SemanticVisitor::Impl::validateCAbiAccessSpecifiers(
 
 auto SemanticVisitor::Impl::cAbiPointerPointeeAllowed(
     const SemanticType &type) const -> bool {
-  if (type == SemanticType::Void || isCAbiScalar(type)) {
+  if (type == SemanticType::Void || isCAbiScalar(type) ||
+      type == SemanticType::CString || isCAbiNativeFunction(type)) {
     return true;
   }
+  if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1)
+    return cAbiPointerPointeeAllowed(type.arguments.front());
   return type.kind == SemanticType::Class && type.classId != 0 &&
          type.classId <= classes.size() &&
          (classInfo(type.classId).cAbiRecord ||

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <tuple>
 
 namespace {
 
@@ -138,6 +139,105 @@ void testRawPointerAstPrinting() {
              printed == "(lambda [] -> const native::Cell*)",
          "AST printing should keep pointee const before the first qualified "
          "type segment");
+
+  for (const std::string &type :
+       {"native::Cell***", "const native::Cell***", "native::Cell* const*",
+        "const native::Cell* const** const*"}) {
+    lang::Parser nested(lexer.scan("[]() -> " + type + " { return nullptr; }"));
+    const lang::ExprPtr parsed = nested.parseExpression();
+    expect(parsed != nullptr && !nested.hadError() &&
+               lang::AstPrinter().print(*parsed) ==
+                   "(lambda [] -> " + type + ")",
+           "AST printing should preserve every pointer layer and its own "
+           "pointee qualifier: " +
+               type);
+    const auto *lambda =
+        parsed ? lang::exprAs<lang::Lambda>(parsed.get()) : nullptr;
+    if (lambda) {
+      const lang::TypeRef &result = lambda->returnType();
+      expect(result.pointers.size() == static_cast<std::size_t>(std::count(
+                                           type.begin(), type.end(), '*')),
+             "each written pointer layer should retain its own star token");
+      for (const auto &layer : result.pointers) {
+        expect(layer.star.kind == lang::TokenKind::STAR &&
+                   layer.star.lexeme == "*",
+               "pointer syntax layers should preserve exact source tokens");
+      }
+    }
+  }
+
+  lang::Parser topLevelConst(
+      lexer.scan("[]() -> native::Cell* const { return nullptr; }"));
+  (void)topLevelConst.parseExpression();
+  expect(topLevelConst.hadError(),
+         "trailing const should not introduce C++ binding constness");
+}
+
+void testNestedPointerTypes() {
+  const auto result = lang::Frontend().analyze("nested-pointer-types.gti", R"(
+using Pointer = int*;
+using Slot = Pointer*;
+[[c_abi]] struct NativeSlots { mut Slot slot; };
+struct Holder { mut Slot slot = nullptr; };
+extern "C" {
+  void native_write(Slot slot, Pointer value);
+  Slot native_return();
+  void native_read(int* const* readonly_slot, const int** readonly_value);
+}
+Slot forward(Slot slot) { return slot; }
+int*** deeper(int*** slots) { return slots; }
+int main() {
+  mut int owner = 7;
+  mut Pointer pointer = &owner;
+  mut Slot slot = &pointer;
+  Holder carrier{.slot = forward(slot)};
+  int* const* shared = slot;
+  unsafe {
+    *slot = &owner;
+    native_write(*deeper(&slot), &owner);
+    if (*shared != pointer || *carrier.slot != pointer) { return 1; }
+  }
+  return 0;
+}
+)");
+  if (!result.canGenerateCode())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode(),
+         "nested pointers should compose with aliases, fields, C parameters, "
+         "unannotated returns and GTI helper functions");
+  if (result.canGenerateCode()) {
+    const lang::MirBody *body = findMirFunction(result, "main");
+    expect(body && body->loans.empty(),
+           "raw pointer-slot addresses must not create checked loans");
+    const auto artifact = gti_test::emitCpp(result, result.mir, result.mir,
+                                            lang::OptimizationResult{});
+    expect(artifact.contents.find("__gti_native_out_") == std::string::npos &&
+               artifact.contents.find("union raw_address") != std::string::npos,
+           "native calls should use actual pointer slots without contextual "
+           "temporary writeback staging");
+  }
+
+  for (const auto &[name, source, code] :
+       {std::tuple{"deep-const-addition",
+                   "int main() { mut int* p = nullptr; int** s = &p; "
+                   "const int** invalid = s; return 0; }",
+                   "GTI-S2003"},
+        std::tuple{"readonly-slot-write",
+                   "int main() { mut int* p = nullptr; int* const* s = &p; "
+                   "unsafe { *s = nullptr; } return 0; }",
+                   "GTI-S2002"},
+        std::tuple{"immutable-slot-address",
+                   "int main() { int* p = nullptr; int** s = &p; return 0; }",
+                   "GTI-S2003"},
+        std::tuple{"unsafe-slot-read",
+                   "int main() { mut int* p = nullptr; int** s = &p; "
+                   "int* read = *s; return 0; }",
+                   "GTI-S2055"}}) {
+    const auto invalid = lang::Frontend().analyze(name, source);
+    expect(!invalid.canGenerateCode() && hasCode(invalid, code),
+           std::string(name) + " should retain mandatory pointer checking");
+  }
 }
 
 void testRawPointerPipeline() {
@@ -486,8 +586,8 @@ int main() { int32_t* local; return 0; }
 using Pointer = int32_t*;
 int main() { Pointer* nested = nullptr; return 0; }
 )");
-  expect(!aliasDepth.canGenerateCode() && hasCode(aliasDepth, "GTI-S2056"),
-         "aliases should not bypass the one-level pointer rule");
+  expect(aliasDepth.canGenerateCode(),
+         "a transparent alias should compose with further pointer layers");
 
   const lang::FrontendResult aliasPointerToArray =
       lang::Frontend().analyze("raw-pointer-to-array-alias.gti", R"(
@@ -1901,6 +2001,7 @@ int main() {
 int main() {
   lang::installCrashHandlers("gti_raw_pointer_tests");
   testRawPointerAstPrinting();
+  testNestedPointerTypes();
   testRawPointerPipeline();
   testUnsafeAndPointerDiagnostics();
   testRawPointerConstructorRanking();

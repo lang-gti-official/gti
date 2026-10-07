@@ -1,0 +1,6 @@
+int main() {
+  int x = 4;
+  int y = x @ 2; //!ERR
+  int z = y $ 1; //!ERR
+  return z;
+}

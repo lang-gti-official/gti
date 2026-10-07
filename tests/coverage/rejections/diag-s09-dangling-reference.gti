@@ -1,0 +1,12 @@
+int& dangling() {
+  int local = 4;
+  return local; //!ERR
+}
+
+int& from_value(int v) {
+  return v; //!ERR
+}
+
+int main() {
+  return dangling() + from_value(1);
+}

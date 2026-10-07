@@ -1,0 +1,8 @@
+constexpr int32_t divide(int32_t a, int32_t b) { return a / b; }
+
+static_assert(divide(4, 2) == 3); //!ERR
+constexpr int32_t bad = divide(1, 0); //!ERR
+
+int main() {
+  return 0;
+}

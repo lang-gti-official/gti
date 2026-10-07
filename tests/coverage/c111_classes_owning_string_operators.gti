@@ -1,0 +1,75 @@
+// Operators on a cleanup-owning (std::string) class: read-only and consuming
+// (`&&`) overloads of operator/ selected by receiver category in a chain,
+// compound append (+=), comparison against string_view, subscript returning
+// a char reference, unary ~ producing an owned value, and observable
+// destruction counts proving consumed temporaries are not double-dropped.
+#include <std/format>
+#include <std/string>
+
+static mut int32_t paths_dropped = 0;
+static mut int32_t consuming_calls = 0;
+
+class Path {
+  mut std::string text;
+public:
+  Path(std::string_view start) : text(std::string(start)) {}
+  ~Path() { paths_dropped += 1; }
+
+  Path operator/(std::string_view part) {
+    mut Path next = Path(this.text.view());
+    next.text.append("/");
+    next.text.append(part);
+    return next;
+  }
+  Path operator/(std::string_view part) && {
+    consuming_calls += 1;
+    this.text.append("/");
+    this.text.append(part);
+    return std::move(this);
+  }
+  void operator+=(std::string_view suffix) mut { this.text.append(suffix); }
+  bool operator==(std::string_view other) { return this.text.view() == other; }
+  bool operator!=(std::string_view other) { return !(this.text.view() == other); }
+  char& operator[](std::size_t i) { return this.text[i]; }
+  Path operator~() {
+    mut Path up = Path("");
+    mut std::size_t cut = std::size_t(0);
+    for (mut std::size_t i = 0; i < this.text.size(); i++) {
+      if (this.text[i] == '/') { cut = i; }
+    }
+    for (mut std::size_t i = 0; i < cut; i++) {
+      char c = this.text[i];
+      up.text.push_back(c);
+    }
+    return up;
+  }
+  std::size_t size() { return this.text.size(); }
+  std::string_view view() { return this.text.view(); }
+};
+
+int main() {
+  {
+    Path root = Path("usr");
+    Path lib = root / "lib";                // read-only receiver: root kept
+    if (lib != "usr/lib" || root != "usr") { return 1; }
+    if (consuming_calls != 0) { return 2; }
+
+    Path deep = Path("opt") / "pkg" / "bin"; // temporaries select consuming form
+    if (deep != "opt/pkg/bin") { std::println("{}", deep.view()); return 3; }
+    if (consuming_calls != 2) { std::println("consuming {}", consuming_calls); return 4; }
+
+    mut Path m = lib / "gti";
+    m += ".so";
+    if (m != "usr/lib/gti.so") { return 5; }
+    if (m[std::size_t(4)] != 'l') { return 6; }
+
+    Path parent = ~m;
+    if (parent != "usr/lib") { return 7; }
+    if (paths_dropped != 0) { return 8; }
+  }
+  // root, lib, deep, m, parent are the five survivors; every temporary in the
+  // chains was either consumed or dropped exactly once.
+  std::println("dropped {} consuming {}", paths_dropped, consuming_calls);
+  if (paths_dropped != 5) { return 9; }
+  return 0;
+}

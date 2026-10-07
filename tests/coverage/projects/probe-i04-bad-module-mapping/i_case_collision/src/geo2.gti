@@ -1,0 +1,2 @@
+export module geo;
+export int area2() { return 4; }

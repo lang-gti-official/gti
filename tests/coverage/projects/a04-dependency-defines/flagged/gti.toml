@@ -1,0 +1,8 @@
+manifest-version = 1
+
+[package]
+name = "flagged"
+version = "0.1.0"
+
+[build]
+defines = ["DEP_FLAG"]

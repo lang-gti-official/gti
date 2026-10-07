@@ -7858,7 +7858,7 @@ def test_native_record_tooling(executable, root):
         ]["type"] == struct_type
 
         invalid_source = (
-            "[[c_abi]] struct Bad { bool value; };\n"
+            "[[c_abi]] struct Bad { char value; };\n"
             "int main() { return 0; }\n"
         )
         session.send(
@@ -7882,15 +7882,15 @@ def test_native_record_tooling(executable, root):
             for item in invalid["diagnostics"]
             if item.get("code") == "GTI-S2064"
         )
-        field_type = invalid_source.index("bool")
+        field_type = invalid_source.index("char")
         assert diagnostic["range"] == {
             "start": lsp_position(invalid_source, field_type),
-            "end": lsp_position(invalid_source, field_type + len("bool")),
+            "end": lsp_position(invalid_source, field_type + len("char")),
         }, diagnostic
         assert "fixes" not in diagnostic.get("data", {}), diagnostic
 
         invalid_array_source = (
-            "[[c_abi]] struct Bad { bool values[4]; };\n"
+            "[[c_abi]] struct Bad { char values[4]; };\n"
             "int main() { return 0; }\n"
         )
         session.send(
@@ -7914,11 +7914,11 @@ def test_native_record_tooling(executable, root):
             for item in invalid_array["diagnostics"]
             if item.get("code") == "GTI-S2070"
         )
-        array_type = invalid_array_source.index("bool")
+        array_type = invalid_array_source.index("char")
         assert array_diagnostic["range"] == {
             "start": lsp_position(invalid_array_source, array_type),
             "end": lsp_position(
-                invalid_array_source, array_type + len("bool")
+                invalid_array_source, array_type + len("char")
             ),
         }, array_diagnostic
         assert array_diagnostic["data"]["phase"] == "semantics", (

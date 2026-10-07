@@ -1,0 +1,10 @@
+// A28: entry.first.view() over a std::map range.
+#include <std/map>
+#include <std/string>
+int main() {
+  mut std::map<std::string, int> inventory{};
+  [[discard]] inventory.insert(std::string("pear"), 1);
+  mut std::size_t total = 0;
+  for (auto& entry : inventory) { total += entry.first.view().size(); }
+  return total == 4 ? 0 : 1;
+}

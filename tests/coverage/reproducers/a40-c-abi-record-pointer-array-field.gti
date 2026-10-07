@@ -1,0 +1,15 @@
+// A40: the same through a [[c_abi]] record pointer.
+[[c_abi]]
+struct Samples {
+  mut int32_t values[4];
+  mut int32_t count;
+};
+extern "C" {
+  Samples* native_samples();
+}
+int main() {
+  unsafe {
+    Samples* s = native_samples();
+    return s->values[1];
+  }
+}

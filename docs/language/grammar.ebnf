@@ -317,28 +317,27 @@ native-link-name-attribute
    while binding the decoded portable C identifier `symbol`; without it the
    source identifier is the link symbol.
 
-   Returns are limited to `void`, the fixed-width signed and unsigned integer
-   types, `float`, `double`, valid `[[c_abi]]` records, `c_string`, exact named
-   native function types, and one-level raw pointers whose pointee is `void`,
+   Returns are limited to `void`, target-correct C scalar families, fixed-width
+   integer types, `bool`, `float`, `double`, valid `[[c_abi]]` records,
+   `c_string`, exact named native function types, and recursive raw pointers
+   whose terminal pointee is `void`,
    one of those scalar types,
-   `c_string`, a valid native record, or a `[[c_opaque]]` handle. A
-   `[[c_array(count)]]` declaration may add one outer pointer to an otherwise
-   admitted one-level pointer return. Its named parameter must be an immutable
+   `c_string`, a valid native record, a `[[c_opaque]]` handle or exact named
+   native callback. `[[c_array(count)]]` supplies a separate count contract
+   without changing pointer type identity. Its parameter must be an immutable
    one-level pointer to a writable fixed-width integer. Parameters are
    immutable by-value instances of the same scalar and native-record types,
    the admitted pointer types, plus `std::string_view` as a non-retained
-   counted input buffer. One direct bodyless C parameter may also use the exact
-   `OpaqueHandle**` out form; its only source argument is the contextual
-   address of an exact mutable `OpaqueHandle*` binding inside `unsafe`. A
-   raw-pointer pointee may be qualified with `const`. `int`,
+   counted input buffer. Pointer-slot addresses are ordinary inert raw values,
+   with native calls and slot dereference requiring `unsafe`. Each
+   raw-pointer pointee may be independently qualified with `const`. `int`,
    `uint`, suffix-less fixed-width spellings, and transparent aliases follow
-   their resolved fixed-width type. Bool, char, enums, ordinary complete
+   their resolved fixed-width type. GTI char, enums, ordinary complete
    classes, expected,
-   references, arrays, packs, string-view returns, native variables, general
-   pointer-to-pointer types, and anonymous/general function pointers are not
+   references, arrays, packs, string-view returns, native variables and
+   anonymous/general function pointers are not
    part of this contract. `GTI-S2073` owns malformed C-array pairs and
-   `GTI-S2074` owns a second pointer level outside the annotated return or
-   exact opaque-handle out parameter. Calling a
+   pointer depth is no longer a contextual ABI exception. Calling a
    pointer-bearing C declaration requires an `unsafe`
    block; scalar-only calls and the counted string-view case remain safe. The
    exact function identifier is the native C symbol; a containing GTI namespace
@@ -838,7 +837,7 @@ signature-receiver     = "mut" | "&&" ;
    type metadata usable in aliases/generic arguments, not an object or a native
    callback pointer. It has no implicit function/array parameter decay. *)
 
-raw-pointer-base       = [ "const" ] base-type "*" [ "*" ] ;
+raw-pointer-base       = [ "const" ] base-type "*" { [ "const" ] "*" } ;
 
 base-type              = primitive-type
                        | user-type
@@ -859,20 +858,21 @@ base-type              = primitive-type
    require an explicit `std::move`. A lambda initializer also requires an
    immutable binding. *)
 
-(* `T*` and `const T*` are nullable, non-owning, one-level raw-pointer types.
+(* Raw pointers are recursive, nullable and non-owning.
    `const` is valid here only when followed by `*` and makes the pointee
    read-only. Leading declaration `mut` controls whether the pointer binding
-   may be reseated; it does not change pointee access. A second parsed `*` is
-   admitted semantically only on an `extern "C"` return carrying a valid
-   `[[c_array(count)]]` pair. Pointer-to-pointer locals, parameters, fields,
-   aliases, and unannotated returns, references to raw pointers, function
-   pointers, pointer-to-array types, and implicit array decay are rejected. A
-   fixed array may contain one-level pointer values. Raw-pointer variables and
+   may be reseated; it does not change pointee access. `T* const*` points to a
+   read-only pointer slot, unlike `const T**`, whose final object is read-only.
+   Locals, parameters, fields, aliases, generic arguments and unannotated
+   returns use the same type family. References to raw pointers, anonymous
+   function-pointer declarators, pointer-to-array types and implicit array
+   decay remain rejected. Fixed arrays may contain nested pointer values.
+   Raw-pointer variables and
    fields require an explicit initializer, normally `nullptr`.
 
    Carrying, copying, assigning, passing, returning, null comparison, compatible
-   equality, and adding `const` pointee qualification are safe. Address
-   formation, dereference, indexing, arrow access, pointer arithmetic, and a
+   equality, adding outer qualification and address formation are safe.
+   Dereference, indexing, arrow access, pointer arithmetic, and a
    pointer-bearing C call require a lexical `unsafe` block. Raw pointers own no
    storage and create no semantic loan. See `raw-pointers.md`. *)
 

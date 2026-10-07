@@ -1,0 +1,13 @@
+// INVALID: list::remove requires an equality-comparable element type.
+#include <std/list>
+class Token {
+  int id;
+public:
+  Token(int id) : id(id) {}
+};
+int main() {
+  mut std::list<Token> tokens{};
+  tokens.push_back(Token(1));
+  Token probe = Token(1);
+  return int(tokens.remove(probe));
+}

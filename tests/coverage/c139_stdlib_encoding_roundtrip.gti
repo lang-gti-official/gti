@@ -1,0 +1,81 @@
+// Base64 and hexadecimal: RFC 4648 vectors kept in an ordered map, a full
+// 256-byte round trip with embedded zeroes, uppercase hex acceptance, and
+// every decode_errc category, including non-canonical padding bits.
+#include <std/encoding>
+#include <std/string>
+#include <std/map>
+#include <std/vector>
+
+bool decode_fails(std::string_view text, std::encoding::decode_errc wanted) {
+  auto result = std::encoding::base64::decode(text);
+  return !result && result.error() == wanted;
+}
+
+bool hex_fails(std::string_view text, std::encoding::decode_errc wanted) {
+  auto result = std::encoding::hex::decode(text);
+  return !result && result.error() == wanted;
+}
+
+int main() {
+  mut std::map<std::string, std::string> vectors{};
+  [[discard]] vectors.insert(std::string(""), std::string(""));
+  [[discard]] vectors.insert(std::string("f"), std::string("Zg=="));
+  [[discard]] vectors.insert(std::string("fo"), std::string("Zm8="));
+  [[discard]] vectors.insert(std::string("foo"), std::string("Zm9v"));
+  [[discard]] vectors.insert(std::string("foob"), std::string("Zm9vYg=="));
+  [[discard]] vectors.insert(std::string("fooba"), std::string("Zm9vYmE="));
+  [[discard]] vectors.insert(std::string("foobar"), std::string("Zm9vYmFy"));
+  mut int checked = 0;
+  for (auto& entry : vectors) {
+    std::string& plain = entry.first;
+    std::string& encoded = entry.second;
+    std::string produced = std::encoding::base64::encode(plain.view());
+    if (produced != encoded.view()) { std::println(produced); return 1; }
+    mut auto back = std::encoding::base64::decode(encoded.view());
+    if (!back || back.value() != plain) { return 2; }
+    checked++;
+  }
+  if (checked != 7) { return 3; }
+
+  // Every byte value, including NUL, survives both encodings.
+  mut std::string bytes{};
+  for (mut int value = 0; value < 256; value++) {
+    bytes.push_back(char(uint8_t(value)));
+  }
+  if (bytes.size() != 256 || bytes[std::size_t(0)] != '\0') { return 4; }
+  std::string b64 = std::encoding::base64::encode(bytes.view());
+  std::string hex = std::encoding::hex::encode(bytes.view());
+  if (b64.size() != 344 || hex.size() != 512) { return 5; }
+  if (!hex.starts_with("000102") || !hex.ends_with("fdfeff")) { return 6; }
+  auto from_b64 = std::encoding::base64::decode(b64.view());
+  auto from_hex = std::encoding::hex::decode(hex.view());
+  if (!from_b64 || !from_hex) { return 7; }
+  if (from_b64.value() != bytes || from_hex.value() != bytes) { return 8; }
+
+  auto upper = std::encoding::hex::decode("DEADbeef");
+  if (!upper || upper.value().size() != 4) { return 9; }
+  std::string relowered = std::encoding::hex::encode(upper.value().view());
+  if (relowered != "deadbeef") { return 10; }
+
+  if (!decode_fails("Zg=", std::encoding::decode_errc::invalid_length)) { return 11; }
+  if (!decode_fails("Zg!=", std::encoding::decode_errc::invalid_character)) { return 12; }
+  if (!decode_fails("Z===", std::encoding::decode_errc::invalid_padding)) { return 13; }
+  if (!decode_fails("Zg==Zg==", std::encoding::decode_errc::invalid_padding)) { return 14; }
+  if (!decode_fails("Zh==", std::encoding::decode_errc::non_canonical_input)) { return 15; }
+  if (!decode_fails("Zm8 ", std::encoding::decode_errc::invalid_character)) { return 16; }
+  if (!hex_fails("abc", std::encoding::decode_errc::invalid_length)) { return 17; }
+  if (!hex_fails("0x12", std::encoding::decode_errc::invalid_character)) { return 18; }
+
+  // Collect decoded payloads into a vector and check combined length.
+  mut std::vector<std::string> payloads{};
+  std::string_view inputs[3] = {"aGVsbG8=", "d29ybGQ=", "IQ=="};
+  for (mut std::size_t i = 0; i < 3; i++) {
+    mut auto decoded = std::encoding::base64::decode(inputs[i]);
+    if (!decoded) { return 19; }
+    payloads.push_back(std::move(decoded).value());
+  }
+  mut std::string sentence{};
+  for (auto& part : payloads) { sentence.append(part.view()); }
+  std::println(sentence);
+  return sentence == "helloworld!" ? 0 : 20;
+}

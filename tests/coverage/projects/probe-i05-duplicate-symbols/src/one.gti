@@ -1,0 +1,8 @@
+namespace util {
+  int helper(int value) { return value + 1; }
+  mut int counter = 0;
+  class Widget {
+  public:
+    Widget() {}
+  };
+}

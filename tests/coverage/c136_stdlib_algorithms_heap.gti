@@ -1,0 +1,151 @@
+// Algorithms over move-only data: a hand-written binary min-heap priority
+// queue over vector<Job> (swap_elements sift up/down), std::sort with a
+// stateful comparator, std::transform producing move-only unique_ptr results,
+// bounds/binary_search/search/count/equal/lexicographical_compare/min/max
+// element over sorted iterator ranges, and stable-order checks via tie-breaks.
+#include <std/algorithm>
+#include <std/iterator>
+#include <std/vector>
+#include <std/memory>
+#include <std/string>
+
+class Job {
+public:
+  int deadline;
+  int id;
+  std::unique_ptr<std::string> note;
+  // Workaround: make_unique<std::string>(std::string) ICEs (repro/rE2);
+  // build from a view instead.
+  Job(int deadline, int id, std::string_view text) : deadline(deadline), id(id),
+      note(std::make_unique<std::string>(text)) {}
+  Job(Job& other) = delete;
+  Job(Job&& other) = default;
+};
+
+class JobHeap {
+  mut std::vector<Job> slots;
+  bool earlier(std::size_t a, std::size_t b) {
+    Job& left = this.slots[a];
+    Job& right = this.slots[b];
+    if (left.deadline != right.deadline) { return left.deadline < right.deadline; }
+    return left.id < right.id;
+  }
+public:
+  JobHeap() : slots(std::vector<Job>()) {}
+  std::size_t size() { return this.slots.size(); }
+  void push(Job job) mut {
+    this.slots.push_back(std::move(job));
+    mut std::size_t child = this.slots.size() - 1;
+    while (child > 0) {
+      std::size_t parent = (child - 1) / 2;
+      if (!this.earlier(child, parent)) { break; }
+      this.slots.swap_elements(child, parent);
+      child = parent;
+    }
+  }
+  Job& top() { return this.slots[std::size_t(0)]; }
+  void pop() mut {
+    std::size_t last = this.slots.size() - 1;
+    this.slots.swap_elements(std::size_t(0), last);
+    this.slots.pop_back();
+    mut std::size_t node = 0;
+    while (true) {
+      std::size_t left = node * 2 + 1;
+      std::size_t right = left + 1;
+      mut std::size_t best = node;
+      if (left < this.slots.size() && this.earlier(left, best)) { best = left; }
+      if (right < this.slots.size() && this.earlier(right, best)) { best = right; }
+      if (best == node) { break; }
+      this.slots.swap_elements(node, best);
+      node = best;
+    }
+  }
+};
+
+class CountingOrder {
+  mut int comparisons = 0;
+public:
+  CountingOrder() {}
+  bool operator()(Job& left, Job& right) mut {
+    this.comparisons++;
+    if (left.deadline != right.deadline) { return left.deadline > right.deadline; }
+    return left.id < right.id;
+  }
+};
+
+std::unique_ptr<int> squared(std::unique_ptr<int>& value) {
+  return std::make_unique<int>(*value * *value);
+}
+
+int main() {
+  JobHeap heap{};
+  mut JobHeap queue = JobHeap();
+  int deadlines[8] = {7, 3, 9, 3, 1, 8, 7, 2};
+  for (mut int i = 0; i < 8; i++) { std::string text = std::to_string(i);
+    queue.push(Job(deadlines[i], i, text.view())); }
+  mut int order = 0;
+  mut std::string notes{};
+  while (queue.size() > 0) {
+    Job& next = queue.top();
+    order = order * 10 + next.id;
+    notes.append(next.note->view());
+    queue.pop();
+  }
+  std::println(notes);
+  // deadlines: 1(id4) 2(id7) 3(id1) 3(id3) 7(id0) 7(id6) 8(id5) 9(id2)
+  if (notes != "47130652") { return 1; }
+  if (heap.size() != 0) { return 2; }
+
+  mut std::vector<Job> jobs{};
+  for (mut int i = 0; i < 8; i++) { std::string text = std::to_string(i);
+    jobs.push_back(Job(deadlines[i], i, text.view())); }
+  std::sort(jobs, CountingOrder());
+  mut std::string sorted{};
+  for (mut std::size_t i = 0; i < jobs.size(); i++) {
+    // Workaround: job.note->view() on a range-for element ICEs (repro/rB).
+    Job& job = jobs[i];
+    sorted.append(job.note->view());
+  }
+  std::println(sorted);
+  if (sorted != "25061374") { return 3; }
+
+  mut std::vector<std::unique_ptr<int>> inputs{};
+  mut std::vector<std::unique_ptr<int>> outputs{};
+  for (mut int i = 1; i <= 5; i++) {
+    inputs.push_back(std::make_unique<int>(i));
+    outputs.push_back(std::make_unique<int>(0));
+  }
+  std::transform(inputs, outputs, squared);
+  mut int total = 0;
+  for (auto& value : outputs) { total += *value; }
+  if (total != 1 + 4 + 9 + 16 + 25 || *inputs[std::size_t(4)] != 5) { return 4; }
+
+  std::vector<int> values = {1, 3, 3, 3, 5, 8, 13, 21};
+  int three = 3;
+  int four = 4;
+  int twenty_one = 21;
+  auto low = std::lower_bound(values.begin(), values.end(), three);
+  auto high = std::upper_bound(values.begin(), values.end(), three);
+  std::ptrdiff_t run = std::distance(std::move(low), std::move(high));
+  if (run != 3) { return 5; }
+  if (!std::binary_search(values.begin(), values.end(), twenty_one) ||
+      std::binary_search(values.begin(), values.end(), four)) { return 6; }
+  if (std::count(values, three) != 3) { return 7; }
+
+  std::vector<int> pattern = {3, 5, 8};
+  auto stop = values.end();
+  auto hit = std::search(values.begin(), values.end(), pattern.begin(), pattern.end());
+  if (!(hit != stop) || *hit != 3) { return 8; }
+  auto smallest = std::min_element(values.begin(), values.end());
+  auto largest = std::max_element(values.begin(), values.end());
+  if (*smallest != 1 || *largest != 21) { return 9; }
+  if (!std::is_sorted(values.begin(), values.end())) { return 10; }
+
+  std::vector<int> prefix = {1, 3, 3};
+  std::vector<int> bigger = {1, 3, 4};
+  if (!std::starts_with(values.begin(), values.end(), prefix.begin(), prefix.end())) { return 11; }
+  if (!std::lexicographical_compare(values.begin(), values.end(), bigger.begin(), bigger.end())) { return 12; }
+  if (std::equal(prefix.begin(), prefix.end(), bigger.begin(), bigger.end())) { return 13; }
+  if (std::clamp(42, 0, 10) != 10 || std::min(-1, 2) != -1) { return 14; }
+  return 0;
+}

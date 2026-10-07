@@ -334,6 +334,56 @@ struct SemanticType {
   SemanticType(Kind kind, std::vector<SemanticType> arguments)
       : kind(kind), arguments(std::move(arguments)) {}
 
+  [[nodiscard]] static std::optional<SemanticType>
+  nativeCScalarType(NativeCScalarKind requested, const TargetInfo &target) {
+    const auto info = target.nativeCScalar(requested);
+    if (!info) {
+      return std::nullopt;
+    }
+    SemanticType type;
+    switch (info->valueKind) {
+    case TargetScalarKind::Bool:
+      type.kind = Bool;
+      break;
+    case TargetScalarKind::Int8:
+      type.kind = Int8;
+      break;
+    case TargetScalarKind::Int16:
+      type.kind = Int16;
+      break;
+    case TargetScalarKind::Int32:
+      type.kind = Int32;
+      break;
+    case TargetScalarKind::Int64:
+      type.kind = Int64;
+      break;
+    case TargetScalarKind::UInt8:
+      type.kind = UInt8;
+      break;
+    case TargetScalarKind::UInt16:
+      type.kind = UInt16;
+      break;
+    case TargetScalarKind::UInt32:
+      type.kind = UInt32;
+      break;
+    case TargetScalarKind::UInt64:
+      type.kind = UInt64;
+      break;
+    case TargetScalarKind::Float32:
+      type.kind = Float;
+      break;
+    case TargetScalarKind::Float64:
+      type.kind = Double;
+      break;
+    default:
+      return std::nullopt;
+    }
+    if (target.fixedCScalarIdentity(info->valueKind) != info->declarationKind) {
+      type.nativeCScalar = info->declarationKind;
+    }
+    return type;
+  }
+
   [[nodiscard]] static SemanticType
   classType(ClassId id, std::vector<SemanticType> arguments = {},
             std::vector<CompileTimeValue> valueArguments = {}) {
@@ -583,6 +633,7 @@ struct SemanticType {
   friend bool operator==(const SemanticType &, const SemanticType &) = default;
 
   Kind kind;
+  NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
   std::vector<SemanticType> arguments;
   std::vector<CompileTimeValue> valueArguments;
   ClassId classId = 0;

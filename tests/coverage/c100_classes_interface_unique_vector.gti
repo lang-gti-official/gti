@@ -1,0 +1,96 @@
+// Interface dispatch through a vector of unique_ptr<Interface>, through
+// dereferenced owners bound to Interface& / mut Interface& parameters, and
+// observable destruction order of the erased owners.
+#include <std/format>
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+
+static mut int32_t destroyed_sum = 0;
+static mut int32_t destroyed_count = 0;
+
+interface Account {
+  int64_t balance();
+  void deposit(int64_t amount) mut;
+  int32_t id();
+};
+
+class Checking : public Account {
+  int32_t ident;
+  mut int64_t cents = 0;
+public:
+  Checking(int32_t ident, int64_t start) : ident(ident), cents(start) {}
+  ~Checking() {
+    destroyed_count += 1;
+    destroyed_sum = destroyed_sum * 10 + this.ident;
+    std::println("drop checking {}", this.ident);
+  }
+  int64_t balance() override { return this.cents; }
+  void deposit(int64_t amount) mut override { this.cents += amount; }
+  int32_t id() override { return this.ident; }
+};
+
+class Savings : public Account {
+  int32_t ident;
+  mut int64_t cents = 0;
+  int64_t bonus;
+public:
+  Savings(int32_t ident, int64_t bonus) : ident(ident), bonus(bonus) {}
+  ~Savings() {
+    destroyed_count += 1;
+    destroyed_sum = destroyed_sum * 10 + this.ident;
+    std::println("drop savings {}", this.ident);
+  }
+  int64_t balance() override { return this.cents + this.bonus; }
+  void deposit(int64_t amount) mut override { this.cents += amount * 2; }
+  int32_t id() override { return this.ident; }
+};
+
+int64_t total(std::vector<std::unique_ptr<Account>>& accounts) {
+  mut int64_t sum = 0;
+  for (auto& account : accounts) {
+    sum += account->balance();
+  }
+  return sum;
+}
+
+void pay_all(mut std::vector<std::unique_ptr<Account>>& accounts, int64_t amount) {
+  for (mut std::size_t i = 0; i < accounts.size(); i++) {
+    accounts[i]->deposit(amount);
+  }
+}
+
+int64_t read_through_ref(Account& account) { return account.balance(); }
+void bump_through_ref(mut Account& account) { account.deposit(int64_t(5)); }
+
+int main() {
+  {
+    mut std::vector<std::unique_ptr<Account>> accounts{};
+    accounts.push_back(std::upcast_unique<Account, Checking>(std::make_unique<Checking>(1, int64_t(100))));
+    accounts.push_back(std::upcast_unique<Account, Savings>(std::make_unique<Savings>(2, int64_t(7))));
+    accounts.push_back(std::upcast_unique<Account, Checking>(std::make_unique<Checking>(3, int64_t(0))));
+
+    if (total(accounts) != 107) { return 1; }
+    pay_all(accounts, int64_t(10));
+    // 110 + (20 + 7) + 10
+    if (total(accounts) != 147) { return 2; }
+
+    if (read_through_ref(*accounts[std::size_t(1)]) != 27) { return 3; }
+    bump_through_ref(*accounts[std::size_t(1)]);
+    if (accounts[std::size_t(1)]->balance() != 37) { return 4; }
+
+    mut std::unique_ptr<Account> taken = std::unique_ptr<Account>(nullptr);
+    taken.swap(accounts[std::size_t(0)]);
+    if (accounts[std::size_t(0)] != nullptr) { return 9; }
+    if (taken->id() != 1) { return 5; }
+    taken->deposit(int64_t(1));
+    if (taken->balance() != 111) { return 6; }
+    accounts.pop_back();
+    if (destroyed_count != 1 || destroyed_sum != 3) { return 7; }
+    std::println("inner scope end");
+  }
+  // taken destroyed first (declared last), then the vector's remaining elements.
+  std::println("destroyed {} order {}", destroyed_count, destroyed_sum);
+  if (destroyed_count != 3 || destroyed_sum != 312) { return 8; }
+  return 0;
+}

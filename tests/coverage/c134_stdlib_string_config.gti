@@ -1,0 +1,111 @@
+// A small "key = value; ..." configuration parser exercising owning-string
+// search (find/rfind with positions), substr, trimming, prefix/suffix tests,
+// insert/replace/erase, compare and ordering, plus stoi/stoull/stod and
+// from_chars conversions with positions, bases, and error categories.
+#include <std/string>
+#include <std/map>
+#include <std/charconv>
+#include <std/numeric>
+
+bool is_space(char c) { return c == ' ' || c == '\t'; }
+
+std::string trimmed(std::string& text) {
+  mut std::size_t first = 0;
+  while (first < text.size() && is_space(text[first])) { first++; }
+  mut std::size_t last = text.size();
+  while (last > first && is_space(text[last - 1])) { last--; }
+  return text.substr(first, last - first);
+}
+
+int parse_into(std::string& source, mut std::map<std::string, std::string>& out) {
+  mut std::size_t start = 0;
+  mut int entries = 0;
+  while (start < source.size()) {
+    mut std::size_t stop = source.find(';', start);
+    if (stop == std::string::npos) { stop = source.size(); }
+    std::string item = source.substr(start, stop - start);
+    std::size_t equals = item.find('=');
+    if (equals != std::string::npos) {
+      std::string raw_key = item.substr(std::size_t(0), equals);
+      std::string raw_value = item.substr(equals + 1);
+      std::string key = trimmed(raw_key);
+      std::string value = trimmed(raw_value);
+      [[discard]] out.insert_or_assign(std::move(key), std::move(value));
+      entries++;
+    }
+    start = stop + 1;
+  }
+  return entries;
+}
+
+int main() {
+  std::string config{"name = gti-lang ; version=379;flags = 0x1F ;ratio= 2.5; small=-128 ;big=18446744073709551615;name=gti"};
+  mut std::map<std::string, std::string> settings{};
+  if (parse_into(config, settings) != 7 || settings.size() != 6) { return 1; }
+
+  std::string name_key{"name"};
+  if (settings.at(name_key) != "gti") { return 2; }   // later assignment won
+
+  std::string version_key{"version"};
+  auto version = std::stoi(settings.at(version_key));
+  if (!version || version.value() != 379) { return 3; }
+
+  std::string flags_key{"flags"};
+  mut std::size_t consumed = 0;
+  auto flags = std::stoi(settings.at(flags_key), consumed, 0);
+  if (!flags || flags.value() != 31 || consumed != 4) { return 4; }
+
+  std::string big_key{"big"};
+  auto big = std::stoull(settings.at(big_key));
+  if (!big || big.value() != std::MAX_UINT64) { return 5; }
+  std::string overflow_text{"18446744073709551616"};
+  auto overflow = std::stoull(overflow_text);
+  if (overflow || overflow.error() != std::parse_errc::result_out_of_range) { return 6; }
+  std::string_view minus_one = "-1";
+  auto negative_unsigned = std::stoul(minus_one);
+  if (negative_unsigned) { return 7; }
+
+  std::string ratio_key{"ratio"};
+  auto ratio = std::stod(settings.at(ratio_key));
+  if (!ratio || ratio.value() != 2.5) { return 8; }
+
+  std::string small_key{"small"};
+  mut int8_t small = 0;
+  auto parsed_small = std::from_chars(settings.at(small_key).view(), small);
+  if (parsed_small.ec != std::parse_errc::none || small != int8_t(-128) || parsed_small.position != 4) { return 9; }
+  mut int8_t untouched = 5;
+  std::string_view too_small_text = "-129xyz";
+  auto too_small = std::from_chars(too_small_text, untouched);
+  if (too_small.ec != std::parse_errc::result_out_of_range || too_small.position != 4 || untouched != int8_t(5)) { return 10; }
+  mut uint32_t hex_value = 0;
+  std::string_view hex_text = "ffZ";
+  auto hex = std::from_chars(hex_text, hex_value, 16);
+  if (hex.ec != std::parse_errc::none || hex_value != uint32_t(255) || hex.position != 2) { return 11; }
+  std::string_view ten = "10";
+  auto bad_base = std::from_chars(ten, hex_value, 40);
+  if (bad_base.ec != std::parse_errc::invalid_argument || hex_value != uint32_t(255)) { return 12; }
+  mut double scientific = 0.0;
+  std::string_view sci_text = "6.25e-2";
+  auto sci = std::from_chars(sci_text, scientific, std::chars_format::scientific);
+  if (sci.ec != std::parse_errc::none || scientific != 0.0625) { return 13; }
+
+  // Editing operations on an owned path-like string.
+  mut std::string path{"/usr/local/lib/libgti.a"};
+  if (!path.starts_with("/usr") || !path.ends_with(".a") || path.ends_with('/')) { return 14; }
+  std::size_t slash = path.rfind('/');
+  std::string file = path.substr(slash + 1);
+  if (file != "libgti.a" || path.rfind("lib", slash) != 11) { return 15; }
+  path.replace(slash + 1, std::size_t(6), "core");   // libgti -> core
+  path.insert(std::size_t(4), "/opt");
+  path.erase(std::size_t(0), std::size_t(4));
+  std::println(path);
+  if (path != "/opt/local/lib/core.a") { return 16; }
+  if (path.find("lib", std::size_t(12)) != std::string::npos) { return 17; }
+  if (path.compare("/opt") <= 0 || path.compare("/zzz") >= 0 || !(path < "/p")) { return 18; }
+
+  std::string lowest = std::to_string(int64_t(-9223372036854775807) - int64_t(1));
+  std::string highest = std::to_string(std::MAX_UINT64);
+  if (lowest != "-9223372036854775808" || highest != "18446744073709551615") { return 19; }
+  if (std::to_string(uint8_t(0)) != "0" || std::to_string(int16_t(-7)) != "-7") { return 20; }
+  return 0;
+}

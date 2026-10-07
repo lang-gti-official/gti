@@ -1,0 +1,16 @@
+int add(int a, int b) { return a + b; }
+
+struct Pair {
+  int a = 0;
+  int b = 0;
+  Pair(int a, int b) : a(a), b(b) {}
+  int sum() { return this.a + this.b; }
+};
+
+int main() {
+  int x = add(1); //!ERR
+  Pair p = Pair(1, 2, 3); //!ERR
+  Pair q = Pair(1, 2);
+  int y = q.sum(4); //!ERR
+  return x + y;
+}

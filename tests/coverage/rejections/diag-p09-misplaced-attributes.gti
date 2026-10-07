@@ -1,0 +1,6 @@
+int compute() { return 4; }
+
+int main() {
+  [[discardable]] int x = compute(); //!ERR
+  return x - 4;
+}

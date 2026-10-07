@@ -1,0 +1,16 @@
+// A53: an operator with a T& parameter given a temporary reports a generic
+// no-exact-overload error whose help talks about conversions and ADL.
+class V {
+public:
+  int32_t x;
+  V(int32_t x) : x(x) {}
+  V operator+(V& o) { return V(this.x + o.x); }
+  bool operator==(V& o) { return this.x == o.x; }
+};
+int main() {
+  V a = V(1);
+  V b = V(2);
+  V c = V(3);
+  if (!(c == a + b)) { return 1; }
+  return 0;
+}

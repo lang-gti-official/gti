@@ -1,0 +1,42 @@
+export module main;
+
+namespace lib {
+  constexpr int hidden_factor = 3;
+  int default_offset() { return 4; }
+
+  // Exported constants derived from private constants.
+  export constexpr int public_factor = hidden_factor * 2;
+
+  // Default arguments that name private declarations.
+  export int scaled(int value, int factor = hidden_factor) { return value * factor; }
+  export int shifted(int value, int offset = default_offset()) { return value + offset; }
+
+  struct Limits {
+    int low;
+    int high;
+  };
+
+  export struct Range {
+    int first = 0;
+    int last = 0;
+    int width() { return last - first; }
+  };
+
+  export class Window {
+    int size;
+
+  public:
+    Window(int s) : size(s) {}
+    int clipped(int value, int limit = default_offset() * 10) {
+      if (value > limit) {
+        return limit;
+      }
+      return value + size - size;
+    }
+  };
+
+  export Range make_range(int a, int b) {
+    Range result = {.first = a, .last = b};
+    return result;
+  }
+}

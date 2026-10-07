@@ -1,0 +1,7 @@
+int main() {
+  mut int total = 0;
+  auto add = [&total](int v) -> void { total += v; }; //!ERR
+  auto g = [](int a, int b) -> int { return a + b; };
+  int r = g(1); //!ERR
+  return r;
+}

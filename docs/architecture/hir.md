@@ -53,8 +53,9 @@ whole-program plan verification or be published to the backend. Normal
 `HirProgram` owns:
 
 - the selected execution profile copied from the pre-semantics target facts;
-- the semantic analysis seal, exact program-initialization plan, hosted-entry
-  plan, and merged module initialization body;
+- the semantic analysis seal, artifact program kind, exact
+  program-initialization plan, hosted-entry or dormant embedding-export plan,
+  and merged module initialization body;
 - concrete class, function, constructor, destructor, and lambda instances;
 - exact native callback adapter identities linking a callback type to one
   concrete free-function instance;
@@ -237,6 +238,15 @@ compares the semantic and HIR seals, initialization and hosted-entry plans,
 module binding/statement/value inventories, full representation-relevant
 binding metadata, initializer provenance, and constant-substitution facts.
 
+For a library request, `HirEmbeddingPlan` maps every selected semantic
+`FunctionId` to its one concrete non-generic free-function instance and copies
+the canonical symbol, qualified name, signature, ABI version, and request
+span. That instance is the future wrapper root; ordinary declaration seeding
+may still retain other source functions for the current whole-program model,
+but they do not become public exports. Plan verification exact-compares the
+semantic row and concrete instance, requires strict public-symbol order, and
+rejects a hosted entry or native callback adapter in a library snapshot.
+
 For an owned-argument entry, `HirHostedProgramEntryPlan` maps the exact semantic
 entry, append function, vector constructor, and string constructor to concrete
 HIR instance identities. It also copies the `main` anchor and exactly two
@@ -369,6 +379,16 @@ exact-checks the source conversion, function declaration/instance, ownership,
 linkage, parameters, result, and every value-to-adapter reference. This makes
 callback reachability a concrete-instance edge rather than a backend lookup by
 function spelling.
+
+Native value invocation is a separate `HirValueKind::Call` family. Semantics
+records `ResolvedCallInfo::nativeCalleeType` and any enclosing generic callable
+boundary; HIR preserves that exact signature without manufacturing a selected
+GTI declaration or adapter target. Its receiver is the callee value, staged as
+a passive value before the ordered arguments, and its invocation capability is
+read-only. HIR plan verification checks the signature, result, parameters,
+receiver, lexical foreign-pointer unsafe effect, and absence of unrelated
+static/lambda/adapter targets. Concrete generic callable signatures may select
+the exact native type as an alternative to a function or lambda target.
 
 A selected GTI-only namespace function becomes
 `HirValueKind::FunctionItem`. Its `SemanticType::FunctionItem` contains the

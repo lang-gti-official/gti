@@ -1,0 +1,1 @@
+int area() { return 4; }

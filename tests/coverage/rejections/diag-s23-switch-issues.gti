@@ -1,0 +1,23 @@
+enum class Mode {
+  a,
+  b,
+  c,
+};
+
+int code(Mode m) {
+  switch (m) {
+  case Mode::a:
+    return 1;
+  case Mode::a: //!ERR
+    return 2;
+  case Mode::d: //!ERR
+    return 3;
+  default:
+    return 0;
+  }
+}
+
+int main() {
+  break; //!ERR
+  return code(Mode::a);
+}

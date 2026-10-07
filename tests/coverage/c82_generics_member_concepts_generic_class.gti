@@ -1,0 +1,101 @@
+// User concepts built from read-only zero-argument member requirements,
+// composed with std concepts, used by a constrained generic function, a
+// structurally constrained generic class with methods, and a static query in
+// `if constexpr` / `static_assert`.
+#include <std/vector>
+
+concept shaped<T> = requires(T& value) { { value.area() } -> int32_t; };
+concept named_shape<T> =
+    shaped<T> && requires(T& value) { { value.sides() } -> int32_t; };
+concept stored_shape<T> = named_shape<T> && std::copyable<T>;
+
+struct Square {
+  int32_t edge = 1;
+  int32_t area() { return this.edge * this.edge; }
+  int32_t sides() { return 4; }
+};
+
+struct Triangle {
+  int32_t base = 2;
+  int32_t height = 2;
+  int32_t area() { return this.base * this.height / 2; }
+  int32_t sides() { return 3; }
+};
+
+struct Blob {
+  int32_t size = 9;
+  int32_t area() { return this.size; }
+};
+
+int32_t total_area<T>(std::vector<T>& shapes) requires stored_shape<T> {
+  mut int32_t total = 0;
+  for (auto& shape : shapes) {
+    total = total + shape.area();
+  }
+  return total;
+}
+
+int32_t corner_count<T>(T& shape) requires shaped<T> {
+  if constexpr (requires(T& value) { { value.sides() } -> int32_t; }) {
+    return shape.sides();
+  } else {
+    return 0;
+  }
+}
+
+class Gallery<stored_shape T> {
+  mut std::vector<T> items;
+
+public:
+  Gallery() : items(std::vector<T>()) {}
+  void add(T item) mut { this.items.push_back(std::move(item)); }
+  int32_t largest_area() {
+    mut int32_t best = 0;
+    for (auto& item : this.items) {
+      if (item.area() > best) { best = item.area(); }
+    }
+    return best;
+  }
+  int32_t edges() {
+    mut int32_t sum = 0;
+    for (auto& item : this.items) { sum += item.sides(); }
+    return sum;
+  }
+  std::size_t count() { return this.items.size(); }
+};
+
+static_assert(requires(Square& value) { { value.area() } -> int32_t; });
+static_assert(!(requires(Blob& value) { { value.sides() } -> int32_t; }));
+
+int main() {
+  mut std::vector<Square> squares = std::vector<Square>();
+  Square small{.edge = 3};
+  Square big{.edge = 4};
+  squares.push_back(small);
+  squares.push_back(big);
+  int32_t squares_total = total_area(squares);
+  std::println(squares_total);
+  if (squares_total != 25) { return 1; }
+
+  Triangle tri{.base = 6, .height = 4};
+  Blob blob{};
+  int32_t tri_corners = corner_count(tri);
+  int32_t blob_corners = corner_count(blob);
+  std::println(tri_corners);
+  std::println(blob_corners);
+  if (tri_corners != 3) { return 2; }
+  if (blob_corners != 0) { return 3; }
+
+  mut Gallery<Triangle> gallery = Gallery<Triangle>();
+  Triangle t1{.base = 2, .height = 2};
+  Triangle t2{.base = 10, .height = 3};
+  gallery.add(t1);
+  gallery.add(t2);
+  gallery.add(tri);
+  std::println(gallery.largest_area());
+  std::println(gallery.edges());
+  if (gallery.largest_area() != 15) { return 4; }
+  if (gallery.edges() != 9) { return 5; }
+  if (gallery.count() != std::size_t(3)) { return 6; }
+  return 0;
+}

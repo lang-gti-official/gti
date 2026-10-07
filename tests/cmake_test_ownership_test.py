@@ -60,6 +60,13 @@ def main() -> None:
     )
     if optional_lsp is None:
         fail("structural_relocation_lsp must be conditional on its actual LSP target")
+    formatting_lsp = re.search(
+        r"if\(TARGET gti_lsp\)\s+add_test\(NAME extensible_formatting_lsp\b"
+        r".*?add_test\(NAME integral_enum_lsp\b.*?\s+endif\(\)",
+        test_cmake, re.DOTALL,
+    )
+    if formatting_lsp is None:
+        fail("formatting LSP tests must be conditional on their actual LSP target")
 
     # Execute the actual final CMake fragment in a small standalone project.
     # A newly registered test must inherit the layout too, while existing test
@@ -108,7 +115,8 @@ def main() -> None:
             'project(OptionalLsp NONE)\nenable_testing()\n'
             'if(ENABLE_LSP)\nadd_executable(gti_lsp IMPORTED GLOBAL)\n'
             'set_target_properties(gti_lsp PROPERTIES IMPORTED_LOCATION '
-            '"${CMAKE_COMMAND}")\nendif()\n' + optional_lsp.group(0),
+            '"${CMAKE_COMMAND}")\nendif()\n' + optional_lsp.group(0)
+            + '\n' + formatting_lsp.group(0),
             encoding="utf-8",
         )
         for enabled in ("ON", "OFF"):
@@ -121,7 +129,9 @@ def main() -> None:
                 check=True, capture_output=True, text=True, timeout=30,
             )
             names = [test["name"] for test in json.loads(result.stdout)["tests"]]
-            if names != (["structural_relocation_lsp"] if enabled == "ON" else []):
+            expected_names = ["structural_relocation_lsp", "extensible_formatting_lsp",
+                              "integral_enum_lsp"] if enabled == "ON" else []
+            if names != expected_names:
                 fail(f"LSP {enabled}: incorrect optional test inventory {names}")
 
     print("CMake test ownership: root products and test registrations are separate")

@@ -1635,10 +1635,11 @@ infrastructure project.
 | Arena or pool allocator | `M-LIFE-01` + failure/layout facts -> `S-ALLOC-01/02` -> one `S-ALLOC-03` client | Application GTI owns allocation policy and one container/value family proves initialization, failure, and cleanup. |
 | Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, ordered scalar atomics with integer fetch operations, mutex-guard access, join, and worker failure work through public GTI. |
 | Renderer/game update loop | mutable ranges/views + completed vector/string + exact domain operators + time/files/allocation | A frame/update workload mutates collections and domain values without raw-pointer escape hatches. |
+| Host-embedded gameplay module | `E-EMBED-00` -> `B-LIB-01` -> `E-EMBED-01A/B/C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | A C17 or C++20/C++23 engine host loads a versioned GTI shared library, validates its descriptor, creates its one module context, invokes generated C wrappers repeatedly, receives an exact defined-failure record without process exit, destroys the context, unloads the library, and loads it again. No ordinary GTI or generated C++ ABI crosses the boundary. |
 | Compiler-style AST/protocol | `M-LIFE-01` + layout -> `L-SUM-01` | Generic payload cases support exhaustive move/borrow matching and deterministic cleanup. |
 | Fallible pipeline | `M-LIFE/M-EXEC` -> `L-ERR-01` plus `expected`/host APIs | Propagation is concise, exact-type, and cleanup-correct across a nontrivial call chain. |
 
-The first four user-facing lanes should normally outrank unrelated
+The first five user-facing lanes should normally outrank unrelated
 generalization work once their immediate prerequisites are ready. This does
 not permit skipping a correctness dependency; it prevents proof machinery with
 no named consumer from displacing a bounded executable slice.
@@ -1814,6 +1815,198 @@ remain historical prerequisites and do not occupy the queue.
 permanent executable-authority gate remains: any new executable feature must
 extend verified MIR, its verifier, and the general backend preflight; it may
 not add an AST/semantic/HIR-only C++ body case.
+
+## Engine Embedding Delivery Campaign
+
+> **Campaign status:** foundation complete through `E-EMBED-01A`.
+> `E-EMBED-01B` is the next ready row; wrapper generation, artifact
+> publication, tooling, and the dynamic-host gate remain blocked behind it.
+
+This campaign delivers the two capabilities required before an engine can
+integrate GTI as a trusted native gameplay language:
+
+1. a project `library` target that produces a loadable shared library rather
+   than an executable; and
+2. a generated, versioned, host-to-GTI C embedding boundary over explicitly
+   selected GTI functions.
+
+Completion means an engine can begin integration. It does not mean that GTI
+has become a dynamic, sandboxed, or ABI-stable language. The acceptance client
+is one host-owned process loading an unloadable gameplay module and invoking it
+on the context-creating thread. The engine remains responsible for ECS and
+resource storage, generation-checked engine handles, scheduling, file
+watching, state migration, and the policy that chooses when to swap modules.
+
+### First-Slice Contract
+
+The following decisions bound every row in this campaign:
+
+- The target is a **trusted native gameplay module**, not an untrusted mod
+  sandbox. A VM, JIT, WebAssembly backend, instruction quota, capability
+  sandbox, and process isolation are separate outcomes.
+- Project configuration selects `kind = "library"` and
+  `linkage = "shared"`. Static libraries, separately compiled GTI dependencies,
+  and a stable ABI for ordinary GTI values remain out of scope. The target has
+  one root source graph and shall not define `main`.
+- Export selection is artifact policy in `gti.toml`, not new source syntax. An
+  export maps one exact qualified GTI free-function name to one explicit C
+  symbol. The selected function remains an ordinary GTI function internally;
+  only its generated wrapper is public.
+- The first boundary admits non-generic, non-overloaded namespace-scope source
+  functions with bodies. Methods, constructors, operators, lambdas, virtual
+  dispatch roots, compiler-private declarations, native imports, and generic
+  or overloaded sets are rejected as exports.
+- Wrapper parameters and results use a reviewed subset of the existing C ABI:
+  `void`, fixed-width integers, `float`, `double`, valid passive `[[c_abi]]`
+  records, and one-level pointers to valid passive records or nominal
+  `[[c_opaque]]` engine handles. References, owners, ordinary classes,
+  containers, payload enums, `expected`, callable values, strings, nested
+  pointers, ownership transfer, and native C++ types do not cross this first
+  boundary. Pointer use inside GTI retains the existing lexical `unsafe`
+  requirement.
+- Every exported wrapper takes the generated module context first, returns a
+  versioned embedding status, writes a non-`void` result only on success, and
+  writes an immutable `gti_failure_record_v1` only for a GTI defined failure.
+  Invalid host arguments are embedding-status errors and do not forge GTI
+  failure records.
+- One loaded library image owns at most one live context. Creation,
+  invocation, and destruction are serialized on the creating host thread;
+  recursive entry and concurrent entry fail before GTI code begins. This
+  matches the first game-loop client without claiming foreign-thread entry or
+  per-context copies of program globals.
+- Context creation explicitly runs the verified GTI module-initialization body;
+  no user GTI initialization is moved into an uncontrolled native dynamic
+  initializer. Existing restrictions on cleanup-owning global/static state
+  remain in force. Successful scalar/passive global effects persist between
+  calls and are reset only by complete destruction/unload/reload.
+- A defined failure completes invocation-owned MIR cleanup, invokes the
+  configured observer under ADR 007, returns the original record, and performs
+  no default report or process exit. Earlier effects are not rolled back.
+  Re-entry is allowed only when the generated context guard proves retained
+  state structurally valid; otherwise the context becomes poisoned. A failure
+  during failure cleanup, observer contract violation, escaping native
+  exception, abort, or long jump remains process-terminal and is never
+  translated into a recoverable GTI record.
+- The descriptor and its failure-site data remain valid only while the library
+  is loaded. The host must copy rendered information it wants to retain and
+  must destroy the context before unloading. Calls after destruction and
+  unload with a live context are host contract violations.
+- A GTI function-to-C callback adapter is rejected in an unloadable library
+  target for this slice. Its current process-lifetime address contract cannot
+  safely survive library unload. Engine-to-GTI events use generated exports;
+  GTI-to-engine calls use the existing outbound `extern "C"` surface and a
+  linked engine C shim.
+- The embedding ABI is versioned independently of `VERSION`. Its C records,
+  status values, descriptor, wrapper calling convention, result publication,
+  and symbol visibility are stable for ABI version 1. Generated C++ names and
+  ordinary GTI layout are explicitly not part of that ABI.
+
+The initial manifest shape to freeze under `E-EMBED-00` is:
+
+```toml
+[targets.gameplay]
+kind = "library"
+linkage = "shared"
+root = "src/gameplay.gti"
+
+[[targets.gameplay.exports]]
+function = "game::update"
+symbol = "game_update_v1"
+```
+
+There must be at least one export. Export declarations are ordered for
+diagnostics but canonicalized by public symbol for descriptor/header emission
+and cache identity. Duplicate functions, duplicate symbols, implementation-
+reserved names, fixed embedding-runtime names, and names unsafe in either C17
+or C++20/C++23 fail before native compilation.
+
+### Ownership And Phase Boundaries
+
+| Fact or operation | Producer and owner | Consumers and lifetime |
+| --- | --- | --- |
+| Target kind, linkage, root and requested export spellings | `gti_driver` manifest/project resolution | Immutable build and analysis plans, cache/build-report identity, metadata, and LSP project facts for one request. |
+| Library program kind and exact selected export symbols | Frontend/semantics from the driver request | HIR root discovery, lowered-program ABI facts, diagnostics, language queries, and backend planning for one snapshot. |
+| Exported executable closure | HIR instance discovery rooted at module initialization plus every selected export | MIR lowering, effect/failure closure, verifier, and backend preflight for one artifact. Unselected declarations do not become ABI merely because they were parsed. |
+| Invocation cleanup and defined-failure propagation | Verified MIR bodies and program verifier | Generated wrapper body. The wrapper selects containment policy but cannot reconstruct cleanup from AST, HIR, or C++ exceptions. |
+| C type projection, wrapper symbol and module descriptor rows | Immutable lowered-program embedding plan | C header backend and C++ backend. Both consume the same rows; neither independently guesses ABI eligibility or spelling. |
+| Context guard, observer firewall and fixed ABI records | Narrow runtime C ABI plus compiler-generated containment code | One loaded library/context. Runtime supplies mechanisms; generated code owns initialization, exact calls, cleanup, poison decisions, and result/failure publication. |
+| Native linker command, visibility, output names, publication and cache | `gti_driver` native/artifact layers | Shared library and matching generated header. The CLI only presents paths/status. |
+| Engine resources, handles, scheduling and reload state | Embedding host | Remain outside the compiler/runtime. GTI sees bounded passive values or non-owning opaque handles only. |
+
+The compiler should extract a shared immutable C ABI projection service from
+the current native-header path when necessary. It must not parse a generated
+header, maintain a second type allowlist, or let the driver inspect semantic
+types. Likewise, the library target reuses the existing frontend, HIR, MIR,
+optimizer, backend, runtime, and native-toolchain path; it is not a second
+compiler pipeline.
+
+### Serialized Implementation Sequence
+
+The reconciled foundation ships its compiler SDK request/root metadata and
+explicit disabled-library diagnostics in 0.382.0. This is not library activation
+or a usable host ABI implementation. The original campaign's deferred-version
+assumption is revised for that observable packaged SDK surface; activation
+still requires its own surface/version review and the complete acceptance gate.
+
+Rows may land as reviewable commits on one campaign branch, but the manifest
+must not accept a user-visible half-target on a release branch. `library`
+activation, its minor `VERSION` advance, and public documentation happen only
+when the shared artifact and boundary pass `Q-EMBED-01`.
+
+| Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `E-EMBED-00` | **complete** | Completed C ABI, failure, MIR-backend, project and runtime foundations | Freeze the embedding ABI, manifest schema and acceptance fixture before implementation. | Commit `ae8dbb71` accepts ADR 026 and freezes every ABI-v1 status, context/descriptor/wrapper prototype, 64-bit record layout, lifecycle, symbol, failure, and unload rule. The C17/C++20 header oracles and non-executable gameplay fixture pass in the complete matrix. |
+| 2 | `B-LIB-01` | **complete** | `E-EMBED-00` | Carry a dormant shared-library target and export request through driver and compiler ownership without exposing incomplete artifacts. | Commit `1fcbe268` carries library/shared/export facts and exact spans through manifest, workspace, project facts, build plan, cache identity, compilation request, and internal `check`. Focused project/CLI tests and the complete matrix prove missing/unknown linkage, selection and command legality, no executable regression, and default `GTI-B2000` rejection; no shared artifact is exposed. |
+| 3 | `E-EMBED-01A` | **complete** | `B-LIB-01` | Resolve exact exports semantically and make them the library's executable roots. | Commit `1fcbe268` resolves and validates the export set once in semantics, then exact-compares immutable canonical roots through HIR, MIR, optimization, failure metadata, and `LoweredProgram`. The positive/negative matrix covers declaration kinds, admitted and excluded boundary families, collisions/reserved names, `main`, callbacks, unused declarations, forged plans, and request/declaration-order independence. |
+| 4 | `E-EMBED-01B` | **ready** | `E-EMBED-01A` | Implement the reusable host-call containment and context lifecycle before dynamic loading obscures failures. | A public C17-compatible runtime header and private implementation supply versioned context/status primitives. A statically linked host harness proves create/init, repeated sequential calls, successful result publication, exact defined-failure return after cleanup, observer ordering, valid re-entry, poison rejection, recursive/concurrent/wrong-thread rejection, destruction, null/out-parameter validation, descriptor lifetime, and the terminal double-failure/observer/native-exception firewalls. Sanitizer coverage checks context and output lifetimes. |
+| 5 | `E-EMBED-01C` | **blocked** | `E-EMBED-01B` | Generate the exact C wrappers, artifact descriptor and matching host header solely from lowered ABI facts and verified MIR. | C and C++ compile oracles consume the same generated header. Wrapper runtime tests cover every admitted scalar/record/pointer parameter and result, `void`, success, propagated failure, prior effects, invocation-owned cleanup, module initialization failure, symbol stability and reserved-name diagnostics at C++20/C++23 and O0/O3. Backend preflight fails closed if a selected body, result publication, failure edge, or representation row is incomplete. No wrapper calls an unverified source-body route. |
+| 6 | `B-LIB-02` | **blocked** | `E-EMBED-01C` | Publish a self-contained shared library plus its embedding header through the normal project build. | `gti build` emits platform-correct `.dylib`, `.so`, or `.dll` output with PIC-compatible hidden runtime/support code and only the descriptor/context/export surface visible; Windows import artifacts are managed explicitly. Publication is atomic, paths remain contained, clean removes managed outputs, metadata/build reports name every artifact, and a schema-bumped cache keys target kind, linkage, export plan, embedding ABI, complete source graph, runtime and native toolchain. `run` and ordinary `gti test` reject library targets; direct mode remains unchanged. |
+| 7 | `T-EMBED-01` | **blocked** | `B-LIB-02`; extends the completed `T-LSP-04` project-facts client | Make the library target usable during real editing and integration rather than only from a terminal fixture. | Driver-owned project facts expose library/linkage/export configuration; the LSP analyzes a library root without inventing missing-`main` diagnostics, applies exact export diagnostics to dirty overlays, and rejects stale generations. CLI/reference documentation shows the manifest, generated files, ABI restrictions, failure handling and host lifecycle. No new Tree-sitter or formatter rule is added because the campaign adds no GTI source syntax. |
+| 8 | `Q-EMBED-01` | **blocked** | `T-EMBED-01` | Prove both requested capabilities together in a real dynamically loaded engine-style vertical slice. | A C17 and C++ host builds the module with the installed toolchain, loads it through `dlopen`/`dlsym` or `LoadLibrary`/`GetProcAddress`, validates ABI/descriptor identity, creates the context, calls initialize/update/event/shutdown-style exports repeatedly, observes one module call into a linked engine C shim, receives and resolves an exact GTI failure without host termination, calls again according to the validated re-entry rule, destroys the context, unloads, reloads, and repeats. Linux, macOS and Windows CI cover the platform surface; C++20/C++23 and O0/O3 produce equivalent behavior; export-table inspection finds no accidental GTI/C++ symbols; full compiler, driver, runtime, LSP, installed-toolchain and corpus gates pass. |
+
+### Campaign Exit And Handoff To The Engine
+
+Capability 1, **native library targets**, is complete only when `B-LIB-02` and
+`Q-EMBED-01` pass. Capability 2, **generated host-to-GTI embedding**, is
+complete only when `E-EMBED-01A/B/C`, `T-EMBED-01`, and `Q-EMBED-01` pass. Do
+not mark the campaign complete from a generated `.so`/`.dylib`/`.dll`, a
+header-only mock, direct calls to mangled C++ symbols, or a success-only host
+demo.
+
+At the exit gate the engine team receives:
+
+- one documented `gti.toml` library/export configuration;
+- one platform shared library and its generated C17/C++ header;
+- a versioned descriptor/context/status/failure contract;
+- a complete host lifecycle and unload checklist;
+- an engine C-shim example using opaque handles and passive frame/event
+  records; and
+- exact diagnostics for ABI mismatch, invalid context, unsupported exports,
+  stale/destroyed calls and poisoned state.
+
+Automatic file watching, background compilation, frame-boundary swap policy,
+serialization and state migration, ECS/component registration, editor UI,
+generation-checked engine handle storage, and retaining old modules until the
+engine releases them are then engine integration work. The compiler may later
+add convenience around those workflows, but none may weaken the v1 boundary.
+
+### Explicitly Deferred Follow-On Work
+
+- multiple contexts per library image or per-context program-global storage;
+- concurrent, recursive, worker-thread or foreign-thread host entry;
+- module-owned object handles or GTI allocation ownership crossing the ABI;
+- retained GTI-to-C callbacks and unload-safe callback-registration tokens;
+- dynamic strings, slices, containers, callable tables or `expected` projected
+  directly across the boundary;
+- automatic hot reload, state schema reflection or state migration;
+- static GTI libraries, separately compiled GTI packages, binary modules or a
+  stable ABI for ordinary GTI types;
+- arbitrary C++ linkage, exception translation or host unwinding; and
+- untrusted-mod sandboxing, bytecode, JIT or WebAssembly execution.
+
+One of these items advances only with a concrete engine client and its own
+ownership, lifetime, failure and compatibility contract. It is not required to
+declare capabilities 1 and 2 ready for the first engine integration.
 
 ## Phase D: Cross-Cutting Language Decisions
 
@@ -8010,7 +8203,7 @@ it is not a competing active queue.
 | --- | --- | --- |
 | `E-SYM-01` | done under `L-GEN-01` | Nameable source generic free functions, eligible top-level class applications, and ordinary member instances use SHA-256 symbols over versioned lowered nominal plus concrete type/value/signature identity, never counter-shaped IDs or TypeContext pointers. Constructors use already-selected concrete signatures. Discovery-order perturbation tests cover function, class, and member families. |
 | `E-INST-01` | done | Nameable generic functions, eligible classes, members, constructors, and exact class specializations emit as ordinary concrete C++ declarations, and every verified-MIR call names the GTI-selected route directly. Native templates remain only as audited physical carriers for unnameable lexical closures, incomplete-pointee ownership wrappers, unused families, nested types, compiler/C ABI capabilities, and their transitive dependent generic families; they have no semantic authority. |
-| `E-EMBED-01` | bounded-first | After `M-FAIL-01` and the allowlisted entry's closed-call-graph `M-BACK-02` slice, generate one host-callable containment wrapper over an allowlisted signature. The row itself owns context validity/poisoning, descriptor lifetime, observer configuration, record return, invocation cleanup, native-exception firewalling, and same-process re-entry tests; it is not yet the stable GTI ABI. |
+| `E-EMBED-01` | active | `E-EMBED-00`, `B-LIB-01`, and `E-EMBED-01A` are complete; `E-EMBED-01B` is the next ready row. `E-EMBED-01B/C`, `B-LIB-02`, `T-EMBED-01`, and `Q-EMBED-01` remain the sole route to a host-callable artifact; this remains a generated C wrapper rather than a stable GTI ABI. |
 | `E-ABI-01` | later breadth | Stable GTI ABI/separate compilation only after layout, names, concrete emission, package identity, and compatibility policy are complete. |
 
 ### P-MEASURE: Performance And Representation
@@ -8044,6 +8237,8 @@ The next order resolves drift between the build proposal and checkpoint:
 | `B-PROJECT-03` | complete | Manifest schema 1 resolves canonical workspace members and recursive source-only path dependencies without network access. Direct aliases feed the compiler-owned source graph, transitive/quoted cross-package access is rejected, cycles/duplicate names/roots/nested workspaces fail before compilation, `--package` selection and shared collision-free outputs are deterministic, schema-9 metadata publishes the graph, and cache identity includes package provenance. Direct mode remains manifest-independent. |
 | `B-PROJECT-04` | complete | Exact pinned-revision Git resolution, `gti.lock`, explicit `gti fetch`, `--locked`, and `--offline` use immutable content-verified checkouts and have reproducible CLI and installed-toolchain coverage. Registry ranges, mutable branch/tag selectors, and dependency code execution remain out of scope. |
 | `B-PROJECT-05` | complete | `gti/driver/project_facts.h` publishes the resolved workspace as read-only values: package closure with membership/roots/selectability/git provenance/alias edges, the package source-root graph, the selected package's profiles and targets, package-level configuration flags, the default profile name, per-profile analysis configuration, and the workspace-graph model identity. Resolution runs no native tool, git process, or build and creates no directories, using `gti metadata`'s dependency policy. Library tests cover workspace members, path dependencies, standalone packages, discovery/manifest/selection failures, build-plan agreement, and installed-package consumption; `T-LSP-04` now consumes the same facts. |
+| `B-LIB-01` | complete | Dormant shared-library targets and exact exports cross immutable project/compiler facts through LoweredProgram. Public manifests remain gated; embedding_foundation owns the structural gate. |
+| `B-LIB-02` | blocked | After E-EMBED-01C, publish, cache, report and clean the shared library/header, then activate library targets. |
 | `B-PROJECT-06` | complete | Source registry bootstrap: `gti add`, immutable completeness-last `gti publish`, metadata-only shared SemVer resolution, exact logical v2 lock closures, verified user caching and locked/offline fetch integrate with the normal source/native graph. Gitea Generic Packages is the configurable official backend, not package-semantic authority. Normal registry builds and LSP facts acquire nothing. Fake/in-memory registry tests cover conflicts, partial publication, authentication, integrity, concurrent acquisition and offline native consumers. Signing, yanking, search, multi-version canonical identities and feature/target solving remain deferred; ADR 025 and the current build/driver document own the exact limits. |
 
 Each row must preserve direct mode. Dependency fetching, manifests, cache, and
@@ -8057,6 +8252,7 @@ artifact policy stay in `gti_driver`, never `gti_compiler` or the LSP.
 | `T-LSP-02` | complete for current snapshots | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, fail-closed function-local rename, and signature help from the selected overload and argument position are implemented through `LanguageQueries` with protocol tests. Project-wide coverage remains gated on `T-LSP-05`. |
 | `T-LSP-03` | measured defer | Extract document/snapshot service boundaries when a concrete feature makes the current server class costly to evolve. |
 | `T-LSP-04` | complete | Analysis and completion consume driver-owned `ProjectFacts` without fetching/building, publish project-resolution failures, preserve standalone mode, watch manifest/lock changes, and keep dirty dependency buffers authoritative. |
+| `T-EMBED-01` | blocked | Extend the completed T-LSP-04 ProjectFacts integration to library/export facts after B-LIB-02; dirty roots must use the exact no-main and export contract. |
 | `T-LSP-05` | measured defer | A durable project index only after unopened-file references/rename proves a client. |
 | `T-LSP-06` | measured defer | Process-isolated analysis only if in-process crash recovery must guarantee containment of heap corruption. The current guard is state-safe, not process isolation. |
 | `T-LSP-07` | complete | Missing-include actions discover actual declarations across the selected project, direct package aliases and public standard-library units. Structured semantic lookup requests, canonical parsing, exact definition identity and speculative frontend reanalysis replace the hardcoded standard-type catalog. Dirty/new/deleted files invalidate discovery results; module/private/incompatible candidates fail closed. No durable project index is introduced. |
@@ -8070,6 +8266,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | --- | --- | --- |
 | `Q-DIAG-01` | foundation complete; migration active | One checked JSON source now generates the private typed diagnostic identity/default-severity/group/format table and rejects duplicate identities or invalid placeholder contracts. The first semantic/source producers (`GTI-S2009`, `GTI-S2075`, `GTI-S2095`, and `GTI-S2096`) use it; remaining subsystems migrate in bounded slices while preserving current spans/messages unless intentionally changed. |
 | `Q-FAIL-01` | hosted consumer, same-thread native-callback firewall, and managed-task handoff/re-raise complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, callback termination adapter, and worker ordinary/`GTI-R0014` containment are implemented and focused tests pass. Embedding, foreign-thread callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
+| `Q-EMBED-01` | blocked | After T-EMBED-01, run the dynamically loaded engine-host acceptance matrix before activating native libraries and generated embedding. |
 | `Q-DEPRECATION-01` | planned | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
 | `Q-FUZZ-01` | bounded compiler campaign complete — `Q-FUZZ-01A` capture/replay, `Q-FUZZ-01B` parser/formatter/pipeline/source-loader libFuzzer harnesses, `Q-FUZZ-01C` resumable bundle reduction, and `Q-FUZZ-01D` real-compiler typed differential/composition validation are implemented; constrained eleven-factor interaction generation, pairwise/selected-triple coverage, native/metamorphic oracles, measured-boundary triage, and bounded typed reduction extend that foundation; prerequisite `C-MIG-02` is done | Wider seeded exploration remains opt-in; the seed 20261003 campaign passes after the checked passive Expected argument fix recorded in verification; the fixed interaction smoke is a CTest, not a complete coverage claim. Arbitrary JSON-RPC/LSP fuzzing, a complete generator, and arbitrary semantics-aware source reduction remain deferred. Current commands and boundaries live in [verification](../architecture/verification.md#failure-capture-and-opt-in-fuzzing); the original campaign rationale remains in [the archived tooling record](archive/compiler-bug-finding-and-triage.md). |
 

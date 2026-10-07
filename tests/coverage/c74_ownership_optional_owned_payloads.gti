@@ -1,0 +1,106 @@
+// std::optional with owned payloads: strings, unique owners of a class with
+// a destructor, nested optionals, clone, value_or on a copyable payload,
+// emplace in a loop, by-value transfer through functions, and a cache field.
+#include <std/memory>
+#include <std/optional>
+#include <std/string>
+#include <std/utility>
+
+mut int g_released = 0;
+
+class Resource {
+  int id_;
+
+public:
+  Resource(int id) : id_(id) {}
+  ~Resource() { g_released += 1; }
+  int id() { return this.id_; }
+};
+
+std::optional<std::unique_ptr<Resource>> acquire(bool present, int id) {
+  if (!present) {
+    return std::optional<std::unique_ptr<Resource>>();
+  }
+  std::optional<std::unique_ptr<Resource>> result{std::make_unique<Resource>(id)};
+  return result;
+}
+
+int consume(std::optional<std::unique_ptr<Resource>> slot) {
+  if (!slot) { return -1; }
+  return slot.value()->id();
+}
+
+class Cache {
+  mut std::optional<std::string> cached_{};
+  mut int misses_ = 0;
+
+public:
+  Cache() {}
+  std::string_view get(std::string_view key) mut {
+    if (!this.cached_.has_value()) {
+      this.misses_ += 1;
+      mut std::string& fresh = this.cached_.emplace(key);
+      fresh.append("!");
+    }
+    return this.cached_.value().view();
+  }
+  void invalidate() mut { this.cached_.reset(); }
+  int misses() { return this.misses_; }
+  std::optional<std::string> take() mut {
+    return std::exchange(this.cached_, std::optional<std::string>());
+  }
+};
+
+int main() {
+  mut std::optional<std::unique_ptr<Resource>> slot{};
+  for (mut int i = 1; i <= 3; i += 1) {
+    [[discard]] slot.emplace(std::make_unique<Resource>(i));
+  }
+  // Two earlier payloads were destroyed by later emplacements.
+  if (g_released != 2 || slot.value()->id() != 3) { return 1; }
+  if (consume(std::move(slot)) != 3 || g_released != 3) { return 2; }
+
+  if (consume(acquire(false, 9)) != -1) { return 3; }
+  if (consume(acquire(true, 9)) != 9 || g_released != 4) { return 4; }
+
+  mut std::optional<std::string> text{std::string("abc")};
+  std::optional<std::string> copy = text.clone();
+  text.value().append("def");
+  if (text.value() != "abcdef" || copy.value() != "abc") { return 5; }
+  text.reset();
+  if (text.has_value() || !copy) { return 6; }
+
+  mut std::optional<std::optional<std::string>> nested{};
+  [[discard]] nested.emplace();
+  if (!nested || nested.value().has_value()) { return 7; }
+  [[discard]] nested.value().emplace("inner");
+  if (nested.value().value() != "inner") { return 8; }
+
+  std::optional<int> missing{};
+  std::optional<int> present{5};
+  if (missing.value_or(7) != 7 || present.value_or(7) != 5) { return 9; }
+
+  mut Cache cache{};
+  {
+    std::string_view first = cache.get("key");
+    if (first != "key!") { return 10; }
+  }
+  {
+    std::string_view second = cache.get("other");
+    if (second != "key!" || cache.misses() != 1) { return 11; }
+  }
+  cache.invalidate();
+  {
+    std::string_view third = cache.get("again");
+    if (third != "again!" || cache.misses() != 2) { return 12; }
+  }
+  std::optional<std::string> taken = cache.take();
+  if (!taken || taken.value() != "again!") { return 13; }
+  {
+    std::string_view fourth = cache.get("last");
+    if (fourth != "last!") { return 14; }
+  }
+  std::println(taken.value());
+  std::println("v08 ok");
+  return 0;
+}

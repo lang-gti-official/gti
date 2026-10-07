@@ -1,0 +1,10 @@
+// INVALID: designated construction of a struct that declares a constructor.
+struct Pair {
+  int32_t a = 0;
+  int32_t b = 0;
+  Pair(int32_t a, int32_t b) : a(a), b(b) {}
+};
+int main() {
+  Pair p = {.a = 1, .b = 2};
+  return p.a + p.b - 3;
+}

@@ -1,0 +1,33 @@
+manifest-version = 1
+
+[package]
+name = "i05-duplicate-symbols"
+version = "0.1.0"
+
+[modules]
+left = "src/left.gti"
+right = "src/right.gti"
+
+[targets.dup_function]
+kind = "executable"
+root = "src/dup_function_main.gti"
+
+[targets.dup_private_type]
+kind = "test"
+root = "src/dup_private_type_main.gti"
+
+[targets.main_in_include]
+kind = "test"
+root = "src/main_in_include_main.gti"
+
+[targets.dup_global]
+kind = "test"
+root = "src/dup_global_main.gti"
+
+[targets.dup_class]
+kind = "test"
+root = "src/dup_class_main.gti"
+
+[targets.hidden_dup]
+kind = "test"
+root = "src/hidden_dup_main.gti"

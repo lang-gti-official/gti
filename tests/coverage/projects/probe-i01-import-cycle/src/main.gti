@@ -1,0 +1,3 @@
+import alpha;
+
+int main() { return alpha_value() - 1; }

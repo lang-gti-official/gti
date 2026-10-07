@@ -1,0 +1,7 @@
+#ifdef //!ERR
+int value() { return 1; }
+#endif
+
+int main() {
+  return 0;
+}

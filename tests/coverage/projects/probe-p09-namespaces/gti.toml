@@ -1,0 +1,9 @@
+manifest-version = 1
+
+[package]
+name = "p09-namespaces"
+version = "0.1.0"
+
+[targets.p09]
+kind = "executable"
+root = "src/main.gti"

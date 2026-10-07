@@ -1,0 +1,5 @@
+// A17: a negative literal in an int16_t fixed-array initializer fails in the C++ backend.
+int main() {
+  int16_t values[2] = {1, -2};
+  return values[1] == -2 ? 0 : 1;
+}

@@ -1,0 +1,27 @@
+// A25: the plain T& return of a reference extracted from expected<T&, E> is a MIR ICE
+// (borrow instruction does not match the loan's parent).
+#include <std/memory>
+enum class errc { missing };
+class Node {
+  int value_;
+  std::unique_ptr<Node> child_;
+public:
+  Node(int value) : value_(value), child_(std::unique_ptr<Node>(nullptr)) {}
+  Node(int value, int child) : value_(value), child_(std::make_unique<Node>(child)) {}
+  int value() { return this.value_; }
+  Node& child_ref() { return *this.child_; }
+  expected<Node&, errc> child() {
+    if (!this.child_) { return unexpected(errc::missing); }
+    return *this.child_;
+  }
+};
+Node& relay(Node& node) {
+  auto r = node.child();
+  Node& inner = r.value();
+  return inner;
+}
+int main() {
+  Node root{1, 2};
+  std::println(relay(root).value());
+  return relay(root).value() == 2 ? 0 : 1;
+}

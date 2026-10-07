@@ -859,7 +859,8 @@ module.exports = grammar({
         ),
       ),
 
-    pointer_declarator: () => prec.right(seq("*", optional("*"))),
+    pointer_declarator: () =>
+      prec.right(seq("*", repeat(seq(optional("const"), "*")))),
 
     reference_declarator: () => choice("&", "&&"),
 

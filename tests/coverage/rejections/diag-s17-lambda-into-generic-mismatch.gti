@@ -1,0 +1,9 @@
+int apply<Operation>(int value, Operation operation) {
+  return operation(value); //!ERR
+}
+
+int main() {
+  auto wrong = [](std::string_view s) -> int { return 1; };
+  int r = apply(3, wrong); //!ERR
+  return r;
+}

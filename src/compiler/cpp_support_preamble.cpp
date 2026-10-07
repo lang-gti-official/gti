@@ -40,6 +40,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "SourceType",
       "T",
       "U",
+      "Values",
       "Target",
       "Unsigned",
       "UnsignedCount",
@@ -82,7 +83,11 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "raw_address",
       "raw_address_traits",
       "is_raw_address_v",
-      "address_bits_",
+      "address_bits",
+      "native_slot_",
+      "native_slot_address",
+      "raw_pointer_array",
+      "fixed_array_extent",
       "native_address",
       "native_pointer_value",
       "raw_pointer_slot_copy",
@@ -187,6 +192,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "mutable_receiver",
       "negate",
       "numeric_cast",
+      "integer_comparison_type",
       "numeric_conversion_error",
       "once_call",
       "offset",
@@ -241,6 +247,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "shift_right_assign",
       "shifted",
       "slot",
+      "slots_",
       "status",
       "state_",
       "storage",
@@ -265,6 +272,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "unchecked_read",
       "unchecked_read_mut",
       "value",
+      "values",
       "wrapping_add",
       "wrapping_mul",
       "wrapping_sub",
@@ -274,6 +282,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "align",
       "align_val_t",
       "alignof",
+      "add_const_t",
       "auto",
       "bad_alloc",
       "bit_cast",
@@ -307,7 +316,9 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "if",
       "in_range",
       "inline",
+      "integral_constant",
       "is_arithmetic_v",
+      "is_union_v",
       "is_copy_constructible_v",
       "is_floating_point_v",
       "is_iec559",
@@ -364,6 +375,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "uint8_t",
       "unexpected",
       "unique_ptr",
+      "union",
       "unsigned",
       "using",
       "void",
@@ -450,10 +462,13 @@ struct gti_failure_record_v2;
 
 namespace gti_internal::backend {
 
-// GTI raw values carry address bits, not C++ pointer values. Copy, storage,
-// qualification/erasure and equality therefore remain inert after the pointee
-// ends its lifetime. Native pointers are reconstructed only for MIR-admitted
-// unsafe access/arithmetic or an explicit foreign boundary.
+// A union's implicit copy/move copies its object representation, rather than
+// evaluating its pointer member ([class.copy.ctor], [class.copy.assign]).
+// GTI transport and comparison therefore stay inert after a pointee expires,
+// while an addressable pointer slot is an actual native T* object. This permits
+// stored/forwarded T** values and foreign writeback without call-local staging.
+// Native pointer values are evaluated only for MIR-admitted unsafe access,
+// arithmetic or an explicit foreign boundary.
 // GTI's supported hosted targets have integral object-pointer representations.
 static_assert(sizeof(std::uintptr_t) == 8 &&
               sizeof(std::uintptr_t) == sizeof(void *) &&
@@ -469,68 +484,77 @@ static_assert(std::endian::native == std::endian::little,
 #error "GTI integer raw-address representation does not support capability pointers"
 #endif
 template <typename T>
-class raw_address {
-  template <typename> friend class raw_address;
-  std::uintptr_t address_bits_ = 0;
+union raw_address {
+  template <typename> friend union raw_address;
+  T *native_slot_;
+
+  std::uintptr_t address_bits() const noexcept {
+    std::uintptr_t result = 0;
+    static_assert(sizeof(native_slot_) == sizeof(result));
+    std::memcpy(&result, &native_slot_, sizeof(result));
+    return result;
+  }
 public:
-  constexpr raw_address() noexcept = default;
-  constexpr raw_address(std::nullptr_t) noexcept {}
+  constexpr raw_address() noexcept : native_slot_(nullptr) {}
+  constexpr raw_address(std::nullptr_t) noexcept : native_slot_(nullptr) {}
   template <typename Source>
     requires ((!std::is_const_v<Source> || std::is_const_v<T>) &&
               (std::is_same_v<std::remove_const_t<Source>, std::remove_const_t<T>> ||
                std::is_void_v<T>))
-  raw_address(Source *const &value) noexcept {
+  raw_address(Source *const &value) noexcept : native_slot_(nullptr) {
     // Read the native slot's representation, not its pointer value. Capturing
     // an expired C-compatible field remains inert, including qualification.
     // GTI's admitted native ABIs use flat 64-bit object addresses and all-zero
     // null pointers; this is not a promise for arbitrary C++ pointer models.
-    static_assert(sizeof(Source *) == sizeof(address_bits_));
-    std::memcpy(&address_bits_, &value, sizeof(address_bits_));
+    static_assert(sizeof(Source *) == sizeof(native_slot_));
+    std::memcpy(&native_slot_, &value, sizeof(native_slot_));
   }
 
   template <typename Source>
     requires (std::is_same_v<std::remove_const_t<Source>, std::remove_const_t<T>> &&
               (!std::is_const_v<Source> || std::is_const_v<T>))
-  constexpr raw_address(raw_address<Source> value) noexcept
-      : address_bits_(value.address_bits_) {}
+  raw_address(raw_address<Source> value) noexcept : native_slot_(nullptr) {
+    static_assert(sizeof(value) == sizeof(native_slot_));
+    std::memcpy(&native_slot_, &value, sizeof(native_slot_));
+  }
 
   template <typename Source>
     requires ((!std::is_const_v<Source> || std::is_const_v<T>) &&
               !std::is_same_v<std::remove_const_t<Source>, std::remove_const_t<T>> &&
               (std::is_void_v<Source> || std::is_void_v<T>))
-  explicit constexpr raw_address(raw_address<Source> value) noexcept
-      : address_bits_(value.address_bits_) {}
+  explicit raw_address(raw_address<Source> value) noexcept : native_slot_(nullptr) {
+    static_assert(sizeof(value) == sizeof(native_slot_));
+    std::memcpy(&native_slot_, &value, sizeof(native_slot_));
+  }
 
   T *native_address() const noexcept {
-    return address_bits_ == 0 ? nullptr : reinterpret_cast<T *>(address_bits_);
+    const std::uintptr_t bits = address_bits();
+    return bits == 0 ? nullptr : reinterpret_cast<T *>(bits);
   }
   operator T *() const noexcept { return this->native_address(); }
 
   // Native pointer storage may contain an expired address. Transferring its
   // representation through references does not evaluate that pointer value.
-  // The supported integral-pointer ABI equates these bits with address_bits_.
+  // Taking its address does not inspect the pointer stored in the slot.
   void copy_to_native_slot(T *&destination) const noexcept {
-    static_assert(sizeof(destination) == sizeof(address_bits_));
-    std::memcpy(&destination, &address_bits_, sizeof(destination));
+    static_assert(sizeof(destination) == sizeof(native_slot_));
+    if (&destination != &native_slot_)
+      std::memcpy(&destination, &native_slot_, sizeof(destination));
   }
   void copy_from_native_slot(T *const &source) noexcept {
-    static_assert(sizeof(source) == sizeof(address_bits_));
-    std::memcpy(&address_bits_, &source, sizeof(source));
+    static_assert(sizeof(source) == sizeof(native_slot_));
+    if (&source != &native_slot_)
+      std::memcpy(&native_slot_, &source, sizeof(source));
   }
 
-  // Contextual native out-arguments identify a GTI handle slot. Its address
-  // must be staged by the native-call adapter, never dereferenced as T**.
-  static raw_address from_storage_address(const void *storage) noexcept {
-    raw_address result;
-    result.address_bits_ = reinterpret_cast<std::uintptr_t>(storage);
-    return result;
-  }
+  T **native_slot_address() noexcept { return &native_slot_; }
+  T *const *native_slot_address() const noexcept { return &native_slot_; }
 
   template <typename Source>
-  constexpr bool operator==(raw_address<Source> other) const noexcept {
-    return address_bits_ == other.address_bits_;
+  bool operator==(raw_address<Source> other) const noexcept {
+    return address_bits() == other.address_bits();
   }
-  constexpr bool operator==(std::nullptr_t) const noexcept { return address_bits_ == 0; }
+  bool operator==(std::nullptr_t) const noexcept { return address_bits() == 0; }
 
   // These operators occur only at independently verified unsafe MIR sites.
   std::add_lvalue_reference_t<T> operator*() const requires (!std::is_void_v<T>) {
@@ -564,6 +588,7 @@ public:
   }
 };
 static_assert(std::is_trivially_copyable_v<raw_address<int>> &&
+              std::is_union_v<raw_address<int>> &&
               std::is_trivially_destructible_v<raw_address<int>> &&
               sizeof(raw_address<void>) == sizeof(void *) &&
               alignof(raw_address<void>) == alignof(void *));
@@ -623,8 +648,47 @@ template <typename T>
 raw_address<T> raw_address_of(T *value) noexcept { return value; }
 template <typename T>
 raw_address<T *> raw_address_of(raw_address<T> *slot) noexcept {
-  return raw_address<T *>::from_storage_address(slot);
+  return slot->native_slot_address();
 }
+template <typename T>
+raw_address<T *const> raw_address_of(const raw_address<T> *slot) noexcept {
+  return slot->native_slot_address();
+}
+
+// The address of an array element must name an element of a real native
+// pointer array: adjacent union members are not elements of one T* array.
+// The enclosing union keeps whole-array transport representation-preserving,
+// including after any individual pointee expires.
+template <typename T, std::size_t Extent>
+union raw_pointer_array {
+  std::array<T *, Extent> slots_;
+public:
+  constexpr raw_pointer_array() noexcept : slots_{} {}
+  template <typename... Values>
+    requires (sizeof...(Values) != 0 && sizeof...(Values) <= Extent &&
+              ((is_raw_address_v<Values> || std::is_pointer_v<Values> ||
+                std::is_same_v<Values, std::nullptr_t>) && ...))
+  raw_pointer_array(const Values &...values) noexcept : slots_{} {
+    std::size_t index = 0;
+    (raw_pointer_slot_copy(slots_[index++], values), ...);
+  }
+  T *&operator[](std::size_t index) noexcept { return slots_[index]; }
+  T *const &operator[](std::size_t index) const noexcept { return slots_[index]; }
+  static constexpr std::size_t size() noexcept { return Extent; }
+  T **data() noexcept { return slots_.data(); }
+  T *const *data() const noexcept { return slots_.data(); }
+};
+static_assert(std::is_trivially_copyable_v<raw_pointer_array<int, 2>> &&
+              std::is_trivially_destructible_v<raw_pointer_array<int, 2>> &&
+              sizeof(raw_pointer_array<int, 2>) == 2 * sizeof(int *));
+
+template <typename Array> struct fixed_array_extent;
+template <typename T, std::size_t Extent>
+struct fixed_array_extent<std::array<T, Extent>>
+    : std::integral_constant<std::size_t, Extent> {};
+template <typename T, std::size_t Extent>
+struct fixed_array_extent<raw_pointer_array<T, Extent>>
+    : std::integral_constant<std::size_t, Extent> {};
 
 // The MIR caller has selected construction into distinct final storage.
 // Byte-copy an exact trivial copy/move without evaluating scalar subobjects:
@@ -1103,7 +1167,7 @@ template <std::size_t Extent, typename Array, typename Cleanup>
 [[nodiscard]] bool mir_array_cleanup_with_failure_v1(
     Array &array, ::gti_failure_record_v2 *record, bool unwinding,
     const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
-  static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
+  static_assert(fixed_array_extent<std::remove_cvref_t<Array>>::value == Extent);
   mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
   for (std::size_t index = Extent; index != 0; --index) {
     if (!sequence.step(cleanup(array[index - 1], sequence.record(), sequence.unwinding())))
@@ -1395,7 +1459,7 @@ private:
       Array &array, ::gti_failure_record_v2 *failure_record,
       bool cleanup_failure,
       const ::gti_failure_artifact_descriptor_v1 *artifact, bool &success) {
-    static_assert(std::tuple_size_v<std::remove_cvref_t<Array>> == Extent);
+    static_assert(fixed_array_extent<std::remove_cvref_t<Array>>::value == Extent);
     for (std::size_t index = Extent; index != 0; --index) {
       auto &element = array[index - 1];
       // The leaf arm must be the discarded statement of this constexpr
@@ -3039,11 +3103,18 @@ inline void simd_binary(const std::array<Value, Count> &left,
 )";
   }
   output << R"(
+// std::in_range/cmp_* exclude plain char, but GTI's C char has a selected
+// signed or unsigned numeric domain. Normalize only for range comparison.
+template <typename T>
+using integer_comparison_type = std::conditional_t<std::is_same_v<T, char>,
+    std::conditional_t<std::is_signed_v<char>, signed char, unsigned char>, T>;
+
 template <typename Array, typename Index>
 inline decltype(auto) array_at(Array &&array, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
-  if (std::cmp_less(index, 0) ||
-      std::cmp_greater_equal(index, std::size(array))) {
+  const auto numeric_index = static_cast<integer_comparison_type<Index>>(index);
+  if (std::cmp_less(numeric_index, 0) ||
+      std::cmp_greater_equal(numeric_index, std::size(array))) {
     array_bounds_error();
   }
   return std::forward<Array>(array)[static_cast<std::size_t>(index)];
@@ -3052,7 +3123,8 @@ inline decltype(auto) array_at(Array &&array, Index index) {
 template <typename Index>
 inline char8_t string_view_at(std::string_view value, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
-  if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
+  const auto numeric_index = static_cast<integer_comparison_type<Index>>(index);
+  if (std::cmp_less(numeric_index, 0) || std::cmp_greater_equal(numeric_index, value.size())) {
     string_view_bounds_error();
   }
   return static_cast<char8_t>(static_cast<unsigned char>(
@@ -3073,7 +3145,8 @@ inline Target numeric_cast(Source value) {
                    std::is_same_v<Source, char8_t>));
   } else if constexpr (std::is_integral_v<Target> &&
                 std::is_integral_v<Source>) {
-    if (!std::in_range<Target>(value)) {
+    if (!std::in_range<integer_comparison_type<Target>>(
+            static_cast<integer_comparison_type<Source>>(value))) {
       numeric_conversion_error();
     }
   } else if constexpr (std::is_integral_v<Target> &&

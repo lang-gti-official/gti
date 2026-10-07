@@ -1,0 +1,19 @@
+// A54: the same with a user class type argument.
+// Bogus GTI-S2029 "Type 'unknown class' does not satisfy ..." when a
+// namespace-scope alias names a constrained generic over a class type.
+class Key {
+  int v;
+public:
+  Key(int v) : v(v) {}
+  bool operator==(Key& o) { return this.v == o.v; }
+  bool operator!=(Key& o) { return this.v != o.v; }
+};
+class Policy<std::equality_comparable T> {
+public:
+  Policy() {}
+};
+using Alias = Policy<Key>;
+int main() {
+  Alias value{};
+  return 0;
+}

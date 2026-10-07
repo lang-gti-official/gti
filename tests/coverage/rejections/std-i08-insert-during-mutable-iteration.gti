@@ -1,0 +1,12 @@
+// INVALID: inserting into a map while a mutable range-for holds its
+// exclusive loan.
+#include <std/map>
+int main() {
+  mut std::map<int, int> table{};
+  [[discard]] table.insert(1, 10);
+  for (mut auto& entry : table) {
+    entry.second += 1;
+    [[discard]] table.insert(entry.first + 100, 0);
+  }
+  return 0;
+}

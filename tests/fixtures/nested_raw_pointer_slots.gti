@@ -1,0 +1,74 @@
+[[c_abi]] struct SlotRecord {
+  mut int32_t* value;
+  mut int32_t** saved;
+};
+
+extern "C" {
+  SlotRecord make_record();
+  void retain_slot(int32_t** slot);
+  void write_retained(int32_t* value);
+  int32_t write_aliases(int32_t** first, int32_t** second, int32_t* value);
+  void write_array(int32_t** slots, int32_t* first, int32_t* second);
+  void write_triple(int32_t*** slot, int32_t* value);
+  int32_t read_slot(int32_t* const* slot);
+  void write_record(SlotRecord* record, int32_t* value);
+}
+
+int32_t** forward(int32_t** slot) { return slot; }
+int32_t* identity(int32_t* value) { return value; }
+
+struct Holder {
+  mut int32_t* value = nullptr;
+};
+
+struct Snapshot {
+  mut int32_t* values[2] = {};
+};
+
+int main() {
+  mut int32_t first = 11;
+  mut int32_t second = 22;
+  mut Holder holder{};
+  mut int32_t** saved = forward(&holder.value);
+  int32_t*** deep = &saved;
+  int32_t* const* readonly = saved;
+  mut int32_t* slots[2] = {};
+  int32_t** array_address = &slots[0];
+
+  unsafe {
+    mut SlotRecord record = make_record();
+    record.saved = &record.value;
+    retain_slot(saved);
+    // The retained address survives the end of retain_slot's full expression.
+    write_retained(&first);
+    if (holder.value != &first || read_slot(readonly) != 11) { return 1; }
+    if (write_aliases(saved, &holder.value, &second) != 0 ||
+        holder.value != &second) { return 2; }
+    write_triple(deep, &first);
+    if (holder.value != &first) { return 3; }
+    write_array(array_address, &first, &second);
+    if (slots[0] != &first || slots[1] != &second ||
+        *(array_address + 1) != &second) { return 4; }
+    write_record(&record, &second);
+    if (record.value != &second || *record.saved != &second) { return 5; }
+    // End native retention explicitly before the slot's scope ends.
+    retain_slot(nullptr);
+  }
+
+  // None of these operations accesses the dead pointee. Union/native-slot
+  // representation transfer must remain inert even with native optimization.
+  mut int32_t* expired = nullptr;
+  {
+    mut int32_t dead = 7;
+    expired = &dead;
+  }
+  int32_t* copied = identity(expired);
+  mut int32_t* initialized[2] = {expired, copied};
+  mut Snapshot original{};
+  original.values[0] = initialized[0];
+  original.values[1] = initialized[1];
+  Snapshot copy = original;
+  original = original;
+  if (copy.values[0] != expired || copy.values[1] != copied) { return 6; }
+  return 0;
+}

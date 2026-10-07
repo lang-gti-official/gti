@@ -1,0 +1,58 @@
+// Valid (failure path): checked slot misuse through storage emplace, arena and
+// pool. Slot bounds/liveness must be checked BEFORE the element constructor
+// runs, so "construct 99" never prints; already-live elements and the prepared
+// string argument are cleaned up exactly once before the status-70 report.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Part {
+  std::string label;
+  int32_t id;
+public:
+  Part(std::string label, int32_t id) : label(std::move(label)), id(id) {
+    std::print("construct ");
+    std::println(id);
+  }
+  Part(Part& other) = delete;
+  Part(Part&& other) = default;
+  ~Part() {
+    std::print("drop ");
+    std::println(this.id);
+  }
+  int32_t key() { return this.id; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::allocator heap{};
+  mut auto attempt = heap.try_storage<Part>(std::size_t(2));
+  if (!attempt) { return 1; }
+  mut std::storage<Part> slots = std::move(attempt).value();
+  slots.emplace(std::size_t(0), std::string("zero"), 0);
+  if (argc == 1) {
+    slots.emplace(std::size_t(5), std::string("far"), 99); // emplace-oob-site
+  }
+  if (argc == 2) {
+    slots.emplace(std::size_t(0), std::string("again"), 99); // emplace-dup-site
+  }
+  mut auto arena_attempt = std::try_make_arena<Part>(std::size_t(3));
+  if (!arena_attempt) { return 2; }
+  mut std::arena<Part> frame = std::move(arena_attempt).value();
+  mut auto placed = frame.try_insert(Part(std::string("arena"), 10));
+  if (!placed || placed.value() != std::size_t(0)) { return 3; }
+  if (argc == 3) {
+    // Position 1 is inside capacity but beyond the monotonic size.
+    std::println(frame.get(std::size_t(1)).key()); // arena-get-site
+  }
+  mut auto pool_attempt = std::try_make_pool<Part>(std::size_t(2));
+  if (!pool_attempt) { return 4; }
+  mut std::pool<Part> pool = std::move(pool_attempt).value();
+  mut auto slot = pool.try_insert(Part(std::string("pool"), 20));
+  if (!slot) { return 5; }
+  pool.erase(slot.value());
+  if (argc == 4) {
+    pool.erase(slot.value()); // pool-erase-site
+  }
+  std::println("unreachable");
+  return 0;
+}

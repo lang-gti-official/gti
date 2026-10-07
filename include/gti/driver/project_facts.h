@@ -74,8 +74,10 @@ struct ProjectFactsProfile {
 struct ProjectFactsTarget {
   std::string name;
   ProjectTargetKind kind = ProjectTargetKind::Executable;
+  ProjectTargetLinkage linkage = ProjectTargetLinkage::None;
   // The target's entry source, resolved against the package source root.
   std::filesystem::path root;
+  std::vector<ProjectExport> exports;
 };
 
 class ProjectFacts final {
@@ -169,7 +171,8 @@ struct ProjectFactsResult {
 // native tool, no git process, and no build, and creates no directories.
 [[nodiscard]] ProjectFactsResult resolveProjectFacts(
     const std::filesystem::path &startDirectory,
-    const std::optional<std::string> &requestedPackage = std::nullopt);
+    const std::optional<std::string> &requestedPackage = std::nullopt,
+    ManifestFeaturePolicy manifestFeatures = {});
 
 // Describes an already-resolved workspace. Callers that have resolved a
 // workspace for another purpose reuse it instead of resolving twice.

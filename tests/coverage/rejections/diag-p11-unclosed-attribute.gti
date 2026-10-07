@@ -1,0 +1,7 @@
+[[discardable //!ERR
+int compute() { return 4; } //!ERR
+
+int main() {
+  [[discard]] compute();
+  return 0;
+}

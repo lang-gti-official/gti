@@ -390,7 +390,8 @@ inline mir_failure_status_v1
 mir_checked_string_view_at_v1(std::string_view value, Index index,
                               char8_t *result) noexcept {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
-  if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
+  const auto numeric_index = static_cast<integer_comparison_type<Index>>(index);
+  if (std::cmp_less(numeric_index, 0) || std::cmp_greater_equal(numeric_index, value.size())) {
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_STRING_VIEW_V1};
   }
@@ -636,10 +637,11 @@ inline bool mir_object_destroy_v1(T *address, ::gti_failure_record_v2 *record,
   return success;
 }
 
-template <typename T, std::size_t N>
+template <typename Array>
 inline mir_failure_status_v1
-mir_restoring_indexed_swap_v1(std::array<T, N> &storage,
+mir_restoring_indexed_swap_v1(Array &storage,
                               std::uint64_t left, std::uint64_t right) {
+  constexpr std::size_t N = fixed_array_extent<Array>::value;
   if (left >= N || right >= N)
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
@@ -1108,7 +1110,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
                 std::is_arithmetic_v<Source>);
   if constexpr (std::is_integral_v<Target> &&
                 std::is_integral_v<Source>) {
-    if (!std::in_range<Target>(value)) {
+    if (!std::in_range<integer_comparison_type<Target>>(
+            static_cast<integer_comparison_type<Source>>(value))) {
       return {GTI_FAILURE_CODE_NUMERIC_CONVERSION_OUT_OF_RANGE_V1,
               GTI_FAILURE_DETAIL_NUMERIC_CAST_V1};
     }

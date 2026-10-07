@@ -1,0 +1,38 @@
+#include <m/stats>
+#include <m/detail/accumulate>
+#include <std/vector>
+#include "shapes.gti"
+
+int main() {
+  if (mid::stats::start != 50) {
+    return 1;
+  }
+  mut std::vector<int> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  if (mid::detail::accumulate(values) != 6) {
+    return 2;
+  }
+  if (mid::stats::doubled_sum(values) != 12) {
+    return 3;
+  }
+  if (mid::stats::twice_calls() != 1) {
+    return 4;
+  }
+  app::shapes::Tri tri{4, 3};
+  app::shapes::Quad quad{2, 5};
+  if (mid::stats::total_area(tri, quad) != 16) {
+    return 5;
+  }
+  if (mid::stats::total_sides(tri, quad) != 7) {
+    return 6;
+  }
+  // A value whose type comes from the dependency is usable through auto.
+  auto summary = mid::stats::summarize(21);
+  if (summary.doubled() != 42 || summary.total != 21) {
+    return 7;
+  }
+  std::println("p02 path dependencies ok");
+  return 0;
+}

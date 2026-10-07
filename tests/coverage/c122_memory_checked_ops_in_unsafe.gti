@@ -1,0 +1,71 @@
+// Valid (failure path): `unsafe` grants raw access but never disables checked
+// arithmetic, conversion, shifts or fixed-array bounds. Each argument count
+// selects one checked operation whose operands are read through raw pointers.
+// Before the status-70 report, every live owner must be destroyed in reverse
+// order: nested block local, helper local, by-value owned parameter, caller
+// local, outer guard.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Guard {
+  std::string name;
+public:
+  Guard(std::string name) : name(std::move(name)) {}
+  Guard(Guard& other) = delete;
+  Guard(Guard&& other) = default;
+  ~Guard() { std::println(this.name); }
+};
+
+struct Frame {
+  mut int32_t slots[4] = {0, 0, 0, 0};
+  mut int32_t count = 0;
+};
+
+int32_t run(int32_t which, Guard parameter) {
+  Guard helper{std::string("helper local")};
+  mut int32_t big = 2147483647;
+  mut int32_t zero = 0;
+  mut int32_t minimum = -2147483647 - 1;
+  mut int32_t shift = 40;
+  mut int32_t table[3] = {1, 2, 3};
+  mut Frame frame{};
+  int32_t* p = &big;
+  int32_t* z = &zero;
+  int32_t* m = &minimum;
+  int32_t* s = &shift;
+  Frame* f = &frame;
+  mut int32_t result = 0;
+  {
+    Guard nested{std::string("nested local")};
+    unsafe {
+      if (which == 1) { result = *p * 3; }                       // mul-site
+      if (which == 2) { result = int32_t(int8_t(*p)); }          // cast-site
+      if (which == 3) {
+        int32_t* first = &table[0];
+        int32_t* last = &table[2];
+        int64_t span = last - first;
+        result = table[span + int64_t(1)];                        // index-site
+      }
+      if (which == 4) { result = 1 << *s; }                       // shift-site
+      if (which == 5) { result = *p / *z; }                       // div-site
+      if (which == 6) { result = *p % *z; }                       // mod-site
+      if (which == 7) { result = -*m; }                           // neg-site
+      if (which == 8) {
+        // Direct f->slots[i] ICEs (finding); borrow through the owner witness.
+        f->count = 5;
+        mut Frame& view = std::assume_mut(f, frame);
+        result = view.slots[view.count];                          // member-index-site
+      }
+    }
+  }
+  return result;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{std::string("outer guard")};
+  Guard caller{std::string("caller local")};
+  int32_t status = run(argc, Guard(std::string("owned parameter")));
+  std::println("unreachable");
+  return status;
+}

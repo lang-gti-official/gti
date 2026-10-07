@@ -1,0 +1,48 @@
+// Valid (failure path): relocate_to validates every slot and capacity before
+// transferring anything. Each argument count selects one documented
+// invalid_storage_state failure. Live elements in BOTH storages, plus an
+// unrelated outer guard, must be destroyed exactly once before the report.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Noisy {
+  std::string tag;
+public:
+  Noisy(std::string tag) : tag(std::move(tag)) {}
+  Noisy(Noisy& other) = delete;
+  Noisy(Noisy&& other) = default;
+  ~Noisy() { std::println(this.tag); }
+};
+
+std::storage<Noisy> make(std::size_t count) {
+  std::allocator heap{};
+  mut auto attempt = heap.try_storage<Noisy>(count);
+  // Binding first: a direct `return std::move(attempt).value();` ICEs (finding).
+  std::storage<Noisy> slots = std::move(attempt).value();
+  return slots;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Noisy guard{std::string("outer guard")};
+  mut std::storage<Noisy> source = make(std::size_t(3));
+  mut std::storage<Noisy> target = make(argc == 3 ? std::size_t(2) : std::size_t(3));
+  source.emplace(std::size_t(0), std::string("source 0"));
+  source.emplace(std::size_t(1), std::string("source 1"));
+  if (argc == 1) {
+    // Destination slot 1 is occupied.
+    target.emplace(std::size_t(1), std::string("target 1"));
+    source.relocate_to(target, std::size_t(2)); // occupied-site
+  }
+  if (argc == 2) {
+    // Source slot 2 is not initialized.
+    source.relocate_to(target, std::size_t(3)); // source-site
+  }
+  if (argc == 3) {
+    // Fill the source completely; the destination is too small.
+    source.emplace(std::size_t(2), std::string("source 2"));
+    source.relocate_to(target, std::size_t(3)); // capacity-site
+  }
+  std::println("unreachable");
+  return 1;
+}

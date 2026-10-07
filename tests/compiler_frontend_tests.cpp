@@ -1877,7 +1877,7 @@ void testParserNestingLimit() {
     return result;
   };
 
-  const std::array<std::pair<std::string, std::string>, 4> cases{{
+  const std::array<std::pair<std::string, std::string>, 5> cases{{
       {"parentheses",
        "int32_t f() { return " + nested("(", "0", ")", 600) + "; }"},
       {"unary", "bool f() { return " + nested("!", "true", "", 600) + "; }"},
@@ -1887,6 +1887,7 @@ void testParserNestingLimit() {
       {"statements", "int32_t f() { " +
                          nested("if (true) {", "return 0;", "}", 600) +
                          " return 0; }"},
+      {"pointer-types", "int32_t" + std::string(600, '*') + " f();"},
   }};
 
   for (const auto &[name, source] : cases) {

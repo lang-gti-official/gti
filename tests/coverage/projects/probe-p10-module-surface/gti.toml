@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "p10-module-surface"
+version = "0.1.0"
+
+[modules]
+ledger = "src/api/ledger.gti"
+
+[targets.p10]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.p10-test]
+kind = "test"
+root = "src/ledger_test.gti"

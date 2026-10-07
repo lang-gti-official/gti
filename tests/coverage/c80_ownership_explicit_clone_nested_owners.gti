@@ -1,0 +1,83 @@
+// Explicit cloning of nested owners: a record with an optional string and a
+// vector of strings (construction-only, no move assignment) stored in a
+// vector, deep std::clone of the vector, independent mutation of the copy,
+// nested vector<vector<string>> clone, and optional<record> clone.
+#include <std/optional>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+class Record {
+  std::string name_;
+  mut std::optional<std::string> note_;
+  mut std::vector<std::string> tags_;
+
+public:
+  Record(std::string_view name)
+      : name_(std::string(name)), note_(std::optional<std::string>()),
+        tags_(std::vector<std::string>()) {}
+  Record(std::string name, std::optional<std::string> note,
+         std::vector<std::string> tags)
+      : name_(std::move(name)), note_(std::move(note)), tags_(std::move(tags)) {}
+  Record clone() {
+    return Record(this.name_.clone(), this.note_.clone(), this.tags_.clone());
+  }
+  void annotate(std::string_view note) mut {
+    [[discard]] this.note_.emplace(note);
+  }
+  void tag(std::string_view tag) mut { this.tags_.push_back(std::string(tag)); }
+  std::size_t tag_count() { return this.tags_.size(); }
+  bool has_note() { return this.note_.has_value(); }
+  std::string_view note() { return this.note_.value().view(); }
+  std::string_view name() { return this.name_.view(); }
+};
+
+int main() {
+  mut std::vector<Record> records{};
+  records.push_back(Record("first"));
+  records.push_back(Record("second"));
+  records[std::size_t(0)].annotate("original");
+  records[std::size_t(0)].tag("a");
+  records[std::size_t(1)].tag("b");
+  records[std::size_t(1)].tag("c");
+
+  mut std::vector<Record> copies = std::clone(records);
+  copies[std::size_t(0)].annotate("changed");
+  copies[std::size_t(1)].tag("d");
+  copies.push_back(Record("third"));
+
+  if (records.size() != std::size_t(2) || copies.size() != std::size_t(3)) {
+    return 1;
+  }
+  if (records[std::size_t(0)].note() != "original") { return 2; }
+  if (copies[std::size_t(0)].note() != "changed") { return 3; }
+  if (records[std::size_t(1)].tag_count() != std::size_t(2) ||
+      copies[std::size_t(1)].tag_count() != std::size_t(3)) {
+    return 4;
+  }
+  if (records[std::size_t(1)].has_note() || copies[std::size_t(2)].has_note()) {
+    return 5;
+  }
+
+  mut std::vector<std::vector<std::string>> grid{};
+  for (mut int row = 0; row < 2; row += 1) {
+    mut std::vector<std::string> cells{};
+    for (mut int col = 0; col <= row; col += 1) {
+      cells.push_back(std::to_string(row * 10 + col));
+    }
+    grid.push_back(std::move(cells));
+  }
+  mut std::vector<std::vector<std::string>> grid_copy = std::clone(grid);
+  grid_copy[std::size_t(1)][std::size_t(0)].append("x");
+  if (grid[std::size_t(1)][std::size_t(0)] != "10" ||
+      grid_copy[std::size_t(1)][std::size_t(0)] != "10x") {
+    return 6;
+  }
+
+  std::optional<Record> maybe{records[std::size_t(0)].clone()};
+  std::optional<Record> maybe_copy = maybe.clone();
+  if (!maybe_copy || maybe_copy.value().name() != "first") { return 7; }
+  std::println(copies[std::size_t(0)].note());
+  std::println("v14 ok");
+  return 0;
+}

@@ -1,0 +1,2 @@
+export module geometry;
+export int area() { return 4; }

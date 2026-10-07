@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "k_unimported_mismatch"
+version = "0.1.0"
+
+[modules]
+geo = "src/geo.gti"
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
