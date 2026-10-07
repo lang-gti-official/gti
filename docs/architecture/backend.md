@@ -615,6 +615,31 @@ the exact selected private constructor's instruction-free, nonborrowed void
 `Return` witness. A recursive fields-only aggregate proof cannot substitute the
 slot's shape for that witness after the selected constructor has been corrupted.
 
+The existing MIR double-failure contract also has an inherited dynamic component:
+an ordinary source destructor or helper called by a failure-cleanup `Drop` cannot
+treat its next failure as a fresh primary and run callee-local cleanup first.
+Each failure-form MIR block with an active record establishes a backend-private,
+thread-local scope over that exact record and artifact descriptor. Every emitted
+`Invoke` failure edge checks the inherited context after producing its exact
+secondary record, before entering its local cleanup successor. Terminal source
+constructor/callback/call/join adapters preserve the same check. No public type
+spelling, reconstructed expression, allocation, or native source exception selects
+this behavior; verified MIR active-failure and edge identities own the schedule.
+
+Aggregate, array, prefix, optional, shared/unique, closure and polymorphic cleanup
+recipes inherit that scope. A cleanup sequence arms its own scope after its first
+failure so later child calls stop before local cleanup on a second failure; the
+fixed-array leaf traversal retains the same rule. Nested scopes never replace the
+earliest primary, and successful exit or the runtime's existing managed-worker
+emergency handoff restores the thread-local state. The managed task/capture cleanup
+adapter copies its pending v2 primary and immutable descriptor into its own frame
+through the internal `copy_managed_task_cleanup_primary_v2` query, rather than
+borrowing mutable worker state. Neither records nor stack contexts escape to
+another thread. Runtime-site records may legitimately retain a null descriptor.
+During managed task cleanup, an emergency may complete the already stored primary
+only when both that complete v2 record and its descriptor exactly match; replacing
+the primary or extending an existing two-record envelope remains terminal.
+
 A moved class return is constructed at its MIR `Move`, before the cleanup
 continuation, but is not published until Return. The Move must dominate the
 Return, and later uses of its source remain restricted to moved-from drops.
