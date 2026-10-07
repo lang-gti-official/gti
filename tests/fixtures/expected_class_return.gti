@@ -1,0 +1,73 @@
+#include <std/memory>
+#include <std/string>
+
+mut int destroyed = 0;
+
+struct Passive {
+  int number;
+  Passive(int number) : number(number) {}
+};
+
+class Owned {
+  int number;
+public:
+  Owned(int number) : number(number) {}
+  Owned(Owned& other) = delete;
+  Owned(Owned&& other) = default;
+  ~Owned() { destroyed++; }
+  int read() { return this.number; }
+};
+
+expected<Passive, int> passive_source() { return Passive(7); }
+Passive passive_return() {
+  mut auto source = passive_source();
+  return std::move(source).value();
+}
+Passive copy_return() {
+  auto source = passive_source();
+  return source.value();
+}
+expected<Owned, int> owned_source() { return Owned(11); }
+Owned moved_return() {
+  mut auto source = owned_source();
+  return std::move(source).value();
+}
+Owned fresh_return() { return owned_source().value(); }
+expected<int, Owned> error_source() { return unexpected(Owned(17)); }
+Owned error_return() { return error_source().error(); }
+expected<std::string, int> text_source() { return std::string("return payload"); }
+std::string text_return() {
+  mut auto source = text_source();
+  return std::move(source).value();
+}
+std::string fresh_text_return() { return text_source().value(); }
+std::storage<int> storage_return() {
+  std::allocator allocator{};
+  mut auto source = allocator.try_storage<int>(std::size_t(2));
+  return std::move(source).value();
+}
+std::storage<int> fresh_storage_return() {
+  std::allocator allocator{};
+  return allocator.try_storage<int>(std::size_t(3)).value();
+}
+
+int main() {
+  if (passive_return().number != 7 || copy_return().number != 7) { return 1; }
+  {
+    Owned first = moved_return();
+    Owned second = fresh_return();
+    Owned third = error_return();
+    if (first.read() != 11 || second.read() != 11 || third.read() != 17) { return 2; }
+    if (destroyed != 0) { return 3; }
+  }
+  if (destroyed != 3) { return 4; }
+  std::string text = text_return();
+  std::string fresh_text = fresh_text_return();
+  if (text.view() != "return payload" || fresh_text.view() != "return payload") { return 5; }
+  mut auto slots = storage_return();
+  mut auto fresh_slots = fresh_storage_return();
+  [[discard]] slots.emplace(std::size_t(0), 23);
+  [[discard]] fresh_slots.emplace(std::size_t(2), 29);
+  if (slots.get(std::size_t(0)) != 23 || fresh_slots.get(std::size_t(2)) != 29) { return 6; }
+  return 0;
+}
