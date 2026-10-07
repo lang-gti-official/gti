@@ -11,6 +11,10 @@ namespace lang::mir_detail {
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
                                      const MirInstruction &instruction);
+// Exact raw-address lifetime end. Cleanup/failure recipes are independently
+// derived by the program verifier; this query checks the operation's shape.
+[[nodiscard]] bool objectDestroy(const MirProgram &program,
+                                 const MirInstruction &instruction);
 
 // External region adoption requires an explicit unsafe marker. It transfers
 // slot lifetime authority, never release authority for the external region.

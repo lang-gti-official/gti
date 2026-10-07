@@ -1904,6 +1904,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::PrefixStorageTryCString:
         case IntrinsicKind::OptionalStorageHasValue:
         case IntrinsicKind::OptionalStorageReset:
+        case IntrinsicKind::ObjectDestroy:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         // The expected extractions' defined-failure outcomes anchor in

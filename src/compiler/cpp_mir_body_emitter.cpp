@@ -27976,7 +27976,8 @@ public:
                    << " = false;\n";
           }
           if (instruction.kind == MirInstructionKind::Call &&
-              instruction.intrinsic == IntrinsicKind::OptionalStorageReset &&
+              (instruction.intrinsic == IntrinsicKind::OptionalStorageReset ||
+               instruction.intrinsic == IntrinsicKind::ObjectDestroy) &&
               invokePairedInstruction(facts.body, instruction.id)) {
             writeIndent();
             output << "bool __gti_mir_element_cleanup_success_"
@@ -35337,6 +35338,26 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::ObjectDestroy) {
+      const bool checked =
+          failureForm && invokePairedInstruction(facts.body, instruction.id);
+      if (instruction.elementCleanup) {
+        output << (checked ? "__gti_mir_element_cleanup_success_" +
+                                 std::to_string(instruction.id) + " = "
+                           : "(void)");
+        output << "::gti_internal::backend::mir_object_destroy_v1(";
+      } else {
+        output << "std::destroy_at(";
+      }
+      output << "::gti_internal::backend::native_pointer_value(";
+      emitCallArgument(instruction.operands.front(), false, false);
+      output << ')';
+      if (instruction.elementCleanup)
+        emitElementCleanupArgument(instruction);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic == IntrinsicKind::StorageTryAdopt) {
       const auto *storage =
           mir_detail::storageAdoptionDestination(facts.body, instruction);
@@ -37268,7 +37289,8 @@ private:
             "verified MIR invoke is outside the failure vocabulary");
       }
       if (producer != nullptr && producer->kind == MirInstructionKind::Call &&
-          producer->intrinsic == IntrinsicKind::OptionalStorageReset &&
+          (producer->intrinsic == IntrinsicKind::OptionalStorageReset ||
+           producer->intrinsic == IntrinsicKind::ObjectDestroy) &&
           producer->elementCleanup) {
         emitConditionalEdgeTransfer("__gti_mir_element_cleanup_success_" +
                                     std::to_string(producer->id));
@@ -47125,6 +47147,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           continue;
         }
+        if (instruction.intrinsic == IntrinsicKind::ObjectDestroy) {
+          if (!mir_detail::objectDestroy(program_, instruction) ||
+              !typeRow(instruction.parameterTypes.front()) ||
+              !typeRow(instruction.parameterTypes.front().arguments.front()) ||
+              !valueOperand(instruction.operands.front()) ||
+              (instruction.definedFailure.propagation ==
+                   FailurePropagationKind::Destructor &&
+               (!failureForm ||
+                !invokePairedInstruction(body, instruction.id))))
+            return false;
+          continue;
+        }
         if (instruction.intrinsic == IntrinsicKind::StorageTryAdopt) {
           const auto *storage =
               mir_detail::storageAdoptionDestination(body, instruction);
@@ -49165,7 +49199,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (producer->kind == MirInstructionKind::Call) {
-        if (producer->intrinsic == IntrinsicKind::OptionalStorageReset &&
+        if ((producer->intrinsic == IntrinsicKind::OptionalStorageReset ||
+             producer->intrinsic == IntrinsicKind::ObjectDestroy) &&
             producer->elementCleanup &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::Destructor &&

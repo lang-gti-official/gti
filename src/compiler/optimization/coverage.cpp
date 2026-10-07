@@ -144,6 +144,8 @@ MirOptimizationCoverage optimizationCoverage(MirOperation operation) {
 
 MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   switch (intrinsic) {
+  case IntrinsicKind::ObjectDestroy:
+    return barrier("unsafe object lifetime end and typed cleanup");
   case IntrinsicKind::StorageTryAdopt:
     return barrier("raw region adoption and recoverable metadata allocation");
   case IntrinsicKind::ObjectSize:
@@ -518,6 +520,7 @@ MirOptimizationCoverage optimizationCoverage(UnsafeOperationKind kind) {
   case UnsafeOperationKind::ForeignPointerCall:
   case UnsafeOperationKind::DeclaredUnsafeCall:
   case UnsafeOperationKind::StorageAdoption:
+  case UnsafeOperationKind::ObjectLifetime:
     return barrier("unsafe/raw-memory alias and escape boundary");
   }
   return {};

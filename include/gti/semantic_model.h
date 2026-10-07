@@ -27,6 +27,7 @@ enum class UnsafeOperationKind {
   ForeignPointerCall,
   DeclaredUnsafeCall,
   StorageAdoption,
+  ObjectLifetime,
 };
 
 struct SemanticLoanEndpoint {
@@ -362,6 +363,7 @@ enum class IntrinsicKind {
   ObjectSize,
   ObjectAlignment,
   StorageTryAdopt,
+  ObjectDestroy,
   Count,
 };
 

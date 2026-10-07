@@ -84,6 +84,29 @@ Path joins, weak writes, loops and call summaries retain uncertainty even when
 only one known origin remains. An unknown alternative is not evidence that
 the known alternative must be the actual address.
 
+## Explicit object lifetime end
+
+`<std/memory>` provides `unsafe void std::destroy_at<T>(T* address)` for
+complete, layout-queryable object types admitted by the pointer surface.
+It runs the selected GTI destructor and field cleanup and ends that object's
+lifetime without releasing its storage. It does not require copying or moving
+`T`, so an immovable object may be destroyed at its final address.
+
+The unsafe caller must supply a live, correctly aligned, writable complete
+object with exclusive access, retire its cleanup obligation exactly once, and
+keep the backing bytes available throughout cleanup. Neither `nullptr` nor an
+uninitialized address satisfies that contract. Destruction does not cancel an
+unrelated automatic owner's cleanup obligation: manually destroying an ordinary
+local and then allowing its automatic cleanup is not a valid substitute for
+manual storage. Read-only and incomplete pointees are rejected statically.
+
+The operation uses the same verified cleanup recipe and original failure record
+as ordinary GTI destruction. A failing destructor does not make the object live
+again or authorize a retry; remaining cleanup follows GTI's existing failure
+and secondary-failure rules. There is no hidden slot map, deallocation, C++
+exception, or raw-validity check. Safe containers must maintain their own live
+state and retire it before beginning destruction.
+
 ## Optional raw-pointer audit
 
 When enabled, the compiler preserves known local address origins through

@@ -2274,6 +2274,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       const bool removal =
           instruction.kind == MirInstructionKind::Call &&
           (instruction.intrinsic == IntrinsicKind::StorageDestroy ||
+           instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
            instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
            instruction.intrinsic == IntrinsicKind::PrefixStorageErase ||
            instruction.intrinsic == IntrinsicKind::OptionalStorageReset);
@@ -2285,7 +2286,9 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                 ? parameter.arguments.front()
                 : parameter;
         const auto expectedKind =
-            instruction.intrinsic == IntrinsicKind::StorageDestroy
+            instruction.intrinsic == IntrinsicKind::ObjectDestroy
+                ? SemanticType::RawPointer
+            : instruction.intrinsic == IntrinsicKind::StorageDestroy
                 ? SemanticType::Storage
                 : SemanticType::PrefixStorage;
         const bool optionalStorage =
@@ -10011,6 +10014,17 @@ verifyMirProgramContracts(const MirProgram &program) {
         const bool layoutIntrinsic =
             instruction.intrinsic == IntrinsicKind::ObjectSize ||
             instruction.intrinsic == IntrinsicKind::ObjectAlignment;
+        if ((instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
+             instruction.unsafeOperation ==
+                 UnsafeOperationKind::ObjectLifetime) &&
+            !mir_detail::objectDestroy(program, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .instruction = instruction.id,
+               .message = "object destruction loses its unsafe permission or "
+                          "exact writable complete-object pointer"});
+        }
         if ((instruction.intrinsic == IntrinsicKind::StorageTryAdopt ||
              instruction.unsafeOperation ==
                  UnsafeOperationKind::StorageAdoption) &&

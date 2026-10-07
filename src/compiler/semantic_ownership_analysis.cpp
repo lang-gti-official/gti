@@ -1836,6 +1836,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "object_alignment") {
       return IntrinsicKind::ObjectAlignment;
     }
+    if (name == "object_destroy") {
+      return IntrinsicKind::ObjectDestroy;
+    }
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
     }
@@ -6650,6 +6653,37 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::ObjectDestroy) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
+                  "Ending a raw object's lifetime");
+    if (arguments.size() != 1 || !expr.typeArguments().empty() ||
+        arguments.front().kind != SemanticType::RawPointer ||
+        arguments.front().pointerAccess != AccessMode::Mutable ||
+        arguments.front().arguments.size() != 1 ||
+        (!containsOpenTypeParameter(arguments.front().arguments.front()) &&
+         !runtimeObjectLayoutType(arguments.front().arguments.front()))) {
+      report(expr.paren(),
+             "Object destruction requires one writable pointer to a complete "
+             "object type; the element type is inferred from the pointer.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr,
+        ResolvedCallInfo{.returnType = currentType,
+                         .parameterTypes = arguments,
+                         .typeArguments = {arguments.front().arguments.front()},
+                         .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::ObjectSize ||
       intrinsic == IntrinsicKind::ObjectAlignment) {
     const std::size_t diagnosticsBefore = diagnostics.size();

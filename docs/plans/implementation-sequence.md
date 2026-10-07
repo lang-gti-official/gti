@@ -3950,8 +3950,8 @@ do not expose C++ object layout as GTI semantics.
 
 #### Implementation Audit And Accepted Choices (2026-10-07)
 
-The baseline is `52f27033`; none of the proposed public manual-lifetime APIs
-below is implemented by this audit checkpoint. Phase 2's accepted borrowing,
+The baseline is `52f27033`; the initial audit checkpoint did not implement the
+public manual-lifetime APIs below. Phase 2's accepted borrowing,
 unsafe binding and failure contracts remain unchanged.
 
 The owner approved **two separate allocations from the same bound resource**:
@@ -4010,6 +4010,18 @@ All eight standard/optimization/no-elide/sanitizer modes pass on the optimized
 0.379.3 baseline compiler. Carrier movement, raw construction/destruction and
 relocation, metadata rollback, source migration, removal and full acceptance
 gates remain required work.
+
+The next implementation checkpoint adds public unsafe `destroy_at` backed by
+declaration-bound `ObjectDestroy`, reusing exact MIR element cleanup and original
+destructor failure propagation. The optimized `object_lifetime_contract` covers
+scalar and unrelated immovable destructor types, C++20/C++23 O0/O3 emission,
+unsafe/type negatives and forged cleanup/permission/failure metadata. The raw
+scalar runtime test uses a native-created live object with separately released
+bytes and passes C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan. Adjacent object
+layout, storage adoption and optimizer conformance gates pass. This is not yet
+owning-object runtime evidence or a completed public manual-storage feature:
+final-address construction, typed carriers, relocation, source migration,
+examples, full acceptance and release gates remain outstanding.
 
 #### Why This Campaign Exists
 

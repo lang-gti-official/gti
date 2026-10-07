@@ -703,6 +703,18 @@ outcomes and source-destructor effects. Proving a local check safe does not
 prove element cleanup safe. Effect composition includes every source destructor
 in the recipe, and unrelated instructions cannot carry a recipe.
 
+`ObjectDestroy` generalizes this exact `elementCleanup` contract to one writable
+raw pointer. Semantics requires explicit `ObjectLifetime` unsafe permission and
+an inferred complete pointee type. HIR seeds the concrete lifecycle declaration;
+MIR independently checks the raw operation shape, rederives its entire cleanup
+recipe and preserves destructor propagation. It has no local bounds/vacancy
+detector or storage owner: raw validity is the caller's unsafe obligation.
+The backend invokes only the verified recipe, retires the disarmed native
+representation, and returns its boolean cleanup result through `Invoke` without
+replacing the original failure record. No byte release occurs. Effect analysis
+includes the same exact destructor targets and synchronization effects; the
+optimizer classifies raw lifetime end as a conservative memory/cleanup barrier.
+
 Explicit removal retires the sparse live bit or prefix length before cleanup,
 ends the disarmed element representation once, and returns to the same MIR
 `Invoke` failure edge. The backend-private checked status distinguishes local
