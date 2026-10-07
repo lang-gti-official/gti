@@ -10891,6 +10891,47 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
   }
 }
 
+// A passive union's generated empty representation and bitwise publication
+// cannot run source cleanup. Keep the exact overlapping layout/field witness;
+// an ordinary class, active owner or user special member is not this family.
+[[nodiscard]] bool
+passiveUnionDefaultRepresentation(const MirProgram &program,
+                                  const MirClassInstance &owner) {
+  if (owner.kind != ClassKind::Union || !owner.unionLayout || owner.abstract ||
+      owner.polymorphic || owner.cAbiRecord ||
+      owner.compilerCapability != CompilerCapabilityTypeKind::None ||
+      !owner.bases.empty() || !owner.structuralBases.empty() ||
+      owner.destructor || owner.requiresActiveCleanup ||
+      owner.requiresActiveDropState || owner.traits.containsBorrowedState ||
+      owner.traits.drop != DropKind::Trivial || !owner.fields.empty() ||
+      !owner.fieldDropOrder.empty() ||
+      owner.defaultConstructor != SpecialMemberStatus::Generated ||
+      owner.copyConstructor != SpecialMemberStatus::Generated ||
+      owner.moveConstructor != SpecialMemberStatus::Generated ||
+      owner.moveAssignment != SpecialMemberStatus::Generated ||
+      owner.destructorStatus != SpecialMemberStatus::Generated ||
+      !mirTypeMoveIsDefinedFailureFree(program, owner.type))
+    return false;
+  const auto &layout = *owner.unionLayout;
+  if (layout.sizeBytes == 0 || layout.abiAlignmentBytes == 0 ||
+      layout.sizeBytes % layout.abiAlignmentBytes != 0 ||
+      layout.fields.empty() ||
+      layout.fields.size() != owner.declaredFields.size())
+    return false;
+  for (std::size_t index = 0; index < layout.fields.size(); ++index) {
+    const auto &field = owner.declaredFields[index];
+    const auto &native = layout.fields[index];
+    if (field.field == 0 || field.symbol == 0 ||
+        field.dropKind != DropKind::Trivial || field.requiresActiveCleanup ||
+        native.field != field.symbol || native.type != field.type ||
+        native.sizeBytes == 0 || native.abiAlignmentBytes == 0 ||
+        native.sizeBytes > layout.sizeBytes ||
+        layout.abiAlignmentBytes % native.abiAlignmentBytes != 0)
+      return false;
+  }
+  return true;
+}
+
 [[nodiscard]] bool passiveConstructorFieldInitializersImpl(
     const MirProgram &program, const MirBody &body,
     std::unordered_set<const MirBody *> &visiting) {
@@ -10966,7 +11007,10 @@ bool constructorRollbackCovered(const MirConstructorInstance &constructor,
             (instruction.kind == MirInstructionKind::Construct &&
              instruction.constructorKind != ConstructorKind::Ordinary) ||
             nested == nullptr || !nested->bases.empty() ||
-            nested->polymorphic || nested->unionLayout || nested->cAbiRecord ||
+            nested->polymorphic ||
+            (nested->unionLayout &&
+             !passiveUnionDefaultRepresentation(program, *nested)) ||
+            nested->cAbiRecord ||
             nested->compilerCapability != CompilerCapabilityTypeKind::None ||
             nested->requiresActiveCleanup || nested->requiresActiveDropState ||
             nested->traits.containsBorrowedState ||
@@ -11212,6 +11256,8 @@ enum class EmptyFieldUse { Construction, Assignment };
     }
     instance = &candidate;
   }
+  if (instance != nullptr && instance->unionLayout)
+    return passiveUnionDefaultRepresentation(program, *instance);
   // An interface-only base contributes dispatch identity, not initialized
   // source storage. Native default initialization of those exact empty bases
   // is safe in the private tag constructor; state-bearing or source-defined
@@ -13769,8 +13815,10 @@ passiveGeneratedDefaultFieldInitialize(const MirProgram &program,
   // are preserved by publishing the real T{} at the verified Initialize step.
   if (body.kind != MirBodyKind::Constructor || type == nullptr ||
       !type->bases.empty() || type->polymorphic || type->cAbiRecord ||
-      type->unionLayout || type->requiresActiveCleanup ||
-      type->requiresActiveDropState || type->traits.containsBorrowedState ||
+      (type->unionLayout &&
+       !passiveUnionDefaultRepresentation(program, *type)) ||
+      type->requiresActiveCleanup || type->requiresActiveDropState ||
+      type->traits.containsBorrowedState ||
       type->defaultConstructor != SpecialMemberStatus::Generated ||
       type->moveAssignment != SpecialMemberStatus::Generated ||
       !passiveConstructorFieldInitializers(program, type->fieldInitializers) ||
