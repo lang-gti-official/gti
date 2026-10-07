@@ -594,6 +594,8 @@ std::string cppClassTemplateNameSpelling(const LoweredProgram &program,
 std::string cppNativeTypeSpelling(const LoweredProgram &program,
                                   CppStandard standard,
                                   const SemanticType &type) {
+  if (type.kind == SemanticType::StringView)
+    return "::gti_c_string_view";
   if (type.kind == SemanticType::RawPointer) {
     std::string result =
         type.arguments.empty()

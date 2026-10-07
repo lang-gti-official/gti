@@ -761,8 +761,10 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             return candidate.hirValue == instruction.hirValue &&
                    candidate.unsafeOperation ==
                        UnsafeOperationKind::ForeignPointerCall &&
-                   !candidate.rawMemoryAccess && target != nullptr &&
-                   target->linkage == LanguageLinkage::C;
+                   !candidate.rawMemoryAccess &&
+                   ((target != nullptr &&
+                     target->linkage == LanguageLinkage::C) ||
+                    isMirNativeIndirectCall(program, body, candidate));
           };
           if (instruction.kind == MirInstructionKind::Call) {
             return nativeCall(instruction);
@@ -935,7 +937,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
             instruction.constructorKind == ConstructorKind::Ordinary &&
             !instruction.lambdaTarget &&
             instruction.callableArguments.empty() &&
-            !instruction.callableBoundary && !instruction.callableInvocation &&
+            !instruction.callableBoundary &&
+            (!instruction.callableInvocation ||
+             isMirNativeIndirectCall(program, body, instruction)) &&
             instruction.lifecycle.empty() &&
             !instruction.preparedParameterDrop &&
             !instruction.successResultDrop &&
@@ -1038,7 +1042,9 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
           break;
         case MirInstructionKind::CallInput:
           valid = instruction.callSite != 0 &&
-                  instruction.callInputRole == MirCallInputRole::Argument &&
+                  (instruction.callInputRole == MirCallInputRole::Argument ||
+                   (instruction.callInputRole == MirCallInputRole::Receiver &&
+                    instruction.info.type.hasNativeFunctionShape())) &&
                   instruction.callInputKind == HirCallInputKind::Value &&
                   !instruction.destination && !instruction.receiver &&
                   instruction.parameterTypes.empty() &&
@@ -1051,6 +1057,12 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                   instruction.operands.front().kind == MirOperandKind::Value;
           break;
         case MirInstructionKind::Call: {
+          if (instruction.nativeCalleeType) {
+            valid = isMirNativeIndirectCall(program, body, instruction);
+            if (valid)
+              exactCalls.insert(instruction.id);
+            break;
+          }
           if (instruction.intrinsic != IntrinsicKind::None) {
             // A wrapping/saturating arithmetic intrinsic carries no failure
             // channel: None propagation, no sites, scalar operands.

@@ -20,6 +20,21 @@ struct MirProgramTestAccess {
       }
     }
   }
+  static bool corruptNativeCallee(MirProgram &program) {
+    for (auto &function : program.functions) {
+      for (auto &block : function.body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.nativeCalleeType) {
+            auto &result = instruction.nativeCalleeType->arguments.front();
+            result.nativeCScalar = NativeCScalarKind::Char;
+            result.kind = SemanticType::UInt64;
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
 };
 } // namespace lang
 
@@ -57,7 +72,9 @@ int main() {
         "native-scalars.gti", R"(
 using Word = c_long;
 [[c_abi]] struct Packet { mut c_long word; mut c_char code; mut c_bool ready; };
+using NativeScalars = (c_long, c_char, c_bool) -> c_longlong;
 extern "C" {
+  NativeScalars scalar_callback();
   Word take_word(Word value);
   c_size_t take_size(c_size_t value);
   c_bool take_bool(c_bool value);
@@ -76,6 +93,11 @@ int main() {
   c_char code = take_char(c_char(65));
   c_longlong left = take_longlong(c_long(2) + c_longlong(3));
   c_longlong right = take_longlong(c_longlong(3) + c_long(2));
+  unsafe {
+    NativeScalars callback = scalar_callback();
+    c_longlong answer = callback(c_long(4), c_char(65), true);
+    if (answer != c_longlong(70)) { return 3; }
+  }
   if (family(c_long(1)) != 1 || family(c_longlong(1)) != 2 || left != right) { return 2; }
   if (copied != c_long(3) || length != c_size_t(7) || !flag || int32_t(code) != 65) { return 1; }
   return 0;
@@ -115,6 +137,18 @@ int main() {
                                  std::string::npos;
                         }),
         "MIR must reject a forged native scalar value domain in a declaration");
+    auto malformedCallee = result.mir;
+    expect(lang::MirProgramTestAccess::corruptNativeCallee(malformedCallee),
+           "scalar callback fixture must contain an exact native callee");
+    const auto calleeMutation = lang::verifyMirProgram(malformedCallee);
+    expect(!calleeMutation.valid() &&
+               std::any_of(
+                   calleeMutation.errors.begin(), calleeMutation.errors.end(),
+                   [](const auto &error) {
+                     return error.message.find("native C scalar identity") !=
+                            std::string::npos;
+                   }),
+           "native callee metadata must retain target-correct scalar identity");
     const auto lowered =
         gti_test::lowerProgram(result, result.mir, result.mir, target);
     const auto header = lang::NativeHeaderBackend().generate(lowered).contents;

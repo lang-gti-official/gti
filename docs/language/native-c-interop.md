@@ -258,8 +258,8 @@ passive `[[c_abi]]` record or used as an `extern "C"` parameter or result. It
 is nullable: initialization, assignment, and comparison with `nullptr` are
 valid. A callback binding requires an explicit initializer.
 
-This is not a general first-class GTI function-pointer facility. GTI callback
-values cannot be invoked directly, arithmetically manipulated, cast, or formed
+This is a native C callable facility, distinct from GTI function items and
+capturing closures. Native callback values cannot be arithmetically manipulated, cast, or formed
 from lambdas, methods, generic functions, `unsafe` functions, declarations
 without bodies, or inexact overloads. In an exact callback context, one non-generic
 namespace-scope GTI function with a body may convert to the alias:
@@ -294,6 +294,38 @@ for context lifetime, synchronization, hosted shutdown, and failure containment.
 Concurrent code may still describe and transport other callback values received
 from C without exposing a GTI target. `GTI-S2076` owns invalid callback type
 shapes and conversions; `GTI-S2084` owns unavailable thread capability.
+
+### Invoking Native Function Pointers
+
+A named native function-pointer value can be called with ordinary call syntax
+from a lexical `unsafe` block, including a local binding, a record field, or a
+function result:
+
+```gti
+using Transform = (int32_t) -> int32_t;
+extern "C" { Transform obtain_transform(); }
+
+int32_t apply(Transform transform, int32_t input) {
+  unsafe { return transform(input); }
+}
+```
+
+The callee is evaluated once and copied before arguments are evaluated in
+source order. Changing its source binding during argument evaluation therefore
+does not change the function address being invoked. Parameters and results
+must match the exact native signature; native pointers do not accept explicit
+generic arguments. They can participate in ordinary concrete generic callable
+contracts, without acquiring a GTI function-body identity.
+
+Even a scalar-only call requires unsafe: the caller must ensure that the
+address is non-null, executable, uses the declared C signature, and satisfies
+the native implementation's preconditions. Null transport and comparison are
+safe; calling null is not checked or given a defined GTI failure. Native calls
+remain conservative foreign effects and have no GTI defined-failure return
+channel. Calling a GTI-generated adapter retains its existing terminating
+failure firewall and thread-entry restrictions. This does not admit capturing
+callbacks or broader foreign-thread entry. See runnable example
+[`122-native-function-invocation.gti`](../../examples/122-native-function-invocation.gti).
 
 ## NUL-Terminated C Strings
 
