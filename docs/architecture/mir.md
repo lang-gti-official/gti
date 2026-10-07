@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v93`, `mir-body-v79`).
+instruction, body, and caller-assignment facts (`mir-v94`, `mir-body-v79`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,11 +236,18 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v93`/`mir-body-v79`, with
-`lowered-program-v13` declaration metadata. This revision retires sparse
-capability/intrinsic and initialized-slot proof identities and preserves
-deterministic per-function NUL-result policy. Older version descriptions below
-record their original additions, not an alternative current schema.
+The deterministic serialization is currently `mir-v94`/`mir-body-v79`, with
+`lowered-program-v14` declaration metadata. Version 94 additionally records
+generated-default constructor identity explicitly on each constructor instance
+and the independent generated-schedule obligation on concrete class rows;
+backends must not infer that identity from its parameter count. Version 14
+retains that obligation in detached class declarations, so removing both a
+constructor row and its selected target cannot authorize a native default call.
+The preceding
+revision retired sparse capability/intrinsic and initialized-slot proof
+identities and preserved deterministic per-function NUL-result policy. Older
+version descriptions below record their original additions, not an alternative
+current schema.
 
 Concrete class rows retain transfer/share policy and any substituted unsafe
 capability condition. The verifier checks that a conditional policy retains
@@ -1086,6 +1093,10 @@ storage under a single merged owner. Loan conflicts, scalar-promotion admission,
 and alias/escape analysis inspect the entire set. Shared reference/subview
 projections conservatively preserve that complete set rather than independently
 shortening one owner's endpoint.
+When a result composes several single-path shared entry carriers, compact
+source identity is decided per selected input, not by the result's field count.
+Each mapping preserves its own opaque entry source and destination field path;
+the verifier independently rejects substitution or collapse of those sources.
 Two distinct result fields may intentionally name the same concrete owner.
 Their field paths remain distinct in `additionalDependencies`; equality of the
 source place is not permission to discard either path. Typed field projection
@@ -1191,6 +1202,19 @@ parent, require child-first retirement on every path, and reject copy,
 reseating, forged ancestry, parent use while suspended, or an escaping child
 shape. The C++ backend merely represents the already-verified reference field
 and schedule.
+
+A by-value call that consumes a complete borrowed carrier retires the input
+loan on the call-success continuation before initializing the returned carrier.
+If HIR also records that loan's last-use endpoint on the enclosing statement,
+lowering acknowledges the already-emitted endpoint exactly once for that
+statement. It must not emit a second `EndBorrow` or ignore arbitrary inactive
+loans. For a conditional statement, only HIR's exact declared enclosing endpoint
+can be acknowledged by nested transfers. Each arm has independent endpoint
+state; the join retains an acknowledgment only when every normally reaching
+arm supplies the same identity. A terminating arm supplies no fallthrough
+evidence. Loop and switch bodies cannot export an unproved path-only transfer
+acknowledgment. The result still retains every source dependency; live child
+reborrows and unrelated overlapping loans remain conflicts.
 
 Version 49 makes a summarized reference return runtime-exact. When a body
 returns the borrowed result of a reference-returning call (a transient
@@ -1958,6 +1982,13 @@ publish into an owned Expected binding: its Invoke success activates the
 payload obligation, then the binding Initialize transfers it into the
 wrapper. Generated lifecycle-guarded movement reuses MIR's failure-free
 relocation proof; it does not execute the disarmed source destructor.
+Constructor fields use that same typed publication protocol when an already
+permitted success/error value initializes an Expected field. The source
+payload is transferred out and the completed target wrapper receives its own
+rollback obligation; the field must not inherit the payload's narrower drop
+type. Verification checks the selected alternative, target cleanup recipe and
+publication events independently. This does not admit new borrowed-success
+conversions or defer conversion policy to native C++.
 An owning Expected call result passed into a constructor retains its exact
 value-rooted slot across subsequent argument evaluation. Its producer's Invoke
 success dominates the consumer, and one shared owned-argument CFG proof checks

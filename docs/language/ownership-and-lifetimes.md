@@ -679,7 +679,10 @@ whose dependency is derived from `this`; a free function or static method may re
 one when compatible reference or carrier parameters supply its checked origin
 set. Multi-origin returns must preserve all summarized parameter dependencies;
 they cannot substitute local storage or select a different dependency set on
-another return path:
+another return path. Passing an exact carrier by value with an explicit move
+transfers its existing loans through an ordinary function just as through a
+constructor. This does not exempt a live child reborrow or another overlapping
+loan, and a reference parameter does not authorize such a transfer:
 
 ```gti
 class Iterator<T> {

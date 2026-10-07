@@ -4633,24 +4633,37 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       return;
     }
     // Consuming a complete carrier transfers its capabilities rather than
-    // competing with them. Only exact moved constructor inputs authorize
-    // this exception; an ordinary lvalue must still obey copy/reborrow rules.
+    // competing with them. Constructors and ordinary functions use the same
+    // exact moved by-value input rule; lvalues and reference parameters still
+    // obey copy/reborrow rules. Exclude only that input's loan, not its live
+    // children or unrelated overlapping loans.
     std::vector<SemanticLoanId> transferredInputs;
-    if (construction != nullptr) {
+    if (construction != nullptr ||
+        (resolved != nullptr && resolved->intrinsic == IntrinsicKind::None)) {
       const auto *initializer = exprAs<DirectInitializer>(expression.get());
       const auto *arguments = call != nullptr ? &call->arguments()
                               : initializer != nullptr
                                   ? &initializer->arguments()
                                   : nullptr;
-      auto parameters = construction->borrowArguments;
-      for (const auto &field : construction->borrowFields)
+      auto parameters = construction != nullptr ? construction->borrowArguments
+                                                : resolved->borrowArguments;
+      const auto &fields = construction != nullptr ? construction->borrowFields
+                                                   : resolved->borrowFields;
+      const auto &parameterTypes = construction != nullptr
+                                       ? construction->parameterTypes
+                                       : resolved->parameterTypes;
+      for (const auto &field : fields)
         if (field.origin == BorrowOriginKind::Argument &&
             std::find(parameters.begin(), parameters.end(), field.parameter) ==
                 parameters.end())
           parameters.push_back(field.parameter);
       if (arguments != nullptr)
         for (const auto parameter : parameters)
-          if (parameter < arguments->size())
+          if (parameter < arguments->size() &&
+              parameter < parameterTypes.size() &&
+              parameterTypes[parameter].kind == SemanticType::Class &&
+              semanticModel.typeOf(*(*arguments)[parameter]) ==
+                  parameterTypes[parameter])
             if (const auto source = retainedLoanSource((*arguments)[parameter]);
                 source && source->transfer)
               transferredInputs.push_back(source->loan);
@@ -7100,6 +7113,24 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::PrefixStorageCString ||
       intrinsic == IntrinsicKind::PrefixStorageTryCString) {
     analyzePrefixStorageIntrinsicCall(expr, intrinsic);
+    // Intrinsic analysis resolves element/constructor facts directly rather
+    // than going through ordinary argument matching. It must still enforce
+    // the trusted declaration's storage access contract. In particular, both
+    // operands of relocation are mutable, and a mutable read cannot overlap
+    // an existing live loan. Do not duplicate that contract in an operation
+    // allowlist or infer it from the public wrapper's spelling.
+    for (std::size_t index = 0; index < expr.arguments().size() &&
+                                index < declaration.parameterTypes.size();
+         ++index) {
+      const auto &parameter = declaration.parameterTypes[index];
+      if (parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::Mutable &&
+          parameter.arguments.size() == 1 &&
+          parameter.arguments.front().kind == SemanticType::PrefixStorage) {
+        requireMutableStorage(expr.arguments()[index],
+                              declaration.declaration->name().lexeme);
+      }
+    }
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

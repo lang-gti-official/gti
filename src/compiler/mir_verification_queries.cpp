@@ -257,7 +257,8 @@ bool objectConstruct(const MirProgram &program,
         const bool defaultConstruction =
             instruction.parameterTypes.size() == 1 &&
             instruction.constructorKind == ConstructorKind::Ordinary &&
-            owner.defaultConstructor == SpecialMemberStatus::Generated;
+            owner.defaultConstructor == SpecialMemberStatus::Generated &&
+            !owner.generatedDefaultRequiresSchedule;
         if (!transfer && !defaultConstruction)
           return false;
       }

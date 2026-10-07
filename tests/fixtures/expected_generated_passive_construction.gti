@@ -1,0 +1,47 @@
+#include <std/string>
+#include <std/vector>
+
+mut int phase = 0;
+
+struct Caller {
+  ~Caller() { std::println("caller cleaned"); }
+};
+
+int read_value(int ordinal) {
+  std::println(ordinal);
+  if (ordinal == 2 && (phase == 1 || phase == 3)) {
+    int zero = 0;
+    int first_failure = 10 / zero;
+    return first_failure;
+  }
+  return ordinal * 10;
+}
+
+struct Generated {
+  int first = read_value(1);
+  int second = read_value(2);
+  int third = read_value(3);
+};
+
+struct Explicit {
+  int first;
+  Explicit() : first(read_value(1)) {
+    int second = read_value(2);
+    int third = read_value(3);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Caller caller = Caller();
+  if (phase < 2) {
+    expected<Generated, int> result = Generated();
+    if (result.value().first != 10 || result.value().second != 20 ||
+        result.value().third != 30) { return 1; }
+  } else {
+    expected<Explicit, int> result = Explicit();
+    if (result.value().first != 10) { return 2; }
+  }
+  std::println("published");
+  return 0;
+}

@@ -513,7 +513,8 @@ private:
            << number(value.moveConstructor) << ':'
            << number(value.copyAssignment) << ':'
            << number(value.moveAssignment) << ':' << number(value.destructor)
-           << ";c-abi-layout=";
+           << ";generated-default-requires-schedule="
+           << value.generatedDefaultRequiresSchedule << ";c-abi-layout=";
     cAbiLayout(value.cAbiLayout);
     output << ";union-layout=";
     unionLayout(value.unionLayout);
@@ -799,7 +800,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v13\n";
+  output << "lowered-program-v14\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

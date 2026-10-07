@@ -489,6 +489,14 @@ struct SemanticType {
     return kind == NativeFunction && !arguments.empty();
   }
 
+  // The existing scalar/owner null-initialization conversions. UniqueOwner
+  // remains an ownership-assignment rule, not an ordinary value conversion.
+  [[nodiscard]] bool acceptsNullInitialization() const {
+    return kind == CString || hasNativeFunctionShape() ||
+           ((kind == RawPointer || kind == UniqueOwner) &&
+            arguments.size() == 1);
+  }
+
   [[nodiscard]] bool hasCThreadEntryShape() const {
     return kind == NativeFunction && arguments.size() == 2 &&
            arguments[0] == SemanticType::Int32 &&
@@ -668,6 +676,55 @@ constantIntegerDomain(const SemanticType &type);
 
 [[nodiscard]] std::optional<BinaryFloatFormat>
 semanticFloatFormat(const SemanticType &type);
+
+// Context-free initialization conversions already permitted by semantics.
+// Literal-dependent integer narrowing is deliberately absent: semantic
+// contextual typing must supply its exact selected type before HIR/MIR.
+[[nodiscard]] inline bool
+isImplicitScalarInitializationConversion(const SemanticType &target,
+                                         const SemanticType &source) {
+  if (source == SemanticType::NullPtr)
+    return target.acceptsNullInitialization();
+  const auto from = constantIntegerDomain(source);
+  const auto to = constantIntegerDomain(target);
+  if ((target == SemanticType::Double &&
+       (from.has_value() || source == SemanticType::Float)) ||
+      (target == SemanticType::Float && from.has_value()))
+    return true;
+  if (from && to)
+    return from->signedValue == to->signedValue
+               ? from->width <= to->width
+               : to->signedValue && !from->signedValue &&
+                     from->width < to->width;
+  return target.kind == SemanticType::RawPointer &&
+         source.kind == SemanticType::RawPointer &&
+         target.arguments.size() == 1 && source.arguments.size() == 1 &&
+         target.arguments.front() == source.arguments.front() &&
+         target.pointerAccess == AccessMode::ReadOnly &&
+         source.pointerAccess == AccessMode::Mutable;
+}
+
+// A value initialization selects exactly one expected alternative. Borrowed
+// successes use their separate loan-bearing conversion contract, not this
+// owning/passive publication rule.
+[[nodiscard]] inline bool
+isImplicitExpectedInitializationConversion(const SemanticType &target,
+                                           const SemanticType &source) {
+  if (target.kind != SemanticType::Expected || target.arguments.size() != 2 ||
+      target == source)
+    return false;
+  const bool error =
+      source.kind == SemanticType::Unexpected && source.arguments.size() == 1;
+  const auto &selected = target.arguments[error ? 1 : 0];
+  const auto &payload = error ? source.arguments.front() : source;
+  if (selected == SemanticType::Void ||
+      selected.kind == SemanticType::Reference)
+    return false;
+  return selected == payload ||
+         (selected.kind != SemanticType::UniqueOwner &&
+          isImplicitScalarInitializationConversion(selected, payload)) ||
+         isImplicitExpectedInitializationConversion(selected, payload);
+}
 
 // Primitive by-value inputs have no loan or cleanup to transfer across an
 // in-place construction preflight. Classes, enums, text and pointers are not

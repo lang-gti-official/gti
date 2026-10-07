@@ -2,6 +2,7 @@
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_lowering.h"
 
 namespace {
 
@@ -3511,7 +3512,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v93 ") &&
+  expect(mirDump.starts_with("mir-v94 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -3742,6 +3743,7 @@ int main() {
 
   const lang::FrontendResult optionalMisuse =
       analyzeTrustedMemoryFixture("prefix-storage-optional-misuse.gti", R"(
+#include <std/optional>
 int main() {
   mut gti_internal::prefix_storage<int> values =
       gti_internal::allocate_prefix_storage<int>(uint64_t(1));
@@ -3749,7 +3751,11 @@ int main() {
 }
 )");
   expect(!optionalMisuse.canGenerateCode() &&
-             hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-S2019"),
+             hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-S2019") &&
+             hasDiagnostic(optionalMisuse.diagnostics,
+                           "Optional storage operations require the exact "
+                           "trusted gti_internal::optional_storage<T> "
+                           "capability"),
          "optional storage operations must reject prefix storage arguments: "
          "the two capabilities stay distinct");
 
@@ -3765,6 +3771,93 @@ int main() {
              hasDiagnosticCode(prefixMisuse.diagnostics, "GTI-S2019"),
          "prefix storage operations must reject unique-owner arguments: "
          "the two capabilities stay distinct");
+
+  const auto rejectsLiveLoan = [&](const std::string &borrowedStorage,
+                                   const std::string &operation,
+                                   const std::string &invocation) {
+    const auto result = analyzeTrustedPreludeFixture(
+        "prefix-storage-live-loan.gti", R"(
+int main() {
+  mut gti_internal::prefix_storage<int> values =
+      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
+  mut gti_internal::prefix_storage<int> other =
+      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
+  gti_internal::prefix_storage_append(values, 7);
+  gti_internal::prefix_storage_append(other, 9);
+  int& value = gti_internal::prefix_storage_read()" +
+                                            borrowedStorage +
+                                            R"(, uint64_t(0));
+)" + invocation + R"(
+  return value;
+}
+)");
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2017") &&
+               hasDiagnostic(result.diagnostics,
+                             operation +
+                                 " cannot mutate storage while an "
+                                 "overlapping borrow may still be live"),
+           operation + " must reject its live " + borrowedStorage + " loan");
+  };
+  rejectsLiveLoan("values", "prefix_storage_pop",
+                  "gti_internal::prefix_storage_pop(values);");
+  rejectsLiveLoan("values", "prefix_storage_append",
+                  "gti_internal::prefix_storage_append(values, 11);");
+  rejectsLiveLoan(
+      "values", "prefix_storage_insert",
+      "gti_internal::prefix_storage_insert(values, uint64_t(0), 11);");
+  rejectsLiveLoan("values", "prefix_storage_erase",
+                  "gti_internal::prefix_storage_erase(values, uint64_t(0));");
+  rejectsLiveLoan(
+      "values", "prefix_storage_read_mut",
+      "mut int& edit = gti_internal::prefix_storage_read_mut(values, "
+      "uint64_t(0));");
+  rejectsLiveLoan("values", "prefix_storage_relocate",
+                  "gti_internal::prefix_storage_relocate(values, other);");
+  rejectsLiveLoan("other", "prefix_storage_relocate",
+                  "gti_internal::prefix_storage_relocate(values, other);");
+
+  const auto immutable =
+      analyzeTrustedPreludeFixture("prefix-storage-immutable.gti", R"(
+int main() {
+  gti_internal::prefix_storage<int> values =
+      gti_internal::allocate_prefix_storage<int>(uint64_t(1));
+  gti_internal::prefix_storage_pop(values);
+  return 0;
+}
+)");
+  expect(!immutable.canGenerateCode() &&
+             hasDiagnosticCode(immutable.diagnostics, "GTI-S2019") &&
+             hasDiagnostic(immutable.diagnostics,
+                           "prefix_storage_pop requires mutable storage"),
+         "a trusted prefix mutator still requires a mutable binding");
+
+  const auto endedLoan =
+      analyzeTrustedPreludeFixture("prefix-storage-ended-loan.gti", R"(
+int main() {
+  mut gti_internal::prefix_storage<int> values =
+      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
+  mut gti_internal::prefix_storage<int> other =
+      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
+  gti_internal::prefix_storage_append(values, 7);
+  gti_internal::prefix_storage_append(other, 9);
+  int& value = gti_internal::prefix_storage_read(values, uint64_t(0));
+  // Mutating a disjoint owner does not invalidate value's loan.
+  gti_internal::prefix_storage_pop(other);
+  int copied = value;
+  // The checked loan ends at its last use, not at the enclosing scope.
+  gti_internal::prefix_storage_pop(values);
+  gti_internal::prefix_storage_append(other, 9);
+  gti_internal::prefix_storage_relocate(other, values);
+  mut int& edit = gti_internal::prefix_storage_read_mut(values, uint64_t(0));
+  edit = copied;
+  gti_internal::prefix_storage_pop(values);
+  return 0;
+}
+)");
+  expect(endedLoan.canGenerateCode(),
+         "prefix mutation permits disjoint storage and ended shared/mutable "
+         "loans, including both relocation operands");
 }
 
 void testReceiverTiedReferenceReturns() {
@@ -4046,8 +4139,8 @@ public:
     gti_internal::prefix_storage_pop(this.data);
   }
 
-  int invalidate_receiver(uint64_t index) mut {
-    int& value = gti_internal::prefix_storage_read(this.data, index);
+  T invalidate_receiver(uint64_t index) mut {
+    T& value = gti_internal::prefix_storage_read(this.data, index);
     gti_internal::prefix_storage_pop(this.data);
     return value;
   }
@@ -6354,6 +6447,379 @@ int main() {
                            "Move assignment is unavailable for type 'MutView'"),
          "multi-origin, global, copied, and reseated mutable "
          "dependency graphs should remain rejected");
+}
+
+void testComposedCarrierFunctionTransfer() {
+  const std::string declarations = R"(
+struct Cell { mut int value = 0; };
+struct Context {
+  int& step;
+  mut Cell& left;
+  mut Cell& right;
+  Context(int& step, mut Cell& left, mut Cell& right)
+      : step(step), left(left), right(right) {}
+  void update() mut {
+    this.left.value += this.step;
+    this.right.value += this.step;
+  }
+};
+T forward_context<T>(T context) { return std::move(context); }
+)";
+  const std::string setup = R"(
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  mut Context initial{step, left, right};
+)";
+  const std::string forwarding = R"(
+  Context intermediate = forward_context<Context>(std::move(initial));
+  mut Context active = forward_context<Context>(std::move(intermediate));
+)";
+  const auto analyze = [&](const std::string &name, const std::string &body,
+                           const std::string &extra = "") {
+    return lang::Frontend().analyze(name, declarations + extra + setup + body,
+                                    {standardLibraryPrelude()});
+  };
+  const auto valid = analyze("composed-carrier-forwarding.gti", forwarding + R"(
+  active.update();
+  active.update();
+  left.value += 1;
+  return left.value + right.value - 9;
+}
+)");
+  if (!valid.canGenerateCode())
+    for (const auto &diagnostic : valid.diagnostics)
+      std::cerr << "Composed forwarding diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "generic forwarding transfers a complete mixed carrier through "
+         "ordinary by-value calls and releases both exclusive owners");
+  if (valid.canGenerateCode()) {
+    const auto *main = findTopLevelFunction(valid.program, "main");
+    const auto loanFor = [&](const std::string &name) {
+      const auto *local = findDirectLocal(main, name);
+      const auto *binding =
+          local == nullptr ? nullptr : valid.semantics.findBinding(*local);
+      return binding == nullptr
+                 ? nullptr
+                 : valid.semantics.findLoan(binding->retainedLoan);
+    };
+    const auto *initial = loanFor("initial");
+    const auto *intermediate = loanFor("intermediate");
+    const auto *active = loanFor("active");
+    for (const auto *loan : {intermediate, active})
+      expect(initial != nullptr && loan != nullptr &&
+                 initial->access == lang::AccessMode::ReadOnly &&
+                 initial->additionalDependencies.size() == 2 &&
+                 std::all_of(initial->additionalDependencies.begin(),
+                             initial->additionalDependencies.end(),
+                             [](const auto &dependency) {
+                               return dependency.access ==
+                                      lang::AccessMode::Mutable;
+                             }) &&
+                 loan->place == initial->place &&
+                 loan->access == initial->access &&
+                 loan->designatedFields == initial->designatedFields &&
+                 loan->additionalDependencies ==
+                     initial->additionalDependencies,
+             "each forwarding result preserves the exact shared and two "
+             "exclusive dependency places, field identities, and permissions");
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+      expect(!gti_test::emitCppText(valid, standard).empty(),
+             "mixed carrier transfer remains admitted by the verified backend");
+    for (const auto &function : valid.mir.functionInstances()) {
+      if (function.entryKind == lang::ProgramEntryKind::None)
+        continue;
+      for (const auto [consumed, result] : {std::pair{initial, intermediate},
+                                            std::pair{intermediate, active}}) {
+        const auto findLoan =
+            [&](const auto *semantic) -> const lang::MirLoan * {
+          if (semantic != nullptr)
+            for (const auto &loan : function.body.loans)
+              if (loan.semanticLoan == semantic->id)
+                return &loan;
+          return nullptr;
+        };
+        const auto *inputLoan = findLoan(consumed);
+        const auto *resultLoan = findLoan(result);
+        unsigned endCount = 0;
+        lang::MirInstructionId call = 0, end = 0, initialize = 0;
+        const lang::MirBlock *callBlock = nullptr, *endBlock = nullptr,
+                             *initializeBlock = nullptr;
+        for (const auto &block : function.body.blocks)
+          for (const auto &instruction : block.instructions) {
+            if (inputLoan != nullptr &&
+                instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                instruction.loan == inputLoan->id && block.activeFailure == 0) {
+              // Separate failure continuations retire the same static loan
+              // on disjoint paths; count the successful transfer path only.
+              ++endCount;
+              end = instruction.id;
+              endBlock = &block;
+            }
+            if (resultLoan == nullptr)
+              continue;
+            if (instruction.kind == lang::MirInstructionKind::Call &&
+                instruction.loan == resultLoan->id) {
+              call = instruction.id;
+              callBlock = &block;
+            }
+            const auto *destination =
+                function.body.findPlace(instruction.destination.value_or(0));
+            if (instruction.kind == lang::MirInstructionKind::Initialize &&
+                destination != nullptr &&
+                destination->root == lang::MirPlaceRootKind::Binding &&
+                std::find(resultLoan->carriers.begin(),
+                          resultLoan->carriers.end(),
+                          destination->binding) != resultLoan->carriers.end()) {
+              initialize = instruction.id;
+              initializeBlock = &block;
+            }
+          }
+        expect(endCount == 1 && call != 0 && end < initialize &&
+                   callBlock != nullptr && endBlock != nullptr &&
+                   endBlock == initializeBlock &&
+                   callBlock->terminator.kind ==
+                       lang::MirTerminatorKind::Invoke &&
+                   callBlock->terminator.invokeInstruction == call &&
+                   callBlock->terminator.target == endBlock->id,
+               "each consumed carrier ends exactly once on its call-success "
+               "continuation before the returned carrier is initialized");
+      }
+    }
+    if (initial != nullptr) {
+      auto repeatedEndpoint = valid.hir;
+      bool changed = false;
+      auto &functions = const_cast<std::vector<lang::HirFunctionInstance> &>(
+          repeatedEndpoint.functionInstances());
+      for (auto &function : functions) {
+        if (function.entryKind == lang::ProgramEntryKind::None)
+          continue;
+        bool acknowledged = false;
+        for (auto &statement : function.body.statements) {
+          if (acknowledged) {
+            statement.endedLoans.push_back(initial->id);
+            changed = true;
+            break;
+          }
+          acknowledged = std::find(statement.endedLoans.begin(),
+                                   statement.endedLoans.end(),
+                                   initial->id) != statement.endedLoans.end();
+        }
+      }
+      expect(changed && !lang::MirLowerer()
+                             .lower(repeatedEndpoint, valid.failureMetadata)
+                             .valid(),
+             "a call-transfer endpoint cannot acknowledge the same retired "
+             "loan again at a later statement");
+    }
+    if (active != nullptr) {
+      auto forged = valid.mir;
+      bool changed = false;
+      for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
+        auto *body = lang::findMirBody(forged, address);
+        if (body == nullptr)
+          continue;
+        for (auto &loan : body->loans)
+          if (loan.semanticLoan == active->id &&
+              !loan.additionalDependencies.empty()) {
+            loan.additionalDependencies.pop_back();
+            changed = true;
+          }
+      }
+      expect(changed && !lang::verifyMirProgram(forged).valid(),
+             "independent MIR verification rejects losing either exclusive "
+             "dependency during carrier forwarding");
+    }
+  }
+  const auto branched = analyze("composed-carrier-branch-transfer.gti", R"(
+  if (step == 2) {
+    mut Context active = forward_context<Context>(std::move(initial));
+    active.update();
+  } else {
+    mut Context active = forward_context<Context>(std::move(initial));
+    active.update();
+  }
+  return left.value + right.value - 4;
+}
+)");
+  expect(branched.canGenerateCode() &&
+             lang::verifyMirProgram(branched.mir).valid(),
+         "mutually exclusive carrier transfers retain distinct statement "
+         "endpoints across branch lowering");
+  if (branched.canGenerateCode()) {
+    auto oneSidedEndpoint = branched.hir;
+    bool changed = false;
+    auto &functions = const_cast<std::vector<lang::HirFunctionInstance> &>(
+        oneSidedEndpoint.functionInstances());
+    for (auto &function : functions) {
+      if (function.entryKind == lang::ProgramEntryKind::None)
+        continue;
+      for (auto &statement : function.body.statements) {
+        if (statement.kind != lang::HirStatementKind::If ||
+            statement.endedLoans.empty())
+          continue;
+        // Only the then path now performs a call transfer. The else path
+        // explicitly ends the same loan at entry, so HIR's repeated endpoint
+        // at the join must not borrow the then path's acknowledgement.
+        statement.elseBranch.reset();
+        statement.elseEntryEndedLoans = statement.endedLoans;
+        changed = true;
+        break;
+      }
+    }
+    expect(changed && !lang::MirLowerer()
+                           .lower(oneSidedEndpoint, branched.failureMetadata)
+                           .valid(),
+           "a one-sided call-transfer acknowledgement cannot hide a forged "
+           "repeated endpoint on the other branch");
+    const auto *main = findTopLevelFunction(branched.program, "main");
+    const auto *initial = findDirectLocal(main, "initial");
+    const auto *binding =
+        initial == nullptr ? nullptr : branched.semantics.findBinding(*initial);
+    auto missingEndpoint = branched.mir;
+    bool removed = false;
+    unsigned successfulEndpoints = 0;
+    for (const auto address :
+         lang::enumerateMirBodyAddresses(missingEndpoint)) {
+      auto *body = lang::findMirBody(missingEndpoint, address);
+      if (body == nullptr || binding == nullptr)
+        continue;
+      for (auto &block : body->blocks) {
+        if (block.activeFailure != 0)
+          continue;
+        for (auto instruction = block.instructions.begin();
+             instruction != block.instructions.end();) {
+          const auto *loan = body->findLoan(instruction->loan.value_or(0));
+          if (instruction->kind == lang::MirInstructionKind::EndBorrow &&
+              loan != nullptr && loan->semanticLoan == binding->retainedLoan) {
+            ++successfulEndpoints;
+            if (!removed) {
+              instruction = block.instructions.erase(instruction);
+              removed = true;
+              continue;
+            }
+          }
+          ++instruction;
+        }
+      }
+    }
+    expect(removed && successfulEndpoints == 2 &&
+               !lang::verifyMirProgram(missingEndpoint).valid(),
+           "independent MIR verification rejects losing the executable "
+           "carrier endpoint on exactly one normally reaching branch");
+  }
+  const auto nestedBranch = analyze("composed-carrier-nested-branch.gti", R"(
+  if (step == 2) {
+    if (step > 0) {
+      mut Context active = forward_context<Context>(std::move(initial));
+      active.update();
+    } else {
+      mut Context active = forward_context<Context>(std::move(initial));
+      active.update();
+    }
+  } else {
+    mut Context active = forward_context<Context>(std::move(initial));
+    active.update();
+  }
+  return left.value + right.value - 4;
+}
+)");
+  expect(nestedBranch.canGenerateCode() &&
+             lang::verifyMirProgram(nestedBranch.mir).valid(),
+         "nested branches preserve the exact outer HIR endpoint without "
+         "inventing an intermediate semantic endpoint");
+  const auto returningBranch = analyze("composed-carrier-returning-arm.gti", R"(
+  if (step != 2) {
+    return 0;
+  } else {
+    mut Context active = forward_context<Context>(std::move(initial));
+    active.update();
+  }
+  return left.value + right.value - 4;
+}
+)");
+  expect(returningBranch.canGenerateCode() &&
+             lang::verifyMirProgram(returningBranch.mir).valid(),
+         "only normally reaching branches contribute call-transfer endpoint "
+         "acknowledgements at a join");
+  const auto looped = lang::Frontend().analyze(
+      "composed-carrier-loop-transfer.gti", declarations + R"(
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  for (mut int index = 0; index < 2; index++) {
+    Context current{step, left, right};
+    mut Context active = forward_context<Context>(std::move(current));
+    active.update();
+  }
+  return left.value + right.value - 8;
+}
+)",
+      {standardLibraryPrelude()});
+  expect(looped.canGenerateCode() && lang::verifyMirProgram(looped.mir).valid(),
+         "a loop-local carrier transfer retires its exact loan on each "
+         "iteration without leaking statement acknowledgement state");
+  const auto reject = [&](const std::string &name, const std::string &body,
+                          const std::string &code,
+                          const std::string &extra = "") {
+    const auto result = analyze(name, body, extra);
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, code) &&
+               !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
+           name + " remains a source ownership error");
+  };
+  for (const auto *owner : {"left", "right"})
+    reject(std::string("composed-forwarding-live-") + owner + ".gti",
+           forwarding + "  " + owner +
+               ".value = 9;\n  active.update();\n  return 0;\n}\n",
+           "GTI-S2017");
+  reject("composed-forwarding-live-child.gti", R"(
+  mut Cell& child = initial.left;
+  mut Context active = forward_context<Context>(std::move(initial));
+  child.value = 9;
+  active.update();
+  return 0;
+}
+)",
+         "GTI-S2017");
+  reject("composed-forwarding-cannot-copy.gti", R"(
+  mut Context active = forward_context<Context>(initial);
+  active.update();
+  return 0;
+}
+)",
+         "GTI-S2018");
+  reject("composed-forwarding-cannot-transfer-twice.gti", forwarding + R"(
+  Context duplicate = forward_context<Context>(std::move(initial));
+  active.update();
+  return 0;
+}
+)",
+         "GTI-S2018");
+  reject("composed-forwarding-cannot-move-reference.gti", R"(
+  mut Context& alias = initial;
+  mut Context active = forward_context<Context>(std::move(alias));
+  active.update();
+  return 0;
+}
+)",
+         "GTI-S2018");
+  reject("composed-forwarding-overlapping-sibling-argument.gti", R"(
+  mut Context active = forward_with_owner(std::move(initial), left);
+  active.update();
+  return 0;
+}
+)",
+         "GTI-S2017", R"(
+Context forward_with_owner(Context context, mut Cell& other) {
+  other.value += 1;
+  return std::move(context);
+}
+)");
 }
 
 void testNestedBorrowedFields() {
@@ -10043,13 +10509,33 @@ int main() {
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  std::size_t scheduledNullOwnerFields = 0;
+  for (const auto &constructor : frontend.hir.constructorInstances()) {
+    const auto *owner = frontend.hir.findClassInstance(constructor.owner);
+    if (!binding || !owner || owner->type != binding->type ||
+        !constructor.generatedDefault)
+      continue;
+    for (const auto &initializer : constructor.initializers) {
+      const auto *value =
+          initializer.arguments.size() == 1
+              ? constructor.body.findValue(initializer.arguments.front())
+              : nullptr;
+      scheduledNullOwnerFields +=
+          initializer.targetType.kind == lang::SemanticType::UniqueOwner &&
+          value && value->info.type == lang::SemanticType::NullPtr;
+    }
+  }
   expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
-             artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
+             artifact.contents.find("std::unique_ptr<T> owner;") !=
                  std::string::npos &&
+             artifact.contents.find("std::unique_ptr<T> owner = nullptr") ==
+                 std::string::npos &&
+             scheduledNullOwnerFields == 1 &&
              artifact.contents.find(
                  "__gti_std::unique_ptr<::__gti_program::Widget>") !=
                  std::string::npos,
-         "the C++ backend should emit the nominal unique_ptr wrapper");
+         "the nominal unique_ptr wrapper should initialize its empty owner "
+         "through one selected schedule, not a duplicate native default");
   expect(
       artifact.contents.find(
           "::gti_internal::backend::make_unique<::__gti_program::Widget>(") ==
@@ -12078,6 +12564,23 @@ int main() {
       bufferTypes.size() == 1 ? *bufferTypes.begin() : std::string();
   const std::size_t emittedProgram =
       artifact.contents.find("namespace __gti_program {");
+  std::vector<lang::HirConstructorInstanceId> ownerConstructors;
+  for (const auto &constructor : frontend.hir.constructorInstances())
+    if (constructor.source != nullptr &&
+        (constructor.source->name().lexeme == "Buffer" ||
+         constructor.source->name().lexeme == "NestedBuffer"))
+      ownerConstructors.push_back(constructor.id);
+  expect(ownerConstructors.size() == 2 &&
+             std::all_of(ownerConstructors.begin(), ownerConstructors.end(),
+                         [&](auto id) {
+                           return artifact.contents.find(
+                                      "scalar-cfg-constructor-failure-v1 "
+                                      "constructor-instance " +
+                                      std::to_string(id) + "\n") !=
+                                  std::string::npos;
+                         }),
+         "both concrete owner constructors retain their exact MIR body "
+         "identity independently of imported library constructor numbering");
   expect(
       !concreteBuffer.empty() && emittedProgram != std::string::npos &&
           artifact.contents.find("transfer__gti_mir_failure(") !=
@@ -12087,12 +12590,6 @@ int main() {
           artifact.contents.find(
               "construct_representation_at(__gti_mir_out_result, "
               "std::move(__gti_mir_p_1.get()));") != std::string::npos &&
-          artifact.contents.find(
-              "scalar-cfg-constructor-failure-v1 constructor-instance 1") !=
-              std::string::npos &&
-          artifact.contents.find(
-              "scalar-cfg-constructor-failure-v1 constructor-instance 2") !=
-              std::string::npos &&
           artifact.contents.find("mir_prefix_allocate_v1<std::int32_t>") !=
               std::string::npos &&
           artifact.contents.find("__gti_entry__gti_mir_failure(") !=
@@ -12244,12 +12741,18 @@ int main() {
   for (const lang::HirFunctionInstance &function :
        frontend.hir.functionInstances()) {
     for (const lang::HirValue &value : function.body.values) {
-      if (lifecycle != nullptr &&
+      if (lifecycle != nullptr && value.constructorTarget &&
           value.info.type.kind == lang::SemanticType::Class &&
           value.info.type.classId == lifecycle->id &&
           value.constructorKind == lang::ConstructorKind::Ordinary) {
+        const auto *target =
+            frontend.hir.findConstructorInstance(*value.constructorTarget);
         hirUsesGeneratedConstruction =
-            hirUsesGeneratedConstruction || !value.constructorTarget;
+            hirUsesGeneratedConstruction ||
+            (target && target->generatedDefault && target->source == nullptr &&
+             target->declaration == 0 && target->parameterTypes.empty() &&
+             target->initializers.size() == 1 &&
+             target->body.statements.empty());
       }
       if (value.source != nullptr) {
         const lang::ResolvedConstructionInfo *construction =
@@ -12265,23 +12768,26 @@ int main() {
   expect(selectedDefaultedDeclaration && hirUsesGeneratedConstruction &&
              frontend.hir.destructorInstances().empty(),
          "semantic selection should retain the written declaration while HIR "
-         "uses bodyless structural lifecycle operations");
+         "selects the generated field schedule without inventing a source "
+         "constructor or destructor body");
 
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
                         lang::OptimizationPipeline().run(
                             frontend.hir, lang::OptimizationLevel::O0));
   expect(
-      artifact.contents.find("ExplicitStructural() = default;") !=
-              std::string::npos &&
+      artifact.contents.find("ExplicitStructural();") != std::string::npos &&
           artifact.contents.find("~ExplicitStructural() noexcept = default;") !=
               std::string::npos &&
-          artifact.contents.find("ExplicitStructural::ExplicitStructural(") ==
+          artifact.contents.find("ExplicitStructural::ExplicitStructural(") !=
               std::string::npos &&
+          artifact.contents.find("std::int32_t value;") != std::string::npos &&
+          artifact.contents.find("std::int32_t value =") == std::string::npos &&
           artifact.contents.find("__gti_lifecycle_active_") ==
               std::string::npos,
-      "the backend should represent defaulted lifecycle structurally "
-      "without a source body or active-drop adapter");
+      "the backend should emit the selected generated constructor while "
+      "keeping structural destruction and no duplicate default or active-drop "
+      "adapter");
 
   const std::string invalidSource = R"(
 class MissingInitializer {
@@ -17242,7 +17748,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v93 ") &&
+             mirDump.starts_with("mir-v94 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -18322,42 +18828,44 @@ int main() {
   }
 
   const lang::MirConstructorInstance *bundleConstructor = nullptr;
-  const lang::MirDropObligation *entryRollback = nullptr;
+  const lang::MirDropObligation *fieldRollback = nullptr;
+  std::size_t rollbackCount = 0;
   for (const lang::MirConstructorInstance &constructor :
        frontend.mir.constructorInstances()) {
     for (const lang::MirDropObligation &drop :
          constructor.body.dropObligations) {
-      if (drop.kind == lang::MirDropObligationKind::ConstructionRollback &&
-          drop.initiallyActive) {
+      if (drop.kind == lang::MirDropObligationKind::ConstructionRollback) {
         bundleConstructor = &constructor;
-        entryRollback = &drop;
+        fieldRollback = &drop;
+        ++rollbackCount;
       }
     }
   }
-  expect(bundleConstructor != nullptr && entryRollback != nullptr,
-         "the completed in-class initializer should enter the constructor "
-         "as one active rollback obligation");
-  if (bundleConstructor == nullptr || entryRollback == nullptr) {
+  expect(bundleConstructor != nullptr && fieldRollback != nullptr &&
+             rollbackCount == 1 && !fieldRollback->initiallyActive,
+         "the selected declaration initializer should have exactly one "
+         "rollback obligation, inactive until construction completes");
+  if (bundleConstructor == nullptr || fieldRollback == nullptr) {
     return;
   }
 
   const lang::MirClassInstance *owner =
       frontend.mir.findClassInstance(bundleConstructor->owner);
-  const lang::MirPlace *entryPlace =
-      bundleConstructor->body.findPlace(entryRollback->place);
-  expect(owner != nullptr && entryPlace != nullptr &&
-             entryPlace->root == lang::MirPlaceRootKind::This &&
-             entryPlace->projections.size() == 1 &&
-             entryPlace->projections.front().kind ==
+  const lang::MirPlace *fieldPlace =
+      bundleConstructor->body.findPlace(fieldRollback->place);
+  expect(owner != nullptr && fieldPlace != nullptr &&
+             fieldPlace->root == lang::MirPlaceRootKind::This &&
+             fieldPlace->projections.size() == 1 &&
+             fieldPlace->projections.front().kind ==
                  lang::MirProjectionKind::Field,
-         "the constructor-entry rollback should name one exact This-rooted "
+         "the selected-field rollback should name one exact This-rooted "
          "field");
-  if (owner == nullptr || entryPlace == nullptr ||
-      entryPlace->projections.size() != 1) {
+  if (owner == nullptr || fieldPlace == nullptr ||
+      fieldPlace->projections.size() != 1) {
     return;
   }
 
-  const lang::SymbolId fieldSymbol = entryPlace->projections.front().field;
+  const lang::SymbolId fieldSymbol = fieldPlace->projections.front().field;
   std::size_t matchingInitializerRollbacks = 0;
   for (const lang::MirDropObligation &drop :
        owner->fieldInitializers.dropObligations) {
@@ -18368,35 +18876,55 @@ int main() {
                 place != nullptr &&
                 place->root == lang::MirPlaceRootKind::Binding &&
                 place->symbol == fieldSymbol &&
-                drop.dropType == entryRollback->dropType
+                drop.dropType == fieldRollback->dropType
             ? 1
             : 0;
   }
   expect(matchingInitializerRollbacks == 1,
-         "constructor-entry rollback must be copied from one exact completed "
-         "field-initializer schedule");
+         "selected constructor rollback must preserve the exact declaration "
+         "field's cleanup recipe");
 
+  std::size_t exactFieldActivations = 0;
   bool failureDropsField = false;
   bool normalTransfersField = false;
   for (const lang::MirBlock &block : bundleConstructor->body.blocks) {
     for (const lang::MirInstruction &instruction : block.instructions) {
       for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+        if (event.kind == lang::MirLifecycleEventKind::Reparent &&
+            event.target == fieldRollback->id &&
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.constructorInitializer != 0 &&
+            instruction.constructorInitializer <=
+                bundleConstructor->initializers.size()) {
+          const auto &selected =
+              bundleConstructor
+                  ->initializers[instruction.constructorInitializer - 1];
+          const auto *source =
+              bundleConstructor->body.findDropObligation(event.source);
+          exactFieldActivations +=
+              selected.field == fieldSymbol && selected.arguments.size() == 1 &&
+              source && source->kind == lang::MirDropObligationKind::Value &&
+              source->value == selected.arguments.front() &&
+              source->dropType == fieldRollback->dropType &&
+              !event.conditional && !event.failureCleanup;
+        }
         failureDropsField =
             failureDropsField ||
             (block.failureParameter != 0 &&
              event.kind == lang::MirLifecycleEventKind::Drop &&
-             event.source == entryRollback->id && event.failureCleanup);
+             event.source == fieldRollback->id && event.failureCleanup);
         normalTransfersField =
             normalTransfersField ||
             (block.failureParameter == 0 &&
              event.kind == lang::MirLifecycleEventKind::TransferOut &&
-             event.source == entryRollback->id && !event.failureCleanup);
+             event.source == fieldRollback->id && !event.failureCleanup);
       }
     }
   }
-  expect(failureDropsField && normalTransfersField,
-         "failure must drop the default field and normal completion must "
-         "transfer it to the completed object");
+  expect(exactFieldActivations == 1 && failureDropsField &&
+             normalTransfersField,
+         "one completed default value must arm its exact field rollback; "
+         "failure drops that field and success transfers it to the object");
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "the default-field constructor rollback program should verify");
 
@@ -18407,8 +18935,8 @@ int main() {
   for (lang::MirConstructorInstance &constructor : constructors) {
     for (const lang::MirDropObligation &drop :
          constructor.body.dropObligations) {
-      if (drop.kind != lang::MirDropObligationKind::ConstructionRollback ||
-          !drop.initiallyActive) {
+      if (constructor.id != bundleConstructor->id ||
+          drop.id != fieldRollback->id) {
         continue;
       }
       auto &places =
@@ -18418,8 +18946,31 @@ int main() {
     }
   }
   expect(forgedField && !lang::verifyMirProgram(forged).valid(),
-         "the program verifier should reject an entry rollback that is not "
+         "the program verifier should reject a selected rollback that is not "
          "derived from its owner's exact field-initializer schedule");
+  for (unsigned mutation = 0; mutation < 2; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *constructor = const_cast<lang::MirConstructorInstance *>(
+        malformed.findConstructorInstance(bundleConstructor->id));
+    bool changed = false;
+    if (mutation == 0) {
+      auto *drop = const_cast<lang::MirDropObligation *>(
+          constructor->body.findDropObligation(fieldRollback->id));
+      drop->initiallyActive = true;
+      changed = true;
+    } else {
+      for (auto &block : constructor->body.blocks)
+        for (auto &instruction : block.instructions)
+          changed |=
+              std::erase_if(instruction.lifecycle, [&](const auto &event) {
+                return event.kind == lang::MirLifecycleEventKind::Reparent &&
+                       event.target == fieldRollback->id;
+              }) != 0;
+    }
+    expect(changed && !lang::verifyMirProgram(malformed).valid(),
+           "a selected field cannot start cleanup before construction or "
+           "lose its exactly-once completion activation");
+  }
 
   const lang::FrontendResult overridden =
       lang::Frontend().analyze("overridden-default-field-constructor.gti", R"(
@@ -18441,6 +18992,7 @@ int main() { Bundle bundle = Bundle(7); return bundle.held.value - 7; }
          "initializer");
   if (overridden.canGenerateCode()) {
     bool inheritedDefaultRollback = false;
+    std::size_t selectedFieldConstructions = 0;
     for (const lang::MirConstructorInstance &constructor :
          overridden.mir.constructorInstances()) {
       inheritedDefaultRollback =
@@ -18453,11 +19005,20 @@ int main() { Bundle bundle = Bundle(7); return bundle.held.value - 7; }
                            lang::MirDropObligationKind::ConstructionRollback &&
                        drop.initiallyActive;
               });
+      if (constructor.initializers.size() != 1 ||
+          constructor.initializers.front().targetType.kind !=
+              lang::SemanticType::Class)
+        continue;
+      for (const auto &block : constructor.body.blocks)
+        for (const auto &instruction : block.instructions)
+          selectedFieldConstructions +=
+              instruction.kind == lang::MirInstructionKind::Construct &&
+              instruction.constructorTarget.has_value();
     }
-    expect(!inheritedDefaultRollback &&
+    expect(!inheritedDefaultRollback && selectedFieldConstructions == 1 &&
                lang::verifyMirProgram(overridden.mir).valid(),
-           "an explicitly initialized field must not also inherit its "
-           "default-field rollback state");
+           "an explicitly initialized field must have one selected "
+           "construction, without also running or inheriting its default");
   }
 }
 
@@ -20516,6 +21077,8 @@ constexpr NamedTest kTests[] = {
     {"testArgumentTiedReferenceReturns", testArgumentTiedReferenceReturns},
     {"testStoredReferenceGroundwork", testStoredReferenceGroundwork},
     {"testMutableStoredDependencies", testMutableStoredDependencies},
+    {"testComposedCarrierFunctionTransfer",
+     testComposedCarrierFunctionTransfer},
     {"testStoredCarrierReturnProvenance", testStoredCarrierReturnProvenance},
     {"testNestedBorrowedFields", testNestedBorrowedFields},
     {"testNestedMemberReferenceReturnForwarding",

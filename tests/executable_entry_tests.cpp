@@ -1,6 +1,7 @@
 #include "gti/driver/compilation.h"
 #include "gti/frontend.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -111,6 +112,121 @@ int main() {
             "int helper(int value) { return value; }\n");
   expect(defined.semanticValid,
          "later definitions must resolve before use checking");
+  lang::FrontendOptions closedOptions = options;
+  closedOptions.stopAfter = lang::FrontendPhase::Mir;
+  const auto closed = [&](const std::string &text) {
+    return lang::Frontend(closedOptions).analyze(path, text);
+  };
+  const std::string mapper = R"(
+namespace traits {
+class Mapper<T> {
+public:
+  int decode(T& input);
+  int inspect();
+  int operator+(int delta);
+};
+}
+int decode<T>(T& input) {
+  traits::Mapper<T> mapping{};
+  return mapping.decode(input);
+}
+int inspect<T>() {
+  traits::Mapper<T> mapping{};
+  return mapping.inspect();
+}
+int adjust<T>() {
+  traits::Mapper<T> mapping{};
+  return mapping + 2;
+}
+class Wrapper<T> {
+public:
+  int read<U>(U& input) { return decode<U>(input); }
+};
+)";
+  const std::string specialized = R"(
+class traits::Mapper<int> {
+public:
+  int decode(int& input) { return input; }
+  int inspect() { return 3; }
+  int operator+(int delta) { return delta; }
+};
+)";
+  expect(closed(mapper + "int main() { Wrapper<int> unused{}; return 0; }")
+             .canGenerateCode(),
+         "uninstantiated generic calls and generic methods of a concrete "
+         "class do not impose executable definition requirements");
+  expect(closed(mapper + specialized + R"(
+int main() {
+  int input = 7;
+  Wrapper<int> wrapper{};
+  return wrapper.read<int>(input) + inspect<int>() + adjust<int>() - 12;
+}
+)")
+             .canGenerateCode(),
+         "concrete generic calls use exact specialized method and operator "
+         "definitions, including fully concrete signatures on open owners");
+  for (const auto &call : {"decode<int>(input)", "inspect<int>()",
+                           "adjust<int>()", "wrapper.read<int>(input)"}) {
+    const auto missing = closed(mapper +
+                                "int main() { int input = 7; "
+                                "Wrapper<int> wrapper{}; return " +
+                                call + "; }");
+    bool sourceError = false;
+    for (const auto &item : missing.diagnostics) {
+      sourceError = sourceError || item.code == "GTI-S2106";
+      expect(item.code != "GTI-B0001",
+             "concrete missing generic definitions must not reach MIR failure");
+    }
+    expect(!missing.canGenerateCode() && sourceError,
+           "concrete generic methods and operators still require a body");
+  }
+  const std::string valueGeneric = R"(
+int absent();
+int select<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return absent(); }
+}
+)";
+  expect(closed(valueGeneric + "int main() { return select<0>(); }")
+             .canGenerateCode(),
+         "an unselected value-generic constexpr branch requires no body");
+  const auto selectedMissing =
+      closed(valueGeneric + "int main() { return select<1>(); }");
+  expect(!selectedMissing.canGenerateCode() &&
+             std::any_of(
+                 selectedMissing.diagnostics.begin(),
+                 selectedMissing.diagnostics.end(),
+                 [](const auto &item) { return item.code == "GTI-S2106"; }),
+         "a selected nondependent call in an instantiated generic still "
+         "requires its definition");
+  const std::string concreteNested = R"(
+int fixed<T>();
+int outer<U>() { return fixed<int>(); }
+)";
+  expect(closed(concreteNested + "int main() { return 0; }").canGenerateCode(),
+         "an unused primary does not emit even its fixed-type nested calls");
+  const auto nestedMissing =
+      closed(concreteNested + "int main() { return outer<int>(); }");
+  expect(!nestedMissing.canGenerateCode() &&
+             std::any_of(
+                 nestedMissing.diagnostics.begin(),
+                 nestedMissing.diagnostics.end(),
+                 [](const auto &item) { return item.code == "GTI-S2106"; }),
+         "an instantiated outer generic cannot hide a fixed concrete "
+         "bodyless callee behind its primary's open formal");
+  const std::string packGeneric = R"(
+int absent();
+int pack<Args...>(Args... values) { return absent(); }
+)";
+  expect(closed(packGeneric + "int main() { return 0; }").canGenerateCode(),
+         "an unused generic pack body remains a declaration");
+  const auto packMissing =
+      closed(packGeneric + "int main() { return pack(1, 2); }");
+  expect(!packMissing.canGenerateCode() &&
+             std::any_of(
+                 packMissing.diagnostics.begin(), packMissing.diagnostics.end(),
+                 [](const auto &item) { return item.code == "GTI-S2106"; }),
+         "a concretely expanded pack cannot suppress missing definitions");
   options.requireEntryPoint = false;
   const auto fragment = lang::Frontend(options).analyze(path, undefinedSource);
   expect(fragment.semanticValid,

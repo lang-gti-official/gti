@@ -35,7 +35,91 @@ BorrowedPair reversed_view(int& first, int& second) {
   return BorrowedPair(second, first);
 }
 
+struct Reading {
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+
+struct Readings {
+  Reading first;
+  Reading second;
+  Readings(Reading left, Reading right) : first(left), second(right) {}
+};
+
+Readings combine_readings(Reading left, Reading right) {
+  return Readings(left, right);
+}
+
+Readings reverse_readings(Reading left, Reading right) {
+  return Readings(right, left);
+}
+
+struct UpdateContext {
+  int& step;
+  mut int& left;
+  mut int& right;
+  UpdateContext(int& amount, mut int& first, mut int& second)
+      : step(amount), left(first), right(second) {}
+  void update() mut { this.left += this.step; this.right += this.step; }
+};
+
+T transfer_context<T>(T value) { return std::move(value); }
+
+int branch_transfer(bool outer, bool inner) {
+  int step = 2;
+  mut int left = 0;
+  mut int right = 0;
+  UpdateContext initial{step, left, right};
+  if (outer) {
+    if (inner) {
+      mut auto active = transfer_context<UpdateContext>(std::move(initial));
+      active.update();
+    } else {
+      mut auto active = transfer_context<UpdateContext>(std::move(initial));
+      active.update();
+      active.update();
+    }
+  } else {
+    mut auto active = transfer_context<UpdateContext>(std::move(initial));
+    active.update();
+    active.update();
+    active.update();
+  }
+  return left + right;
+}
+
+int terminating_branch_transfer(bool early) {
+  int step = 3;
+  mut int left = 0;
+  mut int right = 0;
+  UpdateContext initial{step, left, right};
+  if (early) {
+    return 1;
+  } else {
+    mut auto active = transfer_context<UpdateContext>(std::move(initial));
+    active.update();
+  }
+  return left + right;
+}
+
+int loop_transfer() {
+  int step = 2;
+  mut int left = 0;
+  mut int right = 0;
+  for (mut int index = 0; index < 3; index++) {
+    UpdateContext initial{step, left, right};
+    UpdateContext intermediate = transfer_context<UpdateContext>(std::move(initial));
+    mut auto active = transfer_context<UpdateContext>(std::move(intermediate));
+    active.update();
+  }
+  return left + right;
+}
+
 int main() {
+  if (branch_transfer(true, true) != 4 || branch_transfer(true, false) != 8 ||
+      branch_transfer(false, true) != 12 || branch_transfer(false, false) != 12 ||
+      terminating_branch_transfer(true) != 1 ||
+      terminating_branch_transfer(false) != 6 || loop_transfer() != 12) { return 10; }
   mut int first = 20;
   mut int second = 22;
   BorrowedPair pair{first, second};
@@ -52,6 +136,14 @@ int main() {
   if (final_pair.sum() != 42) { return 3; }
   if (observe_forwarded(final_pair) != 42) { return 7; }
   if (observe_forwarded_reference(final_pair) != 42) { return 8; }
+  Reading left{first};
+  Reading right{second};
+  auto readings = combine_readings(left, right);
+  auto reversed = reverse_readings(left, right);
+  auto repeated = combine_readings(left, left);
+  if (readings.first.value != 30 || readings.second.value != 12 ||
+      reversed.first.value != 12 || reversed.second.value != 30 ||
+      repeated.first.value != 30 || repeated.second.value != 30) { return 9; }
   auto factory = make_view(first, second);
   auto forwarded = forward_view(factory);
   if (reversed_view(first, second).sum() != 42) { return 5; }

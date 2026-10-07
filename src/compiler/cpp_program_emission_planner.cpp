@@ -3375,11 +3375,14 @@ public:
          loweredProgram.constructorInstances()) {
       const MirClassInstance *owner = mir.findClassInstance(candidate.owner);
       if (candidate.declaration == 0 && owner != nullptr &&
-          owner->declaration == declaration.id) {
-        if (generatedConstructor != nullptr || !owner->type.arguments.empty() ||
-            !owner->type.valueArguments.empty())
+          owner->declaration == declaration.id &&
+          (concreteInstance != nullptr
+               ? owner->id == concreteInstance->id
+               : owner->type.arguments.empty() &&
+                     owner->type.valueArguments.empty())) {
+        if (generatedConstructor != nullptr)
           throw std::logic_error(
-              "generated base constructor needs one concrete owner");
+              "generated constructor needs one exact concrete owner");
         generatedConstructor = mir.findConstructorInstance(candidate.id);
       }
     }
@@ -4139,6 +4142,8 @@ public:
     concrete.genericArgumentPatterns.clear();
     concrete.traits = instance.traits;
     concrete.defaultConstructor = instance.defaultConstructor;
+    concrete.generatedDefaultRequiresSchedule =
+        instance.generatedDefaultRequiresSchedule;
     concrete.copyConstructor = instance.copyConstructor;
     concrete.moveConstructor = instance.moveConstructor;
     concrete.copyAssignment = instance.copyAssignment;
@@ -6813,6 +6818,15 @@ public:
                               : loweredClassRow(instance->declaration);
       if (constructor == nullptr || owner == nullptr)
         throw std::logic_error("generated constructor lost its concrete owner");
+      const bool directOwner = loweredClassUsesDirectRepresentation(*instance);
+      const bool genericOwner = loweredOwnerIsGeneric(*owner);
+      const std::string ownerSpelling =
+          directOwner || genericOwner
+              ? loweredConcreteClassName(constructor->owner)
+              : loweredPrimaryClassSpelling(*owner);
+      const std::string constructorName =
+          directOwner ? loweredConcreteClassLeafName(constructor->owner)
+                      : owner->name;
       const std::size_t namespaceCount =
           emitLoweredNamespaceOpen(owner->namespaceScope);
       const auto &plan = generalMirBodyPlan(
@@ -6821,8 +6835,9 @@ public:
         if (!(failure ? plan.supportsFailureText() : plan.supportsPlainText()))
           continue;
         writeIndent();
-        output << loweredPrimaryClassSpelling(*owner) << "::" << owner->name
-               << '(';
+        if (genericOwner && !directOwner)
+          output << "template <> ";
+        output << ownerSpelling << "::" << constructorName << '(';
         emitLoweredConstructorParameters(*constructor, failure);
         output << ')';
         emitGeneralMirConstructorInitializerList(*constructor, failure);

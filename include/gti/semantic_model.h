@@ -914,8 +914,12 @@ struct ClassLifecycleInfo {
   std::optional<DestructorInfo> declaredDestructor;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
   // Exact source base selected by the bounded generated-constructor schedule.
-  // Zero retains the existing structural declaration-initializer route.
+  // Zero means this base-only family is not selected; field-default schedules
+  // are selected independently below.
   ConstructorId generatedDefaultBaseConstructor = 0;
+  // Declaration defaults execute in one selected constructor body, so failure
+  // can roll back earlier completed fields before leaving construction.
+  bool generatedDefaultFieldInitializers = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;

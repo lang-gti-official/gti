@@ -17,6 +17,11 @@ a replacement body or offer an automatic foreign-linkage edit. Pure virtual
 contracts, registered runtime bindings and compiler intrinsics retain their
 separate definition policies. Fragment analysis can still resolve declarations
 without claiming executable closure.
+Generic primary bodies defer this closure requirement while their enclosing
+type or value formals remain unresolved. Concrete reanalysis checks the selected
+specialization and active `if constexpr` branch; an instantiated body still
+rejects every selected missing definition, even for a nondependent call. A
+concrete class context does not resolve a generic method's own open formals.
 
 ## Terminal colour
 

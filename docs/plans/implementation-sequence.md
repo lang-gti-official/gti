@@ -4337,6 +4337,27 @@ been retired. Current-main/census reconciliation, optional-audit parity, broad
 production and installed-consumer acceptance remain outstanding; the focused
 results are not a completed-campaign claim.
 
+The current acceptance fixes also close general composition gaps exposed by
+the source owners: moved multi-field carriers retain their exact input loans
+through ordinary generic forwarding, and independent compact borrowed inputs
+retain their own origins when combined. Prefix mutators still reject live
+overlapping loans. Generic primary-body definition checks defer only while
+actual enclosing bindings remain open, then reject missing concrete callees.
+These rules are covered with unrelated application types rather than storage
+name recognition.
+
+Default construction with declaration-field initializers now selects an
+explicit generated constructor schedule. Its class-level obligation survives
+semantics, HIR, MIR and detached LoweredProgram verification, so erasing the
+selected constructor cannot silently restore native field initialization.
+Field publication arms rollback only after successful construction; implicit
+scalar/null/expected initialization uses existing semantic conversion rules.
+This is not the separate omitted-field/default-policy work. Focused generated
+schedule, cleanup, ownership and backend tests are being reconciled with the
+new representation. Raising passive expected publication and the state-bearing
+base-constructor path remain acceptance work; this checkpoint is not ready for
+integration until those tests and the final combined gates pass.
+
 #### Why This Campaign Exists
 
 Phase 2 successfully separated resource selection and region release from

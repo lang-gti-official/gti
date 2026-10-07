@@ -928,6 +928,11 @@ verifyLoweredProgram(const LoweredProgram &program) {
     const MirClassInstance &mir = program.mir_.classInstances()[index];
     if (const auto *declaration =
             program.findClassDeclaration(instance.declaration)) {
+      if (declaration->generatedDefaultRequiresSchedule !=
+          mir.generatedDefaultRequiresSchedule) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
+                 "lowered generated-default obligation differs from MIR");
+      }
       for (const LoweredGenericParameter &parameter :
            declaration->genericParameters) {
         if (!parameter.typeArgumentPath.empty() &&
@@ -999,17 +1004,15 @@ verifyLoweredProgram(const LoweredProgram &program) {
     if (instance.declaration == 0 &&
         (owner == nullptr ||
          owner->defaultConstructor != SpecialMemberStatus::Generated ||
-         !owner->declaredFields.empty() || owner->destructor ||
          !mir.parameterTypes.empty() || !mir.typeArguments.empty() ||
-         !mir.valueArguments.empty() || mir.initializers.size() != 1 ||
-         mir.initializers.front().kind !=
-             ConstructorInitializerTargetKind::Base ||
+         !mir.valueArguments.empty() || !mir.parameterBindings.empty() ||
          mir.definitionKind != MirDefinitionKind::Source)) {
       addIssue(
           issues, LoweredProgramIssueKind::InvalidInstanceInventory,
           "generated constructor instance has an invalid structural schedule");
     }
     if (instance.id != index + 1 || instance.id != mir.id ||
+        (instance.declaration == 0) != mir.generatedDefault ||
         instance.owner != mir.owner ||
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments || instance.owner == 0 ||
