@@ -5650,6 +5650,30 @@ Source-template owners need a carrier identity/declaration proof before their
 generic representations share the preparation schedule. No additional
 C++ move, source-expression reconstruction or base placement replacement may
 stand in for those proofs.
+The remaining frame/gate acceptance inputs are structural, not library-specific:
+
+- An owned derived-constructor parameter must remain in one reference-bound
+  representation frame while scalar base arguments execute. Prefix failure
+  must replay the original parameter cleanup continuation; successful base
+  entry may publish owning fields only in their verified schedule. An unrelated
+  owner with observable move/cleanup behavior must prove there are no extra
+  delegation copies, moves or drops.
+- Owned base arguments need exact `CallInput` transfer/prepared-drop facts at
+  `InitializeBase`, with cleanup of unpublished arguments before entry and
+  completion/rollback afterward. Borrowed arguments need original places,
+  access modes and retained loan endpoints, including rejection of temporary
+  or escaping origins. Neither may be inferred from C++ parameter spelling.
+- Generic owners need exact carrier identities and declarations for their
+  source-template/concrete-instance representations; opaque source-template
+  body fallback is not an acceptance path.
+- An owning or nested-state base needs a recursively inactive native shell.
+  Its gate must suppress all observable base/field default construction before
+  preparation succeeds, then execute the original typed constructor schedule.
+  The general-object-lifetime declaration/default-field schedule is the shared
+  prerequisite. Tests must cover preparation, ancestor, owning-field and body
+  failure, secondary cleanup failure, exact original records and normal cleanup
+  without constructing a standalone base or placement-replacing one.
+
 Historical entry-active declaration-field rollback tokens cannot precede a
 fallible base; declaration-default construction must use the typed constructor
 schedule that arms each field after its successful initializer. The concurrent
