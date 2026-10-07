@@ -28116,7 +28116,10 @@ public:
       output << ";\n";
     }
     for (const MirValue &value : facts.body.values) {
-      const auto *arrayStage = findInstruction(facts.body, value.definition);
+      const auto *arrayStage =
+          value.info.type.kind == SemanticType::Array
+              ? findInstruction(facts.body, value.definition)
+              : nullptr;
       if (arrayStage != nullptr &&
           passiveFixedArrayAggregateCallInput(program, facts.body, *arrayStage))
         continue;
@@ -45861,7 +45864,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
   }
   for (const MirValue &value : body.values) {
-    const auto *arrayStage = findInstruction(body, value.definition);
+    const auto *arrayStage = value.info.type.kind == SemanticType::Array
+                                 ? findInstruction(body, value.definition)
+                                 : nullptr;
     if (arrayStage != nullptr &&
         passiveFixedArrayAggregateCallInput(program_, body, *arrayStage) &&
         typeRow(value.info.type))
