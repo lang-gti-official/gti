@@ -587,6 +587,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   useful diagnostics and tooling. It carries group `unreachable-code` and the
   LSP `Unnecessary` tag, but no deletion fix: deleting source can remove
   declarations, documentation, or deliberately retained code.
+  Emit this advisory from primary analysis only: a concrete `if constexpr`
+  branch cannot establish declaration-wide unreachability. Instance reanalysis
+  still checks the retained tail for semantic errors.
 - `GTI-S2096` warns when an explicitly `mut` ordinary local value is never
   written, addressed mutably, passed by mutable reference, or used as a mutable
   receiver. Mutable-reference parameters of the selected constructor count as
@@ -597,6 +600,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   bindings. It carries group `unused-mut`, the LSP `Unnecessary` tag, and one
   preferred fix that removes exactly the `mut` token without consuming nearby
   comments or whitespace.
+  Mutable operator receiver selection records the same source use as method
+  selection, including overloaded dereference stores. Symbolic pack folds
+  record fixed mutable-reference prefix arguments, and deferred callable calls
+  conservatively retain mutable argument places. These primary-body facts
+  prevent an edit that fails for a valid concrete instance; independent generic
+  unused locals still receive one source warning and a safe removal fix.
 - `GTI-S2009` retains the error for an implicitly ignored non-void call result.
   Its `unused-result` group provides one non-preferred fix that inserts
   `[[discard]]` at the parser-recorded start of the complete expression. The

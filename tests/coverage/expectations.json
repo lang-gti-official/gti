@@ -1805,12 +1805,11 @@
       "outcome": "rejected"
     },
     "a20-unnecessary-mut-per-instance": {
-      "finding": "A20",
       "forbid": [
         "warning[GTI-S2096]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a21-value-argument-resolved-as-type": {
       "finding": "A21",
@@ -1836,12 +1835,11 @@
       "outcome": "rejected"
     },
     "a24-unreachable-warning-per-instance": {
-      "finding": "A24",
       "forbid": [
         "warning[GTI-S2095]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a25-expected-ref-relay-wrong-referent": {
       "finding": "A25",
@@ -1909,12 +1907,11 @@
       "outcome": "backend"
     },
     "a33-unnecessary-mut-deref-store": {
-      "finding": "A33",
       "forbid": [
         "warning[GTI-S2096]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a34-view-relay-through-subscript": {
       "code": "GTI-S2045",

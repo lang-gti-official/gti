@@ -1101,7 +1101,11 @@ auto SemanticVisitor::Impl::analyze(const StmtList &statements) -> void {
       reachable = summarizeFlow(statement.get()).canFallThrough;
     } else {
       if (!hasUnreachableTail) {
-        if (statement != nullptr && statement->extent()) {
+        // One specialization's selected constexpr branch cannot make shared
+        // source unreachable. Declaration-wide tails are diagnosed by primary
+        // analysis; concrete reanalysis still checks the tail's semantics.
+        if (!instanceAnalysisActive && statement != nullptr &&
+            statement->extent()) {
           Diagnostic diagnostic = makeDiagnostic(
               DiagnosticId::UnreachableStatement, *statement->extent());
           diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
