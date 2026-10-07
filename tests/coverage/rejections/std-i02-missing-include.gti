@@ -1,0 +1,6 @@
+// INVALID: std::unordered_map is used without including <std/unordered_map>.
+#include <std/string>
+int main() {
+  mut std::unordered_map<std::string, int> counts{};
+  return int(counts.size());
+}

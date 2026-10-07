@@ -3066,10 +3066,14 @@ example graph.
 ## Language coverage corpus
 
 `tests/coverage/` holds a breadth sweep of ordinary GTI programs chosen to
-combine syntax and stdlib surface, a reproducer for every audit finding, and
-must-reject programs under `rejections/`. `language_coverage_corpus` gates all
-three through `tests/coverage/gate.py <gti> <output>` against
-`tests/coverage/expectations.json`.
+combine syntax and stdlib surface, a reproducer for every audit finding,
+must-reject programs under `rejections/`, and multi-step projects under
+`projects/` (modules, path dependencies, defines, workspaces, test targets, and
+initialization order). `language_coverage_corpus` gates all four through
+`tests/coverage/gate.py <gti> <output>` against
+`tests/coverage/expectations.json`. A program may list runtime `cases` with
+arguments, exact stdout, and a stderr pattern, so defined-failure reports and
+cleanup order are checked rather than only the exit status.
 
 The gate separately classifies pass, runtime failure, ICE (`GTI-B0001`),
 backend and link failure, silent compiler failure, hang, crash, a diagnostic at

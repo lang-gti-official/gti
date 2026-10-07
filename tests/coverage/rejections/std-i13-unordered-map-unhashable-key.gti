@@ -1,0 +1,14 @@
+// INVALID: an unordered_map key type without a std::hash specialization.
+#include <std/unordered_map>
+struct Point {
+  int x;
+  int y;
+  bool operator==(Point& o) { return this.x == o.x && this.y == o.y; }
+  bool operator!=(Point& o) { return !(this.x == o.x && this.y == o.y); }
+};
+int main() {
+  mut std::unordered_map<Point, int> grid{};
+  Point p = {.x = 1, .y = 2};
+  [[discard]] grid.insert(p, 3);
+  return int(grid.size());
+}

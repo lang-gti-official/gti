@@ -1,0 +1,14 @@
+// A57: a range-for over a non-dependent range inside a generic function fails with no
+// diagnostic.
+// Silent failure: exit 65 and "Diagnostics: 1 error" with no diagnostic text.
+// A range-for over a range whose type does not depend on the enclosing
+// function's generic parameter (fixed array, std::vector<int>, a field of a
+// non-generic class) inside a generic function or method. Ranges over
+// std::vector<T> (the resolved F1 shape) compile.
+int sum<T>(T seed) {
+  int[2] local = {1, 2};
+  mut int n = 0;
+  for (auto& entry : local) { n += entry; }
+  return n;
+}
+int main() { return sum(1) == 3 ? 0 : 1; }

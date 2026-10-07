@@ -162,8 +162,10 @@ def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[
         cases = expectation.get("cases", [{"exit": expected_exit}])
         for index, case in enumerate(cases):
             try:
+                # Run from the output directory so programs that write
+                # relative files never touch the source tree.
                 ran = subprocess.run([str(output), *case.get("args", [])], capture_output=True,
-                                     text=True, timeout=RUN_SECONDS)
+                                     text=True, timeout=RUN_SECONDS, cwd=output.parent)
             except subprocess.TimeoutExpired:
                 return "hang", f"case {index} exceeded {RUN_SECONDS}s"
             if ran.returncode != case.get("exit", 0):

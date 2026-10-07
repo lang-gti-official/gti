@@ -1,0 +1,12 @@
+// INVALID: formatting an application type that has no std::formatter.
+#include <std/format>
+#include <std/string>
+struct Point {
+  int x;
+  int y;
+};
+int main() {
+  Point p = {.x = 1, .y = 2};
+  std::string text = std::format("{}", p);
+  return int(text.size());
+}
