@@ -7724,6 +7724,7 @@ public:
       SemanticType fieldType = SemanticType::Unknown;
       SemanticType baseType = SemanticType::Unknown;
       std::vector<std::size_t> baseParameters;
+      std::vector<CppMirConstructedFieldInitializerArgument> baseArguments;
       std::vector<bool> movedParameters;
       std::vector<CppMirConstructedFieldInitializerArgument>
           constructedArguments;
@@ -7737,7 +7738,8 @@ public:
       initializers.push_back({.kind = BindingKind::Base,
                               .initializer = binding.initializer,
                               .baseType = binding.baseType,
-                              .baseParameters = binding.parameters});
+                              .baseParameters = binding.parameters,
+                              .baseArguments = binding.arguments});
     }
     for (const CppMirStoredReferenceBinding &binding : *bindings) {
       initializers.push_back({.initializer = binding.initializer,
@@ -7809,7 +7811,15 @@ public:
         // constructor needs the exact private empty state proved for that
         // concrete type. This is deliberately per-field: a mutex owner is
         // move-constructible while its public move assignment stays deleted.
-        if (field->type.kind != SemanticType::Array &&
+        const auto representation =
+            cppMirExpectedTypeRepresentation(field->type);
+        const bool passiveScalar =
+            field->dropKind == DropKind::Trivial &&
+            !field->requiresActiveCleanup && representation &&
+            (*representation == CppMirTypeRepresentationKind::Scalar ||
+             *representation == CppMirTypeRepresentationKind::Enum ||
+             field->type.kind == SemanticType::RawPointer);
+        if (!passiveScalar && field->type.kind != SemanticType::Array &&
             !cppMirFailureConstructorEmptyStateTypeEligible(mir, field->type)) {
           continue;
         }
@@ -7836,42 +7846,34 @@ public:
       if (initializer.kind == BindingKind::Base) {
         emitSemanticType(initializer.baseType);
         output << '(';
-        const MirBlock *entry =
-            constructor.body.findBlock(constructor.body.entry);
-        const MirInstruction *baseStage =
-            failureForm && entry != nullptr && !entry->instructions.empty() &&
-                    entry->instructions.front().kind ==
-                        MirInstructionKind::InitializeBase &&
-                    entry->instructions.front().constructorInitializer ==
-                        initializer.initializer + 1
-                ? &entry->instructions.front()
-                : nullptr;
-        if (baseStage != nullptr) {
-          if (!baseStage->constructorTarget ||
-              !initializer.baseParameters.empty()) {
-            throw std::logic_error(
-                "MIR base initialization lost its exact zero-argument target");
-          }
-          output
-              << cppMirFailureConstructorTagSpelling(
-                     *baseStage->constructorTarget)
-              << "{}, __gti_mir_constructor_success, __gti_mir_failure_record";
-        }
-        for (std::size_t argument = 0;
-             argument < initializer.baseParameters.size(); ++argument) {
-          if (argument != 0) {
+        const MirInstruction *baseStage = nullptr;
+        for (const auto &block : constructor.body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == MirInstructionKind::InitializeBase &&
+                instruction.constructorInitializer ==
+                    initializer.initializer + 1)
+              baseStage = &instruction;
+        const bool status = failureForm && baseStage != nullptr &&
+                            !baseStage->definedFailure.empty();
+        if (status)
+          output << cppMirFailureConstructorTagSpelling(
+                        *baseStage->constructorTarget)
+                 << "{}";
+        for (std::size_t index = 0; index < initializer.baseArguments.size();
+             ++index) {
+          if (status || index != 0)
             output << ", ";
-          }
-          const bool moved = argument < initializer.movedParameters.size() &&
-                             initializer.movedParameters[argument];
-          if (moved) {
-            output << "std::move(";
-          }
-          output << "__gti_mir_arg_" << initializer.baseParameters[argument];
-          if (moved) {
-            output << ')';
-          }
+          const auto &argument = initializer.baseArguments[index];
+          if (argument.parameter)
+            output << "__gti_mir_arg_" << *argument.parameter;
+          else if (argument.literal)
+            emitMirLiteral(*argument.literal, argument.type);
+          else
+            throw std::logic_error(
+                "MIR base initializer lost its exact scalar argument");
         }
+        if (status)
+          output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
         output << ')';
         continue;
       }
