@@ -6045,6 +6045,13 @@ auto SemanticVisitor::Impl::resolveRequirements(
   // Validation consumes the ordinary guaranteed-fact scope: conjunction adds
   // facts, while disjunction retains only facts common to every alternative.
   requirementScopes.push_back(result);
+  // Only a dependent application is an assumption for admission. A closed
+  // application may make the function nonviable, but cannot assert a false
+  // fact into existence while forming another closed argument's type.
+  std::erase_if(requirementScopes.back(), [](const auto &requirement) {
+    return std::none_of(requirement.arguments.begin(),
+                        requirement.arguments.end(), containsOpenTypeParameter);
+  });
   for (const TypeRef *argument : argumentsToValidate) {
     validateType(*argument);
     recordTypeUse(*argument);
