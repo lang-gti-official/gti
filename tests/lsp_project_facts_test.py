@@ -139,9 +139,7 @@ def test_path_dependency_tooling(executable, root):
         'math = { path = "../math" }\n\n'
         "[targets.app]\n"
         'kind = "executable"\n'
-        'root = "src/main.gti"\n\n'
-        "[build]\n"
-        'defines = ["PROJECT_FEATURE"]\n',
+        'root = "src/main.gti"\n',
     )
     write(
         dependency / "gti.toml",
@@ -149,7 +147,9 @@ def test_path_dependency_tooling(executable, root):
         "[package]\n"
         'name = "math"\n'
         'version = "1.0.0"\n'
-        'source-root = "lib"\n',
+        'source-root = "lib"\n\n'
+        "[build]\n"
+        'defines = ["PROJECT_FEATURE"]\n',
     )
 
     session = LspSession(executable)

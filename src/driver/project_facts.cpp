@@ -167,7 +167,7 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
   const ResolvedProjectPackage &selected = workspace.selectedPackage();
   const ProjectManifest &manifest = selected.manifest;
   facts.selectedIdentity = selected.identity();
-  facts.resolvedConfigurationFlags = manifest.build().defines;
+  facts.resolvedConfigurationFlags = workspace.configurationFlags();
   facts.resolvedDefaultProfile = selectDefaultProfileName(manifest.profiles());
 
   facts.resolvedProfiles.reserve(manifest.profiles().size());

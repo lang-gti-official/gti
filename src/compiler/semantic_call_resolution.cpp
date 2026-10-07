@@ -6013,6 +6013,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   }
 
   const CallableCandidate &selected = viable.front().function;
+  requireFunctionDefinition(selected, token);
   const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
   if (selected.receiverMutability == ReceiverMutability::Consuming &&
       (selected.returnType.kind == SemanticType::Reference ||
@@ -6406,6 +6407,31 @@ auto SemanticVisitor::Impl::containsCAbiRawPointer(
   return containsCAbiRawPointer(type, visiting);
 }
 
+auto SemanticVisitor::Impl::requireFunctionDefinition(
+    const CallableCandidate &function, const Token &location) -> void {
+  const FunctionDecl *declaration = function.declaration;
+  if (!requireFunctionDefinitions || function.id == 0 ||
+      declaration == nullptr || declaration->body() != nullptr ||
+      declaration->runtimeBinding() ||
+      function.record().linkage != LanguageLinkage::Gti ||
+      function.record().intrinsic != IntrinsicKind::None ||
+      function.record().pureVirtual) {
+    return;
+  }
+  Diagnostic diagnostic =
+      makeDiagnostic(DiagnosticId::MissingFunctionDefinition, location,
+                     {function.record().qualifiedName});
+  diagnostic.related.push_back(
+      {tokenSpan(declaration->operatorName()
+                     ? declaration->operatorName()->keyword
+                     : declaration->name()),
+       "The bodyless declaration is here."});
+  diagnostic.hints.emplace_back(
+      "Provide a GTI definition, or declare a foreign function through "
+      "extern \"C\" with a supported native signature.");
+  diagnostics.push_back(std::move(diagnostic));
+}
+
 auto SemanticVisitor::Impl::recordResolvedCall(
     const Call &call, const CallableCandidate &function,
     std::vector<SemanticType> typeArguments,
@@ -6413,6 +6439,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     std::vector<std::size_t> ephemeralBorrowArguments,
     std::vector<CallableArgumentBoundary> callableArguments,
     CallReceiverMode receiverMode) -> void {
+  requireFunctionDefinition(function, expressionToken(call.callee()));
   const bool pointerBearingCFunction =
       function.declaration != nullptr && function.declaration->hasCLinkage() &&
       (containsCAbiRawPointer(function.returnType) ||

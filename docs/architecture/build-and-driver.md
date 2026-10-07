@@ -549,6 +549,12 @@ tool-owned subtree. When a package has one executable plus test targets, that
 executable remains the default for `build`, `check`, and `run`. `metadata` is
 read-only.
 
+The verified hosted `ReturnEntry` adapter preserves returned integers in
+0..255 and maps every other integer to status 1, after invocation cleanup.
+Consequently, a test returning a nonzero failure count such as 256 cannot be
+reported as passed because the host truncates its process status. The defined
+runtime-failure status remains 70.
+
 The driver also owns an internal, dormant `library` target model for the
 engine-embedding campaign. Under the non-default `ManifestFeaturePolicy`, a
 target must declare `linkage = "shared"` and at least one
@@ -565,7 +571,12 @@ published. Internal tests may resolve the plan and run the ordinary frontend
 An optional top-level `[build]` table accepts
 `defines = ["DEBUG", "FEATURE"]`. Names must be ordinary GTI identifiers;
 they are sorted and deduplicated. Repeatable project-command `-D NAME` values
-are added to the manifest set. The effective set is immutable in every
+are added to the union from the selected package and its transitive dependency
+closure, excluding unrelated workspace members. `ProjectWorkspace` computes
+this one program-wide set for both build plans and read-only `ProjectFacts`,
+so editor analysis, check, build and metadata agree. Flags are not private to
+their declaring package; source `#undef` still applies in load order.
+The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
 the shared frontend request. Metadata schema 14 reports that effective `defines`
 array beside each target/profile output plan.
