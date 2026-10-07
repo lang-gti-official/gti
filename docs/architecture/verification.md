@@ -3707,6 +3707,31 @@ ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full
 python3 tests/owning_function_runtime_test.py build/gti --jobs 1
 ```
 
+On a 12-core host with sufficient memory, a larger accounted allocation can
+shorten long-suite tails while still letting three four-worker suites share
+the machine. Reconfigure the same Ninja tree rather than launching multiple
+uncoordinated CTest runs:
+
+```sh
+cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
+cmake --build build --parallel 12
+ctest --test-dir build --parallel 12 --output-on-failure
+```
+
+The per-suite default remains two for smaller hosts. Higher values are a
+resource choice, not permission to change timeouts or assert fewer outcomes.
+If other builds share the host, reduce the outer budget or rerun a timed-out
+gate unchanged under a controlled load; never convert the failure to a pass.
+
+Local samples on 2026-10-07 use one Release compiler binary with AppleClang 21
+and system LLVM 22.1.8 on a 12-core/32-GiB macOS arm64 host. The unchanged
+eight-mode contextual-numeric suite took 10.78 seconds serially and 5.37 seconds
+with two workers. All 143 standard-library cases took 926.46 seconds serially
+and 649.47 seconds with two workers (about 30% less wall time), with identical
+completed-case censuses and no removed configurations or observations. These
+are single-run samples, not CI thresholds or a claim that whole-release time
+halves; the parallel stdlib sample also shared the host with another build.
+
 Fast feedback is not a complete feature/release claim. The full completion,
 installed-consumer, platform, sanitizer and packaging obligations below remain
 in force. This scheduling change does not replace them with a smaller suite.
