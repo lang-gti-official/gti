@@ -16,6 +16,18 @@ namespace {
 
 int failures = 0;
 
+bool sameFailureRecord(const gti_failure_record_v2 &left,
+                       const gti_failure_record_v2 &right) {
+  return left.abi_version == right.abi_version && left.code == right.code &&
+         left.detail == right.detail && left.site_index == right.site_index &&
+         left.reserved == right.reserved &&
+         std::memcmp(left.artifact_identity, right.artifact_identity,
+                     sizeof(left.artifact_identity)) == 0 &&
+         left.message_size == right.message_size &&
+         left.message_flags == right.message_flags &&
+         std::memcmp(left.message, right.message, sizeof(left.message)) == 0;
+}
+
 void expect(bool condition, const char *message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
@@ -568,13 +580,12 @@ void destroyPanicTask(void *opaque) {
   const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
   expect(gti_runtime_detail::copy_managed_task_cleanup_primary_v2(copied,
                                                                   artifact) &&
-             std::memcmp(&copied, &context->primary, sizeof(copied)) == 0 &&
-             artifact == nullptr,
+             sameFailureRecord(copied, context->primary) && artifact == nullptr,
          "task cleanup copies the exact pending primary and its descriptor");
   copied.code = GTI_FAILURE_CODE_NONE_V1;
   expect(gti_runtime_detail::copy_managed_task_cleanup_primary_v2(copied,
                                                                   artifact) &&
-             std::memcmp(&copied, &context->primary, sizeof(copied)) == 0,
+             sameFailureRecord(copied, context->primary),
          "mutating a cleanup-frame copy cannot modify worker-owned failure");
   if (context->failCleanup) {
     expect(gti_runtime_detail::record_managed_task_cleanup_failure(
@@ -845,14 +856,14 @@ int main(int argc, char **argv) {
     if (spawned.status != GTI_THREAD_SPAWN_OK_V1)
       return 1;
     const auto joined = gti_rt_thread_join_v2(&state);
-    expect(joined.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
-               std::memcmp(&joined.cleanup_failure.primary, &probe.primary,
-                           sizeof(probe.primary)) == 0 &&
-               std::memcmp(&joined.cleanup_failure.secondary, &probe.secondary,
-                           sizeof(probe.secondary)) == 0 &&
-               joined.primary_artifact == &probe.primaryArtifact &&
-               joined.secondary_artifact == &probe.secondaryArtifact,
-           "only the exact pending primary completes the two-record envelope");
+    expect(
+        joined.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
+            sameFailureRecord(joined.cleanup_failure.primary, probe.primary) &&
+            sameFailureRecord(joined.cleanup_failure.secondary,
+                              probe.secondary) &&
+            joined.primary_artifact == &probe.primaryArtifact &&
+            joined.secondary_artifact == &probe.secondaryArtifact,
+        "only the exact pending primary completes the two-record envelope");
     return failures == 0 ? 0 : 1;
   }
   testSpawnJoinAndConsumption();
