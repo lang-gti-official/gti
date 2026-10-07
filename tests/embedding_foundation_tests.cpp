@@ -506,6 +506,31 @@ void testDormantDriverModel() {
              target->exports.size() == 2,
          "internal manifest loading should retain linkage and export spans");
 
+  std::string overlayText = manifest(validLibraryTarget);
+  overlayText.replace(overlayText.find("game_update_v1"),
+                      std::string("game_update_v1").size(),
+                      "overlay_update_v1");
+  const lang::driver::WorkspaceManifestOverlay overlay{manifestPath,
+                                                       overlayText};
+  const auto overlayWorkspace = lang::driver::resolveProjectWorkspace(
+      temporary.root(), std::nullopt, {.allowAcquisition = false}, overlay,
+      enabled);
+  const auto *overlayTarget =
+      overlayWorkspace.succeeded()
+          ? overlayWorkspace.workspace->selectedPackage().manifest.findTarget(
+                "gameplay")
+          : nullptr;
+  expect(overlayTarget != nullptr && overlayTarget->exports.size() == 2 &&
+             overlayTarget->exports.front().symbol == "overlay_update_v1" &&
+             readFile(manifestPath) == manifest(validLibraryTarget),
+         "dormant feature policy and dirty manifest overlays must compose "
+         "without disk writes");
+  const auto disabledOverlay = lang::driver::resolveProjectWorkspace(
+      temporary.root(), std::nullopt, {.allowAcquisition = false}, overlay);
+  expect(!disabledOverlay.succeeded() &&
+             hasCode(disabledOverlay.diagnostics, "GTI-B2000"),
+         "a manifest overlay cannot activate public library targets");
+
   const lang::driver::ProjectResolutionResult resolved =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
           temporary.root(), std::optional<std::string>{"gameplay"}, "dev",
