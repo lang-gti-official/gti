@@ -1248,6 +1248,8 @@ int32_t main() {
   const lang::MirFunctionInstance *entry = nullptr;
   const lang::MirFunctionInstance *defaultReturn = nullptr;
   lang::MirPlaceId referencePlace = 0;
+  lang::MirPlaceId addressPlace = 0;
+  lang::MirInstructionId referenceInitializer = 0;
   lang::MirLoanId retainedLoan = 0;
   lang::MirLoanId addressLoan = 0;
   for (const lang::MirFunctionInstance &function :
@@ -1271,17 +1273,20 @@ int32_t main() {
               address->root != lang::MirPlaceRootKind::Loan) {
             continue;
           }
-          const lang::MirLoanId parent = instruction.operands.front().loan;
-          const auto child = std::find_if(
-              function.body.loans.begin(), function.body.loans.end(),
-              [&](const lang::MirLoan &loan) {
-                return loan.kind == lang::MirLoanKind::CallResult &&
-                       loan.parent == parent;
-              });
-          if (child != function.body.loans.end() &&
-              address->loan == child->id) {
+          const auto *child = function.body.findLoan(address->loan);
+          const auto *parent = child == nullptr
+                                   ? nullptr
+                                   : function.body.findLoan(child->parent);
+          if (child != nullptr &&
+              child->kind == lang::MirLoanKind::CallResult &&
+              child->id == instruction.operands.front().loan &&
+              parent != nullptr && parent->kind == lang::MirLoanKind::Stored &&
+              std::find(child->carriers.begin(), child->carriers.end(),
+                        destination->binding) != child->carriers.end()) {
             referencePlace = destination->id;
-            retainedLoan = parent;
+            addressPlace = address->id;
+            referenceInitializer = instruction.id;
+            retainedLoan = parent->id;
             addressLoan = address->loan;
           }
         }
@@ -1304,7 +1309,8 @@ int32_t main() {
   expect(entry != nullptr && defaultReturn != nullptr && referencePlace != 0 &&
              retainedLoan != 0 && addressLoan != 0 &&
              retainedLoan != addressLoan,
-         "the fixture should retain distinct provenance and address loans");
+         "the reference must retain its exact address loan and distinct "
+         "stored-owner parent");
   if (entry == nullptr || defaultReturn == nullptr || referencePlace == 0 ||
       retainedLoan == 0 || addressLoan == 0 || retainedLoan == addressLoan) {
     return;
@@ -1348,6 +1354,29 @@ int32_t main() {
                    std::string::npos,
            "a retained reference should copy the child call-result address, "
            "not its provenance-only parent loan");
+  }
+  for (int mutation = 0; mutation != 2; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *body = lang::findMirBody(malformed, entryAddress);
+    if (mutation == 0) {
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == referenceInitializer)
+            instruction.operands.front().loan = retainedLoan;
+    } else {
+      body->places[addressPlace - 1].loan = retainedLoan;
+    }
+    const lang::CppMirBodyEmitter rejectedEmitter(malformed, map);
+    const std::string changed =
+        mutation == 0 ? "retained loan" : "runtime address";
+    expect(!lang::verifyMirProgram(malformed).valid(),
+           "MIR rejects stored-owner provenance substituted for reference " +
+               changed);
+    expect(
+        !rejectedEmitter.analyze(entryAddress).ready() &&
+            !rejectedEmitter.supportsFailureBodyText(entryAddress),
+        "backend rejects stored-owner provenance substituted for reference " +
+            changed);
   }
 }
 

@@ -764,6 +764,12 @@ object's shell. It does not grant mutable access to the resource. An accessor
 returning a reference to an owned field or owned storage still protects the
 enclosing owner; an external resource remaining alive cannot make an element
 reference survive destruction or movement of its own storage owner.
+This also applies when a reference is returned through a local alias or an
+identity wrapper. A borrowed operator may expose a fresh temporary's inline
+storage for an immediate read within the full expression; that reference
+cannot be retained in a local or returned from the function. An exact
+stored-field result instead retains the external referent and does not borrow
+the temporary carrier's inline storage.
 
 Inherited borrowed state, arrays of borrowed carriers,
 global/static or captured borrowed storage, dependency-changing returns, and
@@ -979,6 +985,12 @@ Stored lambdas keep their exact closure identity and read-invocation policy;
 fixed arguments and expanded argument packs use the same retained checkpoint.
 Explicit extraction into a local remains an actual ownership transfer and
 retains that local's ordinary cleanup scope.
+
+A destructor does not acquire consuming-receiver permission. It may observe
+or mutate its available fields, but cannot move a receiver field into a local
+or invoke it through `std::move(this.field)`. Cleanup retains responsibility
+for those fields. Moving a separate local owned value inside the destructor
+remains an ordinary permitted ownership transfer.
 
 An explicitly moved lambda with owned captures uses the same full-expression
 lifetime. Its environment is moved before argument evaluation, read invocation

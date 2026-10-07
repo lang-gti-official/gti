@@ -74,7 +74,49 @@ expected<int, int> propagated() {
   return api.auth().create_access_token(?argument_error());
 }
 
+// An overloaded borrowed-result operator keeps the physical temporary alive,
+// even when its separate stored dependency points at an unrelated owner.
+class InlineCursor {
+  int& owner;
+  int inline_value = 7;
+public:
+  InlineCursor(int& source) : owner(source) {}
+  int& operator*() { return this.inline_value; }
+};
+InlineCursor inline_cursor(int& owner) { return InlineCursor(owner); }
+int& relay_inline(InlineCursor& cursor) {
+  int& selected = *cursor;
+  int& again = selected;
+  return again;
+}
+int& relay_parameter(int& value) {
+  int& first = value;
+  int& second = first;
+  return second;
+}
+
+class CleanupCursor {
+  mut int& drops;
+  int inline_value = 7;
+public:
+  CleanupCursor(mut int& drops) : drops(drops) {}
+  int& operator*() { return this.inline_value; }
+  ~CleanupCursor() { this.drops += 1; }
+};
+CleanupCursor cleanup_cursor(mut int& drops) { return CleanupCursor(drops); }
+
 int main(int argc, std::vector<std::string> argv) {
+  int cursor_owner = 4;
+  InlineCursor named_cursor = inline_cursor(cursor_owner);
+  if (relay_inline(named_cursor) != 7 || relay_parameter(cursor_owner) != 4) { return 31; }
+  if (*inline_cursor(cursor_owner) != 7) { return 15; }
+  if (!(false || *inline_cursor(cursor_owner) == 7)) { return 16; }
+  mut int cursor_drops = 0;
+  int cursor_value = *cleanup_cursor(cursor_drops);
+  if (cursor_value != 7 || cursor_drops != 1) { return 17; }
+  bool skipped_or = true || *cleanup_cursor(cursor_drops) == 7;
+  bool skipped_and = false && *cleanup_cursor(cursor_drops) == 7;
+  if (!skipped_or || skipped_and || cursor_drops != 1) { return 18; }
   if (argc == 7) {
     auto result = propagated();
     return !result && result.error() == 7 ? 0 : 1;

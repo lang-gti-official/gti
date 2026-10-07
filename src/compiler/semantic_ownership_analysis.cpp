@@ -2812,7 +2812,11 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     return std::nullopt;
   }
   if (resolved->borrowFields.size() == 1 &&
-      resolved->returnType.kind == SemanticType::Reference) {
+      (resolved->returnType.kind == SemanticType::Reference ||
+       (resolved->returnType.kind == SemanticType::Class &&
+        resolved->intrinsic == IntrinsicKind::None &&
+        !resolved->borrowFields.front().sourceFields.empty() &&
+        storedReferencePath(resolved->returnType).has_value()))) {
     const auto &mapping = resolved->borrowFields.front();
     const ExprPtr *origin = nullptr;
     if (mapping.origin == BorrowOriginKind::Argument &&
@@ -3018,18 +3022,39 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
                                              SemanticLoanId throughLoan) const
     -> std::vector<SemanticLoanId> {
   std::vector<SemanticLoanId> result;
+  const auto *accessParent = semanticModel.findLoan(throughLoan);
+  const bool carrierAccess =
+      accessParent != nullptr && !place.receiver && place.projections.empty() &&
+      std::find(accessParent->carriers.begin(), accessParent->carriers.end(),
+                place.root) != accessParent->carriers.end();
+  const auto *parent =
+      carrierAccess && accessParent->kind == SemanticLoanKind::Reference &&
+              accessParent->storedDependency != 0
+          ? semanticModel.findLoan(accessParent->storedDependency)
+          : accessParent;
+  // A call through the exact named carrier uses its external capability as
+  // well as its physical shell. An exclusive parent stays suspended while a
+  // child is live even when the child's source is the external referent.
   for (const auto &[id, flow] : loanFlow.records) {
     if (!flow.active) {
       continue;
     }
     const SemanticLoanInfo *loan = semanticModel.findLoan(id);
-    if (loan == nullptr || loanIsAncestor(id, throughLoan)) {
+    if (loan == nullptr || loanIsAncestor(id, throughLoan) ||
+        (carrierAccess && parent != nullptr &&
+         loanIsAncestor(id, parent->id))) {
       continue;
     }
-    const auto *parent = semanticModel.findLoan(throughLoan);
     const auto parentIsExclusive = [&] {
       if (parent == nullptr)
         return false;
+      if (carrierAccess)
+        return parent->access == AccessMode::Mutable ||
+               std::any_of(parent->additionalDependencies.begin(),
+                           parent->additionalDependencies.end(),
+                           [](const auto &dependency) {
+                             return dependency.access == AccessMode::Mutable;
+                           });
       if (parent->entry && parent->kind == SemanticLoanKind::StoredValue &&
           !parent->designatedFields.empty())
         if (const auto dependency =
@@ -3044,8 +3069,8 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
                                   loanPlacesOverlap(dependency.place, place);
                          });
     };
-    const bool suspendedParentUse = throughLoan != 0 &&
-                                    loanIsAncestor(throughLoan, id) &&
+    const bool suspendedParentUse = parent != nullptr &&
+                                    loanIsAncestor(parent->id, id) &&
                                     parentIsExclusive();
     // Permission belongs to the overlapping dependency, not to whichever
     // reference happened to be the carrier's first field. In particular, a
@@ -3053,7 +3078,17 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
     // exclusive first field cannot prohibit reads of unrelated shared owners.
     const auto conflicts = [&](const SemanticLoanPlace &source,
                                AccessMode access, bool protectsStorage) {
-      return protectsStorage && loanPlacesOverlap(place, source) &&
+      const bool overlaps =
+          loanPlacesOverlap(place, source) ||
+          (carrierAccess && suspendedParentUse &&
+           (loanPlacesOverlap(parent->place, source) ||
+            std::any_of(parent->additionalDependencies.begin(),
+                        parent->additionalDependencies.end(),
+                        [&](const auto &dependency) {
+                          return dependency.access == AccessMode::Mutable &&
+                                 loanPlacesOverlap(dependency.place, source);
+                        })));
+      return protectsStorage && overlaps &&
              (suspendedParentUse || requested == AccessMode::Mutable ||
               access == AccessMode::Mutable);
     };
@@ -3328,14 +3363,20 @@ auto SemanticVisitor::Impl::retainedLoanPlace(const ExprPtr &expression)
     const auto *resolved =
         call == nullptr ? nullptr : semanticModel.findCall(*call);
     const auto *operation = semanticModel.findOperator(*expression);
-    const bool mappedReference =
-        (resolved != nullptr &&
-         resolved->returnType.kind == SemanticType::Reference &&
-         resolved->borrowFields.size() == 1) ||
-        (operation != nullptr &&
-         operation->returnType.kind == SemanticType::Reference &&
-         operation->borrowFields.size() == 1);
-    if (mappedReference) {
+    const auto mappedExternalResult = [&](const auto &record) {
+      return record.borrowFields.size() == 1 &&
+             (record.returnType.kind == SemanticType::Reference ||
+              (record.returnType.kind == SemanticType::Class &&
+               !record.borrowFields.front().sourceFields.empty() &&
+               storedReferencePath(record.returnType).has_value()));
+    };
+    const bool mappedResult =
+        (resolved != nullptr && mappedExternalResult(*resolved) &&
+         (resolved->returnType.kind == SemanticType::Reference ||
+          (resolved->intrinsic == IntrinsicKind::None &&
+           semanticModel.findConstruction(*expression) == nullptr))) ||
+        (operation != nullptr && mappedExternalResult(*operation));
+    if (mappedResult) {
       const auto dependencies = storedBorrowDependencies(expression);
       if (dependencies.size() == 1)
         return dependencies.front().place;
@@ -4392,7 +4433,8 @@ auto SemanticVisitor::Impl::receiverStorageBorrow(
   // provenance: extracting a fallible borrowed success, for example,
   // retains its external referent rather than the expected object's shell.
   if (const auto *operation = semanticModel.findOperator(*expression))
-    return borrowedResult(operation->returnType) &&
+    return operation->declaration != nullptr &&
+           borrowedResult(operation->returnType) &&
            operation->borrowOrigin == BorrowOriginKind::Receiver &&
            operation->borrowArguments.empty() &&
            operation->borrowFields.empty() &&
@@ -4400,7 +4442,8 @@ auto SemanticVisitor::Impl::receiverStorageBorrow(
   const auto *call = exprAs<Call>(expression.get());
   const auto *resolved =
       call == nullptr ? nullptr : semanticModel.findCall(*call);
-  if (resolved == nullptr || resolved->intrinsic != IntrinsicKind::None ||
+  if (resolved == nullptr || resolved->declaration == nullptr ||
+      resolved->intrinsic != IntrinsicKind::None ||
       !borrowedResult(resolved->returnType) ||
       resolved->borrowOrigin != BorrowOriginKind::Receiver ||
       !resolved->borrowArguments.empty() || !resolved->borrowFields.empty())
@@ -4586,7 +4629,14 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     semanticModel.recordBindingLoan(binding, id);
     return;
   }
-  if (const auto source = retainedLoanSource(expression)) {
+  auto source = retainedLoanSource(expression);
+  if (binding.isRangeIterator() && resolved != nullptr &&
+      resolved->borrowOrigin == BorrowOriginKind::Receiver)
+    if (const auto *member = exprAs<Get>(call->callee().get()))
+      // A synthesized cursor retains the range loan, not the external field
+      // selected by the ordinary begin() result's return contract.
+      source = retainedLoanSource(member->object());
+  if (source) {
     const SemanticLoanInfo *sourceLoan = semanticModel.findLoan(source->loan);
     const bool storedReceiverShell = retainedStoredBorrow &&
                                      !binding.isRangeIterator() &&
@@ -4605,14 +4655,33 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     if (sourceLoan == nullptr) {
       return;
     }
+    const auto childConflicts = [&](const SemanticLoanPlace &place) {
+      auto conflicts = conflictingLoans(place, carrierAccess, sourceLoan->id);
+      const auto *binding = source->carrier == nullptr
+                                ? nullptr
+                                : resolve(source->carrier->name());
+      const auto *alias = binding == nullptr
+                              ? nullptr
+                              : semanticModel.findLoan(binding->retainedLoan);
+      if (source->dependency && alias != nullptr &&
+          alias->kind == SemanticLoanKind::Reference &&
+          alias->storedDependency == sourceLoan->id) {
+        // A mapped external reborrow is made through this exact reference
+        // alias. Its physical shell is not a competing borrow of the stored
+        // referent. Unrelated aliases, even to the same owner, remain checked.
+        std::erase_if(conflicts, [&](SemanticLoanId conflict) {
+          return loanIsAncestor(conflict, alias->id);
+        });
+      }
+      return conflicts;
+    };
     if (source->dependency && carrier->type.kind == SemanticType::Reference) {
       const auto &selected = *source->dependency;
       if (carrierAccess == AccessMode::Mutable &&
           selected.access != AccessMode::Mutable)
         return; // Reference binding owns the permission diagnostic.
       reportBorrowConflict(
-          expressionToken(expression),
-          conflictingLoans(selected.place, carrierAccess, sourceLoan->id),
+          expressionToken(expression), childConflicts(selected.place),
           "Cannot create a child reborrow while another overlapping child "
           "loan may still be live.");
       const auto storedDependency = sourceLoan->storedDependency;
@@ -4822,18 +4891,28 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       childPlace = sourceLoan->place;
     }
     reportBorrowConflict(
-        expressionToken(expression),
-        conflictingLoans(childPlace, carrierAccess, sourceLoan->id),
+        expressionToken(expression), childConflicts(childPlace),
         "Cannot create a child reborrow while another overlapping child "
         "loan may still be live.");
     const SemanticLoanKind kind = retainedStoredBorrow
                                       ? SemanticLoanKind::StoredValue
                                       : SemanticLoanKind::Reference;
     const SemanticLoanId dependency = sourceLoan->storedDependency;
+    // A returned adapter's field identity belongs to its result layout, not
+    // its exclusive parent's layout. Keep the selected origin and permission
+    // while publishing that exact destination path on the child loan.
+    const auto dependencies = retainedStoredBorrow
+                                  ? storedBorrowDependencies(expression)
+                                  : std::vector<SemanticLoanDependency>{};
+    const auto fields = dependencies.size() == 1
+                            ? dependencies.front().designatedFields
+                            : std::vector<SymbolId>{};
     const SemanticLoanId child = createRetainedLoan(
         *carrier, carrierSymbol, kind, expression.get(), std::move(childPlace),
         sourceLoan->owner, sourceLoan->receiverOrigin, carrierAccess,
-        sourceLoan->protectsStorage, sourceLoan->id);
+        sourceLoan->protectsStorage ||
+            (source->dependency && sourceLoan->access == AccessMode::Mutable),
+        sourceLoan->id, false, fields);
     if (dependency != 0) {
       SemanticLoanInfo loan = *semanticModel.findLoan(child);
       loan.storedDependency = dependency;
@@ -6871,6 +6950,17 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
   const ExprPtr &argument = expr.arguments().front();
   const SemanticType valueType = analyzeProjectionBase(argument);
   SemanticPlace place = semanticPlace(argument);
+  if (destructorDepth != 0 && place.receiver && !place.projections.empty()) {
+    // Destructor entry authority permits checked field access, not a second
+    // ownership transfer. A retained consuming receiver may already have
+    // consumed a field while keeping its physical shell for final cleanup.
+    report(expressionToken(argument),
+           "std::move cannot partially move a receiver field in a destructor; "
+           "field cleanup remains owned by the enclosing object.",
+           "GTI-S2018");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (place.receiver && place.root != nullptr && place.projections.empty()) {
     if (currentReceiverMutability != ReceiverMutability::Consuming ||
         !typeTraits(valueType).movable ||

@@ -28,9 +28,11 @@
     "115-discardable-results.gti": 43,
     "116-optional-raw-audit.gti": 34,
     "117-unsafe-member-contracts.gti": 37,
-    "118-cleanup-bound-guards.gti": 31,
+    "118-cleanup-bound-guards.gti": 34,
     "119-runtime-object-layout.gti": 50,
     "12-fixed-arrays.gti": 28,
+    "120-immovable-storage.gti": 364,
+    "121-programmable-allocators.gti": 551,
     "13-ownership.gti": 46,
     "14-operators.gti": 38,
     "15-variadic-generics.gti": 36,
@@ -51,7 +53,7 @@
     "30-callable-forwarding.gti": 27,
     "31-exact-constraints.gti": 37,
     "32-structured-bindings.gti": 26,
-    "33-source-concepts.gti": 24,
+    "33-source-concepts.gti": 32,
     "34-do-while.gti": 23,
     "35-conditional-expressions.gti": 40,
     "36-c-abi-sockets.gti": 25,
@@ -117,5 +119,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 15143
+  "total": 16069
 }

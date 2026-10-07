@@ -4225,6 +4225,71 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
     return;
   }
+  const ExprPtr *physicalOrigin = &value;
+  std::unordered_set<const Expr *> visitedOrigins;
+  while (physicalOrigin != nullptr && *physicalOrigin &&
+         !receiverStorageBorrow(*physicalOrigin)) {
+    if (!visitedOrigins.insert(physicalOrigin->get()).second) {
+      physicalOrigin = nullptr;
+      break;
+    }
+    if (const auto *group = exprAs<Grouping>(physicalOrigin->get())) {
+      physicalOrigin = &group->expression();
+    } else if (const auto *comma = exprAs<Binary>(physicalOrigin->get());
+               comma != nullptr && comma->oper().kind == TokenKind::COMMA) {
+      physicalOrigin = &comma->right();
+    } else {
+      physicalOrigin = storedBorrowSource(*physicalOrigin);
+    }
+  }
+  if (physicalOrigin != nullptr && *physicalOrigin) {
+    const bool stable = hasStableBorrowStorage(*physicalOrigin);
+    const ExprPtr *receiver = storedBorrowSource(*physicalOrigin);
+    const SemanticLoanPlace shell = receiver != nullptr
+                                        ? loanPlace(*receiver)
+                                        : SemanticLoanPlace{.receiver = true};
+    bool validShell =
+        stable && shell.receiver &&
+        function->returnBorrowOrigin == BorrowOriginKind::Receiver;
+    if (stable && function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+        function->declaration != nullptr &&
+        function->returnBorrowParameter < function->parameterTypes.size() &&
+        function->returnBorrowParameter <
+            function->declaration->parameters().size()) {
+      const auto index = function->returnBorrowParameter;
+      const auto *binding =
+          semanticModel.findBinding(function->declaration->parameters()[index]);
+      validShell =
+          binding != nullptr &&
+          function->parameterTypes[index].kind == SemanticType::Reference &&
+          !shell.receiver && shell.root == binding->symbol;
+    } else if (stable &&
+               function->returnBorrowOrigin == BorrowOriginKind::Global &&
+               function->returnBorrowPlace) {
+      validShell =
+          !shell.receiver && shell.root == function->returnBorrowPlace->root;
+    }
+    if (!validShell) {
+      // A named carrier is stable within this scope, but its long-lived
+      // external dependency cannot authorize returning its own local shell.
+      // Check physical storage before the ordinary external-owner relay.
+      Diagnostic diagnostic = makeDiagnostic(
+          std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+          "Returned " + std::string(description) +
+              (stable
+                   ? " refers to local or by-value receiver storage that does "
+                     "not outlive this call."
+                   : " refers to temporary receiver storage that is destroyed "
+                     "at the end of this full expression."));
+      diagnostic.hints.emplace_back(
+          "Return an owned value, or borrow from receiver storage that "
+          "outlives "
+          "the call. An external dependency does not extend the containing "
+          "receiver's lifetime.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+  }
   if (!function->returnBorrowFields.empty()) {
     auto actual =
         function->returnType.kind == SemanticType::Reference
@@ -4766,6 +4831,24 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   if (const auto *binary = exprAs<Binary>(expression.get());
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return hasStableBorrowStorage(binary->right(), visiting);
+  }
+  if (receiverStorageBorrow(expression)) {
+    const ExprPtr *receiver = storedBorrowSource(expression);
+    if (receiver == nullptr)
+      return currentClass.has_value(); // An implicit receiver is addressable.
+    const auto *info = semanticModel.findExpression(**receiver);
+    // A temporary can carry a long-lived external borrow without its own
+    // storage becoming long-lived. Compact ordinary receiver contracts
+    // protect that physical storage, not the carried external referent.
+    return info != nullptr && info->category == ValueCategory::Place &&
+           hasStableBorrowStorage(*receiver, visiting);
+  }
+  if (const auto *operation = semanticModel.findOperator(*expression);
+      operation != nullptr && !operation->borrowFields.empty()) {
+    const ExprPtr *source = operatorBorrowSource(expression, *operation);
+    // An exact stored-field mapping instead follows the external referent;
+    // extracting it does not depend on retaining a temporary cursor shell.
+    return source != nullptr && hasStableBorrowStorage(*source, visiting);
   }
   if (const auto *index = exprAs<Index>(expression.get())) {
     return hasStableBorrowStorage(index->object(), visiting);

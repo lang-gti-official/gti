@@ -424,7 +424,7 @@ pointer precondition.
 
 ### Explicit resource binding
 
-The in-progress custom-resource slice in `<std/resource>` makes the trust
+The custom-resource protocol in `<std/resource>` makes the trust
 boundary explicit with `unsafe std::bind_resource(resource)`. The result is a
 reusable checked shared borrow, not ownership of the provider. The unsafe
 obligation applies to every later allocation through that binding or any copy:
@@ -452,9 +452,10 @@ containment guarantee for arbitrary unsafe code.
 The source lease is declared before typed storage so reverse field cleanup
 destroys live elements before returning the region. This is ordinary checked
 lifecycle composition, not recognition of a public standard-library name.
-End-to-end resource-owner/container integration is still being completed; see
-[custom resources](standard-library.md#custom-resource-protocol-in-progress)
-for its current boundary and the example arena's bookkeeping/thread limits.
+See [custom resources](standard-library.md#custom-resource-protocol)
+for typed storage, growable containers and the example arena's bookkeeping/thread
+limits. Empty typed owners conservatively retain their provider borrow until
+their cleanup; releasing their region does not permit an early provider reset.
 
 ## Functions With A Caller Obligation
 

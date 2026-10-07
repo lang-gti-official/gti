@@ -70,12 +70,35 @@ int main() { auto result = bad(); return result.first.read(); }
   result.first = ReadView(b);
   return result.first.read();
 }""",
-        "wrong-constructor-source": """class Bad {
+        "constructor-selected-owner-mutation": """class Selected {
   ReadView view;
 public:
-  Bad(ReadView input, int& unrelated) : view(ReadView(unrelated)) {}
+  Selected(ReadView unused, int& chosen) : view(ReadView(chosen)) {}
+  int& read() { return this.view.read(); }
 };
-int main() { int a = 1; int b = 2; Bad value{ReadView(a), b}; return 0; }
+int main() {
+  int a = 1;
+  mut int b = 2;
+  Selected value{ReadView(a), b};
+  b = 3;
+  return value.read();
+}
+""",
+        "constructor-selected-local-owner-return": """class Selected {
+  ReadView view;
+public:
+  Selected(ReadView unused, int& chosen) : view(ReadView(chosen)) {}
+  int& read() { return this.view.read(); }
+};
+Selected escape(ReadView input) {
+  int local = 2;
+  return Selected(input, local);
+}
+int main() {
+  int a = 1;
+  auto value = escape(ReadView(a));
+  return value.read();
+}
 """,
         "readonly-field-reborrow": """class Bad {
   mut int& item;
@@ -102,7 +125,8 @@ int main() { mut int value = 1; Bad bad{value}; bad.write(); return 0; }
         "exclusive-copy": "GTI-S2003",
         "exclusive-extraction-copy": "GTI-S2003",
         "reseat-field": "GTI-S2003",
-        "wrong-constructor-source": "GTI-S2045",
+        "constructor-selected-owner-mutation": "GTI-S2017",
+        "constructor-selected-local-owner-return": "GTI-S2085",
         "readonly-field-reborrow": "GTI-S2017",
         "readonly-implicit-field-reborrow": "GTI-S2017",
     }
