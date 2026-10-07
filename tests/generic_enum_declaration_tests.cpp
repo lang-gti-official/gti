@@ -3,6 +3,7 @@
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
+#include "gti/semantic_analyzer.h"
 
 #include <algorithm>
 #include <iostream>
@@ -201,6 +202,33 @@ void testExactTypeIdentity() {
          "generic enum type identity includes the declaration and arguments");
 }
 
+void testInstanceCatalogReset() {
+  auto result = lang::Frontend().analyze(
+      "enum-instance-reset.gti",
+      "enum Event<T> { idle, item(T value) }; "
+      "int main() { auto event = Event<int>::item(7); return 0; }");
+  expect(result.canGenerateCode(), "concrete enum reset fixture is valid");
+  const auto *declaration =
+      lang::stmtAs<lang::EnumDecl>(result.program.declarations().front().get());
+  lang::SemanticVisitor visitor;
+  expect(visitor.check(result.program),
+         "reusable semantic visitor accepts enum");
+  const auto *primary = visitor.model().findEnumType(*declaration);
+  expect(primary != nullptr, "reset fixture retains its primary enum");
+  if (primary == nullptr)
+    return;
+  const auto type =
+      lang::SemanticType::enumType(primary->id, {lang::SemanticType::Int32});
+  expect(visitor.enumTypeFor(type).has_value() &&
+             visitor.model().enumTypeFor(type).has_value(),
+         "semantic snapshot retains a concrete enum signature");
+  const auto replacement = lang::Frontend().analyze(
+      "replacement-enum-snapshot.gti", "int main() { return 0; }");
+  expect(visitor.check(replacement.program), "reused visitor resets its model");
+  expect(!visitor.model().enumTypeFor(type).has_value(),
+         "model reset clears concrete signatures with their snapshot pointers");
+}
+
 void testForwardDefaultsAndLatePayloadValidation() {
   for (const auto source :
        {"enum First<T, U = Later<int>> { item(T value) }; "
@@ -262,6 +290,97 @@ void testForwardDefaultsAndLatePayloadValidation() {
            "errors");
   }
 }
+
+void testCrossNominalDefaultsAndFiniteLayouts() {
+  const std::string event =
+      "enum Event<T, U = Later> { item(T value, U detail) }; ";
+  const std::string early = "struct Early<W = Event<int>> {}; ";
+  const std::string later = "struct Later {}; ";
+  for (const std::string &declarations :
+       {event + early + later, later + event + early, early + event + later,
+        early + later + event}) {
+    const auto result = lang::Frontend().analyze(
+        "cross-nominal-defaults.gti",
+        declarations + "using Selected = Early<>; int main() { return 0; }");
+    expect(result.canGenerateCode(),
+           "class and enum default dependencies use the complete nominal "
+           "inventory, independently of declaration order");
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+
+  for (const auto source :
+       {"struct Earlier<T = Later<>> {}; "
+        "struct Later<T = int> {}; using Selected = Earlier<>; "
+        "int main() { return 0; }",
+        "enum Self<T = Self<int>> { item(int value) }; "
+        "int main() { auto value = Self<>::item(7); return 0; }",
+        "struct Self<T = Self<int>> {}; "
+        "using Selected = Self<>; int main() { return 0; }",
+        "enum Event<T> { item(T value) }; "
+        "struct Leaf { int value; }; struct B { Event<Leaf> value; }; "
+        "struct A { Event<B> value; }; int main() { return 0; }",
+        "enum Event<T> { item(T value) }; "
+        "struct Box<T> { T value; }; "
+        "struct A { Event<Box<Box<int>>> value; }; "
+        "int main() { return 0; }",
+        "constexpr uint64_t Earlier = 3; "
+        "struct Count<uint64_t N = Earlier> {}; "
+        "using Selected = Count<>; int main() { return 0; }"}) {
+    const auto result =
+        lang::Frontend().analyze("finite-nominal-defaults.gti", source);
+    expect(result.canGenerateCode(),
+           "finite defaults, explicit self arguments and decreasing concrete "
+           "nominal containment remain valid");
+    if (!result.canGenerateCode()) {
+      std::cerr << source << '\n';
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+
+  for (const auto source :
+       {"enum Event<T> { item(T value) }; "
+        "struct A { Event<B> value; }; struct B { Event<C> value; }; "
+        "struct C { A value; }; int main() { return 0; }",
+        "enum Event<T> { item(T value) }; struct Box<T> { T value; }; "
+        "struct A { Event<Box<Box<A>>> value; }; "
+        "int main() { return 0; }"}) {
+    const auto result =
+        lang::Frontend().analyze("concrete-nominal-layout-cycle.gti", source);
+    expect(!result.semanticValid &&
+               std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2082";
+                           }) &&
+               std::none_of(result.diagnostics.begin(),
+                            result.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-B0001";
+                            }),
+           "cycles through different instances of one enum or class family "
+           "reject in semantics before executable lowering");
+  }
+  for (const auto source :
+       {"struct Count<uint64_t N = Later> {}; constexpr uint64_t Later = 3; "
+        "int main() { return 0; }",
+        "struct First<T = Later<>> {}; struct Later<T = First<>> {}; "
+        "int main() { return 0; }",
+        "enum Event<T = Box<>> { item(int value) }; "
+        "struct Box<T = Event<>> {}; int main() { return 0; }"}) {
+    const auto result =
+        lang::Frontend().analyze("invalid-nominal-default-cycle.gti", source);
+    expect(!result.semanticValid && std::none_of(result.diagnostics.begin(),
+                                                 result.diagnostics.end(),
+                                                 [](const auto &diagnostic) {
+                                                   return diagnostic.code ==
+                                                          "GTI-B0001";
+                                                 }),
+           "inventory completion does not admit later constexpr defaults or "
+           "recursive omitted-default dependencies");
+  }
+}
 } // namespace
 
 int main() {
@@ -270,6 +389,8 @@ int main() {
   testOptionalClassSpelling();
   testInvalidDeclarations();
   testExactTypeIdentity();
+  testInstanceCatalogReset();
   testForwardDefaultsAndLatePayloadValidation();
+  testCrossNominalDefaultsAndFiniteLayouts();
   return failures == 0 ? 0 : 1;
 }

@@ -1547,7 +1547,9 @@ mirDropDestructorTargets(const MirDropType &type) {
 RelocationKind mirTypeRelocationKind(const MirProgram &program,
                                      const SemanticType &type) {
   std::unordered_set<HirClassInstanceId> visiting;
-  std::unordered_set<EnumId> enums;
+  // One declaration family may occur repeatedly along a finite layout path
+  // with distinct arguments. Only revisiting the same exact type is a cycle.
+  std::vector<SemanticType> enums;
   const auto derive = [&](const auto &self,
                           const SemanticType &candidate) -> RelocationKind {
     const auto merge = [](RelocationKind left, RelocationKind right) {
@@ -1589,13 +1591,14 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
     }
     if (candidate.kind == SemanticType::Enum) {
       if (const auto *enumeration = program.findPayloadEnum(candidate)) {
-        if (!enums.insert(candidate.enumId).second)
+        if (std::find(enums.begin(), enums.end(), candidate) != enums.end())
           return RelocationKind::Unavailable;
+        enums.push_back(candidate);
         auto result = RelocationKind::Structural;
         for (const auto &variant : enumeration->variants)
           for (const auto &payload : variant.payloadTypes)
             result = merge(result, self(self, payload));
-        enums.erase(candidate.enumId);
+        enums.pop_back();
         return result;
       }
     }

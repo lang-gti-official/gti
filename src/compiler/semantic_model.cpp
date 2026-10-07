@@ -1361,6 +1361,7 @@ void SemanticModel::clear() {
   exactClassSpecializations.clear();
   typeAliases.clear();
   enumTypes.clear();
+  enumInstanceTypes.clear();
   enumTypesById.clear();
   enumerators.clear();
   switchCases.clear();

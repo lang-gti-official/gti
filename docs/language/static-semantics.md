@@ -1029,12 +1029,20 @@ sharing a primary declaration is not enough.
 Semantic substitution validates actual payload signatures, constraints,
 copy/move/cleanup and concurrency capabilities before executable lowering.
 An unused generic primary is not a concrete runtime representation. Forward
-enum-default dependencies are resolved without declaration-order-dependent
-acceptance; cyclic defaults are ill-formed. Aliases do not bypass instantiated
+class/enum type-default dependencies are resolved against complete nominal
+identities without declaration-order-dependent acceptance; cyclic defaults are
+ill-formed. Value defaults still require earlier visible constant bindings.
+Aliases do not bypass instantiated
 payload validation. Generic arguments are metadata, not ownership edges: an
 unused `void` or reference type argument does not become a payload. An actual
 field substituted to an unsupported type is still ill-formed, including when
 constructing another alternative.
+
+By-value layout checks distinguish concrete generic instances when traversing
+class fields and enum alternatives. A cycle cannot be hidden by visiting the
+same generic primary with different arguments. Finite nested class payloads
+remain valid; direct recursive layouts and structurally growing by-value
+recurrence remain ill-formed.
 
 An enum with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.

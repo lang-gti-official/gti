@@ -105,6 +105,8 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerEnumGenericParameters();
   genericDefaultConstants.clear();
   registerClasses(program.declarations(), {});
+  for (ClassId id = 1; id <= classes.size(); ++id)
+    resolveClassGenericDefaults(id);
   for (EnumId id = 1; id <= enums.size(); ++id)
     resolveEnumGenericDefaults(id);
   resolveTypeAliases();

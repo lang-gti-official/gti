@@ -7032,8 +7032,15 @@ consumer, and release refreshes remain outstanding for the full campaign.
   dependency diagnostics pass the focused protocol gate. Original A47, A48,
   and A49 reproducers also pass all 24 native configurations. S15 plain-class
   payload emission and its generic/nongeneric publication fixtures pass focused
-  native checks. Final review found cross-nominal default-ordering and exact
-  concrete enum layout-traversal gaps, which are being repaired. Combined corpus/full-suite
+  native checks. Final review repairs cross-nominal default-ordering, exact
+  concrete layout/relocation traversal, snapshot reset and nested executable
+  payload storage identity. Focused declaration/backend/optimizer/raw-audit
+  gates and nested/receiver/sibling native matrices pass. Two valid-source
+  composition gaps remain follow-ups, not new source restrictions: a nested
+  local reborrow while two shared sibling payload bindings remain live reaches
+  a MIR sibling-conflict error; two fresh class constructors with enum arguments
+  inside one alternative call exceed the current fused emission staging proof.
+  Preconstructing those class inputs is supported. Combined corpus/full-suite
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
   amendment makes `class` optional with identical scoped semantics for both

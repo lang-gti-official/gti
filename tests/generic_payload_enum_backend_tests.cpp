@@ -2,6 +2,7 @@
 #include "../src/compiler/cpp_representation.h"
 #include "cpp_backend_test_support.h"
 #include "gti/lowered_program_printer.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 
@@ -239,6 +240,30 @@ int main() {
     }
     expect(changed && !lang::verifyMirProgram(deadParent).valid(),
            "a projected child cannot be created after its parent has ended");
+    auto forwardingCycle = projected.mir;
+    changed = false;
+    bool cyclicIdentityRejected = false;
+    for (auto &function :
+         lang::MirProgramTestAccess::functions(forwardingCycle)) {
+      auto &body = function.body;
+      for (const auto &loan : body.loans) {
+        if (loan.parent == 0 || loan.kind != lang::MirLoanKind::Local)
+          continue;
+        // The child's projected SSA source already forwards through its
+        // parent's carrier. Redirecting that parent back to the child forms
+        // a storage-forwarding cycle without changing the SSA producer.
+        body.loans[loan.parent - 1].source = loan.source;
+        cyclicIdentityRejected =
+            !lang::mirCanonicalPlaceContains(body, loan.source, loan.source);
+        changed = true;
+        break;
+      }
+      if (changed)
+        break;
+    }
+    expect(changed && cyclicIdentityRejected &&
+               !lang::verifyMirProgram(forwardingCycle).valid(),
+           "cyclic value/carrier forwarding cannot fabricate storage identity");
   } else {
     for (const auto &diagnostic : projected.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -403,6 +428,213 @@ int main() {
       expect(!gti_test::emitCpp(passive, standard).contents.empty(),
              "fused passive class publications do not invent SSA storage");
     }
+  }
+  const auto sibling =
+      lang::Frontend().analyze("same-typed-payload-siblings.gti", R"(
+enum Event<T> { item(T value) };
+class Inner {
+public:
+  Event<int> data;
+  Inner(Event<int> data) : data(data) {}
+};
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+int main() {
+  Inner left = Inner(Event<int>::item(1));
+  Inner right = Inner(Event<int>::item(2));
+  Pair<Inner> pair = Pair<Inner>::items(left, right);
+  switch (pair) {
+    case Pair<Inner>::items(auto& first, second):
+      switch (first.data) {
+        case Event<int>::item(auto& value):
+          if (value != 1) { return 1; }
+          break;
+      }
+      switch (second.data) {
+        case Event<int>::item(value): return value - 2;
+      }
+    case Pair<Inner>::other: return 3;
+  }
+}
+)");
+  expect(sibling.canGenerateCode(),
+         "same-typed payload siblings retain nested exact selector identity");
+  if (!sibling.canGenerateCode()) {
+    for (const auto &diagnostic : sibling.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  } else {
+    bool selectorProof = false;
+    bool variantRejected = false;
+    bool typeRejected = false;
+    for (const auto &function : sibling.mir.functionInstances()) {
+      const auto &original = function.body;
+      const lang::MirInstruction *first = nullptr;
+      const lang::MirInstruction *second = nullptr;
+      const lang::MirInstruction *nested = nullptr;
+      for (const auto &block : original.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.operation != lang::MirOperation::PayloadExtract)
+            continue;
+          if (instruction.info.type.kind == lang::SemanticType::Class) {
+            if (instruction.info.category == lang::ValueCategory::Place)
+              first = &instruction;
+            else
+              second = &instruction;
+          } else if (instruction.info.category == lang::ValueCategory::Place)
+            nested = &instruction;
+        }
+      if (!first || !second || !nested)
+        continue;
+      const auto firstPlace =
+          std::find_if(original.places.begin(), original.places.end(),
+                       [&](const auto &place) {
+                         return place.root == lang::MirPlaceRootKind::Value &&
+                                place.value == first->result &&
+                                place.projections.empty();
+                       });
+      if (firstPlace == original.places.end())
+        continue;
+      const auto firstLoan = std::find_if(
+          original.loans.begin(), original.loans.end(),
+          [&](const auto &loan) { return loan.source == firstPlace->id; });
+      if (firstLoan == original.loans.end())
+        continue;
+      auto body = original;
+      body.values[*second->result - 1].info.category =
+          lang::ValueCategory::Place;
+      auto findInstruction =
+          [&](lang::MirInstructionId id) -> lang::MirInstruction * {
+        for (auto &block : body.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.id == id)
+              return &instruction;
+        return nullptr;
+      };
+      auto *secondExtract = findInstruction(second->id);
+      secondExtract->info.category = lang::ValueCategory::Place;
+      auto secondPlace = *firstPlace;
+      secondPlace.id = body.places.size() + 1;
+      secondPlace.value = *second->result;
+      secondPlace.sourceValue = second->hirValue;
+      body.places.push_back(secondPlace);
+      auto loan = *firstLoan;
+      loan.id = body.loans.size() + 1;
+      loan.source = secondPlace.id;
+      loan.carriers.clear();
+      body.loans.push_back(loan);
+      auto secondSubject = *body.findPlace(nested->operands.front().place);
+      secondSubject.id = body.places.size() + 1;
+      secondSubject.root = lang::MirPlaceRootKind::Loan;
+      secondSubject.binding = 0;
+      secondSubject.symbol = 0;
+      secondSubject.value = 0;
+      secondSubject.loan = loan.id;
+      if (!secondSubject.projections.empty() &&
+          secondSubject.projections.front().kind ==
+              lang::MirProjectionKind::Dereference)
+        secondSubject.projections.erase(secondSubject.projections.begin());
+      body.places.push_back(secondSubject);
+      auto firstSubjectAlias = secondSubject;
+      firstSubjectAlias.id = body.places.size() + 1;
+      firstSubjectAlias.loan = firstLoan->id;
+      body.places.push_back(firstSubjectAlias);
+      const auto subject = nested->operands.front().place;
+      selectorProof =
+          lang::mirCanonicalPlaceContains(body, subject,
+                                          firstSubjectAlias.id) &&
+          lang::mirCanonicalPlaceContains(body, firstSubjectAlias.id,
+                                          subject) &&
+          !lang::mirCanonicalPlaceContains(body, firstPlace->id,
+                                           secondPlace.id) &&
+          !lang::mirCanonicalPlaceContains(body, subject, secondSubject.id);
+      secondExtract->payloadIndex = 0;
+      secondExtract->enumVariant = 1;
+      selectorProof = selectorProof &&
+                      !lang::mirCanonicalPlaceContains(body, firstPlace->id,
+                                                       secondPlace.id);
+      secondExtract->enumVariant = 0;
+      const auto wrongType = lang::SemanticType::enumType(
+          *first->enumOwner, {lang::SemanticType::Int32});
+      secondExtract->operands.front().type = wrongType;
+      selectorProof = selectorProof &&
+                      !lang::mirCanonicalPlaceContains(body, firstPlace->id,
+                                                       secondPlace.id);
+      auto forgedVariant = sibling.mir;
+      auto forgedType = sibling.mir;
+      auto forgedSubject = sibling.mir;
+      for (auto &target : lang::MirProgramTestAccess::functions(forgedVariant))
+        if (target.id == function.id)
+          for (auto &block : target.body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.id == first->id)
+                instruction.enumVariant = 1;
+      for (auto &target : lang::MirProgramTestAccess::functions(forgedType))
+        if (target.id == function.id)
+          for (auto &block : target.body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.id == first->id)
+                instruction.operands.front().type = wrongType;
+      // The matching switch still guards first.data. Substituting an equal-
+      // typed sibling subject must fail even though its enum tag could match.
+      secondExtract->operands.front().type = second->operands.front().type;
+      secondExtract->payloadIndex = 1;
+      findInstruction(nested->id)->operands.front().place = secondSubject.id;
+      for (auto &target : lang::MirProgramTestAccess::functions(forgedSubject))
+        if (target.id == function.id)
+          target.body = body;
+      const auto subjectValidation = lang::verifyMirProgram(forgedSubject);
+      selectorProof =
+          selectorProof && !subjectValidation.valid() &&
+          std::any_of(subjectValidation.errors.begin(),
+                      subjectValidation.errors.end(), [&](const auto &error) {
+                        return error.owner == function.id &&
+                               error.instruction == nested->id &&
+                               error.message.find("payload-enum instruction") !=
+                                   std::string::npos;
+                      });
+      variantRejected = !lang::verifyMirProgram(forgedVariant).valid();
+      typeRejected = !lang::verifyMirProgram(forgedType).valid();
+      break;
+    }
+    expect(selectorProof && variantRejected && typeRejected,
+           "exact selectors survive Binding/Loan aliases and reject forged "
+           "same-typed siblings, alternatives and concrete enum arguments");
+  }
+  const auto finite =
+      lang::Frontend().analyze("finite-enum-family-nesting.gti", R"(
+enum Event<T> { item(T value) };
+struct Leaf { int value; };
+struct B { Event<Leaf> value; };
+struct A { Event<B> value; };
+int main() { return 0; }
+)");
+  expect(finite.canGenerateCode(),
+         "finite nesting of distinct enum instances is not a layout cycle");
+  if (finite.canGenerateCode()) {
+    expect(finite.mir.payloadEnums().size() == 2,
+           "both nested exact instances are discovered even without execution");
+    for (const auto &enumeration : finite.mir.payloadEnums()) {
+      expect(
+          lang::mirTypeRelocationKind(finite.mir, enumeration.type) ==
+                  lang::RelocationKind::Structural &&
+              enumeration.traits.relocation == lang::RelocationKind::Structural,
+          "relocation recursion is keyed by exact enum type, not primary ID");
+    }
+    auto recursive = finite.mir;
+    auto &cycle = lang::MirProgramTestAccess::enums(recursive).front();
+    cycle.variants.front().payloadTypes.front() = cycle.type;
+    expect(lang::mirTypeRelocationKind(recursive, cycle.type) ==
+                   lang::RelocationKind::Unavailable &&
+               !lang::verifyMirProgram(recursive).valid(),
+           "an actual repeated exact enum instance remains a rejected layout "
+           "cycle");
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      expect(!gti_test::emitCpp(finite, standard).contents.empty(),
+             "finite alternating class/enum layouts reach verified emission");
+    }
+  } else {
+    for (const auto &diagnostic : finite.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
   return failures == 0 ? 0 : 1;
 }
