@@ -1,0 +1,45 @@
+// Ordinary user types retain exact element addresses and receiver-tied views.
+// Boxing an existing value uses its selected copy/move operation, not a wrapper.
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+struct Counter {
+  int count;
+  Counter(int number) : count(number) {}
+  int& operator*() { return this.count; }
+};
+struct Slot {
+  Counter value;
+  Slot(int number) : value(Counter(number)) {}
+};
+class Name {
+  std::string text;
+public:
+  Name(std::string_view spelling) : text(std::string(spelling)) {}
+  std::string_view view() { return this.text.view(); }
+};
+class Names {
+  mut std::vector<Name> entries{};
+public:
+  Names() { this.entries.push_back(Name("asset")); }
+  std::string_view at(std::size_t index) { return this.entries[index].view(); }
+};
+
+int main() {
+  Slot slots[2] = {Slot(4), Slot(5)};
+  mut int total = 0;
+  for (auto& slot : slots) { total += *slot.value; }
+  if (total != 9) { return 1; }
+
+  Names names{};
+  std::string_view name = names.at(std::size_t(0));
+  if (name[std::size_t(0)] != 'a') { return 2; }
+  // This view protects names; moving/mutating the owner while it is used
+  // remains invalid. A local or temporary owner cannot supply an escaping view.
+
+  auto counter = std::make_unique<Counter>(Counter(total));
+  auto text = std::make_unique<std::string>(std::string("asset"));
+  std::string_view owned_name = text->view();
+  return counter->count == 9 && owned_name[std::size_t(0)] == 'a' ? 0 : 3;
+}

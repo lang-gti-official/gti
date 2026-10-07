@@ -1,5 +1,11 @@
 # GTI examples
 
+[`125-operator-and-value-transport.gti`](125-operator-and-value-transport.gti)
+demonstrates an overloaded operator on a range element's field, a read-only
+view relayed through an indexed receiver, and allocation of existing passive
+and move-only values. Exact addresses, owner dependencies and copy/move policy
+remain compiler-checked; local/temporary view escapes remain invalid.
+
 [`123-native-c-scalars.gti`](123-native-c-scalars.gti) demonstrates target-correct
 C integer and character families, real libc calls, unrelated generic values,
 and checked conversion/indexing. C types preserve native declaration identity;

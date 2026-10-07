@@ -5,6 +5,32 @@
 
 namespace lang::mir_detail {
 
+bool generatedUniqueConstruction(const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::AllocateUniqueOwner ||
+      instruction.constructorTarget || instruction.functionTarget ||
+      instruction.receiver || !instruction.result ||
+      instruction.info.type.kind != SemanticType::UniqueOwner ||
+      instruction.info.type.arguments.size() != 1 ||
+      instruction.info.type.arguments.front().kind != SemanticType::Class ||
+      instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1)
+    return false;
+  const auto &pointee = instruction.info.type.arguments.front();
+  const auto &parameter = instruction.parameterTypes.front();
+  const auto &operand = instruction.operands.front();
+  if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
+      operand.place != 0 || operand.loan != 0 || operand.literal ||
+      operand.type != parameter)
+    return false;
+  return (instruction.constructorKind == ConstructorKind::Copy &&
+          parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::ReadOnly &&
+          parameter.arguments == std::vector<SemanticType>{pointee}) ||
+         (instruction.constructorKind == ConstructorKind::Move &&
+          parameter == pointee);
+}
+
 bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
                                MirLoanId dependency, std::size_t depth) {
   const auto *loan = body.findLoan(dependency);
