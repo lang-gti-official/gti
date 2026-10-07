@@ -2,7 +2,9 @@
 #include "gti/hir.h"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -132,6 +134,52 @@ int main() { return change(1); }
   expect(!invalid.canGenerateCode(),
          "generic range reanalysis does not authorize mutable immutable-owner "
          "access");
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/generic_discovery_boundaries.gti";
+  std::ifstream input(fixture);
+  const std::string source{std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>()};
+  const auto otherBodies = analyze(source);
+  if (!otherBodies.canGenerateCode())
+    for (const auto &diagnostic : otherBodies.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(!source.empty() && otherBodies.canGenerateCode(),
+         "constructor, destructor and nested-lambda reanalysis preserves range "
+         "loans too");
+  if (otherBodies.canGenerateCode()) {
+    for (int family = 0; family != 3; ++family) {
+      auto malformed = otherBodies.hir;
+      const auto corrupt = [](lang::HirBody &body) {
+        for (auto &statement : body.statements) {
+          if (statement.rangeIteration) {
+            statement.rangeIteration->elementAccess = lang::AccessMode::Mutable;
+            return true;
+          }
+        }
+        return false;
+      };
+      bool changed = false;
+      if (family == 0)
+        for (auto &instance :
+             const_cast<std::vector<lang::HirConstructorInstance> &>(
+                 malformed.constructorInstances()))
+          changed = corrupt(instance.body) || changed;
+      if (family == 1)
+        for (auto &instance :
+             const_cast<std::vector<lang::HirDestructorInstance> &>(
+                 malformed.destructorInstances()))
+          changed = corrupt(instance.body) || changed;
+      if (family == 2)
+        for (auto &instance : const_cast<std::vector<lang::HirLambda> &>(
+                 malformed.lambdaInstances()))
+          changed = corrupt(instance.body) || changed;
+      expect(changed &&
+                 !lang::verifyHirProgramPlans(otherBodies.semantics, malformed)
+                      .valid(),
+             "other concrete body families still reject forged mutable range "
+             "access");
+    }
+  }
 }
 
 std::string finite(std::size_t count) {

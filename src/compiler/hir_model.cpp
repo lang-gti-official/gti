@@ -1091,8 +1091,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   };
   verifyRangeIterations(program.module());
   for (const HirClassInstance &instance : program.classInstances()) {
-    verifyRangeIterations(instance.fieldInitializers);
-    verifyRangeIterations(instance.staticFieldInitializers);
+    const bool reanalyzed =
+        !instance.typeArguments.empty() || !instance.valueArguments.empty();
+    verifyRangeIterations(instance.fieldInitializers, reanalyzed);
+    verifyRangeIterations(instance.staticFieldInitializers, reanalyzed);
   }
   for (const HirFunctionInstance &instance : program.functionInstances()) {
     const FunctionInfo *function = semantics.findFunction(instance.declaration);
@@ -1111,13 +1113,24 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   }
   for (const HirConstructorInstance &instance :
        program.constructorInstances()) {
-    verifyRangeIterations(instance.body);
+    verifyRangeIterations(instance.body, !instance.generatedDefault);
   }
   for (const HirDestructorInstance &instance : program.destructorInstances()) {
-    verifyRangeIterations(instance.body);
+    const HirClassInstance *owner =
+        instance.owner == 0 || instance.owner > program.classInstances().size()
+            ? nullptr
+            : &program.classInstances()[instance.owner - 1];
+    verifyRangeIterations(instance.body,
+                          owner != nullptr && (!owner->typeArguments.empty() ||
+                                               !owner->valueArguments.empty()));
   }
   for (const HirLambda &instance : program.lambdaInstances()) {
-    verifyRangeIterations(instance.body);
+    verifyRangeIterations(
+        instance.body,
+        !instance.type.lambdaEnclosingClassTypes.empty() ||
+            !instance.type.lambdaEnclosingClassValues.empty() ||
+            !instance.type.lambdaEnclosingFunctionTypes.empty() ||
+            !instance.type.lambdaEnclosingFunctionValues.empty());
   }
   const ProgramInitializationPlan &semanticInitialization =
       semantics.programInitializationPlan();

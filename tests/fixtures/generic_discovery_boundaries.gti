@@ -13,6 +13,37 @@ int exact<T>(T value, int count) {
   return 1 + exact(value, count - 1);
 }
 
+mut int dropped = 0;
+
+class RangeOwner<T> {
+  mut int total = 0;
+public:
+  RangeOwner() {
+    int[2] local = {1, 2};
+    for (auto& value : local) { this.total += value; }
+  }
+  ~RangeOwner() {
+    int[2] local = {1, 2};
+    for (auto& value : local) { dropped += value; }
+  }
+  int read() { return this.total; }
+};
+
+int lambda_sum<T>(T seed) {
+  auto callback = []() -> int {
+    int[2] local = {1, 2};
+    mut int sum = 0;
+    for (auto& value : local) { sum += value; }
+    return sum;
+  };
+  return callback();
+}
+
 int main() {
-  return bounded<62>() + exact(1, 200) - 262;
+  mut int result = 0;
+  {
+    RangeOwner<int> owner{};
+    result = bounded<62>() + exact(1, 200) + owner.read() + lambda_sum(true);
+  }
+  return result + dropped - 271;
 }
