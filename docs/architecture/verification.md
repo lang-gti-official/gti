@@ -665,6 +665,11 @@ process open until elapsed progress arrives, then releases a deliberate native
 failure and verifies live row cleanup and unchanged stdout. It explicitly
 proves the output was visible before the native process exited.
 
+The native-detail assertion accepts the intended elapsed-time suffix and
+rejects explicit backend/tool labels. Pure positive and negative cases keep
+this distinction deterministic: a slow build's `(1.46s)` must not be mistaken
+for the retired `(c++)` label, while labels such as `cpp` or `clang++` still fail.
+
 The existing colour parity and exact parallel replay tests use
 `--progress=never` when comparing byte-identical text; the progress-specific
 gate separately tests colours and live terminal presentation. The installed
@@ -3673,6 +3678,14 @@ do not give each test the entire host's CPU count. Existing suite names,
 timeouts, fixture sets, optimization/standard/elision/sanitizer modes, expected
 diagnostics and native observations are unchanged. Full CI and release commands
 continue to run every registered test without filtering.
+
+Compound suites also carry a conservative CTest `COST` hint based on their
+unchanged suite timeout, with a minimum of one. This is an
+ordering hint, not a measured duration: fresh trees otherwise assign unknown
+tests zero cost and can keep filling slots with smaller one-worker tests while
+large matrices wait for a sufficient reservation. CTest schedules higher-cost
+work first. Actual test timings remain visible; the hint does not raise a
+timeout, change worker accounting, or remove any check.
 
 For the callable matrix, only compilation runs concurrently. Native executions
 remain on the parent thread in the original mode/fixture/argument order, with

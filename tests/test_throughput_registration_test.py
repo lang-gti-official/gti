@@ -5,6 +5,7 @@ import ast
 import copy
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,8 @@ def verify(tests, repository):
                 raise AssertionError(f"{test['name']}: worker/scheduler allocation mismatch")
             if "bounded-case-workers" not in labels:
                 raise AssertionError(f"{test['name']}: missing worker label")
+            if properties.get("COST") != max(1, properties.get("TIMEOUT", 1)):
+                raise AssertionError(f"{test['name']}: missing compound-suite ordering hint")
     if found != wrappers:
         raise AssertionError(f"unregistered shared matrix clients: {wrappers - found}")
     if not feedback or feedback == names:
@@ -64,11 +67,36 @@ def verify(tests, repository):
     return found
 
 
+def verify_cold_ordering():
+    # Exercise the public COST/PROCESSORS scheduler contract on a cold tree,
+    # rather than assuming that JSON properties imply the desired start order.
+    with tempfile.TemporaryDirectory(prefix="gti-test-cost-") as temporary:
+        root = pathlib.Path(temporary)
+        (root / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\nproject(Cost NONE)\n'
+            'enable_testing()\n'
+            'add_test(NAME small_first COMMAND "${CMAKE_COMMAND}" -E true)\n'
+            'add_test(NAME small_second COMMAND "${CMAKE_COMMAND}" -E true)\n'
+            'add_test(NAME compound COMMAND "${CMAKE_COMMAND}" -E true)\n'
+            'set_tests_properties(compound PROPERTIES PROCESSORS 2 COST 100)\n'
+            'add_test(NAME largest COMMAND "${CMAKE_COMMAND}" -E true)\n'
+            'set_tests_properties(largest PROPERTIES PROCESSORS 2 COST 200)\n')
+        build = root / "build"
+        subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"],
+                       capture_output=True, text=True, timeout=30, check=True)
+        result = subprocess.run(["ctest", "--test-dir", str(build), "--parallel", "2"],
+                                capture_output=True, text=True, timeout=30, check=True)
+        starts = re.findall(r"Start\s+\d+:\s+(\S+)", result.stdout)
+        if starts[:2] != ["largest", "compound"] or set(starts) != {
+                "small_first", "small_second", "compound", "largest"}:
+            raise AssertionError(f"cold compound-suite ordering lost: {starts}")
+
+
 def main():
     repository, build = map(lambda value: pathlib.Path(value).resolve(), sys.argv[1:])
     tests = inventory(build)
     clients = verify(tests, repository)
-    for mutation in ("allocation", "full", "disabled"):
+    for mutation in ("allocation", "full", "disabled", "cost"):
         changed = copy.deepcopy(tests)
         target = next(test for test in changed if test["name"] == "stdlib_surface")
         properties = target["properties"]
@@ -78,16 +106,19 @@ def main():
             for prop in properties:
                 if prop["name"] == "LABELS":
                     prop["value"].remove("coverage-full")
-        else:
+        elif mutation == "disabled":
             properties.append({"name": "DISABLED", "value": True})
+        else:
+            properties.append({"name": "COST", "value": 0})
         try:
             verify(changed, repository)
         except AssertionError:
             pass
         else:
             raise AssertionError(f"accepted forged {mutation} registration")
+    verify_cold_ordering()
     print(f"Full census: {len(tests)} gates; {len(clients)} parallel clients accounted; "
-          "forged allocation, omission and disabling rejected")
+          "forged allocation, omission, disabling and ordering rejected")
 
 
 if __name__ == "__main__":
