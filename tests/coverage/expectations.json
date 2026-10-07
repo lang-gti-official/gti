@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/memory>:476: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/memory>:475: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/memory>:473: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:268: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:441: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:268: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/memory>:442: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:425: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:807: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:275: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/memory>:461: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -85,7 +85,7 @@
         {
           "exit": 70,
           "stderr": "<std/resource_vector>:87: runtime error\\[GTI-R0017\\]: panic: \"resource_vector\\ could\\ not\\ grow\"\\n",
-          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 1\ndrop 100\ndrop 200\n"
+          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 2\nrelease 1\ndrop 100\ndrop 200\n"
         }
       ]
     },
@@ -284,16 +284,16 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:161: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
-          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+          "stderr": "<std/memory>:194: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 2\nrelease 1\ntag 9\n"
         },
         {
           "args": [
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:169: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
-          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+          "stderr": "<std/memory>:202: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 2\nrelease 1\ntag 9\n"
         }
       ]
     },
