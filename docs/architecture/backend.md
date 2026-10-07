@@ -203,6 +203,14 @@ the checked extraction helper against caller storage; it supplies neither
 implicit construction nor native unwinding. The state check still precedes
 construction, and MIR alone decides whether to destroy or publish the result.
 
+Results from consuming source members use the ordinary owning-call result
+staging and replacement proof. The exact `Once` receiver must resolve to its
+selected consuming member and materialized receiver place. Receiver cleanup
+remains at the recorded full-expression/failure Drop; it is not an argument
+transfer at Call. Only a successful result activates the replacement stage, so
+receiver failure cannot overwrite the old destination, and failed replacement
+cleanup destroys the unpublished result without committing it.
+
 Pointer-bearing passive C-compatible records use byte-preserving construction
 and assignment internally. Verified source calls snapshot value arguments
 before passing them by internal reference; result publication uses a typed

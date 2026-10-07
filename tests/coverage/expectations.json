@@ -1892,7 +1892,7 @@
     "a30-assign-consuming-call-result": {
       "finding": "A30",
       "issue": 75,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a31-move-on-break-path-then-reinit": {
       "finding": "A31",
