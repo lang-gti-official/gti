@@ -194,6 +194,10 @@
       "suite": "text"
     },
     {
+      "name": "testCopyableLambdaReturnRetainsSsa",
+      "suite": "text"
+    },
+    {
       "name": "testForwardedConcretePackLayout",
       "suite": "text"
     },

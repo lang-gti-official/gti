@@ -21,7 +21,8 @@ if(Python3_Interpreter_FOUND)
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
     generated_base_constructor_runtime generic_algorithm_breadth
-    generic_callable_adapter_runtime hosted_constructor_identity_runtime
+    generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
+    hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime

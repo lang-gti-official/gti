@@ -1,5 +1,25 @@
 # Compiler Verification
 
+## Class field value publication and declaration defaults
+
+The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
+the focused repair gates for issues #53, #60 and #91. Five original reproducers,
+two stronger fixtures and example 23 pass C++20/C++23 at O0/O1/O3 with native
+elision disabled (48 executions). Both stronger fixtures pass ASan/UBSan. They
+cover binding/receiver and nested field copies, explicit moves, fresh
+constructors, call results, generated declaration/default-list field
+construction, omitted designated brace defaults, and owning field replacement
+through existing cleanup protocols. Four semantic negatives retain immutable
+field, moved-source, owning-copy and unknown-designator rejection.
+
+`class_field_values` checks forged field identities/types and the omitted-default
+construction kind/CallInput activation, plus cycles and unresolved calls in
+recursive passive default bodies; `class_field_value_runtime` owns the
+native matrix. Existing `field_array_empty_state` remains passing. Example 23
+adds nine MIR bodies and twelve declarations, with generated items unchanged.
+This is focused candidate evidence; combined full-suite, installed-toolchain,
+Linux and Windows verification remains with the campaign coordinator.
+
 ## Typed passive fixed-array construction
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
@@ -3808,6 +3828,41 @@ are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
 
 ## Development And Completion Cadence
+
+### Generic contract and advisory regression gates
+
+`testDependentRequiresArgumentAdmission` in the declarations partition checks
+complete-clause dependent compound admission, reversed conjunction order,
+common disjunction facts, missing/branch-local facts, unknown types, and
+concrete rejection. `function_item_semantic_ir` also covers deduced value
+packs, exact/ambiguous overloads, open forwarding, access boundaries, verified
+HIR/MIR, target mutation, and production representation preflight.
+`generic_contract_runtime` runs the pack fixture, A19, and updated examples 33
+and 80 through the unchanged eight-mode native matrix.
+
+`testGenericAdvisorySoundness` and `generic_advisory_lsp` cover A20/A24/A33,
+unresolved callable arguments, an unrelated mutable operator receiver,
+declaration-independent warnings, exact safe edits, UTF-16 positions, current
+versions and stale-fix rejection. `generic_contract_lsp` checks contextual
+function hover/definition, dependent-clause publication and error recovery.
+Focused passes do not replace the campaign's combined full-suite acceptance.
+
+The PR117 refresh retains the integrated constructor/lambda transport, physical
+field identities and diagnostic recovery from canonical `a23c66a`. Its owning
+declarations and diagnostics partitions, native contract/advisory matrices,
+LSP and focused integration controls are rerun with an optimized Release/Ninja
+compiler. The older contextual-array negative expected an argument-order
+message where the compiler now resolves a written type in a value slot; that
+expectation follows the correct GTI-S2026 value-kind diagnostic and additionally
+requires its exact three-byte written-argument span. No invalid program is
+admitted, source assertion removed, mode omitted, or warning policy relaxed.
+
+The reviewed example inventory adds five bodies to example 33 (the Box field
+and static initializer bodies, constructor, observer and constrained reader),
+and two to example 80 (the pack client and target). Their observed declaration
+increments are seven and two, and generated-item increments are three and one.
+Only those example entries and corresponding totals change; the complete
+corpus census/oracle must still be run by the combined acceptance campaign.
 
 ### Bounded case workers and development selections
 
