@@ -86,6 +86,13 @@ concrete class/enum dependencies, including alternatives never constructed in
 source. This permits finite recursive owning sums without inventing a second
 generic type system or omitting an unused alternative from layout.
 
+Type aliases discover exact enum identities separately from class layouts.
+Walking an alias's type arguments may register enum rows, but a class appearing
+only in that metadata retains a forward identity rather than an executable
+class instance. An enum's actual alternative fields still discover the class
+layouts their representation requires. Semantic alias validation is unchanged;
+validating a type is not authority to instantiate its construction or cleanup.
+
 Consuming `expected<T, E>` combinators receive their exact operation, mapper
 identity, and result type from semantics. `transform_error`, `transform`, and
 `and_then` share one expansion into a state test,

@@ -809,6 +809,28 @@ private:
     return concrete;
   }
 
+  // An alias needs an exact enum identity for declaration spelling, but is
+  // not itself a request for a concrete class layout or executable lifecycle.
+  // Walk its argument graph without using the representation-bearing class
+  // discovery path. An enum's actual alternative fields still discover their
+  // required class layouts through enqueueEnum.
+  bool seedAliasEnumIdentities(const SemanticType &type) {
+    bool concrete =
+        type != SemanticType::Unknown &&
+        type.kind != SemanticType::TypeParameter &&
+        (type.kind != SemanticType::TypePack || type.concretePack) &&
+        type.arrayLengthParameterId == 0;
+    for (const CompileTimeValue &value : type.valueArguments)
+      concrete = concrete && value.kind != CompileTimeValue::Parameter;
+    for (const SemanticType &argument : type.arguments) {
+      const bool argumentConcrete = seedAliasEnumIdentities(argument);
+      concrete = concrete && argumentConcrete;
+    }
+    if (concrete && type.kind == SemanticType::Enum)
+      enqueueEnum(type);
+    return concrete;
+  }
+
   void enqueueEnum(const SemanticType &type) {
     if (std::any_of(output.program.enums.begin(), output.program.enums.end(),
                     [&](const HirEnum &item) { return item.type == type; })) {
@@ -878,7 +900,7 @@ private:
       }
       if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
         if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
-          seedConcreteDeclarationType(info->type);
+          seedAliasEnumIdentities(info->type);
         continue;
       }
       if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
