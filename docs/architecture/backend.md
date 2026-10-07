@@ -1249,6 +1249,13 @@ folds access that slot, not the moved native parameter shell. Copy stages
 leave it live; move stages and reverse normal/failure drops follow the exact
 MIR lifecycle events. In particular, an unused owning pack cannot delegate
 destructor failure to native parameter scope and skip the caller's cleanup.
+Constructor-local packs use that same concrete layout and entry obligation
+proof when forwarding into a field constructor. A failure cleanup accepts only
+the exact element ordinal, flattened parameter type, source binding and active
+Binding drop; it does not reinterpret the pack root as one owning parameter.
+Completed fields and remaining arguments retain their existing reverse MIR
+rollback schedule. This applies equally to unrelated generic envelopes and
+source-defined list/deque/queue nodes, without recognizing container names.
 
 An admitted direct class/struct field uses the class initializer schedule's
 exact payload construction, `This.field` publication, value-rooted reparenting,

@@ -11727,7 +11727,7 @@ constructorBaseRollbackDrop(const MirBody &body,
 // parameter place/type/drop relation; moved parameters are represented by
 // their later value and rollback obligations instead.
 [[nodiscard]] bool failureConstructorParameterCleanupDrop(
-    const MirConstructorInstance &constructor,
+    const MirProgram &program, const MirConstructorInstance &constructor,
     const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Drop ||
       !instruction.destination || instruction.lifecycle.size() != 1) {
@@ -11743,13 +11743,23 @@ constructorBaseRollbackDrop(const MirBody &body,
       obligation->kind != MirDropObligationKind::Binding ||
       obligation->place != *instruction.destination ||
       !obligation->initiallyActive || place == nullptr ||
-      place->root != MirPlaceRootKind::Binding || !place->projections.empty() ||
-      place->binding == 0 || place->type != obligation->dropType.type ||
+      place->root != MirPlaceRootKind::Binding || place->binding == 0 ||
+      place->type != obligation->dropType.type ||
       instruction.info.type != place->type ||
       (!obligation->dropType.requiresActiveCleanup &&
        !trivialMirDrop(constructor.body, instruction, false))) {
     return false;
   }
+  if (const auto parameter = packElementParameterIndex(
+          program, constructor.body,
+          {.kind = MirBodyKind::Constructor, .owner = constructor.id},
+          *place)) {
+    return *parameter < constructor.parameterTypes.size() &&
+           constructor.parameterTypes[*parameter] == place->type &&
+           obligation->binding == place->binding;
+  }
+  if (!place->projections.empty())
+    return false;
   std::size_t matches = 0;
   for (std::size_t index = 0; index < constructor.parameterBindings.size();
        ++index) {
@@ -12263,7 +12273,8 @@ failureConstructorBoundaryEligible(const MirProgram &program,
                       }) &&
           !aggregateConstructorRollbackDrop(constructor.body, instruction) &&
           !constructorBaseRollbackDrop(constructor.body, instruction) &&
-          !failureConstructorParameterCleanupDrop(constructor, instruction) &&
+          !failureConstructorParameterCleanupDrop(program, constructor,
+                                                  instruction) &&
           !failureConstructorLocalCleanupDrop(constructor.body, instruction) &&
           !failureConstructorPreparedArgumentCleanupDrop(constructor.body,
                                                          instruction)) {
@@ -40916,7 +40927,8 @@ nativeBorrowedConstructedFieldPrefix(
               ? body.findDropObligation(instruction.lifecycle.front().source)
               : nullptr;
       std::unordered_set<HirClassInstanceId> visiting;
-      if (!failureConstructorParameterCleanupDrop(constructor, instruction) ||
+      if (!failureConstructorParameterCleanupDrop(program, constructor,
+                                                  instruction) ||
           drop == nullptr || drop->dropType.requiresActiveCleanup ||
           !failureConstructorPassiveBoundShell(program, drop->dropType.type,
                                                visiting) ||

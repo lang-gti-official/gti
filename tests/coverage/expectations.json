@@ -2106,12 +2106,12 @@
     "a55-ctor-pack-move-only-field-init": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a55-list-emplace-move-only-argument": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a56-make-unique-same-type": {
       "finding": "A56",

@@ -110,7 +110,7 @@
     "86-owning-callbacks.gti": 239,
     "87-associative-containers.gti": 509,
     "88-consuming-builders.gti": 355,
-    "89-library-workflow.gti": 797,
+    "89-library-workflow.gti": 832,
     "90-generic-algorithms.gti": 250,
     "91-json-documents.gti": 491,
     "92-json-codecs.gti": 516,
@@ -122,5 +122,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16166
+  "total": 16201
 }
