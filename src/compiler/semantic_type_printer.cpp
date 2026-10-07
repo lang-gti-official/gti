@@ -4,8 +4,10 @@ namespace lang {
 
 class SemanticTypePrinterImpl {
 public:
-  explicit SemanticTypePrinterImpl(const SemanticModel &semantics)
-      : semantics(semantics) {}
+  explicit SemanticTypePrinterImpl(
+      const SemanticModel &semantics,
+      const SemanticTypePrinter::GenericParameterLookup &lookup)
+      : semantics(semantics), lookup(lookup) {}
 
   [[nodiscard]] std::string print(const SemanticType &type) const {
     if (type.nativeCScalar != NativeCScalarKind::None) {
@@ -219,6 +221,9 @@ private:
   [[nodiscard]] std::string genericParameter(GenericParameterId id,
                                              bool pack) const {
     const GenericParameterInfo *parameter = semantics.findGenericParameter(id);
+    if (parameter == nullptr && lookup) {
+      parameter = lookup(id);
+    }
     if (parameter == nullptr) {
       return pack ? "type pack" : "type parameter";
     }
@@ -226,13 +231,20 @@ private:
   }
 
   const SemanticModel &semantics;
+  const SemanticTypePrinter::GenericParameterLookup &lookup;
 };
 
 SemanticTypePrinter::SemanticTypePrinter(const SemanticModel &semantics)
     : semantics(semantics) {}
 
 std::string SemanticTypePrinter::print(const SemanticType &type) const {
-  return SemanticTypePrinterImpl(semantics).print(type);
+  return print(type, {});
+}
+
+std::string
+SemanticTypePrinter::print(const SemanticType &type,
+                           const GenericParameterLookup &lookup) const {
+  return SemanticTypePrinterImpl(semantics, lookup).print(type);
 }
 
 } // namespace lang

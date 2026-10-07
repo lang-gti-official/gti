@@ -113,6 +113,13 @@ and every application must have the declared arity. Unexpanded packs,
 values, arbitrary expressions, general nested requires-expressions, boolean
 predicates, and negation are not accepted in this clause.
 
+The compiler forms all clause applications before validating dependent
+compound arguments against the clause's guaranteed facts. For example,
+`requires std::copyable<T> && boxed_int<Box<T>>` can admit `Box<T>` when the
+class itself requires copyability. Reversing the conjuncts has the same
+meaning. A fact supplied by only one disjunction branch cannot admit that
+compound type; every concrete call still checks the selected clause.
+
 At a concrete call, conjunction requires both operands and disjunction accepts
 either complete operand. Facts are never mixed across alternatives. During
 symbolic generic-body checking, conjunction contributes the union of its
