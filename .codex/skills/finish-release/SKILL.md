@@ -19,6 +19,12 @@ policy below without bypassing that lifecycle.
 - Treat a change as release-bearing when repository version policy requires a
   `VERSION` advance, when it changes shipped behavior or packaging, or when the
   user explicitly requests a release.
+- When `VERSION` stays unchanged but a commit touches a file that
+  `scripts/check_release_version.py` classifies as shipped, end that commit's
+  message with a `Release-Impact: internal` trailer and one nonempty
+  `Release-Reason:` trailer explaining why no user-visible behavior changes.
+  Documentation and agent-automation commits need neither. See
+  [the release policy](../../../docs/architecture/build-and-driver.md).
 
 ## Commit And Reconcile
 
@@ -30,8 +36,9 @@ policy below without bypassing that lifecycle.
    The destination must be GTI's canonical Gitea repository; remove or bypass
    any legacy GitHub push URL before publication.
 3. Run the proportionate local build, tests, packaging checks, formatting, and
-   release-version checks. Gitea CI is confirmation, not a substitute for
-   local gates.
+   release-version checks (`python3 scripts/check_release_version.py
+   origin/main HEAD`). Gitea CI is confirmation, not a substitute for local
+   gates.
 4. Stage only the intended files, review `git diff --cached`, and create a
    focused commit.
 
