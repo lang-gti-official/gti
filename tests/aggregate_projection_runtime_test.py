@@ -19,12 +19,13 @@ def main():
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     sources = [repository / f"tests/fixtures/{name}.gti" for name in
                ("array_field_projections", "class_array_decomposition",
-                "owning_class_array_decomposition")] + [
+                "owning_class_array_decomposition", "constructor_struct_field_address")] + [
         repository / f"tests/coverage/reproducers/{name}.gti"
-        for name in ("a40-raw-pointer-fixed-array-field-index",
+        for name in ("a39-ctor-address-of-struct-field", "a40-raw-pointer-fixed-array-field-index",
                      "a40-c-abi-record-pointer-array-field",
                      "a51-binding-over-class-array", "a51-binding-over-class-array-invalid-cpp")
-    ] + [repository / "examples/32-structured-bindings.gti", repository / "examples/12-fixed-arrays.gti"]
+    ] + [repository / f"examples/{name}.gti" for name in (
+        "32-structured-bindings", "12-fixed-arrays", "111-final-address-storage")]
     with tempfile.TemporaryDirectory(prefix="gti-aggregate-projection-") as directory:
         scratch = Path(directory)
         native = scratch / "native.o"
@@ -40,7 +41,7 @@ def main():
                     expected_output = ("structured bindings worked\n" if source.name.startswith("32-") else
                                        "fixed arrays keep their bounds\n" if source.name.startswith("12-") else "")
                     assert executed.stdout == expected_output and executed.stderr == "", executed
-        for source in sources[:3]:
+        for source in sources[:4]:
             executable = scratch / f"{source.stem}-sanitized"
             run([str(compiler), str(source), "-O1", "--progress", "never", "-o", str(executable),
                  "--", str(native), "-fsanitize=address,undefined", "-fno-elide-constructors"])
@@ -84,7 +85,7 @@ def main():
             rejected = run([str(compiler), str(path), "--progress", "never", "--emit-cpp",
                             "-o", str(scratch / "bad.cpp")], expected=65)
             assert "error[GTI-S" in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
-    print("aggregate projections: 54 native successes, 36 checked bounds failures with cleanup, three sanitizers and six semantic negatives passed")
+    print("aggregate projections: 72 native successes, 36 checked bounds failures with cleanup, four sanitizers and six semantic negatives passed")
 
 
 if __name__ == "__main__":

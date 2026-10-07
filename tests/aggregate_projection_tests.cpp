@@ -7,7 +7,8 @@ int main() {
   std::size_t copies = 0, moves = 0, addresses = 0;
   for (const auto name :
        {"array_field_projections", "class_array_decomposition",
-        "owning_class_array_decomposition"}) {
+        "owning_class_array_decomposition",
+        "constructor_struct_field_address"}) {
     const auto path = root / "fixtures" / (std::string(name) + ".gti");
     std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};

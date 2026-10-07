@@ -316,8 +316,8 @@
       }
     },
     "111-final-address-storage.gti": {
-      "declarations": 303,
-      "bodies": 46,
+      "declarations": 308,
+      "bodies": 48,
       "generated_items": 11,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1817,8 +1817,8 @@
     }
   },
   "totals": {
-    "declarations": 52593,
-    "bodies": 16507,
+    "declarations": 52598,
+    "bodies": 16509,
     "generated_items": 3436
   }
 }
