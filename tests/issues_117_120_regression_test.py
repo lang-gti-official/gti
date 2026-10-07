@@ -84,6 +84,7 @@ def main() -> int:
         for fixture_name in (
             "issue_117_array_cleanup.gti",
             "issue_117_owning_array.gti",
+            "issue_117_generic_indirect.gti",
         ):
             source = fixtures / fixture_name
             executable = root / f"{source.stem}-cpp20-o3"
@@ -112,7 +113,7 @@ def main() -> int:
         if emitted.returncode != 0:
             return fail("emit fixed-array cleanup MIR", emitted)
         mir = mir_path.read_text(encoding="utf8")
-        if not mir.startswith("mir-v54 ") or not all(
+        if not mir.startswith("mir-v91 ") or not all(
             marker in mir
             for marker in (
                 "fixed-array=schedule(extents=[3]",

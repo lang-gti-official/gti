@@ -1,0 +1,87 @@
+#include <std/string>
+#include <std/vector>
+
+enum class ErrorKind { Primary, Secondary };
+
+class Error {
+  int identity;
+  ErrorKind kind;
+  std::string message;
+public:
+  Error(int identity, ErrorKind kind, std::string message)
+      : identity(identity), kind(kind), message(std::move(message)) {}
+  ~Error() { std::println(this.identity); }
+  std::size_t size() {
+    if (this.kind != ErrorKind::Primary) { return std::size_t(0); }
+    return this.message.size();
+  }
+};
+
+Error make_error(int identity) { return Error(identity, ErrorKind::Primary, std::string("error")); }
+expected<int, Error> success() { return 7; }
+expected<int, Error> direct_error() {
+  return unexpected(Error(1, ErrorKind::Primary, std::string("error")));
+}
+expected<int, Error> factory_error() { return unexpected(make_error(2)); }
+expected<int, Error> moved_error() {
+  Error local = make_error(3);
+  return unexpected(std::move(local));
+}
+expected<int, Error> forwarded_error() { return factory_error(); }
+expected<std::string, Error> cloned_text(std::string& value) {
+  return value.clone();
+}
+expected<std::string, Error> text_error() { return unexpected(make_error(5)); }
+expected<std::string, Error> forwarded_text(bool fail, std::string& text) {
+  if (fail) {
+    mut auto result = text_error();
+    return std::move(result).value();
+  }
+  mut auto result = cloned_text(text);
+  return std::move(result).value();
+}
+expected<void, Error> void_success() { return; }
+expected<void, Error> void_error() { return unexpected(make_error(6)); }
+
+Error checked_error(int divisor) {
+  Error local = make_error(4);
+  int checked = 1 / divisor;
+  return std::move(local);
+}
+expected<int, Error> checked_result(int divisor) {
+  return unexpected(checked_error(divisor));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Error guard = make_error(9);
+  expected<int, Error> literal = 7;
+  if (!literal.has_value() || literal.value() != 7) { return 1; }
+  auto good = success();
+  if (!good.has_value() || good.value() != 7) { return 2; }
+  { auto value = direct_error(); if (value.has_value() || value.error().size() != std::size_t(5)) { return 3; } }
+  { auto value = factory_error(); if (value.has_value() || value.error().size() != std::size_t(5)) { return 4; } }
+  { auto value = moved_error(); if (value.has_value() || value.error().size() != std::size_t(5)) { return 5; } }
+  { auto value = forwarded_error(); if (value.has_value() || value.error().size() != std::size_t(5)) { return 6; } }
+  std::string text{"hello"};
+  { auto value = forwarded_text(false, text); if (!value.has_value() || value.value().size() != std::size_t(5)) { return 7; } }
+  { auto value = text_error(); if (value.has_value() || value.error().size() != std::size_t(5)) { return 8; } }
+  { auto value = void_success(); value.value(); }
+  { auto value = void_error(); if (value.has_value() || value.error().size() != std::size_t(5)) { return 10; } }
+  {
+    auto value = checked_result(argc == 2 ? 0 : 1);
+    int checked = 12 / (argc == 3 ? 0 : 1);
+    if (value.has_value() || value.error().size() != std::size_t(5)) { return 9; }
+  }
+  if (argc == 4) {
+    auto value = factory_error();
+    int invalid = value.value();
+  }
+  if (argc == 5) {
+    auto value = void_error();
+    value.value();
+  }
+  if (argc == 6) {
+    auto value = forwarded_text(true, text);
+  }
+  return 0;
+}

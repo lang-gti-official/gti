@@ -52,6 +52,8 @@ struct HirDropObligation {
   std::size_t constructionOrder = 0;
   HirDropObligationKind kind = HirDropObligationKind::Value;
   HirBindingId binding = 0;
+  // Concrete pack bindings retain one lexical obligation per owning element.
+  std::optional<std::size_t> packElement;
   HirValueId value = 0;
   HirFullExpressionId fullExpression = 0;
   HirDropType dropType;
@@ -131,9 +133,11 @@ struct HirLoan {
   SemanticLoanId semanticLoan = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
   SemanticLoanId parent = 0;
+  SemanticLoanId storedDependency = 0;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
-  SymbolId designatedField = 0;
+  std::vector<SymbolId> designatedFields;
+  std::vector<SemanticLoanDependency> additionalDependencies;
   bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
   bool entry = false;
@@ -147,10 +151,12 @@ enum class HirCallInputKind {
   MutableBorrow,
   ReadTemporaryBorrow,
   MutableTemporaryBorrow,
-  // An exact fresh borrowed-state carrier moved into one constructor
-  // parameter. This is not a general borrowed-value transfer: MIR verifies
+  // An exact fresh borrowed-state carrier moved into one ordinary call or
+  // constructor parameter. This is not an escaping transfer: MIR verifies
   // the producer, retained owner loan, lifetime slot, and unique consumer.
   MoveBorrowedTemporary,
+  // Once access to an owned field of consuming this; cleanup stays in this.
+  RetainedReceiver,
 };
 
 struct HirCallReceiver {
@@ -208,18 +214,38 @@ struct HirValue {
   std::optional<ConstantValue> constant;
   bool programConstantSubstitution = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  // A runtime representation query names a type, never an object or loan.
+  std::optional<SemanticType> objectLayoutType;
+  // Checked source control-flow contracts, retained independently of the
+  // backend's private status-returning failure convention.
+  bool neverReturns = false;
+  bool tracksCaller = false;
+  std::optional<CallerLocationOrigin> callerLocation;
+  std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  // Exact argument origins retained for composed owner-dependent values.
+  std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   bool storedReferenceAccess = false;
+  bool retainedReceiverProjection = false;
+  std::optional<HirValueId> retainedReceiverOwner;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirValueId> receiver;
   std::optional<HirCallPlan> callPlan;
   std::optional<HirExpectedPropagationPlan> expectedPropagation;
+  // Eager call inputs evaluated in source order before a synthesized branch.
+  // Unlike branch operands these retain their full-expression cleanup on both
+  // paths, including when the conditional mapper is never invoked.
+  std::vector<HirValueId> conditionalInputs;
+  // Void evaluations that must complete in order before this value begins.
+  // They share the enclosing full-expression lifetime, not a nested scope.
+  std::vector<HirValueId> sequencedInputs;
   SymbolId packFoldSymbol = 0;
   GenericParameterId packFoldParameter = 0;
   FunctionId packFoldFunction = 0;
@@ -227,10 +253,14 @@ struct HirValue {
   std::vector<HirPackFoldElement> packFoldElements;
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<SemanticType> nativeCalleeType;
   std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
+  // Semantics resolved a full-field construction; stage all inputs before
+  // publishing fields, with ordinary constructor argument failure cleanup.
+  bool designatedConstruction = false;
   std::optional<HirLambdaId> lambdaTarget;
   std::vector<CallableArgumentBoundary> callableArguments;
   std::optional<CallableBoundary> callableBoundary;
@@ -419,6 +449,7 @@ struct HirClassInstance {
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;
+  bool mutexGuardBorrowCarrier = false;
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
@@ -428,6 +459,7 @@ struct HirClassInstance {
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
+  bool cOpaqueHandle = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
   std::optional<UnionLayout> unionLayout;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
@@ -454,6 +486,7 @@ struct HirCallableSignature {
   std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
+  std::optional<SemanticType> nativeCalleeType;
 };
 
 struct HirCallableForwarding {
@@ -488,12 +521,19 @@ struct HirFunctionInstance {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> returnBorrowParameters;
+  std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  bool requiresUnsafe = false;
+  bool neverReturns = false;
+  bool tracksCaller = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -508,6 +548,7 @@ struct HirNativeCallbackAdapter {
   HirNativeCallbackAdapterId id = 0;
   HirFunctionInstanceId target = 0;
   SemanticType type = SemanticType::Unknown;
+  CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
 };
 
 struct HirThreadTaskAdapter {
@@ -545,6 +586,10 @@ struct HirConstructorInstance {
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
   const ConstructorDecl *source = nullptr;
+  // Structural default construction with an explicit, selected base schedule.
+  // Such instances have no source constructor declaration.
+  bool generatedDefault = false;
+  bool constexprConstructor = false;
   HirClassInstanceId owner = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
@@ -553,6 +598,7 @@ struct HirConstructorInstance {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowParameters;
   std::vector<HirConstructorInitializer> initializers;
   std::vector<HirValueId> initializerValues;
   HirBody body;
@@ -779,7 +825,7 @@ struct HirLoweringResult {
   std::vector<Diagnostic> diagnostics;
 
   [[nodiscard]] bool valid() const {
-    return diagnostics.empty() && program.valid();
+    return !hasErrorDiagnostics(diagnostics) && program.valid();
   }
 };
 
@@ -798,6 +844,24 @@ public:
   [[nodiscard]] HirLoweringResult
   lower(const Program &source, const SemanticModel &semantics,
         SemanticInstanceProvider &instanceProvider);
+
+  // Staged execution only: lower a completed function/method/constructor root
+  // and its closure without publishing whole-program initialization or entry.
+  // The result deliberately has no whole-program analysis seal and cannot
+  // cross the normal LoweredProgram/backend boundary.
+  [[nodiscard]] HirLoweringResult lowerConstantFunction(
+      const SemanticModel &semantics,
+      SemanticInstanceProvider &instanceProvider, FunctionId root,
+      const std::vector<FunctionId> &completedFunctions,
+      const GenericSubstitution &substitution = {},
+      const std::vector<ConstructorId> &completedConstructors = {});
+
+  [[nodiscard]] HirLoweringResult lowerConstantConstructor(
+      const SemanticModel &semantics,
+      SemanticInstanceProvider &instanceProvider,
+      const ResolvedConstructionInfo &root,
+      const std::vector<FunctionId> &completedFunctions,
+      const std::vector<ConstructorId> &completedConstructors);
 
 private:
   class Impl;

@@ -5,7 +5,7 @@ Status: Normative scaffold
 ## 6.1 Program Formation
 
 A program consists of one entry source unit, every source unit reachable
-through valid includes, the implicit prelude, and one selected target. Source
+through valid includes and imports, the implicit prelude, and one selected target. Source
 units are parsed independently and retain their identity through semantic
 analysis.
 
@@ -24,6 +24,12 @@ or:
 
 int main(int argc, std::vector<std::string> argv)
 ```
+
+Here top-level means the global namespace: `tea::main` is an ordinary
+function, not an entry point. An executable requires a global definition in
+its entry source unit; a global `main` may forward to a namespaced function.
+Missing entry definitions are diagnosed as `GTI-S2094` before backend/native
+compilation. Library analysis and emit-only requests do not require an entry.
 
 The parameter names are not significant, and either by-value binding may use
 ordinary `mut`. Aliases that resolve to the exact signature types are valid.
@@ -120,6 +126,26 @@ ill-formed only when it appears outside a conditional or in the selected
 branch. Its message is reported against the GTI directive; it is never
 forwarded to a native preprocessor.
 
+Compiler warnings have stable group names and may be disabled per invocation.
+For a standalone source, pass `-Wno-<group>` or `--disable-warning <group>`:
+
+```sh
+gti main.gti -Wno-unused-mut -o app
+```
+
+A project applies the same policy from its selected profile:
+
+```toml
+[profiles.dev]
+disabled-warnings = ["unused-mut"]
+```
+
+Command-line groups are additive to the profile list. Current warning groups
+are `configuration` (`GTI-S2075`), `unreachable-code` (`GTI-S2095`), and
+`unused-mut` (`GTI-S2096`). Unknown names are rejected, and errors cannot be
+suppressed through this mechanism. Successful and failed build/check commands
+end their status output with the remaining error and warning counts.
+
 The frontend, optimizer, and backend shall consume equivalent target facts.
 
 Target comparisons have exactly three case-sensitive properties:
@@ -160,16 +186,19 @@ retain the exact binary32 and binary64 contracts in
 The pointer row is a representation category for compiler facts; it does not
 grant layout to ordinary classes, interfaces, owners, references, or other
 aggregate source types. A record explicitly declared `[[c_abi]] struct` has
-the layout defined below. Ordinary class layout, vtables, packing, unions,
-bit-fields, and user-selected alignment remain outside this bounded contract.
+the layout defined below, and a valid passive union has the separate bounded
+layout defined below. Ordinary class layout, vtables, packing, payload-enum
+layout, bit-fields, and user-selected alignment remain outside this bounded
+contract.
 
 The type-only operators `sizeof(type)` and `alignof(type)` expose a bounded
 projection of these selected facts as exact `uint64_t` frontend constants.
 `alignof` selects the ABI-alignment column; preferred alignment is not
 source-queryable. Primitive scalar types and one-level raw pointers use the
 table directly after transparent alias resolution; pointer layout does not
-depend on whether the pointee is itself queryable. A supported positive fixed
-array is derived recursively:
+depend on whether the pointee is itself queryable. An integral scoped enum
+uses the layout of its exact fixed-width underlying integer type. A supported
+positive fixed array is derived recursively:
 
 ```text
 sizeof(T[N])  = checked(N * sizeof(T))
@@ -184,11 +213,18 @@ rounded up to that record alignment. Nested `[[c_abi]]` records use their
 already-computed size and alignment. Every intermediate offset and final size
 must fit `uint64_t`.
 
-References, ordinary classes and structs, interfaces, enums, `expected`, bare
-`void`, `nullptr_t`, compiler-private types, symbolic type parameters or
-extents, and every other backend-dependent representation are rejected before
-lowering when queried directly. Only a structurally valid `[[c_abi]]` record
-opts into aggregate layout.
+A valid passive union uses the greatest field alignment and the greatest field
+size, with its final size rounded up to that alignment. Its fields may
+recursively use the admitted scalar, raw-pointer, integral-enum, fixed-array,
+passive-union, and `[[c_abi]]` record layouts. The union is nonempty, so both
+maxima are defined, and every intermediate and final size must fit `uint64_t`.
+
+References, ordinary classes and structs, interfaces, payload enums,
+`expected`, bare `void`, `nullptr_t`, compiler-private types, symbolic type
+parameters or extents, and every other backend-dependent representation are
+rejected before lowering when queried directly. Structurally valid passive
+unions and `[[c_abi]]` records are the bounded aggregate-layout opt-ins;
+integral scoped enums inherit their declared integer layout.
 The query grammar is parenthesized and type-only; it does not evaluate an
 expression, and a query is not directly part of the restricted array-extent
 grammar. An earlier `constexpr uint64_t` initialized from a query may name an
@@ -202,11 +238,18 @@ and before any backend runs. Installed-toolchain tests compare the host
 selection against the native scalar, pointer, positive-array, and `[[c_abi]]`
 record ABI on every supported build target.
 
-Target selection does not itself promise cross-compilation. A compiler-library
-client may analyze a program with any supported normalized target facts, but
-creating a native artifact for a non-host target additionally requires an
-appropriately configured native toolchain. The current command-line driver
-selects the host target and does not yet expose a general `--target` option.
+Target selection does not itself promise that a native artifact can be
+produced or executed. A compiler-library client may analyze a program with any
+supported normalized target facts. The direct one-file compiler selects the
+host target. Project `build`, `check`, `run`, and `test` commands accept
+`--target <triple>`; omission selects the host. `check` can analyze any
+supported target without a native toolchain, while a non-host native build
+requires its normalized `[toolchains.<triple>]` manifest entry. `run` and
+`test` reject a non-host target because the reference driver has no target
+runner contract. Cross-target runtime headers and archives must be supplied
+explicitly through the runtime path overrides; the manifest does not yet
+select them per target, and the language makes no automatic cross-runtime
+guarantee.
 
 ## 6.3 Implementation Requirements
 
@@ -317,10 +360,11 @@ nor a stable callable GTI ABI. `E-EMBED-01B/C` and `B-LIB-02` own the context
 runtime, generated boundary, activation, and same-process re-entry evidence.
 
 **Specification gap:** Annotated opaque-handle ownership transfer, captured or
-userdata callbacks, foreign-thread GTI callback entry, array parameters at the
-C boundary, C enums, alternate calling conventions, casts, native error
-conventions, allocation, packing, C ABI unions, bit-fields, and manual lifetime
-remain to be designed. The
+userdata callbacks, arbitrary foreign-thread GTI callback entry, array
+parameters at the C boundary, C enums, alternate calling conventions, casts,
+native error conventions, allocation, packing, C ABI unions (distinct from
+GTI's passive source unions), bit-fields, and manual lifetime remain to be
+designed. The
 returned pointer-plus-count idiom and direct opaque-handle out parameter are
 the implemented bounded nested-pointer forms; neither is a general
 pointer-to-pointer facility.
@@ -339,7 +383,10 @@ The concurrency and memory-model boundary is specified in
 managed-thread operations. `std::atomic<T>` provides `bool` and fixed-width
 integer atomics with sequentially consistent defaults and explicit static
 legal orders. `std::mutex<T>` provides owner-tied scoped exclusive access.
-Condition variables, signal interaction, detached/asynchronous execution, and
+The separate unsafe `<std/cthread>` surface provides registered manual
+create/join, once initialization, manual mutexes, and manual condition
+variables. A safe scoped condition-variable wrapper, signal interaction,
+detached/asynchronous execution, thread-specific storage, and arbitrary
 foreign-thread entry are not currently implemented. An implementation shall
 not infer the
 concurrent profile or a `threads` capability solely from the target operating
@@ -354,9 +401,11 @@ optional `execution-profile` field of the selected `[profiles.<name>]` table,
 with the same two values, and accepts the command-line option as an explicit
 override. Omission selects `single-threaded`. Concurrent selection enables the
 adopted static global/storage policy and permits implemented managed-thread,
-atomic, and mutex operations when the selected target advertises its
-independent `threads` runtime capability. It grants no detach, condition
-variable, or other unimplemented operation.
+atomic, scoped-mutex, and unsafe C-style create/join, once, manual-mutex, and
+condition-variable operations when the selected target advertises its
+independent `threads` runtime capability. It grants no detach, safe scoped
+condition-variable wrapper, arbitrary foreign-thread entry, or other
+unimplemented operation.
 
 The reference driver resolves execution policy and runtime support into one
 immutable analysis configuration before frontend entry. A raw compiler-library

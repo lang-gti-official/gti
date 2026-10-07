@@ -1,0 +1,73 @@
+#include <std/optional>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+expected<std::optional<std::vector<std::string>>, std::string> load(bool fail) {
+  if (fail) { return unexpected(std::string("unavailable")); }
+  mut std::vector<std::string> values{};
+  values.push_back(std::string("first"));
+  values.push_back(std::string("second"));
+  return std::optional<std::vector<std::string>>(std::move(values));
+}
+
+expected<std::optional<std::vector<std::string>>, std::string> forward(bool fail) {
+  return ?load(fail);
+}
+
+// An explicit clone policy belongs to the application type. It observes the
+// active alternative and duplicates only that payload, using ordinary GTI.
+class Snapshot {
+  expected<std::optional<std::vector<std::string>>, std::string> result;
+public:
+  Snapshot(expected<std::optional<std::vector<std::string>>, std::string> value)
+      : result(std::move(value)) {}
+  Snapshot clone() {
+    if (this.result.has_value()) {
+      expected<std::optional<std::vector<std::string>>, std::string> copied =
+          std::clone(this.result.value());
+      return Snapshot(std::move(copied));
+    }
+    expected<std::optional<std::vector<std::string>>, std::string> copied =
+        unexpected(std::clone(this.result.error()));
+    return Snapshot(std::move(copied));
+  }
+  bool valid() {
+    if (!this.result.has_value()) {
+      return this.result.error().view() == "unavailable";
+    }
+    return this.result.value().has_value() &&
+        this.result.value().value().size() == std::size_t(2) &&
+        this.result.value().value()[std::size_t(1)].view() == "second";
+  }
+};
+
+int main() {
+  mut auto success = forward(false);
+  if (!success.has_value() || !success.value().has_value()) { return 1; }
+  auto copied = success.value().clone();
+  success.value().value()[std::size_t(0)].push_back('!');
+  if (copied.value()[std::size_t(0)].view() != "first" ||
+      success.value().value()[std::size_t(0)].view() != "first!") { return 2; }
+  auto moved = std::move(success);
+  if (moved.value().value()[std::size_t(0)].view() != "first!") { return 3; }
+  auto failure = forward(true);
+  if (failure.has_value() || failure.error().view() != "unavailable") { return 4; }
+
+  expected<int, int> scalar = 17;
+  std::optional<expected<int, int>> wrapped{std::move(scalar)};
+  auto scalar_copy = std::clone(wrapped);
+  if (scalar_copy.value().value() != 17) { return 5; }
+  expected<int, int> error = unexpected(23);
+  std::optional<expected<int, int>> failed{std::move(error)};
+  auto failed_copy = std::clone(failed);
+  if (failed_copy.value().has_value() || failed_copy.value().error() != 23) { return 6; }
+
+  std::optional<Snapshot> snapshot{Snapshot(forward(false))};
+  auto snapshot_copy = snapshot.clone();
+  if (!snapshot_copy.value().valid()) { return 7; }
+  std::optional<Snapshot> error_snapshot{Snapshot(forward(true))};
+  auto error_copy = error_snapshot.clone();
+  if (!error_copy.value().valid()) { return 8; }
+  return 0;
+}

@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 #include "gti/checked_integer.h"
+#include "gti/concurrency.h"
 #include "gti/constant_evaluator.h"
 #include "gti/diagnostic.h"
 #include "gti/failure.h"
@@ -24,6 +25,34 @@
 namespace lang {
 
 struct FrontendWorkMetrics;
+
+// Optional diagnostics about programmer-owned unsafe obligations. This policy
+// never changes typing, checked loans, MIR verification, or runtime semantics.
+enum class RawPointerAuditMode { Off, Warn, Strict };
+
+[[nodiscard]] constexpr std::optional<RawPointerAuditMode>
+parseRawPointerAuditMode(std::string_view name) {
+  if (name == "off")
+    return RawPointerAuditMode::Off;
+  if (name == "warn")
+    return RawPointerAuditMode::Warn;
+  if (name == "strict")
+    return RawPointerAuditMode::Strict;
+  return std::nullopt;
+}
+
+[[nodiscard]] constexpr std::string_view
+rawPointerAuditModeName(RawPointerAuditMode mode) {
+  switch (mode) {
+  case RawPointerAuditMode::Off:
+    return "off";
+  case RawPointerAuditMode::Warn:
+    return "warn";
+  case RawPointerAuditMode::Strict:
+    return "strict";
+  }
+  return "off";
+}
 
 using ClassId = std::size_t;
 using ConceptId = std::size_t;
@@ -139,6 +168,7 @@ enum class OwnershipEventKind {
   Move,
   Reinitialize,
   DropBoundary,
+  ConsumeReceiver,
 };
 
 struct OwnershipEvent {
@@ -179,6 +209,10 @@ struct GenericParameterInfo {
   ConceptId conceptId = 0;
   std::shared_ptr<const SemanticType> defaultType;
   std::shared_ptr<const GenericValueExpression> defaultValue;
+  // Semantics-resolved projection from the public class argument list.
+  // Empty denotes an ordinary positional parameter. For a pack, the final
+  // component selects the start of a tail, including an empty tail.
+  std::vector<std::size_t> typeArgumentPath;
 };
 
 struct CompileTimeValue {
@@ -293,11 +327,62 @@ struct SemanticType {
     Expected,
     Unexpected,
     PrefixStorage,
+    FunctionSignature,
   };
 
   SemanticType(Kind kind = Unknown) : kind(kind) {}
   SemanticType(Kind kind, std::vector<SemanticType> arguments)
       : kind(kind), arguments(std::move(arguments)) {}
+
+  [[nodiscard]] static std::optional<SemanticType>
+  nativeCScalarType(NativeCScalarKind requested, const TargetInfo &target) {
+    const auto info = target.nativeCScalar(requested);
+    if (!info) {
+      return std::nullopt;
+    }
+    SemanticType type;
+    switch (info->valueKind) {
+    case TargetScalarKind::Bool:
+      type.kind = Bool;
+      break;
+    case TargetScalarKind::Int8:
+      type.kind = Int8;
+      break;
+    case TargetScalarKind::Int16:
+      type.kind = Int16;
+      break;
+    case TargetScalarKind::Int32:
+      type.kind = Int32;
+      break;
+    case TargetScalarKind::Int64:
+      type.kind = Int64;
+      break;
+    case TargetScalarKind::UInt8:
+      type.kind = UInt8;
+      break;
+    case TargetScalarKind::UInt16:
+      type.kind = UInt16;
+      break;
+    case TargetScalarKind::UInt32:
+      type.kind = UInt32;
+      break;
+    case TargetScalarKind::UInt64:
+      type.kind = UInt64;
+      break;
+    case TargetScalarKind::Float32:
+      type.kind = Float;
+      break;
+    case TargetScalarKind::Float64:
+      type.kind = Double;
+      break;
+    default:
+      return std::nullopt;
+    }
+    if (target.fixedCScalarIdentity(info->valueKind) != info->declarationKind) {
+      type.nativeCScalar = info->declarationKind;
+    }
+    return type;
+  }
 
   [[nodiscard]] static SemanticType
   classType(ClassId id, std::vector<SemanticType> arguments = {},
@@ -311,6 +396,15 @@ struct SemanticType {
   [[nodiscard]] static SemanticType typeParameter(GenericParameterId id) {
     SemanticType type(TypeParameter);
     type.genericParameterId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType functionSignature(
+      SemanticType result, std::vector<SemanticType> parameters,
+      ReceiverMutability receiver = ReceiverMutability::ReadOnly) {
+    parameters.insert(parameters.begin(), std::move(result));
+    SemanticType type(FunctionSignature, std::move(parameters));
+    type.signatureReceiver = receiver;
     return type;
   }
 
@@ -332,6 +426,19 @@ struct SemanticType {
     type.genericParameterId = id;
     type.concretePack = true;
     return type;
+  }
+
+  // Canonical argument lists contain expanded concrete elements, retaining
+  // only symbolic packs until their declaration parameters are substituted.
+  static void appendExpandedArgument(std::vector<SemanticType> &arguments,
+                                     SemanticType argument) {
+    if (argument.kind == TypePack && argument.concretePack) {
+      for (SemanticType &element : argument.arguments) {
+        appendExpandedArgument(arguments, std::move(element));
+      }
+    } else {
+      arguments.emplace_back(std::move(argument));
+    }
   }
 
   [[nodiscard]] static SemanticType typeName(ClassId id) {
@@ -380,6 +487,23 @@ struct SemanticType {
 
   [[nodiscard]] bool hasNativeFunctionShape() const {
     return kind == NativeFunction && !arguments.empty();
+  }
+
+  [[nodiscard]] bool hasCThreadEntryShape() const {
+    return kind == NativeFunction && arguments.size() == 2 &&
+           arguments[0] == SemanticType::Int32 &&
+           arguments[1] == rawPointerTo(SemanticType::Void);
+  }
+
+  [[nodiscard]] CThreadCallbackKind cThreadCallbackKind() const {
+    if (hasCThreadEntryShape()) {
+      return CThreadCallbackKind::ThreadEntry;
+    }
+    if (kind == NativeFunction && arguments.size() == 1 &&
+        arguments[0] == SemanticType::Void) {
+      return CThreadCallbackKind::OnceInitializer;
+    }
+    return CThreadCallbackKind::None;
   }
 
   [[nodiscard]] const SemanticType *nativeFunctionReturnType() const {
@@ -513,6 +637,7 @@ struct SemanticType {
   friend bool operator==(const SemanticType &, const SemanticType &) = default;
 
   Kind kind;
+  NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
   std::vector<SemanticType> arguments;
   std::vector<CompileTimeValue> valueArguments;
   ClassId classId = 0;
@@ -530,6 +655,7 @@ struct SemanticType {
   GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
   AccessMode pointerAccess = AccessMode::Mutable;
+  ReceiverMutability signatureReceiver = ReceiverMutability::ReadOnly;
   bool concretePack = false;
 };
 
@@ -547,7 +673,54 @@ constantIntegerDomain(const SemanticType &type);
 [[nodiscard]] std::optional<BinaryFloatFormat>
 semanticFloatFormat(const SemanticType &type);
 
+// Primitive by-value inputs have no loan or cleanup to transfer across an
+// in-place construction preflight. Classes, enums, text and pointers are not
+// admitted by representation similarity to a primitive.
+[[nodiscard]] inline bool isPassiveScalarValueType(const SemanticType &type) {
+  return constantIntegerDomain(type).has_value() ||
+         semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
+         type == SemanticType::Char;
+}
+
 [[nodiscard]] SemanticType semanticIntegerType(CheckedIntegerDomain domain);
+
+// Apply a resolved binder projection; this does not perform name lookup,
+// pattern matching, or overload selection in downstream consumers.
+[[nodiscard]] inline std::optional<SemanticType>
+projectGenericTypeArgument(std::span<const SemanticType> arguments,
+                           std::span<const std::size_t> path,
+                           GenericParameterId id, bool pack) {
+  if (path.empty() || id == 0) {
+    return std::nullopt;
+  }
+  for (std::size_t depth = 0; depth + 1 < path.size(); ++depth) {
+    if (path[depth] >= arguments.size()) {
+      return std::nullopt;
+    }
+    arguments = arguments[path[depth]].arguments;
+  }
+  const std::size_t index = path.back();
+  if (!pack) {
+    return index < arguments.size() ? std::optional{arguments[index]}
+                                    : std::nullopt;
+  }
+  if (index > arguments.size()) {
+    return std::nullopt;
+  }
+  const auto tail = arguments.subspan(index);
+  if (tail.size() == 1 && tail.front().kind == SemanticType::TypePack &&
+      !tail.front().concretePack) {
+    return tail.front();
+  }
+  return SemanticType::concreteTypePack(
+      id, std::vector<SemanticType>(tail.begin(), tail.end()));
+}
+
+// Relocation consumes one complete value into fresh, non-overlapping storage.
+// It is not copying, assignment, or permission to invalidate outstanding loans.
+// Bitwise is a language eligibility fact; a backend must also prove that its
+// concrete representation permits bytewise lifetime creation.
+enum class RelocationKind : std::uint8_t { Unavailable, Structural, Bitwise };
 
 struct SemanticTypeTraits {
   OwnershipKind ownership = OwnershipKind::Value;
@@ -559,6 +732,7 @@ struct SemanticTypeTraits {
   bool containsBorrowedState = false;
   bool transferCapable = true;
   bool shareCapable = true;
+  RelocationKind relocation = RelocationKind::Unavailable;
 
   friend bool operator==(const SemanticTypeTraits &,
                          const SemanticTypeTraits &) = default;
@@ -573,6 +747,9 @@ struct ExpressionInfo {
   ValueCategory category = ValueCategory::Value;
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits{};
+  // The frontend-selected arithmetic domain of a built-in place update.
+  // Unknown for other expressions; distinct from the destination/result type.
+  SemanticType updateArithmeticType = SemanticType::Unknown;
 
   friend bool operator==(const ExpressionInfo &,
                          const ExpressionInfo &) = default;

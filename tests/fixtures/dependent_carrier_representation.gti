@@ -1,0 +1,23 @@
+struct Payload<T> {
+  T value;
+  Payload(T value) : value(std::move(value)) {}
+};
+
+struct Wrapper<T> {
+  Payload<T> item;
+  Wrapper(T value) : item(Payload<T>(std::move(value))) {}
+};
+
+class Owner<T> {
+  using value_type = T;
+public:
+  Owner() {}
+  Wrapper<T> result(T value) { return Wrapper<T>(std::move(value)); }
+};
+
+int main() {
+  Owner<int> owner{};
+  auto result = owner.result(42);
+  if (result.item.value != 42) { return 1; }
+  return 0;
+}

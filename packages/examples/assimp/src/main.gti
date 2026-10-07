@@ -1,0 +1,61 @@
+#include <assimp/assimp>
+
+int inspect_scene(const assimp::aiScene* scene) {
+  unsafe {
+    if (assimp::gti_assimp_mesh_count(scene) != 1) { return 2; }
+    const assimp::aiMesh* mesh = assimp::gti_assimp_mesh(scene, uint32_t(0));
+    if (mesh == nullptr) { return 3; }
+    if (assimp::gti_assimp_vertex_count(mesh) != 3 || assimp::gti_assimp_face_count(mesh) != 1) { return 4; }
+    if (assimp::gti_assimp_face_size(mesh, uint32_t(0)) != 3) { return 5; }
+    mut uint32_t index = 99;
+    if (assimp::gti_assimp_face_index(mesh, uint32_t(0), uint32_t(2), &index) != 1 || index != 2) { return 6; }
+    if (assimp::gti_assimp_face_index(mesh, uint32_t(0), uint32_t(3), &index) != 0 || index != 2) { return 7; }
+    mut assimp::GtiAssimpVector3 point = assimp::gti_assimp_zero_vector();
+    if (assimp::gti_assimp_position(mesh, uint32_t(1), &point) != 1 || point.x != 1.0) { return 8; }
+    if (assimp::gti_assimp_position(mesh, uint32_t(3), &point) != 0 || point.x != 1.0) { return 9; }
+    if (assimp::gti_assimp_normal(mesh, uint32_t(0), &point) != 1 || point.z != 1.0) { return 10; }
+    if (assimp::gti_assimp_texcoord(mesh, uint32_t(0), uint32_t(0), &point) != 0) { return 11; }
+    if (assimp::gti_assimp_mesh(scene, uint32_t(1)) != nullptr) { return 12; }
+    const assimp::aiNode* root = assimp::gti_assimp_root(scene);
+    if (root == nullptr || assimp::gti_assimp_child_count(root) == 0) { return 13; }
+    mut assimp::GtiAssimpMatrix4 transform = assimp::gti_assimp_zero_matrix();
+    if (assimp::gti_assimp_node_transform(root, &transform) != 1 || transform.values[0] != 1.0) { return 14; }
+    const assimp::aiNode* child = assimp::gti_assimp_child(root, uint32_t(0));
+    if (child == nullptr || assimp::gti_assimp_node_mesh_count(child) != 1) { return 15; }
+    if (assimp::gti_assimp_node_mesh_index(child, uint32_t(0), &index) != 1 || index != 0) { return 16; }
+    if (assimp::gti_assimp_child(root, uint32_t(999)) != nullptr) { return 17; }
+    if (assimp::gti_assimp_position(mesh, uint32_t(0), nullptr) != 0) { return 21; }
+    if (assimp::gti_assimp_node_transform(nullptr, &transform) != 0 || transform.values[0] != 1.0) { return 22; }
+    if (assimp::gti_assimp_texcoord(mesh, uint32_t(99), uint32_t(0), &point) != 0 || point.z != 1.0) { return 23; }
+    if (assimp::gti_assimp_mesh_name(mesh) == nullptr || assimp::gti_assimp_node_name(root) == nullptr) { return 24; }
+    if (assimp::gti_assimp_mesh_material(mesh) != 0) { return 25; }
+  }
+  return 0;
+}
+
+int main() {
+  unsafe {
+    const assimp::aiScene* scene = assimp::gti_assimp_import_memory(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", uint32_t(32),
+        uint32_t(assimp::GTI_ASSIMP_TRIANGULATE | assimp::GTI_ASSIMP_GEN_NORMALS), "obj");
+    if (scene == nullptr) { return 1; }
+    int result = inspect_scene(scene);
+    assimp::gti_assimp_release(scene);
+    if (result != 0) { return result; }
+    const assimp::aiScene* invalid = assimp::gti_assimp_import_memory("not a model\n", uint32_t(12), uint32_t(0), "obj");
+    if (invalid != nullptr) {
+      assimp::gti_assimp_release(invalid);
+      return 18;
+    }
+    if (assimp::gti_assimp_error() == nullptr) { return 19; }
+    if (assimp::gti_assimp_mesh_count(nullptr) != 0) { return 20; }
+    const assimp::aiScene* file_scene = assimp::gti_assimp_import_file("triangle.obj", uint32_t(assimp::GTI_ASSIMP_TRIANGULATE));
+    if (file_scene == nullptr) { return 26; }
+    const assimp::aiMesh* file_mesh = assimp::gti_assimp_mesh(file_scene, uint32_t(0));
+    mut assimp::GtiAssimpVector3 uv = assimp::gti_assimp_zero_vector();
+    int32_t uv_result = assimp::gti_assimp_texcoord(file_mesh, uint32_t(0), uint32_t(1), &uv);
+    assimp::gti_assimp_release(file_scene);
+    if (uv_result != 1 || uv.x != 1.0 || uv.y != 0.0) { return 27; }
+  }
+  return 0;
+}

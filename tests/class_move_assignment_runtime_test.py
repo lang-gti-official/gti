@@ -74,19 +74,24 @@ def main() -> int:
         if emitted.returncode != 0:
             return fail("emit C++23/O0", emitted)
         generated = generated_path.read_text(encoding="utf8")
-        # Each binding move-assignment preserves MIR's exact three-step
-        # schedule: stage the moved value in its lifetime slot, move-assign
-        # the destination binding, then destroy only the moved-from shell.
+        # Replacement cleanup precedes publication. A fallible cleanup branches
+        # to publication only on success; the temporary's moved-from shell is
+        # retired immediately after that publication.
         schedule = re.findall(
-            r"(__gti_mir_p_\d+)\.construct\(std::move\(__gti_mir_p_\d+\.get\(\)\)\);\n"
-            r"\s*__gti_mir_p_\d+\.get\(\) = std::move\(\1\.get\(\)\);\n"
-            r"\s*(?:__gti_mir_drop_success_\d+ = )?\1\.destroy",
+            r"(?P<slot>__gti_mir_p_\d+)\.construct\(std::move\(__gti_mir_p_\d+\.get\(\)\)\);\n"
+            r"\s*(?P<status>__gti_mir_replacement_success_\d+) = [^\n]+"
+            r"\}\((?P<destination>__gti_mir_p_\d+)\.get\(\)\);\n"
+            r"(?:\s*if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);"
+            r"\s*\} else \{\s*goto __gti_mir_bb_\d+;\s*\}\s*\}"
+            r"\s*(?P=success): \{\n)?"
+            r"\s*(?P=destination)\.get\(\) = std::move\((?P=slot)\.get\(\)\);\n"
+            r"\s*(?P=slot)\.destroy\(\);",
             generated,
         )
-        if len(schedule) < 3:
+        if len(schedule) != 3:
             sys.stderr.write(
                 "generated C++ lost the staged class move-assignment "
-                f"schedule (found {len(schedule)}, expected >= 3)\n"
+                f"schedule (found {len(schedule)}, expected 3)\n"
             )
             return 1
 

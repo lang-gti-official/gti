@@ -1,0 +1,46 @@
+#include "math.gti"
+
+namespace toy3d {
+class Scene {
+  mut float cube_rotation_y_value;
+  mut float cube_angular_speed;
+  mut bool cube_spinning;
+
+public:
+  Scene()
+      : cube_rotation_y_value(0.0), cube_angular_speed(0.75),
+        cube_spinning(true) {}
+
+  void update(float delta_seconds) mut {
+    if (!this.cube_spinning) {
+      return;
+    }
+    this.cube_rotation_y_value += this.cube_angular_speed * delta_seconds;
+    while (this.cube_rotation_y_value >= full_turn) {
+      this.cube_rotation_y_value -= full_turn;
+    }
+  }
+
+  float cube_x() { return 0.0; }
+  float cube_y() { return 0.0; }
+  float cube_z() { return 0.0; }
+  float cube_rotation_y() { return this.cube_rotation_y_value; }
+  float cube_scale() { return 1.0; }
+  float angular_speed() { return this.cube_angular_speed; }
+  bool spinning() { return this.cube_spinning; }
+
+  void set_angular_speed(float speed) mut {
+    this.cube_angular_speed = speed;
+  }
+
+  void set_spinning(bool spinning) mut {
+    this.cube_spinning = spinning;
+  }
+
+  void reset() mut {
+    this.cube_rotation_y_value = 0.0;
+    this.cube_angular_speed = 0.75;
+    this.cube_spinning = true;
+  }
+};
+}

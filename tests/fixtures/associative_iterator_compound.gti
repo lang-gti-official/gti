@@ -1,0 +1,10 @@
+#include <std/unordered_map>
+
+int main() {
+  mut std::unordered_map<int, int> values{};
+  [[discard]] values.insert(3, 30);
+  for (mut auto& entry : values) { entry.second += 1; }
+  int key = 3;
+  if (values.at(key) != 31) return 1;
+  return 0;
+}

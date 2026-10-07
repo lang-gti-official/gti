@@ -1,0 +1,51 @@
+#include <std/string>
+#include <std/vector>
+
+class Guard {
+  int identity;
+public:
+  Guard(int identity) : identity(identity) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+class Error {
+  std::string message;
+public:
+  Error() : message(std::string("failure")) {}
+  ~Error() { std::println(70); }
+  std::size_t size() { return this.message.size(); }
+};
+
+class Value {
+  std::string content;
+public:
+  Value() : content(std::string("value")) {}
+  ~Value() { std::println(30); }
+};
+
+expected<Value, Error> make() { return Value(); }
+
+expected<void, Error> perform(Value value, bool fail, int divisor) {
+  Guard inner{20};
+  int checked = 1 / divisor;
+  if (fail) { return unexpected(Error()); }
+  return;
+}
+
+expected<int, Error> pipeline(bool fail, bool trap) {
+  for (mut int index = 0; index < 3; index++) {
+    Guard iteration{10 + index};
+    Value child = ?make();
+    ?perform(std::move(child), fail && index == 1,
+             trap && index == 1 ? 0 : 1);
+  }
+  return 42;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{99};
+  auto result = pipeline(argc == 2, argc == 3);
+  std::println(90);
+  if (argc == 1) { return result && result.value() == 42 ? 0 : 1; }
+  return !result && result.error().size() == std::size_t(7) ? 0 : 2;
+}

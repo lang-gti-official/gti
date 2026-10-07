@@ -1,105 +1,907 @@
+#include <std/charconv>
 #include <std/string>
+#include <std/detail/panic>
+
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+uint32_t gti_rt_format_f32_v1(
+    float value, uint32_t format, int32_t precision, uint32_t flags,
+    uint32_t fill, uint32_t alignment, uint32_t sign, uint32_t zero_pad,
+    uint64_t width, uint8_t* output, uint64_t capacity, uint64_t* size);
+uint32_t gti_rt_format_f64_v1(double value, uint32_t format,
+                             int32_t precision, uint32_t flags,
+                             uint32_t fill, uint32_t alignment,
+                             uint32_t sign, uint32_t zero_pad, uint64_t width,
+                             uint8_t* output, uint64_t capacity,
+                             uint64_t* size);
+}
+}
+}
 
 namespace std {
 enum class format_errc {
   invalid_format,
   argument_count_mismatch,
+  unsupported_argument,
+};
+
+/// Formatting errors and stdout submission failure are distinct recoverable
+/// outcomes. Allocation still follows GTI's defined allocation-failure policy.
+enum class print_errc {
+  invalid_format,
+  argument_count_mismatch,
+  unsupported_argument,
+  write_failed,
+};
+
+/// Parsed replacement-field presentation. A zero type means the default
+/// presentation for the selected argument type.
+struct format_spec {
+  mut char fill;
+  mut char alignment;
+  mut char sign;
+  mut bool alternate;
+  mut bool zero_pad;
+  mut size_t width;
+  mut bool has_precision;
+  mut size_t precision;
+  mut char type;
+
+  format_spec()
+      : fill(' '), alignment('\0'), sign('-'), alternate(false),
+        zero_pad(false), width(0), has_precision(false), precision(0),
+        type('\0') {}
 };
 
 namespace detail {
-void count_format_argument<std::integral T>(mut size_t& count, T& value) {
-  count++;
+struct enum_underlying_probe<T, U> {
+  bool matches() requires std::enum_underlying<T, U> { return true; }
+};
 }
 
-expected<void, format_errc> validate_format_pattern(string_view pattern,
-                                                     size_t argument_count) {
-  mut size_t cursor = 0;
-  mut size_t field_count = 0;
-  while (cursor < pattern.size()) {
-    char current = pattern[cursor];
-    if (current == '{') {
-      if (cursor + 1 >= pattern.size()) {
-        return unexpected(format_errc::invalid_format);
-      }
-      char next = pattern[cursor + 1];
-      if (next == '{') {
-        cursor += 2;
-        continue;
-      }
-      if (next == '}') {
-        field_count++;
-        cursor += 2;
-        continue;
-      }
-      return unexpected(format_errc::invalid_format);
+/// Specialize this class for an application-owned type. A specialization
+/// supplies a public safe read-only format method with the formattable contract.
+/// The primary formats integral enums using their exact underlying integer.
+class formatter<T> {
+public:
+  expected<void, format_errc> format(T& value, mut string& output,
+                                    format_spec& spec)
+      requires std::integral_enum<T> {
+    if constexpr (requires(detail::enum_underlying_probe<T, int8_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int8_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, uint8_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<uint8_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, int16_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int16_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, uint16_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<uint16_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, int32_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int32_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, uint32_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<uint32_t>(value, output, spec);
+    } else if constexpr (requires(detail::enum_underlying_probe<T, int64_t>& probe) {
+      { probe.matches() } -> bool;
+    }) {
+      return this.format_integral<int64_t>(value, output, spec);
+    } else {
+      return this.format_integral<uint64_t>(value, output, spec);
     }
-    if (current == '}') {
-      if (cursor + 1 >= pattern.size() or pattern[cursor + 1] != '}') {
-        return unexpected(format_errc::invalid_format);
-      }
-      cursor += 2;
-      continue;
-    }
-    cursor++;
   }
 
-  if (field_count != argument_count) {
+private:
+  expected<void, format_errc> format_integral<U>(T& value, mut string& output,
+                                                format_spec& spec)
+      requires std::enum_underlying<T, U> && std::integral<U> {
+    U underlying = std::to_underlying<U, T>(value);
+    return detail::format_result(
+        detail::append_integral(output, underlying, spec));
+  }
+};
+
+concept formattable<T> =
+    std::default_initializable<formatter<T>> &&
+    requires(formatter<T>& writer, T& value, mut string& output, format_spec& spec) {
+      { writer.format(value, output, spec) } -> expected<void, format_errc>;
+    };
+
+namespace detail {
+enum class format_argument_status {
+  appended,
+  invalid_specifier,
+  argument_count_mismatch,
+  unsupported,
+};
+
+expected<void, format_errc> format_result(format_argument_status status) {
+  if (status == format_argument_status::invalid_specifier) {
+    return unexpected(format_errc::invalid_format);
+  }
+  if (status == format_argument_status::unsupported) {
+    return unexpected(format_errc::unsupported_argument);
+  }
+  if (status == format_argument_status::argument_count_mismatch) {
     return unexpected(format_errc::argument_count_mismatch);
   }
   return;
 }
 
-void append_format_argument<std::integral T>(mut string& output,
-                                              string_view pattern,
-                                              mut size_t& cursor, T& value) {
+void count_format_argument<T>(mut size_t& count, T& value) {
+  count++;
+}
+
+struct format_field {
+  mut size_t argument_index;
+  mut size_t end;
+  mut format_spec spec;
+
+  format_field() : argument_index(0), end(0), spec(format_spec()) {}
+};
+
+bool format_digit(char value) {
+  uint8_t code = uint8_t(value);
+  return code >= uint8_t('0') && code <= uint8_t('9');
+}
+
+bool format_alignment(char value) {
+  return value == '<' || value == '>' || value == '^';
+}
+
+bool format_type(char value) {
+  return value == 's' || value == 'c' || value == 'd' || value == 'x' ||
+         value == 'X' || value == 'o' || value == 'b' || value == 'B' ||
+         value == 'f' || value == 'F' || value == 'e' || value == 'E' ||
+         value == 'g' || value == 'G';
+}
+
+bool parse_format_number(string_view pattern, mut size_t& cursor,
+                         mut size_t& value) {
+  if (cursor >= pattern.size() || !format_digit(pattern[cursor])) {
+    return false;
+  }
+  value = 0;
+  while (cursor < pattern.size() && format_digit(pattern[cursor])) {
+    uint64_t digit = uint64_t(uint8_t(pattern[cursor]) - uint8_t('0'));
+    if (value >
+        (uint64_t(18446744073709551615) - digit) / uint64_t(10)) {
+      return false;
+    }
+    value = value * size_t(10) + size_t(digit);
+    cursor++;
+  }
+  return true;
+}
+
+/// Parses one field beginning at `open`. `indexing_mode` is zero before the
+/// first field, one for automatic fields, and two for explicit numeric fields.
+bool parse_format_field(string_view pattern, size_t open,
+                        mut size_t& next_automatic,
+                        mut uint8_t& indexing_mode,
+                        mut format_field& field) {
+  mut size_t cursor = open + 1;
+  if (cursor >= pattern.size()) {
+    return false;
+  }
+
+  if (pattern[cursor] == '}' || pattern[cursor] == ':') {
+    if (indexing_mode == uint8_t(2)) {
+      return false;
+    }
+    indexing_mode = uint8_t(1);
+    field.argument_index = next_automatic;
+    next_automatic++;
+  } else if (format_digit(pattern[cursor])) {
+    if (indexing_mode == uint8_t(1)) {
+      return false;
+    }
+    indexing_mode = uint8_t(2);
+    if (!parse_format_number(pattern, cursor, field.argument_index)) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  if (cursor >= pattern.size()) {
+    return false;
+  }
+  if (pattern[cursor] == '}') {
+    field.end = cursor + 1;
+    return true;
+  }
+  if (pattern[cursor] != ':') {
+    return false;
+  }
+  cursor++;
+
+  if (cursor + 1 < pattern.size() &&
+      format_alignment(pattern[cursor + 1])) {
+    if (pattern[cursor] == '{' || pattern[cursor] == '}') {
+      return false;
+    }
+    field.spec.fill = pattern[cursor];
+    field.spec.alignment = pattern[cursor + 1];
+    cursor += 2;
+  } else if (cursor < pattern.size() && format_alignment(pattern[cursor])) {
+    field.spec.alignment = pattern[cursor];
+    cursor++;
+  }
+
+  if (cursor < pattern.size() &&
+      (pattern[cursor] == '+' || pattern[cursor] == '-' ||
+       pattern[cursor] == ' ')) {
+    field.spec.sign = pattern[cursor];
+    cursor++;
+  }
+  if (cursor < pattern.size() && pattern[cursor] == '#') {
+    field.spec.alternate = true;
+    cursor++;
+  }
+  if (cursor < pattern.size() && pattern[cursor] == '0') {
+    field.spec.zero_pad = true;
+    cursor++;
+  }
+  if (cursor < pattern.size() && format_digit(pattern[cursor])) {
+    if (!parse_format_number(pattern, cursor, field.spec.width)) {
+      return false;
+    }
+  }
+  if (cursor < pattern.size() && pattern[cursor] == '.') {
+    cursor++;
+    field.spec.has_precision = true;
+    if (!parse_format_number(pattern, cursor, field.spec.precision)) {
+      return false;
+    }
+  }
+  if (cursor < pattern.size() && pattern[cursor] != '}') {
+    if (!format_type(pattern[cursor])) {
+      return false;
+    }
+    field.spec.type = pattern[cursor];
+    cursor++;
+  }
+  if (cursor >= pattern.size() || pattern[cursor] != '}') {
+    return false;
+  }
+  field.end = cursor + 1;
+  return true;
+}
+
+expected<void, format_errc> validate_format_pattern(string_view pattern,
+                                                     size_t argument_count) {
+  mut size_t cursor = 0;
+  mut size_t next_automatic = 0;
+  mut uint8_t indexing_mode = uint8_t(0);
   while (cursor < pattern.size()) {
     char current = pattern[cursor];
     if (current == '{') {
-      char next = pattern[cursor + 1];
-      if (next == '{') {
-        output.push_back('{');
+      if (cursor + 1 < pattern.size() && pattern[cursor + 1] == '{') {
         cursor += 2;
         continue;
       }
-
-      cursor += 2;
-      mut string replacement = to_string(value);
-      for (mut size_t index = 0; index < replacement.size(); index++) {
-        output.push_back(replacement[index]);
+      mut format_field field{};
+      if (!parse_format_field(pattern, cursor, next_automatic, indexing_mode,
+                              field)) {
+        return unexpected(format_errc::invalid_format);
       }
-      return;
-    }
-    if (current == '}') {
-      output.push_back('}');
-      cursor += 2;
-      continue;
-    }
-    output.push_back(current);
-    cursor++;
-  }
-}
-
-void append_format_tail(mut string& output, string_view pattern,
-                        mut size_t& cursor) {
-  while (cursor < pattern.size()) {
-    char current = pattern[cursor];
-    if (current == '{') {
-      output.push_back('{');
-      cursor += 2;
+      if (field.argument_index >= argument_count) {
+        return unexpected(format_errc::argument_count_mismatch);
+      }
+      cursor = field.end;
       continue;
     }
     if (current == '}') {
-      output.push_back('}');
+      if (cursor + 1 >= pattern.size() || pattern[cursor + 1] != '}') {
+        return unexpected(format_errc::invalid_format);
+      }
       cursor += 2;
       continue;
     }
-    output.push_back(current);
     cursor++;
   }
+
+  // Automatic indexing preserves the existing exact-arity contract. Explicit
+  // indexing permits reuse and intentionally does not require every supplied
+  // argument to be referenced.
+  if ((indexing_mode == uint8_t(0) && argument_count != 0) ||
+      (indexing_mode == uint8_t(1) && next_automatic != argument_count)) {
+    return unexpected(format_errc::argument_count_mismatch);
+  }
+  return;
+}
+
+void append_repeat(mut string& output, char value, size_t count) {
+  output.reserve(output.size() + count);
+  for (mut size_t index = 0; index < count; index++) {
+    output.push_back(value);
+  }
+}
+
+void append_text(mut string& output, string_view value, format_spec& spec,
+                 char default_alignment) {
+  mut size_t count = value.size();
+  if (spec.has_precision && spec.precision < count) {
+    count = spec.precision;
+  }
+  mut size_t padding = 0;
+  if (spec.width > count) {
+    padding = spec.width - count;
+  }
+  mut char alignment = spec.alignment;
+  if (alignment == '\0') {
+    alignment = default_alignment;
+  }
+  mut size_t left = 0;
+  mut size_t right = 0;
+  if (alignment == '<') {
+    right = padding;
+  } else if (alignment == '^') {
+    left = padding / size_t(2);
+    right = padding - left;
+  } else {
+    left = padding;
+  }
+  append_repeat(output, spec.fill, left);
+  output.reserve(output.size() + count);
+  for (mut size_t index = 0; index < count; index++) {
+    output.push_back(value[index]);
+  }
+  append_repeat(output, spec.fill, right);
+}
+
+char format_digit_character(uint8_t digit, bool uppercase) {
+  if (digit < uint8_t(10)) {
+    switch (digit) {
+    case uint8_t(0): return '0';
+    case uint8_t(1): return '1';
+    case uint8_t(2): return '2';
+    case uint8_t(3): return '3';
+    case uint8_t(4): return '4';
+    case uint8_t(5): return '5';
+    case uint8_t(6): return '6';
+    case uint8_t(7): return '7';
+    case uint8_t(8): return '8';
+    default: return '9';
+    }
+  }
+  if (uppercase) {
+    switch (digit) {
+    case uint8_t(10): return 'A';
+    case uint8_t(11): return 'B';
+    case uint8_t(12): return 'C';
+    case uint8_t(13): return 'D';
+    case uint8_t(14): return 'E';
+    default: return 'F';
+    }
+  }
+  switch (digit) {
+  case uint8_t(10): return 'a';
+  case uint8_t(11): return 'b';
+  case uint8_t(12): return 'c';
+  case uint8_t(13): return 'd';
+  case uint8_t(14): return 'e';
+  default: return 'f';
+  }
+}
+
+void append_numeric_text(mut string& output, string& prefix, string& digits,
+                         format_spec& spec) {
+  size_t content = prefix.size() + digits.size();
+  mut size_t padding = 0;
+  if (spec.width > content) {
+    padding = spec.width - content;
+  }
+
+  if (spec.zero_pad && spec.alignment == '\0') {
+    output.append(prefix.view());
+    append_repeat(output, '0', padding);
+    output.append(digits.view());
+    return;
+  }
+
+  mut char alignment = spec.alignment;
+  if (alignment == '\0') {
+    alignment = '>';
+  }
+  mut size_t left = 0;
+  mut size_t right = 0;
+  if (alignment == '<') {
+    right = padding;
+  } else if (alignment == '^') {
+    left = padding / size_t(2);
+    right = padding - left;
+  } else {
+    left = padding;
+  }
+  append_repeat(output, spec.fill, left);
+  output.append(prefix.view());
+  output.append(digits.view());
+  append_repeat(output, spec.fill, right);
+}
+
+format_argument_status append_integral<std::integral T>(mut string& output,
+                                                         T& value,
+                                                         format_spec& spec) {
+  if (spec.has_precision) {
+    return format_argument_status::invalid_specifier;
+  }
+  mut char presentation = spec.type;
+  if (presentation == '\0') {
+    presentation = 'd';
+  }
+  if (presentation == 'c') {
+    if (spec.sign != '-' || spec.alternate || spec.zero_pad || value < T(0) ||
+        uint64_t(value) > uint64_t(255)) {
+      return format_argument_status::invalid_specifier;
+    }
+    mut string character = string();
+    character.push_back(char(uint8_t(value)));
+    append_text(output, character.view(), spec, '<');
+    return format_argument_status::appended;
+  }
+
+  mut uint8_t base = uint8_t(10);
+  mut bool uppercase = false;
+  if (presentation == 'x' || presentation == 'X') {
+    base = uint8_t(16);
+    uppercase = presentation == 'X';
+  } else if (presentation == 'o') {
+    base = uint8_t(8);
+  } else if (presentation == 'b' || presentation == 'B') {
+    base = uint8_t(2);
+    uppercase = presentation == 'B';
+  } else if (presentation != 'd') {
+    return format_argument_status::invalid_specifier;
+  }
+
+  mut string prefix = string();
+  bool negative = value < T(0);
+  if (negative) {
+    prefix.push_back('-');
+  } else if (spec.sign == '+') {
+    prefix.push_back('+');
+  } else if (spec.sign == ' ') {
+    prefix.push_back(' ');
+  }
+  if (spec.alternate) {
+    if (base == uint8_t(16)) {
+      if (uppercase) {
+        prefix.append("0X");
+      } else {
+        prefix.append("0x");
+      }
+    } else if (base == uint8_t(8) && value != T(0)) {
+      prefix.push_back('0');
+    } else if (base == uint8_t(2)) {
+      if (uppercase) {
+        prefix.append("0B");
+      } else {
+        prefix.append("0b");
+      }
+    }
+  }
+
+  mut uint8_t[65] reversed = {};
+  mut size_t count = 0;
+  mut T remaining = value;
+  if (remaining == T(0)) {
+    reversed[0] = uint8_t(0);
+    count = 1;
+  } else {
+    while (remaining != T(0)) {
+      mut int64_t digit = int64_t(remaining % T(base));
+      if (digit < 0) {
+        digit = -digit;
+      }
+      reversed[count] = uint8_t(digit);
+      count++;
+      remaining = T(remaining / T(base));
+    }
+  }
+  mut string digits = string();
+  digits.reserve(count);
+  while (count > 0) {
+    count--;
+    digits.push_back(format_digit_character(reversed[count], uppercase));
+  }
+  append_numeric_text(output, prefix, digits, spec);
+  return format_argument_status::appended;
+}
+
+struct floating_format_selection {
+  mut chars_format style;
+  mut bool uppercase;
+  mut bool general;
+  mut int32_t precision;
+
+  floating_format_selection()
+      : style(chars_format::general), uppercase(false), general(false),
+        precision(int32_t(-1)) {}
+};
+
+bool select_floating_format(format_spec& spec,
+                            mut floating_format_selection& selection) {
+  mut char presentation = spec.type;
+  if (presentation == '\0') {
+    selection.general = true;
+    if (spec.has_precision) {
+      if (spec.precision > size_t(2048)) {
+        return false;
+      }
+      selection.precision =
+          int32_t(spec.precision == size_t(0) ? size_t(1) : spec.precision);
+    }
+  } else if (presentation == 'f' || presentation == 'F') {
+    selection.style = chars_format::fixed;
+    selection.uppercase = presentation == 'F';
+    if (spec.has_precision && spec.precision > size_t(2048)) {
+      return false;
+    }
+    selection.precision =
+        int32_t(spec.has_precision ? spec.precision : size_t(6));
+  } else if (presentation == 'e' || presentation == 'E') {
+    selection.style = chars_format::scientific;
+    selection.uppercase = presentation == 'E';
+    if (spec.has_precision && spec.precision > size_t(2048)) {
+      return false;
+    }
+    selection.precision =
+        int32_t(spec.has_precision ? spec.precision : size_t(6));
+  } else if (presentation == 'g' || presentation == 'G') {
+    selection.general = true;
+    selection.uppercase = presentation == 'G';
+    if (spec.has_precision && spec.precision > size_t(2048)) {
+      return false;
+    }
+    selection.precision = int32_t(
+        spec.has_precision
+            ? (spec.precision == size_t(0) ? size_t(1) : spec.precision)
+            : size_t(6));
+  } else {
+    return false;
+  }
+  return true;
+}
+
+format_argument_status append_float32(mut string& output, float& value,
+                                      format_spec& spec) {
+  mut floating_format_selection selection{};
+  if (!select_floating_format(spec, selection)) {
+    return format_argument_status::invalid_specifier;
+  }
+  mut uint8_t buffer[4096] = {};
+  mut uint64_t count = uint64_t(0);
+  mut uint32_t code = uint32_t(0);
+  mut uint32_t flags = uint32_t(0);
+  if (selection.uppercase) { flags += uint32_t(1); }
+  if (spec.alternate) { flags += uint32_t(2); }
+  if (selection.general) { flags += uint32_t(4); }
+  unsafe {
+    code = gti_internal::runtime::gti_rt_format_f32_v1(
+        value, numeric_format(selection.style), selection.precision,
+        flags, uint32_t(uint8_t(spec.fill)),
+        uint32_t(uint8_t(spec.alignment)), uint32_t(uint8_t(spec.sign)),
+        spec.zero_pad ? uint32_t(1) : uint32_t(0), uint64_t(spec.width),
+        &buffer[0], uint64_t(4096), &count);
+  }
+  if (code != uint32_t(0) || count > uint64_t(4096)) {
+    return format_argument_status::invalid_specifier;
+  }
+  output.reserve(output.size() + size_t(count));
+  for (mut uint64_t index = uint64_t(0); index < count; index++) {
+    output.push_back(char(buffer[index]));
+  }
+  return format_argument_status::appended;
+}
+
+format_argument_status append_float64(mut string& output, double& value,
+                                      format_spec& spec) {
+  mut floating_format_selection selection{};
+  if (!select_floating_format(spec, selection)) {
+    return format_argument_status::invalid_specifier;
+  }
+  mut uint8_t buffer[4096] = {};
+  mut uint64_t count = uint64_t(0);
+  mut uint32_t code = uint32_t(0);
+  mut uint32_t flags = uint32_t(0);
+  if (selection.uppercase) { flags += uint32_t(1); }
+  if (spec.alternate) { flags += uint32_t(2); }
+  if (selection.general) { flags += uint32_t(4); }
+  unsafe {
+    code = gti_internal::runtime::gti_rt_format_f64_v1(
+        value, numeric_format(selection.style), selection.precision,
+        flags, uint32_t(uint8_t(spec.fill)),
+        uint32_t(uint8_t(spec.alignment)), uint32_t(uint8_t(spec.sign)),
+        spec.zero_pad ? uint32_t(1) : uint32_t(0), uint64_t(spec.width),
+        &buffer[0], uint64_t(4096), &count);
+  }
+  if (code != uint32_t(0) || count > uint64_t(4096)) {
+    return format_argument_status::invalid_specifier;
+  }
+  output.reserve(output.size() + size_t(count));
+  for (mut uint64_t index = uint64_t(0); index < count; index++) {
+    output.push_back(char(buffer[index]));
+  }
+  return format_argument_status::appended;
+}
+
+void append_selected_format_argument<T>(mut string& output,
+                                        size_t requested,
+                                        mut size_t& candidate,
+                                        mut format_argument_status& status,
+                                        format_spec& spec, T& value)
+    requires formattable<T> {
+  if (status != format_argument_status::appended) {
+    candidate++;
+    return;
+  }
+  if (candidate == requested) {
+    formatter<T> writer{};
+    auto formatted = writer.format(value, output, spec);
+    if (!formatted) {
+      switch (formatted.error()) {
+      case format_errc::unsupported_argument:
+        status = format_argument_status::unsupported;
+        break;
+      case format_errc::argument_count_mismatch:
+        status = format_argument_status::argument_count_mismatch;
+        break;
+      case format_errc::invalid_format:
+        status = format_argument_status::invalid_specifier;
+        break;
+      }
+    }
+  }
+  candidate++;
+}
+
+void append_format_literal(mut string& output, string_view pattern,
+                           mut size_t& cursor) {
+  char current = pattern[cursor];
+  if ((current == '{' || current == '}') &&
+      cursor + 1 < pattern.size() && pattern[cursor + 1] == current) {
+    output.push_back(current);
+    cursor += 2;
+    return;
+  }
+  output.push_back(current);
+  cursor++;
+}
 }
 }
 
-expected<string, format_errc> format(string_view pattern) {
+class std::formatter<int8_t> {
+public:
+  expected<void, std::format_errc> format(int8_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              int8_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+class std::formatter<uint8_t> {
+public:
+  expected<void, std::format_errc> format(uint8_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              uint8_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+class std::formatter<int16_t> {
+public:
+  expected<void, std::format_errc> format(int16_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              int16_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+class std::formatter<uint16_t> {
+public:
+  expected<void, std::format_errc> format(uint16_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              uint16_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+class std::formatter<int32_t> {
+public:
+  expected<void, std::format_errc> format(int32_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              int32_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+class std::formatter<uint32_t> {
+public:
+  expected<void, std::format_errc> format(uint32_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              uint32_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+class std::formatter<int64_t> {
+public:
+  expected<void, std::format_errc> format(int64_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              int64_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+class std::formatter<uint64_t> {
+public:
+  expected<void, std::format_errc> format(uint64_t& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              uint64_t& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_integral(output, value, spec);
+  }
+};
+
+class std::formatter<bool> {
+public:
+  expected<void, std::format_errc> format(bool& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              bool& value,
+                                              std::format_spec& spec) {
+    if (spec.type == '\0' || spec.type == 's') {
+      if (spec.sign != '-' || spec.alternate || spec.zero_pad) {
+        return std::detail::format_argument_status::invalid_specifier;
+      }
+      std::detail::append_text(output, value ? "true" : "false", spec, '<');
+      return std::detail::format_argument_status::appended;
+    }
+    mut uint8_t numeric = value ? uint8_t(1) : uint8_t(0);
+    return std::detail::append_integral(output, numeric, spec);
+  }
+};
+
+class std::formatter<char> {
+public:
+  expected<void, std::format_errc> format(char& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              char& value,
+                                              std::format_spec& spec) {
+    if (spec.type != '\0' && spec.type != 'c') {
+      mut uint8_t numeric = uint8_t(value);
+      return std::detail::append_integral(output, numeric, spec);
+    }
+    if (spec.sign != '-' || spec.alternate || spec.zero_pad ||
+        spec.has_precision) {
+      return std::detail::format_argument_status::invalid_specifier;
+    }
+    mut std::string character = std::string();
+    character.push_back(value);
+    std::detail::append_text(output, character.view(), spec, '<');
+    return std::detail::format_argument_status::appended;
+  }
+};
+
+class std::formatter<float> {
+public:
+  expected<void, std::format_errc> format(float& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              float& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_float32(output, value, spec);
+  }
+};
+
+class std::formatter<double> {
+public:
+  expected<void, std::format_errc> format(double& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              double& value,
+                                              std::format_spec& spec) {
+    return std::detail::append_float64(output, value, spec);
+  }
+};
+
+class std::formatter<std::string_view> {
+public:
+  expected<void, std::format_errc> format(std::string_view& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              std::string_view& value,
+                                              std::format_spec& spec) {
+    if ((spec.type != '\0' && spec.type != 's') || spec.sign != '-' ||
+        spec.alternate || spec.zero_pad) {
+      return std::detail::format_argument_status::invalid_specifier;
+    }
+    std::detail::append_text(output, value, spec, '<');
+    return std::detail::format_argument_status::appended;
+  }
+};
+
+class std::formatter<std::string> {
+public:
+  expected<void, std::format_errc> format(std::string& value, mut std::string& output, std::format_spec& spec) {
+    return std::detail::format_result(this.append(output, value, spec));
+  }
+
+private:
+  std::detail::format_argument_status append(mut std::string& output,
+                                              std::string& value,
+                                              std::format_spec& spec) {
+    if ((spec.type != '\0' && spec.type != 's') || spec.sign != '-' ||
+        spec.alternate || spec.zero_pad) {
+      return std::detail::format_argument_status::invalid_specifier;
+    }
+    std::detail::append_text(output, value.view(), spec, '<');
+    return std::detail::format_argument_status::appended;
+  }
+};
+
+namespace std {
+expected<string, format_errc> try_format(string_view pattern) {
   expected<void, format_errc> validation =
       detail::validate_format_pattern(pattern, size_t(0));
   if (!validation) {
@@ -108,17 +910,16 @@ expected<string, format_errc> format(string_view pattern) {
 
   mut string output = string();
   mut size_t cursor = 0;
-  detail::append_format_tail(output, pattern, cursor);
+  while (cursor < pattern.size()) {
+    detail::append_format_literal(output, pattern, cursor);
+  }
   return std::move(output);
 }
 
 expected<string, format_errc>
-format<std::integral First, std::integral Args...>(string_view pattern,
-                                                   First first,
-                                                   Args... args) {
+try_format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut size_t argument_count = 1;
   (detail::count_format_argument(argument_count, args), ...);
-
   expected<void, format_errc> validation =
       detail::validate_format_pattern(pattern, argument_count);
   if (!validation) {
@@ -127,57 +928,199 @@ format<std::integral First, std::integral Args...>(string_view pattern,
 
   mut string output = string();
   mut size_t cursor = 0;
-  detail::append_format_argument(output, pattern, cursor, first);
-  (detail::append_format_argument(output, pattern, cursor, args), ...);
-  detail::append_format_tail(output, pattern, cursor);
+  mut size_t next_automatic = 0;
+  mut uint8_t indexing_mode = uint8_t(0);
+  while (cursor < pattern.size()) {
+    if (pattern[cursor] != '{' ||
+        (cursor + 1 < pattern.size() && pattern[cursor + 1] == '{')) {
+      detail::append_format_literal(output, pattern, cursor);
+      continue;
+    }
+
+    mut detail::format_field field{};
+    if (!detail::parse_format_field(pattern, cursor, next_automatic,
+                                    indexing_mode, field)) {
+      return unexpected(format_errc::invalid_format);
+    }
+    mut size_t candidate = 0;
+    size_t requested = field.argument_index;
+    format_spec selected_spec = field.spec;
+    mut detail::format_argument_status status =
+        detail::format_argument_status::appended;
+    detail::append_selected_format_argument(output, requested,
+                                            candidate, status, selected_spec,
+                                            first);
+    (detail::append_selected_format_argument(output, requested,
+                                             candidate, status, selected_spec,
+                                             args), ...);
+    if (status == detail::format_argument_status::unsupported) {
+      return unexpected(format_errc::unsupported_argument);
+    }
+    if (status == detail::format_argument_status::argument_count_mismatch) {
+      return unexpected(format_errc::argument_count_mismatch);
+    }
+    if (status == detail::format_argument_status::invalid_specifier) {
+      return unexpected(format_errc::invalid_format);
+    }
+    cursor = field.end;
+  }
   return std::move(output);
 }
 
-expected<void, format_errc>
-try_print(string_view pattern) {
-  mut expected<string, format_errc> formatted = format(pattern);
+/// Appends one fully formatted result. Failure leaves `output` unchanged.
+expected<void, format_errc> try_format_to(mut string& output,
+                                      string_view pattern) {
+  mut expected<string, format_errc> formatted = try_format(pattern);
   if (!formatted) {
     return unexpected(formatted.error());
   }
-  print(formatted.value());
+  output.append(formatted.value().view());
   return;
 }
 
+/// Appends one fully formatted result. Failure leaves `output` unchanged.
 expected<void, format_errc>
-try_print<std::integral First, std::integral Args...>(string_view pattern,
-                                                      First first,
-                                                      Args... args) {
+try_format_to<First, Args...>(mut string& output, string_view pattern, First first,
+                          Args... args) requires formattable<First> {
   mut expected<string, format_errc> formatted =
-      format(pattern, first, args...);
+      try_format(pattern, std::move(first), args...);
   if (!formatted) {
     return unexpected(formatted.error());
   }
-  print(formatted.value());
+  output.append(formatted.value().view());
   return;
 }
 
-expected<void, format_errc>
-try_println(string_view pattern) {
-  mut expected<string, format_errc> formatted = format(pattern);
-  if (!formatted) {
-    return unexpected(formatted.error());
+namespace detail {
+[[noreturn, track_caller]]
+void panic_format_error(format_errc error) {
+  switch (error) {
+  case format_errc::invalid_format:
+    panic("Formatting failed: invalid format");
+  case format_errc::argument_count_mismatch:
+    panic("Formatting failed: argument count mismatch");
+  case format_errc::unsupported_argument:
+    panic("Formatting failed: unsupported argument; convert the value to a supported type");
   }
-  print(formatted.value());
-  print('\n');
-  return;
+  panic("Formatting failed: unknown error");
 }
 
-expected<void, format_errc>
-try_println<std::integral First, std::integral Args...>(string_view pattern,
-                                                        First first,
-                                                        Args... args) {
-  mut expected<string, format_errc> formatted =
-      format(pattern, first, args...);
-  if (!formatted) {
-    return unexpected(formatted.error());
+print_errc print_format_error(format_errc error) {
+  switch (error) {
+  case format_errc::invalid_format:
+    return print_errc::invalid_format;
+  case format_errc::argument_count_mismatch:
+    return print_errc::argument_count_mismatch;
+  case format_errc::unsupported_argument:
+    return print_errc::unsupported_argument;
   }
-  print(formatted.value());
-  print('\n');
+  return print_errc::invalid_format;
+}
+
+[[noreturn, track_caller]]
+void panic_print_error(print_errc error) {
+  switch (error) {
+  case print_errc::invalid_format:
+    panic_format_error(format_errc::invalid_format);
+  case print_errc::argument_count_mismatch:
+    panic_format_error(format_errc::argument_count_mismatch);
+  case print_errc::unsupported_argument:
+    panic_format_error(format_errc::unsupported_argument);
+  case print_errc::write_failed:
+    panic("Output failed: stdout write failed");
+  }
+  panic("Output failed: unknown error");
+}
+
+expected<void, print_errc> submit_print(string_view text) {
+  // The prelude's counted stdout entry checks complete submission already.
+  // Avoid importing the unrelated FILE/descriptor layer just for its status.
+  if (gti_internal::runtime::gti_rt_write_stdout(text) != 0) {
+    return unexpected(print_errc::write_failed);
+  }
   return;
+}
+}
+
+/// Formats an owning result, panicking at the caller on formatting failure.
+[[track_caller]]
+string format(string_view pattern) {
+  mut auto result = try_format(pattern);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+  return std::move(result).expect("Formatting succeeded without a value");
+}
+
+[[track_caller]]
+string format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
+  mut auto result = try_format(pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+  return std::move(result).expect("Formatting succeeded without a value");
+}
+
+[[track_caller]]
+void format_to(mut string& output, string_view pattern) {
+  auto result = try_format_to(output, pattern);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+}
+
+[[track_caller]]
+void format_to<First, Args...>(mut string& output, string_view pattern,
+                              First first, Args... args) requires formattable<First> {
+  auto result = try_format_to(output, pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_format_error(result.error());
+  }
+}
+
+/// With no format arguments, output is literal, like the prelude print API.
+expected<void, print_errc> try_print(string_view text) {
+  return detail::submit_print(text);
+}
+
+expected<void, print_errc>
+try_print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
+  mut auto formatted = try_format(pattern, std::move(first), args...);
+  if (!formatted) {
+    return unexpected(detail::print_format_error(formatted.error()));
+  }
+  return detail::submit_print(formatted.value().view());
+}
+
+expected<void, print_errc> try_println(string_view text) {
+  mut string line = string(text);
+  line.push_back('\n');
+  return detail::submit_print(line.view());
+}
+
+expected<void, print_errc>
+try_println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
+  mut auto formatted = try_format(pattern, std::move(first), args...);
+  if (!formatted) {
+    return unexpected(detail::print_format_error(formatted.error()));
+  }
+  formatted.value().push_back('\n');
+  return detail::submit_print(formatted.value().view());
+}
+
+[[track_caller]]
+void print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
+  auto result = try_print(pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_print_error(result.error());
+  }
+}
+
+[[track_caller]]
+void println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
+  auto result = try_println(pattern, std::move(first), args...);
+  if (!result) {
+    detail::panic_print_error(result.error());
+  }
 }
 }

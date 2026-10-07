@@ -1,0 +1,207 @@
+#include <std/panic>
+#include <std/format>
+#include <std/functional>
+#include <std/string>
+#include <std/thread>
+#include <std/vector>
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+struct Uuid {
+  int value;
+};
+class std::formatter<Uuid> {
+public:
+  expected<void, std::format_errc> format(Uuid& value,
+      mut std::string& output, std::format_spec& spec) {
+    return unexpected(std::format_errc::unsupported_argument);
+  }
+};
+
+int argument(int value) {
+  std::println(value);
+  return value;
+}
+
+[[noreturn, track_caller]]
+void tracked_inner(std::string_view message) {
+  std::panic(message);
+}
+
+[[noreturn, track_caller]]
+void tracked_outer(std::string_view message) {
+  tracked_inner(message);
+}
+
+[[noreturn]]
+void untracked_boundary() {
+  tracked_outer("untracked boundary"); // untracked-site
+}
+
+[[noreturn, track_caller]]
+void generic_failure<T>(T value) requires std::formattable<T> {
+  std::panic("generic {}", value);
+}
+
+int terminal_value() {
+  std::panic("value function failed"); // value-site
+}
+
+[[noreturn]]
+int terminal_argument() {
+  std::panic("argument failed"); // terminal-argument-site
+}
+
+void consume_three(Guard first, int second, int third) {
+  std::println(999);
+}
+
+[[track_caller]]
+int stored_failure(int value) {
+  std::panic("stored {}", value);
+}
+
+struct StoredCallback<F> {
+  F callback;
+  StoredCallback(F value) : callback(value) {}
+  int invoke(int value) {
+    return callback(value); // stored-wrapper-site
+  }
+  [[track_caller]] int tracked_invoke(int value) {
+    return callback(value);
+  }
+};
+
+StoredCallback<F> retain<F>(F value) {
+  return StoredCallback<F>(value);
+}
+
+void worker_double_failure(Guard skipped_parameter) {
+  Guard skipped{83};
+  Guard worker{82, true};
+  std::panic("worker primary failure"); // worker-primary-site
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{90};
+  if (argc == 2) {
+    Guard inner{10};
+    std::panic("raw panic with {literal braces}"); // raw-site
+  }
+  if (argc == 3) {
+    Guard inner{20};
+    std::panic("arguments {} then {}", argument(1), argument(2)); // format-site
+  }
+  if (argc == 4) {
+    std::string message{"owned message survives cleanup"};
+    Guard inner{30};
+    std::panic(message.view()); // owned-site
+  }
+  if (argc == 5) {
+    mut std::string message{""};
+    for (mut int index = 0; index < 600; index++) {
+      message.push_back('a');
+    }
+    Guard inner{40};
+    std::panic(message.view()); // truncation-site
+  }
+  if (argc == 6) {
+    Guard skipped{5};
+    Guard inner{50, true};
+    std::panic("primary failure"); // primary-site
+  }
+  if (argc == 7) {
+    Guard inner{60};
+    std::panic("{", 1); // invalid-format-site
+  }
+  if (argc == 8) {
+    Guard inner{70};
+    std::panic("{} {}", 1); // count-site
+  }
+  if (argc == 9) {
+    Guard inner{80};
+    Uuid value = {.value = 7};
+    std::panic("{}", value); // unsupported-site
+  }
+  if (argc == 10 || argc == 11) {
+    auto started = std::thread::start([]() -> void {
+      std::string message{"worker failed"};
+      Guard worker{81};
+      std::panic(message.view()); // worker-site
+    });
+    if (!started) {
+      return 99;
+    }
+    mut std::thread worker = std::move(started).value();
+    if (argc == 10) {
+      auto joined = worker.join();
+      if (!joined) {
+        return 98;
+      }
+    }
+    return 0;
+  }
+  if (argc == 12) {
+    tracked_outer("tracked wrapper"); // tracked-site
+  }
+  if (argc == 13) {
+    untracked_boundary();
+  }
+  if (argc == 14) {
+    generic_failure(42); // generic-site
+  }
+  if (argc == 15) {
+    return terminal_value();
+  }
+  if (argc == 16) {
+    auto started = std::thread::start([]() -> void {
+      Guard skipped_caller{84};
+      worker_double_failure(Guard(87));
+    });
+    if (!started) {
+      return 99;
+    }
+    mut std::thread worker = std::move(started).value();
+    auto joined = worker.join();
+    if (!joined) {
+      return 98;
+    }
+    return 0;
+  }
+  if (argc == 17) {
+    std::function<int(int)> callback{stored_failure};
+    return callback(6);
+  }
+  if (argc == 18) {
+    auto callback = retain(stored_failure);
+    return callback.invoke(7);
+  }
+  if (argc == 19) {
+    auto callback = retain(stored_failure);
+    return callback.tracked_invoke(8); // tracked-stored-site
+  }
+  if (argc == 20) {
+    Guard inner{84};
+    std::panic("owned {} {}", std::string("first"), std::string("second")); // owned-format-site
+  }
+  if (argc == 21) {
+    consume_three(Guard(85), terminal_argument(), argument(999));
+  }
+  if (argc == 22) {
+    Guard inner{86};
+    int total = 1 + (terminal_argument());
+    std::println(total);
+  }
+  std::println("ready");
+  return 0;
+}

@@ -77,6 +77,52 @@ void writeJsonPaths(std::ostream &stream,
   stream << ']';
 }
 
+void writeBuildScriptDeclaration(
+    std::ostream &stream,
+    const std::optional<driver::ProjectBuildScript> &script) {
+  if (!script) {
+    stream << "null";
+    return;
+  }
+  stream << "{\"command\": ";
+  writeJsonStrings(stream, script->command);
+  stream << ", \"source\": ";
+  if (script->declaredSource) {
+    writeJsonString(stream, *script->declaredSource);
+  } else {
+    stream << "null";
+  }
+  stream << ", \"inputs\": ";
+  writeJsonStrings(stream, script->declaredInputs);
+  stream << '}';
+}
+
+void writeBuildScriptPlans(
+    std::ostream &stream, const std::vector<driver::BuildScriptPlan> &scripts) {
+  stream << '[';
+  for (std::size_t index = 0; index < scripts.size(); ++index) {
+    if (index != 0) {
+      stream << ", ";
+    }
+    stream << "{\"package\": ";
+    writeJsonString(stream, scripts[index].packageIdentity);
+    stream << ", \"command\": ";
+    writeJsonStrings(stream, scripts[index].command);
+    stream << ", \"source\": ";
+    if (scripts[index].source) {
+      writeJsonString(stream, scripts[index].source->string());
+    } else {
+      stream << "null";
+    }
+    stream << ", \"inputs\": ";
+    writeJsonPaths(stream, scripts[index].inputs);
+    stream << ", \"outputDirectory\": ";
+    writeJsonString(stream, scripts[index].outputDirectory.string());
+    stream << '}';
+  }
+  stream << ']';
+}
+
 std::string_view nativeLinkOperandKindName(driver::NativeLinkOperandKind kind) {
   switch (kind) {
   case driver::NativeLinkOperandKind::File:
@@ -224,6 +270,10 @@ void writeProjectMetadata(std::ostream &stream,
   writeJsonString(stream, manifest.packageRoot().string());
   stream << ",\n    \"sourceRoot\": ";
   writeJsonString(stream, manifest.package().sourceRoot.string());
+  stream << ",\n    \"buildScript\": ";
+  writeBuildScriptDeclaration(stream, manifest.package().buildScript);
+  stream << "\n  },\n  \"build\": {\n    \"allowBuildScripts\": ";
+  writeJsonStrings(stream, manifest.build().allowedBuildScripts);
   stream << "\n  },\n  \"workspace\": {\n    \"root\": ";
   writeJsonString(stream, metadata.workspace().root().string());
   stream << ",\n    \"declared\": "
@@ -256,6 +306,8 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, package.manifest.path().string());
     stream << ", \"sourceRoot\": ";
     writeJsonString(stream, package.manifest.package().sourceRoot.string());
+    stream << ", \"buildScript\": ";
+    writeBuildScriptDeclaration(stream, package.manifest.package().buildScript);
     stream << ", \"dependencies\": [";
     for (std::size_t dependencyIndex = 0;
          dependencyIndex < package.dependencies.size(); ++dependencyIndex) {
@@ -294,7 +346,15 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, cppStandardName(profile.cppStandard));
     stream << ", \"executionProfile\": ";
     writeJsonString(stream, executionProfileName(profile.executionProfile));
-    stream << ", \"keepCpp\": " << (profile.keepCpp ? "true" : "false") << '}';
+    stream << ", \"rawPointerAudit\": ";
+    writeJsonString(stream, rawPointerAuditModeName(profile.rawPointerAudit));
+    stream << ", \"disabledWarnings\": ";
+    writeJsonStrings(stream, profile.warningPolicy.disabledGroups());
+    stream << ", \"dependencyWarnings\": "
+           << (profile.dependencyWarnings ? "true" : "false");
+    stream << ", \"keepCpp\": " << (profile.keepCpp ? "true" : "false")
+           << ", \"debugInfo\": " << (profile.debugInfo ? "true" : "false")
+           << '}';
   }
   if (!manifest.profiles().empty()) {
     stream << '\n';
@@ -332,11 +392,27 @@ void writeProjectMetadata(std::ostream &stream,
       } else {
         writeJsonStrings(stream, plan->configurationFlags());
       }
+      stream << ", \"debugInfo\": "
+             << (plan != nullptr && plan->debugInfo() ? "true" : "false");
+      stream << ", \"rawPointerAudit\": ";
+      writeJsonString(stream, rawPointerAuditModeName(
+                                  plan != nullptr ? plan->rawPointerAudit()
+                                                  : RawPointerAuditMode::Off));
+      stream << ", \"dependencyWarnings\": "
+             << (plan == nullptr || plan->packageWarnings().dependencyWarnings()
+                     ? "true"
+                     : "false");
       stream << ", \"native\": ";
       if (plan == nullptr) {
         writeNativeInputs(stream, {});
       } else {
         writeNativeInputs(stream, plan->nativeInputs());
+      }
+      stream << ", \"buildScripts\": ";
+      if (plan == nullptr) {
+        writeBuildScriptPlans(stream, {});
+      } else {
+        writeBuildScriptPlans(stream, plan->buildScripts());
       }
       stream << '}';
     }

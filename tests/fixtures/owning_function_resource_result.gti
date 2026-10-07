@@ -1,0 +1,23 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+Resource produce(int divisor) { return Resource(12 / divisor); }
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  std::function<Resource(int)> callback{produce};
+  int divisor = argc == 2 ? 0 : 2;
+  Resource result = callback(divisor);
+  std::println(result.read());
+  int later = 6 / (argc == 3 ? 0 : 1);
+  return later - 6;
+}

@@ -10,6 +10,19 @@ endif()
 
 project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
+option(GTI_BUILD_LSP "Build the GTI language server" ON)
+option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
+option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
+option(GTI_BUILD_FUZZERS
+       "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
+option(GTI_ENABLE_THREAD_SANITIZER_TESTS
+       "Run ThreadSanitizer test variants on a compatible host" ON)
+
+# Enforce the host compiler configuration before dependency discovery.
+include(CTest)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/OptimizedTestCompiler.cmake")
+gti_require_optimized_test_compiler()
+
 find_program(GTI_GIT_EXECUTABLE git)
 set(GTI_BUILD_IDENTITY_HEADER
     "${CMAKE_CURRENT_BINARY_DIR}/generated/gti/build_identity_config.h")
@@ -27,6 +40,10 @@ add_custom_target(
 )
 
 find_package(Threads REQUIRED)
+# <std/http> loads the platform libcurl dynamically so the public runtime
+# archive has no libcurl link dependency. Its stable C declarations and option
+# constants still come from the build host's development headers.
+find_package(CURL REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,13 +54,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-option(GTI_BUILD_LSP "Build the GTI language server" ON)
-option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
-option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
-option(GTI_BUILD_FUZZERS
-       "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
-
-find_package(Python3 COMPONENTS Interpreter QUIET)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(Python3_Interpreter_FOUND)
   add_custom_target(
     format
@@ -62,6 +73,24 @@ if(Python3_Interpreter_FOUND)
     VERBATIM
   )
 endif()
+
+set(GTI_DIAGNOSTIC_REGISTRY_HEADER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/gti/diagnostic_registry_generated.h")
+add_custom_command(
+  OUTPUT "${GTI_DIAGNOSTIC_REGISTRY_HEADER}"
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_diagnostics.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics/semantic.json"
+    "${GTI_DIAGNOSTIC_REGISTRY_HEADER}"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_diagnostics.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics/semantic.json"
+  COMMENT "Generating typed diagnostic registry"
+  VERBATIM
+)
+add_custom_target(gti_diagnostic_registry
+                  DEPENDS "${GTI_DIAGNOSTIC_REGISTRY_HEADER}")
 
 if(GTI_RELEASE_BUILD)
   set(GTI_BUNDLE_LLVM ON)
@@ -292,6 +321,7 @@ add_library(
   "gti_semantic_analysis" OBJECT
   "src/compiler/semantic_analyzer.cpp"
   "src/compiler/semantic_body_analysis.cpp"
+  "src/compiler/semantic_constexpr.cpp"
   "src/compiler/semantic_call_resolution.cpp"
   "src/compiler/semantic_declaration_analysis.cpp"
   "src/compiler/semantic_embedding.cpp"
@@ -302,6 +332,7 @@ add_library(
 target_include_directories(
   "gti_semantic_analysis"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include"
+          "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 target_include_directories(
   "gti_semantic_analysis" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS}
@@ -311,6 +342,7 @@ target_precompile_headers(
   "gti_semantic_analysis"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/semantic_analyzer_impl.h"
 )
+add_dependencies("gti_semantic_analysis" gti_diagnostic_registry)
 
 add_library(
   "gti_compiler" STATIC
@@ -320,6 +352,7 @@ add_library(
   "src/compiler/checked_integer.cpp"
   "src/compiler/configuration_directive_processor.cpp"
   "src/compiler/constant_evaluator.cpp"
+  "src/compiler/mir_constant_evaluator.cpp"
   "src/compiler/diagnostic.cpp"
   "src/compiler/documentation.cpp"
   "src/compiler/executable_path.cpp"
@@ -327,6 +360,7 @@ add_library(
   "src/compiler/format_config.cpp"
   "src/compiler/formatter.cpp"
   "src/compiler/frontend.cpp"
+  "src/compiler/include_suggestions.cpp"
   "src/compiler/frontend_cache.cpp"
   "src/compiler/hir.cpp"
   "src/compiler/hir_model.cpp"
@@ -352,6 +386,8 @@ add_library(
   "src/compiler/mir_backend.cpp"
   "src/compiler/native_header.cpp"
   "src/compiler/optimization/alias.cpp"
+  "src/compiler/optimization/coverage.cpp"
+  "src/compiler/optimization/devirtualization.cpp"
   "src/compiler/mir_effects.cpp"
   "src/compiler/optimization/loops.cpp"
   "src/compiler/optimization/pass.cpp"
@@ -373,6 +409,9 @@ add_library(
   "src/compiler/token.cpp"
 )
 target_include_directories("gti_compiler" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_include_directories("gti_compiler" PRIVATE
+                           "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_dependencies("gti_compiler" gti_diagnostic_registry)
 target_link_libraries(
   "gti_compiler"
   PRIVATE
@@ -421,8 +460,19 @@ target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 
 add_library(
   "gti_runtime" STATIC
+  "runtime/src/charconv.cpp"
+  "runtime/src/chrono.cpp"
+  "runtime/src/cthread.cpp"
+  "runtime/src/cthread_sleep.cpp"
+  "runtime/src/cthread_mutex.cpp"
+  "runtime/src/cthread_state.cpp"
   "runtime/src/failure.cpp"
+  "runtime/src/filesystem.cpp"
+  "runtime/src/http.cpp"
   "runtime/src/io.cpp"
+  "runtime/src/math.cpp"
+  "runtime/src/memory.cpp"
+  "runtime/src/process.cpp"
   "runtime/src/random.cpp"
   "runtime/src/thread.cpp"
 )
@@ -432,8 +482,9 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
+target_include_directories("gti_runtime" SYSTEM PRIVATE ${CURL_INCLUDE_DIRS})
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
-target_link_libraries("gti_runtime" PRIVATE Threads::Threads)
+target_link_libraries("gti_runtime" PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
   # gti_rt_random_bytes calls BCryptGenRandom.
   target_link_libraries("gti_runtime" PRIVATE "bcrypt")
@@ -443,10 +494,19 @@ add_library(
   "gti_driver" STATIC
   "src/driver/artifact.cpp"
   "src/driver/bindgen_import.cpp"
+  "src/driver/build_script.cpp"
   "src/driver/build.cpp"
   "src/driver/build_report.cpp"
   "src/driver/compilation.cpp"
   "src/driver/dependencies.cpp"
+  "src/driver/package_archive.cpp"
+  "src/driver/registry_metadata.cpp"
+  "src/driver/registry_gitea.cpp"
+  "src/driver/registry_credentials.cpp"
+  "src/driver/registry_cache.cpp"
+  "src/driver/registry_resolver.cpp"
+  "src/driver/registry_commands.cpp"
+  "src/driver/semver.cpp"
   "src/driver/manifest.cpp"
   "src/driver/native_toolchain.cpp"
   "src/driver/process.cpp"
@@ -466,8 +526,21 @@ target_include_directories(
 target_include_directories(
   "gti_driver" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus"
 )
+target_include_directories("gti_driver" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_include_directories("gti_driver" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
-target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend gti_bindgen)
+target_link_libraries("gti_driver" PUBLIC gti_compiler PRIVATE gti_cpp_backend gti_bindgen gti_runtime)
+if(APPLE)
+  enable_language(OBJCXX)
+  set_target_properties(gti_driver PROPERTIES OBJCXX_STANDARD 20
+    OBJCXX_STANDARD_REQUIRED ON OBJCXX_EXTENSIONS OFF)
+  target_sources(gti_driver PRIVATE "src/driver/registry_credentials_macos.mm")
+  set_source_files_properties("src/driver/registry_credentials_macos.mm"
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  # System framework names remain relocatable in the installed static SDK.
+  target_link_libraries(gti_driver PRIVATE
+    "-framework Security" "-framework Foundation" "-framework LocalAuthentication")
+endif()
 add_dependencies("gti_driver" "gti_runtime" "gti_build_identity_refresh")
 target_compile_definitions(
   "gti_driver"
@@ -521,8 +594,10 @@ set_target_properties(
     SUFFIX ".so"
 )
 
-add_executable("gti" "src/cli/main.cpp" "src/cli/project_presentation.cpp")
-target_link_libraries("gti" PRIVATE gti_driver gti_bindgen)
+add_executable("gti" "src/cli/main.cpp" "src/cli/registry_input.cpp" "src/cli/project_presentation.cpp"
+                     "src/cli/terminal_style.cpp" "src/cli/build_progress.cpp")
+target_link_libraries("gti" PRIVATE gti_driver gti_bindgen Threads::Threads)
+target_include_directories("gti" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_compile_definitions(
   "gti"
   PRIVATE
@@ -532,7 +607,7 @@ target_compile_definitions(
 # Build-time producer for the reference site's compiler-owned API manifest.
 # It is intentionally not installed with the user-facing toolchain.
 add_executable("gti_docgen" EXCLUDE_FROM_ALL
-               "reference/tools/docgen_main.cpp")
+               "src/docgen/main.cpp")
 target_link_libraries("gti_docgen" PRIVATE gti_compiler)
 target_compile_definitions(
   "gti_docgen"
@@ -689,9 +764,33 @@ if(TARGET gti_lsp)
           COMPONENT gti_toolchain)
 endif()
 
-include(CTest)
-# After include(CTest) so fuzz/CMakeLists.txt sees BUILD_TESTING and can
-# register its fixed-corpus smoke test.
+if(APPLE)
+  foreach(installed_executable IN ITEMS gti gti_lsp)
+    if(TARGET "${installed_executable}")
+      target_link_options("${installed_executable}" PRIVATE
+                          "LINKER:-headerpad_max_install_names")
+    endif()
+  endforeach()
+  if(GTI_BUNDLE_LLVM)
+    target_link_options(libclang PRIVATE "LINKER:-headerpad_max_install_names")
+  endif()
+  # Homebrew opt paths can move to a different ABI between build and install.
+  # Use the selected libclang target, resolve its transitive runtime closure,
+  # rewrite only staged copies, and sign them before archiving/activation.
+  install(CODE "
+    execute_process(
+      COMMAND \"${Python3_EXECUTABLE}\"
+              \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle_macos_runtime.py\"
+              --stage \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\"
+              --library \"$<TARGET_FILE:libclang>\"
+      RESULT_VARIABLE gti_bundle_result)
+    if(NOT gti_bundle_result EQUAL 0)
+      message(FATAL_ERROR \"Failed to bundle macOS toolchain runtime dependencies\")
+    endif()
+  " COMPONENT gti_toolchain)
+endif()
+
+# BUILD_TESTING and the optimized compiler policy are established above.
 if(GTI_BUILD_FUZZERS)
   add_subdirectory("fuzz")
 endif()

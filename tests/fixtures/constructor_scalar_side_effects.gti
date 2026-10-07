@@ -1,0 +1,43 @@
+#include <std/string>
+#include <std/vector>
+
+mut int counter = 0;
+
+class Marker {
+  int number;
+public:
+  Marker(int value) : number(value) {}
+  ~Marker() {
+    std::println(this.number);
+    std::println(counter);
+  }
+};
+
+class Snapshot {
+  Marker first;
+  int prefix;
+  int postfix;
+  int compound;
+  int assigned;
+  int observed;
+  Marker last;
+public:
+  Snapshot() : first(Marker(100)), prefix(++counter), postfix(counter++),
+               compound(counter += 2), assigned(counter = 40),
+               observed(counter), last(Marker(200)) {
+    std::println(this.prefix);
+    std::println(this.postfix);
+    std::println(this.compound);
+    std::println(this.assigned);
+    std::println(this.observed);
+  }
+  ~Snapshot() { std::println(300); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  counter = argc == 1 ? 10 : (argc == 2 ? 2147483647 :
+                             (argc == 3 ? 2147483646 : 2147483645));
+  Marker caller = Marker(900);
+  Snapshot value{};
+  return 0;
+}

@@ -47,6 +47,15 @@ function queryCaptures(name, input = fixture) {
 }
 
 const captures = queryCaptures("highlights");
+const moduleCaptures = queryCaptures("highlights", path.join(__dirname, "modules.gti"));
+for (const [text, name] of [
+  ["export", "keyword.modifier"], ["module", "keyword.type"],
+  ["import", "keyword.import"], ["geometry", "module"], ["math", "module"],
+]) {
+  if (!moduleCaptures.some((capture) => capture.text === text && capture.name === name)) {
+    throw new Error(`Missing module @${name} capture for ${text}`);
+  }
+}
 const fixtureLines = fs.readFileSync(fixture, "utf8").split("\n");
 
 function requireCapture(row, text, name) {
@@ -104,6 +113,11 @@ const nativeArrayRow = fixtureLines.findIndex((line) =>
 );
 requireCapture(nativeArrayRow, "c_array", "attribute");
 requireCapture(nativeArrayRow, "count", "variable.parameter");
+const nativeLinkNameRow = fixtureLines.findIndex((line) =>
+  line.includes("[[link_name(\"gti_native_handles\")]]"),
+);
+requireCapture(nativeLinkNameRow, "link_name", "attribute");
+requireCapture(nativeLinkNameRow, '"gti_native_handles"', "string");
 const nativeCallbackRow = fixtureLines.findIndex((line) =>
   line.includes("using NativeCallback"),
 );
@@ -529,12 +543,22 @@ requireRainbowDelimiter(
 requireRainbowDelimiter("[[c_abi]] struct NativePoint {", "[[");
 requireRainbowDelimiter("[[c_opaque]] struct NativeHandle;", "[[");
 requireRainbowDelimiter(
-  "  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);",
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
   "[[",
 );
 requireRainbowDelimiter(
-  "  [[c_array(count)]] NativeHandle** native_handles(int32_t* count);",
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
   "(",
+);
+requireRainbowDelimiter(
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
+  "[[",
+  2,
+);
+requireRainbowDelimiter(
+  '  [[c_array(count)]] [[link_name("gti_native_handles")]] NativeHandle** native_handles(int32_t* count);',
+  "(",
+  2,
 );
 requireRainbowDelimiter(
   "constexpr uint64_t scalar_layout = sizeof(int32_t);",
@@ -608,6 +632,42 @@ requireCapture(defaultValueRow, "default_extent_highlight", "function");
 requireCapture(defaultValueRow, "N", "variable.parameter");
 requireCapture(defaultValueRow, "3", "number");
 requireCapture(defaultValueRow, "<", "punctuation.bracket");
+
+const unsafeFunctionRow = fixtureLines.findIndex((line) =>
+  line.includes("unsafe void retain_context_highlight"),
+);
+requireCapture(unsafeFunctionRow, "unsafe", "keyword");
+requireCaptureCount(unsafeFunctionRow, "unsafe", "attribute", 0);
+requireCapture(unsafeFunctionRow, "retain_context_highlight", "function");
+
+const functionContractRow = fixtureLines.findIndex((line) =>
+  line.includes("void terminal_highlight"),
+);
+requireCapture(functionContractRow, "noreturn", "attribute");
+requireCapture(functionContractRow, "track_caller", "attribute");
+requireCapture(fixtureLines.findIndex((line) => line.includes("optional_highlight")), "discardable", "attribute");
+requireCapture(functionContractRow, "terminal_highlight", "function");
+
+const borrowOriginRow = fixtureLines.findIndex((line) =>
+  line.includes("int& borrow_highlight"),
+);
+requireCapture(borrowOriginRow, "borrowed_from", "attribute");
+requireCaptureCount(borrowOriginRow, "owner", "variable.parameter", 2);
+
+const memberRequirementRow = fixtureLines.findIndex((line) =>
+  line.includes("requires(T& item)"),
+);
+requireCapture(memberRequirementRow, "requires", "keyword");
+requireCaptureCount(memberRequirementRow, "item", "variable.parameter", 2);
+requireCapture(memberRequirementRow, "snapshot", "function.method");
+requireCapture(memberRequirementRow, "->", "operator");
+
+const namespacePathRow = fixtureLines.findIndex((line) =>
+  line.includes("namespace qualified_outer::"),
+);
+for (const component of ["qualified_outer", "qualified_inner", "qualified_leaf"]) {
+  requireCapture(namespacePathRow, component, "module");
+}
 
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",

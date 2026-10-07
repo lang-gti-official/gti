@@ -1,0 +1,17 @@
+class View {
+  int& item;
+public:
+  View(int& item) : item(item) {}
+  bool operator!=(int& other) { return this.item != other; }
+};
+View view(int& value) { return View(value); }
+int main() {
+  int value = 42;
+  int same = 42;
+  int different = 7;
+  if (view(value) != same) { return 1; }
+  if (!(view(value) != different)) { return 2; }
+  if (((view(value))) != same) { return 3; }
+  if (value != same || view(value) != same) { return 4; }
+  return 0;
+}

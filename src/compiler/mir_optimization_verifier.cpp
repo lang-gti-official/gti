@@ -3,6 +3,7 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "gti/optimization/devirtualization.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
 
@@ -54,7 +55,8 @@ verifyMirOptimizationCoherence(const MirProgram &source,
                    record.proof == MirTransformProofKind::Count ||
                    (record.kind != MirTransformKind::DischargeSafetyCheck &&
                     (record.safetyDischarge.has_value() ||
-                     !record.relatedPlaces.empty() ||
+                     (record.kind != MirTransformKind::DevirtualizeCall &&
+                      !record.relatedPlaces.empty()) ||
                      record.requiredAnalyses.safetyChecks));
           })) {
     reject({}, "MIR transformation record has an invalid pass, kind, or "
@@ -566,6 +568,25 @@ verifyMirOptimizationCoherence(const MirProgram &source,
       return result;
     }
     rebuildMirReachability(*body);
+  }
+  for (std::size_t index = 0; index < records.size(); ++index) {
+    const auto &record = records[index];
+    if (consumed[index] || record.kind != MirTransformKind::DevirtualizeCall)
+      continue;
+    auto replay = rewriteMirExactReceiver(candidate, record.body,
+                                          record.instruction, record.pass);
+    if (!replay || *replay != record) {
+      reject(record.body,
+             "exact receiver transformation does not replay from canonical MIR",
+             record.block, record.instruction);
+      return result;
+    }
+    consumed[index] = true;
+    auto *body = findMirBody(candidate, record.body);
+    if (!body || !rebuildMirValueUses(*body)) {
+      reject(record.body, "receiver refinement failed to rebuild MIR uses");
+      return result;
+    }
   }
   const MirVerificationResult foldedVerification = verifyMirProgram(candidate);
   if (!foldedVerification.valid()) {

@@ -1,6 +1,0 @@
-{
-  "title": "Construct and inspect a vector",
-  "description": "Builds a vector and prints its size.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

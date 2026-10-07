@@ -13,7 +13,7 @@ struct NativeSnapshot {
 // A binding can attach these declarations to a native library. They remain
 // unused here so the example has no external link dependency.
 extern "C" {
-  c_string native_version();
+  [[link_name("native_version")]] c_string api_version();
   [[c_array(count)]] const NativeSnapshot* native_snapshots(uint32_t* count);
   [[c_array(count)]] NativeHandle** native_handles(int32_t* count);
   ErrorCallback native_set_error_callback(ErrorCallback callback);

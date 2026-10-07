@@ -1,0 +1,33 @@
+#include <std/memory>
+
+struct Resource { int value = 40; };
+class Block {
+  Resource& resource;
+  mut int offset = 2;
+public:
+  Block(Resource& resource) : resource(resource) {}
+  int read() { return this.resource.value + this.offset; }
+  void touch() mut { this.offset++; }
+};
+class Cursor {
+  Block& block;
+  std::size_t position;
+public:
+  Cursor(Block& block, std::size_t position) : block(block), position(position) {}
+  int read() { return this.block.read() + int(this.position); }
+};
+class Owner {
+  mut Block block;
+public:
+  Owner(Resource& resource) : block(Block(resource)) {}
+  Cursor begin() { return Cursor(this.block, std::size_t(0)); }
+  void touch() mut { this.block.touch(); }
+};
+int main() {
+  Resource resource{};
+  mut Owner owner{resource};
+  auto cursor = owner.begin();
+  int first = cursor.read();
+  owner.touch();
+  return first - 42;
+}

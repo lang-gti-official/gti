@@ -2,13 +2,15 @@
 // storage capability. The private representation owns at most one live T and
 // never allocates merely to represent the empty state.
 
+#include <std/utility>
+
 namespace gti_internal {
 /// Compiler-owned inline storage for zero or one live `T`.
 ///
 /// Exact trusted declaration identity selects the representation. Application
 /// code cannot name this type or its operations, and the public optional class
 /// owns every state transition.
-class optional_storage<std::movable T> {
+class optional_storage<std::move_constructible T> {
 public:
   optional_storage() {}
   optional_storage(optional_storage<T>& other) = delete;
@@ -16,15 +18,15 @@ public:
   ~optional_storage() = default;
 };
 
-bool optional_storage_has_value<std::movable T>(
+bool optional_storage_has_value<std::move_constructible T>(
     gti_internal::optional_storage<T>& storage);
-void optional_storage_construct<std::movable T, Args...>(
-    mut gti_internal::optional_storage<T>& storage, Args... args);
-T& optional_storage_read<std::movable T>(
+void optional_storage_construct<std::move_constructible T>(
+    mut gti_internal::optional_storage<T>& storage, T value);
+T& optional_storage_read<std::move_constructible T>(
     gti_internal::optional_storage<T>& storage);
-mut T& optional_storage_read_mut<std::movable T>(
+mut T& optional_storage_read_mut<std::move_constructible T>(
     mut gti_internal::optional_storage<T>& storage);
-void optional_storage_reset<std::movable T>(
+void optional_storage_reset<std::move_constructible T>(
     mut gti_internal::optional_storage<T>& storage);
 }
 
@@ -36,8 +38,8 @@ namespace std {
 /// unavailable. Access to an empty value raises GTI's checked
 /// `empty_owner_access/member_access` failure after normal MIR cleanup. Copy
 /// construction and both assignment forms remain deliberately absent; use an
-/// explicit payload-level copy when `T` supports one.
-class optional<std::movable T> {
+/// explicit `clone()` when `T` supports duplication.
+class optional<std::move_constructible T> {
   mut gti_internal::optional_storage<T> storage =
       gti_internal::optional_storage<T>();
 
@@ -92,14 +94,22 @@ public:
 
   /// Returns a copy of the live value, or moves `fallback` when empty.
   ///
-  /// This member intentionally instantiates only when copying `T` is valid;
-  /// move-only payloads keep the rest of the optional surface and receive the
-  /// normal exact copy diagnostic if they call `value_or`.
-  T value_or(T fallback) {
+  /// Only copy construction is required, not copy assignment. Move-only
+  /// payloads keep the other members, including explicit `clone()`.
+  T value_or(T fallback) requires std::copy_constructible<T> {
     if (this.has_value()) {
       return this.value();
     }
     return std::move(fallback);
+  }
+
+  /// Duplicates an engaged payload using its explicit clone contract.
+  /// Empty optionals remain empty; sharing follows the payload's clone policy.
+  optional<T> clone() requires std::cloneable<T> {
+    if (this.has_value()) {
+      return optional<T>(std::clone(this.value()));
+    }
+    return optional<T>();
   }
 
   /// Destroys the live value, if any, and becomes empty.
@@ -107,10 +117,15 @@ public:
     gti_internal::optional_storage_reset(this.storage);
   }
 
-  /// Replaces the current value by constructing `T` directly from `args`.
+  /// Replaces the current value from `args`, remaining empty on failure.
+  ///
+  /// Payload construction runs as ordinary GTI before publication into the
+  /// inline slot. The private capability only transfers a completed value;
+  /// it must not hide a source constructor or its failure/cleanup schedule.
   mut T& emplace<Args...>(Args... args) mut {
     this.reset();
-    gti_internal::optional_storage_construct(this.storage, args...);
+    T value = T(args...);
+    gti_internal::optional_storage_construct(this.storage, std::move(value));
     return gti_internal::optional_storage_read_mut(this.storage);
   }
 };

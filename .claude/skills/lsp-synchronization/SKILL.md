@@ -46,6 +46,7 @@ unless the feature has a concrete need. Record future work in
 [`docs/plans/lsp-evolution.md`](../../../docs/plans/lsp-evolution.md) and update
 the current architecture doc when behavior lands.
 
-After local validation, use the `finish-release` skill when the completed
-LSP/editor change is ready to commit or release. Finish after the push or
-workflow dispatch succeeds; do not wait for asynchronous GitHub CI/CD.
+After local validation, use the `agent-workflow` and `finish-release` skills for
+PR integration, local-main sync and version policy. Respect required PR checks;
+post-merge packaging does not block completion. Explicit PR-only/local-only
+instructions override integration.

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import argparse
 import json
 import os
 import pathlib
@@ -12,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
+
+from case_jobs import configured_jobs, positive_jobs, run_cases
 
 
 SCHEMA = "gti-stdlib-surface-v1"
@@ -41,7 +44,7 @@ def repository_path(repository: pathlib.Path, value: object, label: str) -> path
 
 def stdlib_sources(repository: pathlib.Path) -> list[pathlib.Path]:
     return [repository / "stdlib" / "prelude.gti", *sorted(
-        (repository / "stdlib" / "std").glob("*.gti")
+        (repository / "stdlib" / "std").rglob("*.gti")
     )]
 
 
@@ -363,23 +366,25 @@ def run_case(
 
 
 def main() -> int:
-    if len(sys.argv) not in {5, 6} or (
-        len(sys.argv) == 6 and sys.argv[5] != "--validate-only"
-    ):
-        raise SystemExit(
-            "usage: stdlib_surface_test.py <gti> <cxx> <runtime-library> "
-            "<repository> [--validate-only]"
-        )
-    compiler = pathlib.Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compiler", type=pathlib.Path)
+    parser.add_argument("cxx", type=pathlib.Path)
+    parser.add_argument("runtime_library", type=pathlib.Path)
+    parser.add_argument("repository", type=pathlib.Path)
+    parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs(),
+                        help="Concurrent isolated cases; default: serial outside CTest.")
+    arguments = parser.parse_args()
+    compiler = arguments.compiler.resolve()
     # Preserve the driver spelling: resolving a clang++ symlink to `clang`
     # silently switches the native link step from C++ to C mode.
-    cxx = pathlib.Path(sys.argv[2]).absolute()
-    runtime_library = pathlib.Path(sys.argv[3]).resolve()
-    repository = pathlib.Path(sys.argv[4]).resolve()
+    cxx = arguments.cxx.absolute()
+    runtime_library = arguments.runtime_library.resolve()
+    repository = arguments.repository.resolve()
     manifest_path = repository / "tests" / "stdlib_surface_manifest.json"
     manifest = load_manifest(manifest_path)
     validate_manifest(manifest, repository)
-    if len(sys.argv) == 6:
+    if arguments.validate_only:
         print(
             f"stdlib surface manifest valid: {len(manifest['entries'])} entries, "
             f"{len(manifest['cases'])} cases"
@@ -388,7 +393,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-stdlib-surface-") as temporary:
         scratch = pathlib.Path(temporary)
-        for case in manifest["cases"]:
+        def execute(case):
             run_case(
                 case,
                 compiler,
@@ -397,6 +402,8 @@ def main() -> int:
                 repository,
                 scratch,
             )
+        run_cases([(case["id"], case) for case in manifest["cases"]],
+                  execute, arguments.jobs)
     executable = sum(
         entry["status"] == "executable" for entry in manifest["entries"]
     )

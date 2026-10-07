@@ -1,6 +1,0 @@
-{
-  "title": "Remove the final value",
-  "description": "Drops one element and exposes the preceding element as the new back.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

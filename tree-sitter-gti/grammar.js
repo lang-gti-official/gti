@@ -35,11 +35,13 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "enum",
   "expected",
   "extern",
+  "export",
   "false",
   "float",
   "for",
   "if",
   "interface",
+  "import",
   "int",
   "int8_t",
   "int16_t",
@@ -50,6 +52,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "int32",
   "int64",
   "mut",
+  "module",
   "namespace",
   "nullptr",
   "nullptr_t",
@@ -94,6 +97,7 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$._base_type, $.numeric_conversion],
     [$.generic_function, $.user_type],
     [$.generic_function, $.primary_expression],
     [$.generic_function, $.user_type, $.primary_expression],
@@ -112,10 +116,26 @@ module.exports = grammar({
     source_file: ($) =>
       seq(
         optional($._byte_order_mark),
-        repeat(choice($.include_directive, $.declaration)),
+        optional($.module_declaration),
+        repeat(choice($.include_directive, $.import_declaration, $.declaration)),
       ),
 
     _byte_order_mark: () => "\uFEFF",
+
+    module_declaration: ($) =>
+      seq("export", "module", field("name", $.identifier), ";"),
+
+    import_declaration: ($) =>
+      seq(
+        optional("export"),
+        "import",
+        field("path", choice($.module_name, $.string_literal)),
+        ";",
+      ),
+
+    module_name: ($) => seq($.identifier, optional(seq(".", $.identifier))),
+
+    export_declaration: ($) => seq("export", $.declaration),
 
     include_directive: ($) =>
       prec.right(
@@ -139,6 +159,7 @@ module.exports = grammar({
 
     declaration: ($) =>
       choice(
+        $.export_declaration,
         $.conditional_declaration,
         $.configuration_directive,
         $.compile_error_directive,
@@ -236,7 +257,12 @@ module.exports = grammar({
 
     extern_c_function_prototype: ($) =>
       seq(
-        optional(field("attribute", $.native_c_array_attribute)),
+        repeat(
+          field(
+            "attribute",
+            choice($.native_c_array_attribute, $.native_link_name_attribute),
+          ),
+        ),
         field("return_type", $.type),
         field("name", $.identifier),
         field("parameters", $.parameter_clause),
@@ -283,6 +309,7 @@ module.exports = grammar({
       seq(
         "namespace",
         field("name", $.identifier),
+        repeat(seq("::", field("name", $.identifier))),
         field("body", $.namespace_body),
       ),
 
@@ -378,6 +405,7 @@ module.exports = grammar({
     constraint_expression: ($) =>
       choice(
         $.concept_application,
+        $.member_requirement_expression,
         seq("(", $.constraint_expression, ")"),
         prec.left(
           2,
@@ -412,7 +440,10 @@ module.exports = grammar({
         choice(
           seq(
             field("name", $.identifier),
-            optional(field("type_parameters", $.generic_parameter_clause)),
+            optional(choice(
+              field("type_parameters", $.generic_parameter_clause),
+              field("type_patterns", $.generic_signature_pattern_clause),
+            )),
           ),
           seq(
             field("name", $.scoped_identifier),
@@ -440,6 +471,16 @@ module.exports = grammar({
         field("attribute", alias("c_array", $.identifier)),
         "(",
         field("count", $.identifier),
+        ")",
+        "]]",
+      ),
+
+    native_link_name_attribute: ($) =>
+      seq(
+        "[[",
+        field("attribute", alias("link_name", $.identifier)),
+        "(",
+        field("symbol", $.string_literal),
         ")",
         "]]",
       ),
@@ -549,6 +590,8 @@ module.exports = grammar({
 
     method_declaration: ($) =>
       seq(
+        repeat(field("attribute", $.function_contract_attribute)),
+        optional(field("unsafe", "unsafe")),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
         optional(field("constant", "constexpr")),
@@ -562,7 +605,7 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
-        optional(field("mutable", "mut")),
+        optional(choice(field("mutable", "mut"), field("consuming", "&&"))),
         optional(field("constraints", $.requires_clause)),
         optional(field("override", "override")),
         choice(field("body", $.block), $.pure_specifier, ";"),
@@ -571,6 +614,7 @@ module.exports = grammar({
     operator_declaration: ($) =>
       choice(
         seq(
+          repeat(field("attribute", $.function_contract_attribute)),
           optional(field("virtual", "virtual")),
           optional(field("constant", "constexpr")),
           optional(field("return_mutable", "mut")),
@@ -643,7 +687,7 @@ module.exports = grammar({
             ),
           ),
           field("parameters", $.parameter_clause),
-          optional(field("mutable", "mut")),
+          optional(choice(field("mutable", "mut"), field("consuming", "&&"))),
           optional(field("constraints", $.requires_clause)),
           optional(field("override", "override")),
           choice(field("body", $.block), $.pure_specifier, ";"),
@@ -654,14 +698,35 @@ module.exports = grammar({
 
     function_declaration: ($) =>
       seq(
-        optional(field("attribute", $.native_c_array_attribute)),
+        repeat(
+          field(
+            "attribute",
+            choice(
+              $.native_c_array_attribute,
+              $.native_link_name_attribute,
+              $.function_contract_attribute,
+            ),
+          ),
+        ),
         optional(field("binding", $.runtime_binding)),
+        optional(field("unsafe", "unsafe")),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
         optional(field("constant", "constexpr")),
         optional(field("return_mutable", "mut")),
         $._function_declaration_body,
       ),
+
+    function_contract_attribute: ($) =>
+      seq(
+        "[[",
+        choice("noreturn", "track_caller", "discardable", $.borrow_origin_attribute),
+        repeat(seq(",", choice("noreturn", "track_caller", "discardable", $.borrow_origin_attribute))),
+        "]]",
+      ),
+
+    borrow_origin_attribute: ($) =>
+      seq("borrowed_from", "(", field("origin", choice($.identifier, "this")), ")"),
 
     _function_declaration_body: ($) =>
       seq(
@@ -676,6 +741,14 @@ module.exports = grammar({
 
     generic_parameter_clause: ($) =>
       seq("<", commaSep1($.generic_parameter), ">"),
+
+    generic_signature_pattern_clause: ($) =>
+      seq(
+        "<",
+        field("pattern", $.function_signature),
+        repeat(seq(",", field("pattern", $.type))),
+        ">",
+      ),
 
     generic_parameter: ($) =>
       choice(
@@ -745,7 +818,20 @@ module.exports = grammar({
         ";",
       ),
 
-    type: ($) =>
+    type: ($) => prec.right(choice($._non_function_type, $.function_signature)),
+
+    function_signature: ($) =>
+      prec.right(
+        seq(
+          field("return_type", $._non_function_type),
+          "(",
+          optional(commaSep1(seq(optional("mut"), field("parameter", $.type), optional("...")))),
+          ")",
+          optional(field("receiver_qualifier", choice("mut", "&&"))),
+        ),
+      ),
+
+    _non_function_type: ($) =>
       prec.right(
         choice(
           seq(
@@ -764,7 +850,8 @@ module.exports = grammar({
         ),
       ),
 
-    pointer_declarator: () => prec.right(seq("*", optional("*"))),
+    pointer_declarator: () =>
+      prec.right(seq("*", repeat(seq(optional("const"), "*")))),
 
     reference_declarator: () => choice("&", "&&"),
 
@@ -825,12 +912,14 @@ module.exports = grammar({
     type_argument_clause: ($) =>
       seq(
         "<",
-        commaSep1(
-          choice(
-            $.type,
-            $.integer_literal,
-            $.array_extent_parenthesized_expression,
-            $.array_extent_binary_expression,
+        optional(
+          commaSep1(
+            choice(
+              seq($.type, optional("...")),
+              $.integer_literal,
+              $.array_extent_parenthesized_expression,
+              $.array_extent_binary_expression,
+            ),
           ),
         ),
         ">",
@@ -1004,14 +1093,20 @@ module.exports = grammar({
     direct_initializer: ($) =>
       seq(
         "{",
-        optional(seq(commaSep1($._expression_not_comma), optional(","))),
+        optional(seq(choice(commaSep1($._expression_not_comma),
+                            commaSep1($.designated_initializer)), optional(","))),
         "}",
       ),
+
+    designated_initializer: ($) =>
+      seq(".", field("field", $.identifier), "=",
+          field("value", $._initializer_element)),
 
     array_initializer: ($) =>
       seq(
         "{",
-        optional(seq(commaSep1($._initializer_element), optional(","))),
+        optional(seq(choice(commaSep1($._initializer_element),
+                            commaSep1($.designated_initializer)), optional(","))),
         "}",
       ),
 
@@ -1134,13 +1229,18 @@ module.exports = grammar({
           choice(
             $.pack_expansion,
             seq(
-              commaSep1(choice($._expression_not_comma, $.array_initializer)),
+              commaSep1(choice($._expression_not_comma, $.array_initializer,
+                               $.payload_reference_pattern)),
               optional(seq(",", $.pack_expansion)),
             ),
           ),
         ),
         ")",
       ),
+
+    payload_reference_pattern: ($) =>
+      seq(optional(field("mutable", "mut")), "auto", "&",
+          field("name", $.identifier)),
 
     pack_expansion: ($) =>
       seq(field("name", $.identifier), field("operator", "...")),
@@ -1231,6 +1331,7 @@ module.exports = grammar({
         $.numeric_conversion,
         $.lambda_expression,
         $.layout_query_expression,
+        $.member_requirement_expression,
         $.this_expression,
         $.nullptr_literal,
         $.pack_fold_expression,
@@ -1248,6 +1349,16 @@ module.exports = grammar({
         "(",
         field("value", $._expression_not_comma),
         ")",
+      ),
+
+    member_requirement_expression: ($) =>
+      seq(
+        "requires", "(", optional("mut"), field("receiver_type", $.type),
+        field("binding", $.identifier),
+        repeat(seq(",", optional("mut"), field("parameter_type", $.type), field("parameter", $.identifier))),
+        ")", "{", optional(field("unsafe", "unsafe")), "{",
+        field("receiver", $.identifier), ".", field("member", $.identifier),
+        "(", optional(commaSep1(field("argument", $.identifier))), ")", "}", "->", field("result_type", $.type), ";", "}",
       ),
 
     layout_query_expression: ($) =>

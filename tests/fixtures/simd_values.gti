@@ -1,0 +1,206 @@
+#include <std/simd>
+#include <std/array>
+#include <std/optional>
+#include <std/vector>
+
+struct LanePacket {
+  std::simd<float, 7> values{2.0};
+};
+
+int floating_edges<std::floating_point T>(int normal_exponent, int digits) {
+  mut T normal = T(1);
+  for (mut int exponent = 0; exponent < normal_exponent; exponent++) {
+    normal /= T(2);
+  }
+  // Seven lanes exercise packed operations and scalar tails in both widths.
+  std::simd<T, 7> min_normal{normal};
+  std::simd<T, 7> two{T(2)};
+  std::simd<T, 7> one{T(1)};
+  std::simd<T, 7> subnormal = min_normal / two;
+  std::simd<T, 7> restored = subnormal * two;
+  std::simd_mask<7> restored_equal = restored.equal(min_normal);
+  if (!restored_equal.all_of()) { return 1; }
+  mut T smallest = normal;
+  for (mut int digit = 1; digit < digits; digit++) { smallest /= T(2); }
+  std::simd<T, 7> min_subnormal{smallest};
+  std::simd<T, 7> underflow = min_subnormal / two;
+  std::simd<T, 7> zero{};
+  std::simd_mask<7> zero_equal = underflow.equal(zero);
+  if (!zero_equal.all_of()) { return 2; }
+  mut T half_ulp = T(1);
+  for (mut int digit = 0; digit < digits; digit++) { half_ulp /= T(2); }
+  std::simd<T, 7> half{half_ulp};
+  std::simd<T, 7> rounded = one + half;
+  std::simd_mask<7> ties_even = rounded.equal(one);
+  if (!ties_even.all_of()) { return 3; }
+  std::simd<T, 7> negative_zero{-T(0)};
+  std::simd<T, 7> signed_zero = negative_zero * two;
+  std::simd<T, 7> reciprocal = one / signed_zero;
+  for (mut std::size_t lane = 0; lane < 7; lane++) {
+    if (reciprocal[lane] >= T(0)) { return 4; }
+  }
+  // Separate multiplication rounds to one. Contraction into a fused
+  // multiply-subtract would instead expose a nonzero negative residual.
+  T epsilon = half_ulp * T(2);
+  std::simd<T, 7> above{T(1) + epsilon};
+  std::simd<T, 7> below{T(1) - epsilon};
+  std::simd<T, 7> unfused = above * below - one;
+  std::simd_mask<7> unfused_equal = unfused.equal(zero);
+  if (!unfused_equal.all_of()) { return 5; }
+  std::simd<T, 7> nan = zero / zero;
+  std::simd_mask<7> nan_le = nan.less_equal(one);
+  std::simd_mask<7> nan_gt = nan.greater(one);
+  std::simd_mask<7> nan_ne = nan.not_equal(nan);
+  if (!nan_le.none_of() || !nan_gt.none_of() || !nan_ne.all_of()) { return 6; }
+  return 0;
+}
+
+int lanes<std::floating_point T, uint64_t N>() {
+  std::simd<T, N> two{T(2)};
+  std::simd<T, N> three{T(3)};
+  std::simd<T, N> five = two + three;
+  std::simd<T, N> one = three - two;
+  std::simd<T, N> six = two * three;
+  std::simd<T, N> quotient = six / three;
+  std::simd<T, N> copied = five;
+  mut std::simd<T, N> updated = two;
+  updated += three;
+  updated -= one;
+  updated *= three;
+  updated /= two;
+  std::simd_mask<N> compound_equal = updated.equal(six);
+  if (!compound_equal.all_of()) { return 8; }
+  updated = two + three;
+  updated = updated + updated;
+  if (updated.reduce() != T(N * 10)) { return 9; }
+  std::simd_mask<N> equal = quotient.equal(two);
+  std::simd_mask<N> less = two.less(three);
+  std::simd_mask<N> greater = three.greater(two);
+  std::simd_mask<N> le = two.less_equal(two);
+  std::simd_mask<N> ge = three.greater_equal(two);
+  std::simd_mask<N> unequal = two.not_equal(three);
+  if (two.size() != N || equal.size() != N ||
+      !equal.all_of() || !less.all_of() || !greater.all_of() ||
+      !le.all_of() || !ge.all_of() || !unequal.all_of()) { return 1; }
+  std::simd_mask<N> none = less.inverted();
+  std::simd_mask<N> and_mask = less & none;
+  std::simd_mask<N> or_mask = less | none;
+  std::simd_mask<N> xor_mask = less ^ greater;
+  if (!none.none_of() || and_mask.any_of() || !or_mask.all_of() ||
+      !xor_mask.none_of() || less.count() != N) { return 2; }
+  mut std::simd_mask<N> alternating{};
+  for (mut std::size_t i = 0; i < N; i++) {
+    alternating.set(i, i % 2 == 0);
+  }
+  std::simd<T, N> selected = five.select(alternating, one);
+  mut std::array<T, N> destination{};
+  five.copy_to<N>(destination, std::size_t(0));
+  mut std::simd<T, N> loaded{};
+  loaded.copy_from<N>(destination, std::size_t(0));
+  std::simd_mask<N> loaded_equal = loaded.equal(five);
+  if (!loaded_equal.all_of()) { return 3; }
+  for (mut std::size_t i = 0; i < N; i++) {
+    if (five[i] != T(5) || one[i] != T(1) || six[i] != T(6) ||
+        quotient[i] != T(2) || copied[i] != T(5)) { return 4; }
+    if (alternating[i]) {
+      if (selected[i] != T(5)) { return 5; }
+    } else if (selected[i] != T(1)) { return 6; }
+  }
+  if (five.reduce() != T(N * 5)) { return 7; }
+  return 0;
+}
+
+int main() {
+  if (floating_edges<float>(126, 24) != 0 ||
+      floating_edges<double>(1022, 53) != 0) { return 15; }
+  LanePacket packet{};
+  // Repeated read-only input is legal; containers/wrappers need no SIMD rule.
+  std::simd<float, 7> added = packet.values + packet.values;
+  mut std::vector<std::simd<float, 7>> packets{};
+  packets.push_back(added);
+  auto copies = packets.clone();
+  std::optional<std::simd<float, 7>> maybe{added};
+  if (copies[std::size_t(0)].reduce() != 28.0 || maybe.value().reduce() != 28.0) {
+    return 16;
+  }
+  // Nonempty growth and shrink combine structural storage relocation with
+  // the ordinary fixed-array representation of a four-lane SIMD value.
+  std::simd<float, 4> first = std::simd<float, 4>({1.0, 2.0, 3.0, 4.0});
+  std::simd<float, 4> second = std::simd<float, 4>({5.0, 6.0, 7.0, 8.0});
+  mut std::vector<std::simd<float, 4>> relocated{};
+  relocated.push_back(first);
+  relocated.push_back(second);
+  relocated.reserve(std::size_t(64));
+  if (relocated.size() != 2 || relocated.capacity() < 64) { return 17; }
+  for (mut std::size_t lane = 0; lane < 4; lane++) {
+    if (relocated[std::size_t(0)][lane] != first[lane] ||
+        relocated[std::size_t(1)][lane] != second[lane]) { return 18; }
+  }
+  relocated.push_back(first + second);
+  relocated.shrink_to_fit();
+  if (relocated.size() != 3 || relocated.capacity() != 3) { return 19; }
+  for (mut std::size_t lane = 0; lane < 4; lane++) {
+    if (relocated[std::size_t(0)][lane] != first[lane] ||
+        relocated[std::size_t(1)][lane] != second[lane] ||
+        relocated[std::size_t(2)][lane] != first[lane] + second[lane]) {
+      return 20;
+    }
+  }
+  if (relocated[std::size_t(0)].reduce() != 10.0 ||
+      relocated[std::size_t(1)].reduce() != 26.0 ||
+      relocated[std::size_t(2)].reduce() != 36.0) { return 21; }
+  if (lanes<float, 1>() != 0 || lanes<float, 4>() != 0 ||
+      lanes<float, 7>() != 0 || lanes<float, 64>() != 0 ||
+      lanes<double, 2>() != 0 || lanes<double, 5>() != 0) { return 10; }
+  std::simd<float, 4> zero{};
+  std::simd<float, 4> one{1.0};
+  std::simd<float, 4> negative_zero{-0.0};
+  std::simd<float, 4> infinity = one / zero;
+  std::simd<float, 4> negative_infinity = one / negative_zero;
+  std::simd<float, 4> nan = zero / zero;
+  std::simd_mask<4> nan_equal = nan.equal(nan);
+  std::simd_mask<4> nan_less = nan.less(one);
+  std::simd_mask<4> nan_ge = nan.greater_equal(one);
+  std::simd_mask<4> nan_ne = nan.not_equal(nan);
+  if (!nan_equal.none_of() || !nan_less.none_of() || !nan_ge.none_of() ||
+      !nan_ne.all_of() || infinity[std::size_t(0)] <= 0.0 ||
+      negative_infinity[std::size_t(0)] >= 0.0) { return 11; }
+  std::simd<float, 4> ordered = std::simd<float, 4>({100000000000000000000.0, 1.0, -100000000000000000000.0, 1.0});
+  if (ordered.reduce() != 1.0) { return 12; }
+  mut std::array<float, 6> offset_data{};
+  ordered.copy_to<6>(offset_data, std::size_t(1));
+  mut std::simd<float, 4> offset_copy{};
+  offset_copy.copy_from<6>(offset_data, std::size_t(1));
+  std::simd_mask<4> offset_equal = offset_copy.equal(ordered);
+  if (!offset_equal.all_of() || offset_data[std::size_t(0)] != 0.0 ||
+      offset_data[std::size_t(5)] != 0.0) { return 13; }
+  // Distinct lanes, a scalar tail, negatives, and non-integral results.
+  // Compare the vector operations to scalar operations before reductions.
+  for (mut int sample = 1; sample < 24; sample++) {
+    mut std::simd<double, 7> a{};
+    mut std::simd<double, 7> b{};
+    for (mut std::size_t lane = 0; lane < 7; lane++) {
+      double left = double(sample * 7 + int(lane) * 3 - 60) / double(13);
+      double right = double(sample + int(lane) + 1) / double(17);
+      a.set(lane, left);
+      b.set(lane, right);
+    }
+    std::simd<double, 7> sum = a + b;
+    std::simd<double, 7> difference = a - b;
+    std::simd<double, 7> product = a * b;
+    std::simd<double, 7> ratio = a / b;
+    std::simd_mask<7> smaller = a.less(b);
+    std::simd_mask<7> same = a.equal(b);
+    for (mut std::size_t lane = 0; lane < 7; lane++) {
+      double left = a[lane];
+      double right = b[lane];
+      if (sum[lane] != left + right || difference[lane] != left - right ||
+          product[lane] != left * right || ratio[lane] != left / right ||
+          smaller[lane] != (left < right) || same[lane] != (left == right)) {
+        return 14;
+      }
+    }
+  }
+  std::println("simd ok");
+  return 0;
+}

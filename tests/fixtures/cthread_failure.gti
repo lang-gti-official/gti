@@ -1,0 +1,22 @@
+#include <std/cthread>
+
+extern "C" {
+  int32_t cthread_zero();
+  void cthread_cleanup();
+}
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { cthread_cleanup(); }
+};
+int32_t worker(void* context) {
+  Guard guard{};
+  return 100 / cthread_zero();
+}
+int main() {
+  mut std::thrd_t handle = 0;
+  unsafe {
+    if (std::thrd_create(handle, worker, nullptr) != std::thrd_success) { return 1; }
+    return std::thrd_join(handle, nullptr);
+  }
+}

@@ -1,0 +1,29 @@
+#include <std/utility>
+
+struct Resource { int value = 7; };
+class View {
+  Resource& owner;
+public:
+  View(Resource& owner) : owner(owner) {}
+  Resource& get() { return this.owner; }
+};
+class Wrapper {
+  View view;
+  mut int count;
+public:
+  Wrapper(Resource& owner) : view(View(owner)), count(0) {}
+  View binding() { return this.view; }
+  void touch() mut { this.count++; }
+  int inspect() mut {
+    auto copy = this.binding();
+    this.touch();
+    return copy.get().value;
+  }
+};
+int main() {
+  Resource owner{};
+  mut Wrapper wrapper{owner};
+  auto copied = wrapper.binding();
+  wrapper.touch();
+  return copied.get().value + wrapper.inspect() - 14;
+}

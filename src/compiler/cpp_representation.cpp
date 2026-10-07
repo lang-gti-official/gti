@@ -1,5 +1,7 @@
 #include "cpp_representation.h"
 
+#include <stdexcept>
+
 #include "gti/lowered_program.h"
 
 #include <llvm/ADT/ArrayRef.h>
@@ -164,6 +166,106 @@ semanticTypeContainsLexicalClosure(const SemanticType &type) {
                      semanticTypeContainsLexicalClosure);
 }
 
+// A dependent native template signature/field must instantiate the same carrier
+// that concrete MIR calls address. Propagate template representation through
+// those declaration dependencies; otherwise a dependent `Carrier<T>` silently
+// creates a second native class beside the hashed concrete `Carrier<int>`.
+[[nodiscard]] bool
+concreteClassHasTemplateDependency(const LoweredProgram &program,
+                                   ClassId requested) {
+  std::vector<ClassId> templates;
+  const auto add = [&](ClassId id) {
+    const LoweredClassDeclaration *declaration =
+        program.findClassDeclaration(id);
+    if (declaration == nullptr) {
+      return;
+    }
+    const auto *primary = concreteClassPrimary(program, *declaration);
+    if (primary != nullptr && !primary->genericParameters.empty() &&
+        std::find(templates.begin(), templates.end(), primary->id) ==
+            templates.end()) {
+      templates.push_back(primary->id);
+    }
+  };
+  for (const LoweredDeclaration &row : program.declarations()) {
+    const auto *declaration =
+        std::get_if<LoweredClassDeclaration>(&row.payload);
+    if (declaration != nullptr &&
+        declaration->exactSpecializationPrimary == 0 &&
+        !declaration->genericParameters.empty() &&
+        !concreteClassSupportsDirectRepresentation(program, *declaration,
+                                                   row)) {
+      add(declaration->id);
+    }
+  }
+  const auto dependent = [&](const auto &self,
+                             const SemanticType &type) -> bool {
+    return type.kind == SemanticType::TypeParameter ||
+           (type.kind == SemanticType::TypePack && !type.concretePack) ||
+           type.arrayLengthParameterId != 0 ||
+           std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                       [](const CompileTimeValue &value) {
+                         return value.kind == CompileTimeValue::Parameter;
+                       }) ||
+           std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return self(self, argument);
+                       });
+  };
+  const auto visit = [&](const auto &self, const SemanticType &type) -> void {
+    if (type.kind == SemanticType::Class && dependent(dependent, type)) {
+      add(type.classId);
+    }
+    for (const SemanticType &argument : type.arguments) {
+      self(self, argument);
+    }
+  };
+  for (std::size_t index = 0; index < templates.size(); ++index) {
+    const ClassId owner = templates[index];
+    if (owner == requested) {
+      return true;
+    }
+    const auto *declaration = program.findClassDeclaration(owner);
+    const auto *ownerRow = classDeclarationRow(program, owner);
+    for (const auto &base : declaration->bases) {
+      visit(visit, base.type);
+    }
+    for (const LoweredDeclaration &row : program.declarations()) {
+      if (const auto *storage =
+              std::get_if<LoweredStorageDeclaration>(&row.payload);
+          storage != nullptr && storage->ownerClass == owner) {
+        visit(visit, storage->type);
+      } else if (const auto *function =
+                     std::get_if<LoweredFunctionDeclaration>(&row.payload);
+                 function != nullptr && function->ownerClass == owner) {
+        visit(visit, function->returnType);
+        for (const auto &parameter : function->parameters) {
+          visit(visit, parameter.type);
+        }
+      } else if (const auto *constructor =
+                     std::get_if<LoweredConstructorDeclaration>(&row.payload);
+                 constructor != nullptr && constructor->owner == owner) {
+        for (const auto &parameter : constructor->parameters) {
+          visit(visit, parameter.type);
+        }
+      } else if (ownerRow != nullptr && row.parent == ownerRow->id) {
+        if (const auto *alias =
+                std::get_if<LoweredTypeAliasDeclaration>(&row.payload)) {
+          visit(visit, alias->type);
+        } else if (const auto *enumeration =
+                       std::get_if<LoweredEnumDeclaration>(&row.payload)) {
+          for (const auto &enumerator : enumeration->enumerators) {
+            for (const auto &payload : enumerator.payloadTypes) {
+              visit(visit, payload);
+            }
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
 [[nodiscard]] bool
 concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
                                        const SemanticType &type) {
@@ -194,6 +296,14 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
 [[nodiscard]] bool appendConcreteTypeIdentity(std::vector<std::uint8_t> &output,
                                               const LoweredProgram &program,
                                               const SemanticType &type) {
+  if (type.nativeCScalar != NativeCScalarKind::None) {
+    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+        type) {
+      return false;
+    }
+    appendIdentityText(output, nativeCScalarKindName(type.nativeCScalar));
+    return true;
+  }
   const auto appendArguments = [&]() {
     appendIdentityInteger(output, type.arguments.size());
     for (const SemanticType &argument : type.arguments) {
@@ -343,6 +453,14 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     }
     appendIdentityText(output, "native-function");
     return appendArguments();
+  case SemanticType::FunctionSignature:
+    if (type.arguments.empty()) {
+      return false;
+    }
+    appendIdentityText(output, "function-signature");
+    appendIdentityText(
+        output, std::to_string(static_cast<int>(type.signatureReceiver)));
+    return appendArguments();
   case SemanticType::FunctionItem: {
     const LoweredFunctionDeclaration *declaration =
         program.findFunctionDeclaration(type.functionId);
@@ -389,11 +507,227 @@ identityDigestHex(const std::vector<std::uint8_t> &identity) {
 
 } // namespace
 
+bool cppFunctionHasFailureResultChannel(
+    const LoweredProgram &program, const LoweredFunctionDeclaration &function) {
+  if (function.returnType != SemanticType::Void)
+    return true;
+  if (!function.virtualMethod)
+    return false;
+  // Multiple inherited contracts can share one override. Use the connected
+  // declaration family, not just one selected root, so all native status
+  // signatures keep the same result arity after substitution.
+  std::vector<FunctionId> connected{function.id};
+  const auto append = [&](FunctionId id) {
+    if (id != 0 &&
+        std::find(connected.begin(), connected.end(), id) == connected.end())
+      connected.push_back(id);
+  };
+  for (std::size_t index = 0; index < connected.size(); ++index) {
+    const FunctionId id = connected[index];
+    if (const auto *declaration = program.findFunctionDeclaration(id)) {
+      if (declaration->returnType != SemanticType::Void)
+        return true;
+      for (const FunctionId root : declaration->virtualRoots)
+        append(root);
+    }
+    for (const auto &row : program.declarations()) {
+      const auto *candidate =
+          std::get_if<LoweredFunctionDeclaration>(&row.payload);
+      if (candidate != nullptr &&
+          std::find(candidate->virtualRoots.begin(),
+                    candidate->virtualRoots.end(),
+                    id) != candidate->virtualRoots.end())
+        append(candidate->id);
+    }
+  }
+  return false;
+}
+
+bool cppVirtualFamilyHasConditionalResultChannel(
+    const LoweredProgram &program, const LoweredFunctionDeclaration &function) {
+  if (!function.virtualMethod || function.linkage != LanguageLinkage::Gti)
+    return false;
+  std::vector<FunctionId> connected{function.id};
+  const auto append = [&](FunctionId id) {
+    if (id != 0 &&
+        std::find(connected.begin(), connected.end(), id) == connected.end())
+      connected.push_back(id);
+  };
+  for (std::size_t index = 0; index < connected.size(); ++index) {
+    const FunctionId id = connected[index];
+    if (const auto *declaration = program.findFunctionDeclaration(id)) {
+      const auto *owner = program.findClassDeclaration(declaration->ownerClass);
+      const SemanticType *result = &declaration->returnType;
+      while (result->kind == SemanticType::Array &&
+             result->arguments.size() == 1)
+        result = &result->arguments.front();
+      if (owner && result->kind == SemanticType::TypeParameter &&
+          std::any_of(owner->genericParameters.begin(),
+                      owner->genericParameters.end(),
+                      [&](const auto &parameter) {
+                        return parameter.id == result->genericParameterId;
+                      }))
+        return true;
+      for (FunctionId root : declaration->virtualRoots)
+        append(root);
+    }
+    for (const auto &row : program.declarations()) {
+      const auto *candidate =
+          std::get_if<LoweredFunctionDeclaration>(&row.payload);
+      if (candidate && std::find(candidate->virtualRoots.begin(),
+                                 candidate->virtualRoots.end(),
+                                 id) != candidate->virtualRoots.end())
+        append(candidate->id);
+    }
+  }
+  return false;
+}
+
+std::string cppClassTemplateNameSpelling(const LoweredProgram &program,
+                                         ClassId id) {
+  const LoweredClassDeclaration *info = program.findClassDeclaration(id);
+  return info == nullptr ? std::string{}
+                         : cppLoweredQualifiedName(info->qualifiedName,
+                                                   info->cOpaqueHandle);
+}
+
+std::string cppNativeTypeSpelling(const LoweredProgram &program,
+                                  CppStandard standard,
+                                  const SemanticType &type) {
+  if (type.kind == SemanticType::StringView)
+    return "::gti_c_string_view";
+  if (type.kind == SemanticType::RawPointer) {
+    std::string result =
+        type.arguments.empty()
+            ? "void"
+            : cppNativeTypeSpelling(program, standard, type.arguments.front());
+    if (type.pointerAccess == AccessMode::ReadOnly) {
+      const bool pointerObject =
+          !type.arguments.empty() &&
+          (type.arguments.front().kind == SemanticType::RawPointer ||
+           type.arguments.front().kind == SemanticType::CString ||
+           type.arguments.front().kind == SemanticType::NativeFunction);
+      result = pointerObject ? result + " const" : "const " + result;
+    }
+    return result + '*';
+  }
+  if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+      type.arrayLengthParameterId == 0)
+    return "std::array<" +
+           cppNativeTypeSpelling(program, standard, type.arguments.front()) +
+           ", " + std::to_string(type.arrayLength) + ">";
+  return cppSemanticTypeSpelling(program, standard, type);
+}
+
+bool cppUsesDependentByteField(const SemanticType &type) {
+  return type.kind == SemanticType::TypeParameter ||
+         (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+          cppUsesDependentByteField(type.arguments.front()));
+}
+
+bool cppRequiresIndirectValueTransport(const MirProgram &program,
+                                       const SemanticType &type) {
+  if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+    return cppRequiresIndirectValueTransport(program, type.arguments.front());
+  if (type.kind != SemanticType::Class)
+    return false;
+  const auto instance = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [&](const auto &item) { return item.type == type; });
+  return instance != program.classInstances().end() && instance->cAbiRecord &&
+         cppRequiresBytePreservingTransport(program, type);
+}
+
+bool cppRequiresBytePreservingTransport(const MirProgram &program,
+                                        const SemanticType &type) {
+  std::vector<SemanticType> visiting;
+  const auto inspect = [&](const auto &self, const SemanticType &current,
+                           bool nativeField) -> bool {
+    if (current.kind == SemanticType::RawPointer ||
+        current.kind == SemanticType::CString)
+      return nativeField;
+    if (current.kind == SemanticType::Reference ||
+        current.kind == SemanticType::UniqueOwner ||
+        current.kind == SemanticType::Storage ||
+        current.kind == SemanticType::PrefixStorage ||
+        current.kind == SemanticType::NativeFunction)
+      return false;
+    if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+      return false; // By-value recursion is rejected before the backend.
+    visiting.push_back(current);
+    const bool result = [&] {
+      if (current.kind == SemanticType::Array ||
+          current.kind == SemanticType::Expected ||
+          current.kind == SemanticType::Unexpected)
+        return std::any_of(
+            current.arguments.begin(), current.arguments.end(),
+            [&](const auto &item) { return self(self, item, nativeField); });
+      if (current.kind == SemanticType::Lambda) {
+        const auto *lambda = program.findLambda(current.lambdaId);
+        if (!lambda)
+          return false;
+        for (std::size_t index = 0; index < lambda->captureTypes.size();
+             ++index)
+          if (self(self, lambda->captureTypes[index], false))
+            return true;
+        return false;
+      }
+      if (current.kind == SemanticType::Enum) {
+        const auto *payload = program.findPayloadEnum(current.enumId);
+        if (payload)
+          for (const auto &variant : payload->variants)
+            for (const auto &field : variant.payloadTypes)
+              if (self(self, field, false))
+                return true;
+        return false;
+      }
+      if (current.kind != SemanticType::Class)
+        return false;
+      const auto instance = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &item) { return item.type == current; });
+      if (instance == program.classInstances().end())
+        return false;
+      if (instance->compilerCapability ==
+          CompilerCapabilityTypeKind::OptionalStorage)
+        return std::any_of(
+            current.arguments.begin(), current.arguments.end(),
+            [&](const auto &item) { return self(self, item, false); });
+      for (const auto &base : instance->bases)
+        if (self(self, base.type, false))
+          return true;
+      for (const auto &field : instance->declaredFields)
+        if (self(self, field.type, instance->cAbiRecord))
+          return true;
+      return false;
+    }();
+    visiting.pop_back();
+    return result;
+  };
+  return inspect(inspect, type, false);
+}
+
 std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                                     CppStandard standard,
                                     const SemanticType &type) {
+  if (type.nativeCScalar != NativeCScalarKind::None) {
+    if (SemanticType::nativeCScalarType(type.nativeCScalar, program.target()) !=
+        type) {
+      throw std::logic_error(
+          "invalid native C scalar identity reached C++ representation");
+    }
+    return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+  }
   const auto spell = [&](const SemanticType &inner) {
     return cppSemanticTypeSpelling(program, standard, inner);
+  };
+  const auto dependent = [&](const auto &self,
+                             const SemanticType &inner) -> bool {
+    return inner.kind == SemanticType::TypeParameter ||
+           inner.kind == SemanticType::TypePack ||
+           std::any_of(
+               inner.arguments.begin(), inner.arguments.end(),
+               [&](const auto &argument) { return self(self, argument); });
   };
   switch (type.kind) {
   case SemanticType::Void:
@@ -421,7 +755,9 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   case SemanticType::Bool:
     return "bool";
   case SemanticType::Char:
-    return "std::uint8_t";
+    // Preserve GTI's distinct code-unit identity in native generic arguments.
+    // uint8_t would alias UInt8 and collide in member specializations.
+    return "char8_t";
   case SemanticType::StringView:
     return "std::string_view";
   case SemanticType::CString:
@@ -429,30 +765,59 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   case SemanticType::NullPtr:
     return "std::nullptr_t";
   case SemanticType::RawPointer: {
-    std::string result;
+    std::string result = "::gti_internal::backend::raw_address<";
+    const bool qualifiedPointerObject =
+        type.pointerAccess == AccessMode::ReadOnly && !type.arguments.empty() &&
+        (type.arguments.front().kind == SemanticType::RawPointer ||
+         type.arguments.front().kind == SemanticType::CString);
     if (type.pointerAccess == AccessMode::ReadOnly) {
-      result += "const ";
+      result += qualifiedPointerObject ? "std::add_const_t<" : "const ";
     }
-    result += type.arguments.empty() ? "void" : spell(type.arguments.front());
-    result += '*';
+    // A nested pointer names a native pointer slot, not another address
+    // carrier object. Qualify that pointer object at this exact layer.
+    result +=
+        type.arguments.empty() ? "void"
+        : type.arguments.front().kind == SemanticType::RawPointer
+            ? cppNativeTypeSpelling(program, standard, type.arguments.front())
+            : spell(type.arguments.front());
+    if (qualifiedPointerObject)
+      result += '>';
+    result += '>';
     return result;
   }
+  case SemanticType::FunctionSignature:
   case SemanticType::NativeFunction: {
-    if (!type.hasNativeFunctionShape()) {
+    if (type.arguments.empty()) {
       return "void";
     }
-    std::string result = "std::add_pointer_t<";
-    result += spell(*type.nativeFunctionReturnType());
+    const bool native = type.kind == SemanticType::NativeFunction;
+    std::string result = native ? "std::add_pointer_t<" : "";
+    result += native ? cppNativeTypeSpelling(program, standard,
+                                             type.arguments.front())
+                     : spell(type.arguments.front());
     result += '(';
     bool separator = false;
-    for (const SemanticType &parameter : type.nativeFunctionParameterTypes()) {
+    for (const SemanticType &parameter :
+         std::span<const SemanticType>(type.arguments).subspan(1)) {
       if (separator) {
         result += ", ";
       }
-      result += spell(parameter);
+      result += native ? cppNativeTypeSpelling(program, standard, parameter)
+                       : spell(parameter);
+      if (parameter.kind == SemanticType::TypePack && !parameter.concretePack) {
+        result += "...";
+      }
       separator = true;
     }
-    result += ")>";
+    result += native ? ")>" : ")";
+    if (!native) {
+      // Qualifiers distinguish metadata types only. Invocation access is
+      // selected by GTI semantics and carried by MIR, never native overloads.
+      if (type.signatureReceiver == ReceiverMutability::Mutable)
+        result += " &";
+      else if (type.signatureReceiver == ReceiverMutability::Consuming)
+        result += " &&";
+    }
     return result;
   }
   case SemanticType::FunctionItem:
@@ -461,8 +826,23 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                      std::to_string(type.functionId) + ">"
                : "void";
   case SemanticType::Array: {
-    std::string result = "std::array<";
-    result += type.arguments.empty() ? "void" : spell(type.arguments.front());
+    const bool pointerElements =
+        type.arguments.size() == 1 &&
+        type.arguments.front().kind == SemanticType::RawPointer &&
+        type.arguments.front().arguments.size() == 1;
+    std::string result = pointerElements
+                             ? "::gti_internal::backend::raw_pointer_array<"
+                             : "std::array<";
+    if (pointerElements) {
+      const SemanticType &pointer = type.arguments.front();
+      const std::string pointee =
+          cppNativeTypeSpelling(program, standard, pointer.arguments.front());
+      result += pointer.pointerAccess == AccessMode::ReadOnly
+                    ? "std::add_const_t<" + pointee + ">"
+                    : pointee;
+    } else {
+      result += type.arguments.empty() ? "void" : spell(type.arguments.front());
+    }
     result += ", ";
     if (type.arrayLengthParameterId != 0) {
       const LoweredGenericParameter *parameter =
@@ -490,6 +870,14 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         return "void";
       }
       return "::gti_internal::backend::atomic_value<" +
+             spell(type.arguments.front()) + ">";
+    }
+    if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::SharedOwner) {
+      if (type.arguments.size() != 1) {
+        return "void";
+      }
+      return "::gti_internal::backend::shared_owner<" +
              spell(type.arguments.front()) + ">";
     }
     if (classInfo->compilerCapability ==
@@ -528,7 +916,8 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
         classInfo->exactSpecializationPrimary == 0
             ? type.valueArguments
             : classInfo->exactValueArguments;
-    if (!typeArguments.empty() || !valueArguments.empty()) {
+    if (!typeArguments.empty() || !valueArguments.empty() ||
+        !classInfo->genericParameters.empty()) {
       result += '<';
       bool separator = false;
       for (const SemanticType &argument : typeArguments) {
@@ -536,6 +925,9 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
           result += ", ";
         }
         result += spell(argument);
+        if (argument.kind == SemanticType::TypePack && !argument.concretePack) {
+          result += "...";
+        }
         separator = true;
       }
       for (const CompileTimeValue &argument : valueArguments) {
@@ -608,13 +1000,44 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     return result;
   }
   case SemanticType::Expected: {
-    std::string result = standard == CppStandard::Cpp23 ? "std::expected<"
-                                                        : "::nonstd::expected<";
+    if (type.arguments.size() == 2 &&
+        type.arguments.front().kind == SemanticType::Reference &&
+        type.arguments.front().referenceAccess == AccessMode::ReadOnly &&
+        type.arguments.front().arguments.size() == 1) {
+      return "::gti_internal::backend::borrowed_expected<" +
+             spell(type.arguments.front().arguments.front()) + ", " +
+             spell(type.arguments.back()) + ">";
+    }
+    const bool byteTransport = std::any_of(
+        type.arguments.begin(), type.arguments.end(),
+        [&](const auto &argument) {
+          return cppRequiresIndirectValueTransport(program.mir(), argument);
+        });
+    std::string result =
+        dependent(dependent, type) ? "::gti_internal::backend::expected_result<"
+        : byteTransport            ? "::gti_internal::backend::byte_expected<"
+        : standard == CppStandard::Cpp23 ? "std::expected<"
+                                         : "::nonstd::expected<";
     if (type.arguments.size() == 2) {
       result += spell(type.arguments[0]);
       result += ", ";
       result += spell(type.arguments[1]);
     }
+    result += '>';
+    return result;
+  }
+  case SemanticType::Unexpected: {
+    const bool byteTransport =
+        !type.arguments.empty() && cppRequiresIndirectValueTransport(
+                                       program.mir(), type.arguments.front());
+    std::string result =
+        dependent(dependent, type)
+            ? "::gti_internal::backend::unexpected_result<"
+        : byteTransport ? "::gti_internal::backend::byte_unexpected<"
+        : standard == CppStandard::Cpp23 ? "std::unexpected<"
+                                         : "::nonstd::unexpected_type<";
+    if (type.arguments.size() == 1)
+      result += spell(type.arguments.front());
     result += '>';
     return result;
   }
@@ -641,6 +1064,7 @@ std::optional<std::string> cppConcreteClassName(const LoweredProgram &program,
       primary->genericParameters.empty() ||
       !concreteClassSupportsDirectRepresentation(program, *declaration,
                                                  *primaryRow) ||
+      concreteClassHasTemplateDependency(program, primary->id) ||
       concreteClassIsCallableTemplateCarrier(program, type)) {
     return std::nullopt;
   }
@@ -773,6 +1197,14 @@ bool cppConcreteFunctionInstanceIsNameable(
     return false;
   }
   std::vector<std::uint8_t> identity;
+  if (instance.owner) {
+    const MirClassInstance *owner =
+        program.mir().findClassInstance(*instance.owner);
+    if (owner == nullptr ||
+        !appendConcreteTypeIdentity(identity, program, owner->type)) {
+      return false;
+    }
+  }
   for (const SemanticType &argument : instance.typeArguments) {
     if (!appendConcreteTypeIdentity(identity, program, argument)) {
       return false;
@@ -849,6 +1281,53 @@ cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
     }
   }
   return "__gti_inst_" + identityDigestHex(identity) + "_" + row.name;
+}
+
+std::optional<std::string>
+cppCallableFreeFunctionSpelling(const LoweredProgram &program,
+                                const LoweredDeclaration &row,
+                                const LoweredFunctionDeclaration &function,
+                                const LoweredFunctionInstance &instance,
+                                const MirFunctionInstance &mirInstance) {
+  const auto *rowFunction =
+      std::get_if<LoweredFunctionDeclaration>(&row.payload);
+  const auto *selected = program.findFunctionInstance(instance.id);
+  const auto *selectedMir = program.mir().findFunctionInstance(mirInstance.id);
+  if (rowFunction == nullptr || rowFunction->id != function.id ||
+      function.id == 0 || function.ownerClass != 0 ||
+      function.genericParameters.empty() ||
+      function.definitionKind != MirDefinitionKind::Source ||
+      function.linkage != LanguageLinkage::Gti ||
+      function.intrinsic != IntrinsicKind::None || instance.owner ||
+      mirInstance.owner || instance.id == 0 || instance.id != mirInstance.id ||
+      instance.declaration != function.id ||
+      mirInstance.declaration != function.id ||
+      instance.typeArguments != mirInstance.typeArguments ||
+      instance.valueArguments != mirInstance.valueArguments ||
+      selected == nullptr || selectedMir == nullptr ||
+      (selected != &instance && *selected != instance) ||
+      (selectedMir != &mirInstance && *selectedMir != mirInstance) ||
+      cppConcreteFunctionInstanceIsNameable(program, instance, mirInstance))
+    return std::nullopt;
+  const auto containsClosure = [](const auto &self,
+                                  const SemanticType &type) -> bool {
+    return type.kind == SemanticType::Lambda ||
+           std::any_of(
+               type.arguments.begin(), type.arguments.end(),
+               [&](const auto &argument) { return self(self, argument); });
+  };
+  if (!containsClosure(containsClosure, mirInstance.returnType) &&
+      std::none_of(mirInstance.parameterTypes.begin(),
+                   mirInstance.parameterTypes.end(),
+                   [&](const auto &type) {
+                     return containsClosure(containsClosure, type);
+                   }) &&
+      std::none_of(instance.typeArguments.begin(), instance.typeArguments.end(),
+                   [&](const auto &type) {
+                     return containsClosure(containsClosure, type);
+                   }))
+    return std::nullopt;
+  return "__gti_callable_inst_" + std::to_string(instance.id) + "_" + row.name;
 }
 
 std::optional<std::string>

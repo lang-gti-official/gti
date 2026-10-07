@@ -1,10 +1,12 @@
 #include "gti/driver/project.h"
 
+#include "gti/driver/process.h"
 #include "gti/format_config.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <limits>
@@ -144,6 +146,19 @@ bool validateNativeFragment(const Fragment &fragment, const TargetInfo &target,
                 "C source");
   validatePaths(fragment.inputs.cppSources, fragment.cppSourceDeclarations,
                 false, "C++ source");
+  if (target.os != "macos") {
+    for (std::size_t index = 0; index < fragment.inputs.cppSources.size();
+         ++index) {
+      if (fragment.inputs.cppSources[index].extension() == ".mm") {
+        diagnostics.push_back(projectDiagnostic(
+            "GTI-B1401", spanAt(fragment.cppSourceDeclarations, index),
+            "Objective-C++ '.mm' sources require a target whose os is 'macos'; "
+            "selected os is '" +
+                target.os + "'."));
+        valid = false;
+      }
+    }
+  }
   validatePaths(fragment.inputs.libraryDirectories,
                 fragment.libraryDirectoryDeclarations, true, "directory");
   validatePaths(fragment.inputs.libraryFiles, fragment.libraryFileDeclarations,
@@ -365,7 +380,7 @@ std::optional<std::vector<NativeDependencyGroup>> composeDependencyNativeGroups(
         !scratch.compilerArguments.empty() ||
         !scratch.cCompilerArguments.empty() ||
         !scratch.linkerArguments.empty() || !scratch.trailingArguments.empty();
-    if (!declaresAnything) {
+    if (!declaresAnything && !(*package)->manifest.package().buildScript) {
       continue;
     }
     const std::string identity = (*package)->identity();
@@ -421,6 +436,77 @@ std::optional<std::vector<NativeDependencyGroup>> composeDependencyNativeGroups(
     return std::nullopt;
   }
   return groups;
+}
+
+std::optional<std::vector<BuildScriptPlan>>
+composeBuildScriptPlans(const ProjectWorkspace &workspace,
+                        const ResolvedProjectPackage &selected,
+                        const TargetInfo &target, std::string_view profile,
+                        std::vector<Diagnostic> &diagnostics) {
+  std::vector<const ResolvedProjectPackage *> ordered;
+  std::set<std::string> visited;
+  const std::function<void(const ResolvedProjectPackage &)> visit =
+      [&](const ResolvedProjectPackage &package) {
+        if (!visited.insert(package.identity()).second) {
+          return;
+        }
+        for (const ResolvedProjectDependency &dependency :
+             package.dependencies) {
+          if (const ResolvedProjectPackage *targetPackage =
+                  workspace.findPackage(dependency.targetIdentity)) {
+            visit(*targetPackage);
+          }
+        }
+        ordered.push_back(&package);
+      };
+  visit(selected);
+
+  const std::vector<std::string> &allowed =
+      selected.manifest.build().allowedBuildScripts;
+  std::vector<BuildScriptPlan> plans;
+  bool valid = true;
+  for (const ResolvedProjectPackage *package : ordered) {
+    const std::optional<ProjectBuildScript> &script =
+        package->manifest.package().buildScript;
+    if (!script) {
+      continue;
+    }
+    const bool isSelected = package->identity() == selected.identity();
+    if (!isSelected && std::find(allowed.begin(), allowed.end(),
+                                 package->identity()) == allowed.end()) {
+      Diagnostic diagnostic = projectDiagnostic(
+          "GTI-B2002", script->declaration,
+          "Dependency package '" + package->identity() +
+              "' declares a host build script that the selected package has "
+              "not approved.");
+      diagnostic.hints.push_back(
+          "Add '" + package->identity() +
+          "' to [build].allow-build-scripts after reviewing the pinned "
+          "dependency and its build command.");
+      diagnostics.push_back(std::move(diagnostic));
+      valid = false;
+      continue;
+    }
+
+    std::filesystem::path output =
+        workspace.root() / "build" / "gti" / "build-scripts" /
+        portableProjectNameKey(package->manifest.package().name) /
+        package->manifest.package().version / targetTriple(target) /
+        std::string(profile);
+    plans.push_back({.packageIdentity = package->identity(),
+                     .packageRoot = package->manifest.packageRoot(),
+                     .command = script->command,
+                     .source = script->source,
+                     .inputs = script->inputs,
+                     .declaredInputs = script->declaredInputs,
+                     .outputDirectory = std::move(output),
+                     .declaration = script->declaration,
+                     .selectedPackage = isSelected});
+  }
+  if (!valid) {
+    return std::nullopt;
+  }
+  return plans;
 }
 
 const ProjectProfile *selectProfile(const ProjectManifest &manifest,
@@ -544,18 +630,43 @@ ProjectBuildPlan makeBuildPlan(
     const ProjectWorkspace &workspace, const ProjectManifest &manifest,
     const ProjectTarget &selectedTarget, const ProjectProfile &selectedProfile,
     const TargetInfo &target, NativeInputs nativeInputs,
+    std::vector<BuildScriptPlan> buildScripts,
     const ProjectBuildOverrides &overrides = {},
     RuntimeProfile runtimeProfile = RuntimeProfile::None,
     ResolvedProjectToolchain toolchain = {}) {
+  for (BuildScriptPlan &script : buildScripts) {
+    script.outputDirectory /= portableProjectNameKey(selectedTarget.name);
+  }
   const OptimizationLevel optimization =
       overrides.optimization.value_or(selectedProfile.optimization);
   const CppStandard cppStandard =
       overrides.cppStandard.value_or(selectedProfile.cppStandard);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
+  const bool debugInfo =
+      overrides.debugInfo.value_or(selectedProfile.debugInfo);
+  const RawPointerAuditMode rawPointerAudit =
+      overrides.rawPointerAudit.value_or(selectedProfile.rawPointerAudit);
   ConfigurationFlags configurationFlags = manifest.build().defines;
   configurationFlags.insert(configurationFlags.end(),
                             overrides.configurationFlags.begin(),
                             overrides.configurationFlags.end());
+  std::vector<std::string> disabledWarnings =
+      selectedProfile.warningPolicy.disabledGroups();
+  disabledWarnings.insert(disabledWarnings.end(),
+                          overrides.warningPolicy.disabledGroups().begin(),
+                          overrides.warningPolicy.disabledGroups().end());
+  WarningPolicy warningPolicy(std::move(disabledWarnings));
+  std::vector<std::string> dependencyWarningIdentities;
+  const std::string selectedPackageIdentity =
+      workspace.selectedPackage().identity();
+  for (const ResolvedProjectPackage &package : workspace.packages()) {
+    if (package.identity() != selectedPackageIdentity) {
+      dependencyWarningIdentities.push_back(package.identity());
+    }
+  }
+  PackageWarningPolicy packageWarningPolicy(
+      selectedProfile.dependencyWarnings, selectedPackageIdentity,
+      std::move(dependencyWarningIdentities));
   const AnalysisConfiguration configuration(
       target,
       overrides.executionProfile.value_or(selectedProfile.executionProfile),
@@ -594,6 +705,13 @@ ProjectBuildPlan makeBuildPlan(
   nativeInputs.targetPolicy = {.triple = toolchain.nativeTarget,
                                .sysroot = toolchain.sysroot};
   std::string modelIdentity = workspace.modelIdentity();
+  modelIdentity += "\nraw-pointer-audit:" +
+                   std::string(rawPointerAuditModeName(rawPointerAudit));
+  modelIdentity += selectedProfile.dependencyWarnings
+                       ? "\ndependency-warnings:true"
+                       : "\ndependency-warnings:false";
+  if (debugInfo)
+    modelIdentity += "\ndebug-info:true";
   modelIdentity += "\ntarget:" + targetTriple(resolvedTarget);
   if (toolchain.declared()) {
     modelIdentity +=
@@ -619,13 +737,25 @@ ProjectBuildPlan makeBuildPlan(
     std::vector<ProjectExport> canonicalExports = selectedTarget.exports;
     std::sort(canonicalExports.begin(), canonicalExports.end(),
               [](const ProjectExport &left, const ProjectExport &right) {
-                if (left.symbol != right.symbol) {
+                if (left.symbol != right.symbol)
                   return left.symbol < right.symbol;
-                }
                 return left.function < right.function;
               });
-    for (const ProjectExport &selected : canonicalExports) {
+    for (const ProjectExport &selected : canonicalExports)
       modelIdentity += "\nexport:" + selected.symbol + '=' + selected.function;
+  }
+  for (const BuildScriptPlan &script : buildScripts) {
+    modelIdentity += "\nbuild-script:" + script.packageIdentity;
+    if (script.source) {
+      modelIdentity += "|source=" + std::filesystem::relative(
+                                        *script.source, script.packageRoot)
+                                        .generic_string();
+    }
+    for (const std::string &argument : script.command) {
+      modelIdentity += "|argv=" + argument;
+    }
+    for (const std::string &input : script.declaredInputs) {
+      modelIdentity += "|input=" + input;
     }
   }
 
@@ -706,8 +836,10 @@ ProjectBuildPlan makeBuildPlan(
       selectedTarget.kind, selectedProfile.name, selectedTarget.root, output,
       generatedSource, resolvedTarget, optimization, cppStandard, keepCpp,
       std::move(nativeInputs), std::move(packageSourceRoots),
-      configuration.configurationFlags(), std::move(modelIdentity),
-      std::move(bindgenImports), std::move(toolchain), selectedTarget.linkage,
+      configuration.configurationFlags(), std::move(warningPolicy),
+      std::move(modelIdentity), std::move(bindgenImports),
+      std::move(buildScripts), std::move(toolchain), debugInfo,
+      std::move(packageWarningPolicy), rawPointerAudit, selectedTarget.linkage,
       selectedTarget.exports);
 }
 
@@ -760,6 +892,23 @@ bool writeScaffoldFile(const std::filesystem::path &path,
   return static_cast<bool>(output);
 }
 
+std::string processFailureDetail(const ProcessResult &process) {
+  constexpr std::size_t limit = 400;
+  std::string detail = process.driverDiagnostic.value_or("");
+  if (!process.output.empty()) {
+    if (!detail.empty()) {
+      detail += "; ";
+    }
+    detail += process.output.size() > limit
+                  ? "..." + process.output.substr(process.output.size() - limit)
+                  : process.output;
+  }
+  while (!detail.empty() && (detail.back() == '\n' || detail.back() == '\r')) {
+    detail.pop_back();
+  }
+  return detail.empty() ? "Git returned a nonzero status" : detail;
+}
+
 Diagnostic scaffoldDiagnostic(const std::filesystem::path &path,
                               std::string code, std::string message) {
   return projectDiagnostic(std::move(code), {path.string(), 0, 1, 1},
@@ -787,6 +936,10 @@ int main(int argc, std::vector<std::string> argv) {
   std::println("Hello, GTI!");
   return 0;
 }
+)";
+
+constexpr std::string_view scaffoldGitIgnore = R"(# GTI build output
+/build/
 )";
 
 } // namespace
@@ -863,10 +1016,13 @@ ProjectBuildPlan::ProjectBuildPlan(
     OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
     NativeInputs nativeInputs,
     std::vector<PackageSourceRoot> packageSourceRoots,
-    ConfigurationFlags configurationFlags, std::string projectModelIdentity,
+    ConfigurationFlags configurationFlags, WarningPolicy warningPolicy,
+    std::string projectModelIdentity,
     std::vector<BindgenImportPlan> bindgenImports,
-    ResolvedProjectToolchain toolchain, ProjectTargetLinkage targetLinkage,
-    std::vector<ProjectExport> exports)
+    std::vector<BuildScriptPlan> buildScripts,
+    ResolvedProjectToolchain toolchain, bool debugInfo,
+    PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit,
+    ProjectTargetLinkage targetLinkage, std::vector<ProjectExport> exports)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -882,10 +1038,14 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedNativeInputs(std::move(nativeInputs)),
       resolvedPackageSources(std::move(packageSourceRoots)),
       resolvedConfigurationFlags(std::move(configurationFlags)),
+      resolvedWarningPolicy(std::move(warningPolicy)),
+      resolvedPackageWarningPolicy(std::move(packageWarnings)),
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
       resolvedBindgenImports(std::move(bindgenImports)),
+      resolvedBuildScripts(std::move(buildScripts)),
       resolvedToolchain(std::move(toolchain)),
-      resolvedExports(std::move(exports)) {}
+      resolvedExports(std::move(exports)), sourceDebugInfo(debugInfo),
+      rawPointerAuditMode(rawPointerAudit) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -966,6 +1126,12 @@ CppStandard ProjectBuildPlan::cppStandard() const { return backendStandard; }
 
 bool ProjectBuildPlan::keepCpp() const { return retainGeneratedSource; }
 
+bool ProjectBuildPlan::debugInfo() const { return sourceDebugInfo; }
+
+RawPointerAuditMode ProjectBuildPlan::rawPointerAudit() const {
+  return rawPointerAuditMode;
+}
+
 const NativeInputs &ProjectBuildPlan::nativeInputs() const {
   return resolvedNativeInputs;
 }
@@ -978,6 +1144,14 @@ const ConfigurationFlags &ProjectBuildPlan::configurationFlags() const {
   return resolvedConfigurationFlags;
 }
 
+const WarningPolicy &ProjectBuildPlan::warnings() const {
+  return resolvedWarningPolicy;
+}
+
+const PackageWarningPolicy &ProjectBuildPlan::packageWarnings() const {
+  return resolvedPackageWarningPolicy;
+}
+
 const ResolvedProjectToolchain &ProjectBuildPlan::toolchain() const {
   return resolvedToolchain;
 }
@@ -988,6 +1162,10 @@ const std::string &ProjectBuildPlan::projectModelIdentity() const {
 
 const std::vector<BindgenImportPlan> &ProjectBuildPlan::bindgenImports() const {
   return resolvedBindgenImports;
+}
+
+const std::vector<BuildScriptPlan> &ProjectBuildPlan::buildScripts() const {
+  return resolvedBuildScripts;
 }
 
 ProjectMetadata::ProjectMetadata(ProjectWorkspace workspace, TargetInfo target,
@@ -1011,9 +1189,11 @@ const std::vector<ProjectBuildPlan> &ProjectMetadata::plans() const {
 
 ProjectScaffoldRequest::ProjectScaffoldRequest(
     ProjectScaffoldMode mode, std::filesystem::path destination,
-    std::optional<std::string> packageName)
+    std::optional<std::string> packageName,
+    std::optional<ProjectScaffoldGit> git)
     : scaffoldMode(mode), destinationPath(std::move(destination)),
-      requestedPackageName(std::move(packageName)) {}
+      requestedPackageName(std::move(packageName)),
+      requestedGit(std::move(git)) {}
 
 ProjectScaffoldMode ProjectScaffoldRequest::mode() const {
   return scaffoldMode;
@@ -1027,6 +1207,10 @@ const std::optional<std::string> &ProjectScaffoldRequest::packageName() const {
   return requestedPackageName;
 }
 
+const std::optional<ProjectScaffoldGit> &ProjectScaffoldRequest::git() const {
+  return requestedGit;
+}
+
 std::string targetTriple(const TargetInfo &target) {
   return outputComponent(target.arch) + "-" + outputComponent(target.vendor) +
          "-" + outputComponent(target.os);
@@ -1037,7 +1221,7 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
   ProjectResolutionResult result;
   WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
       request.startDirectory(), request.packageName(),
-      request.dependencyPolicy(), request.manifestFeatures());
+      request.dependencyPolicy(), std::nullopt, request.manifestFeatures());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -1161,12 +1345,20 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     result.status = ProjectResolutionStatus::ManifestFailure;
     return result;
   }
+  std::optional<std::vector<BuildScriptPlan>> buildScripts =
+      composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                              request.target(), selectedProfile->name,
+                              result.diagnostics);
+  if (!buildScripts) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
 
   result.status = ProjectResolutionStatus::Success;
-  result.plan =
-      makeBuildPlan(workspace, manifest, *selectedTarget, *selectedProfile,
-                    request.target(), std::move(*nativeInputs),
-                    request.overrides(), request.runtimeProfile(), *toolchain);
+  result.plan = makeBuildPlan(
+      workspace, manifest, *selectedTarget, *selectedProfile, request.target(),
+      std::move(*nativeInputs), std::move(*buildScripts), request.overrides(),
+      request.runtimeProfile(), *toolchain);
   return result;
 }
 
@@ -1175,7 +1367,7 @@ resolveProjectTests(const ProjectBuildRequest &request) {
   ProjectTestResolutionResult result;
   WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
       request.startDirectory(), request.packageName(),
-      request.dependencyPolicy(), request.manifestFeatures());
+      request.dependencyPolicy(), std::nullopt, request.manifestFeatures());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -1272,6 +1464,14 @@ resolveProjectTests(const ProjectBuildRequest &request) {
     result.status = ProjectResolutionStatus::ManifestFailure;
     return result;
   }
+  std::optional<std::vector<BuildScriptPlan>> buildScripts =
+      composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                              request.target(), selectedProfile->name,
+                              result.diagnostics);
+  if (!buildScripts) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
 
   result.plans.reserve(selectedTargets.size());
   for (const ProjectTarget *selectedTarget : selectedTargets) {
@@ -1293,8 +1493,8 @@ resolveProjectTests(const ProjectBuildRequest &request) {
     }
     result.plans.push_back(makeBuildPlan(
         workspace, manifest, *selectedTarget, *selectedProfile,
-        request.target(), std::move(*nativeInputs), request.overrides(),
-        request.runtimeProfile(), *toolchain));
+        request.target(), std::move(*nativeInputs), *buildScripts,
+        request.overrides(), request.runtimeProfile(), *toolchain));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1314,7 +1514,7 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
 
   WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
       request.startDirectory(), request.packageName(),
-      request.dependencyPolicy(), request.manifestFeatures());
+      request.dependencyPolicy(), std::nullopt, request.manifestFeatures());
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -1367,10 +1567,28 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
   }
 
   result.plans.reserve(manifest.targets().size());
+  std::optional<std::vector<BuildScriptPlan>> buildScripts =
+      composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                              request.target(), selectedProfile->name,
+                              result.diagnostics);
+  if (!buildScripts) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
+  std::optional<std::vector<NativeDependencyGroup>> composed =
+      composeDependencyNativeGroups(workspace, workspace.selectedPackage(),
+                                    request.target(), result.diagnostics);
+  if (!composed) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
   for (const ProjectTarget &target : manifest.targets()) {
     std::optional<NativeInputs> nativeInputs =
         resolveNativeInputs(manifest, target, *selectedProfile,
                             request.target(), result.diagnostics);
+    if (nativeInputs) {
+      nativeInputs->dependencyGroups = *composed;
+    }
     if (!nativeInputs ||
         !checkToolchainCCoverage(
             *toolchain, *nativeInputs, request.toolchainPolicy(),
@@ -1381,8 +1599,8 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
     }
     result.plans.push_back(makeBuildPlan(
         workspace, manifest, target, *selectedProfile, request.target(),
-        std::move(*nativeInputs), request.overrides(), request.runtimeProfile(),
-        *toolchain));
+        std::move(*nativeInputs), *buildScripts, request.overrides(),
+        request.runtimeProfile(), *toolchain));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1394,9 +1612,9 @@ ProjectMetadataResult resolveProjectMetadata(
     std::optional<std::string> packageName, RuntimeProfile runtimeProfile,
     ManifestFeaturePolicy manifestFeatures) {
   ProjectMetadataResult result;
-  WorkspaceResolutionResult resolvedWorkspace =
-      resolveProjectWorkspace(startDirectory, packageName,
-                              {.allowAcquisition = false}, manifestFeatures);
+  WorkspaceResolutionResult resolvedWorkspace = resolveProjectWorkspace(
+      startDirectory, packageName, {.allowAcquisition = false}, std::nullopt,
+      manifestFeatures);
   result.sources = std::move(resolvedWorkspace.sources);
   if (!resolvedWorkspace.succeeded()) {
     switch (resolvedWorkspace.status) {
@@ -1440,6 +1658,13 @@ ProjectMetadataResult resolveProjectMetadata(
   plans.reserve(manifest.targets().size() * manifest.profiles().size());
   for (const ProjectTarget &projectTarget : manifest.targets()) {
     for (const ProjectProfile &profile : manifest.profiles()) {
+      std::optional<std::vector<BuildScriptPlan>> buildScripts =
+          composeBuildScriptPlans(workspace, workspace.selectedPackage(),
+                                  target, profile.name, result.diagnostics);
+      if (!buildScripts) {
+        result.status = ProjectMetadataStatus::ManifestFailure;
+        return result;
+      }
       std::optional<NativeInputs> nativeInputs = resolveNativeInputs(
           manifest, projectTarget, profile, target, result.diagnostics);
       if (!nativeInputs) {
@@ -1448,7 +1673,8 @@ ProjectMetadataResult resolveProjectMetadata(
       }
       nativeInputs->dependencyGroups = *composed;
       plans.push_back(makeBuildPlan(workspace, manifest, projectTarget, profile,
-                                    target, std::move(*nativeInputs), {},
+                                    target, std::move(*nativeInputs),
+                                    std::move(*buildScripts), {},
                                     runtimeProfile, metadataToolchain));
     }
   }
@@ -1564,6 +1790,41 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
         {}, "GTI-B1500", "A project destination path is required."));
     return result;
   }
+  if (request.git() &&
+      request.mode() != ProjectScaffoldMode::ExistingDirectory) {
+    result.status = ProjectScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        request.destination(), "GTI-B1500",
+        "Git initialization is supported only by existing-directory project "
+        "scaffolding."));
+    return result;
+  }
+  if (request.git() && request.git()->executable.empty()) {
+    result.status = ProjectScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        request.destination(), "GTI-B1500",
+        "Git initialization requires a non-empty Git executable."));
+    return result;
+  }
+  if (request.git()) {
+    // Git repository-local environment overrides take precedence over -C.
+    // Refuse them before creating any scaffold output: otherwise `git init`
+    // could mutate external metadata which local rollback cannot restore.
+    for (const char *variable :
+         {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+          "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+          "GIT_IMPLICIT_WORK_TREE"}) {
+      if (std::getenv(variable) != nullptr) {
+        result.status = ProjectScaffoldStatus::InvalidRequest;
+        result.diagnostics.push_back(scaffoldDiagnostic(
+            request.destination(), "GTI-B1500",
+            "Cannot initialize a standalone Git repository while '" +
+                std::string(variable) +
+                "' is set; unset that environment variable and retry."));
+        return result;
+      }
+    }
+  }
 
   std::error_code error;
   result.packageRoot = std::filesystem::absolute(request.destination(), error)
@@ -1634,6 +1895,8 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
   const std::filesystem::path manifest = result.packageRoot / "gti.toml";
   const std::filesystem::path sourceDirectory = result.packageRoot / "src";
   const std::filesystem::path source = sourceDirectory / "main.gti";
+  const std::filesystem::path gitMetadata = result.packageRoot / ".git";
+  const std::filesystem::path gitIgnore = result.packageRoot / ".gitignore";
   const ScaffoldEntryKind manifestKind = inspectScaffoldEntry(manifest, error);
   if (manifestKind == ScaffoldEntryKind::Failure) {
     result.status = ProjectScaffoldStatus::FilesystemFailure;
@@ -1648,6 +1911,43 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
     result.diagnostics.push_back(scaffoldDiagnostic(
         manifest, "GTI-B1503", "A project manifest already exists."));
     return result;
+  }
+
+  if (request.git()) {
+    const ScaffoldEntryKind gitMetadataKind =
+        inspectScaffoldEntry(gitMetadata, error);
+    if (gitMetadataKind == ScaffoldEntryKind::Failure) {
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1504",
+          "Failed to inspect the Git metadata path: " + error.message() + "."));
+      return result;
+    }
+    if (gitMetadataKind != ScaffoldEntryKind::Missing) {
+      result.status = ProjectScaffoldStatus::Conflict;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1503",
+          "Cannot initialize Git because a '.git' entry already exists."));
+      return result;
+    }
+
+    const ScaffoldEntryKind gitIgnoreKind =
+        inspectScaffoldEntry(gitIgnore, error);
+    if (gitIgnoreKind == ScaffoldEntryKind::Failure) {
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitIgnore, "GTI-B1504",
+          "Failed to inspect the Git ignore path: " + error.message() + "."));
+      return result;
+    }
+    if (gitIgnoreKind != ScaffoldEntryKind::Missing) {
+      result.status = ProjectScaffoldStatus::Conflict;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitIgnore, "GTI-B1503",
+          "Cannot create the canonical GTI '.gitignore' because that entry "
+          "already exists."));
+      return result;
+    }
   }
 
   const ScaffoldEntryKind sourceDirectoryKind =
@@ -1718,9 +2018,19 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
   }
 
   bool manifestWriteAttempted = false;
+  bool gitIgnoreWriteAttempted = false;
+  bool createdGitMetadata = false;
   const auto rollback = [&] {
     std::error_code rollbackError;
+    if (createdGitMetadata) {
+      std::filesystem::remove_all(gitMetadata, rollbackError);
+    }
+    if (gitIgnoreWriteAttempted) {
+      rollbackError.clear();
+      std::filesystem::remove(gitIgnore, rollbackError);
+    }
     if (manifestWriteAttempted) {
+      rollbackError.clear();
       std::filesystem::remove(manifest, rollbackError);
     }
     if (createdRoot) {
@@ -1758,6 +2068,83 @@ ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
     result.diagnostics.push_back(scaffoldDiagnostic(
         manifest, "GTI-B1504", "Failed to write the project manifest."));
     return result;
+  }
+
+  if (request.git()) {
+    gitIgnoreWriteAttempted = true;
+    if (!writeScaffoldFile(gitIgnore, scaffoldGitIgnore)) {
+      rollback();
+      result.createdSource = false;
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitIgnore, "GTI-B1504",
+          "Failed to write the canonical GTI '.gitignore'."));
+      return result;
+    }
+    result.createdGitIgnore = true;
+
+    // Reserve the exact metadata directory before starting Git. A missing
+    // entry observed during preflight is not ownership: another process may
+    // have created it since, and rollback must never delete that entry.
+    createdGitMetadata = std::filesystem::create_directory(gitMetadata, error);
+    if (!createdGitMetadata) {
+      const std::error_code reservationError = error;
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = reservationError
+                          ? ProjectScaffoldStatus::FilesystemFailure
+                          : ProjectScaffoldStatus::Conflict;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, reservationError ? "GTI-B1504" : "GTI-B1503",
+          reservationError ? "Failed to reserve the Git metadata directory: " +
+                                 reservationError.message() + "."
+                           : "Cannot initialize Git because a '.git' entry "
+                             "already exists."));
+      return result;
+    }
+    const ProcessResult git =
+        invokeProcess({request.git()->executable, "-C",
+                       result.packageRoot.string(), "init", "--quiet"},
+                      {.outputMode = ProcessOutputMode::Capture,
+                       .captureSuccessfulOutput = false,
+                       .description = "Git initialization"});
+    if (!git.succeeded()) {
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = ProjectScaffoldStatus::ToolFailure;
+      result.diagnostics.push_back(
+          scaffoldDiagnostic(result.packageRoot, "GTI-B1504",
+                             "Failed to initialize the Git repository: " +
+                                 processFailureDetail(git) + "."));
+      return result;
+    }
+
+    const ScaffoldEntryKind initializedGitKind =
+        inspectScaffoldEntry(gitMetadata, error);
+    if (initializedGitKind == ScaffoldEntryKind::Failure) {
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1504",
+          "Failed to inspect the initialized Git repository: " +
+              error.message() + "."));
+      return result;
+    }
+    if (initializedGitKind != ScaffoldEntryKind::Directory) {
+      rollback();
+      result.createdSource = false;
+      result.createdGitIgnore = false;
+      result.status = ProjectScaffoldStatus::ToolFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          gitMetadata, "GTI-B1504",
+          "Git reported success without creating repository metadata."));
+      return result;
+    }
+    result.initializedGit = true;
   }
 
   result.status = ProjectScaffoldStatus::Success;

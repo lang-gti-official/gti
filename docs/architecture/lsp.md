@@ -16,6 +16,16 @@ JSON-RPC/LSP
 
 ## Semantic Source Of Truth
 
+Source modules use the same manifest module maps, source graph, export
+publication, and re-export traversal as compilation. Completion only presents
+the candidates supplied by semantic lookup; hover and definition use resolved
+occurrences. An inferred value of a private type can still present its ordinary
+public members without exposing that type's name as a namespace candidate.
+Dirty interface overlays invalidate consumers through the existing dependency
+generation machinery, and closing an overlay restores the on-disk surface.
+Unrelated semantic errors do not suppress module completion. Import-path/module-
+name completion and import-directive navigation are not added by this slice.
+
 `FrontendResult` retains the recovered AST, `SemanticModel`, `SemanticDatabase`,
 HIR/MIR, source graph, source text, and diagnostics together. The LSP retains a
 `shared_ptr<const FrontendResult>` in each `AnalysisSnapshot`. This keeps AST
@@ -99,6 +109,19 @@ resolved trailing requirements from AST/semantic records; hover and completion
 must not reconstruct `requires` syntax or capability meaning in the protocol
 adapter.
 
+Bounded member requirements render their compiler-owned
+`requires(T& value) { { value.method() } -> R; }` signature in concept hover.
+An explicitly unsafe compound requirement retains `unsafe { ... } -> R` in
+that signature. Ordinary unsafe methods use the existing resolved function
+contract for hover and unsafe-call diagnostics; no protocol-owned effect
+inference is involved.
+The synthetic receiver declaration and use share a `RequirementParameter`
+symbol for definition, references, rename, and read-only parameter tokens.
+That symbol is source-only: it does not declare runtime parameter storage or
+relax the lowered verifier's rules for ordinary parameters. Malformed queries
+and failed contracts use the shared parser/semantic diagnostics, and formatting
+must preserve their meaning through an edit/reanalysis round trip.
+
 Bounded constraint disjunction follows that same compiler-owned path.
 Signatures render canonical `&&`/`||` precedence and only necessary
 parentheses, selected calls substitute every application leaf, and a failed
@@ -117,6 +140,27 @@ written `::` path. Tree-sitter accepts the alias as a class member and supplies
 the syntax-level type-definition capture while semantic tokens retain the exact
 class-versus-namespace meaning.
 
+Function-declaration and selected-call signatures retain `[[noreturn]]`,
+`[[track_caller]]`, `[[discardable]]`, explicit `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`,
+and `unsafe` from the resolved `FunctionInfo`. The borrow-origin parameter name
+comes from the resolved formal parameter index, not from reparsing the attribute;
+inferred borrow origins do not invent explicit annotations. Contract
+attributes precede the `unsafe` modifier and then `static`/`constexpr`, when
+present. Signature printers preserve that canonical order.
+The LSP publishes `GTI-S2055` and its
+related declaration span from the same frontend; it neither infers safety
+requirements nor offers a fix-it accepting an unsafe obligation.
+The keyword is highlighted as a keyword, not a decorator. The compiler's
+obsolete-spelling migration and `unused-unsafe` diagnostics supply the same
+current-version edits to CLI and LSP; the latter removes only a proven-unused
+keyword while keeping its lexical scope.
+
+C-style create/join, manual mutexes, conditions, and once initialization use that same public declaration path.
+Their `GTI-S2084` profile requirement is derived by semantics from the resolved
+private runtime call graph, and `GTI-S2055` retains the ordinary unsafe caller contract. The
+editor publishes both without recognizing public `std::thrd_*`, `std::mtx_*`, or `std::cnd_*`
+spellings or `std::call_once`; hover and definition select the ordinary wrapper in `<std/cthread>`.
+
 Function-declaration and selected-call hover also append compiler-owned
 callable-parameter contracts from `FunctionInfo`. Confined notes identify
 read-only or mutable access and the deduplicated exact invocation signatures
@@ -131,6 +175,10 @@ fixed-array extents. Declaration signatures print generic type/value defaults
 from their semantic/AST records, including dependent value expressions;
 selected-call signatures print the complete concrete substitution regardless
 of whether each argument was written, inferred, or defaulted. Generic
+signature-pattern class declarations print their public pattern, such as
+`class Callback<R(Args...)>`, rather than flattening its extracted binders.
+Binder occurrences retain their own symbol identities even when an outer
+alias has the same name. Generic
 constructor declaration hover retains its symbolic
 local type/value parameters and requirements, while selected construction
 hover substitutes the exact inferred arguments, requirements, and parameter
@@ -152,6 +200,13 @@ formation publishes the shared `GTI-S2090` diagnostic; a bare name without an
 eligible callable context retains `GTI-S2076`. The query and protocol layers do
 not infer a function-item type, choose among overloads, or expose the backend's
 private nominal tag.
+
+Consuming public callback signatures likewise use ordinary semantic records:
+binding hover retains `R(Args...) &&`, and missing explicit moves or reuse after
+consumption publish compiler ownership diagnostics. The protocol regression
+changes a valid wrapper invocation to each invalid form and back, checking that
+the newest valid snapshot clears the errors. No wrapper-specific LSP policy is
+needed.
 
 Defaulted default constructors and destructors use those same compiler-owned
 declaration identities. Declaration hover and document-symbol detail include
@@ -233,6 +288,12 @@ decorator token, and invalid declarations publish the shared `GTI-S2064`
 diagnostic; the protocol layer neither computes layout nor keeps a second field
 allowlist.
 
+`[[link_name("symbol")]]` follows the same boundary for C-linkage functions.
+The attribute is a syntax-owned decorator, hover renders it through the
+compiler's canonical function signature, and invalid placement, spelling, or
+program-global symbol collisions publish `GTI-S2054`. The LSP never substitutes
+the link symbol for source lookup or maintains a second native-symbol table.
+
 `mut { ... }` field groups have no document symbol or protocol-owned semantic
 rule. The compiler query flattens their enclosed fields into the containing
 class/struct outline, hover renders each field's effective mutable binding, and
@@ -287,6 +348,31 @@ and related declaration; a newer valid snapshot clears it. Signature help
 renders the exact selected borrowed overload when the fallback tier is active
 and the exact by-value overload when the ordinary tier wins. The protocol
 layer does not classify producers, rank candidates, or extend lifetimes.
+
+Ordered-call borrow conflicts likewise publish the compiler's later-mutation
+primary span and earlier-borrow related span, including UTF-16 conversion of
+non-ASCII prefixes. Reordering to a valid mutation-before-lookup expression
+clears the error on the next snapshot. The LSP does not reorder operands or
+offer a fix-it that could change observable effects.
+
+Moving an owner-dependent text view retains its compiler-owned dependency.
+The LSP therefore publishes `GTI-S2045` when that moved expression is stored
+in an unsupported field, with the same source token and non-mechanical hint
+as compilation. A local view transfer remains valid. The borrowing-composition
+protocol regression checks the UTF-16 range after a supplementary Unicode
+comment, structured hints, and clearing after valid or repaired edits.
+It also checks `GTI-S2019` for a borrowed payload in optional storage. When
+concrete instantiation diagnoses the library's private storage declaration,
+the published related information retains the exact requesting user binding.
+Replacing that payload with an eligible value clears the dependency diagnostic
+as well as publishing the new valid document generation.
+
+Mixed shared/exclusive stored-reference aggregates use those same snapshots.
+The composition regression covers four independent fields, selected mutable
+accessor hover/definition, an overlapping owner mutation after a supplementary
+Unicode comment, diagnostic clearing and incomplete-source recovery. Neither
+the LSP nor its fixes reconstructs field permissions or return origins; those
+remain compiler-owned dependency facts.
 
 Range-for diagnostics follow the same boundary. An immutable owner for a
 mutable element reference, a missing exact `begin_mut()`/mutable-dereference
@@ -349,9 +435,10 @@ compiler work.
 - Completed analysis is published only if the document and dependency
   generations still match. Only then may its source digests be learned. Stale
   semantic requests and stale digest publications are rejected.
-- The dynamic file watcher covers both `**/*.gti` and `**/gti.toml`. A manifest
-  change invalidates semantic-token caches and reanalyses every open document,
-  so changing `[build].defines` flips the selected/inactive branches.
+- The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
+  A manifest or lockfile change invalidates semantic-token caches and
+  reanalyses every open document, so configuration, package aliases, and
+  materialized locked dependencies cannot leave a stale project snapshot.
 
 ### Reusable frontend work
 
@@ -400,15 +487,66 @@ symbolic semantics made valid editor snapshots omit diagnostics that
 `static_assert` declarations. The LSP does not query HIR directly, and it still
 does not build failure metadata or MIR; retaining the HIR result is the current
 cost of publishing the compiler's complete source-level semantic diagnostic
-set. Code generation remains disabled. Before analysis, the LSP uses the
-driver's canonical nearest-manifest discovery and parser plus the immutable
-driver-owned `AnalysisConfiguration`. It seeds configuration flags from
-`[build].defines`, selects the default `dev` execution profile, and derives
-runtime capabilities from the installed hosted runtime profile; it does not
-reimplement TOML, target, or capability policy. A startup
+set. Code generation remains disabled.
+
+Before analysis and completion, the LSP asks the driver for immutable
+`ProjectFacts` for the package containing the entry document. The facts select
+the nearest workspace member/package, the default profile's analysis
+configuration, and the exact `PackageSourceRoot` closure used by `gti check`.
+Package angle includes therefore use only declared direct aliases, including
+already-materialized checksum-verified Git dependencies. Resolution runs no
+process, performs no fetch or build, and creates no project state. Registry
+dependencies use the same verified cached closure, logical source identities
+and exact lock edges; no version-discovery or archive request is made by editor
+analysis. A missing
+manifest preserves standalone analysis; a malformed, unlocked, unmaterialized,
+or checksum-mismatched project publishes the driver's structured diagnostics
+and never invents a partial package graph.
+
+The default profile also supplies warning-group and dependency-warning policy.
+It also supplies `raw-pointer-audit = "off"|"warn"|"strict"`. A process option
+`gti_lsp --raw-pointer-audit=off|warn|strict` explicitly overrides that profile;
+without either selection standalone documents use `off`. Duplicate, missing,
+or unknown process values are rejected. Analysis and completion both pass the
+resolved enum to the compiler before analysis, rather than filtering raw
+diagnostics afterwards. Mandatory type/unsafe/checked-borrow errors remain
+errors in every mode. Audit warning/error severity comes from the same
+frontend boundary as CLI compilation; the LSP does not promote findings or
+infer safety itself. Watched manifest changes invalidate these snapshots even
+when source bytes are unchanged. No environment-variable or independent
+dynamic editor policy is introduced.
+
+The protocol adapter applies the shared driver's primary-source package
+classifier when publishing diagnostics, not a directory-name heuristic.
+`dependency-warnings = false` removes dependency warnings without hiding
+errors, consumer warnings or their related dependency notes. Filtering does
+not discard the analyzed semantic snapshot: hover, completion and other queries
+remain available. A dependency opened as its own project becomes the selected
+package and retains its own warnings. Watched manifest changes invalidate
+diagnostic snapshots through the existing project-input generation path.
+
+An open document whose canonical path is a declared executable or test root
+also requests the frontend's missing-entry check (`GTI-S2094`). Ordinary
+included files, source-only packages, and standalone documents do not acquire
+executable intent. Completion-marker recovery suppresses this check; normal
+document analysis clears or replaces it through the existing versioned
+diagnostic publication path. The LSP does not scan for `main` itself.
+
+Every open GTI document is still passed to the frontend as a canonical-path
+source override. An unsaved dependency buffer is therefore authoritative over
+the verified on-disk package root for diagnostics, hover, completion,
+definition, and semantic tokens, while generation checks prevent an analysis
+captured before that edit from publishing. The protocol adapter does not parse
+TOML, reconstruct workspace membership, or resolve dependency aliases itself.
+
+The selected project configuration seeds `[build].defines`, uses the default
+profile's execution model, and derives runtime capabilities from the installed
+hosted runtime profile. A startup
 `--execution-profile single-threaded|concurrent` option overrides the manifest
 profile and also configures standalone documents. Omission selects the
-manifest `dev` profile when present and otherwise remains single-threaded.
+driver-selected default profile when present and otherwise remains
+single-threaded.
+
 This keeps standalone and concurrent-project diagnostics and the public
 `<std/thread>`, `<std/atomic>`, and `<std/mutex>` surfaces aligned with
 compiler-driver workflows. Analysis work
@@ -466,28 +604,98 @@ The shared compiler token contract classifies `double` as a built-in type and
 the complete `d`/`D`-suffixed decimal as one numeric semantic token. The LSP
 does not rescan the suffix or infer float width independently.
 
-Diagnostic serialization preserves compiler codes, severities, phases, hints,
-related locations, and fix-its while respecting the client's
+Diagnostic serialization preserves compiler codes, severities, groups, phases,
+hints, related locations, and fix-its while respecting the client's
 `publishDiagnostics` capabilities. Hints stay in the plain-text message for
 universal display and are also exposed as structured data when supported.
+Ownership explanations use this same serialization: move-site notes,
+borrow-origin/later-statement notes, and read-only declaration notes remain
+compiler-owned half-open byte spans until protocol conversion. Their intentional
+repair options are plain hints, not automatic moves, clones, mutability changes,
+or effect reorders. Correcting an overlay clears the former explanation on the
+next document generation; a diagnostic from the prior version cannot authorize
+an action on the replacement source. Terminal display-cell expansion never
+enters LSP messages or UTF-16 ranges.
+Compiler diagnostic tags are published only when the client's negotiated
+`tagSupport.valueSet` admits that exact LSP tag; the current unreachable-code
+and unnecessary-`mut` warnings use `Unnecessary`. Quick-fix preference is
+compiler-owned per fix. Removing an unnecessary local `mut` is preferred,
+whereas inserting `[[discard]]` for an ignored result is deliberately
+non-preferred because using the value may be the intended repair.
+Selected mutable-reference constructor arguments count as mutable uses in the
+compiler. Changing a constructor from read-only to mutable-reference removes
+the obsolete warning and its quick fix; an old diagnostic cannot remove a
+now-required `mut` in the new document generation.
+When the client supports literal quick-fix actions, a diagnostic carrying at
+least one current structured fix appends `(fix available)` to its LSP-facing
+message. The compiler diagnostic text remains unchanged, and clients without
+that action capability are not promised an unavailable editor operation.
 When several open roots diagnose the same dependency span, publication merges
 their related information instead of selecting one root arbitrarily; distinct
 include and instantiation locations therefore remain visible on the one
 deduplicated diagnostic. Diagnostics with different hints or fixes remain
-distinct.
+distinct. The same grouping applies to identical primary errors from multiple
+concrete instantiations in one root; every substitution note and requesting
+location is retained. This presentation grouping does not deduplicate the
+compiler's instance-owned diagnostic records.
 Quick fixes come only from compiler `Diagnostic::fixes` associated with the
 current source/generation, an intersecting request range, and an exact
 client-provided diagnostic. Position conversion is tested at the protocol
 edge; compiler source spans remain half-open UTF-8 byte ranges.
+Unresolved declarations publish compiler-validated missing-include fixes through
+this same path. This covers project functions such as `example::test()`, types,
+aliases, values, scoped enumerators, static members, and concepts, not a catalog
+of standard-library type spellings. Semantics marks the unresolved lookup on
+the diagnostic; the protocol adapter never extracts names from its message.
+
+The driver supplies search roots for the selected package and its declared
+direct dependency aliases. Standalone files search their parent directory;
+standard-library public units use the same discovery mechanism. Discovery
+recurses through `.gti` files, excluding hidden/build directories, nested
+packages without their own search authority, and symlink escapes. Unsaved
+files and dirty overlays participate. Dependency fixes use the declared angle
+alias; same-package fixes use a relative quoted path. Module interfaces are
+not include candidates, including exported interfaces: those require imports.
+
+`include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
+existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`
+stops the canonical frontend before semantic analysis; it is not another
+declaration parser or semantic index. A candidate edit is then checked in a
+separate frontend snapshot of the actual requesting program. The existing
+definition query must resolve the original occurrence to that candidate file,
+and the edit must introduce no new errors. Wrong namespace, access, overload,
+configuration, package, and module guesses therefore fail closed. Existing
+unrelated errors may remain; a candidate that reveals additional errors is
+conservatively withheld until those errors are addressed. No discovery runs
+for a snapshot without unresolved-name requests or for completion-marker analysis.
+
+The service shares the bounded parsed-unit cache but retains no semantic IDs
+across snapshots. Edits preserve BOM/CRLF and follow a module header when the
+requesting file has one. Multiple valid files produce separate, deterministic,
+non-preferred alternatives rather than silently choosing a declaration.
+
+Open/change/close and watched-file events refresh snapshots that requested
+discovery, including negative searches and newly created files outside the
+loaded graph. A discovery-generation check rejects an in-flight result after
+any source change; ordinary loaded-source generation checks remain unchanged.
+Code actions still require the current source and diagnostic. This deliberately
+uses conservative invalidation for unresolved snapshots rather than adding a
+persistent background project index.
 
 ## Incomplete Source
 
 Editor analysis enables parser recovery and semantic analysis of recovered
 declarations. Completion runs a dedicated frontend analysis with a cursor
 marker so the parser/analyzer can capture real scope, receiver, visibility, and
-overload candidates in fragments such as `object.` or `foo(`. Features may
-return partial or no semantic results; they must not confidently invent missing
-meaning from punctuation.
+overload candidates in fragments such as `object.` or `foo(`. A variable
+initializer that consumes this marker remains available to semantic completion
+even when the user has not yet typed its trailing semicolon; ordinary compiler
+snapshots continue to reject that source. Published diagnostics do not gate
+completion when the marker's scope and receiver remain recoverable: an
+unrelated error such as a missing return in the enclosing function remains
+visible while candidates are returned. Features may return partial or no
+semantic results; they must not confidently invent missing meaning from
+punctuation.
 
 ## Current Limits
 
@@ -496,7 +704,7 @@ meaning from punctuation.
   compiler-owned Markdown.
 - Definition, references, document highlights, and rename are implemented
   from exact resolved symbols. Rename is deliberately limited to
-  function-local names: identities visible outside the entry document's
+function-local names: identities visible outside the entry document's
   source graph may have references in unopened dependants the snapshot cannot
   see, so the compiler query rejects them instead of producing an incomplete
   edit. A project symbol index is not implemented.
@@ -508,17 +716,11 @@ meaning from punctuation.
 - Semantic analysis and HIR remain whole-program work on every accepted edit.
   They are the largest remaining repeated-edit cost; no semantic checkpoint or
   durable symbol identity is implemented.
-- `Frontend`/`LanguageQueries` can consume the same explicit
-  `PackageSourceRoot` graph as compilation. The LSP now consumes the nearest
-  manifest's configuration flags and default `dev` execution profile, with an
-  explicit standalone execution-profile startup override, but does not yet
-  resolve its workspace graph, selected package, or a named non-default
-  manifest profile. Consequently, package angle includes are not resolved in
-  editor snapshots yet. A project whose `dev` profile selects `concurrent`, or
-  a standalone server launched with `--execution-profile concurrent`, receives
-  the same managed-thread and concurrent-global semantic checks as the matching
-  compiler-driver workflow; richer project selection still awaits the shared
-  project-facts model.
+- Project analysis follows the package containing the opened document and the
+  driver's default profile on the host target. The protocol has no explicit
+  workspace-package, target, non-default-profile, or cross-target selection
+  request yet; adding one requires a client-facing configuration contract,
+  not another manifest parser.
 - Crash containment is in-process. It keeps the worker and shared state
   usable after a contained fault, but it is not a process-isolation
   guarantee: heap damage done before a fault is not undone.

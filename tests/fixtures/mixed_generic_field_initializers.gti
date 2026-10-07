@@ -1,0 +1,23 @@
+#include <std/memory>
+
+// The closure application retains the generic native carrier. The int
+// application is only an empty owner's pointee and selects no constructor.
+class Record<T> {
+  T value;
+  int status = 7;
+public:
+  Record(T value) : value(std::move(value)) {}
+  int get() { return this.status; }
+};
+
+int inspect<T>(T value) {
+  Record<T> record{std::move(value)};
+  return record.get();
+}
+
+int main() {
+  auto identity = [](int value) -> int { return value; };
+  std::unique_ptr<Record<int>> absent{};
+  Record<std::unique_ptr<int>> present{std::make_unique<int>(5)};
+  return inspect(std::move(identity)) + present.get() - 14;
+}

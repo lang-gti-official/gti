@@ -1,35 +1,99 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "ca7e8829b48da291e23b56f8c23baabbf3483ebb5f45f82b19cd95d6411a0eff",
-    "stdlib/std/algorithm.gti": "c946106b09514ca1ae6f5e5df32b27f49cd8c3234df602e3927dafd821506c1d",
-    "stdlib/std/array.gti": "eff214cb420565f2fe12e02cdee5e2a3cce6407d41f766633c04bbee3d0f69c2",
+    "stdlib/prelude.gti": "d828bb5d148add18bc85a8b4417657a2aca228fff12823c1aefd21b338d1df52",
+    "stdlib/std/algorithm.gti": "f989a6357efa6e9d4be6c0b99747794f6c93bc3a918e9890ea01d27df5328f19",
+    "stdlib/std/array.gti": "6b738e22e49dc45108dc3c1b90c90f19b765b4fc8bca48a63a9d565818b45233",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
-    "stdlib/std/cmath.gti": "e12accf1a46bd3d1f6ac90991776e43acb008401b98d141e0b6ba7040bd3bcd8",
-    "stdlib/std/cstdio.gti": "3bc53122406a8e5f22fec798ab82f8701898f36b1229974120dd020bf3e024b3",
-    "stdlib/std/filesystem.gti": "00f31e9007004d91eafc9edb4cc49fbaf8e3d00a4c874b4620317dc5a9a3b71c",
-    "stdlib/std/format.gti": "89b3fa9adafbfb95d2e0f0a8dea450df177c5a676833e967eaa516168cb21f0e",
-    "stdlib/std/forward_list.gti": "935c5d80a864386e7ef7c58f42afe5b8bcd5434b25f0570082b029d39b3fbac1",
-    "stdlib/std/functional.gti": "1fb8339bb43551750c4199280f8680a56ccde35646f5ad55a27d8d0eb3fb3faf",
+    "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
+    "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
+    "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
+    "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
+    "stdlib/std/cstdio.gti": "8081db343694df6698be59fbc91574fb92cc366e0471681daff43ea17cc7e7f3",
+    "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
+    "stdlib/std/deque.gti": "5e014f240f4655824f1c245d507a96805ce4bfb1444570af4af2e6a222c1bba7",
+    "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
+    "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
+    "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
+    "stdlib/std/format.gti": "724d3f26a7ba1460d21fb02fafecbd531d4c29e6984169fbcdede21815502171",
+    "stdlib/std/forward_list.gti": "2152aab44209cfa14a3b1709f6250c3ef85db78e1e665d5bc8299f3cb353a4bf",
+    "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
+    "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
+    "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "2c67bfceaaaa2c79ce474434d5e9962ce15bd08127ce175c97efe8b05ebcd1f1",
-    "stdlib/std/list.gti": "b90968de7e8f71110d7e6d897ff7a1bca3da55e210ae85d48de316b6ea252648",
-    "stdlib/std/memory.gti": "b1b7cd67371d764d584c250b6638a2e1ec8c579d2e1a0992a2130ada75a99fe4",
+    "stdlib/std/json.gti": "3de0a06f6b25109551714c74f21f62fe9421f97e520efd73a428178dc8af21f9",
+    "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
+    "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
+    "stdlib/std/memory.gti": "3de07e5167024af2b3132525b3ada0f0f72e450d214edee209b6cd3d1065713e",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "e1fb604aa2118418ee039a3e35f66674eb9ceba60b11fe20e63c5dd42f1786ed",
-    "stdlib/std/optional.gti": "9b038467204b82f5675326e67254bee896b2d6a5648f47bb22f325bbb202b8d8",
+    "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
+    "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
+    "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
+    "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
+    "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
+    "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
-    "stdlib/std/span.gti": "6bf25a9fd906d05e37d69880551723a03ccbfd35a9548f9fc2ddf1801398225b",
-    "stdlib/std/string.gti": "a1a20bd2ab4de21a4a44974263079a4da7cf663e7b4f562e33fc9a7834db7882",
+    "stdlib/std/resource.gti": "42abee4267c6c3cbdfaafd34eb03f7ad507c1f0280cf1e410a89fc4ec86c5ebf",
+    "stdlib/std/resource_vector.gti": "9b052fac66fd2f9d6dcf9af01620d7ce04dfd4c839da2be8a8b9e4065e708d79",
+    "stdlib/std/set.gti": "706d93edf068cc7a207ce3eedc2cd19ad08ea46cdd70b924309c6230cd90c716",
+    "stdlib/std/simd.gti": "ec60e8807ec3d4cf617a03d4f593231e54b298c2b399b260aa19acfddcdbe720",
+    "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
+    "stdlib/std/span.gti": "f3d587fbf05cab159aeeaa96b4abc60c4330a86045a73f4405560b044a1a44d4",
+    "stdlib/std/string.gti": "181fe4c74a67e2176429c68073da5ce104718c2eb43a94fc88bcc9a0da0f7d31",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
-    "stdlib/std/utility.gti": "4a5ecc9a549629f1f25c7c0f1f802d9450ada2260747018bb063d500d65ca2a7",
-    "stdlib/std/vector.gti": "1f64abdc69282c4a5a36306c6a5319dabc53f4a8cd64ccae1aa92494f3973ef8"
+    "stdlib/std/unordered_map.gti": "dd9a09af61807b6482123f37f4875608c7eb6a5e83129ae7f498586b174e8aa7",
+    "stdlib/std/unordered_set.gti": "f99b3591dc87e0fc1bbfa8ee6256403daf07317efa9e466c0dbd38381d314f3f",
+    "stdlib/std/utility.gti": "142fb40869c5b2f4d0a431035ae7af5128c99426e9adb2abb2f9fa9d4b3b382d",
+    "stdlib/std/vector.gti": "e910b9440303857f044187a81096e6ae5254069bcde0f5e5aed3101f73b67c2b"
   },
   "cases": [
     {
       "id": "algorithm",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_algorithm.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-boundaries",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_boundaries.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-mutation",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_mutation.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-owned-example",
+      "mode": "run",
+      "source": "examples/101-owned-algorithm-results.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "terrain.compiled\nplayer.compiled\n8\n3\n3\n1\n", "stderr": ""}
+    },
+    {
+      "id": "algorithm-owned-transform",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_transform_owned.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-search",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "algorithm-user-types",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_user_types.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -56,6 +120,83 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "associative-hashes",
+      "mode": "run",
+      "source": "tests/fixtures/associative_hash_contracts.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "associative-map",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-balancing",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_balancing.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-insert-result",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_insert_result.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-iteration",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_iteration.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "associative-map-ownership",
+      "mode": "run",
+      "source": "tests/fixtures/associative_map_ownership.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "atomic",
       "mode": "run",
       "source": "tests/fixtures/atomic_scalar.gti",
@@ -80,9 +221,186 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "build",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_build.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "charconv-float",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_float.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "charconv-integer",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_integer.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "charconv-owned-arguments",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_owned_arguments.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "chrono",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_chrono.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "cmath",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cmath.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "complete-containers-collection",
+      "mode": "run",
+      "source": "tests/fixtures/complete_containers_collection.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "complete-containers-ownership",
+      "mode": "run",
+      "source": "tests/fixtures/complete_containers_ownership.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-deque",
+      "mode": "run",
+      "source": "tests/fixtures/complete_deque.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-list",
+      "mode": "run",
+      "source": "tests/fixtures/complete_list.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-list-differential",
+      "mode": "run",
+      "source": "tests/fixtures/complete_list_differential.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "complete-sets",
+      "mode": "run",
+      "source": "tests/fixtures/complete_sets.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "composable-io",
+      "mode": "run",
+      "source": "tests/fixtures/composable_io.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "composable-io-native",
+      "mode": "run",
+      "source": "tests/fixtures/composable_io_native.gti",
+      "optimizations": ["O0", "O3"],
+      "stdin": "a\u0000z\n",
+      "expected": {"exit_code": 0, "stdout": "a\u0000z\n", "stderr": "ok"}
+    },
+    {
+      "id": "constexpr-chrono",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_chrono.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "constexpr-library",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_library_positive.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "constexpr-operators",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_operators.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "constexpr-readonly-references",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_readonly_references.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "container-swap",
+      "mode": "run",
+      "source": "tests/fixtures/container_swap.gti",
+      "native_sources": ["tests/fixtures/container_swap_oracle.cpp"],
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -91,11 +409,114 @@
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_cstdio.gti",
       "optimizations": ["O0", "O3"],
-      "stdin": "Q",
+      "stdin": "Qsecret\n",
       "files": {
         "bytes.bin": {"encoding": "hex", "contents": "41005a"}
       },
-      "expected": {"exit_code": 0, "stdout": "io-out\n", "stderr": "io-err\n"}
+      "expected": {"exit_code": 0, "stdout": "password: io-out\n", "stderr": "io-err\n"}
+    },
+    {
+      "id": "cthread",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_yield.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-concurrent",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_yield_concurrent.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-condition",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_condition.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-condition-concurrent",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_condition_concurrent.gti",
+      "native_sources": ["tests/fixtures/cthread_condition_context.cpp"],
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-create-join",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_create_join.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-identity",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_identity.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-identity-concurrent",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_identity_concurrent.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-mutex",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_mutex.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-mutex-concurrent",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_mutex_concurrent.gti",
+      "native_sources": ["tests/fixtures/cthread_mutex_context.cpp"],
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-once",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_once.gti",
+      "native_sources": ["tests/fixtures/cthread_once_context.cpp"],
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-sleep",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_sleep.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "cthread-sleep-concurrent",
+      "mode": "run",
+      "source": "tests/fixtures/cthread_sleep_concurrent.gti",
+      "execution_profile": "concurrent",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "encoding",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_encoding.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "filesystem",
@@ -120,15 +541,51 @@
       }
     },
     {
+      "id": "filesystem-operations",
+      "mode": "run",
+      "source": "tests/fixtures/filesystem_operations.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "format",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_format.gti",
       "optimizations": ["O0", "O3"],
       "expected": {
         "exit_code": 0,
-        "stdout": "value=7 ok=1\ndone\n",
+        "stdout": "value=7 host=gitea.example ok=1 enabled=true\ndone\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "format-customization",
+      "mode": "run",
+      "source": "tests/fixtures/extensible_formatting.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "ID=002a Record(7)\n", "stderr": ""}
+    },
+    {
+      "id": "format-panic-adoption",
+      "mode": "run",
+      "source": "tests/fixtures/panic_adoption.gti",
+      "native_sources": ["tests/fixtures/panic_adoption_io.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "{raw}{{raw}}\n1 2 three\n", "stderr": ""}
+    },
+    {
+      "id": "forward-list-algorithms",
+      "mode": "run",
+      "source": "tests/fixtures/forward_list_algorithms.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
       "id": "forward-list-empty",
@@ -152,9 +609,79 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "http",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_http.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "http-url-operators",
+      "mode": "run",
+      "source": "tests/fixtures/http_url_operators.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "integral-enum-example",
+      "mode": "run",
+      "source": "examples/110-integral-enums.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "ready opcode=2a bits=00101010\ntoken creation failed: -7\n", "stderr": ""}
+    },
+    {
+      "id": "integral-enum-formatting",
+      "mode": "run",
+      "source": "tests/fixtures/integral_enum_formatting.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "token creation failed: 9\nnamed 18446744073709551615\n", "stderr": ""}
+    },
+    {
       "id": "iterator",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_iterator.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "json",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_json.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "demo\n{\"name\":\"demo\",\"private\":true,\"count\":42,\"items\":[\"one\",2]}\n", "stderr": ""}
+    },
+    {
+      "id": "json-codec",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_json_codec.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "json-owning-error-backend",
+      "mode": "run",
+      "source": "tests/fixtures/json_expected_value_backend_bug.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "memory-layout",
+      "mode": "run",
+      "source": "examples/119-runtime-object-layout.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "mutable-span",
+      "mode": "run",
+      "source": "tests/fixtures/mutable_span.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "mutable-span-owned",
+      "mode": "run",
+      "source": "tests/fixtures/mutable_span_owned.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -183,6 +710,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "native-c-scalars",
+      "mode": "run",
+      "source": "examples/123-native-c-scalars.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "numeric",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_numeric.gti",
@@ -190,9 +724,122 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "numeric-boundaries",
+      "mode": "run",
+      "source": "tests/fixtures/numeric_boundaries.gti",
+      "native_sources": ["tests/fixtures/numeric_boundaries_oracle.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "optional",
       "mode": "run",
       "source": "tests/fixtures/optional_value.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional-clone",
+      "mode": "run",
+      "source": "tests/fixtures/optional_clone.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional-expected-composition",
+      "mode": "run",
+      "source": "tests/fixtures/optional_expected_composition.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional-nested",
+      "mode": "run",
+      "source": "tests/fixtures/optional_nested.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "optional-value-or-contract",
+      "mode": "run",
+      "source": "tests/fixtures/optional_value_or_contract.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owned-error-pipelines",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_owned_error_pipelines.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-borrows",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_borrows.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-items",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_items.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-mutable",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_mutable.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-mutable-arguments",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_mutable_arguments.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-mutable-arguments-cleanup",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_mutable_arguments_failure.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "7\n1\n9\n", "stderr": ""}
+    },
+    {
+      "id": "owning-function-schema",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_schema.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "owning-function-temporary-target",
+      "mode": "run",
+      "source": "tests/fixtures/owning_function_temporary_target.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "paired-span",
+      "mode": "run",
+      "source": "tests/fixtures/paired_span.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "panic-expected",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_panic_expected.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -208,6 +855,13 @@
       }
     },
     {
+      "id": "process",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_process.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "random",
       "mode": "run",
       "source": "tests/fixtures/random_engine.gti",
@@ -219,11 +873,172 @@
       }
     },
     {
+      "id": "raw-owner-witness",
+      "mode": "run",
+      "source": "tests/fixtures/raw_owner_witness.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "raw-pointer-conversion",
+      "mode": "run",
+      "source": "tests/fixtures/raw_pointer_conversion.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "resource-allocator-example",
+      "mode": "run",
+      "source": "examples/121-programmable-allocators.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "resource-constructor-rollback",
+      "mode": "run",
+      "source": "tests/fixtures/resource_constructor_rollback.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
+    },
+    {
+      "id": "resource-container-usage",
+      "mode": "run",
+      "source": "tests/fixtures/resource_container_usage.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "resource-programmable",
+      "mode": "run",
+      "source": "tests/fixtures/programmable_allocators.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "resource-raw-movement",
+      "mode": "run",
+      "source": "tests/fixtures/raw_resource_movement.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "resource-region-contracts",
+      "mode": "run",
+      "source": "tests/fixtures/resource_region_contracts.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "resource-vector-constructor-rollback",
+      "mode": "run",
+      "source": "tests/fixtures/resource_vector_constructor_rollback.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
+    },
+    {
+      "id": "restoring-exchange-example",
+      "mode": "run",
+      "source": "examples/103-resource-exchange.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "scene-c\nscene-a\nscene-b\n", "stderr": ""}
+    },
+    {
+      "id": "restoring-indexed",
+      "mode": "run",
+      "source": "tests/fixtures/restoring_indexed_swap.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "20\n10\n30\n40\n1\n2\n3\n", "stderr": ""}
+    },
+    {
+      "id": "restoring-order",
+      "mode": "run",
+      "source": "tests/fixtures/restoring_algorithm_order.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "restoring-order-example",
+      "mode": "run",
+      "source": "examples/104-move-only-ordering.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "shaders\nmeshes\ntextures\n", "stderr": ""}
+    },
+    {
+      "id": "restoring-shapes",
+      "mode": "run",
+      "source": "tests/fixtures/restoring_exchange_shapes.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "shared-ptr",
+      "mode": "run",
+      "source": "tests/fixtures/shared_ownership.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "1\n7\n2\n8\n3\n9\n", "stderr": ""}
+    },
+    {
+      "id": "shared-ptr-upcast",
+      "mode": "run",
+      "source": "tests/fixtures/shared_ownership_upcast.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "7\n8\n", "stderr": ""}
+    },
+    {
+      "id": "simd",
+      "mode": "run",
+      "source": "tests/fixtures/simd_values.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "simd ok\n", "stderr": ""}
+    },
+    {
+      "id": "source-location",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_source_location.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "span",
       "mode": "run",
       "source": "tests/fixtures/span_owner_dependent.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "storage-discardable-result",
+      "mode": "run",
+      "source": "examples/115-discardable-results.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "storage-final-address",
+      "mode": "run",
+      "source": "tests/fixtures/storage_final_address.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "30\n20\n10\n90\n30\n20\n13\n", "stderr": ""}
+    },
+    {
+      "id": "storage-immovable",
+      "mode": "run",
+      "source": "examples/120-immovable-storage.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "storage-owning-view",
+      "mode": "run",
+      "source": "examples/114-owning-storage-view.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "storage-release",
+      "mode": "run",
+      "source": "tests/fixtures/storage_release.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "30\n10\n77\n90\n", "stderr": ""}
     },
     {
       "id": "string",
@@ -233,12 +1048,69 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "string-c-string",
+      "mode": "run",
+      "source": "tests/fixtures/string_c_string.gti",
+      "native_sources": ["tests/fixtures/string_c_string.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "string-index-range",
+      "mode": "run",
+      "source": "tests/fixtures/string_index_range.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "string-operations",
+      "mode": "run",
+      "source": "tests/fixtures/string_operations.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "string-ordering",
+      "mode": "run",
+      "source": "tests/fixtures/string_ordering.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "structural-relocation",
+      "mode": "run",
+      "source": "tests/fixtures/structural_relocation.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "71\n82\n81\nrelocation passed\n", "stderr": ""}
+    },
+    {
       "id": "tcp",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_tcp.gti",
       "native_sources": ["tests/fixtures/stdlib_surface_tcp_stub.cpp"],
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "text-owner-relay",
+      "mode": "run",
+      "source": "tests/fixtures/text_owner_relay.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "thread",
@@ -267,6 +1139,97 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "unordered-map-collisions",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_collisions.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-core",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_core.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-insert-result",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_insert_result.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-iteration",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_iteration.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-load-factor",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_load_factor.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "unordered-map-ownership",
+      "mode": "run",
+      "source": "tests/fixtures/unordered_map_ownership.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "utility-clone",
+      "mode": "run",
+      "source": "tests/fixtures/generic_clone.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "utility-make-pair",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_utility.gti",
@@ -286,6 +1249,13 @@
       "source": "tests/fixtures/stdlib_surface_vector.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "vector-construction-only",
+      "mode": "run",
+      "source": "tests/fixtures/vector_construction_only.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "beta\nalpha\n1\n2\n3\nthree\ntwo\n102\n103\n9\n", "stderr": ""}
     }
   ],
   "entries": [
@@ -294,28 +1264,51 @@
       "source": "stdlib/std/algorithm.gti",
       "status": "executable",
       "operations": [
+        "std::adjacent_find",
         "std::all_of",
         "std::any_of",
         "std::binary_search",
         "std::clamp",
+        "std::contains",
         "std::copy",
+        "std::copy_if",
+        "std::copy_n",
         "std::count",
         "std::count_if",
+        "std::equal",
         "std::fill",
         "std::find",
+        "std::find_first_of",
         "std::find_if",
         "std::find_if_not",
         "std::for_each",
+        "std::is_partitioned",
+        "std::is_sorted",
+        "std::is_sorted_until",
+        "std::lexicographical_compare",
+        "std::lower_bound",
         "std::max",
+        "std::max_element",
         "std::min",
+        "std::min_element",
         "std::none_of",
+        "std::remove_copy",
+        "std::remove_copy_if",
+        "std::replace",
+        "std::replace_copy",
+        "std::replace_copy_if",
+        "std::replace_if",
         "std::reverse",
+        "std::search",
+        "std::search_n",
         "std::sort",
-        "std::transform"
+        "std::starts_with",
+        "std::transform",
+        "std::upper_bound"
       ],
-      "case_ids": ["algorithm"],
+      "case_ids": ["algorithm", "algorithm-boundaries", "algorithm-mutation", "algorithm-search", "algorithm-user-types", "constexpr-library", "algorithm-owned-transform", "algorithm-owned-example", "restoring-indexed", "restoring-order", "restoring-order-example"],
       "required_instantiations": ["audit_iterator/audit_iterator/int32_t predicates and exact value", "move-only iterator/distinct sentinel/int32_t", "std::vector<int32_t>::iterator/sentinel/int32_t", "read- and mut-callable for_each clients", "application-defined and fixed-array predicate/operation/mutable complete-range clients"],
-      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "stdlib/std/algorithm.gti"]
+      "evidence": ["tests/fixtures/stdlib_surface_algorithm.gti", "tests/fixtures/generic_algorithm_find_count.gti", "tests/fixtures/generic_algorithm_for_each.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_algorithm_cluster_test.py", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_breadth_test.py", "tests/generic_algorithm_errors_test.py", "stdlib/std/algorithm.gti"]
     },
     {
       "id": "array.executable",
@@ -325,23 +1318,27 @@
         "std::array::array",
         "std::array::at",
         "std::array::back",
+        "std::array::begin",
+        "std::array::begin_mut",
         "std::array::empty",
+        "std::array::end",
         "std::array::fill",
         "std::array::front",
         "std::array::operator[]",
         "std::array::size"
       ],
-      "case_ids": ["array"],
+      "case_ids": ["array", "algorithm-search", "algorithm-mutation", "algorithm-user-types", "constexpr-operators", "constexpr-readonly-references"],
       "required_instantiations": ["std::array<int32_t, 0>", "std::array<int32_t, 3>"],
-      "evidence": ["tests/fixtures/stdlib_surface_array.gti", "stdlib/std/array.gti"]
+      "evidence": ["tests/fixtures/stdlib_surface_array.gti", "tests/fixtures/algorithm_search.gti", "tests/fixtures/algorithm_mutation.gti", "tests/fixtures/algorithm_user_types.gti", "stdlib/std/array.gti"]
     },
     {
-      "id": "array.scaffold",
+      "id": "array.swap",
       "source": "stdlib/std/array.gti",
-      "status": "scaffold",
-      "operations": ["std::array::swap"],
-      "reason": "swap is bodyless because moving a value out through a mutable reference is not expressible yet.",
-      "evidence": ["stdlib/std/array.gti", "stdlib/README.md"]
+      "status": "executable",
+      "operations": ["std::array::swap", "std::array::swap_elements"],
+      "case_ids": ["restoring-indexed", "restoring-order", "restoring-order-example"],
+      "required_instantiations": ["std::array<int, 0>", "std::array<int, 2>", "std::array<std::string, 2>", "unrelated move-only Resource"],
+      "evidence": ["tests/fixtures/restoring_indexed_swap.gti", "tests/fixtures/restoring_algorithm_order.gti", "tests/restoring_indexed_runtime_test.py", "tests/restoring_exchange_tests.cpp", "examples/104-move-only-ordering.gti"]
     },
     {
       "id": "atomic.executable",
@@ -371,19 +1368,108 @@
       "evidence": ["docs/language/concurrency.md", "examples/76-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_fetch.gti", "tests/fixtures/atomic_fetch_overflow.gti", "tests/fixtures/atomic_orders.gti", "tests/fixtures/atomic_scalar.gti"]
     },
     {
+      "id": "build.executable",
+      "source": "stdlib/std/build.gti",
+      "status": "executable",
+      "operations": [
+        "std::build::command::arg",
+        "std::build::command::command",
+        "std::build::command::run",
+        "std::build::context::cc",
+        "std::build::context::context",
+        "std::build::context::cxx",
+        "std::build::context::host",
+        "std::build::context::jobs",
+        "std::build::context::output_dir",
+        "std::build::context::output_file",
+        "std::build::context::package_dir",
+        "std::build::context::profile",
+        "std::build::context::target",
+        "std::build::context::target_os",
+        "std::build::context_from_args",
+        "std::build::outputs::c_source",
+        "std::build::outputs::cpp_source",
+        "std::build::outputs::framework",
+        "std::build::outputs::include_dir",
+        "std::build::outputs::library",
+        "std::build::outputs::library_dir",
+        "std::build::outputs::link_file",
+        "std::build::outputs::outputs",
+        "std::build::outputs::publish"
+      ],
+      "case_ids": ["build"],
+      "required_instantiations": ["exact host argv and nonzero exit status", "all structured native output categories"],
+      "evidence": ["tests/fixtures/stdlib_surface_build.gti", "tests/project_cli_smoke_test.py", "stdlib/std/build.gti", "runtime/src/process.cpp"]
+    },
+    {
+      "id": "charconv.executable",
+      "source": "stdlib/std/charconv.gti",
+      "status": "executable",
+      "operations": [
+        "std::chars_format",
+        "std::from_chars",
+        "std::from_chars_result",
+        "std::parse_errc"
+      ],
+      "case_ids": [
+        "charconv-integer",
+        "charconv-float"
+      ],
+      "required_instantiations": [
+        "all fixed-width integers",
+        "float",
+        "double"
+      ],
+      "evidence": [
+        "tests/charconv_runtime_test.py",
+        "tests/runtime_charconv_tests.cpp"
+      ]
+    },
+    {
+      "id": "chrono.executable",
+      "source": "stdlib/std/chrono.gti",
+      "status": "executable",
+      "operations": [
+        "std::chrono::clock_errc",
+        "std::chrono::nanoseconds::count",
+        "std::chrono::nanoseconds::nanoseconds",
+        "std::chrono::steady_clock::now",
+        "std::chrono::steady_time_point::after",
+        "std::chrono::steady_time_point::before",
+        "std::chrono::steady_time_point::elapsed_since",
+        "std::chrono::steady_time_point::equals",
+        "std::chrono::steady_time_point::steady_time_point",
+        "std::chrono::steady_time_point::time_since_origin",
+        "std::chrono::system_clock::now",
+        "std::chrono::system_time_point::after",
+        "std::chrono::system_time_point::before",
+        "std::chrono::system_time_point::elapsed_since",
+        "std::chrono::system_time_point::equals",
+        "std::chrono::system_time_point::nanoseconds_since_unix_epoch",
+        "std::chrono::system_time_point::subsecond_nanoseconds",
+        "std::chrono::system_time_point::system_time_point",
+        "std::chrono::system_time_point::unix_seconds"
+      ],
+      "case_ids": ["chrono", "constexpr-chrono", "owned-error-pipelines"],
+      "required_instantiations": [
+        "int64 minimum/maximum elapsed subtraction",
+        "negative Unix nanosecond decomposition",
+        "steady and system host clock reads"
+      ],
+      "evidence": [
+        "docs/language/chrono.md",
+        "runtime/src/chrono.cpp",
+        "stdlib/std/chrono.gti",
+        "tests/fixtures/stdlib_surface_chrono.gti",
+        "tests/runtime_chrono_tests.cpp"
+      ]
+    },
+    {
       "id": "cmath.executable",
       "source": "stdlib/std/cmath.gti",
       "status": "executable",
-      "operations": ["std::abs(float)", "std::isfinite(float)", "std::isinf(float)", "std::isnan(float)"],
-      "case_ids": ["cmath"],
-      "required_instantiations": [],
-      "evidence": ["tests/fixtures/stdlib_surface_cmath.gti", "stdlib/std/cmath.gti"]
-    },
-    {
-      "id": "cmath.scaffold",
-      "source": "stdlib/std/cmath.gti",
-      "status": "scaffold",
       "operations": [
+        "std::abs(float)",
         "std::acos(float)",
         "std::asin(float)",
         "std::atan(float)",
@@ -394,6 +1480,9 @@
         "std::exp(float)",
         "std::floor(float)",
         "std::fmod(float,float)",
+        "std::isfinite(float)",
+        "std::isinf(float)",
+        "std::isnan(float)",
         "std::log(float)",
         "std::log10(float)",
         "std::pow(float,float)",
@@ -403,8 +1492,9 @@
         "std::tan(float)",
         "std::trunc(float)"
       ],
-      "reason": "The arithmetic, rounding, power, logarithmic, and trigonometric declarations are bodyless.",
-      "evidence": ["stdlib/std/cmath.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "case_ids": ["cmath", "constexpr-library"],
+      "required_instantiations": ["binary32 finite, signed-zero, NaN, infinity, domain, pole, overflow, and subnormal cases"],
+      "evidence": ["tests/fixtures/stdlib_surface_cmath.gti", "tests/cmath_runtime_test.py", "stdlib/std/cmath.gti", "runtime/src/math.cpp"]
     },
     {
       "id": "cstdio.executable",
@@ -412,12 +1502,14 @@
       "status": "executable",
       "operations": [
         "std::FILE::close",
+        "std::FILE::flush",
         "std::FILE::get",
         "std::FILE::is_open",
         "std::FILE::read_some",
         "std::FILE::seek",
         "std::FILE::tell",
         "std::FILE::write",
+        "std::FILE::write_some",
         "std::fclose",
         "std::fgetc",
         "std::fopen",
@@ -426,15 +1518,105 @@
         "std::ftell",
         "std::fwrite",
         "std::getchar",
+        "std::getline",
         "std::read_stdin_some",
         "std::try_flush_stderr",
         "std::try_flush_stdout",
         "std::try_write_stderr",
         "std::try_write_stdout"
       ],
-      "case_ids": ["cstdio"],
+      "case_ids": ["cstdio", "composable-io-native"],
       "required_instantiations": [],
       "evidence": ["tests/fixtures/stdlib_surface_cstdio.gti", "docs/language/io.md"]
+    },
+    {
+      "id": "cthread.executable",
+      "source": "stdlib/std/cthread.gti",
+      "status": "executable",
+      "operations": ["std::ONCE_FLAG_INIT", "std::call_once", "std::cnd_broadcast", "std::cnd_destroy", "std::cnd_init", "std::cnd_signal", "std::cnd_timedwait", "std::cnd_wait", "std::mtx_destroy", "std::mtx_init", "std::mtx_lock", "std::mtx_timedlock", "std::mtx_trylock", "std::mtx_unlock", "std::once_flag", "std::thrd_create", "std::thrd_current", "std::thrd_equal", "std::thrd_join", "std::thrd_sleep", "std::thrd_yield", "std::timespec"],
+      "case_ids": ["cthread", "cthread-concurrent", "cthread-create-join", "cthread-identity", "cthread-identity-concurrent", "cthread-mutex", "cthread-mutex-concurrent", "cthread-condition", "cthread-condition-concurrent", "cthread-once", "cthread-sleep", "cthread-sleep-concurrent"],
+      "required_instantiations": ["initial and managed yield; stable initial/managed/manual identity and total equality; relative sleep with value/reference and unsafe pointer overloads; single-threaded and concurrent profiles; manual registered worker and once-only integer-result join; plain/recursive/timed mutexes, typed native-context data publication, and explicit destruction; condition signal/broadcast, wait/timedwait predicate loops, timeout reacquisition, and manual lifetime"],
+      "evidence": ["stdlib/std/cthread.gti", "tests/cthread_runtime_test.py", "tests/cthread_sleep_test.py", "tests/cthread_mutex_test.py", "tests/cthread_condition_test.py", "tests/cthread_once_test.py", "tests/cthread_create_join_test.py", "tests/cthread_tests.cpp", "tests/fixtures/cthread_yield_call_count.cpp", "docs/language/concurrency.md"]
+    },
+    {
+      "id": "deque.executable",
+      "source": "stdlib/std/deque.gti",
+      "status": "executable",
+      "operations": [
+        "std::deque::at",
+        "std::deque::back",
+        "std::deque::begin",
+        "std::deque::begin_mut",
+        "std::deque::clear",
+        "std::deque::collection_init",
+        "std::deque::collection_insert",
+        "std::deque::deque",
+        "std::deque::emplace",
+        "std::deque::emplace_back",
+        "std::deque::emplace_front",
+        "std::deque::empty",
+        "std::deque::end",
+        "std::deque::erase",
+        "std::deque::front",
+        "std::deque::insert",
+        "std::deque::operator[]",
+        "std::deque::pop_back",
+        "std::deque::pop_front",
+        "std::deque::push_back",
+        "std::deque::push_front",
+        "std::deque::resize",
+        "std::deque::size",
+        "std::deque::swap"
+      ],
+      "case_ids": [
+        "algorithm-search",
+        "algorithm-mutation",
+        "algorithm-user-types",
+        "complete-containers-collection",
+        "complete-deque",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "immovable Element",
+        "unique_ptr<int>"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
+    },
+    {
+      "id": "detail.panic-core",
+      "source": "stdlib/std/detail/panic.gti",
+      "status": "executable",
+      "operations": ["std::detail::panic"],
+      "case_ids": ["panic-expected", "format-panic-adoption"],
+      "evidence": ["tests/panic_runtime_test.py", "tests/panic_adoption_runtime_test.py"]
+    },
+    {
+      "id": "encoding.executable",
+      "source": "stdlib/std/encoding.gti",
+      "status": "executable",
+      "operations": [
+        "std::encoding::base64::decode",
+        "std::encoding::base64::encode",
+        "std::encoding::decode_errc",
+        "std::encoding::hex::decode",
+        "std::encoding::hex::encode"
+      ],
+      "case_ids": ["encoding"],
+      "required_instantiations": [
+        "RFC 4648 empty and one/two/three-byte tails",
+        "all 256 byte values through Base64 and hexadecimal round trips",
+        "strict invalid length, character, padding, and canonical-bit errors"
+      ],
+      "evidence": [
+        "docs/language/encoding.md",
+        "stdlib/std/encoding.gti",
+        "tests/encoding_runtime_test.py",
+        "tests/fixtures/stdlib_surface_encoding.gti"
+      ]
     },
     {
       "id": "filesystem.executable",
@@ -491,13 +1673,64 @@
       ]
     },
     {
+      "id": "filesystem.host-operations",
+      "source": "stdlib/std/filesystem.gti",
+      "status": "executable",
+      "operations": [
+        "std::filesystem::absolute",
+        "std::filesystem::canonical",
+        "std::filesystem::copy_file",
+        "std::filesystem::copy_options",
+        "std::filesystem::create_directories",
+        "std::filesystem::create_directory",
+        "std::filesystem::create_directory_symlink",
+        "std::filesystem::create_hard_link",
+        "std::filesystem::create_symlink",
+        "std::filesystem::current_path",
+        "std::filesystem::directory_entries",
+        "std::filesystem::directory_iterator::entry_path",
+        "std::filesystem::directory_iterator::next",
+        "std::filesystem::directory_iterator::open",
+        "std::filesystem::equivalent",
+        "std::filesystem::errc",
+        "std::filesystem::exists",
+        "std::filesystem::file_size",
+        "std::filesystem::file_status::type",
+        "std::filesystem::file_type",
+        "std::filesystem::is_directory",
+        "std::filesystem::is_empty",
+        "std::filesystem::is_regular_file",
+        "std::filesystem::is_symlink",
+        "std::filesystem::read_symlink",
+        "std::filesystem::remove",
+        "std::filesystem::remove_all",
+        "std::filesystem::rename",
+        "std::filesystem::status",
+        "std::filesystem::symlink_status",
+        "std::filesystem::temp_directory_path",
+        "std::filesystem::weakly_canonical"
+      ],
+      "case_ids": [
+        "filesystem-operations"
+      ],
+      "required_instantiations": [
+        "views and owning paths",
+        "directory stream and vector<path>"
+      ],
+      "evidence": [
+        "tests/filesystem_operations_runtime_test.py",
+        "tests/runtime_filesystem_tests.cpp",
+        "docs/language/filesystem.md"
+      ]
+    },
+    {
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
-      "operations": ["std::format", "std::try_print", "std::try_println"],
-      "case_ids": ["format"],
-      "required_instantiations": ["zero arguments", "int32_t,uint64_t integral pack"],
-      "evidence": ["tests/fixtures/stdlib_surface_format.gti", "stdlib/std/format.gti"]
+      "operations": ["std::format", "std::format_spec", "std::format_to", "std::formattable<T>", "std::formatter<T>", "std::print(pattern,Args...)", "std::println(pattern,Args...)", "std::try_format", "std::try_format_to", "std::try_print", "std::try_println"],
+      "case_ids": ["format", "format-customization", "format-panic-adoption", "integral-enum-formatting", "integral-enum-example"],
+      "required_instantiations": ["zero arguments", "all fixed-width integer types", "mixed bool,char,int32_t,float,double,string_view,string pack", "counted string view with embedded zero", "indexed and typed format specifications", "custom formatter delegation and composition", "recoverable value-dependent formatter rejection"],
+      "evidence": ["tests/fixtures/stdlib_surface_format.gti", "tests/fixtures/extensible_formatting.gti", "stdlib/std/format.gti"]
     },
     {
       "id": "forward-list.empty",
@@ -523,23 +1756,41 @@
       "required_instantiations": ["std::forward_list<int32_t>"]
     },
     {
+      "id": "forward-list.node-algorithms",
+      "source": "stdlib/std/forward_list.gti",
+      "status": "executable",
+      "operations": [
+        "std::forward_list::merge",
+        "std::forward_list::remove",
+        "std::forward_list::resize",
+        "std::forward_list::reverse",
+        "std::forward_list::sort",
+        "std::forward_list::unique"
+      ],
+      "case_ids": ["forward-list-algorithms"],
+      "evidence": ["tests/fixtures/forward_list_algorithms.gti", "tests/forward_list_runtime_test.py", "stdlib/std/forward_list.gti"],
+      "required_instantiations": ["std::forward_list<int32_t>", "std::forward_list<entry>"]
+    },
+    {
       "id": "forward-list.scaffold",
       "source": "stdlib/std/forward_list.gti",
       "status": "scaffold",
       "operations": [
         "std::forward_list::begin",
         "std::forward_list::emplace_front",
-        "std::forward_list::end",
-        "std::forward_list::merge",
-        "std::forward_list::remove",
-        "std::forward_list::resize",
-        "std::forward_list::reverse",
-        "std::forward_list::sort",
-        "std::forward_list::swap",
-        "std::forward_list::unique"
+        "std::forward_list::end"
       ],
-      "reason": "These declarations are bodyless pending nullable owner-tied traversal and mutation/invalidation proofs.",
+      "reason": "Iteration needs nullable owner-tied traversal; emplacement needs generic in-place construction.",
       "evidence": ["stdlib/std/forward_list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "forward-list.swap",
+      "source": "stdlib/std/forward_list.gti",
+      "status": "executable",
+      "operations": ["std::forward_list::swap"],
+      "case_ids": ["container-swap"],
+      "required_instantiations": ["int32_t", "move-only destructor-bearing item"],
+      "evidence": ["tests/fixtures/container_swap.gti", "tests/fixtures/container_swap_cleanup.gti", "tests/container_swap_runtime_test.py"]
     },
     {
       "id": "functional.executable",
@@ -551,12 +1802,117 @@
       "evidence": ["tests/fixtures/stdlib_surface_functional.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/fixtures/complete_range_probe.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/generic_algorithm_cluster_test.py", "stdlib/std/functional.gti"]
     },
     {
-      "id": "functional.scaffold",
+      "id": "functional.hashes",
       "source": "stdlib/std/functional.gti",
-      "status": "scaffold",
-      "operations": ["std::hash<T>::operator()"],
-      "reason": "The generic customization primary is declaration-only and the canonical language document does not promise primitive hash implementations.",
-      "evidence": ["stdlib/std/functional.gti", "docs/language/standard-library.md"]
+      "status": "executable",
+      "operations": ["std::hash<bool>","std::hash<char>","std::hash<int16_t>","std::hash<int32_t>","std::hash<int64_t>","std::hash<int8_t>","std::hash<uint16_t>","std::hash<uint32_t>","std::hash<uint64_t>","std::hash<uint8_t>"],
+      "case_ids": ["associative-hashes"],
+      "required_instantiations": ["all fixed-width signed/unsigned integers", "bool", "char", "application-owned exact hash specialization", "move-only stored source hasher"],
+      "evidence": ["stdlib/std/functional.gti", "tests/fixtures/associative_hash_contracts.gti", "tests/associative_hash_contracts_test.py"]
+    },
+    {
+      "id": "functional.owning",
+      "source": "stdlib/std/functional.gti",
+      "status": "executable",
+      "operations": ["std::function::clone", "std::function::empty", "std::function::function", "std::function::operator()", "std::function::replace", "std::function::reset", "std::move_only_function::empty", "std::move_only_function::move_only_function", "std::move_only_function::operator()", "std::move_only_function::replace", "std::move_only_function::reset"],
+      "case_ids": ["owning-function", "owning-function-borrows", "owning-function-items", "owning-function-schema", "owning-function-temporary-target", "owning-function-mutable", "owning-function-mutable-arguments", "owning-function-mutable-arguments-cleanup"],
+      "required_instantiations": ["int(int) copyable captured lambda, explicit clone and setter transfer", "void() read-callable lambda", "int(int) move-only unique-owner capture", "mixed read-only reference/value arguments with noncopyable referents", "stored and returned namespace function items, capture, replacement, clone and callee evaluation order", "nested immutable command schema with vector children and an owned leaf handler", "int(int) mut stateful targets, independent clone state, replacement, reset and exactly-once destruction"],
+      "evidence": ["tests/fixtures/owning_function.gti", "tests/fixtures/owning_function_borrows.gti", "tests/fixtures/owning_function_items.gti", "tests/fixtures/owning_function_schema.gti", "tests/fixtures/owning_function_mutable.gti", "tests/fixtures/owning_function_mutable_arguments.gti", "tests/owning_function_tests.cpp", "tests/owning_function_runtime_test.py", "stdlib/std/functional.gti"]
+    },
+    {
+      "id": "http.executable",
+      "source": "stdlib/std/http.gti",
+      "status": "executable",
+      "operations": [
+        "std::http::client::create",
+        "std::http::client::delete_",
+        "std::http::client::get",
+        "std::http::client::head",
+        "std::http::client::last_error_message",
+        "std::http::client::last_native_code",
+        "std::http::client::patch",
+        "std::http::client::post",
+        "std::http::client::put",
+        "std::http::client::send",
+        "std::http::header::header",
+        "std::http::header::name",
+        "std::http::header::replace_value",
+        "std::http::header::value",
+        "std::http::request::add_header",
+        "std::http::request::body",
+        "std::http::request::ca_bundle",
+        "std::http::request::connect_timeout_ms",
+        "std::http::request::headers",
+        "std::http::request::max_response_bytes",
+        "std::http::request::request",
+        "std::http::request::set_body",
+        "std::http::request::set_ca_bundle",
+        "std::http::request::set_connect_timeout_ms",
+        "std::http::request::set_header",
+        "std::http::request::set_max_response_bytes",
+        "std::http::request::set_timeout_ms",
+        "std::http::request::set_url",
+        "std::http::request::timeout_ms",
+        "std::http::request::url",
+        "std::http::request::verb",
+        "std::http::response::body",
+        "std::http::response::headers",
+        "std::http::response::response",
+        "std::http::response::status",
+        "std::http::url::add_query_parameter",
+        "std::http::url::clear_query",
+        "std::http::url::clone",
+        "std::http::url::has_explicit_port",
+        "std::http::url::host",
+        "std::http::url::https",
+        "std::http::url::operator/",
+        "std::http::url::operator/=",
+        "std::http::url::parse",
+        "std::http::url::port",
+        "std::http::url::push_path_segment",
+        "std::http::url::scheme",
+        "std::http::url::set_query_parameter",
+        "std::http::url::string",
+        "std::http::url::view"
+      ],
+      "case_ids": ["http", "http-url-operators"],
+      "required_instantiations": [
+        "absolute HTTP/HTTPS URL parse, validation, cloning, rendering, path and query construction",
+        "string_view and owned-url request/client overloads",
+        "read-only named URL cloning, consuming operator chains, mutable path append and borrow rejection"
+      ],
+      "evidence": [
+        "docs/language/http.md",
+        "stdlib/std/http.gti",
+        "tests/fixtures/stdlib_surface_http.gti",
+        "tests/http_runtime_test.py",
+        "tests/http_url_operators_test.py"
+      ]
+    },
+    {
+      "id": "io.executable",
+      "source": "stdlib/std/io.gti",
+      "status": "executable",
+      "operations": [
+        "std::byte_buffer",
+        "std::io::buffered_reader",
+        "std::io::buffered_writer",
+        "std::io::copy",
+        "std::io::error",
+        "std::io::getline",
+        "std::io::memory_reader",
+        "std::io::memory_stream",
+        "std::io::read_exact",
+        "std::io::reader",
+        "std::io::stderr_writer",
+        "std::io::stdin_reader",
+        "std::io::stdout_writer",
+        "std::io::write_all",
+        "std::io::writer"
+      ],
+      "case_ids": ["composable-io", "composable-io-native"],
+      "required_instantiations": ["memory/file/process stream adapters", "custom short/failing/stalled/oversized transports", "buffered readers and writers"],
+      "evidence": ["tests/composable_io_runtime_test.py", "tests/runtime_io_tests.cpp", "docs/language/io.md"]
     },
     {
       "id": "iterator.executable",
@@ -576,12 +1932,126 @@
       "evidence": ["stdlib/std/iterator.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
     },
     {
-      "id": "list.scaffold",
+      "id": "json.executable",
+      "source": "stdlib/std/json.gti",
+      "status": "executable",
+      "operations": ["std::json public surface"],
+      "case_ids": ["json", "json-codec", "json-owning-error-backend", "owned-error-pipelines"],
+      "required_instantiations": [],
+      "evidence": [
+        "docs/language/json.md",
+        "stdlib/std/json.gti",
+        "tests/fixtures/json_expected_value_backend_bug.gti",
+        "tests/fixtures/stdlib_json_codec.gti",
+        "tests/fixtures/stdlib_surface_json.gti",
+        "tests/json_stdlib_test.py"
+      ]
+    },
+    {
+      "id": "list.executable",
       "source": "stdlib/std/list.gti",
-      "status": "scaffold",
-      "operations": ["std::list public surface"],
-      "reason": "The move-only shape is present, but node storage and operation bodies are absent.",
-      "evidence": ["stdlib/std/list.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "status": "executable",
+      "operations": [
+        "std::list::back",
+        "std::list::begin",
+        "std::list::begin_mut",
+        "std::list::clear",
+        "std::list::collection_init",
+        "std::list::collection_insert",
+        "std::list::emplace_back",
+        "std::list::emplace_front",
+        "std::list::empty",
+        "std::list::end",
+        "std::list::erase",
+        "std::list::front",
+        "std::list::insert",
+        "std::list::list",
+        "std::list::merge",
+        "std::list::pop_back",
+        "std::list::pop_front",
+        "std::list::push_back",
+        "std::list::push_front",
+        "std::list::remove",
+        "std::list::resize",
+        "std::list::reverse",
+        "std::list::size",
+        "std::list::sort",
+        "std::list::swap",
+        "std::list::unique"
+      ],
+      "case_ids": [
+        "algorithm-search",
+        "algorithm-mutation",
+        "algorithm-user-types",
+        "complete-containers-collection",
+        "complete-list",
+        "complete-list-differential",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "unique_ptr<int>",
+        "immovable Element"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
+    },
+    {
+      "id": "map.executable",
+      "source": "stdlib/std/map.gti",
+      "status": "executable",
+      "operations": [
+        "std::map::at",
+        "std::map::begin",
+        "std::map::begin_mut",
+        "std::map::clear",
+        "std::map::const_iterator",
+        "std::map::contains",
+        "std::map::count",
+        "std::map::emplace",
+        "std::map::empty",
+        "std::map::end",
+        "std::map::erase",
+        "std::map::find",
+        "std::map::find_mut",
+        "std::map::get_or_insert",
+        "std::map::insert",
+        "std::map::insert_or_assign",
+        "std::map::iterator",
+        "std::map::key_type",
+        "std::map::lower_bound",
+        "std::map::map",
+        "std::map::mapped_type",
+        "std::map::size",
+        "std::map::size_type",
+        "std::map::try_emplace",
+        "std::map::upper_bound",
+        "std::map::value_type"
+      ],
+      "case_ids": [
+        "associative-map",
+        "associative-map-balancing",
+        "associative-map-iteration",
+        "associative-map-ownership",
+        "associative-map-insert-result"
+      ],
+      "required_instantiations": [
+        "scalar keys and values",
+        "move-only string keys and unique-owner values",
+        "custom read-only policies",
+        "checked mutable and read-only traversal",
+        "pair<iterator, bool> insertion and move",
+        "duplicate emplacement without construction",
+        "destructor cleanup and node reuse"
+      ],
+      "evidence": [
+        "stdlib/std/map.gti",
+        "tests/associative_map_test.py",
+        "tests/container_contract_failure_test.py",
+        "docs/language/standard-library.md"
+      ]
     },
     {
       "id": "memory.executable",
@@ -604,6 +2074,9 @@
         "std::arena<T>::size",
         "std::arena<T>::try_insert",
         "std::arena_errc",
+        "std::assume_mut<T,Owner>",
+        "std::assume_ref<T,Owner>",
+        "std::erase_address<T>",
         "std::pool<T>",
         "std::pool<T>::capacity",
         "std::pool<T>::clear",
@@ -621,13 +2094,17 @@
         "std::storage<T>::clear",
         "std::storage<T>::construct",
         "std::storage<T>::destroy",
+        "std::storage<T>::emplace",
         "std::storage<T>::get",
         "std::storage<T>::get_mut",
         "std::storage<T>::initialized",
+        "std::storage<T>::release",
+        "std::storage<T>::relocate_to",
         "std::try_make_arena<T>",
-        "std::try_make_pool<T>"
+        "std::try_make_pool<T>",
+        "std::typed_address<T>"
       ],
-      "case_ids": ["allocator-storage", "arena-pool"],
+      "case_ids": ["allocator-storage", "storage-discardable-result", "storage-final-address", "storage-immovable", "storage-owning-view", "storage-release", "arena-pool", "raw-owner-witness", "raw-pointer-conversion", "structural-relocation", "owned-error-pipelines", "resource-programmable", "resource-region-contracts"],
       "required_instantiations": [
         "std::alignment(64)",
         "std::arena<int32_t>",
@@ -635,23 +2112,59 @@
         "std::pool<int32_t>",
         "std::pool<tracked_value>",
         "std::storage<int32_t>",
-        "std::storage<tracked>"
+        "std::storage<tracked>",
+        "std::storage<immovable object> with final-address emplacement",
+        "std::alloc_errc invalid_region and invalid_state"
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
+        "tests/storage_final_address_runtime_test.py",
+        "tests/fixtures/storage_final_address.gti",
+        "tests/fixtures/storage_release.gti",
         "tests/arena_pool_runtime_test.py",
         "tests/fixtures/allocator_storage.gti",
         "tests/fixtures/arena_pool.gti",
+        "tests/fixtures/structural_relocation.gti",
+        "tests/structural_relocation_runtime_test.py",
+        "examples/120-immovable-storage.gti",
+        "tests/fixtures/programmable_allocators.gti",
+        "tests/fixtures/resource_region_contracts.gti",
         "stdlib/std/memory.gti"
       ]
+    },
+    {
+      "id": "memory.layout",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::layout", "std::layout::alignment", "std::layout::bytes", "std::layout_of<T>()", "std::layout_queryable<T>"],
+      "case_ids": ["memory-layout"],
+      "required_instantiations": ["std::layout_of<Envelope<Owner>>()", "std::layout_of<Owner>()", "std::layout_of<Pinned>()", "std::layout_of<int32_t>()", "std::layout_of<uint64_t[3]>()"],
+      "evidence": ["examples/119-runtime-object-layout.gti", "tests/runtime_object_layout_tests.cpp", "tests/runtime_object_layout_test.py", "docs/language/standard-library.md"]
     },
     {
       "id": "memory.scaffold",
       "source": "stdlib/std/memory.gti",
       "status": "scaffold",
-      "operations": ["std::make_shared", "std::shared_ptr public surface", "std::weak_ptr public surface"],
-      "reason": "shared_ptr, weak_ptr, and make_shared are declaration-only.",
+      "operations": ["std::weak_ptr public surface"],
+      "reason": "weak_ptr remains declaration-only.",
       "evidence": ["stdlib/std/memory.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+    },
+    {
+      "id": "memory.shared-ptr",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::make_shared", "std::shared_ptr public surface"],
+      "case_ids": ["shared-ptr"],
+      "evidence": ["tests/fixtures/shared_ownership.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_failure_test.py", "tests/shared_ownership_threads_test.py"]
+    },
+    {
+      "id": "memory.shared-ptr-upcast",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::shared_ptr::upcast", "std::upcast_shared"],
+      "case_ids": ["shared-ptr-upcast"],
+      "required_instantiations": ["public polymorphic Base/Derived sharing one control block"],
+      "evidence": ["tests/fixtures/shared_ownership_upcast.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_tests.cpp", "stdlib/std/memory.gti"]
     },
     {
       "id": "memory.unique-ptr",
@@ -679,6 +2192,31 @@
       "case_ids": ["unique-ptr-upcast"],
       "evidence": ["tests/fixtures/stdlib_surface_unique_ptr_upcast.gti", "stdlib/std/memory.gti"],
       "required_instantiations": ["Base/Derived"]
+    },
+    {
+      "id": "mutable-span.executable",
+      "source": "stdlib/std/span.gti",
+      "status": "executable",
+      "operations": [
+        "std::mutable_span::as_span",
+        "std::mutable_span::at",
+        "std::mutable_span::back",
+        "std::mutable_span::begin",
+        "std::mutable_span::begin_mut",
+        "std::mutable_span::empty",
+        "std::mutable_span::end",
+        "std::mutable_span::first",
+        "std::mutable_span::front",
+        "std::mutable_span::last",
+        "std::mutable_span::operator[]",
+        "std::mutable_span::size",
+        "std::mutable_span::subspan",
+        "std::string::as_mutable_span",
+        "std::vector::as_mutable_span"
+      ],
+      "case_ids": ["mutable-span", "mutable-span-owned", "composable-io"],
+      "required_instantiations": ["int", "char", "uint8_t", "owning application element", "shared child copies", "exclusive subviews", "mutable iterators"],
+      "evidence": ["tests/composable_io_runtime_test.py", "tests/carrier_shell_reference_tests.cpp", "docs/language/ranges.md"]
     },
     {
       "id": "mutex.executable",
@@ -712,6 +2250,7 @@
       "source": "stdlib/std/numeric.gti",
       "status": "executable",
       "operations": [
+        "std::MAX_UINT64",
         "std::accumulate",
         "std::checked_add",
         "std::checked_mul",
@@ -730,27 +2269,72 @@
         "std::wrapping_mul",
         "std::wrapping_sub"
       ],
-      "case_ids": ["numeric"],
-      "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int32_t", "uint8_t"],
-      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py"]
-    },
-    {
-      "id": "numeric.unsupported-hash-specializations",
-      "source": "stdlib/std/numeric.gti",
-      "status": "unsupported",
-      "operations": ["std::hash<uint16_t>", "std::hash<uint32_t>", "std::hash<uint64_t>", "std::hash<uint8_t>"],
-      "reason": "Latent specialization bodies exist, but the canonical standard-library contract explicitly does not ship primitive hash implementations or a hashability capability.",
-      "evidence": ["stdlib/std/numeric.gti", "docs/language/standard-library.md"],
-      "required_instantiations": []
+      "case_ids": ["numeric", "numeric-boundaries", "constexpr-library"],
+      "required_instantiations": ["audit_iterator/int32_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "float", "double"],
+      "evidence": ["tests/fixtures/stdlib_surface_numeric.gti", "tests/fixtures/generic_callable_concepts.gti", "tests/generic_callable_concepts_runtime_test.py", "tests/defined_integer_runtime_test.py", "tests/numeric_boundaries_runtime_test.py", "tests/fixtures/numeric_boundaries.gti", "tests/fixtures/numeric_boundaries_oracle.cpp", "tests/fixtures/numeric_boundaries_failure.gti"]
     },
     {
       "id": "optional.executable",
       "source": "stdlib/std/optional.gti",
       "status": "executable",
-      "operations": ["std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
-      "case_ids": ["optional"],
-      "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>"],
-      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+      "operations": ["std::optional::clone", "std::optional::emplace", "std::optional::has_value", "std::optional::operator bool", "std::optional::operator*", "std::optional::operator->", "std::optional::optional", "std::optional::reset", "std::optional::value", "std::optional::value_or"],
+      "case_ids": ["optional", "optional-clone", "optional-nested", "optional-expected-composition", "vector-construction-only", "optional-value-or-contract"],
+      "required_instantiations": ["std::optional<int32_t>", "std::optional<move_only>", "std::optional<std::optional<std::string>>"],
+      "evidence": ["tests/fixtures/optional_lifecycle.gti", "tests/fixtures/optional_value.gti", "tests/fixtures/optional_clone.gti", "tests/fixtures/optional_nested.gti", "tests/fixtures/optional_expected_composition.gti", "tests/fixtures/expected_constructor_payload.gti", "tests/fixtures/optional_constructor_failure.gti", "tests/fixtures/optional_reset_failure.gti", "tests/constructor_field_publication_test.py", "tests/optional_compiler_tests.cpp", "tests/optional_runtime_test.py", "stdlib/std/optional.gti"]
+    },
+    {
+      "id": "paired-span.executable",
+      "source": "stdlib/std/paired_span.gti",
+      "status": "executable",
+      "operations": ["std::paired_span::empty", "std::paired_span::first", "std::paired_span::paired_span", "std::paired_span::second", "std::paired_span::size", "std::paired_span::subspan"],
+      "case_ids": ["paired-span"],
+      "required_instantiations": ["std::paired_span<int32_t, int32_t>", "std::paired_span<int32_t, double>"],
+      "evidence": ["tests/fixtures/paired_span.gti", "stdlib/std/paired_span.gti"]
+    },
+    {
+      "id": "panic.executable",
+      "source": "stdlib/std/panic.gti",
+      "status": "executable",
+      "operations": ["std::panic(string_view)", "std::panic(string_view,Args...)"],
+      "case_ids": ["panic-expected"],
+      "required_instantiations": ["raw counted message", "formatted int argument"],
+      "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/panic_runtime_test.py", "tests/panic_contract_tests.cpp", "stdlib/std/panic.gti"]
+    },
+    {
+      "id": "prelude.c-scalars",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["c_bool", "c_char", "c_double", "c_float", "c_int", "c_intptr_t", "c_long", "c_longlong", "c_ptrdiff_t", "c_schar", "c_short", "c_size_t", "c_uchar", "c_uint", "c_uintptr_t", "c_ulong", "c_ulonglong", "c_ushort", "c_void"],
+      "case_ids": ["native-c-scalars"],
+      "required_instantiations": ["LP64 and LLP64 C declaration identities", "plain-char numeric conversion and indexing", "unrelated generic aggregates"],
+      "evidence": ["tests/native_c_scalar_tests.cpp", "tests/native_c_scalar_target_tests.cpp", "tests/native_c_scalar_runtime_test.py", "examples/123-native-c-scalars.gti", "docs/language/native-c-interop.md"]
+    },
+    {
+      "id": "prelude.enum-underlying",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["std::enum_underlying", "std::integral_enum", "std::to_underlying"],
+      "case_ids": ["integral-enum-formatting", "integral-enum-example"],
+      "required_instantiations": ["all eight underlying widths", "unrelated wire encoder", "exact signedness and width rejection"],
+      "evidence": ["tests/integral_enum_tests.cpp", "tests/fixtures/integral_enum_formatting.gti", "examples/110-integral-enums.gti"]
+    },
+    {
+      "id": "prelude.expected-ergonomics",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["expected::and_then", "expected::expect", "expected::transform"],
+      "case_ids": ["panic-expected"],
+      "required_instantiations": ["expected<int,int>", "owned and void alternatives in the runtime matrix"],
+      "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/expected_ergonomics_tests.cpp", "tests/expected_ergonomics_runtime_test.py"]
+    },
+    {
+      "id": "prelude.move-construction",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["std::move_constructible"],
+      "case_ids": ["optional-nested"],
+      "required_instantiations": ["construction-only user type", "nested optional", "deleted-move rejection"],
+      "evidence": ["tests/compiler_declarations_tests.cpp", "tests/fixtures/optional_nested.gti", "stdlib/prelude.gti"]
     },
     {
       "id": "prelude.output",
@@ -762,6 +2346,80 @@
       "evidence": ["tests/fixtures/stdlib_surface_prelude_output.gti", "stdlib/prelude.gti"]
     },
     {
+      "id": "prelude.relocation",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": ["std::bitwise_relocatable", "std::relocatable"],
+      "case_ids": ["structural-relocation"],
+      "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class"],
+      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "stdlib/prelude.gti"]
+    },
+    {
+      "id": "process.executable",
+      "source": "stdlib/std/process.gti",
+      "status": "executable",
+      "operations": [
+        "std::process::command::arg",
+        "std::process::command::argument_count",
+        "std::process::command::command",
+        "std::process::command::run",
+        "std::process::command::valid",
+        "std::process::errc",
+        "std::process::exit_status::exit_code",
+        "std::process::exit_status::exit_status",
+        "std::process::exit_status::exited",
+        "std::process::exit_status::signaled",
+        "std::process::exit_status::success",
+        "std::process::exit_status::terminating_signal"
+      ],
+      "case_ids": ["process"],
+      "required_instantiations": [
+        "empty, embedded-zero, empty-argument, and spaced-argument argv",
+        "execute failure distinct from exit 127",
+        "ordinary success/nonzero exit and signal termination"
+      ],
+      "evidence": [
+        "docs/language/process.md",
+        "runtime/src/process.cpp",
+        "stdlib/std/process.gti",
+        "tests/fixtures/stdlib_surface_process.gti",
+        "tests/process_runtime_test.py",
+        "tests/runtime_process_tests.cpp"
+      ]
+    },
+    {
+      "id": "queue.executable",
+      "source": "stdlib/std/queue.gti",
+      "status": "executable",
+      "operations": [
+        "std::queue::back",
+        "std::queue::clear",
+        "std::queue::collection_init",
+        "std::queue::collection_insert",
+        "std::queue::emplace",
+        "std::queue::empty",
+        "std::queue::front",
+        "std::queue::pop",
+        "std::queue::push",
+        "std::queue::queue",
+        "std::queue::size",
+        "std::queue::swap"
+      ],
+      "case_ids": [
+        "complete-containers-collection",
+        "complete-deque",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "unique_ptr<int>",
+        "immovable Element"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
+    },
+    {
       "id": "random.executable",
       "source": "stdlib/std/random.gti",
       "status": "executable",
@@ -769,6 +2427,154 @@
       "case_ids": ["random"],
       "required_instantiations": [],
       "evidence": ["tests/fixtures/random_engine.gti", "stdlib/std/random.gti"]
+    },
+    {
+      "id": "resource-vector.executable",
+      "source": "stdlib/std/resource_vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::resource_vector::back",
+        "std::resource_vector::begin",
+        "std::resource_vector::capacity",
+        "std::resource_vector::clear",
+        "std::resource_vector::emplace_back",
+        "std::resource_vector::empty",
+        "std::resource_vector::end",
+        "std::resource_vector::front",
+        "std::resource_vector::get",
+        "std::resource_vector::get_mut",
+        "std::resource_vector::operator[]",
+        "std::resource_vector::pop_back",
+        "std::resource_vector::push_back",
+        "std::resource_vector::release",
+        "std::resource_vector::reserve",
+        "std::resource_vector::resource_vector",
+        "std::resource_vector::size",
+        "std::resource_vector::try_emplace_back",
+        "std::resource_vector::try_push_back",
+        "std::resource_vector::try_reserve",
+        "std::resource_vector_element"
+      ],
+      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-container-usage", "resource-vector-constructor-rollback"],
+      "required_instantiations": ["int and std::string", "owning Item with an observable destructor", "application-defined arena and allocation-budget provider", "growth, iteration, mutable element access, owner movement and recoverable growth failure"],
+      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti"]
+    },
+    {
+      "id": "resource.protocol",
+      "source": "stdlib/std/resource.gti",
+      "status": "executable",
+      "operations": [
+        "std::bind_resource",
+        "std::memory_resource",
+        "std::process_resource::allocate",
+        "std::process_resource::process_resource",
+        "std::process_resource::release",
+        "std::raw_allocation",
+        "std::resource_ref",
+        "std::resource_ref::get"
+      ],
+      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-raw-movement", "resource-region-contracts", "resource-container-usage"],
+      "required_instantiations": ["process_resource", "application-defined Arena, CountingResource and ProbeResource", "one-time unsafe binding followed by checked safe ownership", "exact allocation descriptor release, provider lifetime retention and region-shape rejection"],
+      "evidence": ["stdlib/std/resource.gti", "examples/allocator-support/arena.gti", "tests/resource_protocol_tests.cpp", "tests/resource_memory_runtime_tests.cpp", "tests/fixtures/resource_region_contracts.gti", "tests/fixtures/raw_resource_movement.gti", "tests/programmable_allocators_runtime_test.py", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti"]
+    },
+    {
+      "id": "resource.storage",
+      "source": "stdlib/std/resource.gti",
+      "status": "executable",
+      "operations": [
+        "std::resource_storage::capacity",
+        "std::resource_storage::clear",
+        "std::resource_storage::destroy",
+        "std::resource_storage::emplace",
+        "std::resource_storage::get",
+        "std::resource_storage::get_mut",
+        "std::resource_storage::initialized",
+        "std::resource_storage::release",
+        "std::resource_storage::relocate_to",
+        "std::resource_storage::resource_storage",
+        "std::resource_storage::try_allocate",
+        "std::resource_storage::try_reserve_prefix"
+      ],
+      "case_ids": ["resource-allocator-example", "resource-constructor-rollback", "resource-programmable", "resource-region-contracts", "resource-container-usage", "resource-vector-constructor-rollback"],
+      "required_instantiations": ["int and owning Item", "immovable FixedObject and Fixed", "explicit over-alignment and sparse slots", "structural relocation with strong allocation-failure preservation", "element cleanup before provider release and constructor rollback"],
+      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/fixtures/resource_constructor_rollback.gti", "tests/fixtures/resource_region_contracts.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti"]
+    },
+    {
+      "id": "set.executable",
+      "source": "stdlib/std/set.gti",
+      "status": "executable",
+      "operations": [
+        "std::set::begin",
+        "std::set::clear",
+        "std::set::collection_init",
+        "std::set::collection_insert",
+        "std::set::contains",
+        "std::set::count",
+        "std::set::emplace",
+        "std::set::empty",
+        "std::set::end",
+        "std::set::erase",
+        "std::set::find",
+        "std::set::insert",
+        "std::set::lower_bound",
+        "std::set::set",
+        "std::set::size",
+        "std::set::swap",
+        "std::set::upper_bound"
+      ],
+      "case_ids": [
+        "algorithm-search",
+        "complete-containers-collection",
+        "complete-sets",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "move-only Key and stateful Compare"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
+    },
+    {
+      "id": "simd.executable",
+      "source": "stdlib/std/simd.gti",
+      "status": "executable",
+      "operations": [
+        "std::simd::copy_from", "std::simd::copy_to", "std::simd::equal",
+        "std::simd::greater", "std::simd::greater_equal", "std::simd::less",
+        "std::simd::less_equal", "std::simd::not_equal", "std::simd::operator*",
+        "std::simd::operator*=", "std::simd::operator+", "std::simd::operator+=",
+        "std::simd::operator-", "std::simd::operator-=", "std::simd::operator/",
+        "std::simd::operator/=",
+        "std::simd::operator[]", "std::simd::reduce", "std::simd::select",
+        "std::simd::set", "std::simd::simd", "std::simd::size",
+        "std::simd_mask::all_of", "std::simd_mask::any_of", "std::simd_mask::count",
+        "std::simd_mask::inverted", "std::simd_mask::none_of",
+        "std::simd_mask::operator&", "std::simd_mask::operator[]",
+        "std::simd_mask::operator^", "std::simd_mask::operator|",
+        "std::simd_mask::set", "std::simd_mask::simd_mask", "std::simd_mask::size"
+      ],
+      "case_ids": ["simd"],
+      "required_instantiations": ["float: 1/4/7/64 lanes", "double: 2/5/7 lanes", "corresponding masks"],
+      "evidence": ["tests/fixtures/simd_values.gti", "tests/simd_tests.cpp", "tests/simd_runtime_test.py"]
+    },
+    {
+      "id": "source-location.executable",
+      "source": "stdlib/std/source_location.gti",
+      "status": "executable",
+      "operations": [
+        "std::source_location::column",
+        "std::source_location::current",
+        "std::source_location::file_name",
+        "std::source_location::function_name",
+        "std::source_location::line",
+        "std::source_location::source_location"
+      ],
+      "case_ids": ["source-location"],
+      "required_instantiations": ["direct current call", "caller-side default argument", "empty location"],
+      "evidence": ["tests/fixtures/stdlib_surface_source_location.gti", "tests/source_location_runtime_test.py", "stdlib/std/source_location.gti"]
     },
     {
       "id": "span.executable",
@@ -795,44 +2601,81 @@
       "id": "string.executable",
       "source": "stdlib/std/string.gti",
       "status": "executable",
-      "operations": [
-        "std::string::append",
-        "std::string::as_span",
-        "std::string::at",
-        "std::string::back",
-        "std::string::begin",
-        "std::string::capacity",
-        "std::string::clear",
-        "std::string::clone",
-        "std::string::empty",
-        "std::string::end",
-        "std::string::front",
-        "std::string::operator comparisons",
-        "std::string::operator[]",
-        "std::string::pop_back",
-        "std::string::push_back",
-        "std::string::reserve",
-        "std::string::resize",
-        "std::string::shrink_to_fit",
-        "std::string::size",
-        "std::string::view",
-        "std::to_string",
-        "std::to_string(float)"
-      ],
-      "case_ids": ["span", "string"],
+      "operations": ["std::hash<std::string>","std::string::append","std::string::as_span","std::string::at","std::string::back","std::string::begin","std::string::c_string","std::string::capacity","std::string::clear","std::string::clone","std::string::empty","std::string::end","std::string::front","std::string::operator comparisons","std::string::operator[]","std::string::pop_back","std::string::push_back","std::string::reserve","std::string::resize","std::string::shrink_to_fit","std::string::size","std::string::string(size_t,size_t,string&)","std::string::try_c_string","std::string::view","std::to_string","std::to_string(float)"],
+      "case_ids": ["span", "string", "string-c-string", "string-index-range", "string-ordering", "associative-hashes"],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)"
       ],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "stdlib/std/string.gti"]
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_string.gti", "tests/fixtures/string_index_range.gti", "tests/string_index_range_runtime_test.py", "tests/fixtures/string_c_string.gti", "tests/fixtures/string_c_string.cpp", "tests/string_c_string_runtime_test.py", "tests/fixtures/string_ordering.gti", "tests/string_ordering_runtime_test.py", "tests/fixtures/associative_hash_contracts.gti", "stdlib/std/string.gti"]
     },
     {
-      "id": "string.scaffold",
+      "id": "string.manipulation",
       "source": "stdlib/std/string.gti",
-      "status": "scaffold",
+      "status": "executable",
+      "operations": [
+        "std::string::compare",
+        "std::string::contains",
+        "std::string::ends_with",
+        "std::string::erase",
+        "std::string::find",
+        "std::string::insert",
+        "std::string::npos",
+        "std::string::replace",
+        "std::string::rfind",
+        "std::string::starts_with",
+        "std::string::substr"
+      ],
+      "case_ids": [
+        "string-operations",
+        "text-owner-relay"
+      ],
+      "required_instantiations": [
+        "embedded NUL",
+        "nested owner relay"
+      ],
+      "evidence": [
+        "tests/string_operations_runtime_test.py",
+        "tests/string_operations_errors_test.py",
+        "tests/compiler_declarations_tests.cpp"
+      ]
+    },
+    {
+      "id": "string.numeric-input",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
+      "operations": [
+        "std::stod",
+        "std::stof",
+        "std::stoi",
+        "std::stol",
+        "std::stoll",
+        "std::stoul",
+        "std::stoull"
+      ],
+      "case_ids": [
+        "charconv-integer",
+        "charconv-float",
+        "charconv-owned-arguments"
+      ],
+      "required_instantiations": [
+        "optional consumed position",
+        "base zero or2..36",
+        "decimal and hexadecimal floats"
+      ],
+      "evidence": [
+        "tests/charconv_runtime_test.py",
+        "docs/language/standard-library.md"
+      ]
+    },
+    {
+      "id": "string.swap",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
       "operations": ["std::string::swap"],
-      "reason": "swap is bodyless until moving through mutable references is expressible.",
-      "evidence": ["stdlib/std/string.gti", "stdlib/README.md"]
+      "case_ids": ["container-swap"],
+      "required_instantiations": ["empty and embedded-zero strings", "distinct reserved capacities"],
+      "evidence": ["tests/fixtures/container_swap.gti", "tests/container_swap_runtime_test.py"]
     },
     {
       "id": "tcp.executable",
@@ -853,21 +2696,135 @@
       "evidence": ["examples/66-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
     },
     {
+      "id": "unordered_map.executable",
+      "source": "stdlib/std/unordered_map.gti",
+      "status": "executable",
+      "operations": [
+        "std::unordered_map::at",
+        "std::unordered_map::begin",
+        "std::unordered_map::begin_mut",
+        "std::unordered_map::bucket",
+        "std::unordered_map::bucket_count",
+        "std::unordered_map::bucket_size",
+        "std::unordered_map::clear",
+        "std::unordered_map::const_iterator",
+        "std::unordered_map::contains",
+        "std::unordered_map::count",
+        "std::unordered_map::emplace",
+        "std::unordered_map::empty",
+        "std::unordered_map::end",
+        "std::unordered_map::erase",
+        "std::unordered_map::find",
+        "std::unordered_map::find_mut",
+        "std::unordered_map::get_or_insert",
+        "std::unordered_map::insert",
+        "std::unordered_map::insert_or_assign",
+        "std::unordered_map::iterator",
+        "std::unordered_map::key_type",
+        "std::unordered_map::load_factor",
+        "std::unordered_map::mapped_type",
+        "std::unordered_map::max_load_factor",
+        "std::unordered_map::rehash",
+        "std::unordered_map::reserve",
+        "std::unordered_map::size",
+        "std::unordered_map::size_type",
+        "std::unordered_map::try_emplace",
+        "std::unordered_map::unordered_map",
+        "std::unordered_map::value_type"
+      ],
+      "case_ids": [
+        "unordered-map-core",
+        "unordered-map-collisions",
+        "unordered-map-iteration",
+        "unordered-map-ownership",
+        "unordered-map-load-factor",
+        "unordered-map-insert-result"
+      ],
+      "required_instantiations": [
+        "scalar keys and values",
+        "move-only string keys and unique-owner values",
+        "custom read-only policies",
+        "checked mutable and read-only traversal",
+        "pair<iterator, bool> insertion and move",
+        "duplicate emplacement without construction",
+        "destructor cleanup and node reuse"
+      ],
+      "evidence": [
+        "stdlib/std/unordered_map.gti",
+        "tests/unordered_map_test.py",
+        "tests/container_contract_failure_test.py",
+        "docs/language/standard-library.md"
+      ]
+    },
+    {
+      "id": "unordered_set.executable",
+      "source": "stdlib/std/unordered_set.gti",
+      "status": "executable",
+      "operations": [
+        "std::unordered_set::begin",
+        "std::unordered_set::bucket",
+        "std::unordered_set::bucket_count",
+        "std::unordered_set::bucket_size",
+        "std::unordered_set::clear",
+        "std::unordered_set::collection_init",
+        "std::unordered_set::collection_insert",
+        "std::unordered_set::contains",
+        "std::unordered_set::count",
+        "std::unordered_set::emplace",
+        "std::unordered_set::empty",
+        "std::unordered_set::end",
+        "std::unordered_set::erase",
+        "std::unordered_set::find",
+        "std::unordered_set::insert",
+        "std::unordered_set::load_factor",
+        "std::unordered_set::max_load_factor",
+        "std::unordered_set::rehash",
+        "std::unordered_set::reserve",
+        "std::unordered_set::size",
+        "std::unordered_set::swap",
+        "std::unordered_set::unordered_set"
+      ],
+      "case_ids": [
+        "algorithm-search",
+        "complete-containers-collection",
+        "complete-sets",
+        "complete-containers-ownership"
+      ],
+      "required_instantiations": [
+        "int",
+        "move-only Key with collision-heavy Hash and Equal"
+      ],
+      "evidence": [
+        "tests/complete_containers_test.py",
+        "tests/fixtures/complete_containers_ownership.gti"
+      ]
+    },
+    {
+      "id": "utility.clone",
+      "source": "stdlib/std/utility.gti",
+      "status": "executable",
+      "operations": ["std::clone", "std::cloneable", "std::member_cloneable"],
+      "case_ids": ["utility-clone"],
+      "required_instantiations": ["int", "std::string", "nested vector<string>", "user-defined Record", "shared_ptr<int>"],
+      "evidence": ["tests/fixtures/generic_clone.gti", "tests/generic_clone_runtime_test.py"]
+    },
+    {
       "id": "utility.pair",
       "source": "stdlib/std/utility.gti",
       "status": "executable",
       "operations": ["std::make_pair", "std::pair::first", "std::pair::pair", "std::pair::second"],
-      "case_ids": ["utility-make-pair", "utility-pair-constructor"],
+      "case_ids": ["utility-make-pair", "utility-pair-constructor", "constexpr-library"],
       "evidence": ["tests/fixtures/stdlib_surface_utility.gti", "tests/fixtures/stdlib_surface_utility_pair.gti", "stdlib/std/utility.gti"],
       "required_instantiations": ["std::pair<int32_t,int64_t>"]
     },
     {
-      "id": "utility.scaffold",
+      "id": "utility.restoring",
       "source": "stdlib/std/utility.gti",
-      "status": "scaffold",
+      "status": "executable",
       "operations": ["std::exchange", "std::swap"],
-      "reason": "swap and exchange are declaration-only because moving through a mutable reference is not yet expressible.",
-      "evidence": ["stdlib/std/utility.gti", "stdlib/README.md#partial-modules-and-declaration-scaffolds"]
+      "case_ids": ["restoring-exchange-example", "restoring-shapes"],
+      "required_instantiations": ["unrelated move-only Asset and Resource", "owning and cleanup-free fixed arrays", "unique and shared owners", "optional", "expected owning success and error", "owning payload enum"],
+      "evidence": ["examples/103-resource-exchange.gti", "tests/fixtures/restoring_exchange_shapes.gti", "tests/restoring_exchange_tests.cpp", "tests/restoring_exchange_runtime_test.py", "tests/restoring_exchange_shapes_runtime_test.py"]
     },
     {
       "id": "vector.executable",
@@ -882,6 +2839,8 @@
         "std::vector::capacity",
         "std::vector::clear",
         "std::vector::clone",
+        "std::vector::collection_init",
+        "std::vector::collection_insert",
         "std::vector::emplace_back",
         "std::vector::empty",
         "std::vector::end",
@@ -897,17 +2856,27 @@
         "std::vector::size",
         "std::vector::vector"
       ],
-      "case_ids": ["span", "vector"],
-      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])"],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "stdlib/std/vector.gti"]
+      "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition"],
+      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record", "construction-only Message", "std::vector<std::optional<std::string>>"],
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "tests/fixtures/vector_construction_only.gti", "tests/fixtures/vector_construction_only_failure.gti", "tests/vector_construction_only_runtime_test.py", "stdlib/std/vector.gti"]
     },
     {
-      "id": "vector.scaffold",
+      "id": "vector.indexed-swap",
       "source": "stdlib/std/vector.gti",
-      "status": "scaffold",
+      "status": "executable",
+      "operations": ["std::vector::swap_elements"],
+      "case_ids": ["restoring-indexed", "restoring-order", "restoring-order-example"],
+      "required_instantiations": ["int", "std::string", "unrelated move-only Resource and Job"],
+      "evidence": ["tests/fixtures/restoring_indexed_swap.gti", "tests/fixtures/restoring_algorithm_order.gti", "tests/restoring_indexed_runtime_test.py", "tests/restoring_exchange_tests.cpp"]
+    },
+    {
+      "id": "vector.swap",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
       "operations": ["std::vector::swap"],
-      "reason": "swap is bodyless because moving an owner out through a mutable reference is forbidden.",
-      "evidence": ["stdlib/std/vector.gti", "stdlib/README.md"]
+      "case_ids": ["container-swap"],
+      "required_instantiations": ["int32_t", "std::unique_ptr<int32_t>", "move-only destructor-bearing item"],
+      "evidence": ["tests/fixtures/container_swap.gti", "tests/fixtures/container_swap_cleanup.gti", "tests/container_swap_runtime_test.py"]
     }
   ]
 }

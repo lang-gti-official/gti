@@ -84,6 +84,7 @@ enum class MirTransformKind {
   RemoveBlock,
   PromotePlace,
   DischargeSafetyCheck,
+  DevirtualizeCall,
   Count,
 };
 
@@ -98,6 +99,7 @@ enum class MirTransformProofKind {
   BoundsRange,
   StorageInitialization,
   ArithmeticRange,
+  ExactReceiver,
   Count,
 };
 
@@ -252,6 +254,9 @@ enum class MirProjectionKind {
   RawIndex,
   RawDereference,
   PackElement,
+  // A constructor-owned direct base subobject; selection is its concrete
+  // HirClassInstanceId. It is not a field symbol or an independent object.
+  Base,
 };
 
 struct MirPlaceProjection {
@@ -316,29 +321,49 @@ enum class MirLoanKind {
   Stored,
   Return,
   Parameter,
-  // A verifier-owned read-only loan from one materialized fresh value into
-  // one ordered call argument. Backends erase its representation, and every
-  // path ends it immediately after that invocation.
+  // A verifier-owned read-only loan for one fresh value argument, or a
+  // read/mutable physical-shell loan for a fresh borrowed-carrier receiver.
+  // The latter retains an independent Stored owner dependency. Backends erase
+  // its representation; every path ends it immediately after invocation.
   CallArgument,
+};
+
+struct MirLoanDependency {
+  MirPlaceId source = 0;
+  std::vector<SymbolId> designatedFields;
+  AccessMode access = AccessMode::ReadOnly;
+
+  friend bool operator==(const MirLoanDependency &,
+                         const MirLoanDependency &) = default;
 };
 
 struct MirLoan {
   MirLoanId id = 0;
   SemanticLoanId semanticLoan = 0;
   MirLoanId parent = 0;
+  // source/parent protect a reference's physical carrier shell. This
+  // independent Stored loan protects its inherited external owners without
+  // transferring ownership, suspending the dependency, or increasing access.
+  MirLoanId storedDependency = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
+  // Each extra stored dependency retains its own provenance and permission.
+  // Abstract entry dependencies designate a field rather than a concrete
+  // caller place; concrete dependencies name their body-local source place.
+  std::vector<MirLoanDependency> additionalDependencies;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;
   SymbolId storedField = 0;
-  // Exact stored-reference field whose referent this loan designates. Unlike
-  // storedField (a constructor storage target), this is provenance metadata
-  // for a by-value carrier dependency and has no backend representation.
-  SymbolId designatedField = 0;
-  // True only for a stored exclusive dependency whose carrier destructor
-  // releases the protected resource. Cleanup must Drop that carrier before
-  // ending this loan on every normal and failure edge.
+  // Exact nominal field path ending at the reference this loan designates.
+  // Unlike storedField (a constructor storage target), this is provenance
+  // metadata for a by-value carrier dependency and has no backend
+  // representation.
+  std::vector<SymbolId> designatedFields;
+  // An owned carrier needs this dependency until cleanup, including read-only
+  // dependencies used by source destructors. EndBorrow follows the exact Drop
+  // or verified ownership transfer on every normal and failure edge. This
+  // retention bit grants no mutable access or mutex-release authority.
   bool lifecycleBound = false;
   // A two-phase mutable call-result loan reserves one stable target place at
   // its producing call, but does not become exclusive until the unique
@@ -348,6 +373,32 @@ struct MirLoan {
   bool twoPhase = false;
   bool entry = false;
   bool escapes = false;
+
+  [[nodiscard]] bool protectsSource(MirPlaceId place) const {
+    if (source == place)
+      return true;
+    for (const auto &dependency : additionalDependencies)
+      if (dependency.source != 0 && dependency.source == place)
+        return true;
+    return false;
+  }
+
+  [[nodiscard]] std::vector<MirPlaceId> additionalSources() const {
+    std::vector<MirPlaceId> result;
+    for (const auto &dependency : additionalDependencies)
+      if (dependency.source != 0)
+        result.push_back(dependency.source);
+    return result;
+  }
+
+  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  additionalDesignatedFields() const {
+    std::vector<std::vector<SymbolId>> result;
+    for (const auto &dependency : additionalDependencies)
+      if (!dependency.designatedFields.empty())
+        result.push_back(dependency.designatedFields);
+    return result;
+  }
 
   friend bool operator==(const MirLoan &, const MirLoan &) = default;
 };
@@ -366,6 +417,17 @@ enum class MirDropObligationKind {
   // Constructor bodies use the exact This-rooted field place; the owning
   // field-initializer schedule uses that field's exact binding-rooted place.
   ConstructionRollback,
+  // Storage for one not-yet-constructed unique-owner pointee. This generated
+  // obligation only deallocates bytes: it never invokes the pointee's cleanup.
+  // AllocateObject arms it, construction failure drops it, and successful
+  // construction transfers it into the ordinary owning result.
+  ObjectAllocation,
+  // A completed return operand in the caller-provided destination, still
+  // owned by this invocation until its remaining cleanup succeeds. Reparent
+  // arms it from the exact Value obligation; only the final Return may
+  // transfer it out. Failure before publication drops it first.
+  // Generated, with no HIR obligation or full-expression lifetime of its own.
+  ReturnResult,
 };
 
 // A homogeneous fixed-array drop walks these extents in reverse lexicographic
@@ -387,6 +449,44 @@ struct MirDropType {
   std::optional<HirLambdaId> lambdaInstance;
   std::optional<HirDestructorInstanceId> destructor;
   std::optional<MirFixedArrayDropSchedule> fixedArray;
+  // Exact pointee cleanup for an owning pointer to a lifecycle-guarded leaf
+  // class. The owner may be empty; otherwise Drop invokes this class's source
+  // destructor through the failure ABI before releasing the allocation.
+  std::optional<HirClassInstanceId> uniquePointeeClass;
+  // An owning pointer to a polymorphic class retains the complete allocated
+  // object's cleanup selection across upcasts. Dispatch its cleanup through
+  // that selection, not the statically named base's subobject recipe.
+  bool polymorphicCleanup = false;
+  // Selection of this child within its enclosing aggregate schedule. Root
+  // descriptors have no selector; a field/base/capture child has exactly one.
+  SymbolId uniqueOwnerField = 0;
+  std::optional<HirClassInstanceId> uniqueOwnerBase;
+  // Zero-based capture projection within an enclosing closure recipe.
+  std::optional<std::size_t> captureIndex;
+  // Active-alternative field selection within an enclosing payload enum.
+  // Both selectors are present together; fields run in reverse source order.
+  std::optional<std::size_t> payloadVariant;
+  std::optional<std::size_t> payloadField;
+  // A finite back-edge to an enclosing class recipe with this exact
+  // classInstance/type. It has no destructor or children of its own. Complete
+  // root recipes still contain every reachable source destructor, so their
+  // effect target inventory does not need to chase a cyclic native type.
+  bool recursiveCleanup = false;
+  // Ordered complete active-subobject cleanup. A class runs its guarded source
+  // destructor, if present, then children in reverse field order, then base
+  // order. A closure destroys active captures in reverse capture order.
+  // A unique owner of an aggregate has
+  // one unprojected pointee child, followed by allocation release. Storage and
+  // prefix storage have one unprojected element child: apply it in reverse
+  // index order to initialized slots/the live prefix, end each element's
+  // representation lifetime, then release the allocation. A first
+  // failure drains remaining children; a second failure terminates immediately
+  // with both records. Entering during failure returns on the first new
+  // failure.
+  // Expected has two positional alternative recipes (success, error), and
+  // Unexpected has one (error). Passive/void alternatives retain an empty
+  // recipe with their exact type; only the live alternative is executed.
+  std::vector<MirDropType> aggregate;
   bool requiresActiveCleanup = false;
 
   friend bool operator==(const MirDropType &, const MirDropType &) = default;
@@ -447,6 +547,18 @@ enum class MirInstructionKind {
   EndBorrow,
   Lifecycle,
   CallBody,
+  AllocateObject,
+  // Invokes a selected base constructor in place. Completion arms only the
+  // base's rollback obligation, never a standalone class result value.
+  InitializeBase,
+  // Drains a represented destination before its paired Assign commits. The
+  // enclosing representation stays live but disarmed/empty, including on
+  // failure. RHS ownership is untouched until the success-path Assign.
+  CleanupBeforeAssign,
+  // Checks prefix capacity or a sparse slot's bounds/liveness before an
+  // in-place constructor receives prepared parameters. Its exact paired
+  // construction is the sole success continuation.
+  StorageConstructPreflight,
   Count,
 };
 
@@ -556,12 +668,15 @@ struct MirInstruction {
   HirValueId callSite = 0;
   // One-based source constructor-initializer stage. This is zero for every
   // instruction outside a constructor prologue and lets verification and a
-  // backend bind a field initialization to its exact MIR schedule without
+  // backend bind a field/base initialization to its exact MIR schedule without
   // reopening AST expressions.
   std::size_t constructorInitializer = 0;
   std::optional<MirCallInputRole> callInputRole;
   std::size_t callInputIndex = 0;
   HirCallInputKind callInputKind = HirCallInputKind::Value;
+  // A retained pointee invocation consumes availability of this owning field,
+  // not its accessor-result loan. Physical owner cleanup remains active.
+  std::optional<MirPlaceId> retainedOwnerPlace;
   bool defaultArgument = false;
   std::optional<MirDropObligationId> preparedParameterDrop;
   std::optional<MirDropObligationId> successResultDrop;
@@ -582,6 +697,9 @@ struct MirInstruction {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  // Preserve the frontend-selected origins; emission must not infer them.
+  std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
@@ -592,16 +710,39 @@ struct MirInstruction {
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  // Concrete queried representation; only ObjectSize/ObjectAlignment may
+  // carry this field. It is not a runtime argument or a borrow origin.
+  std::optional<SemanticType> objectLayoutType;
+  bool neverReturns = false;
+  bool tracksCaller = false;
+  std::optional<CallerLocationOrigin> callerLocation;
+  FailureSiteId callerLocationSite = 0;
+  bool forwardsCallerLocation = false;
+  std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
+  // Exact contained element cleanup for explicit sparse-slot destruction and
+  // prefix pop/erase. The operation retires the slot before executing this
+  // recipe; a destructor failure propagates its original record through Invoke.
+  std::optional<MirDropType> elementCleanup;
+  std::optional<MirDropType> replacementCleanup;
+  // Symmetric exact instruction pair: CleanupBeforeAssign <-> Assign.
+  MirInstructionId replacementPair = 0;
   std::vector<FailureSiteId> localFailureSites;
   std::vector<MirSafetyDischarge> safetyDischarges;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<SemanticType> nativeCalleeType;
   std::optional<MirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<MirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
+  // Body-local ObjectAllocation obligation consumed by unique construction,
+  // or established by AllocateObject. It is not a source-visible owner value.
+  MirDropObligationId objectAllocation = 0;
+  // Exact non-consuming slot check preceding parameter transfer into an
+  // ordinary storage constructor. Zero for all other instructions.
+  MirInstructionId storagePreflight = 0;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
@@ -625,6 +766,14 @@ struct MirInstruction {
 
 [[nodiscard]] bool hasMirSafetyDischarge(const MirInstruction &instruction,
                                          MirSafetyDischarge discharge);
+// Shared verifier/backend/failure-proof admission of the native indirect call
+// family. The semantic signature remains authoritative; this independently
+// checks its ABI shape and ordered callee/argument staging against MIR.
+class MirProgram;
+struct MirBody;
+[[nodiscard]] bool isMirNativeIndirectCall(const MirProgram &program,
+                                           const MirBody &body,
+                                           const MirInstruction &instruction);
 [[nodiscard]] bool
 isMirFailureOutcomeDischarged(const MirInstruction &instruction,
                               std::size_t origin,
@@ -634,6 +783,13 @@ allMirLocalFailuresDischarged(const MirInstruction &instruction);
 
 [[nodiscard]] MirInstruction
 makeMirInstructionTombstone(const MirInstruction &instruction);
+
+// Exact CFG pairing only; program verification additionally checks the selected
+// constructor signature and body-local verification checks staged ownership.
+struct MirBody;
+[[nodiscard]] const MirInstruction *
+mirStorageConstructForPreflight(const MirBody &body,
+                                MirInstructionId preflight);
 
 struct MirScalarPromotionRewrite {
   MirPlaceId place = 0;
@@ -825,6 +981,8 @@ struct MirRangeIteration {
 
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
+  // Only a tracked source function owns an incoming caller-location parameter.
+  bool hasCallerLocation = false;
   // Source-defined standard-library wrappers are part of the complete MIR
   // declaration inventory even when their public surface is unavailable in
   // the selected execution profile. Lowering sets this bit only on a
@@ -887,6 +1045,13 @@ struct MirBody {
   friend bool operator==(const MirBody &, const MirBody &) = default;
 };
 
+// An input whose enclosing invocation never executes may have no SSA consumer
+// only when every remaining normal path in this full expression reaches an
+// explicit terminal call. This query does not replace the independent loan and
+// drop checks on failure edges, or declaration-contract verification.
+[[nodiscard]] bool mirCallInputAbandonedByTerminal(const MirBody &body,
+                                                   const MirInstruction &input);
+
 // A source temporary is either still rooted directly in its SSA value or has
 // been promoted into one hidden slot so it remains nameable across a CFG
 // merge. This query accepts only those two exact forms and returns the unique
@@ -903,6 +1068,28 @@ struct MirTemporaryMaterialization {
 [[nodiscard]] MirTemporaryMaterialization
 findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                                 HirValueId sourceValue);
+
+// An uncarried borrowed class temporary keeps its exact producer's Stored
+// owner dependency until its full-expression value obligation is retired.
+// This derives lifetime authority from existing identities, not a second
+// cleanup flag. The published fullExpression id may still be pending while
+// lowering; hirFullExpression must already identify the source boundary.
+struct MirTemporaryCarrierDependency {
+  MirTemporaryMaterialization materialization;
+  const MirLoan *loan = nullptr;
+  const MirDropObligation *drop = nullptr;
+
+  [[nodiscard]] explicit operator bool() const {
+    return materialization && loan != nullptr && drop != nullptr;
+  }
+};
+
+[[nodiscard]] MirTemporaryCarrierDependency
+findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place);
+
+// Includes the loan itself and both physical-parent and stored-owner edges.
+[[nodiscard]] bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,
+                                            MirLoanId dependency);
 
 [[nodiscard]] bool supportsMirFailureControlFlow(MirBodyKind kind);
 // Body-level refinement: a constructor whose lowering silently transferred a
@@ -941,6 +1128,7 @@ struct MirClassFieldInfo {
   HirBindingId field = 0;
   SymbolId symbol = 0;
   SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
   DropKind dropKind = DropKind::Trivial;
   bool requiresActiveCleanup = false;
 
@@ -996,12 +1184,14 @@ struct MirClassInstance {
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;
+  bool mutexGuardBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirBaseInstance> structuralBases;
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
+  bool cOpaqueHandle = false;
   std::optional<MirCAbiRecordLayout> cAbiLayout;
   std::optional<MirUnionLayout> unionLayout;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
@@ -1031,6 +1221,7 @@ struct MirCallableSignature {
   std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
+  std::optional<SemanticType> nativeCalleeType;
 
   friend bool operator==(const MirCallableSignature &,
                          const MirCallableSignature &) = default;
@@ -1081,10 +1272,17 @@ struct MirFunctionInstance {
   ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
   std::optional<OverloadedOperator> overloadedOperator;
   bool constexprFunction = false;
+  bool requiresUnsafe = false;
+  bool neverReturns = false;
+  bool tracksCaller = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> returnBorrowParameters;
+  std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -1115,6 +1313,7 @@ struct MirNativeCallbackAdapter {
   MirNativeCallbackAdapterId id = 0;
   HirFunctionInstanceId target = 0;
   SemanticType type = SemanticType::Unknown;
+  CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
   bool targetMayRaiseDefinedFailure = true;
   MirNativeCallbackFailurePolicy failurePolicy =
       MirNativeCallbackFailurePolicy::TerminateInvocation;
@@ -1164,6 +1363,7 @@ struct MirConstructorInitializer {
 struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  bool constexprConstructor = false;
   // Constructor-local generic arguments are part of the concrete instance
   // identity just as owner arguments are part of the class instance. Keep
   // them explicit in MIR so verification and later phases never have to
@@ -1175,6 +1375,7 @@ struct MirConstructorInstance {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowParameters;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;
@@ -1345,6 +1546,8 @@ enum class MirHostedStartupOperationKind {
   EndFailureCleanup,
   ContainFailure,
   TerminateCleanupFailure,
+  BeginCThreadRuntime,
+  EndCThreadRuntime,
   Count,
 };
 
@@ -1398,6 +1601,8 @@ struct MirHostedStartupPlan {
   MirValueId stabilizedCount = 0;
   MirValueId argumentVector = 0;
   MirValueId entryResult = 0;
+  HirFunctionInstanceId cThreadBegin = 0;
+  HirFunctionInstanceId cThreadEnd = 0;
   std::vector<MirHostedStartupOperation> operations;
 
   [[nodiscard]] const MirHostedStartupOperation *
@@ -1407,6 +1612,15 @@ struct MirHostedStartupPlan {
 
   friend bool operator==(const MirHostedStartupPlan &,
                          const MirHostedStartupPlan &) = default;
+};
+
+// Exact numeric representation selected by semantics for a payload-free enum.
+struct MirIntegralEnum {
+  EnumId declaration = 0;
+  SourceUnitId sourceUnit = 0;
+  SemanticType underlyingType = SemanticType::Unknown;
+  friend bool operator==(const MirIntegralEnum &,
+                         const MirIntegralEnum &) = default;
 };
 
 // Pointer-free lifecycle authority for a closed payload enum. Variant rows
@@ -1437,10 +1651,27 @@ struct MirPayloadEnum {
 class MirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
+  [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
   }
   [[nodiscard]] ProgramKind programKind() const { return programKind_; }
+  [[nodiscard]] bool requiresCThreadRuntime() const {
+    if (executionProfile_ != ExecutionProfile::Concurrent) {
+      return false;
+    }
+    for (const auto &function : functions) {
+      if (requiresCThreadConcurrency(function.cThreadOperation)) {
+        return true;
+      }
+    }
+    for (const auto &adapter : nativeCallbacks) {
+      if (adapter.cThreadCallback != CThreadCallbackKind::None) {
+        return true;
+      }
+    }
+    return false;
+  }
   [[nodiscard]] const MirBody &module() const { return moduleBody; }
 
   [[nodiscard]] const std::optional<MirEmbeddingPlan> &embeddingPlan() const {
@@ -1471,6 +1702,19 @@ public:
 
   [[nodiscard]] const std::vector<MirPayloadEnum> &payloadEnums() const {
     return payloadEnums_;
+  }
+
+  [[nodiscard]] const std::vector<MirIntegralEnum> &integralEnums() const {
+    return integralEnums_;
+  }
+
+  [[nodiscard]] const MirIntegralEnum *findIntegralEnum(EnumId id) const {
+    const auto found =
+        std::find_if(integralEnums_.begin(), integralEnums_.end(),
+                     [&](const MirIntegralEnum &candidate) {
+                       return candidate.declaration == id;
+                     });
+    return found == integralEnums_.end() ? nullptr : &*found;
   }
 
   [[nodiscard]] const MirPayloadEnum *findPayloadEnum(EnumId id) const {
@@ -1555,6 +1799,7 @@ private:
   friend struct MirProgramTestAccess;
 
   bool valid_ = true;
+  TargetInfo target_ = TargetInfo::host();
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   ProgramKind programKind_ = ProgramKind::Executable;
   FailureMetadata failureMetadata_;
@@ -1564,6 +1809,7 @@ private:
   std::optional<MirBody> hostedStartupBody;
   MirBody moduleBody;
   std::vector<MirPayloadEnum> payloadEnums_;
+  std::vector<MirIntegralEnum> integralEnums_;
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
   std::vector<MirNativeCallbackAdapter> nativeCallbacks;
@@ -1583,5 +1829,18 @@ enumerateMirBodyAddresses(const MirProgram &program);
 [[nodiscard]] const MirBody *findMirBody(const MirProgram &program,
                                          MirBodyAddress address);
 [[nodiscard]] MirBody *findMirBody(MirProgram &program, MirBodyAddress address);
+
+// Complete protected-place set, preserving deterministic first-seen order.
+// Missing/malformed loan or dependency identities yield an empty set so
+// consumers cannot accidentally treat incomplete provenance as disjoint.
+[[nodiscard]] std::vector<MirPlaceId>
+mirLoanProtectedSources(const MirBody &body, MirLoanId loan);
+
+// Conservative same-block lifecycle proof. A moved-from shell still needs
+// retirement, but cannot invoke its source destructor. Zero means block end.
+[[nodiscard]] bool
+mirDropFollowsDefiniteMove(const MirBlock &block,
+                           MirDropObligationId obligation,
+                           MirInstructionId beforeInstruction = 0);
 
 } // namespace lang

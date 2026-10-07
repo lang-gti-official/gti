@@ -1,0 +1,32 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+expected<Resource, int> resource(int identity, bool fail) {
+  if (fail) { return unexpected(7); }
+  return Resource(identity);
+}
+
+std::pair<Resource, Resource> resources(int argc) {
+  mut auto first = resource(1, argc == 2);
+  mut auto second = resource(2, argc == 3);
+  return std::make_pair(std::move(first).value(),
+                       std::move(second).value());
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  auto result = resources(argc);
+  std::println(7);
+  return result.first.read() == 1 && result.second.read() == 2 ? 0 : 1;
+}

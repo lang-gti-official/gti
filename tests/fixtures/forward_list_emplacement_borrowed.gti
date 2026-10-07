@@ -1,0 +1,16 @@
+#include <std/forward_list>
+#include <std/string>
+
+class Count {
+public:
+  std::size_t length;
+  Count(std::string& text) : length(text.size()) {}
+  Count(Count& other) = delete;
+  Count(Count&& other) = delete;
+};
+
+int main() {
+  mut std::forward_list<Count> values = std::forward_list<Count>();
+  [[discard]] values.emplace_front(std::string("hello"));
+  return values.front().length == std::size_t(5) ? 0 : 1;
+}

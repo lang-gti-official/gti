@@ -1,7 +1,0 @@
-#include <std/string>
-
-int main() {
-  std::string text = std::string("sixteen");
-  std::println(text.size());
-  return 0;
-}

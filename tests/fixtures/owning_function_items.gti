@@ -1,0 +1,46 @@
+#include <std/functional>
+
+mut int order = 0;
+
+namespace handlers {
+int answer() { return 42; }
+int other() { return 13; }
+int add(int value, bool enabled) { return enabled ? value + 3 : 0; }
+int read(int& value) { return value; }
+void action() {}
+int ordered(int value) { order = order * 10 + 3; return value; }
+}
+
+Callable relay<Callable>(Callable callable) { return std::move(callable); }
+Callable prepare<Callable>(Callable callable) {
+  order = order * 10 + 1;
+  return std::move(callable);
+}
+int argument() { order = order * 10 + 2; return 7; }
+
+int main() {
+  auto item = handlers::answer;
+  mut std::function<int()> callback{item};
+  auto copy = callback.clone();
+  if (item() + callback() + copy() != 126) { return 1; }
+  callback.replace(handlers::other);
+  if (callback() != 13 || copy() != 42) { return 8; }
+  auto retained = relay(handlers::answer);
+  if (retained() != 42) { return 2; }
+  auto copied_item = relay(item);
+  if (copied_item() != 42 || item() != 42) { return 9; }
+  std::function<int(int, bool)> binary{handlers::add};
+  if (binary(4, true) != 7 || binary(4, false) != 0) { return 3; }
+  auto captured = [item]() -> int { return item(); };
+  std::function<int()> closure{std::move(captured)};
+  if (closure() != 42) { return 4; }
+  std::move_only_function<void()> action{handlers::action};
+  action();
+  std::function<int(int&)> borrowed{handlers::read};
+  mut int value = 7;
+  if (borrowed(value) != 7) { return 5; }
+  value = 9;
+  if (borrowed(value) != 9) { return 6; }
+  if (prepare(handlers::ordered)(argument()) != 7 || order != 123) { return 7; }
+  return 0;
+}

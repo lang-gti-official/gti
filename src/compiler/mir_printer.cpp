@@ -52,6 +52,8 @@ ownedTransportName(CallableOwnedTransportKind kind) {
     return "exact-field";
   case CallableOwnedTransportKind::ThreadTask:
     return "thread-task";
+  case CallableOwnedTransportKind::Value:
+    return "owned-value";
   }
   return "invalid";
 }
@@ -87,6 +89,8 @@ callInputKindName(HirCallInputKind kind) {
     return "copy-value";
   case HirCallInputKind::MoveValue:
     return "move-value";
+  case HirCallInputKind::RetainedReceiver:
+    return "retained-receiver";
   case HirCallInputKind::ReadBorrow:
     return "read-borrow";
   case HirCallInputKind::MutableBorrow:
@@ -248,6 +252,10 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "terminate-cleanup-failure";
   case MirHostedStartupOperationKind::Count:
     return "invalid";
+  case MirHostedStartupOperationKind::BeginCThreadRuntime:
+    return "begin-cthread-runtime";
+  case MirHostedStartupOperationKind::EndCThreadRuntime:
+    return "end-cthread-runtime";
   }
   return "invalid";
 }
@@ -255,7 +263,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << (program.embeddingPlan() ? "mir-v55" : "mir-v54")
+    output << (program.embeddingPlan() ? "mir-v92" : "mir-v91")
            << " valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
@@ -279,6 +287,23 @@ public:
                << selected.requestSource.line << '\n';
       }
     }
+    const auto &target = program.target();
+    output << "target os=" << target.os << " vendor=" << target.vendor
+           << " arch=" << target.arch
+           << " pointer-width=" << target.dataLayout.pointerWidthBits()
+           << " execution-profile=" << number(target.executionProfile) << '\n';
+    for (const MirNativeCallbackAdapter &adapter :
+         program.nativeCallbackAdapters()) {
+      output << "native-callback @" << adapter.id
+             << " target=" << adapter.target << " cthread-callback="
+             << static_cast<unsigned>(adapter.cThreadCallback)
+             << " may-raise=" << adapter.targetMayRaiseDefinedFailure
+             << " failure-policy=" << number(adapter.failurePolicy)
+             << " catches-native=" << adapter.catchesNativeExceptions
+             << " type=";
+      type(adapter.type);
+      output << '\n';
+    }
     output << "failure-metadata artifact="
            << program.failureMetadata().artifactIdentity().hex()
            << " descriptor-bytes="
@@ -298,6 +323,14 @@ public:
                << definedFailureDetailName(outcome.detail);
       }
       output << "]\n";
+    }
+    for (const CallerLocationAssignment &assignment :
+         program.failureMetadata().callerAssignments()) {
+      output << "caller-location-site @" << assignment.site
+             << " source-unit=" << assignment.origin.sourceUnit
+             << " line=" << assignment.origin.line
+             << " span=" << assignment.origin.start << ".."
+             << assignment.origin.end << '\n';
     }
     programInitialization(program.programInitializationPlan());
     hostedStartup(program.hostedStartupPlan());
@@ -323,6 +356,13 @@ public:
              << (adapter.catchesWorkerFailure ? "catch" : "leak")
              << " native-exception="
              << (adapter.catchesNativeExceptions ? "catch" : "leak") << '\n';
+    }
+    output << "integral-enums " << program.integralEnums().size() << '\n';
+    for (const MirIntegralEnum &enumeration : program.integralEnums()) {
+      output << "integral-enum @" << enumeration.declaration
+             << " source-unit=" << enumeration.sourceUnit << " underlying=";
+      type(enumeration.underlyingType);
+      output << '\n';
     }
     output << "payload-enums " << program.payloadEnums().size() << '\n';
     for (const MirPayloadEnum &enumeration : program.payloadEnums()) {
@@ -365,9 +405,13 @@ public:
              << " compiler-capability=" << number(instance.compilerCapability)
              << " lifecycle-bound-borrow-carrier="
              << instance.lifecycleBoundBorrowCarrier
+             << " mutex-guard-borrow-carrier="
+             << instance.mutexGuardBorrowCarrier
              << " abstract=" << instance.abstract
              << " polymorphic=" << instance.polymorphic
-             << " c-abi=" << instance.cAbiRecord << " special-members={default="
+             << " c-abi=" << instance.cAbiRecord
+             << " c-opaque=" << instance.cOpaqueHandle
+             << " special-members={default="
              << number(instance.defaultConstructor)
              << ",copy-constructor=" << number(instance.copyConstructor)
              << ",move-constructor=" << number(instance.moveConstructor)
@@ -436,7 +480,8 @@ public:
         output << "{field=" << field.field << ",symbol=" << field.symbol
                << ",type=";
         type(field.type);
-        output << ",drop=" << number(field.dropKind)
+        output << ",access=" << number(field.access)
+               << ",drop=" << number(field.dropKind)
                << ",active-cleanup=" << field.requiresActiveCleanup << '}';
       }
       output << "] lifecycle-fields=[";
@@ -504,8 +549,30 @@ public:
       }
       output << "] return-borrow=" << number(instance.returnBorrowOrigin) << ':'
              << instance.returnBorrowParameter << ':'
-             << number(instance.returnBorrowAccess) << " return-borrow-place=";
+             << number(instance.returnBorrowAccess)
+             << " return-borrow-parameters=[";
+      for (std::size_t index = 0;
+           index < instance.returnBorrowParameters.size(); ++index) {
+        separator(index);
+        output << instance.returnBorrowParameters[index];
+      }
+      output << "] return-borrow-place=";
       borrowOriginPlace(instance.returnBorrowPlace);
+      output << " return-borrow-fields=";
+      borrowFields(instance.returnBorrowFields);
+      output << " owned-pointee=";
+      if (instance.ownedPointeeProjection) {
+        output << number(instance.ownedPointeeProjection->borrowIntrinsic)
+               << ":[";
+        for (std::size_t index = 0;
+             index < instance.ownedPointeeProjection->fields.size(); ++index) {
+          separator(index);
+          output << instance.ownedPointeeProjection->fields[index];
+        }
+        output << ']';
+      } else {
+        output << "none";
+      }
       output << " linkage="
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
              << " symbol=" << instance.externalSymbol << " c-array-count=";
@@ -531,8 +598,12 @@ public:
         output << "declaration";
         break;
       }
-      output << " may-raise-defined-failure="
-             << instance.mayRaiseDefinedFailure;
+      output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
+             << " requires-unsafe=" << instance.requiresUnsafe
+             << " noreturn=" << instance.neverReturns
+             << " track-caller=" << instance.tracksCaller
+             << " cthread-operation="
+             << static_cast<unsigned>(instance.cThreadOperation);
       effectSummary(instance.effectSummary);
       output << " roots=[";
       list(instance.virtualRoots);
@@ -549,6 +620,7 @@ public:
     for (const MirConstructorInstance &instance :
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
+             << " constexpr=" << instance.constexprConstructor
              << " type-arguments=[";
       for (std::size_t index = 0; index < instance.typeArguments.size();
            ++index) {
@@ -577,7 +649,13 @@ public:
       }
       output << "] borrow=" << number(instance.borrowOrigin) << ':'
              << instance.borrowParameter << ':' << number(instance.borrowAccess)
-             << " definition=";
+             << " borrow-parameters=[";
+      for (std::size_t index = 0; index < instance.borrowParameters.size();
+           ++index) {
+        separator(index);
+        output << instance.borrowParameters[index];
+      }
+      output << "] definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:
         output << "source";
@@ -674,7 +752,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v47\n";
+    output << "mir-body-v77\n";
     body(value, 0);
     return output.str();
   }
@@ -759,8 +837,9 @@ private:
            << " index-place=p" << plan->argumentIndexPlace << " vector-place=p"
            << plan->argumentVectorPlace << " count=%" << plan->stabilizedCount
            << " vector=%" << plan->argumentVector << " result=%"
-           << plan->entryResult << " operations=" << plan->operations.size()
-           << '\n';
+           << plan->entryResult << " cthread-begin=" << plan->cThreadBegin
+           << " cthread-end=" << plan->cThreadEnd
+           << " operations=" << plan->operations.size() << '\n';
     for (const MirHostedStartupOperation &operation : plan->operations) {
       output << "  hosted-operation @" << operation.id
              << " kind=" << hostedStartupOperationName(operation.kind)
@@ -899,7 +978,8 @@ private:
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
-           << ";parameter=" << value.genericParameterId;
+           << ";parameter=" << value.genericParameterId
+           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar);
     if (value.functionId != 0) {
       output << ";function=" << value.functionId;
     }
@@ -910,6 +990,7 @@ private:
            << ";length-parameter=" << value.arrayLengthParameterId
            << ";access=" << number(value.referenceAccess)
            << ";pointer-access=" << number(value.pointerAccess)
+           << ";signature-receiver=" << number(value.signatureReceiver)
            << ";concrete-pack=" << value.concretePack << ";args=[";
     for (std::size_t index = 0; index < value.arguments.size(); ++index) {
       separator(index);
@@ -960,7 +1041,8 @@ private:
            << ',' << value.copyable << ',' << value.movable << ','
            << value.copyAssignable << ',' << value.moveAssignable << ','
            << value.containsBorrowedState << ',' << value.transferCapable << ','
-           << value.shareCapable << ')';
+           << value.shareCapable << ','
+           << static_cast<unsigned>(value.relocation) << ')';
   }
 
   void info(const ExpressionInfo &value) {
@@ -984,6 +1066,10 @@ private:
     optional(value.functionTarget);
     output << ";lambda=";
     optional(value.lambdaTarget);
+    if (value.nativeCalleeType) {
+      output << ";native-callee=";
+      type(*value.nativeCalleeType);
+    }
     output << ";required=" << callableCapabilityName(value.requiredCapability)
            << ";selected=";
     if (value.selectedCapability) {
@@ -1073,6 +1159,27 @@ private:
     output << "])";
   }
 
+  void borrowFields(const std::vector<BorrowedFieldOrigin> &fields) {
+    output << '[';
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+      separator(index);
+      const auto &field = fields[index];
+      output << "field(result=[";
+      for (std::size_t path = 0; path < field.resultFields.size(); ++path) {
+        separator(path);
+        output << field.resultFields[path];
+      }
+      output << "];origin=" << number(field.origin) << ':' << field.parameter
+             << ";source=[";
+      for (std::size_t path = 0; path < field.sourceFields.size(); ++path) {
+        separator(path);
+        output << field.sourceFields[path];
+      }
+      output << "];access=" << number(field.access) << ')';
+    }
+    output << ']';
+  }
+
   void ownershipEvent(const OwnershipEvent &value) {
     output << "event(kind=" << number(value.kind) << ";place=";
     placeKey(value.place);
@@ -1117,8 +1224,49 @@ private:
       optional(value.dropType.fixedArray->leafClassInstance);
       output << ')';
     }
-    output << " active-cleanup=" << value.dropType.requiresActiveCleanup
+    output << " unique-pointee=";
+    optional(value.dropType.uniquePointeeClass);
+    output << " polymorphic-cleanup=" << value.dropType.polymorphicCleanup
+           << " unique-field=" << value.dropType.uniqueOwnerField
+           << " unique-base=";
+    optional(value.dropType.uniqueOwnerBase);
+    output << " capture=";
+    optional(value.dropType.captureIndex);
+    output << " payload-variant=";
+    optional(value.dropType.payloadVariant);
+    output << " payload-field=";
+    optional(value.dropType.payloadField);
+    output << " recursive=" << value.dropType.recursiveCleanup
+           << " aggregate=[";
+    for (const auto &step : value.dropType.aggregate)
+      aggregateDropStep(step);
+    output << "] active-cleanup=" << value.dropType.requiresActiveCleanup
            << " initially-active=" << value.initiallyActive << '\n';
+  }
+
+  void aggregateDropStep(const MirDropType &step) {
+    output << "step(type=";
+    type(step.type);
+    output << ";class=";
+    optional(step.classInstance);
+    output << ";destructor=";
+    optional(step.destructor);
+    output << ";pointee=";
+    optional(step.uniquePointeeClass);
+    output << ";polymorphic-cleanup=" << step.polymorphicCleanup
+           << ";field=" << step.uniqueOwnerField << ";base=";
+    optional(step.uniqueOwnerBase);
+    output << ";capture=";
+    optional(step.captureIndex);
+    output << ";payload-variant=";
+    optional(step.payloadVariant);
+    output << ";payload-field=";
+    optional(step.payloadField);
+    output << ";recursive=" << step.recursiveCleanup
+           << ";active=" << step.requiresActiveCleanup << ";children=[";
+    for (const auto &child : step.aggregate)
+      aggregateDropStep(child);
+    output << "])";
   }
 
   void fullExpression(const MirFullExpression &value) {
@@ -1164,17 +1312,36 @@ private:
   void loan(const MirLoan &value) {
     output << "  loan" << value.id << " kind=" << number(value.kind)
            << " semantic=" << value.semanticLoan << " parent=loan"
-           << value.parent << " source=p" << value.source
+           << value.parent << " stored-dependency=loan"
+           << value.storedDependency << " source=p" << value.source
            << " access=" << number(value.access) << " produced=v"
            << value.producedBy << " carriers=[";
     for (std::size_t index = 0; index < value.carriers.size(); ++index) {
       separator(index);
       output << value.carriers[index];
     }
-    output << "] field=" << value.storedField
-           << " designated-field=" << value.designatedField
-           << " lifecycle-bound=" << value.lifecycleBound
-           << " two-phase=" << value.twoPhase << " entry=" << value.entry
+    output << "] field=" << value.storedField << " designated-fields=[";
+    for (std::size_t index = 0; index < value.designatedFields.size();
+         ++index) {
+      separator(index);
+      output << value.designatedFields[index];
+    }
+    output << "] lifecycle-bound=" << value.lifecycleBound
+           << " additional-dependencies=[";
+    for (std::size_t index = 0; index < value.additionalDependencies.size();
+         ++index) {
+      separator(index);
+      const auto &dependency = value.additionalDependencies[index];
+      output << "{source=p" << dependency.source
+             << " access=" << number(dependency.access) << " fields=[";
+      for (std::size_t field = 0; field < dependency.designatedFields.size();
+           ++field) {
+        separator(field);
+        output << dependency.designatedFields[field];
+      }
+      output << "]}";
+    }
+    output << ']' << " two-phase=" << value.twoPhase << " entry=" << value.entry
            << " escapes=" << value.escapes << '\n';
   }
 
@@ -1206,6 +1373,8 @@ private:
            << " default-argument=" << value.defaultArgument
            << " prepared-parameter-drop=";
     optional(value.preparedParameterDrop);
+    output << " retained-owner-place=";
+    optional(value.retainedOwnerPlace);
     output << " success-result-drop=";
     optional(value.successResultDrop);
     output << " success-result-destination=";
@@ -1221,6 +1390,19 @@ private:
     } else {
       output << '-';
     }
+    output << " element-cleanup=";
+    if (value.elementCleanup) {
+      aggregateDropStep(*value.elementCleanup);
+    } else {
+      output << '-';
+    }
+    output << " replacement-pair=" << value.replacementPair
+           << " replacement-cleanup=";
+    if (value.replacementCleanup) {
+      aggregateDropStep(*value.replacementCleanup);
+    } else {
+      output << '-';
+    }
     output << " operands=[";
     for (std::size_t index = 0; index < value.operands.size(); ++index) {
       separator(index);
@@ -1231,7 +1413,12 @@ private:
       separator(index);
       type(value.parameterTypes[index]);
     }
-    output << "] closure-captures=[";
+    output << "] object-layout-type=";
+    if (value.objectLayoutType)
+      type(*value.objectLayoutType);
+    else
+      output << '-';
+    output << " closure-captures=[";
     for (std::size_t index = 0; index < value.closureCaptureTypes.size();
          ++index) {
       separator(index);
@@ -1248,8 +1435,15 @@ private:
     output << " borrow-origin=" << number(value.borrowOrigin)
            << " borrow-argument=" << value.borrowArgument
            << " borrow-access=" << number(value.borrowAccess)
-           << " borrow-place=";
+           << " borrow-arguments=[";
+    for (std::size_t index = 0; index < value.borrowArguments.size(); ++index) {
+      separator(index);
+      output << value.borrowArguments[index];
+    }
+    output << "] borrow-place=";
     borrowOriginPlace(value.borrowPlace);
+    output << " borrow-fields=";
+    borrowFields(value.borrowFields);
     output << " operation=" << name(value.operation) << " literal=";
     literal(value.literal);
     output << " literal-provenance=";
@@ -1302,7 +1496,30 @@ private:
     output << " payload-index=";
     optional(value.payloadIndex);
     output << " intrinsic=" << name(value.intrinsic)
-           << " synchronization=" << name(value.synchronization.kind)
+           << " noreturn=" << value.neverReturns
+           << " track-caller=" << value.tracksCaller
+           << " caller-site=" << value.callerLocationSite
+           << " forward-caller=" << value.forwardsCallerLocation
+           << " caller-origin=";
+    if (value.callerLocation) {
+      output << value.callerLocation->sourceUnit << ':'
+             << value.callerLocation->start << ':' << value.callerLocation->end
+             << ':' << value.callerLocation->line;
+    } else {
+      output << '-';
+    }
+    output << " source-location=";
+    if (value.sourceLocation) {
+      output << value.sourceLocation->file.size() << ':'
+             << value.sourceLocation->file << ','
+             << value.sourceLocation->function.size() << ':'
+             << value.sourceLocation->function << ','
+             << value.sourceLocation->line << ':'
+             << value.sourceLocation->column;
+    } else {
+      output << '-';
+    }
+    output << " synchronization=" << name(value.synchronization.kind)
            << " atomic-order=";
     if (value.synchronization.order) {
       output << name(*value.synchronization.order);
@@ -1355,8 +1572,14 @@ private:
     type(value.dispatchOwner);
     output << " function=";
     optional(value.functionTarget);
+    if (value.nativeCalleeType) {
+      output << " native-callee=";
+      type(*value.nativeCalleeType);
+    }
     output << " constructor=";
     optional(value.constructorTarget);
+    output << " object-allocation=" << value.objectAllocation
+           << " storage-preflight=" << value.storagePreflight;
     output << " body-target=";
     if (value.bodyTarget) {
       output << number(value.bodyTarget->kind) << ':'
@@ -1509,6 +1732,7 @@ private:
 
   void body(const MirBody &value, std::size_t owner) {
     output << "body kind=" << number(value.kind) << " owner=" << owner
+           << " caller-parameter=" << value.hasCallerLocation
            << " compiler-trusted-synchronization="
            << value.compilerTrustedSynchronization << " domain=";
     placeDomain(value.placeDomain);

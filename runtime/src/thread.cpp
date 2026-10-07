@@ -1,5 +1,7 @@
 #include "gti/runtime_thread.hpp"
 
+#include "cthread_internal.h"
+#include "failure_internal.h"
 #include "thread_internal.h"
 
 #include <atomic>
@@ -16,8 +18,8 @@ struct gti_thread_state_v1 {
   std::mutex failureMutex;
   gti_thread_worker_failure_kind_v1 failureKind =
       GTI_THREAD_WORKER_FAILURE_NONE_V1;
-  gti_failure_record_v1 failure{};
-  gti_failure_emergency_v1 cleanupFailure{};
+  gti_failure_record_v2 failure{};
+  gti_failure_emergency_v2 cleanupFailure{};
   const gti_failure_artifact_descriptor_v1 *primaryArtifact = nullptr;
   const gti_failure_artifact_descriptor_v1 *secondaryArtifact = nullptr;
   bool valueBearing = false;
@@ -31,6 +33,7 @@ namespace {
 
 thread_local gti_thread_state_v1 *activeWorker = nullptr;
 thread_local bool activeTaskObjectCleanup = false;
+thread_local gti_thread_state_v1 *emergencyHandoffWorker = nullptr;
 std::atomic<gti::runtime::detail::ThreadTestFault> testFault{
     gti::runtime::detail::ThreadTestFault::None};
 std::mutex quarantineMutex;
@@ -48,12 +51,19 @@ public:
   explicit ActiveWorkerScope(gti_thread_state_v1 &state) noexcept
       : previous(activeWorker) {
     activeWorker = &state;
+    gti::runtime::detail::enterCThreadManagedScope();
   }
 
   ActiveWorkerScope(const ActiveWorkerScope &) = delete;
   ActiveWorkerScope &operator=(const ActiveWorkerScope &) = delete;
 
-  ~ActiveWorkerScope() { activeWorker = previous; }
+  ~ActiveWorkerScope() {
+    if (emergencyHandoffWorker != nullptr) {
+      std::terminate();
+    }
+    gti::runtime::detail::leaveCThreadManagedScope();
+    activeWorker = previous;
+  }
 
 private:
   gti_thread_state_v1 *previous;
@@ -76,7 +86,7 @@ public:
 };
 
 void recordWorkerFailure(
-    gti_thread_state_v1 &state, const gti_failure_record_v1 &record,
+    gti_thread_state_v1 &state, const gti_failure_record_v2 &record,
     const gti_failure_artifact_descriptor_v1 *artifact) noexcept {
   if (state.failureKind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) {
     // A cleanup emergency is already the bounded two-record envelope. A
@@ -85,7 +95,7 @@ void recordWorkerFailure(
   }
   if (state.failureKind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
     state.cleanupFailure = {
-        .abi_version = GTI_FAILURE_ABI_VERSION_V1,
+        .abi_version = GTI_FAILURE_ABI_VERSION_V2,
         .reserved = 0,
         .primary = state.failure,
         .secondary = record,
@@ -107,8 +117,8 @@ spawnStatus(const std::system_error &error) noexcept {
                         : GTI_THREAD_SPAWN_RESOURCE_UNAVAILABLE_V1;
 }
 
-[[nodiscard]] gti_thread_join_result_v1 emptyJoinResult() noexcept {
-  return {.abi_version = GTI_THREAD_ABI_VERSION_V1,
+[[nodiscard]] gti_thread_join_result_v2 emptyJoinResult() noexcept {
+  return {.abi_version = GTI_THREAD_ABI_VERSION_V2,
           .status = GTI_THREAD_JOIN_OK_V1,
           .failure_kind = GTI_THREAD_WORKER_FAILURE_NONE_V1,
           .reserved = 0,
@@ -116,6 +126,98 @@ spawnStatus(const std::system_error &error) noexcept {
           .cleanup_failure = {},
           .primary_artifact = nullptr,
           .secondary_artifact = nullptr};
+}
+
+gti_failure_record_v2
+promoteFailure(const gti_failure_record_v1 &record) noexcept {
+  gti_failure_record_v2 result{};
+  // Copy only the frozen v1 fields, never reinterpret an ABI object. Preserve
+  // malformed records as malformed instead of legitimizing an unknown version.
+  result.abi_version = record.abi_version == GTI_FAILURE_ABI_VERSION_V1 &&
+                               record.code != GTI_FAILURE_CODE_PANIC_V2
+                           ? GTI_FAILURE_ABI_VERSION_V2
+                           : 0;
+  result.code = record.code;
+  result.detail = record.detail;
+  result.site_index = record.site_index;
+  result.reserved = record.reserved;
+  std::memcpy(result.artifact_identity, record.artifact_identity, 32);
+  return result;
+}
+
+gti_failure_emergency_v2
+promoteFailure(const gti_failure_emergency_v1 &failure) noexcept {
+  return {.abi_version = failure.abi_version == GTI_FAILURE_ABI_VERSION_V1
+                             ? GTI_FAILURE_ABI_VERSION_V2
+                             : 0,
+          .reserved = failure.reserved,
+          .primary = promoteFailure(failure.primary),
+          .secondary = promoteFailure(failure.secondary)};
+}
+
+bool fitsLegacy(const gti_failure_record_v2 &record) noexcept {
+  if (record.code == GTI_FAILURE_CODE_PANIC_V2 || record.message_size != 0 ||
+      record.message_flags != 0) {
+    return false;
+  }
+  for (const auto byte : record.message) {
+    if (byte != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+gti_failure_record_v1
+legacyFailure(const gti_failure_record_v2 &record) noexcept {
+  gti_failure_record_v1 result{.abi_version = record.abi_version ==
+                                                      GTI_FAILURE_ABI_VERSION_V2
+                                                  ? GTI_FAILURE_ABI_VERSION_V1
+                                                  : 0,
+                               .code = record.code,
+                               .detail = record.detail,
+                               .site_index = record.site_index,
+                               .reserved = record.reserved,
+                               .artifact_identity = {}};
+  std::memcpy(result.artifact_identity, record.artifact_identity, 32);
+  return result;
+}
+
+gti_thread_join_result_v1 legacyJoin(const gti_thread_join_result_v2 &result) {
+  if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1 &&
+      !fitsLegacy(result.failure)) {
+    gti::runtime::detail::terminateLegacyFailure(result.failure,
+                                                 result.primary_artifact);
+  }
+  if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
+      (!fitsLegacy(result.cleanup_failure.primary) ||
+       !fitsLegacy(result.cleanup_failure.secondary))) {
+    gti::runtime::detail::terminateLegacyFailure(result.cleanup_failure,
+                                                 result.primary_artifact,
+                                                 result.secondary_artifact);
+  }
+  gti_thread_join_result_v1 legacy{.abi_version = GTI_THREAD_ABI_VERSION_V1,
+                                   .status = result.status,
+                                   .failure_kind = result.failure_kind,
+                                   .reserved = result.reserved,
+                                   .failure = {},
+                                   .cleanup_failure = {},
+                                   .primary_artifact = result.primary_artifact,
+                                   .secondary_artifact =
+                                       result.secondary_artifact};
+  if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
+    legacy.failure = legacyFailure(result.failure);
+  } else if (result.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) {
+    legacy.cleanup_failure = {
+        .abi_version =
+            result.cleanup_failure.abi_version == GTI_FAILURE_ABI_VERSION_V2
+                ? GTI_FAILURE_ABI_VERSION_V1
+                : 0,
+        .reserved = result.cleanup_failure.reserved,
+        .primary = legacyFailure(result.cleanup_failure.primary),
+        .secondary = legacyFailure(result.cleanup_failure.secondary)};
+  }
+  return legacy;
 }
 
 [[nodiscard]] bool workerFailed(gti_thread_state_v1 &state) noexcept {
@@ -139,10 +241,32 @@ void releaseTaskContext(void *context,
 
 namespace gti_runtime_detail {
 
-bool managed_worker_active() noexcept { return activeWorker != nullptr; }
+bool managed_worker_active() noexcept {
+  return activeWorker != nullptr &&
+         !gti::runtime::detail::terminalCThreadCallbackActive();
+}
+
+bool managed_cleanup_emergency_handoff_active() noexcept {
+  return emergencyHandoffWorker != nullptr &&
+         emergencyHandoffWorker == activeWorker;
+}
+
+void clear_managed_failure_handoff() noexcept {
+  if (emergencyHandoffWorker != nullptr &&
+      emergencyHandoffWorker != activeWorker) {
+    std::terminate();
+  }
+  emergencyHandoffWorker = nullptr;
+}
 
 [[noreturn]] void handoff_managed_worker_failure(
     const gti_failure_record_v1 &record,
+    const gti_failure_artifact_descriptor_v1 *artifact) {
+  handoff_managed_worker_failure(promoteFailure(record), artifact);
+}
+
+[[noreturn]] void handoff_managed_worker_failure(
+    const gti_failure_record_v2 &record,
     const gti_failure_artifact_descriptor_v1 *artifact) {
   gti_thread_state_v1 *state = activeWorker;
   if (state == nullptr) {
@@ -159,6 +283,14 @@ bool managed_worker_active() noexcept { return activeWorker != nullptr; }
     const gti_failure_emergency_v1 &failure,
     const gti_failure_artifact_descriptor_v1 *primaryArtifact,
     const gti_failure_artifact_descriptor_v1 *secondaryArtifact) {
+  handoff_managed_worker_cleanup_failure(promoteFailure(failure),
+                                         primaryArtifact, secondaryArtifact);
+}
+
+[[noreturn]] void handoff_managed_worker_cleanup_failure(
+    const gti_failure_emergency_v2 &failure,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact,
+    const gti_failure_artifact_descriptor_v1 *secondaryArtifact) {
   gti_thread_state_v1 *state = activeWorker;
   if (state == nullptr) {
     std::terminate();
@@ -173,11 +305,34 @@ bool managed_worker_active() noexcept { return activeWorker != nullptr; }
     state->secondaryArtifact = secondaryArtifact;
     state->failureKind = GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
   }
+  if (emergencyHandoffWorker != nullptr) {
+    std::terminate();
+  }
+  // Only this explicit two-record terminal handoff authorizes abandoning
+  // representation cleanup. Ordinary failure propagation and a merely stored
+  // pending failure never enable it. Adapter catches clear it before task
+  // completion/destruction begins.
+  emergencyHandoffWorker = state;
   throw worker_failure_handoff{};
+}
+
+gti_thread_worker_failure_kind_v1 managed_task_cleanup_failure_kind() noexcept {
+  gti_thread_state_v1 *state = activeWorker;
+  if (state == nullptr || !activeTaskObjectCleanup) {
+    return GTI_THREAD_WORKER_FAILURE_NONE_V1;
+  }
+  const std::lock_guard lock(state->failureMutex);
+  return state->failureKind;
 }
 
 bool record_managed_task_cleanup_failure(
     const gti_failure_record_v1 &record,
+    const gti_failure_artifact_descriptor_v1 *artifact) noexcept {
+  return record_managed_task_cleanup_failure(promoteFailure(record), artifact);
+}
+
+bool record_managed_task_cleanup_failure(
+    const gti_failure_record_v2 &record,
     const gti_failure_artifact_descriptor_v1 *artifact) noexcept {
   gti_thread_state_v1 *state = activeWorker;
   if (state == nullptr || !activeTaskObjectCleanup) {
@@ -193,6 +348,20 @@ bool record_managed_task_cleanup_failure(
 
 bool record_managed_task_cleanup_emergency(
     const gti_failure_emergency_v1 *failure,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact,
+    const gti_failure_artifact_descriptor_v1 *secondaryArtifact) noexcept {
+  if (failure == nullptr) {
+    return record_managed_task_cleanup_emergency(
+        static_cast<const gti_failure_emergency_v2 *>(nullptr), primaryArtifact,
+        secondaryArtifact);
+  }
+  const auto promoted = promoteFailure(*failure);
+  return record_managed_task_cleanup_emergency(&promoted, primaryArtifact,
+                                               secondaryArtifact);
+}
+
+bool record_managed_task_cleanup_emergency(
+    const gti_failure_emergency_v2 *failure,
     const gti_failure_artifact_descriptor_v1 *primaryArtifact,
     const gti_failure_artifact_descriptor_v1 *secondaryArtifact) noexcept {
   gti_thread_state_v1 *state = activeWorker;
@@ -279,6 +448,7 @@ gti_rt_thread_spawn_v1(gti_thread_task_entry_v1 entry, void *task_context,
       try {
         entry(task_context);
       } catch (const gti_runtime_detail::worker_failure_handoff &) {
+        gti_runtime_detail::clear_managed_failure_handoff();
         // Generated adapters catch this. Retain a defensive runtime boundary
         // so a malformed adapter still cannot leak an exception to std::thread.
       } catch (...) {
@@ -352,6 +522,7 @@ gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
       try {
         entry(task_context);
       } catch (const gti_runtime_detail::worker_failure_handoff &) {
+        gti_runtime_detail::clear_managed_failure_handoff();
         // Generated adapters normally contain this handoff themselves.
       } catch (...) {
         std::terminate();
@@ -394,9 +565,9 @@ gti_rt_thread_spawn_value_v1(gti_thread_task_entry_v1 entry, void *task_context,
   return result;
 }
 
-extern "C" gti_thread_join_result_v1
-gti_rt_thread_join_v1(gti_thread_state_v1 **stateAddress) {
-  gti_thread_join_result_v1 result{.abi_version = GTI_THREAD_ABI_VERSION_V1,
+extern "C" gti_thread_join_result_v2
+gti_rt_thread_join_v2(gti_thread_state_v1 **stateAddress) {
+  gti_thread_join_result_v2 result{.abi_version = GTI_THREAD_ABI_VERSION_V2,
                                    .status = GTI_THREAD_JOIN_OK_V1,
                                    .failure_kind =
                                        GTI_THREAD_WORKER_FAILURE_NONE_V1,
@@ -453,9 +624,9 @@ gti_rt_thread_join_v1(gti_thread_state_v1 **stateAddress) {
   return result;
 }
 
-extern "C" gti_thread_value_join_result_v1
-gti_rt_thread_join_value_v1(gti_thread_state_v1 **stateAddress) {
-  gti_thread_value_join_result_v1 result{
+extern "C" gti_thread_value_join_result_v2
+gti_rt_thread_join_value_v2(gti_thread_state_v1 **stateAddress) {
+  gti_thread_value_join_result_v2 result{
       .join = emptyJoinResult(),
       .result_context = nullptr,
       .take_result = nullptr,
@@ -512,4 +683,18 @@ gti_rt_thread_join_value_v1(gti_thread_state_v1 **stateAddress) {
   *stateAddress = nullptr;
   delete state;
   return result;
+}
+
+extern "C" gti_thread_join_result_v1
+gti_rt_thread_join_v1(gti_thread_state_v1 **stateAddress) {
+  return legacyJoin(gti_rt_thread_join_v2(stateAddress));
+}
+
+extern "C" gti_thread_value_join_result_v1
+gti_rt_thread_join_value_v1(gti_thread_state_v1 **stateAddress) {
+  const auto result = gti_rt_thread_join_value_v2(stateAddress);
+  return {.join = legacyJoin(result.join),
+          .result_context = result.result_context,
+          .take_result = result.take_result,
+          .abandon_result = result.abandon_result};
 }

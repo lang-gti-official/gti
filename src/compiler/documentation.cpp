@@ -66,6 +66,7 @@ documentationKind(const SymbolRecord &symbol,
     return DocumentationKind::GlobalVariable;
   case SymbolKind::LocalVariable:
   case SymbolKind::Parameter:
+  case SymbolKind::RequirementParameter:
   case SymbolKind::TypeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::LambdaCapture:
@@ -116,6 +117,7 @@ declarationOccurrence(const SemanticDatabase &database, SymbolId symbol) {
   case SymbolKind::NamespaceAlias:
   case SymbolKind::LocalVariable:
   case SymbolKind::Parameter:
+  case SymbolKind::RequirementParameter:
   case SymbolKind::TypeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::LambdaCapture:
@@ -268,6 +270,7 @@ signature(const SymbolRecord &symbol, const SemanticOccurrence *declaration,
     return std::nullopt;
   case SymbolKind::LocalVariable:
   case SymbolKind::Parameter:
+  case SymbolKind::RequirementParameter:
   case SymbolKind::TypeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::LambdaCapture:

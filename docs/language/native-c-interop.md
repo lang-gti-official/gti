@@ -20,19 +20,22 @@ int main() {
 ```
 
 This is a bounded C ABI rather than a general foreign-definition facility. It
-supports fixed-width values, passive `[[c_abi]]` records, nominal pointer-only
-`[[c_opaque]]` handles, bounded one-level raw pointers, NUL-terminated
+supports fixed-width and target-correct C scalar values, passive `[[c_abi]]` records, nominal pointer-only
+`[[c_opaque]]` handles, recursively nested raw pointers, NUL-terminated
 `c_string` values, and annotated native pointer-plus-count returns behind
 lexical `unsafe`. It also supports named exact native callback types and
-same-thread adapters for eligible GTI free functions. It does not expose
-native variables, variadic calls, C++ linkage, annotated ownership transfer,
-foreign-thread GTI callback entry, or a stable binary ABI for ordinary
-GTI-defined types.
+same-thread adapters for eligible GTI free functions, plus the exact registered
+worker and once-initializer adapters owned by `<std/cthread>`. It does not
+expose native variables, variadic calls, C++ linkage, annotated ownership
+transfer, general foreign-thread GTI callback entry, or a stable binary ABI for
+ordinary GTI-defined types.
 
 The compiler can emit one native bridge header for this bounded surface. The
 header is valid C17 and C++20/C++23: C sees deterministic C record names, while
-the default C++ surface exposes familiar GTI source namespaces and names under
-`extern "C"` function linkage. A consumer may define
+the default C++ surface exposes familiar GTI source namespaces and record names
+under `extern "C"` function linkage. Functions use their selected external
+symbol, including when `link_name` makes that differ from the GTI call name. A
+consumer may define
 `GTI_NATIVE_HEADER_NO_SOURCE_NAMES` before including the header to suppress the
 optional C++ record aliases and place C-function declarations only in GTI's
 isolated namespace. Opaque handles retain their exact incomplete source
@@ -40,6 +43,42 @@ identity because a C++ consumer must be able to complete that type. This is
 deliberately a C ABI that C++ code can implement and consume, not an
 `extern "C++"` ABI for classes, overloads, exceptions, templates, or native
 C++ ownership.
+
+## Target-Correct C Scalar Types
+
+The prelude supplies `c_bool`, `c_char`, `c_schar`, `c_uchar`, `c_short`,
+`c_ushort`, `c_int`, `c_uint`, `c_long`, `c_ulong`, `c_longlong`,
+`c_ulonglong`, `c_float`, `c_double`, `c_size_t`, `c_ptrdiff_t`,
+`c_intptr_t`, `c_uintptr_t`, and the `c_void` alias for `void`.
+These describe the selected target's native declaration, not the compiler host.
+For example, `c_long` is 64-bit on accepted macOS/Linux targets and 32-bit on
+Windows. `c_char` is C's distinct plain `char`: unsigned on Linux arm64 and
+signed on the other accepted profiles. GTI's ordinary `char` remains a distinct
+code unit and is not a C ABI scalar.
+
+Equal width does not imply equal type: `c_long` and `c_longlong` remain distinct
+even on LP64, including overloads, generic arguments and pointer pointees.
+Genuine native typedef aliases do canonicalize. For example, `c_int` is the
+same type as `int32_t`, and `c_size_t` canonicalizes to `c_ulong` on
+macOS/Linux or `c_ulonglong` on Windows. `c_bool` aliases GTI `bool` and has
+C `_Bool` / C++ `bool` representation. Numeric C families retain ordinary GTI
+checked arithmetic and explicit narrowing conversions rather than C wrapping
+or implicit narrowing. Mixed equal-width integer families choose the higher
+native rank (`long long` over `long` over `int`) independently of operand order.
+
+```gti
+extern "C" {
+  c_long labs(c_long value);
+  c_size_t strlen(c_string text);
+}
+```
+
+The runnable [native scalar example](../../examples/123-native-c-scalars.gti)
+uses real C library calls, unrelated generic aggregates and checked numeric
+conversion. `gti bindgen` emits these families for the corresponding C
+primitives; native header emission preserves exact primitive identity or a
+genuine target-native fixed-width typedef alias. Long double and target-specific
+extended scalar formats are not admitted by this vocabulary.
 
 ## Declaration Contract
 
@@ -49,23 +88,42 @@ only bodyless free-function declarations ending in `;`. A declaration cannot
 be a definition, method, operator, generic, overload, runtime binding, or use
 `static`, `virtual`, `override`, a mutable receiver, or a writable return.
 
-Each declaration binds the exact source identifier as its native C symbol.
-GTI does not mangle that symbol or prefix it with the containing GTI namespace.
-The namespace still controls source lookup, so a declaration inside
-`namespace posix` is called as `posix::socket`, but its native symbol remains
-exactly `socket`. C symbols are program-global: the same symbol cannot be
-redeclared, overloaded, or introduced by a second namespace. A C-linkage
+By default, each declaration binds the exact source identifier as its native C
+symbol. `[[link_name("symbol")]]` instead binds the decoded `symbol` while the
+declared function name remains the GTI lookup name:
+
+```gti
+namespace cli11 {
+[[c_opaque]] struct GtiCli11App;
+
+extern "C" {
+  [[link_name("gti_cli11_app_create")]]
+  GtiCli11App* app_create(std::string_view description);
+}
+}
+```
+
+GTI code calls `cli11::app_create`, while the object file refers to
+`gti_cli11_app_create`. The link name must be one portable ASCII C identifier;
+the current contract does not admit arbitrary object-format spellings. GTI
+does not mangle the selected symbol or prefix it with the containing GTI
+namespace. `link_name` is valid only on a bodyless `extern "C"` function, may
+occur at most once, and may be stacked with `[[c_array(count)]]`. C symbols are
+program-global: the same selected symbol cannot be redeclared, overloaded, or
+introduced by a second namespace. A C-linkage
 function also cannot share its GTI overload set with an ordinary GTI function.
 The symbol `main` is reserved for the GTI entry point, and an external symbol
 cannot reuse the name of root-namespace GTI storage. Invalid ABI declarations
 use semantic diagnostic `GTI-S2054`.
 
-Native-facing source names must also remain valid after the compiler places
-them in the generated C17/C++ bridge header. Semantics rejects a C17 keyword
-where the source spelling is emitted as an exact C name, an
-implementation-reserved spelling such as `__name` or `_Name` on either emitted
-language surface, and a leading-underscore root type or C symbol because that
-spelling is reserved at C file scope. It also rejects actual collisions with the
+Native-facing names must also remain valid after the compiler places them in
+the generated C17/C++ bridge header. For a function this validation applies to
+the selected link name; without `link_name`, that is the source identifier.
+Semantics rejects a C17 keyword where a spelling is emitted as an exact C name,
+an implementation-reserved spelling such as `__name` or `_Name` on either
+emitted language surface, and a leading-underscore root type or C symbol
+because that spelling is reserved at C file scope. It also rejects actual
+collisions with the
 `<stddef.h>`, `<stdint.h>`, and `<gti/c_abi.h>` surface included by the header:
 object-like macros where the name is emitted, function-like macros when an
 external function name is followed by `(`, and root ordinary identifiers that
@@ -92,26 +150,25 @@ name because a function-like macro is not invoked without a following `(`.
 Likewise, a lower-case leading underscore remains valid for a field, parameter,
 or namespaced type that is not emitted at C file scope. `GTI-S2054` owns these
 conflicts on C function declarations, `GTI-S2064` owns them on native records,
-and `GTI-S2065` owns them on opaque handles; each points at the exact source
-identifier before header generation.
+and `GTI-S2065` owns them on opaque handles. A link-name failure points at its
+string literal; other failures point at the exact source identifier before
+header generation.
 
 The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
 
-- returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
+- returns: `void`, the C scalar families above, `bool`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
   `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
-  records, `c_string`, exact named native function types, and one-level raw
-  pointers whose pointee is `void`, one
+  records, `c_string`, exact named native function types, and recursive raw
+  pointers whose terminal pointee is `void`, one
   of those scalar types, `c_string`, a valid C ABI record, or a
-  `[[c_opaque]]` handle. A `[[c_array(count)]]` declaration may additionally
-  return the exact bounded two-level form whose inner pointer satisfies this
-  same allowlist;
-- parameters: the same fixed-width scalar types, passed immutably by value,
-  valid C ABI records passed immutably by value, one-level raw pointers with
+  `[[c_opaque]]` handle or an exact named native callback type.
+  `[[c_array(count)]]` supplies count metadata independently of pointer depth;
+- parameters: the same scalar types, passed immutably by value,
+  valid C ABI records passed immutably by value, recursive raw pointers with
   immutable bindings and the same permitted pointees, plus
   `std::string_view` as the counted input-buffer case and `c_string` as the
-  NUL-terminated input-pointer case, exact named native function types, and
-  the exact `OpaqueHandle**` out-parameter form described below; and
+  NUL-terminated input-pointer case and exact named native function types; and
 - compatibility spellings `int`, `uint`, `int8` through `int64`, and `uint8`
   through `uint64` resolve to their documented fixed-width types and therefore
   follow the corresponding scalar rule.
@@ -121,25 +178,19 @@ native writable and read-only pointee access respectively; leading declaration
 `mut` is not permitted on a C parameter and would only describe reseating the
 local parameter binding, not the C ABI.
 
-`bool` and `char` are intentionally not C ABI scalars in this contract because
-their source meaning should not inherit platform C representation choices.
+GTI `char` is not a C ABI scalar; use `c_char` for native plain `char`.
 Enums, ordinary complete classes/structs/interfaces, `expected`, owners,
 references, arrays, mutable parameters, packs, string-view returns,
-general pointer-to-pointer types, anonymous or general function-pointer
+anonymous or general function-pointer
 declarators, and pointers to non-ABI pointees are also rejected. The bounded
-exceptions do not create general
-nested pointer types: `c_string*` spells `const char**` for a C out parameter,
-an immutable direct `extern "C"` parameter may be `OpaqueHandle**`, and a
-`[[c_array(count)]]` return may add one outer pointer to an otherwise admitted
-one-level C pointer. At a call, the opaque out parameter accepts only
-`&binding`, where `binding` is a mutable raw pointer to the exact opaque handle;
-the address expression must be the direct argument and the call remains
-lexical `unsafe`. It cannot be stored, returned, forwarded, used for ordinary
-GTI overload resolution, or written in any other local, field, parameter, or
-unannotated return position. The C call may replace the binding with null or a
-native address but does not confer ownership or cleanup policy. A named native
-function type recursively uses the ordinary ABI-safe parameter/result family
-and does not inherit the opaque out-parameter exception. The allowlist does
+pointer rules apply equally to `c_char**`, `OpaqueHandle**`, deeper pointers,
+record fields, aliases and named native callback signatures. A mutable slot's
+address can be captured with `auto` or an explicit pointer type, stored,
+forwarded and returned. A C call may replace its value without conferring
+ownership or cleanup policy. Retaining the slot address requires the unsafe
+caller to preserve its lifetime; there is no call-local staging buffer.
+`T* const*` makes the slot read-only; `const T**` instead makes the final
+object read-only. These are distinct types. The allowlist does
 not define array parameters, captured callbacks, opaque ownership transfer, or
 direct C++ linkage.
 
@@ -163,11 +214,14 @@ records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
 enums become an `int32_t` alias plus `constexpr` constants, a bare anonymous
 enum becomes its `constexpr int32_t` constants alone, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
-block. Record import covers the documented field set, including callback
-fields and fixed arrays with multiple extents or record, pointer, callback,
-and scalar elements; `restrict` qualifiers are read and dropped because they
-do not change the caller's contract. Field positions the record surface
-rejects — `char` pointers and nested pointers — degrade the record to an
+block. A configured function rename emits its GTI source spelling plus
+`[[link_name("original_symbol")]]`; a portable assembler label recorded by
+Clang uses the same representation. Record import covers the documented field
+set, including callback fields and fixed arrays with multiple extents or record,
+pointer, callback, and scalar elements; `restrict` qualifiers are read and
+dropped because they do not change the caller's contract. Field positions the
+record surface
+rejects — unsupported nested pointers — degrade the record to an
 opaque handle with the reason recorded, so generated source always satisfies
 this contract's own validation. Everything
 the bounded surface cannot express is reported with its
@@ -204,10 +258,10 @@ passive `[[c_abi]]` record or used as an `extern "C"` parameter or result. It
 is nullable: initialization, assignment, and comparison with `nullptr` are
 valid. A callback binding requires an explicit initializer.
 
-This is not a general first-class GTI function-pointer facility. GTI callback
-values cannot be invoked directly, arithmetically manipulated, cast, or formed
-from lambdas, methods, generic functions, declarations without bodies, or
-inexact overloads. In an exact callback context, one non-generic
+This is a native C callable facility, distinct from GTI function items and
+capturing closures. Native callback values cannot be arithmetically manipulated, cast, or formed
+from lambdas, methods, generic functions, `unsafe` functions, declarations
+without bodies, or inexact overloads. In an exact callback context, one non-generic
 namespace-scope GTI function with a body may convert to the alias:
 
 ```gti
@@ -227,12 +281,51 @@ If the GTI target reports a defined failure, the thunk completes the target's
 verified cleanup and terminates through the runtime failure boundary; a native
 exception is caught and terminates rather than crossing C.
 
-The first callback profile is deliberately single-threaded. A concurrent
-program may describe and transport callback values received from C, but it may
-not expose a GTI function through an adapter. Native/foreign-thread entry needs
-runtime attachment, synchronization, observer, and thread-owned cleanup rules
-before it can be enabled. `GTI-S2076` owns invalid callback type shapes and
-conversions.
+General callbacks remain single-threaded. In the concurrent profile, GTI
+adapters support the exact `(void*) -> int32_t` C-thread entry and `() -> void`
+once initializer, with target
+thread support and `<std/cthread>` included. The adapter requires once-only
+attachment on its exact runtime-registered worker; ordinary initial-thread or
+foreign-thread invocation of the worker adapter terminates before entering GTI.
+The once adapter instead requires its exact synchronous invocation on an
+existing initial, managed, or entered manual GTI execution thread. This is not general
+foreign-thread attachment. See the [C-style thread contract](concurrency.md#c-style-manual-create-and-join)
+for context lifetime, synchronization, hosted shutdown, and failure containment.
+Concurrent code may still describe and transport other callback values received
+from C without exposing a GTI target. `GTI-S2076` owns invalid callback type
+shapes and conversions; `GTI-S2084` owns unavailable thread capability.
+
+### Invoking Native Function Pointers
+
+A named native function-pointer value can be called with ordinary call syntax
+from a lexical `unsafe` block, including a local binding, a record field, or a
+function result:
+
+```gti
+using Transform = (int32_t) -> int32_t;
+extern "C" { Transform obtain_transform(); }
+
+int32_t apply(Transform transform, int32_t input) {
+  unsafe { return transform(input); }
+}
+```
+
+The callee is evaluated once and copied before arguments are evaluated in
+source order. Changing its source binding during argument evaluation therefore
+does not change the function address being invoked. Parameters and results
+must match the exact native signature; native pointers do not accept explicit
+generic arguments. They can participate in ordinary concrete generic callable
+contracts, without acquiring a GTI function-body identity.
+
+Even a scalar-only call requires unsafe: the caller must ensure that the
+address is non-null, executable, uses the declared C signature, and satisfies
+the native implementation's preconditions. Null transport and comparison are
+safe; calling null is not checked or given a defined GTI failure. Native calls
+remain conservative foreign effects and have no GTI defined-failure return
+channel. Calling a GTI-generated adapter retains its existing terminating
+failure firewall and thread-entry restrictions. This does not admit capturing
+callbacks or broader foreign-thread entry. See runnable example
+[`122-native-function-invocation.gti`](../../examples/122-native-function-invocation.gti).
 
 ## NUL-Terminated C Strings
 
@@ -252,11 +345,29 @@ literal selects a `std::string_view` overload over a `c_string` overload.
 This conversion is not a general class conversion and does not permit a
 `c_string` local to be initialized from a string view.
 
-Dynamic `std::string::c_string()` is intentionally not implemented yet. It
-requires the owner to maintain a terminator and the returned value to retain a
-loan invalidated by mutation or destruction. Until that lifetime contract is
-implemented, GTI rejects retained string-view-to-`c_string` conversions rather
-than reproducing C++'s dangling `c_str()` behavior.
+`std::string::c_string()` returns a non-null NUL-terminated view of the
+string's characters. Allocated character storage maintains a
+representation-private NUL byte at its logical `size()`; a zero-capacity empty
+string uses an immutable process-lifetime NUL sentinel. The terminator is
+maintained after reserve, append, resize, pop, clear, relocation, and capacity
+changes. Embedded NUL bytes remain part of the logical string; ordinary C
+string functions therefore observe only the prefix before the first embedded
+NUL, matching the familiar C++ behavior.
+
+`std::string::try_c_string()` provides the checked alternative. It returns
+`nullptr` when any logical character is NUL and otherwise returns the same
+terminated storage view. Both methods produce a compiler-tracked read-only
+dependency on the source string. Mutation, movement, destruction, and escape
+from a local owner are rejected while a derived pointer remains live; the loan
+ends after the pointer's last source-level use. The checked form is
+conservatively owner-dependent even on a path where its value is null.
+
+Obtaining either pointer is not an `unsafe` operation: the pointer cannot be
+indexed or dereferenced in safe GTI. The compiler also cannot infer whether an
+arbitrary native function secretly retains a pointer after a call. A normal C
+parameter is therefore treated as borrowed for the call; a binding for a
+retaining API must express and uphold that library-specific lifetime contract.
+No backend cast silently extends the source string's lifetime.
 
 ## Native Pointer-Plus-Count Arrays
 
@@ -276,8 +387,7 @@ extern "C" {
 ```
 
 The attribute is valid only on a bodyless `extern "C"` function. Its result
-must be an admitted one-level C pointer, or the exact two-level form whose
-inner pointer is itself admitted. The named count must be an immutable
+must be an admitted recursive C raw pointer. The named count must be an immutable
 parameter binding of type `I*`, where `I` is a fixed-width integer and the
 pointee is writable. Consequently the parameter is written as `int32_t* count`,
 not `mut int32_t* count`: leading `mut` would make the local pointer binding
@@ -291,10 +401,8 @@ An API whose returned storage must be freed belongs to a separate ownership
 transfer family.
 
 Calling the pointer-bearing function and indexing the returned storage require
-`unsafe`. A two-level result can be captured with `auto`; explicit `T**`
-locals, fields, ordinary GTI parameters, and unannotated returns remain
-invalid. The separate opaque-handle out-parameter exception does not change
-this returned-array rule:
+`unsafe`. Results can use `auto` or their exact explicit pointer type.
+The annotation does not restrict ordinary nested-pointer composition:
 
 ```gti
 mut int32_t count = 0;
@@ -348,15 +456,16 @@ layout and should be used as the safe policy wrapper.
 
 An admitted field is one of:
 
-- a fixed-width signed or unsigned integer, `float`, or `double`;
+- a target-correct C scalar, fixed-width integer, `bool`, `float`, or `double`;
 - another valid `[[c_abi]]` record by value; or
 - a named exact native callback alias; or
 - a positive concrete fixed array whose ultimate element is itself an
   admitted field type; or
-- a one-level raw pointer to `void`, an admitted scalar, a valid C ABI record,
-  or a `[[c_opaque]]` handle, with optional pointee `const`.
+- a recursive raw pointer ending in `void`, an admitted scalar, a valid C ABI
+  record, a `[[c_opaque]]` handle, `c_string` or a named native callback,
+  with independent qualification at each layer.
 
-Transparent aliases follow the resolved type. `bool`, `char`, enums, ordinary
+Transparent aliases follow the resolved type. GTI `char`, enums, ordinary
 nominal types, references, owners, borrowed values, `expected`, symbolic or
 zero-length arrays, symbolic types, and cleanup-owning values are rejected.
 `c_string` is a function- and callback-boundary type, not a field type.
@@ -365,8 +474,7 @@ branches and generated C++, never `std::array`; their ordinary GTI indexing
 remains bounds checked. Multiple concrete extents nest in declarator order,
 and an array element takes its layout facts recursively, including by-value
 record elements. Empty records and recursive by-value records — directly or
-through an array element — are rejected; a one-level pointer is the bounded
-linked/opaque edge.
+through an array element — are rejected; pointers provide linked/opaque edges.
 
 Fields remain in source order. Starting at offset zero, semantics rounds each
 field offset up to that field's ABI alignment, advances by its size, records
@@ -397,7 +505,7 @@ standard-layout, trivially-copyable, `sizeof`, `alignof`, and `offsetof`
 assertions to audit the native compiler. Native C++ layout never substitutes
 for the frontend calculation.
 
-C ABI records may cross `extern "C"` by value or one-level pointer. Generate
+C ABI records may cross `extern "C"` by value or through recursive pointers. Generate
 the checked declarations with:
 
 ```sh
@@ -450,8 +558,8 @@ declaration ending in `;`. Ordinary forward declarations are not a second
 incomplete-type system: omitting the attribute is `GTI-S2065`. An opaque
 handle has nominal type identity but no public fields, size, alignment,
 construction, destruction, inheritance, or concurrency policy. It may appear
-as the pointee of one raw pointer, in the exact direct C out-parameter form
-`NativeDatabase**`, or in the bounded returned-array form below. Passing it by
+as the terminal pointee of a recursive raw pointer, including ordinary
+`NativeDatabase**` slot values and native array results. Passing it by
 value, defining a GTI body, using it as a base or generic argument, or querying
 the pointee layout is invalid. `sizeof(NativeDatabase*)` and
 `alignof(NativeDatabase*)` remain valid pointer queries.
@@ -528,6 +636,49 @@ representation. A C++ exception must never escape through an `extern "C"`
 function; the shim must catch it and translate it to a result allowed by the
 declared boundary. General C++ ABI calls remain outside the language contract.
 
+### Objective-C++ Apple API bridges
+
+On macOS, the same boundary can be implemented in a `.mm` Objective-C++
+translation unit. Declare it in the existing `cpp-sources` field and name its
+frameworks explicitly:
+
+```toml
+[[package.native.platforms]]
+os = "macos"
+cpp-sources = ["native/apple_bridge.mm"]
+frameworks = ["Foundation"]
+```
+
+The selected C++ compiler must support Objective-C++ (Apple Clang does).
+GTI compiles the bridge separately with the selected C++ standard and then
+links its object into the generated C++ executable. Other targets ignore this
+platform fragment; selected `.mm` inputs on a non-macOS target are rejected.
+Prebuilt bridge objects may instead use existing `link-files`. No Objective-C
+syntax, class representation, message dispatch, or object ownership enters
+GTI's type system, and `gti bindgen` does not import Objective-C APIs.
+
+Keep `NSString`, `NSObject`, autorelease pools and retained handles behind
+the bridge. Catch Objective-C exceptions with `@try`/`@catch` and any C++
+exceptions with `try`/`catch`, translating failures to the declared C result;
+neither may unwind through GTI. Do not return an `UTF8String` pointer after
+its owner or autorelease pool has expired. Prefer copying bytes into bounded
+caller-owned storage, or define an explicit owned opaque-handle/free contract.
+GTI cannot verify a foreign implementation's retention or bounds promises.
+Apple API thread-affinity requirements also remain the bridge/caller's
+responsibility; compiling a bridge does not make a main-thread-only API safe
+to call from arbitrary threads.
+
+The runnable [Foundation bridge example](../../examples/objective-cpp-bridge/)
+copies a deterministic Foundation string into a live GTI byte array, checks
+the returned length, then constructs an owning GTI string. The bridge retains
+no GTI address; its `@autoreleasepool` releases native temporary objects before
+return. Run `gti run` from that example directory on macOS; it prints
+`psych/foundation`. It works both with Clang's default manual Objective-C
+ownership and an explicit application `compile-args = ["-fobjc-arc"]`.
+That flag is shared with ordinary C++ compilation, where Clang accepts it
+without enabling Objective-C parsing. Opaque flags deliberately bypass the
+whole-program cache; dependency packages still cannot inject arbitrary flags.
+
 ## Pointer-Bearing Calls And Unsafe
 
 A declaration containing an allowed raw pointer is not itself unsafe. This
@@ -553,8 +704,8 @@ function's documented contract. In the example, that includes proving that
 `output` remains live and writable for at least one byte for the duration of
 the call and that the callee does not retain the address.
 
-A C function whose source signature contains only the fixed-width scalar
-allowlist, pointer-free C ABI records, `float`, `double`, `void`, or the special
+A C function whose source signature contains only the C ABI scalar families
+above, pointer-free C ABI records, `float`, `double`, `void`, or the special
 non-retained `std::string_view` parameter remains callable from safe code. The
 private pointer inside the `gti_c_string_view` lowering does not turn the
 source-level call into a raw pointer operation.
@@ -673,7 +824,7 @@ The fields accepted by each `native` table and matching platform fragment are:
 | `c-sources` | Existing package-contained `.c` files compiled before linking |
 | `c-standard` | C language mode: `c11`, `c17` (default), or `c23` |
 | `c-compile-args` | Ordered arguments used only while compiling declared C sources |
-| `cpp-sources` | Existing package-contained `.cpp`, `.cc`, or `.cxx` files compiled before linking |
+| `cpp-sources` | Existing package-contained `.cpp`, `.cc`, `.cxx`, or macOS-only Objective-C++ `.mm` files compiled before linking |
 | `library-dirs` | Existing native library search directories |
 | `link-files` | Existing regular object, archive, or other exact native link inputs |
 | `libraries` | Names emitted through the native toolchain's library option |
@@ -692,9 +843,9 @@ Structured paths are relative to `gti.toml`, canonicalized, and confined to the
 package even through symbolic links. Selected include/library paths must be
 existing directories; selected C sources, C++ sources, and link files must be
 existing regular files. C source paths must use the exact `.c` extension; C++
-source paths must use `.cpp`, `.cc`, or `.cxx`. Dependencies may widen this
-boundary only through a future declared package root; native fields do not
-grant arbitrary filesystem discovery.
+source paths must use `.cpp`, `.cc`, `.cxx`, or `.mm` (macOS only). A dependency
+contributes paths confined to its own declared package root; native fields do
+not grant arbitrary filesystem discovery.
 
 Lists concatenate rather than replacing lower scopes. C sources, C++ sources,
 search paths, and link operands resolve from target to profile to package so
@@ -746,17 +897,18 @@ objects are linked first, followed by C++ objects, the runtime, and declared
 native operands. C++ source objects use the same atomic publication and failure
 preservation contract as C objects. GTI does not parse either native language
 or verify that a definition matches its GTI prototype; that cross-language ABI
-agreement remains the programmer's responsibility. It therefore does not yet
-have a complete dependency graph for native included headers or preprocessing
-state. A build with declared C or C++ sources bypasses the whole-program
-executable cache and recompiles those sources. Pure GTI builds without native
-search paths or link operands remain cacheable.
+agreement remains the programmer's responsibility. Declared native sources,
+including Objective-C++ bridges, use the compiler's preprocessing output and
+dependency report for whole-program cache identity. An unchanged eligible
+build can reuse its executable; unavailable identities conservatively bypass
+the cache. The exact cache boundaries are described in
+[build and driver architecture](../architecture/build-and-driver.md#whole-program-project-cache).
 
 `gti build` and `gti run` pass the effective inputs through the same
 `ExecutableBuildRequest` as direct mode. `gti check` validates the selected
 native configuration, including selected C and C++ source path existence, but
 remains frontend-only and does not discover or invoke a native compiler. The
-`gti metadata` schema version 9 reports every target kind, declared execution
+`gti metadata` schema version 12 reports every target kind, declared execution
 profile, effective GTI configuration flags, native vector, C standard, C
 source, and C++ source for each target/profile plan without creating the build
 tree.

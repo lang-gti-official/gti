@@ -1,0 +1,112 @@
+#include <std/build>
+#include <std/string>
+#include <std/vector>
+
+std::string joined(std::string& base, std::string_view suffix) {
+  mut std::string value = std::string(base.view());
+  value.append(suffix);
+  return std::move(value);
+}
+
+std::string option(std::string_view name, std::string& value) {
+  mut std::string argument = std::string(name);
+  argument.append(value.view());
+  return std::move(argument);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 11) { return 64; }
+  mut std::build::context context = std::build::context_from_args(argv);
+  if (context.target_os() == "windows") { return 69; }
+
+  mut std::string zlib_source =
+      joined(context.package_dir(), "/vendor/zlib");
+  mut std::string zlib_build = joined(context.output_dir(), "/zlib");
+  mut std::string zlib_archive = joined(zlib_build, "/libz.a");
+  mut std::string source = joined(context.package_dir(), "/vendor/libgit2");
+  mut std::string build = joined(context.output_dir(), "/cmake");
+
+  mut std::build::command configure_zlib = std::build::command("cmake");
+  configure_zlib.arg("-S");
+  configure_zlib.arg(zlib_source.view());
+  configure_zlib.arg("-B");
+  configure_zlib.arg(zlib_build.view());
+  configure_zlib.arg("-DCMAKE_BUILD_TYPE=Release");
+  configure_zlib.arg("-DZLIB_BUILD_SHARED=OFF");
+  configure_zlib.arg("-DZLIB_BUILD_STATIC=ON");
+  configure_zlib.arg("-DZLIB_BUILD_TESTING=OFF");
+  configure_zlib.arg("-DZLIB_INSTALL=OFF");
+  int32_t zlib_configured = configure_zlib.run();
+  if (zlib_configured != 0) { return zlib_configured; }
+
+  mut std::build::command compile_zlib = std::build::command("cmake");
+  compile_zlib.arg("--build");
+  compile_zlib.arg(zlib_build.view());
+  compile_zlib.arg("--config");
+  compile_zlib.arg("Release");
+  compile_zlib.arg("--parallel");
+  compile_zlib.arg(context.jobs().view());
+  compile_zlib.arg("--target");
+  compile_zlib.arg("zlibstatic");
+  int32_t zlib_compiled = compile_zlib.run();
+  if (zlib_compiled != 0) { return zlib_compiled; }
+
+  mut std::string zlib_include_option =
+      option("-DZLIB_INCLUDE_DIR=", zlib_source);
+  mut std::string zlib_library_option =
+      option("-DZLIB_LIBRARY=", zlib_archive);
+
+  mut std::build::command configure = std::build::command("cmake");
+  configure.arg("-S");
+  configure.arg(source.view());
+  configure.arg("-B");
+  configure.arg(build.view());
+  configure.arg("-DCMAKE_BUILD_TYPE=Release");
+  configure.arg("-DBUILD_SHARED_LIBS=OFF");
+  configure.arg("-DBUILD_TESTS=OFF");
+  configure.arg("-DBUILD_CLI=OFF");
+  configure.arg("-DBUILD_EXAMPLES=OFF");
+  configure.arg("-DBUILD_FUZZERS=OFF");
+  configure.arg("-DEXPERIMENTAL_SHA256=OFF");
+  configure.arg("-DUSE_THREADS=ON");
+  configure.arg("-DUSE_SSH=OFF");
+  configure.arg("-DUSE_HTTPS=OFF");
+  configure.arg("-DUSE_GSSAPI=OFF");
+  configure.arg("-DUSE_NTLMCLIENT=OFF");
+  configure.arg("-DUSE_ICONV=OFF");
+  configure.arg("-DUSE_SHA1=CollisionDetection");
+  configure.arg("-DUSE_SHA256=Builtin");
+  configure.arg("-DUSE_HTTP_PARSER=builtin");
+  configure.arg("-DREGEX_BACKEND=builtin");
+  configure.arg("-DUSE_BUNDLED_ZLIB=OFF");
+  if (context.target_os() == "linux") {
+    configure.arg("-DENABLE_REPRODUCIBLE_BUILDS=ON");
+  } else {
+    configure.arg("-DENABLE_REPRODUCIBLE_BUILDS=OFF");
+  }
+  configure.arg(zlib_include_option.view());
+  configure.arg(zlib_library_option.view());
+  int32_t configured = configure.run();
+  if (configured != 0) { return configured; }
+
+  mut std::build::command compile = std::build::command("cmake");
+  compile.arg("--build");
+  compile.arg(build.view());
+  compile.arg("--config");
+  compile.arg("Release");
+  compile.arg("--parallel");
+  compile.arg(context.jobs().view());
+  compile.arg("--target");
+  compile.arg("libgit2package");
+  int32_t compiled = compile.run();
+  if (compiled != 0) { return compiled; }
+
+  mut std::build::outputs outputs = std::build::outputs();
+  outputs.link_file("cmake/libgit2.a");
+  if (context.target_os() == "linux") {
+    outputs.library("pthread");
+  } else if (context.target_os() != "macos") {
+    return 69;
+  }
+  return outputs.publish(context);
+}

@@ -1,0 +1,58 @@
+#include <std/resource>
+#include <std/memory>
+#include <std/numeric>
+#include "../../examples/allocator-support/arena.gti"
+
+// Test the provider's placement algorithm independently of checked-owner
+// integration. These raw operations deliberately acknowledge the provider
+// contract; this fixture is not evidence for safe container lifetime checks.
+int main() {
+  mut engine::Arena arena{std::size_t(1024), std::size_t(256)};
+  unsafe {
+    auto first = arena.allocate(std::layout(std::size_t(1), std::size_t(1)))
+        .expect("first region");
+    auto second = arena.allocate(std::layout(std::size_t(8), std::size_t(64)))
+        .expect("second region");
+    auto third = arena.allocate(std::layout(std::size_t(17), std::size_t(256)))
+        .expect("third region");
+    uint8_t* base = std::typed_address<uint8_t>(first.address);
+    uint8_t* middle = std::typed_address<uint8_t>(second.address);
+    uint8_t* last = std::typed_address<uint8_t>(third.address);
+    if (middle - base != int64_t(64) || last - base != int64_t(256)) { return 1; }
+    if (first.id == second.id || second.id == third.id || first.id == third.id) { return 2; }
+    if (second.bytes != std::size_t(8) || second.alignment != std::size_t(64) ||
+        third.bytes != std::size_t(17) || third.alignment != std::size_t(256)) { return 3; }
+    *base = uint8_t(11);
+    *middle = uint8_t(22);
+    *last = uint8_t(33);
+    if (*base != uint8_t(11) || *middle != uint8_t(22) || *last != uint8_t(33)) { return 4; }
+    if (arena.live_allocations() != std::size_t(3) ||
+        arena.used_bytes() != std::size_t(273)) { return 5; }
+
+    auto zero = arena.allocate(std::layout(std::size_t(0), std::size_t(8)))
+        .expect("zero region");
+    if (zero.address != nullptr || arena.live_allocations() != std::size_t(3)) { return 6; }
+    auto invalid = arena.allocate(std::layout(std::size_t(1), std::size_t(3)));
+    if (invalid || invalid.error() != std::alloc_errc::invalid_alignment) { return 7; }
+    auto overflow = arena.allocate(std::layout(std::MAX_UINT64, std::size_t(1)));
+    if (overflow || overflow.error() != std::alloc_errc::size_overflow) { return 8; }
+    auto exhausted = arena.allocate(std::layout(std::size_t(1024), std::size_t(1)));
+    if (exhausted || exhausted.error() != std::alloc_errc::resource_exhausted) { return 9; }
+    if (arena.used_bytes() != std::size_t(273) || arena.allocation_count() != uint64_t(3)) { return 10; }
+
+    arena.release(second);
+    arena.release(first);
+    arena.release(third);
+    arena.release(zero);
+    if (arena.live_allocations() != std::size_t(0) ||
+        arena.release_count() != uint64_t(3)) { return 11; }
+    arena.reset();
+    auto reused = arena.allocate(std::layout(std::size_t(32), std::size_t(256)))
+        .expect("region after reset");
+    if (reused.address != first.address || reused.id == first.id ||
+        arena.used_bytes() != std::size_t(32)) { return 12; }
+    arena.release(reused);
+  }
+  arena.reset();
+  return arena.used_bytes() == std::size_t(0) ? 0 : 13;
+}

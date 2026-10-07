@@ -1,0 +1,31 @@
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+public:
+  int value = 40;
+  ~Resource() { std::println(this.value); }
+};
+class Trace {
+  int id;
+public:
+  Trace(int id) : id(id) {}
+  ~Trace() { std::println(this.id); }
+};
+class Guard {
+  Resource& resource;
+  Trace trace;
+  int id;
+public:
+  Guard(Resource& resource, int id, int divisor) :
+      resource(resource), trace(Trace(100 + id)), id(id) {
+    int checked = 1 / divisor;
+  }
+  ~Guard() { std::println(this.resource.value + this.id); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{};
+  Guard first{resource, 1, 1};
+  Guard second{resource, 2, argc > 1 ? 0 : 1};
+  return 0;
+}

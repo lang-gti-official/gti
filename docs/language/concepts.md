@@ -5,10 +5,20 @@ that generic type arguments must provide. They are a frontend validity
 mechanism. They do not emit C++ concepts, rank overloads, or introduce a
 separate compile-time metaprogramming language.
 
+The prelude's `std::integral_enum<T>` admits scoped enums with a fixed-width
+integer representation and excludes payload enums. `std::enum_underlying<T,U>`
+additionally requires `U` to be the exact declared representation, including
+signedness and width. They do not grant numeric operators or implicit integer
+conversion. The separate `std::to_underlying<U,T>(value)` function extracts that
+exact integer at runtime. Concept applications are constraint syntax, not
+boolean expressions; ordinary bounded member queries can inspect a constrained
+member in a constant condition.
+
 ## Concept declarations
 
 A namespace-scoped source concept declares one or more type parameters and
-combines existing concepts with bounded conjunction and disjunction:
+combines existing concepts and bounded member requirements with conjunction
+and disjunction:
 
 ```gti
 concept sortable<T> =
@@ -22,15 +32,15 @@ concept scalar<T> =
     std::integral<T> || std::floating_point<T>;
 ```
 
-Every application argument is either one of the declaration's visible
-non-pack type parameters or a closed exact type containing no unresolved
-type/value parameter. An application must supply the referenced concept's
+Every application argument is a visible non-pack type parameter, a closed exact
+type, or a dependent compound type. An application must supply the referenced concept's
 exact arity, but may map, reorder, or reuse enclosing parameters. A closed
 argument such as `char` supplies an exact fact but does not participate in
 generic inference. Its application remains an ordinary predicate branch, so a
 false closed application may be bypassed by a satisfied `||` alternative.
-Dependent compound arguments such as `Wrapper<T>`, packs,
-values, and expressions remain outside this bounded grammar. Concept names
+Dependent compound arguments such as `Wrapper<T>` use ordinary type substitution
+and exact specialization selection; they do not infer generic arguments.
+Unexpanded packs, values, and expressions remain outside this grammar. Concept names
 follow ordinary namespace and direct-source-unit visibility. They may be
 declared after use within a visible source unit. Definitions may use
 `&&`/`and` and `||`/`or`. Conjunction binds more tightly than disjunction, and
@@ -45,9 +55,31 @@ T lower<sortable T>(T left, T right) {
 }
 ```
 
-The named concept must have one type parameter and must reduce to unary
-capabilities. Relationships between two or more generic parameters use the
-trailing clause below.
+The named concept must have one type parameter. On function parameters it
+must reduce to unary capabilities; structural function contracts use the
+trailing clause below. Class and struct parameters also accept unary
+structural concepts:
+
+```gti
+concept readable<T> = requires(T& source) { { source.read() } -> int; };
+class Session<readable T> {
+  T& source;
+public:
+  Session(T& source) : source(source) {}
+  int read() { return this.source.read(); }
+  ~Session() { int final_sample = this.source.read(); }
+};
+```
+
+The contract's guaranteed operations apply throughout the class body,
+including field initializers, constructors, methods and destructors. Unsafe
+requirements still require a lexical `unsafe` block at each selected call.
+Every concrete class argument must satisfy the exact concept even when no
+member is called. A contract does not create a public member, change access,
+or permit a destructor to call operations absent from the contract. Ordinary
+constraint composition and disjunction retain only guaranteed common facts.
+Relationships between two or more generic parameters use the trailing clause
+below; this does not introduce class-level trailing `requires` syntax.
 
 ## Trailing `requires`
 
@@ -68,15 +100,17 @@ T consume<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, mut T init)
 The implemented clause has this bounded grammar:
 
 ```text
-constraint-primary    = concept-application | '(' constraint-expression ')'
+constraint-primary    = concept-application | member-requirement
+                      | '(' constraint-expression ')'
 constraint-and        = constraint-primary (('&&' | 'and') constraint-primary)*
 constraint-expression = constraint-and (('||' | 'or') constraint-and)*
 requires-clause       = 'requires' constraint-expression
 ```
 
-Every argument must be a visible non-pack type parameter or closed exact type,
-and every application must have the declared arity. Dependent compound types,
-packs, values, arbitrary expressions, nested requires-expressions, boolean
+Every argument must be a visible non-pack type parameter, closed exact type,
+or dependent compound type,
+and every application must have the declared arity. Unexpanded packs,
+values, arbitrary expressions, general nested requires-expressions, boolean
 predicates, and negation are not accepted in this clause.
 
 At a concrete call, conjunction requires both operands and disjunction accepts
@@ -118,6 +152,140 @@ separate design rather than silently weakening the declared requirement.
 
 GTI therefore retains the exact unique-match rule from
 [ADR 003](../decisions/003-exact-overload-resolution.md).
+
+## Library contract diagnostics
+
+An unsatisfied source-defined contract is a compile-time API error, not a
+recoverable runtime result. Its diagnostic preserves the public concept's
+concrete application, the nested requirement that failed, and its declaration
+location. For example, an ordinary library can declare:
+
+```gti
+concept readable<T> = requires(T& value) { { value.read() } -> int; };
+int inspect<T>(int label, T& value) requires readable<T> {
+  return value.read();
+}
+```
+
+When `inspect(1, item)` receives a type without `read()`, `GTI-S2029` names
+argument 2 and `readable<Item>`, relates the requirement, and explains the
+missing member. An existing inaccessible method, inexact result, or unsupported
+receiver/parameter shape receives its corresponding explanation instead.
+Concrete applications remain available through nested concepts, including
+reordered parameters. The compiler follows resolved generic-parameter identity;
+it does not guess the responsible argument by comparing equal concrete types.
+When several arguments contribute the same parameter, a closed requirement
+does not depend on an argument, or a disjunction has distinct causes, the
+primary remains at the call rather than arbitrarily blaming one argument.
+For an attributable argument, the primary highlights its representative source
+token; it does not promise to underline an entire compound expression.
+The compiler and LSP publish the same structured explanation and do not offer
+an automatic edit that invents an implementation or changes ownership.
+
+This facility is independent of any public library name. It does not by itself
+reject a supported function's dynamic input at compile time. The source-defined
+formatter protocol uses the exact member signatures below, including mutable
+output parameters. Concrete comma-pack folds check their target's requirements
+for every element before HIR publication. Literal-format validation separately
+needs general call-site constant validation and must reuse the canonical
+constant-evaluation direction, not an optimizer-dependent check or a second
+format grammar embedded in the compiler.
+
+## Exact member signature requirements
+
+Library authors can describe a public, nongeneric instance method with
+an exact owned result type:
+
+```gti
+concept snapshot_as<T, R> =
+    requires (T& value) { { value.snapshot() } -> R; };
+
+T save_snapshot<T>(T& value) requires snapshot_as<T, T> {
+  return value.snapshot();
+}
+```
+
+The receiver name is local to the requirement. The requirement inspects a
+signature, not an expression body: it never calls the method, constructs a
+receiver, acquires a loan, or changes runtime ownership. Missing, inaccessible,
+static, consuming, ambiguous or result-mismatched methods do
+not satisfy it. A method's own requirements must be satisfied. Cyclic member
+requirements fail closed; nested member-requirement checking is bounded to 64
+active checks. The result cannot be a reference or contain tracked
+borrowed state. The method body remains subject to ordinary analysis when used;
+signature satisfaction alone does not prove that every body instantiation is
+valid.
+
+Each query admits one checked reference receiver and one nongeneric member.
+An immutable `T&` receiver requires a read-only method; `mut T&` requires a
+mutable method. Additional typed parameters describe the exact method signature,
+including reference access. The call must use every declared parameter once in
+declaration order; it cannot contain arbitrary expressions or transfers:
+
+```gti
+concept accumulates<C, V> =
+    requires(mut C& target, V& input, mut V& previous) {
+      { target.add(input, previous) } -> V;
+    };
+```
+
+Value parameters require exactly that value type, `V&` requires a read-only
+reference, and `mut V&` requires a mutable reference. There is no conversion,
+default-argument omission or generic method deduction in signature matching.
+Requirements neither borrow nor execute their synthetic arguments. Actual calls
+still apply ordinary ownership, receiver access and lifetime rules, and each
+concrete instance is reanalyzed before HIR/MIR. A mutable contract never grants
+permission to call through a read-only receiver. Combine separate queries using
+`&&` and `||`; only facts common to all alternatives enter a generic body.
+Receiver, parameter and result types may contain dependent compound types.
+Function inline generic-parameter constraints still exclude structural
+concepts; use a trailing clause. Class parameters accept unary structural
+annotations as described above. Borrowed-result contracts remain unsupported.
+
+An ordinary requirement proves a safe call and rejects an unsafe member.
+Prefix the compound signature with `unsafe` to describe a member whose caller
+may have an additional obligation:
+
+```gti
+concept writes<T> = requires(mut T& target, int value) {
+  unsafe { target.write(value) } -> void;
+};
+unsafe void forward<T>(mut T& target, int value) requires writes<T> {
+  unsafe { target.write(value); }
+}
+```
+
+The requirement's keyword is a signature fact, not an executing block. It
+retains the unsafe-call obligation during symbolic generic analysis, including
+forwarding to another constrained function. A safe implementation also
+satisfies an unsafe requirement because it needs fewer caller guarantees;
+using only the unsafe requirement still requires lexical `unsafe` in the body.
+A safe requirement never accepts an unsafe implementation, even when queried
+inside an unsafe block. Conjunction retains an independently proved safe fact;
+disjunction retains only the weaker unsafe fact when either alternative has
+that obligation. The actual concrete overload is rechecked and its declaration
+effect is preserved through HIR/MIR. These rules use no library type or member
+name. Example 117 exercises an unrelated sensor abstraction.
+
+The same requirement is a boolean static query in expressions, including
+`if constexpr` and `static_assert`. Unlike C++'s compound requirement syntax,
+GTI's `-> R` names the **exact result type**, not a result constraint concept.
+A successful conjunction supplies each member contract to symbolic body
+analysis; a disjunction supplies only contracts shared by every alternative,
+including their member names and exact receiver/result relationships.
+
+`<std/utility>` defines `std::member_cloneable<T>` with this syntax and
+`std::cloneable<T>` as member cloning or `std::copy_constructible<T>`.
+`std::clone(value)` prefers the exact member operation and otherwise performs
+ordinary copy construction. This is explicit duplication, not automatic deep
+copying: strings duplicate their bytes, shared owners retain shared ownership,
+and user types define their own cloning policy. Noncopyable types without a
+compatible clone member remain rejected. `std::vector<T>::clone()` requires
+`std::cloneable<T>` and duplicates each element through that helper, including
+strings and nested vectors. `std::optional<T>::clone()` applies the same helper
+only when engaged, preserving empty state otherwise. Both operations are
+ordinary constrained GTI methods. No public clone name is recognized by the
+compiler.
 
 ## Ownership boundary
 
@@ -161,6 +329,17 @@ The current structural capability set is intentionally small:
 
 - `copy_constructible<T>` requires an ordinary GTI copy construction to be
   available; unlike `copyable<T>`, it does not require copy assignment;
+- `move_constructible<T>` requires ordinary GTI move construction, without
+  requiring move assignment. `movable<T>` still requires both operations.
+  Construction-only owners can therefore nest without acquiring replacement
+  or borrow-reseating permission; the ordinary ownership checks still apply;
+- `relocatable<T>` requires structurally movable, borrow-free state, excluding
+  address-stable private host state; it does not require assignment;
+- `bitwise_relocatable<T>` additionally requires passive scalar/array state or
+  a class with only eligible fields, no bases, polymorphism, or declared
+  cleanup. It implies `relocatable<T>`; backend representation checks may still
+  select generated elementwise transfer. See [structural
+  relocation](ownership-and-lifetimes.md#structural-relocation);
 - `input_iterator<I>` requires public read-only `operator*()` returning a
   checked reference and public `void operator++() mut`; transferring an
   iterator into an algorithm is checked separately by ordinary parameter

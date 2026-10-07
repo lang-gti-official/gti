@@ -154,9 +154,14 @@ MirLowerer::lowerProgram(const HirProgram &source,
   bool valid = verifyFailureMetadata(failureMetadata).valid();
   result.program.executionProfile_ = source.executionProfile();
   result.program.programKind_ = source.programKind();
+  result.program.target_ = source.analysisSeal().target;
   result.program.failureMetadata_ = failureMetadata;
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
+      result.program.integralEnums_.push_back(
+          {.declaration = enumeration.declaration,
+           .sourceUnit = enumeration.sourceUnit,
+           .underlyingType = enumeration.underlyingType});
       continue;
     }
     MirPayloadEnum lowered{
@@ -198,12 +203,14 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .traits = instance.traits,
         .compilerCapability = instance.compilerCapability,
         .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
+        .mutexGuardBorrowCarrier = instance.mutexGuardBorrowCarrier,
         .kind = instance.kind,
         .bases = instance.bases,
         .structuralBases = instance.bases,
         .abstract = instance.abstract,
         .polymorphic = instance.polymorphic,
         .cAbiRecord = instance.cAbiRecord,
+        .cOpaqueHandle = instance.cOpaqueHandle,
         .cAbiLayout = lowerCAbiRecordLayout(instance),
         .unionLayout = lowerUnionLayout(instance),
         .defaultConstructor = instance.defaultConstructor,
@@ -221,6 +228,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
           {.field = field.binding,
            .symbol = field.info.symbol,
            .type = field.info.type,
+           .access = field.info.access,
            .dropKind = field.info.traits.drop,
            .requiresActiveCleanup = field.requiresActiveCleanup});
       if (field.info.traits.drop != DropKind::Lexical) {
@@ -279,7 +287,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              .requiredCapability = signature.requiredCapability,
              .selectedCapability = signature.selectedCapability,
              .functionTarget = signature.functionTarget,
-             .lambdaTarget = signature.lambdaTarget});
+             .lambdaTarget = signature.lambdaTarget,
+             .nativeCalleeType = signature.nativeCalleeType});
       }
       lowered.forwardings.reserve(parameter.forwardings.size());
       for (const HirCallableForwarding &forwarding : parameter.forwardings) {
@@ -309,10 +318,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
                  ? std::nullopt
                  : std::optional{instance.source->operatorName()->kind},
          .constexprFunction = instance.constexprFunction,
+         .requiresUnsafe = instance.requiresUnsafe,
+         .neverReturns = instance.neverReturns,
+         .tracksCaller = instance.tracksCaller,
+         .cThreadOperation = instance.cThreadOperation,
          .returnBorrowOrigin = instance.returnBorrowOrigin,
          .returnBorrowParameter = instance.returnBorrowParameter,
          .returnBorrowAccess = instance.returnBorrowAccess,
+         .returnBorrowParameters = instance.returnBorrowParameters,
+         .returnBorrowFields = instance.returnBorrowFields,
          .returnBorrowPlace = instance.returnBorrowPlace,
+         .ownedPointeeProjection = instance.ownedPointeeProjection,
          .linkage = instance.linkage,
          .externalSymbol = instance.externalSymbol,
          .cArrayCountParameter = instance.cArrayCountParameter,
@@ -382,6 +398,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         {.id = adapter.id,
          .target = adapter.target,
          .type = adapter.type,
+         .cThreadCallback = adapter.cThreadCallback,
          .targetMayRaiseDefinedFailure = target->mayRaiseDefinedFailure,
          .failurePolicy = MirNativeCallbackFailurePolicy::TerminateInvocation,
          .catchesNativeExceptions = true});
@@ -410,6 +427,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     result.program.constructors.push_back(
         {.id = instance.id,
          .owner = instance.owner,
+         .constexprConstructor = instance.constexprConstructor,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,
@@ -417,8 +435,10 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .borrowOrigin = instance.borrowOrigin,
          .borrowParameter = instance.borrowParameter,
          .borrowAccess = instance.borrowAccess,
+         .borrowParameters = instance.borrowParameters,
          .definitionKind =
-             instance.source != nullptr && instance.source->body() != nullptr
+             instance.generatedDefault || (instance.source != nullptr &&
+                                           instance.source->body() != nullptr)
                  ? MirDefinitionKind::Source
                  : MirDefinitionKind::Declaration,
          .mayRaiseDefinedFailure =
@@ -452,7 +472,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              source, failureMetadata, instance.body, MirBodyKind::Destructor,
              SemanticType::Void, {}, definedFailureEffects, valid, false,
              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-             compilerTrustedSourceUnit(source, instance.sourceUnit))});
+             compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
+             &instance)});
   }
 
   result.program.lambdas.reserve(source.lambdaInstances().size());

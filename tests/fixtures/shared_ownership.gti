@@ -1,0 +1,103 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+struct Item {
+  int identity;
+  Item(int value) : identity(value) {}
+  ~Item() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+struct Passive {
+  int value = 11;
+};
+
+struct ArrayOwner {
+  mut std::shared_ptr<int> values[2] = {};
+  ArrayOwner(std::shared_ptr<int> source) {
+    values[0] = source.clone();
+    values[1] = source.clone();
+  }
+};
+
+struct Node {
+  int value;
+  std::shared_ptr<Node> next;
+  Node(int value, std::shared_ptr<Node> next)
+      : value(value), next(std::move(next)) {}
+};
+
+// Shared policy is composable through an unrelated ordinary source wrapper.
+class Handle<T> {
+  std::shared_ptr<T> value;
+public:
+  Handle(std::shared_ptr<T> source) : value(std::move(source)) {}
+  Handle<T> clone() { return Handle<T>(this.value.clone()); }
+  T& read() { return *this.value; }
+};
+
+int main() {
+  {
+    auto owner = std::make_shared<int>(21);
+    {
+      mut std::shared_ptr<int> handles[2] = {};
+      handles[0] = owner.clone();
+      handles[1] = owner.clone();
+      if (owner.use_count() != 3) { return 11; }
+    }
+    if (owner.use_count() != 1) { return 12; }
+    {
+      auto aggregate = std::make_shared<ArrayOwner>(owner.clone());
+      if (owner.use_count() != 3) { return 13; }
+    }
+    if (owner.use_count() != 1) { return 14; }
+  }
+  {
+    auto passive = std::make_shared<Passive>();
+    if (passive->value != 11) { return 9; }
+    std::shared_ptr<Node> empty{};
+    auto leaf = std::make_shared<Node>(13, std::move(empty));
+    auto root = std::make_shared<Node>(12, leaf.clone());
+    auto alias = root.clone();
+    if (alias->value != 12 || alias->next->value != 13 ||
+        leaf.use_count() != 2) { return 10; }
+  }
+  {
+    mut std::shared_ptr<Item> empty{};
+    auto empty_copy = empty.clone();
+    if (empty != nullptr || empty_copy.use_count() != 0) { return 1; }
+    mut auto first = std::make_shared<Item>(7);
+    mut auto second = first.clone();
+    if (first.use_count() != 2 || second.use_count() != 2) { return 2; }
+    Item& read = *second;
+    first.reset();
+    if (read.read() != 7 || first != nullptr || second.use_count() != 1) {
+      return 3;
+    }
+    first.swap(second);
+    if (second != nullptr || first->read() != 7) { return 4; }
+    auto moved = std::move(first);
+    empty = moved.clone();
+    if (empty.use_count() != 2) { return 5; }
+    empty = nullptr;
+    std::println(1);
+  }
+  {
+    auto original = Handle<Item>(std::make_shared<Item>(8));
+    auto other = original.clone();
+    if (other.read().read() != 8) { return 6; }
+    std::println(2);
+  }
+  {
+    mut std::vector<std::shared_ptr<Item>> items{};
+    auto original = std::make_shared<Item>(9);
+    items.push_back(original.clone());
+    items.push_back(original.clone());
+    if (original.use_count() != 3) { return 7; }
+    items.clear();
+    if (original.use_count() != 1) { return 8; }
+    std::println(3);
+  }
+  return 0;
+}

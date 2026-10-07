@@ -1,0 +1,70 @@
+#include <std/map>
+#include <std/string>
+#include <std/memory>
+
+mut int constructions = 0;
+mut int destructions = 0;
+
+class Payload {
+  int number;
+public:
+  Payload(int value) : number(value) { constructions++; }
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() { destructions++; }
+  int read() { return this.number; }
+};
+
+class Key {
+  int number;
+public:
+  Key(int value) : number(value) {}
+  int read() { return this.number; }
+};
+
+class Reverse {
+public:
+  bool operator()(Key& left, Key& right) { return left.read() > right.read(); }
+};
+
+int main() {
+  {
+    mut std::map<std::string, std::unique_ptr<int>> values{};
+    [[discard]] values.insert(std::string("tea"), std::make_unique<int>(7));
+    [[discard]] values.insert(std::string("auth"), std::make_unique<int>(9));
+    std::string tea = std::string("tea");
+    if (*values.at(tea) != 7) { return 1; }
+    if (values.insert(std::string("tea"), std::make_unique<int>(99)).second) { return 2; }
+    if (*values.at(tea) != 7) { return 3; }
+    if (values.insert_or_assign(std::string("tea"), std::make_unique<int>(11)).second) { return 4; }
+    if (*values.at(tea) != 11) { return 5; }
+    mut auto moved = std::move(values);
+    if (moved.size() != 2 || *moved.at(tea) != 11) { return 6; }
+    moved.clear();
+  }
+  {
+    mut std::map<int, Payload> values{};
+    if (!values.try_emplace(1, 11).second) { return 7; }
+    if (values.try_emplace(1, 22).second || constructions != 1) { return 8; }
+    if (!values.try_emplace(2, 33).second || constructions != 2) { return 9; }
+    int key = 1;
+    if (values.at(key).read() != 11) { return 10; }
+    if (values.erase(key) != 1 || destructions != 1) { return 11; }
+    values.clear();
+    if (destructions != 2) { return 12; }
+  }
+  {
+    // Explicit policies bypass the unused default less<Key> requirement.
+    mut std::map<Key, int, Reverse> values{};
+    [[discard]] values.insert(Key(1), 10);
+    [[discard]] values.insert(Key(3), 30);
+    [[discard]] values.insert(Key(2), 20);
+    mut int next = 3;
+    for (auto& entry : values) {
+      if (entry.first.read() != next || entry.second != next * 10) { return 13; }
+      next--;
+    }
+    if (next != 0) { return 14; }
+  }
+  return 0;
+}

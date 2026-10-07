@@ -27,6 +27,29 @@ the feature actually affects.
    slice enables. Prefer a bounded end-to-end capability over generalized
    restriction machinery that has no immediate client.
 
+## Apply The Generality Gate
+
+Keep the motivating client separate from the language capability. Before
+coding, state the proposed rule without naming a particular `std::*` type and
+answer these questions:
+
+1. Can an unrelated user-defined type exercise the same rule?
+2. Which general semantic facts represent it, rather than a public type or
+   function spelling?
+3. Does semantic analysis establish those facts before HIR/MIR, with HIR
+   preserving them and MIR verifying the executable ownership/effect contract?
+4. Which overlapping special cases become removable or subsumed? If none do,
+   why is this a distinct semantic family rather than a parallel exception?
+
+A bounded first slice is valid when its restriction is structural and its
+remaining boundary is explicit. It must not introduce separate compiler rules
+for individual views, zipped or paired ranges, callbacks, containers, or other
+public wrappers. In borrowing and callable work, name the represented origin
+place or places, access mode, permitted escape boundary, loan endpoints, and
+transfer/drop behavior. Extend the shared place/loan/callable model or remain
+within its existing structural boundary; do not infer permission from the C++
+representation of one client.
+
 ## Trace Applicable Layers
 
 Use this as an impact checklist, not a requirement to modify every stage:
@@ -96,13 +119,64 @@ part of a language-feature task. A static change that only rejects programs is
 also outside this gate; a relaxation that makes new runtime behavior reachable
 is not.
 
+## Evolve Constexpr Toward MIR Execution
+
+When a change extends constant expressions, constexpr functions or
+constructors, static assertions, compile-time branches, or a type-forming
+constant context, read the `L-CONST-01` evaluator direction in
+[`docs/plans/implementation-sequence.md`](../../../docs/plans/implementation-sequence.md#l-const-01-remaining-bounded-compile-time-programming)
+before coding.
+
+The current `ConstexprInterpreter` executes AST inside semantic analysis because
+some constants are needed before complete HIR/MIR exists. Treat that as an
+implemented staging constraint, not permission to grow an indefinitely
+parallel implementation of GTI. For the proposed slice:
+
+1. Separate the semantic decision that an operation is const-eligible from the
+   mechanism that executes it.
+2. Identify whether the result shapes semantic analysis (`if constexpr`,
+   `static_assert`, an array extent, or a value-generic argument) and therefore
+   requires staged or lazy body lowering.
+3. Compare the new AST-interpreter work with a coherent move toward a verified,
+   body-local MIR constant-evaluation profile. Prefer reuse of MIR operations,
+   places, CFG, selected calls/constructors, typed identities, and source
+   provenance over a separate CTFE instruction set.
+4. Define const eligibility structurally over typed operations and effects;
+   never recognize a public library name. Interpret canonical unoptimized IR so
+   optimizer success cannot determine whether a program is valid.
+5. Preserve target-correct checked operations, deterministic step/call-depth
+   limits, source-located failures, generic substitutions, and exact
+   `ConstantValue` identity.
+6. Add differential evidence that the same supported body has equal compile-
+   time and runtime meaning, plus negative eligibility and resource-limit
+   coverage.
+
+A bounded AST-evaluator extension is acceptable only when the same slice cannot
+coherently provide the required early typed MIR. State that prerequisite,
+isolate execution behind the constant-evaluation service boundary where
+possible, and record how the duplicate path will be removed or subsumed. Do not
+introduce an unrelated bytecode interpreter, push semantic branch selection to
+the backend, or claim that complete post-semantics MIR can satisfy constants
+that are prerequisites of lowering.
+
 ## Library And Runtime Choice
+
+Apply the independent systems-language direction in `AGENTS.md`. Reassess
+historical restrictions and private mechanisms against current capabilities;
+record revisions rather than treating an earlier bounded slice as a permanent
+language limit. Describe missing support as a goal with prerequisites and evidence.
 
 Prefer ordinary GTI in `stdlib/` for public policy. Add a compiler-private
 capability only for an invariant ordinary GTI cannot express safely, and bind
 it by trusted declaration identity. Use the bounded native/runtime boundary
 only for host operations. Never recognize a public standard-library wrapper by
 name in the compiler.
+
+Distinguish source policy, host byte/services acquisition, and compiler-owned
+layout/lifecycle/ownership facts. Existing C++ helpers are implementation choices,
+not evidence that an operation must stay private. Expose general public facilities
+where coherent while retaining necessary compiler support and explicit unsafe
+obligations; do not claim a source-defined replacement before it is implemented.
 
 ## Test And Finish
 
@@ -123,9 +197,10 @@ name in the compiler.
    new AST/HIR-only `CppEmitter` behavior and cite the MIR-emitted family that
    owns production execution. Advance `VERSION` when the repository's shipped
    behavior/version policy requires it.
-7. Use `$finish-release` to commit completed work and initiate the appropriate
-   version/tag/release path. Once GitHub accepts the push or workflow dispatch,
-   finish without polling or waiting for asynchronous CI/CD.
+7. Use `$agent-workflow` and `$finish-release` to integrate validated work through
+   its PR, sync local main and apply version policy. Respect required PR checks;
+   post-merge release packaging does not block completion. Explicit PR-only or
+   local-only user instructions override integration.
 
 Do not use `1.0` as a reason to postpone a capability needed by the systems-
 readiness workloads in ADR 012. The target is soft and revisable; accepted

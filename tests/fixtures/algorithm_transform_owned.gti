@@ -1,0 +1,58 @@
+#include <std/algorithm>
+#include <std/string>
+#include <std/vector>
+
+mut int drops = 0;
+mut int clones = 0;
+mut int calls = 0;
+
+class Resource {
+  std::string name;
+public:
+  Resource(std::string name) : name(std::move(name)) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { drops++; }
+  std::string_view view() { return this.name.view(); }
+  Resource clone() { clones++; return Resource(this.name.clone()); }
+};
+
+Resource describe(Resource& input) {
+  calls++;
+  mut std::string name = std::string(input.view());
+  name.append("!");
+  return Resource(std::move(name));
+}
+
+std::string decorate(std::string& input) {
+  mut std::string result = std::string(input.view());
+  result.append("?");
+  return std::move(result);
+}
+
+int main() {
+  {
+    mut std::vector<Resource> source{};
+    source.reserve(std::size_t(2));
+    source.push_back(Resource(std::string("a")));
+    source.push_back(Resource(std::string("b")));
+    mut std::vector<Resource> destination{};
+    destination.reserve(std::size_t(2));
+    destination.push_back(Resource(std::string("old-a")));
+    destination.push_back(Resource(std::string("old-b")));
+    std::transform(source, destination, describe);
+    if (calls != 2 || clones != 0 || drops != 2) { return 1; }
+    if (destination[std::size_t(0)].view() != "a!") { return 1; }
+    if (destination[std::size_t(1)].view() != "b!") { return 1; }
+    if (source[std::size_t(0)].view() != "a") { return 1; }
+  }
+  if (drops != 6 || clones != 0) { return 2; }
+  mut std::vector<std::string> source{};
+  source.push_back(std::string("tea"));
+  mut std::vector<std::string> destination{};
+  destination.push_back(std::string(""));
+  std::transform(source, destination, decorate);
+  if (source[std::size_t(0)] != "tea" ||
+      destination[std::size_t(0)] != "tea?") { return 3; }
+  return 0;
+}

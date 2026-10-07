@@ -858,11 +858,29 @@ def load_build_provenance(
         raise BenchmarkError(f"GTI build report '{path}' must contain an object")
     require_exact_keys(
         report,
-        {"schema", "producer", "project", "sources", "native", "artifact"},
+        {"schema", "producer", "project", "sources", "native", "artifact"}
+        | ({"debug_info"} if "debug_info" in report else set())
+        | ({"raw_pointer_audit"} if "raw_pointer_audit" in report else set()),
         "GTI build report",
     )
     if report["schema"] != 2 or isinstance(report["schema"], bool):
         raise BenchmarkError("GTI build report requires schema 2")
+    # The driver's additive audit policy defaults to off for older schema-2
+    # reports. Preserve the selected policy in decoded benchmark provenance.
+    raw_pointer_audit = report.get("raw_pointer_audit", "off")
+    if not isinstance(raw_pointer_audit, str) or raw_pointer_audit not in {
+        "off", "warn", "strict"
+    }:
+        raise BenchmarkError("GTI build report raw_pointer_audit must be off, warn, or strict")
+    report["raw_pointer_audit"] = raw_pointer_audit
+    # Schema-2 reports predating source debugging omit this additive field.
+    # This harness never requests GTI source mappings, so accepting a true
+    # policy would silently measure a different generated-source workflow.
+    debug_info = report.get("debug_info", False)
+    if not isinstance(debug_info, bool):
+        raise BenchmarkError("GTI build report debug_info must be a boolean")
+    if debug_info:
+        raise BenchmarkError("GTI benchmark build report must disable source debug info")
     # Benchmarks build one entry source directly, so the record must carry no
     # project selection; a project section here would mean the measured
     # command was not the one this harness issued.

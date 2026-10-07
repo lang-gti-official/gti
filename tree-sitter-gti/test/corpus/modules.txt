@@ -1,0 +1,32 @@
+==================
+Explicit module interfaces and imports
+==================
+
+export module geometry;
+import vectors;
+export import dep.math;
+import "helpers.gti";
+export namespace shape {
+  int answer() { return 42; }
+}
+
+---
+
+(source_file
+  (module_declaration (identifier))
+  (import_declaration (module_name (identifier)))
+  (import_declaration (module_name (identifier) (identifier)))
+  (import_declaration (string_literal))
+  (export_declaration
+    (namespace_declaration
+      (identifier)
+      (namespace_body
+        (function_declaration
+          (type (primitive_type))
+          (identifier)
+          (parameter_clause)
+          (block
+            (return_statement
+              (initializer_expression
+                (primary_expression
+                  (literal (integer_literal)))))))))))

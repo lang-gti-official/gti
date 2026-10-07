@@ -76,6 +76,43 @@ transitional `Program`. Semantic
 visibility uses the graph: a unit sees itself, direct includes, and the
 prelude, not arbitrary declarations in the combined AST.
 
+Explicit `export module name;` interfaces additionally retain their module
+declaration token. The loader consumes the header and resolves unconditional
+imports, retaining `Import` and `ExportImport` dependency kinds. Import tokens
+and their source spans remain in the syntax digest and parser input. Only the
+parser's source-unit declaration loop consumes them: an import embedded in a
+parameter, initializer, or unfinished declaration must not disappear into a
+valid program. The loader resolves named
+imports only through supplied `PackageSourceRoot::modules` registrations and
+direct dependency aliases; quoted imports use the same canonical path and
+package-containment authority. Includes cannot load an interface and imports
+cannot load a legacy unit. An imported interface starts from compiler-supplied
+configuration flags and restores the importer's flag state on return. Each
+legacy include runs once per module configuration domain. On reuse in a new
+domain, the loader processes the retained source snapshot through the same
+directive processor, including nested includes, while retaining one canonical
+source identity and dependency edge set. Repeated inclusion in that domain
+does not reapply flag mutations. Different incoming flags or selected syntax
+are diagnosed rather than silently selecting the first module's context;
+matching incoming flags alone cannot prove compatibility when nested include
+history differs. Parsed and lexical cache reuse preserve this check, including
+unsaved source overlays.
+
+The parser retains an optional export token on declarations. Frontend assembly
+collects their exact ranges, including inherited namespace exports in selected
+configuration branches, from the fresh or cached AST. These are syntax requests,
+not a separate symbol catalog.
+Semantic analysis validates export eligibility and publishes each declaration
+and overload through `SourceGraph::isDeclarationVisible`. Ordinary source
+edges remain direct-only; import edges also follow explicit re-export edges.
+Definition-site generic context preserves private implementation lookup. A
+public result can retain an inferred private nominal type without exposing its
+name. Tooling consumes resolved semantic scope/occurrence facts rather than
+filtering reachable members by module name. Initialization, failure provenance
+and caches retain the ordered source graph, including both new edge kinds.
+HIR/MIR and C++ emission use existing executable contracts; this is not binary
+or separate compilation.
+
 ### Reusable lexical and parsed units
 
 `FrontendCache` is an optional frontend input owned by a coordinator such as
@@ -152,6 +189,26 @@ without parser cascades. The formatter and lexical editor highlighting still
 scan written comment ranges separately.
 
 ## Parser And AST
+
+`FunctionDecl::unsafeKeyword()` retains the written `unsafe` declaration
+modifier separately from contract attributes. The parser admits it on GTI free
+functions and ordinary non-polymorphic instance/static methods, in
+`unsafe static constexpr` order before the return type. `MemberRequirement`
+separately retains an optional unsafe keyword before its compound signature;
+semantics propagates that effect through structural requirement facts.
+The parser rejects the obsolete `[[unsafe]]` spelling with a
+spelling-only migration diagnostic while retaining a recovered declaration
+for tooling. Neither syntax form grants implicit permission to the body;
+semantics owns the caller contract and each lexical unsafe operation.
+
+Qualified namespace declarations (`namespace outer::inner { ... }`) expand
+directly into the same nested `NamespaceDecl` nodes as explicit blocks. Each
+component retains its original name token and a declaration extent ending at
+the shared closing brace; the outer extent also includes `namespace`. Every
+component consumes the existing nesting-depth budget, so shorthand cannot
+bypass the parser's bounded recursion contract. Semantics, export visibility,
+HIR/MIR, and tooling therefore use ordinary nested-namespace facts, without a
+second namespace representation or backend interpretation of source spelling.
 
 `Parser` in `include/gti/parser.h` owns grammar, precedence, AST construction,
 recovery, and synchronization through a narrow facade. Its algorithms and
@@ -260,6 +317,12 @@ Recovery nested inside a compile-time branch propagates an unconsumed
 continuation directive with no open conditional is instead advanced as invalid
 input, so every synchronization loop either consumes input or unwinds to its
 owning grammar production.
+
+Completion-marker parsing may retain a variable declaration when its
+initializer consumed the marker before the user wrote the trailing semicolon.
+That exception is local to the dedicated completion snapshot: ordinary parsing
+still requires the terminator, and a marker consumed by the declaration's type
+or name does not suppress the syntax error after its initializer.
 
 Recursive declaration, statement, type, compile-condition, assignment, call,
 grouping, and unary parsing share a structural depth budget of 64. Crossing

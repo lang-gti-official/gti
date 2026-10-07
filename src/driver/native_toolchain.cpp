@@ -340,12 +340,13 @@ NativeCompileRequest::NativeCompileRequest(
     std::string compiler, std::filesystem::path generatedSource,
     std::filesystem::path output, CppStandard standard,
     OptimizationLevel optimization, NativeInputs inputs,
-    std::optional<std::filesystem::path> dependencyFile)
+    std::optional<std::filesystem::path> dependencyFile, bool debugInfo)
     : compilerExecutable(std::move(compiler)),
       generatedSourcePath(std::move(generatedSource)),
       outputPath(std::move(output)), cppStandard(standard),
       optimizationLevel(optimization), nativeInputs(std::move(inputs)),
-      nativeDependencyFile(std::move(dependencyFile)) {}
+      nativeDependencyFile(std::move(dependencyFile)),
+      sourceDebugInfo(debugInfo) {}
 
 const std::string &NativeCompileRequest::compiler() const {
   return compilerExecutable;
@@ -364,6 +365,8 @@ CppStandard NativeCompileRequest::standard() const { return cppStandard; }
 OptimizationLevel NativeCompileRequest::optimization() const {
   return optimizationLevel;
 }
+
+bool NativeCompileRequest::debugInfo() const { return sourceDebugInfo; }
 
 const NativeInputs &NativeCompileRequest::inputs() const {
   return nativeInputs;
@@ -538,6 +541,8 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   // The generated artifact requires this opt-in marker so direct backend
   // consumers cannot unknowingly compile it without the same strict policy.
   command.emplace_back("-D__gti_strict_ieee754=1");
+  if (request.debugInfo())
+    command.emplace_back("-g");
 #if defined(__APPLE__)
   // Apple's linker randomizes LC_UUID in its fast (-O0) mode, which would
   // make identical builds produce different executables. Equal inputs must
@@ -565,6 +570,13 @@ std::vector<std::string> nativeSourceCommand(
   }
   command.insert(command.end(), compilerArguments.begin(),
                  compilerArguments.end());
+  // Both compilation and dependency discovery must parse a declared bridge
+  // in the same language. Keep this local to the foreign translation unit;
+  // the final generated GTI source remains ordinary C++.
+  if (source.extension() == ".mm") {
+    command.emplace_back("-x");
+    command.emplace_back("objective-c++");
+  }
   if (depfile == nullptr) {
     command.emplace_back("-c");
   } else {
@@ -652,7 +664,7 @@ NativeToolchain::invoke(const NativeCCompileRequest &request,
       command(request),
       {.outputMode = ProcessOutputMode::Capture,
        .captureSuccessfulOutput = options.captureSuccessfulOutput,
-       .description = "native C compiler"});
+       .description = "native source compiler"});
 }
 
 NativeProcessResult
@@ -662,7 +674,7 @@ NativeToolchain::invoke(const NativeCppCompileRequest &request,
       command(request),
       {.outputMode = ProcessOutputMode::Capture,
        .captureSuccessfulOutput = options.captureSuccessfulOutput,
-       .description = "native C++ source compiler"});
+       .description = "native source compiler"});
 }
 
 std::string renderCommand(std::span<const std::string> arguments) {

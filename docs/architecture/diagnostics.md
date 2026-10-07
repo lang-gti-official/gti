@@ -1,6 +1,55 @@
 # Diagnostics
 
+`GTI-S2009` retains the non-discardable-by-default call rule and its explicit
+`[[discard]]` fix-it. A selected `[[discardable]]` declaration suppresses that
+requirement, not other diagnostics or call analysis. Duplicate discardable
+attributes and void-result declarations use `GTI-S2099` at the attribute name;
+malformed arguments and non-function placement use parser diagnostics. CLI and
+LSP consume the same policy and source spans.
+
 Status: Current infrastructure and conventions.
+
+## Terminal colour
+
+The CLI accepts `--color=auto|always|never` (also `--color <mode>`), before a
+command or among its options. The default `auto` uses colour independently for
+stdout and stderr only when that destination is a terminal, `TERM` is not
+`dumb`, and `NO_COLOR` is absent or empty. An explicit `always` overrides those
+environment defaults; `never` disables GTI styling. Repeated options use the
+last value. Arguments after `--` and other options' operands remain untouched.
+
+Errors and their underlines are red, warnings yellow, notes/help cyan, and
+successful build/check/emission labels green. Diagnostic summaries are red
+when errors occurred, yellow for warnings alone, or green for a clean result.
+Test build/run progress labels are cyan; passed test labels and summary counts
+are green, while failed labels and counts are red. Parallel build target-failure
+labels are red. These use the same destination-specific policy as diagnostics.
+Severity words, codes, and counts remain visible without colour. Executed-program
+output is never restyled or filtered, and native tools retain their own colour
+policy. When a styled parallel build child's combined output must be replayed
+to a plain destination, SGR styling in that captured text is removed.
+
+`src/cli/terminal_style.*` owns ANSI presentation and terminal detection;
+Windows auto mode requires a console that accepts virtual-terminal processing.
+Diagnostic values, LSP messages, JSON metadata/build reports, generated source,
+and cached compilation artifacts never receive CLI styling. Captured parallel
+GTI build children inherit the parent's resolved colour requirement; replay to
+a plain destination removes their styling. The summary payload remains
+contiguous inside its colour wrapper so the existing child-count aggregation
+does not depend on ANSI parsing.
+
+The runtime owns presentation of panic and checked-failure reports, separately
+from compiler diagnostics. `runtime/src/failure.cpp` colours only the
+`runtime error[GTI-Rxxxx]` heading red, including cleanup emergencies. It uses
+stderr terminal detection, `NO_COLOR` and `TERM=dumb` without allocation;
+`GTI_COLOR=auto|always|never` overrides runtime policy (unknown values use auto).
+An explicit `gti run/test --color` choice is forwarded through the child
+environment; without one, the program inherits its existing runtime policy.
+The CLI never rewrites the program's output. Standalone binaries use the same
+runtime policy. Record/descriptor bytes and unstyled report text are unchanged,
+and source/message controls remain escaped rather than interpreted as styling.
+Windows auto mode enables virtual-terminal processing for the report and
+restores the original console mode afterwards.
 
 `include/gti/diagnostic.h` defines the structured diagnostic contract shared by
 source loading, lexing, parsing, semantics, the driver, the backend, CLI, and
@@ -10,11 +59,68 @@ LSP.
 
 `Diagnostic` contains:
 
-- a stable code;
+- a stable code and optional warning group;
 - owning phase and severity;
 - one primary `SourceSpan`;
 - a user-facing message;
-- optional related spans, fix-its, and hints.
+- optional related spans, fix-its, hints, and presentation tags.
+
+Warnings remain in the shared diagnostic stream but do not make semantic
+analysis fail or prevent HIR/MIR/backend work. Consumers must test severity
+rather than treating a non-empty diagnostic list as failure.
+This includes concrete generic instance results, ordinary/staged HIR results,
+and constexpr definition availability. A warning discovered during early
+concrete evaluation remains a warning, not a failed constant-expression error.
+
+Concrete class validation owns publication of its field, alias, and class
+assertion diagnostics. Constructor lowering may repeat that analysis to obtain
+body-local field-expression identities, but does not republish the class-owned
+records. Concrete constructor-body errors remain independently published with
+their own instantiation sites; no message-based deduplication hides distinct
+diagnostics or notes.
+
+`WarningPolicy` is the immutable driver-boundary filter for compiler warning
+groups. Direct compilation accepts repeatable `-Wno-<group>` (or
+`--disable-warning <group>`) options, while a project profile declares
+`disabled-warnings = ["<group>"]`; command-line groups are additive. Both
+adapters validate names against the typed registry before constructing a
+`CompilationRequest`, and that request applies the policy to source-loading
+and frontend diagnostics. Suppression tests both severity and group, so an
+error cannot be hidden merely because it has a group. The currently
+disableable groups are `configuration`, `unreachable-code`, `unused-mut`,
+`unused-unsafe`, `raw-pointer-violation`, `raw-pointer-potential`, and
+`raw-pointer-incomplete`. Raw-pointer findings require explicit audit enablement
+and distinguish contradictory evidence, possible violations and incomplete
+analysis. `--raw-pointer-audit=strict` promotes only those findings at the
+frontend boundary after inference; promoted errors cannot be suppressed by
+warning policy. See [raw pointers](../language/raw-pointers.md).
+
+Project profiles may independently set `dependency-warnings = false`. The
+driver's immutable `PackageWarningPolicy` suppresses only warnings whose
+primary source belongs to a registered non-selected package in the resolved
+source graph. It composes with group policy without changing analysis or
+hiding errors, consumer warnings, standard-library warnings or native-tool
+output. The LSP publishes the same default-profile policy through read-only
+project facts; a dependency opened as its own project retains its own warnings.
+See [Dependency warnings](build-and-driver.md#dependency-warnings).
+
+CLI build/check/emission presentation ends with `Diagnostics: <errors>,
+<warnings>` after the ordinary success or failure status. Counts describe the
+diagnostics left after warning policy has been applied. A failing driver or
+native-toolchain stage that has no structured compiler error still reports one
+error in the summary, so a long diagnostic stream cannot visually conceal the
+failed outcome. Structured `Diagnostic` values remain authoritative; the CLI
+does not infer counts by parsing rendered compiler text.
+
+The first typed-registry slice lives in `diagnostics/semantic.json` and is
+validated and generated by `scripts/generate_diagnostics.py` during the build.
+Its private `DiagnosticId` table owns each migrated code, default severity,
+group, phase, message format, and format-argument count. Public compiler APIs
+continue to carry ordinary `Diagnostic` values, so generated identities do not
+become an installed-header dependency. Duplicate codes/identities and invalid
+or missing format placeholders fail generation. Migration is incremental:
+unmigrated producers retain the established structured constructor until their
+owning subsystem moves to the same table.
 
 `SourceSpan` is a source identity plus half-open UTF-8 byte offsets and a
 one-based line hint. `SourceManager` owns exact source text plus a per-source
@@ -27,6 +133,48 @@ diagnostics do not store LSP positions.
 rendering a compiler column. It removes CR as well as LF from an accepted CRLF
 display line. Byte offsets remain authoritative and no normalized copy becomes
 diagnostic storage.
+
+## Source excerpts and explanations
+
+Terminal diagnostics keep the `file:line:column` heading, stable code, source
+caret, and separate `note:`/`help:` lines. The heading's column counts source
+scalars; the excerpt underline uses terminal display cells. Both primary and
+related excerpts expand tabs to four-cell stops, account for combining marks
+and wide Unicode scalars, and escape non-printable or malformed bytes as
+`\xNN`. These are generic Unicode terminal widths, not a promise about every
+terminal's font or multi-scalar emoji shaping. Exact source bytes and diagnostic
+spans are unchanged, and LSP ranges still use UTF-16 rather than display cells.
+
+The bounded ownership explanations answer what failed in the primary message,
+why it failed through existing semantic facts, where that cause occurred through
+related spans, and what intentional alternatives remain through hints:
+
+- Use-after-move `GTI-S2018` relates the transfer token, including projected
+  field transfers and unrestored receiver fields. Control-flow joins retain up
+  to four distinct transfer sites in deterministic source order. Restoration
+  clears old causes with the existing moved state; shadowed declarations do not
+  share causes. This private provenance does not decide availability or lifetime.
+- Retained-borrow `GTI-S2017` relates the borrowing origin and, when the flow
+  analysis proves one, the later required statement or structured control-flow
+  boundary. Advice distinguishes completing those uses from ending a
+  resource-bound carrier's scope: a mutex guard remains live until destruction,
+  not merely its last read. No edit automatically reorders effects.
+- Read-only field writes, fixed-array writes, and mutable method calls relate
+  the restricting declaration when it is provable through ordinary named places.
+  Hints distinguish an immutable owner, a read-only reference requiring exclusive
+  access, an immutable capture snapshot, and a constant. Calls, overloaded
+  projections, and raw pointers do not justify a guessed binding-mutability fix.
+  Concurrent globals and static fields are directed toward local storage or
+  synchronized mutation, never toward a forbidden mutable global declaration.
+- Exact move-only binding assignment `GTI-S2003` explains unavailable copying
+  or move assignment rather than reporting identical types as a mismatch. It
+  suggests explicit movement only when move assignment exists. Constants are
+  never advised to add the forbidden `mut constexpr` combination.
+
+These options are advisory, not ownership-changing fix-its. The LSP publishes
+the same compiler-owned notes and hints; it does not reconstruct explanations
+from diagnostic text. This is focused coverage, not a claim that every diagnostic
+family already has complete causal context.
 
 Current phase prefixes are `GTI-L` (lexing), `GTI-I` (source/include loading),
 `GTI-P` (parsing), `GTI-S` (semantics), and `GTI-B` (driver/backend families).
@@ -64,6 +212,128 @@ diagnostics or letting a backend message choose either identity.
 
 ## Production Rules
 
+Registry authentication keeps driver-owned structured codes: `GTI-B1713` for
+server authentication/package-permission rejection, `GTI-B1724` for unavailable,
+denied or unsupported protected credential storage, and `GTI-B1725` for invalid
+token/input/authentication capability. `GTI-B1727` owns unconfirmed credential
+issuance/revocation after failed login and directs manual removal of the newly
+created token without exposing a password, OTP, Basic header or token. Bad
+password/TOTP/server policy remains `GTI-B1713`; unsupported password issuance
+uses `GTI-B1725` and suggests explicit `--token`. Registry-command errors have no source
+token and use an empty primary span; acquisition errors retain the dependency
+manifest span. Messages never render tokens, Keychain item data or server
+response bodies. A failed login does not replace stored state. Permission
+hints explain scoped login or the configured environment override; no fix-it
+stores credentials or changes package permissions. See
+[registry authentication](build-and-driver.md#source-package-registries).
+
+`GTI-S2097` reports an invalid built-in expected mapper contract, naming the
+selected combinator and its exact required signature. It points at the mapper
+expression and retains candidate declarations when function-item selection
+fails. `transform`, `and_then`, and `transform_error` share the same checker;
+an `and_then` result with a different error type explains the explicit
+`transform_error` alternative. `GTI-S2018` reports implicit consumption of a
+named expected by those members or `expect`, and suggests explicit movement
+without an automatic ownership-changing fix. Invalid `expect` messages use
+`GTI-S2016`; unsupported checked-borrow extraction uses `GTI-S2045`. The LSP
+publishes these frontend records and receives member completion signatures
+from the same semantic expected surface, including consuming `&&` qualifiers.
+
+`GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
+missing registration, name mismatch, duplicate interfaces, package escapes,
+inconsistent shared legacy-unit configuration, and include/import bypasses.
+Point at the source directive; relate the interface declaration for name
+mismatches or duplicates. Imports retain their tokens through parsing, so an
+import embedded in an otherwise unfinished declaration receives `GTI-P0001`
+at the unexpected token rather than being erased by loading. Source cycles
+retain `GTI-I0001`. `GTI-S2098` owns
+invalid declaration exports, including exports outside an interface and
+source-local static declarations. Visibility errors explain whether a
+declaration is private or its public interface was not imported; they must not
+offer an include fix that would bypass a module boundary. No fix guesses which
+declarations an author intends to export.
+
+`GTI-B1401` owns a selected Objective-C++ `.mm` native source for a non-macOS
+target. Point at the exact `cpp-sources` manifest array element and name the
+selected OS. Unselected platform fragments produce no diagnostic. No fix-it
+changes target selection or rewrites a source language. Approved build-script
+outputs use their existing `GTI-B2005` invalid-output family for this same
+target boundary.
+
+`GTI-S2099` owns invalid function contracts: duplicate or unknown attributes,
+unsupported native, polymorphic, operator or bodyless declarations, caller tracking on
+the hosted entry point, reachable normal completion of a terminal function,
+and loss of caller-location transport at a native callback boundary.
+The normal-return diagnostic points at the `return` keyword; fallthrough
+points at the function name. A body with an earlier semantic error does not
+receive a speculative terminal-flow cascade. The LSP publishes the same
+diagnostic and no automatic edit guesses whether to remove the contract or
+change the implementation.
+Incomplete bracketed declaration attributes retain parser-owned `GTI-P0001`
+at the first unexpected token. The missing-`]]` message is declaration-neutral,
+and recovery retains following declarations with the existing exact delimiter
+insertion fix, without changing the declared contract.
+
+`GTI-S2094` owns an executable request without a resolved global `main`
+definition in its entry source unit. It is opt-in executable policy, checked
+after successful syntax and semantics and before HIR/backend work. Point at
+the first active namespaced `main` in the entry unit and relate each such
+candidate; when none exists, anchor at byte zero of the entry unit. Explain
+the global forwarding option without a namespace-unwrapping fix-it. Invalid
+source and completion recovery do not receive a cascading missing-entry error.
+The LSP requests this check only for a declared executable/test root.
+
+`GTI-S2000` retains the return-keyword diagnostic for a non-void expression
+returned from a void function. An exactly void-typed expression is accepted,
+including after generic substitution. No fix-it discards or rewrites the
+expression's effects.
+
+`GTI-S2093` owns invalid function-signature components or object uses. Point at
+the invalid component or type use and distinguish signature metadata from an
+owning callable value. The empty parameter list is `()`. No fix-it guesses a
+callback owner, pointer conversion, or alternate signature. Generic value
+construction retains its existing construction diagnostics.
+An explicit `mut` on a signature parameter without a reference also uses
+`GTI-S2093`, anchored to the prefix: `mut T&` is required. No fix-it silently
+changes a value parameter into a borrow.
+
+`GTI-S2023` also owns invalid class-pack declarations and type-list expansions.
+For headerless patterned primaries it also rejects incompatible public type
+arguments at the application name and relates the pattern declaration. Invalid
+receiver-family components relate the selected receiver definition, not the
+first declaration sharing its name. No fix-it converts receiver modes. Invalid
+binder/pack declarations and cyclic patterns are frontend errors, not backend
+failures. No fix-it guesses a different signature or changes a binder's role.
+Point at the pack declaration or expansion ellipsis, and distinguish a nonfinal
+pack, a value/default mixture, a decorated or non-pack expansion, and a list
+placed outside a final signature parameter or class-pack argument. Expanded
+invalid signature elements retain `GTI-S2093`; invalid reference referents
+retain their existing reference diagnostics. Nominal type metadata is not
+itself reference storage. `GTI-S2017` explains when substituting a reference
+into an ordinary binding would require an explicit reference declarator; no
+automatic fix chooses a different generic argument or lifetime contract.
+Concrete named parameter packs admit read-only reference elements;
+`GTI-S2023` still rejects void, signature and mutable-reference elements at the
+pack ellipsis. It does not suggest a fix that would change borrow access.
+
+`GTI-S2023` also reports failure to deduce one exact generic type pack from
+signature/nominal metadata and any supplied value arguments. It anchors the
+failed call and relates the generic pack declaration when deduction has no
+more specific conflict. Repeated-pattern conflicts anchor the incompatible
+argument. No fix-it guesses which signature or supplied pack should change.
+
+`GTI-S2029` also reports unsatisfied collection-hook requirements after owner
+type substitution. The primary span is the initialization brace and related
+information identifies the hook; no automatic edit can choose an appropriate
+policy or element capability. The shared constraint evaluator remains the
+authority, including in generic bodies and LSP snapshots.
+
+`GTI-S2092` owns an invalid contextual collection protocol or element. Protocol
+errors point at the opening brace; an incompatible/copied move-only element
+points at that element and relates the insertion parameter declaring its
+type. Hints explain exact typing or explicit ownership transfer. No automatic
+fix changes ownership intent. The LSP publishes these same frontend records.
+
 - Diagnose invalid GTI in the earliest authoritative frontend phase. A native
   C++ diagnostic is not a substitute for a language diagnostic.
 - Point the primary span at the token/range the user can act on. Use related
@@ -80,6 +350,22 @@ diagnostics or letting a backend message choose either identity.
   scoped enums and valid passive unions, but not payload enums. Suppress this
   diagnostic when ordinary type resolution has already made the operand
   unknown.
+- `GTI-S2063` also owns a malformed private runtime object-layout query. Its
+  complete-object boundary includes ordinary owning and immovable classes but
+  excludes references, incomplete/opaque/abstract classes and direct runtime
+  carrier families outside the admitted slice. Point at the written query
+  type, preserve concrete generic-instantiation context, and explain the
+  structural boundary without suggesting a move, cast, or unsafe block.
+  Ordinary public calls reject unsupported types through the declaration-bound
+  `layout_queryable` concept and shared `GTI-S2029` requirement diagnostics,
+  anchored at the call site with the exact concrete requirement related, not
+  a private library body.
+- `GTI-S2017` rejects a child borrow escaping a local or by-value parameter's
+  cleanup-bound carrier, including through a passive intermediary. Name the
+  general lifetime/cleanup obligation, relate the owning carrier
+  declaration and suggest retaining that lifetime or returning an owned value.
+  A general cleanup-bound marker is not evidence of a mutex: reserve lock and
+  unlock wording for independently proven trusted mutex receivers.
 - `GTI-S2004` owns an integer literal operand whose signed mathematical value
   does not fit the concrete contextual operand type. Point at the numeric
   token, retain a negative sign in the message, and emit only the range
@@ -121,16 +407,57 @@ diagnostics or letting a backend message choose either identity.
   cause. Do not offer a fix-it because ownership transfer, storage duration,
   and API shape require intent. An exact eligible read-only call-only borrow is
   accepted and emits no diagnostic; local and stored bindings remain invalid.
+  For conflicting sequenced binary/logical operands, point at the operator,
+  relate the earlier operand that retains the borrow, and suggest completing
+  that operation in a separate statement. Projecting a copied scalar from a
+  temporary borrowed carrier does not retire the carrier's full-expression
+  loan. An immediate scalar read through a reference does not acquire that
+  longer lifetime. Mutable calls whose view argument aliases their receiver
+  use the same code; expression-level text dependencies count even when the
+  parameter type alone does not encode an owner.
+  A reference return to a borrowed-state object must preserve the physical
+  receiver or selected reference-parameter storage, not merely its external
+  borrowed owners. Returning a local copy's shell reports `GTI-S2017` at the
+  returned expression, with a hint to return the object by value or choose
+  longer-lived storage. It offers no ownership-changing fix-it. A by-value
+  carrier parameter keeps its existing, more specific `GTI-S2085` rule below.
+  The same physical-origin check applies to inline fields returned by ordinary
+  operators and accessors, including through reference aliases and relay calls.
+  A temporary or local carrier's external owner does not extend that carrier's
+  storage lifetime. Exact stored-field mappings may instead return the external
+  referent. Ordinary member calls on ineligible temporary receivers retain
+  their earlier `GTI-S2081` diagnostic.
+  Compiler and LSP tests cover the exact UTF-16 span and diagnostic clearing.
+  For a later call argument that mutates an earlier operand's retained loan,
+  point at the mutating argument's callable token, relate the earlier borrowing
+  argument (or receiver call), and suggest completing mutation first or using
+  separate statements. Do not offer an automatic reorder: either expression
+  may have observable effects. An earlier completed mutation followed by a
+  newly created borrow is accepted when no existing loan conflicts.
 - `GTI-S2045` owns unsupported stored-reference carrier shapes and incoherent
-  borrowed-value return dependencies. One direct read-only or mutable field
-  bound by every constructor from one exact compatible reference parameter is
-  accepted. Point at the field, constructor binding, storage declaration, or
-  return expression that introduces a second/nested/global/captured origin,
+  borrowed-value return dependencies. Any number of read-only or mutable
+  reference fields, optionally nested through nominal carrier fields, is
+  accepted when every constructor binds each exact field path from a compatible
+  parameter and the resulting loans do not conflict.
+  Point at the field, constructor binding, storage declaration, or
+  return expression that introduces an unproven/global/captured origin,
   custom cleanup, dependency-changing assignment, or ambiguous/incompatible
   return. A mutable carrier is move-only; attempts to copy it use the ordinary
   ownership-transfer diagnostic, while assignment remains the ordinary
   unavailable-assignment diagnostic. Do not suggest changing `mut` as a
   mechanical fix because that changes aliasing and API semantics.
+  Owner-dependent `std::string_view` and `c_string` values use this same family
+  for unsupported storage and escape; mutation or movement of their source
+  owner while live remains `GTI-S2017`.
+- `GTI-S2019` owns invalid payloads of declaration-bound private storage.
+  Sparse and prefix storage reject borrowed-state elements even when empty;
+  optional storage additionally requires move construction and excludes void,
+  references and raw-pointer payloads. This boundary does not require move
+  assignment. Point at the concrete payload type, or retain the precise user
+  instantiation as related information when the private field is instantiated
+  from library source. Name the concrete payload and explain that this storage
+  does not retain external-owner dependencies. No fix-it chooses a different
+  ownership model. Invalid storage must not reach `GTI-B0001`.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
   by-value argument. When constructor search finds one accessible candidate
   whose parameter types match and rejects it only because the written value
@@ -140,12 +467,32 @@ diagnostics or letting a backend message choose either identity.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+  A destructor's attempted receiver-field move uses the same code at the
+  field token and explains that field cleanup belongs to the enclosing object.
+  Explicit and implicit `this` paths share this rule; separately owned locals
+  remain movable. No fix-it changes cleanup ownership.
 - `GTI-S2003` retains an ordinary assignment mismatch when a move-only type
-  does not provide move assignment. If the right-hand side is already an
+  cannot be copied through a dereference. Dereference writes use the same
+  copy/move-assignment policy as binding, field, and subscript writes; point at
+  the right-hand value and name unavailable copy or move assignment when its
+  type matches. Suggest explicit transfer only when move assignment exists,
+  without a fix-it that changes ownership intent. The same code is used when
+  a type does not provide move assignment. If the right-hand side is already an
   explicit `std::move`, its hint must identify unavailable move assignment and
   suggest initializing a new binding; it must not repeat the same
   `std::move(owner)` advice. No fix-it is safe because replacing an existing
-  value can carry cleanup or other ownership obligations.
+  value can carry cleanup or other ownership obligations. An exact named
+  move-only value used as a constructor field initializer also remains
+  `GTI-S2003`, but states that copying the field type is unavailable and names
+  the written source in an explicit-move hint. It has no fix-it because moving
+  versus preserving the source requires programmer intent. A return of an
+  exact whole named local or by-value parameter of the same move-only type is
+  an implicit move and produces no diagnostic. A named move-only value that
+  instead requires a return conversion, such as construction of an
+  `expected<T, E>` success, still names the rejected copy and spells `return
+  std::move(name);` in its hint. Field projections and other same-type
+  move-only return expressions state the copy requirement without presenting
+  identical source and destination types as a mismatch.
 - `GTI-S2020` owns malformed or structurally unavailable default-constructor
   policy as well as copy/move construction policy. A valid ordinary form is
   exactly `Type() = default;`; point at `default`, relate the first field
@@ -162,9 +509,11 @@ diagnostics or letting a backend message choose either identity.
   do not attach a fix-it because choosing a target function, parameter access,
   or pack is not mechanical. Parser-owned incomplete folds remain
   `GTI-P0001` and must recover the surrounding function.
-- `GTI-S2054` owns an invalid `extern "C"` declaration, including an exact
-  symbol or parameter spelling that cannot be represented portably in the
-  generated C17/C++ header. It also owns a containing namespace component that
+- `GTI-S2054` owns an invalid `extern "C"` declaration, including misplaced
+  or invalid `[[link_name]]` metadata and an exact symbol or parameter spelling
+  that cannot be represented portably in the generated C17/C++ header. A link
+  name points at its string literal; an ordinary symbol points at its source
+  identifier. It also owns a containing namespace component that
   would collide with the generated C++ support surface when that namespace
   contains a public native record, opaque handle, or C-linkage declaration.
   Point at the offending identifier, distinguish a keyword, reserved spelling,
@@ -216,6 +565,42 @@ diagnostics or letting a backend message choose either identity.
   adding one of the supported definition sources, and continue compilation
   with the flag false. A later or inactive source declaration counts as known;
   `#undef` of an absent flag remains a silent no-op.
+- `GTI-S2095` warns once at the first statement in a consecutive unreachable
+  tail. The tail is still semantically analyzed in isolated flow state for
+  useful diagnostics and tooling. It carries group `unreachable-code` and the
+  LSP `Unnecessary` tag, but no deletion fix: deleting source can remove
+  declarations, documentation, or deliberately retained code.
+- `GTI-S2096` warns when an explicitly `mut` ordinary local value is never
+  written, addressed mutably, passed by mutable reference, or used as a mutable
+  receiver. Mutable-reference parameters of the selected constructor count as
+  uses just as ordinary function parameters do, including when the constructor
+  stores that reference in a carrier. Read-only constructor parameters do not
+  suppress the warning. It does not inspect compiler-trusted standard-library
+  implementation locals or infer warnings for generated/range/reference
+  bindings. It carries group `unused-mut`, the LSP `Unnecessary` tag, and one
+  preferred fix that removes exactly the `mut` token without consuming nearby
+  comments or whitespace.
+- `GTI-S2009` retains the error for an implicitly ignored non-void call result.
+  Its `unused-result` group provides one non-preferred fix that inserts
+  `[[discard]]` at the parser-recorded start of the complete expression. The
+  edit preserves evaluation, remains valid for qualified and nested calls, and
+  makes intent explicit, but is not preferred because using the value may be
+  the correct repair.
+- `GTI-S2100` warns at a non-generic application unsafe-block keyword when no
+  operation used its permission. It carries group `unused-unsafe`, the
+  `Unnecessary` tag, and a keyword-only removal fix that retains lexical scope.
+  Nested unsafe blocks and lambda safety contexts do not use the outer block's
+  permission. Deferred, symbolic generic, compiler-trusted, and invalid bodies
+  are excluded from speculative advice.
+- `GTI-S2055` also owns calls to `unsafe` GTI functions outside lexical
+  unsafe context. Point at the call's closing parenthesis and relate the
+  declaration keyword. Do not offer a fix-it that silently accepts a safety
+  obligation. The same code rejects an unsafe hosted entry point.
+- Obsolete `[[unsafe]]` is parser-owned `GTI-P0001`, not a semantic alias.
+  A contiguous spelling has an exact replacement with `unsafe`, adding a
+  separator before an adjacent type or modifier; embedded
+  comments are retained by withholding a destructive spelling edit. Recovery
+  may retain the declaration for tooling, but the syntax gate prevents codegen.
 - `GTI-S2076` owns the named native callback boundary. Point at the anonymous
   type spelling, invalid ABI component, missing initializer, inexact function
   item, or concurrent-profile conversion that the user can change. State that
@@ -227,7 +612,10 @@ diagnostics or letting a backend message choose either identity.
   Do not suggest a cast, lambda, member thunk, or signature-changing fix-it;
   those choices require intent. Foreign callback values remain valid in the
   concurrent profile, so this code applies there only when GTI code is exposed
-  through an adapter. The same code continues to own a bare namespace function
+  through an adapter. It rejects conversion without `<std/cthread>` or with a
+  signature other than `int32_t(void*)` or `void()`
+  in the concurrent profile. The exact registered worker/once forms additionally
+  checks target support through `GTI-S2084`. The code also owns a bare function
   name used outside any exact native-callback, confined-callable, or thread-task
   context; explain that a function name must otherwise be called directly.
 - `GTI-S2077` owns a syntactically valid but semantically invalid parameter
@@ -262,9 +650,12 @@ diagnostics or letting a backend message choose either identity.
 - `GTI-S2081` owns a class-value receiver that cannot use the bounded fresh
   temporary receiver capability. Point at the call/operator token and
   distinguish an explicit move from existing storage, an unsupported producer,
-  borrowed-state storage or result, non-concrete record, and virtual dispatch.
-  Relate the selected method/operator declaration and suggest an explicit
-  mutable local. Do not offer a fix-it because binding name, scope, and
+  unstable stored owner dependencies, borrowed or pointer-like results,
+  non-concrete record, and virtual dispatch. Multiple proven stable dependencies
+  do not themselves reject an immediate ordinary receiver. Relate the selected
+  method/operator declaration and suggest a named carrier, or keeping its owner
+  in longer-lived named storage when that is the failed condition. Do not offer
+  a fix-it because binding name, scope, and
   ownership use require intent. Immutable named-place failures retain the
   existing mutable-receiver diagnostic rather than being reclassified as a
   temporary.
@@ -324,30 +715,49 @@ diagnostics or letting a backend message choose either identity.
 - `GTI-S2086` owns an invalid prefix `?` propagation expression. Point at the
   operator and distinguish a non-`expected<T, E>` operand, a callable that does
   not return `expected<U, E>`, a non-identical enclosing error type, and an
-  unavailable copy or move for either active alternative. Suggest explicit
-  error handling or conversion for type/context failures, and
+  unavailable copy or move for either active alternative. The bounded
+  `expected<T&, E>` specialization also uses this family until propagation can
+  preserve its successful child loan; suggest explicit state inspection and
+  borrowing `value()` only on that success path. Suggest explicit error
+  handling or conversion for other type/context failures, and
   `?std::move(result)` only for a named move-only expected. Do not offer a
-  mechanical fix-it because consuming a named result changes its subsequent
-  ownership state.
-- `GTI-S2090` owns the bounded GTI function-item boundary. Point at the bare
-  function name for formation/selection failures and at the binding for a
-  storage attempt. Distinguish no eligible exact namespace target, multiple
-  exact targets, a contract outside the confined/thread-task clients, direct
-  call signature mismatch after contextualization, and an attempt to store or
-  escape the item. Relate eligible overload declarations and the selected
+  mechanical fix-it because consuming a named result or choosing a borrow
+  lifetime changes program intent.
+- `GTI-S2089` owns an unresolved declaration for which compiler discovery has
+  proved a defining include. Preserve the unresolved source-name span and
+  message, add the verified include hints and zero-width edits. The same rule
+  handles project and dependency declarations and public standard-library units;
+  no nominal type-to-header catalog remains. `missingIncludeName` is structured
+  compiler lookup metadata, not text extracted from a diagnostic message.
+  Reanalysis must resolve the exact occurrence to the proposed file without
+  introducing new errors. Otherwise retain the original unknown-name diagnostic
+  without a speculative fix. Edits insert after a leading BOM or required
+  module header and preserve CRLF. Several valid files are alternative fixes,
+  none preferred. Already-loaded but invisible declarations keep `GTI-S2024`
+  and acquire fixes through the same proof; module privacy/import diagnostics
+  never request an include that would bypass their boundary.
+- `GTI-S2091` owns struct designated construction: eligibility, unknown,
+  duplicate or out-of-order fields, missing required fields, and incompatible
+  values. Point at the offending field name (or opening brace for an omitted
+  field/unsupported destination). Type mismatches relate the field declaration;
+  ownership hints are explanatory, never an automatic move fix-it.
+- `GTI-S2090` owns the GTI function-item boundary. Point at the bare
+  function name for formation/selection failures. Distinguish no eligible
+  namespace target, ambiguity without an exact context, multiple contextual
+  matches and direct call signature mismatch after contextualization.
+  Storage of an unambiguous exact item is valid. Relate overload declarations and the selected
   callable parameter when available. Explain that the target must be one
   non-generic body-bearing GTI namespace function with the contract's exact
-  result and ordinary argument-binding shape. Suggest passing the name
-  directly to an exact confined or managed-thread client, or wrapping other
-  intended behavior explicitly; do not offer a cast, address-of, or automatic
+  result and ordinary argument-binding shape. Suggest a uniquely named function
+  or an explicitly typed lambda selecting the intended overload; do not offer a cast, address-of, or automatic
   lambda fix-it because those change identity, ABI, or ownership intent.
-- `GTI-S2091` owns the dormant engine-embedding export boundary. Point at the
+- `GTI-S2104` owns the dormant engine-embedding export boundary. Point at the
   manifest request span (or the selected source declaration for a forbidden
   `main`) and distinguish an empty selection, malformed/exact-name miss,
   overload set, ineligible declaration kind, excluded ABI type, duplicate
   function, duplicate/reserved C symbol, hosted entry, and process-lifetime
   callback adapter. Relate exact candidate declarations where useful. Suggest
-  the bounded ADR 023 scalar/passive-record/opaque-pointer family, but do not
+  the bounded ADR 026 scalar/passive-record/opaque-pointer family, but do not
   offer a source fix-it: changing the host ABI, selected declaration, or
   exported symbol requires user intent.
 - `GTI-B2000` owns the dormant engine-embedding manifest boundary. It rejects
@@ -384,10 +794,18 @@ diagnostics or letting a backend message choose either identity.
   one accepted `= delete` special-member-policy context.
 - Reserve `GTI-B0001` for internal MIR/backend integrity failure, not ordinary
   invalid source. The reusable driver uses it when `Backend::generate` throws,
-  anchors the diagnostic at byte zero of the selected entry unit, includes the
-  backend's failure detail when a standard exception provides one, and suggests
-  reporting a reduced compiler bug. A non-standard exception receives the same
-  stable code without inventing a native exception description.
+  anchors the diagnostic at byte zero of the selected entry unit, and reports a
+  backend-neutral internal compiler error with a reduced-bug-report hint.
+  Backend identity and the complete exception detail are developer evidence in
+  `CompilationResult::backendFailureDetails`, not the public message. A
+  non-standard exception uses the same code and an honest evidence description.
+  The CLI/build driver saves that evidence in a private log and reports its
+  path; verbose output or failed preservation exposes the original details.
+  Native compile/link failure is not automatically classified as `GTI-B0001`,
+  since external toolchain and link configuration can also cause it. Retained
+  representations are identified by their actual format and path, never claimed
+  when artifact generation failed before an artifact existed. See
+  [build output](build-and-driver.md#live-build-progress).
 - Reserve `GTI-B0002` for internal post-HIR failure-metadata construction or
   verification failure. Anchor it at byte zero of the selected entry unit,
   include the first failed invariant, and do not attach a source fix-it: valid
@@ -398,6 +816,12 @@ diagnostics or letting a backend message choose either identity.
   prerequisite. Do not suggest filing a compiler bug. A generic text-vocabulary
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
+  One such classification is a fallible source function returning a class value
+  in a declaration-time field initializer (Gitea #2): the backend lacks the
+  enclosing constructor failure channel. The diagnostic names that prerequisite
+  and suggests null initialization plus a later initialization method only for
+  assignable nullable owners. It offers no automatic fix-it and does not claim
+  the valid initializer is supported.
 
 `GTI-S2029` owns failure of a declared public concept relationship before a
 generic body is instantiated. It retains the source concept name and required
@@ -412,6 +836,38 @@ target at a repeatable site therefore fail at call viability. Do not postpone
 these cases to a body-local `GTI-S2022` or `GTI-S2046`: concrete reanalysis
 must confirm the relation, not discover that its public contract was
 insufficient.
+
+Exact read-member requirements also use `GTI-S2029`. Named concepts retain
+their declared name; a direct requirement names the missing member and relates
+its written receiver/result signature rather than inventing a concept name.
+The hint preserves the requirement's receiver and unsafe-call contract. An
+ordinary requirement asks for a safe member; an `unsafe { ... }` requirement
+permits either a safe or unsafe member and does not suggest hiding an unsafe
+operation behind a safe wrapper. Its related signature retains the explicit
+unsafe context. Generic calls still need that context, independently of which
+concrete implementation satisfies the requirement.
+Semantic viability preserves the outer-to-inner concrete concept applications
+and the read-member failure. The read-member selection routine supplies the
+reason (missing member, invalid shape, ambiguity, access, unsafe access,
+inexact/borrowed result, unproven contract, or recursive/dependent requirement)
+to the reporter; the reporter does not repeat lookup or evaluate requirements.
+When an otherwise matching member fails its own `requires` clause, the reason
+identifies that unsatisfied member contract; it does not yet recursively expose
+the underlying failure within that member's clause.
+Call diagnostics map that leaf through concept parameter maps and the generic
+parameter identity to a unique written argument when possible. Equal concrete
+types in unrelated parameters do not establish provenance. Closed constraints,
+shared inference origins, and multi-cause disjunctions retain the call primary.
+Both concrete public applications and leaf locations are structured related
+information, including across source units. No public library spelling selects
+diagnostic behavior.
+When several overloads fail their requirements, the existing no-exact-overload
+diagnostic retains each candidate's constraint explanation and leaf notes as
+related information; it does not replace these causes with a conversion-only
+hint. Failures on rejected candidates remain silent when a viable overload is
+selected.
+Malformed requirement syntax, including a consuming `T&&` receiver, remains
+`GTI-P0001`; no fix-it changes ownership or adds a clone implementation.
 
 `GTI-S2046` owns the confined-callable boundary after public viability. It
 points at the callable
@@ -442,19 +898,26 @@ at the argument, relates both source and target parameters, and suggests
 path-state diagnostics own repeated or maybe-repeated forwarding; malformed
 cardinality must not survive to an internal MIR error.
 
-`GTI-S2022` owns direct consuming-receiver selection. Calling a
-consuming-only `operator() &&` through an ordinary lvalue points at the call
-and suggests the exact `std::move(value)()` spelling. Once the receiver is
+`GTI-S2022` owns direct consuming-receiver selection. Calling a consuming-only
+method or operator through an ordinary lvalue points at the call and suggests
+explicit receiver movement (`std::move(value).method(...)` or
+`std::move(value)()` for a call operator). Once the receiver is
 explicitly moved, ordinary `GTI-S2018` availability diagnostics own later or
 possibly repeated use. A consuming call that overlaps a live borrow is
 reported as consuming access rather than being mislabeled read-only.
-The same code rejects a direct consuming receiver that requires active cleanup
-because the backend cannot yet retain that owned value until the enclosing
-full-expression boundary. Relate the first concrete cleanup-owning field,
-base, or declared cleanup when available and suggest a reusable callable or a
-cleanup-free receiver. When the same structural failure is discovered only by
-concrete generic reanalysis, `GTI-S2046` owns it so the instantiation context
-and confined boundary remain visible; it must still stop before HIR/MIR.
+It also rejects a retained consuming-field invocation whose selected fallback
+returns a reference or tracked borrow. The call token is primary, the selected
+callable declaration is related, and the hint suggests an owning result or
+non-consuming invocation. There is no ownership-changing automatic fix.
+Active cleanup alone no longer rejects a moved nominal or lambda receiver:
+the verified MIR full-expression obligation retains the receiver and its
+captures. Other callable, confinement, borrowing, and availability diagnostics
+still apply; this does not relax use-after-move or allow moving borrowed state.
+Virtual and interface consuming operators use the ordinary exact override
+checks. A read-only or mutable method marked `override` cannot implement an
+`&&` requirement and receives `GTI-S2042`; consumption through an ordinary
+borrowed reference still receives `GTI-S2018`. The LSP publishes those same
+diagnostics and clears an invalid override after the qualifier is restored.
 
 Once a parameter has an invoked confined contract, an ordinary value use also
 reports `GTI-S2046`: only direct invocation or proven confined forwarding is
@@ -479,6 +942,12 @@ or the selected generic result/field does not preserve its exact type. Relate
 the diagnostic to the generic parameter declaration. These are source contract
 errors; forged return, field, constructor, or move evidence is instead rejected
 by MIR verification as compiler corruption.
+
+The same owned-entry checks apply to a nominal generic carrier containing a
+closure, not only a direct type parameter. A reference or bodyless parameter
+reports the unsupported boundary at the argument and suggests a visible
+by-value generic or owning-carrier parameter. It must not claim that all owning
+type erasure is unavailable. No automatic fix changes the ownership contract.
 
 `GTI-S2027` owns lambda capture-shape and ownership failures. The parser keeps
 `[target = expression]` recoverable; semantics accepts only
@@ -515,10 +984,15 @@ arguments; diagnostics must not substitute `unknown class` merely because
 complete member metadata is recorded later. A move-only payload binding names
 the non-consuming copied-pattern boundary and points users to the tag-only
 form; an active recursive/non-class carrier names the bounded owning-class
-boundary. The direct-local owning slice reports by-value function/method,
-constructor, and typed-lambda boundaries at their type declaration and
-suggests a checked reference; lambda capture and field/array/wrapper
-containment name the exact storage boundary before MIR. No fix-it is offered
+boundary. Ordinary concrete generic callables and class/struct owners admit
+owning enums using the same exact lifecycle facts as non-generic definitions;
+a type argument alone is not evidence of contained ownership. Unsupported
+polymorphic/native by-value boundaries point at their type declaration and
+suggest a checked reference. Direct enum captures, fixed arrays, restricted
+field owners, and direct result-carrier alternatives name their exact storage
+boundary before MIR. Expected combinators apply that same containment check to
+their inferred result, anchoring a rejected mapped alternative at the mapper
+expression. No fix-it is offered
 when choosing a payload type, binding, transport, or missing-arm behavior
 requires program intent.
 

@@ -153,7 +153,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
   if (request.kind == ProgramKind::Executable) {
     if (!request.exports.empty()) {
       diagnostics.push_back(makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics,
+          "GTI-S2104", DiagnosticPhase::Semantics,
           requestLocation(request.exports.front(), sourceGraph),
           "Executable programs cannot declare host embedding exports."));
     }
@@ -166,7 +166,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
           : requestLocation(request.exports.front(), sourceGraph);
   if (request.exports.empty()) {
     Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2091", DiagnosticPhase::Semantics, fallback,
+        "GTI-S2104", DiagnosticPhase::Semantics, fallback,
         "A library program must select at least one host export.");
     diagnostic.hints.emplace_back(
         "Add a [[targets.<name>.exports]] entry naming one exact qualified "
@@ -190,7 +190,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
       [](const FunctionInfo *function) { return function->entryPoint; });
   if (main != functions.end()) {
     Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2091", DiagnosticPhase::Semantics,
+        "GTI-S2104", DiagnosticPhase::Semantics,
         tokenSpan((*main)->declaration->name()),
         "A library program cannot define the hosted main entry point.");
     diagnostic.hints.emplace_back(
@@ -203,7 +203,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
   // module cannot safely contain one until registration gains revocation.
   if (semanticModel.hasNativeFunctionConversions()) {
     diagnostics.push_back(makeDiagnostic(
-        "GTI-S2091", DiagnosticPhase::Semantics, fallback,
+        "GTI-S2104", DiagnosticPhase::Semantics, fallback,
         "Library programs cannot create GTI-to-C callback adapters in "
         "embedding ABI version 1."));
   }
@@ -226,7 +226,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
     if (!ordinaryIdentifier(exportRequest.symbol) ||
         reservedEmbeddingSymbol(exportRequest.symbol)) {
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, symbolLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, symbolLocation,
           "Embedding symbol '" + exportRequest.symbol +
               "' is not a non-reserved C17 and C++ identifier.");
       diagnostic.hints.emplace_back(
@@ -237,7 +237,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
     }
     if (!qualifiedFunctionName(exportRequest.function)) {
       diagnostics.push_back(makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, functionLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, functionLocation,
           "Embedding function '" + exportRequest.function +
               "' is not an exact qualified GTI name."));
       requestValid = false;
@@ -246,7 +246,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
         symbols.emplace(exportRequest.symbol, symbolLocation);
     if (!uniqueSymbol) {
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, symbolLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, symbolLocation,
           "Embedding symbol '" + exportRequest.symbol +
               "' is selected more than once.");
       diagnostic.related.push_back(
@@ -258,7 +258,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
         selectedFunctions.emplace(exportRequest.function, functionLocation);
     if (!uniqueFunction) {
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, functionLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, functionLocation,
           "GTI function '" + exportRequest.function +
               "' is selected for export more than once.");
       diagnostic.related.push_back(
@@ -278,14 +278,14 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
     }
     if (matches.empty()) {
       diagnostics.push_back(makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, functionLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, functionLocation,
           "No GTI function named '" + exportRequest.function +
               "' exists in this library source graph."));
       continue;
     }
     if (matches.size() != 1) {
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, functionLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, functionLocation,
           "Embedding export '" + exportRequest.function +
               "' names an overloaded function set; version 1 requires one "
               "unambiguous declaration.");
@@ -308,7 +308,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
         !declaration.runtimeBinding() && !declaration.operatorName();
     if (!ordinarySourceFunction) {
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, functionLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, functionLocation,
           "Embedding export '" + exportRequest.function +
               "' must name one non-generic, non-overloaded, namespace-scope "
               "GTI source function with a body.");
@@ -323,7 +323,11 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
       if (result && type == SemanticType::Void) {
         return true;
       }
-      if (isCAbiScalar(type) || isCAbiRecordType(type)) {
+      // The frozen embedding ABI is narrower than ordinary extern-C support.
+      // Later native scalar support must not silently expand this ABI family.
+      if ((isCAbiScalar(type) && type.kind != SemanticType::Bool &&
+           type.nativeCScalar == NativeCScalarKind::None) ||
+          isCAbiRecordType(type)) {
         return true;
       }
       return type.kind == SemanticType::RawPointer &&
@@ -352,7 +356,7 @@ auto SemanticVisitor::Impl::applyProgramRequest(const Program &program,
     }
     if (!signatureValid) {
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2091", DiagnosticPhase::Semantics, functionLocation,
+          "GTI-S2104", DiagnosticPhase::Semantics, functionLocation,
           "Embedding export '" + exportRequest.function +
               "' has a type outside the version 1 host boundary.");
       diagnostic.related.push_back(

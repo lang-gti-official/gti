@@ -13,6 +13,7 @@
 #include <iterator>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -88,6 +89,9 @@ namespace {
 using gti::runtime::detail::WriteAttempt;
 using gti::runtime::detail::WriteFunction;
 
+// Reserved for the emergency report, never an ordinary record category.
+constexpr gti_failure_code_v1 kCleanupFailureReportCode = 14;
+
 constexpr std::string_view kFailureCategories[] = {
     "",
     "integer_overflow",
@@ -103,6 +107,10 @@ constexpr std::string_view kFailureCategories[] = {
     "allocation_failure",
     "infallible_host_operation_failed",
     "hosted_runtime_contract_failure",
+    "", // 14 is not an ordinary failure record.
+    "key_not_found",
+    "invalid_container_argument",
+    "panic",
 };
 
 constexpr std::string_view kFailureDetails[] = {
@@ -139,15 +147,33 @@ constexpr std::string_view kFailureDetails[] = {
     "automatic_join",
     "negative_argument_count",
     "recursive_thread_local_initialization",
+    "mutex_lock",
+    "key_lookup",
+    "container_argument",
+    "shared_owner",
+    "explicit_panic",
 };
 
-static_assert(std::size(kFailureCategories) == 14);
-static_assert(std::size(kFailureDetails) == 33);
+static_assert(std::size(kFailureCategories) == 18);
+static_assert(std::size(kFailureDetails) == 38);
 
 struct ReportOutput {
   WriteFunction write = nullptr;
   void *context = nullptr;
   bool valid = true;
+  bool color = false;
+  bool errorStyleActive = false;
+
+  ~ReportOutput() {
+    if (errorStyleActive) {
+      // A partial report must not leave the terminal styled. This final
+      // best-effort write neither recurses nor changes the report result.
+      constexpr char reset[] = "\033[0m";
+      (void)gti::runtime::detail::writeAll(
+          write, context, reinterpret_cast<const std::uint8_t *>(reset),
+          sizeof(reset) - 1);
+    }
+  }
 
   bool bytes(const void *data, std::size_t size) {
     if (!valid) {
@@ -165,12 +191,34 @@ struct ReportOutput {
   template <std::size_t Size> bool literal(const char (&value)[Size]) {
     return bytes(value, Size - 1);
   }
+
+  bool beginErrorStyle() {
+    if (!color) {
+      return true;
+    }
+    errorStyleActive = true;
+    return literal("\033[1;31m");
+  }
+
+  bool endErrorStyle() {
+    if (!color) {
+      return true;
+    }
+    if (!literal("\033[0m")) {
+      return false;
+    }
+    errorStyleActive = false;
+    return true;
+  }
 };
 
 struct ResolvedFailure {
-  const gti_failure_record_v1 *record = nullptr;
+  gti_failure_code_v1 code = 0;
+  gti_failure_detail_v1 detail = 0;
   const gti_failure_site_descriptor_v1 *site = nullptr;
   bool runtimeSite = false;
+  gti_c_string_view message{};
+  bool messageTruncated = false;
 };
 
 [[nodiscard]] bool identityIsZero(const std::uint8_t identity[32]) {
@@ -217,6 +265,7 @@ struct ResolvedFailure {
            detail <= GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1;
   case GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1:
     return detail == GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1 ||
+           detail == GTI_FAILURE_DETAIL_SHARED_OWNER_V1 ||
            detail == GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1 ||
            detail == GTI_FAILURE_DETAIL_ELEMENT_CONSTRUCTION_V1 ||
            detail == GTI_FAILURE_DETAIL_HOSTED_ARGUMENTS_V1;
@@ -228,6 +277,12 @@ struct ResolvedFailure {
     return detail == GTI_FAILURE_DETAIL_NEGATIVE_ARGUMENT_COUNT_V1 ||
            detail ==
                GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1;
+  case GTI_FAILURE_CODE_KEY_NOT_FOUND_V1:
+    return detail == GTI_FAILURE_DETAIL_KEY_LOOKUP_V1;
+  case GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1:
+    return detail == GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1;
+  case GTI_FAILURE_CODE_PANIC_V2:
+    return detail == GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2;
   default:
     return false;
   }
@@ -245,12 +300,34 @@ struct ResolvedFailure {
 
 [[nodiscard]] bool validRecordHeader(const gti_failure_record_v1 &record) {
   return record.abi_version == GTI_FAILURE_ABI_VERSION_V1 &&
-         record.reserved == 0 &&
+         record.reserved == 0 && record.code != GTI_FAILURE_CODE_PANIC_V2 &&
          globallyValidOutcome(record.code, record.detail);
 }
 
+[[nodiscard]] bool validRecordHeader(const gti_failure_record_v2 &record) {
+  if (record.abi_version != GTI_FAILURE_ABI_VERSION_V2 ||
+      record.reserved != 0 ||
+      !globallyValidOutcome(record.code, record.detail) ||
+      record.message_size > GTI_FAILURE_MESSAGE_CAPACITY_V2 ||
+      (record.message_flags & ~GTI_FAILURE_MESSAGE_TRUNCATED_V2) != 0 ||
+      (record.code != GTI_FAILURE_CODE_PANIC_V2 &&
+       (record.message_size != 0 || record.message_flags != 0))) {
+    return false;
+  }
+  // Canonical zero padding makes complete by-value copies independently
+  // comparable and never exposes bytes outside the captured message.
+  for (std::size_t index = record.message_size; index < sizeof(record.message);
+       ++index) {
+    if (record.message[index] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename Record>
 [[nodiscard]] bool siteAdmits(const gti_failure_site_descriptor_v1 &site,
-                              const gti_failure_record_v1 &record) {
+                              const Record &record) {
   if (site.reserved != 0 || site.line == 0 || site.end < site.start ||
       site.logical_source.data == nullptr || site.logical_source.length == 0 ||
       site.outcomes == nullptr || site.outcome_count == 0) {
@@ -276,8 +353,9 @@ struct ResolvedFailure {
   return admitted;
 }
 
+template <typename Record>
 [[nodiscard]] bool
-resolveFailure(const gti_failure_record_v1 *record,
+resolveFailure(const Record *record,
                const gti_failure_artifact_descriptor_v1 *artifact,
                ResolvedFailure &resolved) {
   if (record == nullptr || !validRecordHeader(*record)) {
@@ -289,30 +367,38 @@ resolveFailure(const gti_failure_record_v1 *record,
     if (!zeroIdentity || record->site_index != 0 || artifact != nullptr) {
       return false;
     }
-    resolved = {.record = record, .site = nullptr, .runtimeSite = true};
-    return true;
-  }
+    resolved.runtimeSite = true;
+    resolved.site = nullptr;
+  } else {
+    if (artifact == nullptr ||
+        artifact->abi_version != GTI_FAILURE_ABI_VERSION_V1 ||
+        artifact->reserved != 0 || artifact->sites_reserved != 0 ||
+        identityIsZero(artifact->artifact_identity) ||
+        !sameIdentity(record->artifact_identity, artifact->artifact_identity) ||
+        artifact->sites == nullptr || artifact->site_count == 0 ||
+        record->site_index > artifact->site_count ||
+        artifact->canonical_descriptor == nullptr ||
+        artifact->canonical_descriptor_size == 0 ||
+        artifact->canonical_descriptor_size > SIZE_MAX) {
+      return false;
+    }
 
-  if (artifact == nullptr ||
-      artifact->abi_version != GTI_FAILURE_ABI_VERSION_V1 ||
-      artifact->reserved != 0 || artifact->sites_reserved != 0 ||
-      identityIsZero(artifact->artifact_identity) ||
-      !sameIdentity(record->artifact_identity, artifact->artifact_identity) ||
-      artifact->sites == nullptr || artifact->site_count == 0 ||
-      record->site_index > artifact->site_count ||
-      artifact->canonical_descriptor == nullptr ||
-      artifact->canonical_descriptor_size == 0 ||
-      artifact->canonical_descriptor_size > SIZE_MAX) {
-    return false;
+    const gti_failure_site_descriptor_v1 &site =
+        artifact->sites[record->site_index - 1];
+    if (!siteAdmits(site, *record) || site.logical_source.length > SIZE_MAX) {
+      return false;
+    }
+    resolved.site = &site;
+    resolved.runtimeSite = false;
   }
-
-  const gti_failure_site_descriptor_v1 &site =
-      artifact->sites[record->site_index - 1];
-  if (!siteAdmits(site, *record) || site.logical_source.length > SIZE_MAX) {
-    return false;
+  resolved.code = record->code;
+  resolved.detail = record->detail;
+  if constexpr (std::is_same_v<Record, gti_failure_record_v2>) {
+    resolved.message = {.data = reinterpret_cast<const char *>(record->message),
+                        .length = record->message_size};
+    resolved.messageTruncated =
+        (record->message_flags & GTI_FAILURE_MESSAGE_TRUNCATED_V2) != 0;
   }
-
-  resolved = {.record = record, .site = &site, .runtimeSite = false};
   return true;
 }
 
@@ -457,32 +543,62 @@ bool writeSourcePrefix(ReportOutput &output, const ResolvedFailure &failure) {
   return writeSourceLocation(output, failure) && output.literal(": ");
 }
 
+bool writeErrorHeading(ReportOutput &output, gti_failure_code_v1 code) {
+  return output.beginErrorStyle() && output.literal("runtime error[") &&
+         writeFailureCode(output, code) && output.literal("]") &&
+         output.endErrorStyle() && output.literal(": ");
+}
+
 bool writeOrdinaryReport(ReportOutput &output, const ResolvedFailure &failure) {
-  return writeSourcePrefix(output, failure) &&
-         output.literal("runtime error[") &&
-         writeFailureCode(output, failure.record->code) &&
-         output.literal("]: ") &&
-         output.text(kFailureCategories[failure.record->code]) &&
-         output.literal(" in ") &&
-         output.text(kFailureDetails[failure.record->detail]) &&
-         output.literal("\n");
+  if (!(writeSourcePrefix(output, failure) &&
+        writeErrorHeading(output, failure.code) &&
+        output.text(kFailureCategories[failure.code]))) {
+    return false;
+  }
+  if (failure.code == GTI_FAILURE_CODE_PANIC_V2) {
+    if (!(output.literal(": \"") &&
+          writeEscapedSource(output, failure.message) && output.literal("\"") &&
+          (!failure.messageTruncated || output.literal(" [truncated]")))) {
+      return false;
+    }
+  } else if (!(output.literal(" in ") &&
+               output.text(kFailureDetails[failure.detail]))) {
+    return false;
+  }
+  return output.literal("\n");
+}
+
+bool writeCleanupMessage(ReportOutput &output, const ResolvedFailure &failure) {
+  return failure.code != GTI_FAILURE_CODE_PANIC_V2 ||
+         (output.literal(" message=\"") &&
+          writeEscapedSource(output, failure.message) && output.literal("\"") &&
+          (!failure.messageTruncated || output.literal(" [truncated]")));
 }
 
 bool writeCleanupReport(ReportOutput &output, const ResolvedFailure &primary,
                         const ResolvedFailure &secondary) {
   return writeSourcePrefix(output, secondary) &&
-         output.literal("runtime error[GTI-R0014]: failure_during_cleanup; "
-                        "primary [") &&
-         writeFailureCode(output, primary.record->code) &&
-         output.literal("] at ") && writeSourceLocation(output, primary) &&
+         writeErrorHeading(output, kCleanupFailureReportCode) &&
+         output.literal("failure_during_cleanup; primary [") &&
+         writeFailureCode(output, primary.code) && output.literal("] at ") &&
+         writeSourceLocation(output, primary) &&
+         writeCleanupMessage(output, primary) &&
          output.literal("; secondary [") &&
-         writeFailureCode(output, secondary.record->code) &&
-         output.literal("]\n");
+         writeFailureCode(output, secondary.code) && output.literal("]") &&
+         writeCleanupMessage(output, secondary) && output.literal("\n");
 }
 
 #if defined(_WIN32)
 struct NativeWriteContext {
   HANDLE handle;
+  DWORD originalMode = 0;
+  bool restoreMode = false;
+
+  ~NativeWriteContext() {
+    if (restoreMode) {
+      (void)SetConsoleMode(handle, originalMode);
+    }
+  }
 };
 
 WriteAttempt nativeWrite(void *opaque, const std::uint8_t *data,
@@ -576,25 +692,58 @@ NativeWriteContext nativeStderrContext() {
 }
 #endif
 
+bool nativeColorEnabled(NativeWriteContext &context) {
+  const char *mode = std::getenv("GTI_COLOR");
+  if (mode != nullptr && std::string_view(mode) == "never") {
+    return false;
+  }
+  const bool always = mode != nullptr && std::string_view(mode) == "always";
+  if (!always) {
+    const char *noColor = std::getenv("NO_COLOR");
+    const char *term = std::getenv("TERM");
+    if ((noColor != nullptr && *noColor != '\0') ||
+        (term != nullptr && std::string_view(term) == "dumb")) {
+      return false;
+    }
+  }
+#if defined(_WIN32)
+  if (!GetConsoleMode(context.handle, &context.originalMode) ||
+      !SetConsoleMode(context.handle, context.originalMode |
+                                          ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+    return always;
+  }
+  context.restoreMode = true;
+  return true;
+#else
+  return always || isatty(context.descriptor) != 0;
+#endif
+}
+
+template <typename Record>
 gti_failure_report_result_v1
-writeOrdinaryNative(const gti_failure_record_v1 *record,
+writeOrdinaryNative(const Record *record,
                     const gti_failure_artifact_descriptor_v1 *artifact) {
   ResolvedFailure resolved;
   if (!resolveFailure(record, artifact, resolved)) {
     return GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1;
   }
   NativeWriteContext context = nativeStderrContext();
-  ReportOutput output{.write = nativeWrite, .context = &context};
+  ReportOutput output{.write = nativeWrite,
+                      .context = &context,
+                      .color = nativeColorEnabled(context)};
   return writeOrdinaryReport(output, resolved) ? GTI_FAILURE_REPORT_OK_V1
                                                : GTI_FAILURE_REPORT_IO_ERROR_V1;
 }
 
+template <typename Emergency>
 gti_failure_report_result_v1 writeCleanupNative(
-    const gti_failure_emergency_v1 *failure,
+    const Emergency *failure,
     const gti_failure_artifact_descriptor_v1 *primaryArtifact,
     const gti_failure_artifact_descriptor_v1 *secondaryArtifact) {
-  if (failure == nullptr ||
-      failure->abi_version != GTI_FAILURE_ABI_VERSION_V1 ||
+  constexpr auto version = std::is_same_v<Emergency, gti_failure_emergency_v1>
+                               ? GTI_FAILURE_ABI_VERSION_V1
+                               : GTI_FAILURE_ABI_VERSION_V2;
+  if (failure == nullptr || failure->abi_version != version ||
       failure->reserved != 0) {
     return GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1;
   }
@@ -605,7 +754,9 @@ gti_failure_report_result_v1 writeCleanupNative(
     return GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1;
   }
   NativeWriteContext context = nativeStderrContext();
-  ReportOutput output{.write = nativeWrite, .context = &context};
+  ReportOutput output{.write = nativeWrite,
+                      .context = &context,
+                      .color = nativeColorEnabled(context)};
   return writeCleanupReport(output, primary, secondary)
              ? GTI_FAILURE_REPORT_OK_V1
              : GTI_FAILURE_REPORT_IO_ERROR_V1;
@@ -614,8 +765,9 @@ gti_failure_report_result_v1 writeCleanupNative(
 std::atomic<std::uint32_t> gTerminalState{0};
 
 struct ActiveTerminal {
-  gti_failure_record_v1 original;
-  const gti_failure_artifact_descriptor_v1 *artifact;
+  const gti_failure_record_v1 *originalV1 = nullptr;
+  const gti_failure_record_v2 *originalV2 = nullptr;
+  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
 };
 
 thread_local const ActiveTerminal *gActiveTerminal = nullptr;
@@ -632,8 +784,13 @@ thread_local const ActiveTerminal *gActiveTerminal = nullptr;
 
 [[noreturn]] void terminateObserverViolation() {
   if (gActiveTerminal != nullptr) {
-    (void)writeOrdinaryNative(&gActiveTerminal->original,
-                              gActiveTerminal->artifact);
+    if (gActiveTerminal->originalV2 != nullptr) {
+      (void)writeOrdinaryNative(gActiveTerminal->originalV2,
+                                gActiveTerminal->artifact);
+    } else {
+      (void)writeOrdinaryNative(gActiveTerminal->originalV1,
+                                gActiveTerminal->artifact);
+    }
   }
   completeTerminal();
 }
@@ -662,6 +819,27 @@ extern "C" gti_failure_report_result_v1 gti_rt_failure_write_report_v1(
   return writeOrdinaryNative(record, artifact);
 }
 
+namespace gti::runtime::detail {
+
+[[noreturn]] void
+terminateLegacyFailure(const gti_failure_record_v2 &record,
+                       const gti_failure_artifact_descriptor_v1 *artifact) {
+  claimTerminalWinner();
+  (void)writeOrdinaryNative(&record, artifact);
+  completeTerminal();
+}
+
+[[noreturn]] void terminateLegacyFailure(
+    const gti_failure_emergency_v2 &failure,
+    const gti_failure_artifact_descriptor_v1 *primaryArtifact,
+    const gti_failure_artifact_descriptor_v1 *secondaryArtifact) {
+  claimTerminalWinner();
+  (void)writeCleanupNative(&failure, primaryArtifact, secondaryArtifact);
+  completeTerminal();
+}
+
+} // namespace gti::runtime::detail
+
 extern "C" gti_failure_report_result_v1 gti_rt_failure_write_cleanup_report_v1(
     const gti_failure_emergency_v1 *failure,
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
@@ -682,34 +860,140 @@ gti_rt_failure_terminate_v1(const gti_failure_record_v1 *record,
   claimTerminalWinner();
 
   const gti_failure_record_v1 invalidRecord{};
+  const gti_failure_record_v1 original =
+      record == nullptr ? invalidRecord : *record;
   const ActiveTerminal active{
-      .original = record == nullptr ? invalidRecord : *record,
+      .originalV1 = &original,
       .artifact = artifact,
   };
   gActiveTerminal = &active;
 
   ResolvedFailure resolved;
-  const bool valid = resolveFailure(&active.original, artifact, resolved);
+  const bool valid = resolveFailure(&original, artifact, resolved);
   if (valid && observer != nullptr) {
-    gti_failure_record_v1 observed = active.original;
+    gti_failure_record_v1 observed = original;
     try {
       observer(&observed, observer_context);
     } catch (...) {
       terminateObserverViolation();
     }
-    if (std::memcmp(&observed, &active.original, sizeof(observed)) != 0) {
+    if (std::memcmp(&observed, &original, sizeof(observed)) != 0) {
       terminateObserverViolation();
     }
   }
 
   if (valid) {
-    (void)writeOrdinaryNative(&active.original, artifact);
+    (void)writeOrdinaryNative(&original, artifact);
   }
   completeTerminal();
 }
 
 extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v1(
     const gti_failure_emergency_v1 *failure,
+    const gti_failure_artifact_descriptor_v1 *primary_artifact,
+    const gti_failure_artifact_descriptor_v1 *secondary_artifact) {
+  if (failure != nullptr && gti_runtime_detail::managed_worker_active()) {
+    gti_runtime_detail::handoff_managed_worker_cleanup_failure(
+        *failure, primary_artifact, secondary_artifact);
+  }
+  claimTerminalWinner();
+  (void)writeCleanupNative(failure, primary_artifact, secondary_artifact);
+  completeTerminal();
+}
+
+extern "C" gti_failure_report_result_v1
+gti_rt_failure_capture_panic_v2(gti_failure_record_v2 *record,
+                                gti_c_string_view message) {
+  if (record == nullptr || record->abi_version != GTI_FAILURE_ABI_VERSION_V2 ||
+      record->reserved != 0 || record->code != GTI_FAILURE_CODE_PANIC_V2 ||
+      record->detail != GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2 ||
+      (message.data == nullptr && message.length != 0)) {
+    return GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1;
+  }
+  // A local bounded snapshot also makes an overlapping source view safe. Read
+  // at most the capacity plus three lookahead bytes to preserve valid UTF-8 at
+  // the boundary; malformed input is retained as bytes, not reinterpreted.
+  std::uint8_t snapshot[GTI_FAILURE_MESSAGE_CAPACITY_V2]{};
+  const auto *data = reinterpret_cast<const std::uint8_t *>(message.data);
+  std::size_t size = 0;
+  while (size < sizeof(snapshot) && size < message.length) {
+    const std::uint64_t remaining = message.length - size;
+    const std::size_t available =
+        remaining < 4 ? static_cast<std::size_t>(remaining) : 4;
+    std::uint32_t scalar = 0;
+    std::size_t count = decodeUtf8(data + size, available, scalar);
+    if (count == 0) {
+      count = 1;
+    }
+    if (count > sizeof(snapshot) - size) {
+      break;
+    }
+    std::memcpy(snapshot + size, data + size, count);
+    size += count;
+  }
+  std::memcpy(record->message, snapshot, sizeof(snapshot));
+  record->message_size = static_cast<std::uint32_t>(size);
+  record->message_flags =
+      size < message.length ? GTI_FAILURE_MESSAGE_TRUNCATED_V2 : 0;
+  return GTI_FAILURE_REPORT_OK_V1;
+}
+
+extern "C" gti_failure_report_result_v1 gti_rt_failure_write_report_v2(
+    const gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 *artifact) {
+  return writeOrdinaryNative(record, artifact);
+}
+
+extern "C" gti_failure_report_result_v1
+gti_rt_failure_validate_v2(const gti_failure_record_v2 *record,
+                           const gti_failure_artifact_descriptor_v1 *artifact) {
+  ResolvedFailure resolved;
+  return resolveFailure(record, artifact, resolved)
+             ? GTI_FAILURE_REPORT_OK_V1
+             : GTI_FAILURE_REPORT_INVALID_ARGUMENT_V1;
+}
+
+extern "C" gti_failure_report_result_v1 gti_rt_failure_write_cleanup_report_v2(
+    const gti_failure_emergency_v2 *failure,
+    const gti_failure_artifact_descriptor_v1 *primary_artifact,
+    const gti_failure_artifact_descriptor_v1 *secondary_artifact) {
+  return writeCleanupNative(failure, primary_artifact, secondary_artifact);
+}
+
+extern "C" [[noreturn]] void
+gti_rt_failure_terminate_v2(const gti_failure_record_v2 *record,
+                            const gti_failure_artifact_descriptor_v1 *artifact,
+                            gti_failure_observer_v2 observer,
+                            void *observer_context) {
+  if (record != nullptr && gti_runtime_detail::managed_worker_active()) {
+    gti_runtime_detail::handoff_managed_worker_failure(*record, artifact);
+  }
+  claimTerminalWinner();
+  const gti_failure_record_v2 original =
+      record == nullptr ? gti_failure_record_v2{} : *record;
+  const ActiveTerminal active{.originalV2 = &original, .artifact = artifact};
+  gActiveTerminal = &active;
+  ResolvedFailure resolved;
+  const bool valid = resolveFailure(&original, artifact, resolved);
+  if (valid && observer != nullptr) {
+    gti_failure_record_v2 observed = original;
+    try {
+      observer(&observed, observer_context);
+    } catch (...) {
+      terminateObserverViolation();
+    }
+    if (std::memcmp(&observed, &original, sizeof(observed)) != 0) {
+      terminateObserverViolation();
+    }
+  }
+  if (valid) {
+    (void)writeOrdinaryNative(&original, artifact);
+  }
+  completeTerminal();
+}
+
+extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v2(
+    const gti_failure_emergency_v2 *failure,
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
     const gti_failure_artifact_descriptor_v1 *secondary_artifact) {
   if (failure != nullptr && gti_runtime_detail::managed_worker_active()) {

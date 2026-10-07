@@ -1,0 +1,57 @@
+#include <std/memory>
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+// An ordinary owning class, not a C-layout record or a primitive. Allocation
+// derives its layout from the exact T and never asks application code for a
+// deallocation size/alignment tuple.
+class Package {
+  std::string label;
+  int id;
+  bool fail;
+public:
+  Package(std::string label, int id, bool fail)
+      : label(std::move(label)), id(id), fail(fail) {}
+  Package(Package& other) = delete;
+  Package(Package&& other) = default;
+  ~Package() {
+    std::println(this.id);
+    if (this.fail) { std::panic("package cleanup failed"); }
+  }
+};
+
+class Depot {
+  mut std::storage<Package> slots;
+public:
+  Depot(std::storage<Package> slots) : slots(std::move(slots)) {}
+  Depot(Depot& other) = delete;
+  Depot(Depot&& other) = default;
+  void insert(std::size_t index, int id, bool fail) mut {
+    [[discard]] this.slots.emplace(index, std::string("owned"), id, fail);
+  }
+  void release() mut { this.slots.release(); }
+  bool empty() { return this.slots.capacity() == std::size_t(0); }
+};
+
+class Caller {
+public:
+  Caller() {}
+  ~Caller() { std::println(90); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<Package>(std::size_t(3), std::alignment(std::size_t(64)));
+  if (!allocated) { return 1; }
+  mut Depot original{std::move(allocated).value()};
+  original.insert(std::size_t(0), 10, false);
+  original.insert(std::size_t(2), 30, argc == 2);
+  mut Depot moved = std::move(original);
+  Caller caller{};
+  moved.release();
+  if (!moved.empty()) { return 2; }
+  moved.release();
+  std::println(77);
+  return 0;
+}

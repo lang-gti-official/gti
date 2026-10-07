@@ -1,0 +1,58 @@
+struct Point {
+  mut int x = 0;
+  mut int y = 0;
+  constexpr Point(int initial_x, int initial_y) : x(initial_x), y(initial_y) {}
+  constexpr int squared() { return this.x * this.x + this.y * this.y; }
+  constexpr int scaled(int factor) { return this.squared() * factor; }
+};
+
+struct Table {
+  mut int values[3];
+  constexpr Table(int input[3]) : values(input) {}
+  constexpr int sum() {
+    mut int result = 0;
+    for (mut int index = 0; index < 3; index++) {
+      result += this.values[index];
+    }
+    return result;
+  }
+};
+
+constexpr Table make_table(int value) { return Table({value, 2, 3}); }
+constexpr Table table = make_table(7);
+static_assert(table.values[0] == 7 && table.values[2] == 3);
+constexpr int table_sum(int value) { return make_table(value).sum(); }
+static_assert(table_sum(7) == 12);
+
+constexpr Point make_point(int x, int y) {
+  Point result = Point(x, y);
+  return result;
+}
+
+constexpr int distance_squared(Point point) {
+  return point.scaled(1);
+}
+
+constexpr Point translated(Point point, int dx) {
+  mut Point copy = point;
+  copy.x += dx;
+  copy.y++;
+  return copy;
+}
+
+constexpr Point origin = Point(3, 4);
+constexpr Point constructed = make_point(6, 8);
+constexpr Point shifted = translated(origin, 2);
+static_assert(distance_squared(origin) == 25);
+static_assert(distance_squared(constructed) == 100);
+static_assert(origin.x == 3 && origin.y == 4);
+static_assert(shifted.x == 5 && shifted.y == 5);
+
+int main() {
+  Table runtime_table = make_table(7);
+  Point runtime_shifted = translated(make_point(3, 4), 2);
+  return distance_squared(make_point(3, 4)) == 25 &&
+         runtime_shifted.x == shifted.x && runtime_shifted.y == shifted.y &&
+         runtime_table.values[0] == table.values[0] &&
+         runtime_table.sum() == table_sum(7) ? 0 : 1;
+}

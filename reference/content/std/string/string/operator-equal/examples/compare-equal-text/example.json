@@ -1,6 +1,0 @@
-{
-  "title": "Compare with a view",
-  "description": "Uses the string-view overload to compare an owner with a literal.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

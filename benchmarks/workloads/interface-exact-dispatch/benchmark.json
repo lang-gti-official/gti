@@ -1,0 +1,33 @@
+{
+  "schema": 2,
+  "name": "interface-exact-dispatch",
+  "description": "Local exact interface receiver in a 1024-lane deterministic update stage",
+  "work_units": 122880000,
+  "minimum_sample_seconds": 0.05,
+  "variants": [
+    {
+      "name": "gti",
+      "kind": "gti",
+      "source": "main.gti",
+      "execution_profile": "single-threaded"
+    },
+    {
+      "name": "gti-source-proxy",
+      "kind": "gti",
+      "source": "proxy.gti",
+      "execution_profile": "single-threaded"
+    },
+    {
+      "name": "cpp-semantic",
+      "kind": "cpp",
+      "source": "semantic.cpp",
+      "execution_profile": null
+    },
+    {
+      "name": "cpp-idiomatic",
+      "kind": "cpp",
+      "source": "idiomatic.cpp",
+      "execution_profile": null
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import hashlib
 import json
 import os
@@ -22,8 +23,20 @@ DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT = (
     "DEVELOPER_DIR",
     "LD_LIBRARY_PATH",
     "DYLD_LIBRARY_PATH",
+    "DYLD_FRAMEWORK_PATH",
+    "DYLD_FALLBACK_FRAMEWORK_PATH",
     "INCLUDE",
     "LIB",
+)
+
+GIT_REPOSITORY_ENVIRONMENT = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_IMPLICIT_WORK_TREE",
 )
 
 
@@ -68,25 +81,138 @@ def host_target_os():
     return "unknown"
 
 
-def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: project_cli_smoke_test.py /path/to/gti")
+def test_dependency_warning_policy(gti, root):
+    project = root / "dependency-warning-app"
+    library = root / "warning-library"
+    leaf = root / "warning-leaf"
+    source = project / "src/main.gti"
+    own = project / "src/build/gti/deps/owned.gti"
+    library_source = library / "src/value.gti"
+    leaf_source = leaf / "src/value.gti"
+    for path in (source, own, library_source, leaf_source):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        '#include <library/value>\n#include "build/gti/deps/owned.gti"\n'
+        "int main() { mut int own = 0; return library::value() + owned() + own; }\n",
+        encoding="utf-8",
+    )
+    own.write_text(
+        "int owned() { mut int own = 0; return own; }\n", encoding="utf-8")
+    library_text = (
+        "#include <leaf/value>\nnamespace library { int value() { "
+        "mut int value = 0; return leaf::value() + value; } }\n")
+    library_source.write_text(library_text, encoding="utf-8")
+    leaf_source.write_text(
+        "namespace leaf { int value() { mut int value = 0; return value; } }\n",
+        encoding="utf-8",
+    )
+    # Dependencies cannot impose their diagnostic preferences on the consumer.
+    (library / "gti.toml").write_text(
+        'manifest-version = 1\n[package]\nname = "warning_library"\n'
+        'version = "1.0.0"\n[dependencies]\nleaf = { path = "../warning-leaf" }\n'
+        '[profiles.dev]\ndependency-warnings = false\n'
+        'disabled-warnings = ["unused-mut"]\n', encoding="utf-8")
+    (leaf / "gti.toml").write_text(
+        'manifest-version = 1\n[package]\nname = "warning_leaf"\n'
+        'version = "1.0.0"\n', encoding="utf-8")
+    base_manifest = manifest(
+        '[dependencies]\nlibrary = { path = "../warning-library" }\n'
+        '[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n')
+    manifest_path = project / "gti.toml"
+    manifest_path.write_text(base_manifest, encoding="utf-8")
+    visible = run([gti, "check"], cwd=project)
+    assert visible.stderr.count("warning[GTI-S2096]") == 4, visible.stderr
+    assert "Diagnostics: 0 errors, 4 warnings" in visible.stdout
 
-    requested_gti = pathlib.Path(sys.argv[1])
+    quiet_profile = "\n[profiles.dev]\ndependency-warnings = false\n"
+    manifest_path.write_text(base_manifest + quiet_profile, encoding="utf-8")
+    for options in (["check"], ["build", "--emit-mir"]):
+        suppressed = run([gti, *options], cwd=project)
+        assert suppressed.stderr.count("warning[GTI-S2096]") == 2, suppressed.stderr
+        assert str(library_source) not in suppressed.stderr
+        assert str(leaf_source) not in suppressed.stderr
+        assert str(own) in suppressed.stderr
+        assert "Diagnostics: 0 errors, 2 warnings" in suppressed.stdout
+    metadata = json.loads(run([gti, "metadata"], cwd=project).stdout)
+    assert metadata["schemaVersion"] == 14
+    assert [profile["dependencyWarnings"] for profile in metadata["profiles"]] == [
+        False, True]
+    assert [output["dependencyWarnings"]
+            for output in metadata["targets"][0]["outputs"]] == [False, True]
+
+    built = run([gti, "build", "--verbose"], cwd=project)
+    assert built.stderr.count("warning[GTI-S2096]") == 2, built.stderr
+    cached = run([gti, "build", "--verbose"], cwd=project)
+    assert "gti: cache hit " in cached.stderr, cached.stderr
+    manifest_path.write_text(
+        base_manifest + quiet_profile.replace("false", "true"), encoding="utf-8")
+    reenabled = run([gti, "build", "--verbose"], cwd=project)
+    assert "gti: cache miss " in reenabled.stderr, reenabled.stderr
+    assert reenabled.stderr.count("warning[GTI-S2096]") == 4, reenabled.stderr
+    manifest_path.write_text(base_manifest + quiet_profile, encoding="utf-8")
+    grouped = run([gti, "check", "-Wno-unused-mut"], cwd=project)
+    assert "warning[" not in grouped.stderr, grouped.stderr
+    assert "Diagnostics: 0 errors, 0 warnings" in grouped.stdout
+    release = run([gti, "check", "--release"], cwd=project)
+    assert release.stderr.count("warning[GTI-S2096]") == 4, release.stderr
+    custom_profile = "\n[profiles.quiet]\ndependency-warnings = false\n"
+    manifest_path.write_text(
+        base_manifest + quiet_profile + custom_profile, encoding="utf-8")
+    custom = run([gti, "check", "--profile", "quiet"], cwd=project)
+    assert custom.stderr.count("warning[GTI-S2096]") == 2, custom.stderr
+    direct_source = project / "src/direct.gti"
+    direct_source.write_text(
+        "int main() { mut int own = 0; return own; }\n", encoding="utf-8")
+    direct = run([gti, str(direct_source), "--emit-mir"], cwd=project)
+    assert direct.stderr.count("warning[GTI-S2096]") == 1, direct.stderr
+    library_source.write_text(
+        "namespace library { int value() { return missing; } }\n", encoding="utf-8")
+    error = run([gti, "check"], expected=65, cwd=project)
+    assert "error[GTI-S2001]" in error.stderr and str(library_source) in error.stderr
+    library_source.write_text(library_text, encoding="utf-8")
+    manifest_path.write_text(
+        base_manifest + quiet_profile.replace("false", '"false"'), encoding="utf-8")
+    malformed = run([gti, "check"], expected=65, cwd=project)
+    assert "error[GTI-B1004]" in malformed.stderr
+    assert "'dependency-warnings' must be a Boolean" in malformed.stderr
+
+
+def parse_arguments(arguments=None):
+    parser = argparse.ArgumentParser(description="Exercise the GTI project CLI.")
+    parser.add_argument("gti", help="path to the GTI executable")
+    parser.add_argument(
+        "--jobs", type=int, choices=range(1, 5), default=4,
+        help="maximum concurrent target builds (default: 4; use 1 for a serial run)",
+    )
+    return parser.parse_args(arguments)
+
+
+def main():
+    arguments = parse_arguments()
+    if arguments.jobs == 1:
+        print("project_cli: serial resource limit; parallel scheduling parity "
+              "requires the default four-job run", flush=True)
+
+    requested_gti = pathlib.Path(arguments.gti)
     resolved_gti = (
         requested_gti.resolve()
         if requested_gti.exists()
-        else shutil.which(sys.argv[1])
+        else shutil.which(arguments.gti)
     )
     if resolved_gti is None:
-        raise AssertionError(f"could not resolve GTI executable: {sys.argv[1]}")
+        raise AssertionError(f"could not resolve GTI executable: {arguments.gti}")
     gti = str(resolved_gti)
+    git = shutil.which("git")
+    if git is None:
+        raise AssertionError("project CLI Git initialization requires git")
     # Cache checks need a deterministic environment. Some hosted Python
     # launchers inject SDK/include/library search paths before this script
     # starts; the driver correctly treats those mutable roots as a cache
     # bypass. Explicit environment-bypass coverage below adds CPATH back for
     # the command that owns that behavior.
     for variable in DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT:
+        os.environ.pop(variable, None)
+    for variable in GIT_REPOSITORY_ENVIRONMENT:
         os.environ.pop(variable, None)
     scaffold_source = (
         "#include <std/string>\n"
@@ -167,6 +293,119 @@ def main():
             == scaffold_source
         )
 
+        git_init = root / "git-init"
+        git_init.mkdir()
+        initialized_git = run([gti, "init", str(git_init), "--git"])
+        assert "Initialized package 'git-init'" in initialized_git.stdout
+        assert "Initialized Git repository and wrote .gitignore" in (
+            initialized_git.stdout
+        )
+        assert (git_init / ".git").is_dir()
+        assert (git_init / ".gitignore").read_text(encoding="utf-8") == (
+            "# GTI build output\n/build/\n"
+        )
+        top_level = run(
+            [git, "-C", str(git_init), "rev-parse", "--show-toplevel"]
+        )
+        assert pathlib.Path(top_level.stdout.strip()).resolve() == git_init.resolve()
+        ignored_build_file = git_init / "build" / "probe.txt"
+        ignored_build_file.parent.mkdir()
+        ignored_build_file.write_text("ignored\n", encoding="utf-8")
+        run(
+            [
+                git,
+                "-C",
+                str(git_init),
+                "check-ignore",
+                "--quiet",
+                "build/probe.txt",
+            ]
+        )
+
+        new_with_git = run(
+            [gti, "new", str(root / "new-with-git"), "--git"],
+            expected=64,
+        )
+        assert "--git is supported only by gti init" in new_with_git.stderr
+        assert not (root / "new-with-git").exists()
+
+        duplicate_git = root / "duplicate-git"
+        duplicate_git.mkdir()
+        duplicate_git_option = run(
+            [gti, "init", str(duplicate_git), "--git", "--git"],
+            expected=64,
+        )
+        assert "--git may be specified only once" in duplicate_git_option.stderr
+        assert not (duplicate_git / "gti.toml").exists()
+
+        existing_ignore = root / "existing-ignore"
+        existing_ignore.mkdir()
+        (existing_ignore / ".gitignore").write_text(
+            "user-owned\n", encoding="utf-8"
+        )
+        refused_ignore = run(
+            [gti, "init", str(existing_ignore), "--git"], expected=64
+        )
+        assert "error[GTI-B1503]" in refused_ignore.stderr
+        assert (existing_ignore / ".gitignore").read_text(
+            encoding="utf-8"
+        ) == "user-owned\n"
+        assert not (existing_ignore / "gti.toml").exists()
+
+        failed_git = root / "failed-git"
+        failed_git.mkdir()
+        missing_git_environment = os.environ.copy()
+        missing_git_environment["GTI_GIT"] = str(root / "missing-git")
+        git_failure = run(
+            [gti, "init", str(failed_git), "--git"],
+            expected=78,
+            env=missing_git_environment,
+        )
+        assert "error[GTI-B1504]" in git_failure.stderr
+        assert "Failed to initialize the Git repository" in git_failure.stderr
+        assert not (failed_git / "gti.toml").exists()
+        assert not (failed_git / "src").exists()
+        assert not (failed_git / ".gitignore").exists()
+        assert not (failed_git / ".git").exists()
+
+        external_git = root / "external-git-state"
+        external_git.mkdir()
+        sentinel = external_git / "sentinel"
+        sentinel.write_text("user-owned\n", encoding="utf-8")
+        for variable in GIT_REPOSITORY_ENVIRONMENT:
+            for value in (str(external_git), ""):
+                protected_init = root / "environment-protected-init"
+                protected_init.mkdir(exist_ok=True)
+                environment = os.environ.copy()
+                environment[variable] = value
+                # Environment rejection must precede even executable discovery
+                # failure, and must not initialize or rewrite either directory.
+                environment["GTI_GIT"] = str(root / "missing-git")
+                refused = run(
+                    [gti, "init", str(protected_init), "--git"],
+                    expected=64,
+                    env=environment,
+                )
+                assert "error[GTI-B1500]" in refused.stderr
+                assert variable in refused.stderr
+                assert "unset that environment variable" in refused.stderr
+                assert list(protected_init.iterdir()) == []
+                assert list(external_git.iterdir()) == [sentinel]
+                assert sentinel.read_text(encoding="utf-8") == "user-owned\n"
+
+        # An existing Git directory is not scaffold-owned, even on failure.
+        protected_repository = root / "protected-repository"
+        metadata = protected_repository / ".git"
+        metadata.mkdir(parents=True)
+        git_sentinel = metadata / "sentinel"
+        git_sentinel.write_text("repository-owned\n", encoding="utf-8")
+        refused_repository = run(
+            [gti, "init", str(protected_repository), "--git"], expected=64
+        )
+        assert "error[GTI-B1503]" in refused_repository.stderr
+        assert git_sentinel.read_text(encoding="utf-8") == "repository-owned\n"
+        assert not (protected_repository / "gti.toml").exists()
+
         format_root = root / "format-root"
         format_root.mkdir()
         initialized_format = run([gti, "format", "init"], cwd=format_root)
@@ -233,6 +472,65 @@ def main():
             intermediate_executable.parent
             / ".gti-intermediate/intermediate.gti.cpp"
         ).is_file()
+
+        warning_project = root / "warning-project"
+        warning_source = warning_project / "src/main.gti"
+        warning_source.parent.mkdir(parents=True)
+        warning_source.write_text(
+            "int main() { mut int result = 0; return result; }\n",
+            encoding="utf-8",
+        )
+        warning_manifest = warning_project / "gti.toml"
+        warning_manifest.write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "warning_project"\n'
+            'version = "0.1.0"\n\n'
+            "[targets.warning_project]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n\n'
+            "[profiles.dev]\n"
+            'disabled-warnings = ["unused-mut"]\n',
+            encoding="utf-8",
+        )
+        warning_build = run([gti, "build", "--no-cache"], cwd=warning_project)
+        assert "GTI-S2096" not in warning_build.stderr
+        assert (
+            warning_build.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 0 warnings"
+        )
+        warning_manifest.write_text(
+            warning_manifest.read_text(encoding="utf-8").replace(
+                'disabled-warnings = ["unused-mut"]\n', ""
+            ),
+            encoding="utf-8",
+        )
+        warning_check = run([gti, "check"], cwd=warning_project)
+        assert "warning[GTI-S2096]" in warning_check.stderr
+        assert (
+            warning_check.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 1 warning"
+        )
+        warning_check_suppressed = run(
+            [gti, "check", "-Wno-unused-mut"], cwd=warning_project
+        )
+        assert "GTI-S2096" not in warning_check_suppressed.stderr
+        assert (
+            warning_check_suppressed.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 0 warnings"
+        )
+
+        warning_source.write_text("int main() { unsafe { return 0; } }\n", encoding="utf-8")
+        unsafe_warning = run([gti, "check"], cwd=warning_project)
+        assert "warning[GTI-S2100]" in unsafe_warning.stderr
+        warning_manifest.write_text(
+            warning_manifest.read_text(encoding="utf-8") +
+            'disabled-warnings = ["unused-unsafe"]\n', encoding="utf-8")
+        unsafe_suppressed = run([gti, "check"], cwd=warning_project)
+        assert "GTI-S2100" not in unsafe_suppressed.stderr
+        assert unsafe_suppressed.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 0 warnings"
+
+        test_dependency_warning_policy(gti, root)
 
         missing_new_path = run([gti, "new"], expected=64, cwd=root)
         assert "requires a destination path" in missing_new_path.stderr
@@ -331,7 +629,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 9
+        assert configuration_metadata["schemaVersion"] == 14
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -365,6 +663,40 @@ def main():
         executable = executable_named(dev_directory, "sample")
         run([str(executable)])
         assert not (project / "build/gti/release").exists()
+
+        # --no-build resolves the selected managed output but deliberately does
+        # not parse changed source, regenerate bindings, build dependencies, or
+        # consult the cache before launching it.
+        source.write_text("this is deliberately invalid GTI\n", encoding="utf-8")
+        no_build_run = run(
+            [gti, "run", "--no-build", "--", "preserved argument"], cwd=nested
+        )
+        assert no_build_run.stdout == ""
+        assert "Running existing " in no_build_run.stderr
+        assert "(--no-build)" in no_build_run.stderr
+        assert "Built sample" not in no_build_run.stderr
+        source.write_text("int main() { return 0; }\n", encoding="utf-8")
+
+        saved_executable = executable.with_name(executable.name + ".saved")
+        executable.rename(saved_executable)
+        missing_no_build = run(
+            [gti, "run", "--no-build"], expected=74, cwd=nested
+        )
+        assert "managed executable does not exist" in missing_no_build.stderr
+        assert "build target 'sample' before using --no-build" in (
+            missing_no_build.stderr
+        )
+        saved_executable.rename(executable)
+        invalid_no_build_command = run(
+            [gti, "build", "--no-build"], expected=64, cwd=nested
+        )
+        assert "supported only by gti run" in invalid_no_build_command.stderr
+        conflicting_no_build = run(
+            [gti, "run", "--no-build", "--no-cache"],
+            expected=64,
+            cwd=nested,
+        )
+        assert "--no-build cannot be combined" in conflicting_no_build.stderr
 
         emitted = run([gti, "build", "--emit-mir"], cwd=nested)
         assert "Emitted MIR sample [dev," in emitted.stdout
@@ -473,13 +805,14 @@ def main():
                 'root = "main.gti"\n',
                 "\n[profiles.release]\n"
                 "optimization = 3\n"
-                'execution-profile = "concurrent"\n',
+                'execution-profile = "concurrent"\n'
+                'disabled-warnings = ["unused-mut"]\n',
             ),
             encoding="utf-8",
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 9
+        assert metadata_document["schemaVersion"] == 14
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -488,14 +821,22 @@ def main():
                 "optimization": 0,
                 "cppStandard": "c++23",
                 "executionProfile": "single-threaded",
+                "rawPointerAudit": "off",
+                "disabledWarnings": [],
+                "dependencyWarnings": True,
                 "keepCpp": False,
+                "debugInfo": False,
             },
             {
                 "name": "release",
                 "optimization": 3,
                 "cppStandard": "c++23",
                 "executionProfile": "concurrent",
+                "rawPointerAudit": "off",
+                "disabledWarnings": ["unused-mut"],
+                "dependencyWarnings": True,
                 "keepCpp": False,
+                "debugInfo": False,
             },
         ]
         assert metadata_document["targets"][0]["outputs"][1]["profile"] == "release"
@@ -552,7 +893,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 9
+        assert test_metadata["schemaVersion"] == 14
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -763,7 +1104,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 9
+        assert native_document["schemaVersion"] == 14
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -868,9 +1209,9 @@ def main():
             expected=1,
             cwd=native_nested,
         )
-        assert "native C compiler diagnostics" in failed_c_build.stderr
-        assert "native C compiler failed" in failed_c_build.stderr
-        assert "generated C++ retained" in failed_c_build.stderr
+        assert "native source diagnostics" in failed_c_build.stderr
+        assert "native source compiler failed" in failed_c_build.stderr
+        assert "backend 'c++' representation saved" in failed_c_build.stderr
         assert native_object.read_bytes() == previous_object
         run([str(native_executable)])
 
@@ -891,9 +1232,9 @@ def main():
             expected=1,
             cwd=native_nested,
         )
-        assert "native C++ compiler diagnostics" in failed_cpp_build.stderr
-        assert "native C++ compiler failed for" in failed_cpp_build.stderr
-        assert "generated C++ retained" in failed_cpp_build.stderr
+        assert "native source diagnostics" in failed_cpp_build.stderr
+        assert "native source compiler failed for" in failed_cpp_build.stderr
+        assert "backend 'c++' representation saved" in failed_cpp_build.stderr
         assert native_cpp_object.read_bytes() == previous_cpp_object
         run([str(native_executable)])
 
@@ -1087,7 +1428,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 9
+        assert workspace_metadata["schemaVersion"] == 14
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -1209,7 +1550,7 @@ def main():
 
         engine_source = (
             pathlib.Path(__file__).resolve().parent.parent
-            / "examples/game-engine/gti"
+            / "tests/fixtures/project_cli_layer_stack"
         )
         engine_project = root / "psych-core-example"
         shutil.copytree(
@@ -1283,8 +1624,8 @@ def main():
             )
             (path / "src/add.gti").write_text(
                 f"namespace {name} {{\n"
-                f"int add(int left, int right) {{ return left + right"
-                f" + {add_bias}; }}\n"
+                f"int add(int left, int right) {{ mut int bias = {add_bias}; "
+                "return left + right + bias; }\n"
                 "}\n",
                 encoding="utf-8",
             )
@@ -1341,6 +1682,16 @@ def main():
         refetched = run([gti, "fetch"], cwd=git_app)
         assert "gti.lock is up to date (1 git dependency)" in refetched.stdout
         assert lock_path.read_text(encoding="utf-8") == lock_text
+
+        git_warnings = run([gti, "check", "--offline"], cwd=git_app)
+        assert git_warnings.stderr.count("warning[GTI-S2096]") == 1, git_warnings.stderr
+        original_git_manifest = (git_app / "gti.toml").read_text(encoding="utf-8")
+        (git_app / "gti.toml").write_text(
+            original_git_manifest +
+            "\n[profiles.dev]\ndependency-warnings = false\n", encoding="utf-8")
+        git_suppressed = run([gti, "check", "--offline"], cwd=git_app)
+        assert "warning[GTI-S2096]" not in git_suppressed.stderr
+        (git_app / "gti.toml").write_text(original_git_manifest, encoding="utf-8")
 
         run([gti, "build"], cwd=git_app)
         run([gti, "run"], cwd=git_app)
@@ -1857,11 +2208,14 @@ def main():
                     'frameworks = ["CoreFoundation"]',
                 ]
             )
-            framework_bypass = cache_native_build()
-            assert "gti: cache bypassed" in framework_bypass.stderr
-            assert (
-                "name-resolved frameworks require framework search resolution"
-                in framework_bypass.stderr
+            framework_miss = cache_native_build()
+            assert "gti: cache miss " in framework_miss.stderr
+            assert "gti: cache bypassed" not in framework_miss.stderr
+            framework_hit = cache_native_build()
+            assert "gti: cache hit " in framework_hit.stderr
+            assert not any(
+                line.startswith("+ ")
+                for line in framework_hit.stderr.splitlines()
             )
 
         resolved_archive.unlink()
@@ -2191,8 +2545,10 @@ def main():
                 for name in all_target_names
             }
 
+        # Compare deterministic build presentation, not elapsed progress.
+        # Live parallel target waits have their own cli_progress coverage.
         parallel_all = run(
-            [gti, "build", "--all", "--jobs", "4", "--no-cache"],
+            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache", "--progress=never"],
             cwd=multi_project,
         )
         built_positions = [
@@ -2205,7 +2561,7 @@ def main():
 
         run([gti, "clean"], cwd=multi_project)
         serial_all = run(
-            [gti, "build", "--all", "--jobs", "1", "--no-cache"],
+            [gti, "build", "--all", "--jobs", "1", "--no-cache", "--progress=never"],
             cwd=multi_project,
         )
         assert serial_all.stdout == parallel_all.stdout
@@ -2214,7 +2570,10 @@ def main():
         assert serial_artifacts == parallel_artifacts
 
         # A cached rebuild restores every target through the same command.
-        cached_all = run([gti, "build", "--all"], cwd=multi_project)
+        # Keep default-job CLI coverage in the ordinary run, but do not let
+        # hardware-concurrency defaults escape an explicit local resource cap.
+        cached_jobs = [] if arguments.jobs == 4 else ["--jobs", str(arguments.jobs)]
+        cached_all = run([gti, "build", "--all", *cached_jobs], cwd=multi_project)
         assert "Built 4 targets [dev]" in cached_all.stdout
 
         # One failing target must produce the same ordered diagnostics and
@@ -2233,7 +2592,7 @@ def main():
             failing_manifest, encoding="utf-8"
         )
         parallel_failure = run(
-            [gti, "build", "--all", "--jobs", "4", "--no-cache"],
+            [gti, "build", "--all", "--jobs", str(arguments.jobs), "--no-cache", "--progress=never"],
             expected=65,
             cwd=multi_project,
         )
@@ -2245,14 +2604,15 @@ def main():
             assert f"Built {name} [dev," in parallel_failure.stdout
         run([gti, "clean"], cwd=multi_project)
         serial_failure = run(
-            [gti, "build", "--all", "--jobs", "1", "--no-cache"],
+            [gti, "build", "--all", "--jobs", "1", "--no-cache", "--progress=never"],
             expected=65,
             cwd=multi_project,
         )
         assert serial_failure.stdout == parallel_failure.stdout
         assert serial_failure.stderr == parallel_failure.stderr
 
-        # Option surface errors stay focused usage failures.
+        # Option surface errors stay focused. --jobs also controls dependency
+        # build scripts, so it no longer requires --all.
         all_with_target = run(
             [gti, "build", "--all", "alpha"], expected=64, cwd=multi_project
         )
@@ -2260,9 +2620,9 @@ def main():
             all_with_target.stderr
         )
         jobs_without_all = run(
-            [gti, "build", "--jobs", "2"], expected=64, cwd=multi_project
+            [gti, "build", "--jobs", "2"], expected=65, cwd=multi_project
         )
-        assert "--jobs requires --all" in jobs_without_all.stderr
+        assert "declares multiple targets" in jobs_without_all.stderr
         invalid_jobs = run(
             [gti, "build", "--all", "--jobs", "0"],
             expected=64,
@@ -2273,6 +2633,121 @@ def main():
             [gti, "check", "--all"], expected=64, cwd=multi_project
         )
         assert "--all is not supported by gti check" in all_on_check.stderr
+
+        # --- Consumer-approved dependency build scripts ---
+        scripted = root / "scripted-native"
+        (scripted / "src").mkdir(parents=True)
+        (scripted / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "scripted-native"\n'
+            'version = "0.1.0"\n\n'
+            "[package.build-script]\n"
+            'source = "build.gti"\n'
+            'inputs = []\n',
+            encoding="utf-8",
+        )
+        (scripted / "src/scripted.gti").write_text(
+            "namespace scripted {\n"
+            'extern "C" {\n'
+            "int scripted_value();\n"
+            "}\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (scripted / "build.gti").write_text(
+            "#include <std/build>\n"
+            "#include <std/cstdio>\n"
+            "#include <std/string>\n"
+            "#include <std/vector>\n\n"
+            "int main(int argc, std::vector<std::string> argv) {\n"
+            "  if (argc != 11) { return 64; }\n"
+            "  mut std::build::context context = "
+            "std::build::context_from_args(argv);\n"
+            "  mut std::string source = "
+            "std::string(context.output_dir().view());\n"
+            "  source.append(\"/scripted.c\");\n"
+            "  mut auto file = std::fopen(source.view(), "
+            "std::file_mode::write);\n"
+            "  if (!file) { return 74; }\n"
+            "  auto written = file.value()->write(\n"
+            "      \"int scripted_value(void) { return 42; }\\n\");\n"
+            "  if (!written) { return 74; }\n"
+            "  auto closed = file.value()->close();\n"
+            "  if (!closed) { return 74; }\n"
+            "  mut std::build::outputs outputs = "
+            "std::build::outputs();\n"
+            "  outputs.c_source(\"scripted.c\");\n"
+            "  return outputs.publish(context);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        scripted_app = root / "scripted-app"
+        (scripted_app / "src").mkdir(parents=True)
+        scripted_manifest = (
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "scripted-app"\n'
+            'version = "0.1.0"\n\n'
+            "[dependencies]\n"
+            'scripted = { path = "../scripted-native" }\n\n'
+            "[build]\n"
+            'allow-build-scripts = ["scripted-native@0.1.0"]\n\n'
+            "[targets.scripted]\n"
+            'kind = "test"\n'
+            'root = "src/main.gti"\n'
+        )
+        (scripted_app / "gti.toml").write_text(
+            scripted_manifest, encoding="utf-8"
+        )
+        (scripted_app / "src/main.gti").write_text(
+            "#include <scripted/scripted>\n\n"
+            "int main() {\n"
+            "  unsafe { return scripted::scripted_value() == 42 ? 0 : 1; }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        scripted_metadata = json.loads(
+            run([gti, "metadata"], cwd=scripted_app).stdout
+        )
+        assert scripted_metadata["schemaVersion"] == 14
+        assert scripted_metadata["build"]["allowBuildScripts"] == [
+            "scripted-native@0.1.0"
+        ]
+        dependency_metadata = next(
+            package
+            for package in scripted_metadata["workspace"]["packages"]
+            if package["name"] == "scripted-native"
+        )
+        assert dependency_metadata["buildScript"]["command"] == []
+        assert dependency_metadata["buildScript"]["source"] == "build.gti"
+        script_plan = scripted_metadata["targets"][0]["outputs"][0][
+            "buildScripts"
+        ][0]
+        assert script_plan["package"] == "scripted-native@0.1.0"
+        assert script_plan["source"].endswith("/build.gti")
+        assert not (scripted_app / "build").exists()
+        built_scripted = run(
+            [gti, "test", "--jobs", "2"], cwd=scripted_app
+        )
+        assert "Built native dependency scripted-native@0.1.0" in (
+            built_scripted.stderr
+        )
+        reused_scripted = run(
+            [gti, "test", "--jobs", "2"], cwd=scripted_app
+        )
+        assert "Reused native dependency scripted-native@0.1.0" in (
+            reused_scripted.stderr
+        )
+        (scripted_app / "gti.toml").write_text(
+            scripted_manifest.replace(
+                'allow-build-scripts = ["scripted-native@0.1.0"]',
+                "allow-build-scripts = []",
+            ),
+            encoding="utf-8",
+        )
+        unapproved_script = run([gti, "check"], expected=65, cwd=scripted_app)
+        assert "error[GTI-B2002]" in unapproved_script.stderr
 
 
         # --- Native dependency composition ---
@@ -2373,7 +2848,7 @@ def main():
         (composed_app / "gti.toml").write_text(leak_manifest, encoding="utf-8")
         leak_build = run([gti, "build"], expected=1, cwd=composed_app)
         assert "wrap.h" in leak_build.stderr
-        assert "native C compiler failed" in leak_build.stderr
+        assert "native source compiler failed" in leak_build.stderr
         (composed_app / "gti.toml").write_text(
             leak_manifest.replace(
                 '[package.native]\nc-sources = ["native/leak.c"]\n\n', ""
@@ -2388,7 +2863,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 9
+        assert composed_metadata["schemaVersion"] == 14
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]
@@ -2507,7 +2982,7 @@ def main():
         broken_dependency = run(
             [gti, "build"], expected=1, cwd=chained_native_app
         )
-        assert "native C compiler failed" in broken_dependency.stderr
+        assert "native source compiler failed" in broken_dependency.stderr
         assert "base.c" in broken_dependency.stderr
         (base_package / "native/base.c").write_text(
             "int base_value(void) { return 40; }\n", encoding="utf-8"

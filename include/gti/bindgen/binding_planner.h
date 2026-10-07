@@ -50,9 +50,8 @@ struct BindingOptions {
   std::vector<BindingNamePattern> allow;
   // Matching declarations are never emitted; deny wins over allow.
   std::vector<BindingNamePattern> deny;
-  // C name to GTI name, for types and constants whose C spelling GTI cannot
-  // use. Functions are excluded: a function's GTI name is its link symbol,
-  // so renaming one would bind a different function.
+  // C name to GTI source name. Functions retain their native symbol through
+  // `[[link_name("...")]]` when the two spellings differ.
   std::map<std::string, std::string> renames;
   // Functions whose result is borrowed array storage counted through an out
   // parameter.
@@ -122,6 +121,9 @@ struct BindingItem {
   // Function: the validated `[[c_array(count)]]` count parameter, empty when
   // the function declares no array-return contract.
   std::string arrayCountParameter;
+  // Function: the exact C link symbol when `name` is a different GTI source
+  // spelling, empty when both names are identical.
+  std::string linkName;
   // Opaque degradation note or skip reason.
   std::string reason;
 };

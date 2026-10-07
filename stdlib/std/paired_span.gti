@@ -1,0 +1,48 @@
+#include <std/span>
+
+namespace std {
+/// A read-only indexed view over two independently owned contiguous buffers.
+/// Its length is the shorter input length. Both owners remain borrowed until
+/// the last use of this view and every copy derived from it.
+class paired_span<L, R> {
+  span<L> left_view;
+  span<R> right_view;
+
+public:
+  paired_span(span<L> left, span<R> right)
+      : left_view(std::move(left)), right_view(std::move(right)) {}
+
+  size_t size() {
+    size_t left_size = this.left_view.size();
+    size_t right_size = this.right_view.size();
+    return left_size < right_size ? left_size : right_size;
+  }
+
+  bool empty() {
+    return this.size() == 0;
+  }
+
+  L& first(size_t index) {
+    gti_internal::index_bounds_check(index, this.size());
+    return this.left_view[index];
+  }
+
+  R& second(size_t index) {
+    gti_internal::index_bounds_check(index, this.size());
+    return this.right_view[index];
+  }
+
+  paired_span<L, R> subspan(size_t offset, size_t count) {
+    size_t length = this.size();
+    if (offset > length) {
+      gti_internal::index_bounds_check(offset, length);
+    }
+    size_t remaining = length - offset;
+    if (count > remaining) {
+      gti_internal::index_bounds_check(count, remaining);
+    }
+    return paired_span<L, R>(this.left_view.subspan(offset, count),
+                              this.right_view.subspan(offset, count));
+  }
+};
+}

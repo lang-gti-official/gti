@@ -1,0 +1,41 @@
+#include <std/string>
+#include <std/vector>
+
+class Owner {
+public:
+  Owner(int value, int divisor) : value(value), divisor(divisor) {}
+  ~Owner() {
+    std::println(this.value);
+    int checked = 1 / this.divisor;
+  }
+  int get() { return this.value; }
+private:
+  int value;
+  int divisor;
+};
+
+class Builder {
+public:
+  Builder() {}
+  ~Builder() { std::println(9); }
+  Owner finish(int guard_divisor, int result_divisor) && {
+    Owner guard{2, guard_divisor};
+    Owner result{7, result_divisor};
+    return result;
+  }
+  Builder identity() && { return std::move(this); }
+};
+
+struct Copyable {
+  int value = 3;
+};
+
+Copyable copy_result(Copyable value) { return value; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Owner result = Builder().identity().finish(argc == 1 ? 1 : 0, argc == 3 ? 0 : 1);
+  Copyable original{};
+  Copyable copied = copy_result(original);
+  if (copied.value != original.value || result.get() != 7) { return 1; }
+  return 0;
+}

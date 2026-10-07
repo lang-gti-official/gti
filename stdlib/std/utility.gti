@@ -3,17 +3,52 @@
 // it is intentionally not redeclared here.
 
 namespace std {
+  concept member_cloneable<T> =
+      requires (T& value) { { value.clone() } -> T; };
+
+  concept cloneable<T> = std::member_cloneable<T> || std::copy_constructible<T>;
+
+  /// Explicit duplication: use an exact read-only clone member when present,
+  /// otherwise ordinary copy construction. Shared owners retain sharing.
+  T clone<T>(T& value) requires std::cloneable<T> {
+    if constexpr (requires (T& candidate) { { candidate.clone() } -> T; }) {
+      return value.clone();
+    } else {
+      return value;
+    }
+  }
+
+  namespace detail {
+    // A mutable entry still has an immutable key: changing a stored key would
+    // invalidate an ordered tree or hash table's lookup invariant.
+    struct map_entry<K, V> {
+      K first;
+      mut V second;
+
+      map_entry(K key, V value)
+          : first(std::move(key)), second(std::move(value)) {}
+    };
+  }
+
   struct pair<T, U> {
     mut T first;
     mut U second;
 
-    pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
+    constexpr pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
   };
 
-  pair<T, U> make_pair<T, U>(T first, U second) {
+  constexpr pair<T, U> make_pair<T, U>(T first, U second) {
     return pair<T, U>(std::move(first), std::move(second));
   }
 
-  void swap<T>(mut T& left, mut T& right);
-  T exchange<T, U>(mut T& object, U new_value);
+  /// Exchange disjoint initialized places without copying or running cleanup.
+  void swap<T>(mut T& left, mut T& right) requires std::relocatable<T> {
+    gti_internal::restoring_swap(left, right);
+  }
+
+  /// Prepare the replacement first; return the old value with its ownership.
+  T exchange<T>(mut T& object, T new_value) requires std::relocatable<T> {
+    T previous = gti_internal::restoring_exchange(object, std::move(new_value));
+    return std::move(previous);
+  }
 }

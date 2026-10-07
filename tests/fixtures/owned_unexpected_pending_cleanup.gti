@@ -1,0 +1,40 @@
+#include <std/string>
+#include <std/vector>
+
+class Error {
+  int divisor;
+  std::string message;
+public:
+  Error(int divisor, std::string message)
+      : divisor(divisor), message(std::move(message)) { std::println(1); }
+  ~Error() {
+    std::println(3);
+    int value = 1 / this.divisor;
+  }
+};
+
+class Guard {
+  int divisor;
+public:
+  Guard(int divisor) : divisor(divisor) {}
+  ~Guard() {
+    std::println(2);
+    int value = 2 / this.divisor;
+  }
+};
+
+expected<int, Error> make(int guard_divisor, int error_divisor) {
+  Guard local{guard_divisor};
+  return unexpected(Error(error_divisor, std::string("owning error")));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 5) {
+    expected<int, Error> success = 7;
+    std::println(8);
+    return 0;
+  }
+  auto result = make(argc == 1 || argc == 4 ? 1 : 0, argc < 3 ? 1 : 0);
+  std::println(4);
+  return 0;
+}

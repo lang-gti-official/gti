@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lang::driver {
@@ -16,6 +18,10 @@ struct ProcessInvocationOptions {
   ProcessOutputMode outputMode = ProcessOutputMode::Capture;
   bool captureSuccessfulOutput = false;
   std::string description = "process";
+  std::optional<std::filesystem::path> workingDirectory;
+  // Environment entries override inherited values. Build scripting currently
+  // does not claim sandboxing; inheritance is intentional and documented.
+  std::vector<std::pair<std::string, std::string>> environment;
 };
 
 struct ProcessResult {

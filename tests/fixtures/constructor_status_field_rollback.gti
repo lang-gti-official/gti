@@ -1,0 +1,37 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+struct Resource {
+  int divisor;
+  Resource(int divisor) : divisor(divisor) {}
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {
+    int checked = 1 / resource.divisor;
+  }
+  ~Guard() { std::println(10); }
+};
+class Leaf {
+public:
+  Leaf() {}
+  ~Leaf() { std::println(40); }
+};
+class Outer {
+  Guard guard;
+  std::unique_ptr<Leaf> metadata;
+public:
+  Outer(Resource& resource, int divisor)
+      : guard(Guard(resource)), metadata(std::make_unique<Leaf>()) {
+    int checked = 2 / divisor;
+  }
+  ~Outer() { std::println(20); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{argc == 2 ? 0 : 1};
+  Outer outer{resource, argc == 3 ? 0 : 1};
+  std::println(30);
+  return 0;
+}

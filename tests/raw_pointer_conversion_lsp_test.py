@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Pointer alias conversion uses compiler diagnostics and alias identities."""
+import os
+import pathlib
+import sys
+import tempfile
+
+from lsp_smoke_test import LspSession, lsp_position
+
+def main():
+    repository = pathlib.Path(__file__).resolve().parent.parent
+    os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
+    valid = """using Erased = const void*;
+using Pointer = const int*;
+int main() { int value = 42; Erased address = Erased(&value);
+/*😀*/ Pointer restored = Pointer(address);
+unsafe { return *restored - 42; } }
+"""
+    invalid = valid.replace("using Pointer = const int*;", "using Pointer = const uint64_t*;")
+    with tempfile.TemporaryDirectory(prefix="gti-pointer-conversion-lsp-") as directory:
+        path = pathlib.Path(directory) / "main.gti"
+        path.write_text(valid)
+        uri = path.as_uri()
+        session = LspSession(sys.argv[1], ["--raw-pointer-audit=strict"])
+        def published(version):
+            reply = session.receive_until(lambda message:
+                message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"].get("uri") == uri
+                and message["params"].get("version") == version)
+            return [d for d in reply["params"]["diagnostics"] if d.get("severity") == 1]
+        def change(version, source):
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": source}]}})
+        try:
+            session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": True}}}}})
+            assert "error" not in session.receive_until(lambda message: message.get("id") == 1)
+            session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": valid}}})
+            assert not published(1)
+            change(2, invalid)
+            errors = published(2)
+            diagnostic = next((d for d in errors if d.get("code") == "GTI-S2101"
+                               and "known pointee type" in d["message"]), None)
+            assert diagnostic, errors
+            assert diagnostic["range"]["start"] == lsp_position(invalid, invalid.index("Pointer(address)")), diagnostic
+            assert diagnostic.get("relatedInformation"), diagnostic
+            change(3, valid)
+            assert not published(3)
+            session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition", "params": {
+                "textDocument": {"uri": uri}, "position": lsp_position(valid, valid.index("Pointer(address)"))}})
+            reply = session.receive_until(lambda message: message.get("id") == 2)
+            assert reply.get("result"), reply
+            change(4, valid.replace("Pointer(address)", "Pointer("))
+            assert published(4)
+            change(5, valid)
+            assert not published(5)
+        finally:
+            session.close()
+    print("pointer conversion LSP diagnostics, alias identity and recovery passed")
+
+if __name__ == "__main__":
+    main()

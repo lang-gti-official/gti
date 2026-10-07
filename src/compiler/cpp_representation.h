@@ -9,15 +9,54 @@
 
 namespace lang {
 
+[[nodiscard]] std::string
+cppClassTemplateNameSpelling(const LoweredProgram &program, ClassId id);
+
 // Deterministic C++ representation authorities over the sealed lowered
 // program, per ADR 016. These are backend policy: no C++ spelling is stored in
 // LoweredProgram itself.
 
 inline constexpr std::string_view cppEmittedStandardNamespace = "__gti_std";
 
+// A symbolic result keeps one status-ABI result channel even when a concrete
+// instance returns void. Virtual declarations and overrides share that choice.
+[[nodiscard]] bool
+cppFunctionHasFailureResultChannel(const LoweredProgram &program,
+                                   const LoweredFunctionDeclaration &function);
+
+// A virtual slot whose declaration has a class-bound symbolic value result
+// retains a defaulted internal output channel across every override. Native
+// byte-transport results use that channel; other results keep ordinary returns.
+[[nodiscard]] bool cppVirtualFamilyHasConditionalResultChannel(
+    const LoweredProgram &program, const LoweredFunctionDeclaration &function);
+
 [[nodiscard]] std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                                                   CppStandard standard,
                                                   const SemanticType &type);
+
+// Foreign declarations and native-layout fields retain their actual pointer
+// ABI. Ordinary GTI values use inert integer-address carriers instead.
+[[nodiscard]] std::string cppNativeTypeSpelling(const LoweredProgram &program,
+                                                CppStandard standard,
+                                                const SemanticType &type);
+
+// Internal value transport must not evaluate a native object-pointer member
+// after its pointee expires. This representation fact is transitive through
+// inline aggregates, not through references or owning handles. It does not
+// change semantic copyability, cleanup, failure effects, or the external ABI.
+[[nodiscard]] bool cppRequiresBytePreservingTransport(const MirProgram &program,
+                                                      const SemanticType &type);
+
+// Native records cannot acquire custom C++ special members without changing
+// their external ABI. Their direct internal values (including fixed arrays)
+// therefore cross source function boundaries through reference/output slots.
+// Ordinary containing carriers have representation-owned safe special members.
+[[nodiscard]] bool cppRequiresIndirectValueTransport(const MirProgram &program,
+                                                     const SemanticType &type);
+
+// A retained native template's direct dependent field needs the same physical
+// selection as a concrete native record or inline array thereof.
+[[nodiscard]] bool cppUsesDependentByteField(const SemanticType &type);
 
 // A deterministic GTI-owned class symbol for one concrete, nameable generic
 // class application. The direct representation is deliberately limited to
@@ -58,6 +97,16 @@ cppConcreteFunctionInstanceIsNameable(const LoweredProgram &program,
 // incoherent instances return no spelling.
 [[nodiscard]] std::optional<std::string>
 cppConcreteFreeFunctionSpelling(const LoweredProgram &program,
+                                const LoweredDeclaration &row,
+                                const LoweredFunctionDeclaration &function,
+                                const LoweredFunctionInstance &instance,
+                                const MirFunctionInstance &mirInstance);
+
+// Artifact-local identity for one closure-bearing free-function instance.
+// Native template parameters carry unnameable types only; each exact MIR body
+// keeps its own symbol rather than sharing a source-template implementation.
+[[nodiscard]] std::optional<std::string>
+cppCallableFreeFunctionSpelling(const LoweredProgram &program,
                                 const LoweredDeclaration &row,
                                 const LoweredFunctionDeclaration &function,
                                 const LoweredFunctionInstance &instance,

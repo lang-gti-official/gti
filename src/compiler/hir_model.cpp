@@ -220,6 +220,175 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "library HIR lacks its export plan or retains an unsafe hosted root");
   }
+  const auto verifyNativeInvocations = [&](const HirBody &body) {
+    for (const auto &value : body.values) {
+      if (!value.nativeCalleeType)
+        continue;
+      const auto &signature = *value.nativeCalleeType;
+      const auto parameters = signature.nativeFunctionParameterTypes();
+      const auto *callee =
+          value.receiver ? body.findValue(*value.receiver) : nullptr;
+      const bool expandedArguments =
+          value.receiver && value.operands.size() > 1 &&
+          value.operands.front() == *value.receiver &&
+          std::any_of(value.operands.begin() + 1, value.operands.end(),
+                      [&](HirValueId id) {
+                        const HirValue *argument = body.findValue(id);
+                        return argument &&
+                               argument->kind == HirValueKind::PackExpansion &&
+                               argument->info.type.kind ==
+                                   SemanticType::TypePack &&
+                               argument->info.type.concretePack;
+                      });
+      const bool orderedPlan =
+          value.receiver && value.callPlan && value.callPlan->receiver &&
+          value.callPlan->receiver->value == *value.receiver &&
+          value.callPlan->receiver->type == signature &&
+          value.callPlan->receiver->kind == HirCallInputKind::Value &&
+          value.callPlan->arguments.size() == parameters.size();
+      if (value.kind != HirValueKind::Call ||
+          !signature.hasNativeFunctionShape() || !callee ||
+          callee->info.type != signature || value.functionTarget ||
+          value.constructorTarget || value.lambdaTarget ||
+          value.nativeCallbackAdapter || (!orderedPlan && !expandedArguments) ||
+          value.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
+          value.info.type != *signature.nativeFunctionReturnType() ||
+          value.parameterTypes.size() != parameters.size() ||
+          !std::equal(parameters.begin(), parameters.end(),
+                      value.parameterTypes.begin())) {
+        result.errors.emplace_back(
+            "native indirect invocation lost its exact signature and callee "
+            "plan");
+      }
+    }
+  };
+  verifyNativeInvocations(program.module());
+  for (const auto &function : program.functionInstances())
+    verifyNativeInvocations(function.body);
+  for (const auto &constructor : program.constructorInstances())
+    verifyNativeInvocations(constructor.body);
+  for (const auto &destructor : program.destructorInstances())
+    verifyNativeInvocations(destructor.body);
+  for (const auto &lambda : program.lambdaInstances())
+    verifyNativeInvocations(lambda.body);
+  for (const auto &instance : program.functionInstances()) {
+    const auto *declaration = semantics.findFunction(instance.declaration);
+    if (declaration == nullptr ||
+        instance.requiresUnsafe != declaration->requiresUnsafe ||
+        instance.neverReturns != declaration->neverReturns ||
+        instance.tracksCaller != declaration->tracksCaller ||
+        instance.cThreadOperation != declaration->cThreadOperation) {
+      result.errors.emplace_back(
+          "HIR function unsafe contract differs from its semantic declaration");
+    }
+  }
+  for (const auto &instance : program.constructorInstances()) {
+    if ((instance.declaration == 0) != instance.generatedDefault ||
+        (instance.source == nullptr) != instance.generatedDefault)
+      result.errors.emplace_back(
+          "constructor source identity disagrees with its generated status");
+    if (!instance.generatedDefault)
+      continue;
+    const auto *owner =
+        instance.owner != 0 && instance.owner <= program.classInstances().size()
+            ? &program.classInstances()[instance.owner - 1]
+            : nullptr;
+    const auto *lifecycle = owner != nullptr && owner->source != nullptr
+                                ? semantics.findClassLifecycle(*owner->source)
+                                : nullptr;
+    const auto *initializer = instance.initializers.size() == 1
+                                  ? &instance.initializers.front()
+                                  : nullptr;
+    const auto *target =
+        initializer != nullptr && initializer->constructorTarget
+            ? program.findConstructorInstance(*initializer->constructorTarget)
+            : nullptr;
+    const auto *targetOwner =
+        target != nullptr && target->owner != 0 &&
+                target->owner <= program.classInstances().size()
+            ? &program.classInstances()[target->owner - 1]
+            : nullptr;
+    if (instance.declaration != 0 || instance.source != nullptr ||
+        !instance.parameterTypes.empty() || lifecycle == nullptr ||
+        !instance.parameterBindings.empty() ||
+        !instance.typeArguments.empty() || !instance.valueArguments.empty() ||
+        !instance.initializerValues.empty() ||
+        !instance.body.bindings.empty() || !instance.body.loans.empty() ||
+        !instance.body.fullExpressions.empty() ||
+        !instance.body.dropObligations.empty() ||
+        !instance.body.values.empty() || !instance.body.statements.empty() ||
+        !instance.body.roots.empty() || !owner->fields.empty() ||
+        owner->destructor || !owner->type.arguments.empty() ||
+        !owner->type.valueArguments.empty() ||
+        lifecycle->defaultConstructor != SpecialMemberStatus::Generated ||
+        target == nullptr ||
+        lifecycle->generatedDefaultBaseConstructor != target->declaration ||
+        targetOwner == nullptr ||
+        initializer->targetType != targetOwner->type ||
+        std::count_if(owner->bases.begin(), owner->bases.end(),
+                      [&](const auto &base) {
+                        return !base.interface &&
+                               base.instance == target->owner &&
+                               base.type == initializer->targetType;
+                      }) != 1 ||
+        initializer->kind != ConstructorInitializerTargetKind::Base ||
+        initializer->base != target->owner || !initializer->arguments.empty() ||
+        initializer->field != 0 || initializer->generatedDefault ||
+        initializer->storesReference || initializer->ownedParameter ||
+        initializer->explicitArgumentCount != 0)
+      result.errors.emplace_back(
+          "generated constructor differs from its selected semantic base");
+  }
+  const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
+    for (const auto &value : body.values) {
+      if (value.kind != HirValueKind::Call &&
+          value.kind != HirValueKind::DirectInitializer)
+        continue;
+      const auto *construction = value.source != nullptr
+                                     ? semantics.findConstruction(*value.source)
+                                     : nullptr;
+      const auto *type =
+          construction != nullptr && construction->generatedDefault
+              ? semantics.findClassType(construction->constructedType.classId)
+              : nullptr;
+      const auto *lifecycle =
+          type != nullptr && type->declaration != nullptr
+              ? semantics.findClassLifecycle(*type->declaration)
+              : nullptr;
+      if (lifecycle == nullptr ||
+          lifecycle->generatedDefaultBaseConstructor == 0)
+        continue;
+      const auto *target =
+          value.constructorTarget
+              ? program.findConstructorInstance(*value.constructorTarget)
+              : nullptr;
+      const auto *owner =
+          target != nullptr && target->owner != 0 &&
+                  target->owner <= program.classInstances().size()
+              ? &program.classInstances()[target->owner - 1]
+              : nullptr;
+      if (target == nullptr || !target->generatedDefault || owner == nullptr ||
+          owner->type != construction->constructedType ||
+          value.info.type != owner->type ||
+          value.definedFailure.propagation !=
+              FailurePropagationKind::Constructor)
+        result.errors.emplace_back("generated construction value lost its "
+                                   "selected constructor and failure edge");
+    }
+  };
+  verifyGeneratedConstructionValues(program.module());
+  for (const auto &owner : program.classInstances()) {
+    verifyGeneratedConstructionValues(owner.fieldInitializers);
+    verifyGeneratedConstructionValues(owner.staticFieldInitializers);
+  }
+  for (const auto &function : program.functionInstances())
+    verifyGeneratedConstructionValues(function.body);
+  for (const auto &constructor : program.constructorInstances())
+    verifyGeneratedConstructionValues(constructor.body);
+  for (const auto &destructor : program.destructorInstances())
+    verifyGeneratedConstructionValues(destructor.body);
+  for (const auto &lambda : program.lambdaInstances())
+    verifyGeneratedConstructionValues(lambda.body);
   for (std::size_t index = 0; index < program.nativeCallbackAdapters().size();
        ++index) {
     const HirNativeCallbackAdapter &adapter =
@@ -234,12 +403,18 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         adapter.type.nativeFunctionParameterTypes();
     if (adapter.id != index + 1 || target == nullptr ||
         target->owner.has_value() || target->source == nullptr ||
-        target->linkage != LanguageLinkage::Gti || declaration == nullptr ||
-        declaration->ownerClass != 0 || returnType == nullptr ||
-        target->returnType != *returnType ||
+        target->requiresUnsafe || target->linkage != LanguageLinkage::Gti ||
+        declaration == nullptr || declaration->ownerClass != 0 ||
+        returnType == nullptr || target->returnType != *returnType ||
         target->parameterTypes.size() != parameterTypes.size() ||
         !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameterTypes.begin())) {
+                    target->parameterTypes.end(), parameterTypes.begin()) ||
+        adapter.cThreadCallback !=
+            (program.executionProfile() == ExecutionProfile::Concurrent
+                 ? adapter.type.cThreadCallbackKind()
+                 : CThreadCallbackKind::None) ||
+        (program.executionProfile() == ExecutionProfile::Concurrent &&
+         adapter.cThreadCallback == CThreadCallbackKind::None)) {
       result.errors.emplace_back(
           "native callback adapter has no exact free-function target");
     }
@@ -267,6 +442,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (adapter == nullptr || conversion == nullptr || target == nullptr ||
           !value.operands.empty() || value.info.type != adapter->type ||
           conversion->type != adapter->type ||
+          conversion->cThreadCallback != adapter->cThreadCallback ||
           conversion->function != target->declaration ||
           conversion->declaration != target->source) {
         result.errors.emplace_back(
@@ -293,8 +469,279 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     verifyNativeCallbackValues(instance.body);
   }
 
-  const auto verifyFunctionItemValues = [&](const HirBody &body) {
+  const auto verifyCallableValues = [&](const HirBody &body) {
     for (const HirValue &value : body.values) {
+      if (value.kind == HirValueKind::ExpectedPropagation ||
+          value.expectedPropagation) {
+        if (value.kind != HirValueKind::ExpectedPropagation ||
+            !value.expectedPropagation) {
+          result.errors.emplace_back(
+              "expected propagation lost its selected plan");
+        } else {
+          const auto &plan = *value.expectedPropagation;
+          const auto *operand = body.findValue(plan.operand);
+          const auto *success = body.findValue(plan.successExtraction);
+          const auto *error = body.findValue(plan.errorExtraction);
+          const auto *transport = body.findValue(plan.errorValue);
+          const auto *unexpected = body.findValue(plan.unexpected);
+          const bool carrier =
+              operand != nullptr &&
+              operand->info.type.kind == SemanticType::Expected &&
+              operand->info.type.arguments.size() == 2;
+          if (!carrier || success == nullptr || error == nullptr ||
+              transport == nullptr || unexpected == nullptr) {
+            result.errors.emplace_back(
+                "expected propagation references missing alternatives");
+          } else {
+            const auto &payload = operand->info.type.arguments.front();
+            const bool borrowed =
+                payload.kind == SemanticType::Reference &&
+                payload.arguments.size() == 1 &&
+                payload.referenceAccess == AccessMode::ReadOnly;
+            const SemanticType resultType =
+                borrowed ? payload.arguments.front() : payload;
+            const auto extraction = [&](const HirValue &part,
+                                        IntrinsicKind intrinsic,
+                                        const SemanticType &type) {
+              return part.kind == HirValueKind::Call &&
+                     part.intrinsic == intrinsic &&
+                     part.receiver == operand->id &&
+                     part.operands == std::vector<HirValueId>{operand->id} &&
+                     part.info.type == type &&
+                     part.fullExpression == value.fullExpression;
+            };
+            if (plan.moves !=
+                    (operand->info.category == ValueCategory::Value) ||
+                value.info.type != resultType ||
+                value.info.category !=
+                    (borrowed ? ValueCategory::Place : ValueCategory::Value) ||
+                value.info.access != AccessMode::ReadOnly ||
+                !extraction(*success, IntrinsicKind::ExpectedValue,
+                            resultType) ||
+                !extraction(*error, IntrinsicKind::ExpectedError,
+                            operand->info.type.arguments[1]) ||
+                (borrowed &&
+                 (plan.successValue != plan.successExtraction ||
+                  success->info.category != ValueCategory::Place ||
+                  success->info.access != AccessMode::ReadOnly ||
+                  success->borrowOrigin != BorrowOriginKind::Receiver ||
+                  success->borrowAccess != AccessMode::ReadOnly)) ||
+                unexpected->kind != HirValueKind::Unexpected ||
+                unexpected->operands !=
+                    std::vector<HirValueId>{plan.errorValue} ||
+                (plan.moves
+                     ? transport->kind != HirValueKind::Move ||
+                           transport->operands !=
+                               std::vector<HirValueId>{plan.errorExtraction}
+                     : plan.errorValue != plan.errorExtraction)) {
+              result.errors.emplace_back(
+                  "expected propagation lost its selected extraction or "
+                  "transfer contract");
+            }
+          }
+        }
+      }
+      const HirFunctionInstance *contractTarget =
+          value.kind == HirValueKind::Call && value.functionTarget
+              ? program.findFunctionInstance(*value.functionTarget)
+              : nullptr;
+      const bool panic = value.kind == HirValueKind::Call &&
+                         value.intrinsic == IntrinsicKind::Panic;
+      const bool expectedTerminal =
+          panic || (contractTarget != nullptr && contractTarget->neverReturns);
+      const bool expectedTracking =
+          panic || (contractTarget != nullptr && contractTarget->tracksCaller);
+      const CallerLocationOrigin *origin =
+          value.source == nullptr ? nullptr
+                                  : semantics.findCallerLocation(*value.source);
+      if (value.neverReturns != expectedTerminal ||
+          value.tracksCaller != expectedTracking ||
+          value.callerLocation.has_value() != expectedTracking ||
+          (value.callerLocation &&
+           (origin == nullptr || *value.callerLocation != *origin))) {
+        result.errors.emplace_back(
+            "HIR call terminal/caller contract differs from its selected "
+            "declaration or semantic source origin");
+      }
+      std::unordered_set<HirValueId> sequenced;
+      for (const HirValueId inputId : value.sequencedInputs) {
+        const HirValue *input = body.findValue(inputId);
+        if (input == nullptr || input->info.type != SemanticType::Void ||
+            input->neverReturns ||
+            input->fullExpression != value.fullExpression ||
+            value.programConstantSubstitution ||
+            !sequenced.insert(inputId).second) {
+          result.errors.emplace_back(
+              "sequenced HIR inputs must be distinct normally completing void "
+              "evaluations in the same full expression");
+        }
+        std::unordered_set<HirValueId> visited;
+        std::vector<HirValueId> pending{inputId};
+        while (!pending.empty()) {
+          const HirValueId id = pending.back();
+          pending.pop_back();
+          if (id == value.id) {
+            result.errors.emplace_back("sequenced HIR inputs contain a cycle");
+            break;
+          }
+          if (!visited.insert(id).second) {
+            continue;
+          }
+          const HirValue *dependency = body.findValue(id);
+          if (dependency == nullptr) {
+            result.errors.emplace_back(
+                "sequenced HIR input references a missing value");
+            continue;
+          }
+          pending.insert(pending.end(), dependency->operands.begin(),
+                         dependency->operands.end());
+          pending.insert(pending.end(), dependency->conditionalInputs.begin(),
+                         dependency->conditionalInputs.end());
+          pending.insert(pending.end(), dependency->sequencedInputs.begin(),
+                         dependency->sequencedInputs.end());
+          if (dependency->receiver) {
+            pending.push_back(*dependency->receiver);
+          }
+        }
+      }
+      const auto *sourceCall = exprAs<Call>(value.source);
+      const auto *transform =
+          sourceCall == nullptr ? nullptr
+                                : semantics.findExpectedCombinator(*sourceCall);
+      if (!value.conditionalInputs.empty() ||
+          (value.kind == HirValueKind::Conditional && transform != nullptr)) {
+        const auto *member = sourceCall == nullptr
+                                 ? nullptr
+                                 : exprAs<Get>(sourceCall->callee().get());
+        const auto ungroup = [](const Expr *expression) {
+          while (const auto *grouping = exprAs<Grouping>(expression)) {
+            expression = grouping->expression().get();
+          }
+          return expression;
+        };
+        const auto *receiver = value.conditionalInputs.size() == 2
+                                   ? body.findValue(value.conditionalInputs[0])
+                                   : nullptr;
+        const auto *mapper = value.conditionalInputs.size() == 2
+                                 ? body.findValue(value.conditionalInputs[1])
+                                 : nullptr;
+        if (value.kind != HirValueKind::Conditional || transform == nullptr ||
+            member == nullptr || sourceCall->arguments().size() != 1 ||
+            value.operands.size() != 3 || receiver == nullptr ||
+            mapper == nullptr || receiver->id == mapper->id ||
+            receiver->id == value.id || mapper->id == value.id ||
+            receiver->fullExpression != value.fullExpression ||
+            mapper->fullExpression != value.fullExpression ||
+            ungroup(receiver->source) != ungroup(member->object().get()) ||
+            ungroup(mapper->source) !=
+                ungroup(sourceCall->arguments().front().get())) {
+          result.errors.emplace_back("conditional eager inputs differ from the "
+                                     "selected source call order");
+        }
+        if (transform != nullptr && value.operands.size() == 3) {
+          const HirValue *success = body.findValue(value.operands[1]);
+          const HirValue *failure = body.findValue(value.operands[2]);
+          // The owning semantic record can be from a generic primary. Check
+          // the concrete HIR relationship instead of comparing its resolved
+          // result to an unsubstituted base-model type parameter.
+          const bool ownedSource =
+              receiver != nullptr &&
+              receiver->info.type.kind == SemanticType::Expected &&
+              receiver->info.type.arguments.size() == 2;
+          const bool expectedResult =
+              value.info.type.kind == SemanticType::Expected &&
+              value.info.type.arguments.size() == 2;
+          const bool borrowedSuccess =
+              ownedSource &&
+              receiver->info.type.arguments.front().kind ==
+                  SemanticType::Reference &&
+              receiver->info.type.arguments.front().arguments.size() == 1;
+          const bool validResult =
+              ownedSource &&
+              (transform->kind == ExpectedCombinatorKind::Expect
+                   ? borrowedSuccess
+                         ? value.info.type ==
+                                   receiver->info.type.arguments.front()
+                                       .arguments.front() &&
+                               value.info.category == ValueCategory::Place &&
+                               value.info.access == AccessMode::ReadOnly
+                         : value.info.type ==
+                               receiver->info.type.arguments.front()
+                   : expectedResult &&
+                         value.info.type.arguments
+                                 [transform->kind ==
+                                          ExpectedCombinatorKind::TransformError
+                                      ? 0
+                                      : 1] ==
+                             receiver->info.type.arguments
+                                 [transform->kind ==
+                                          ExpectedCombinatorKind::TransformError
+                                      ? 0
+                                      : 1]);
+          if (!validResult || success == nullptr || failure == nullptr) {
+            result.errors.emplace_back(
+                "expected conditional lost its selected result or arms");
+          } else if (transform->kind == ExpectedCombinatorKind::Expect) {
+            if (borrowedSuccess &&
+                (success->kind != HirValueKind::Call ||
+                 success->intrinsic != IntrinsicKind::ExpectedValue ||
+                 success->borrowOrigin != BorrowOriginKind::Receiver ||
+                 success->borrowAccess != AccessMode::ReadOnly ||
+                 success->info.category != ValueCategory::Place ||
+                 success->info.access != AccessMode::ReadOnly ||
+                 success->info.type != value.info.type ||
+                 success->operands != std::vector<HirValueId>{receiver->id} ||
+                 success->receiver != receiver->id)) {
+              result.errors.emplace_back("borrowed expect success lost its "
+                                         "read-only reference extraction");
+            }
+            if (failure->intrinsic != IntrinsicKind::Panic ||
+                failure->info.type != SemanticType::Void ||
+                !failure->neverReturns || !failure->tracksCaller ||
+                failure->operands.size() != 1 || mapper == nullptr ||
+                failure->operands.front() != mapper->id ||
+                failure->parameterTypes !=
+                    std::vector<SemanticType>{SemanticType::StringView} ||
+                failure->source != sourceCall ||
+                failure->definedFailure.localOrigins.empty()) {
+              result.errors.emplace_back("expected expect failure arm lost its "
+                                         "selected terminal panic");
+            }
+          } else if (transform->kind == ExpectedCombinatorKind::Transform &&
+                     expectedResult &&
+                     value.info.type.arguments.front() == SemanticType::Void) {
+            const HirValue *mapped =
+                success->neverReturns ? success
+                : success->sequencedInputs.size() == 1
+                    ? body.findValue(success->sequencedInputs.front())
+                    : nullptr;
+            const HirFunctionInstance *function =
+                mapped != nullptr && mapped->functionTarget
+                    ? program.findFunctionInstance(*mapped->functionTarget)
+                    : nullptr;
+            const HirLambda *lambda =
+                mapped != nullptr && mapped->lambdaTarget
+                    ? program.findLambda(*mapped->lambdaTarget)
+                    : nullptr;
+            if (success->kind != HirValueKind::Call ||
+                (!success->neverReturns &&
+                 success->info.type != value.info.type) ||
+                mapped == nullptr || mapped->kind != HirValueKind::Call ||
+                mapped->info.type != SemanticType::Void ||
+                mapped->source != sourceCall ||
+                (transform->mapper != 0 &&
+                 (function == nullptr ||
+                  function->declaration != transform->mapper)) ||
+                (transform->lambda != 0 &&
+                 (lambda == nullptr ||
+                  lambda->declaration != transform->lambda))) {
+              result.errors.emplace_back(
+                  "void expected transformation must complete its selected "
+                  "mapper before publishing success");
+            }
+          }
+        }
+      }
       if (value.kind != HirValueKind::FunctionItem) {
         continue;
       }
@@ -320,8 +767,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.info.type.functionId != target->declaration ||
           selection->function != target->declaration ||
           selection->declaration != target->source || target->owner ||
-          target->linkage != LanguageLinkage::Gti || returnType == nullptr ||
-          *returnType != target->returnType ||
+          target->linkage != LanguageLinkage::Gti || target->requiresUnsafe ||
+          returnType == nullptr || *returnType != target->returnType ||
           parameters.size() != target->parameterTypes.size() ||
           !std::equal(parameters.begin(), parameters.end(),
                       target->parameterTypes.begin())) {
@@ -330,23 +777,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       }
     }
   };
-  verifyFunctionItemValues(program.module());
+  verifyCallableValues(program.module());
   for (const HirClassInstance &instance : program.classInstances()) {
-    verifyFunctionItemValues(instance.fieldInitializers);
-    verifyFunctionItemValues(instance.staticFieldInitializers);
+    verifyCallableValues(instance.fieldInitializers);
+    verifyCallableValues(instance.staticFieldInitializers);
   }
   for (const HirFunctionInstance &instance : program.functionInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
   for (const HirConstructorInstance &instance :
        program.constructorInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
   for (const HirDestructorInstance &instance : program.destructorInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
   for (const HirLambda &instance : program.lambdaInstances()) {
-    verifyFunctionItemValues(instance.body);
+    verifyCallableValues(instance.body);
   }
 
   std::vector<std::size_t> threadTaskRoots(program.threadTaskAdapters().size(),
@@ -823,6 +1270,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
     pendingValues.insert(pendingValues.end(), value->operands.begin(),
                          value->operands.end());
+    pendingValues.insert(pendingValues.end(), value->conditionalInputs.begin(),
+                         value->conditionalInputs.end());
+    pendingValues.insert(pendingValues.end(), value->sequencedInputs.begin(),
+                         value->sequencedInputs.end());
   }
   if (program.module().values.size() != reachableValues.size() ||
       std::any_of(program.module().values.begin(),
@@ -837,6 +1288,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const HirValue &parent : program.module().values) {
     for (const HirValueId operand : parent.operands) {
       valueParents[operand].push_back(&parent);
+    }
+    for (const HirValueId input : parent.conditionalInputs) {
+      valueParents[input].push_back(&parent);
+    }
+    for (const HirValueId input : parent.sequencedInputs) {
+      valueParents[input].push_back(&parent);
     }
   }
   // The source-bearing ArrayInitializer rooting a (possibly nested)
@@ -906,7 +1363,17 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             : &program.classInstances()[target->owner - 1];
     const bool exactTarget =
         construction != nullptr &&
-        ((construction->generatedDefault && !value.constructorTarget) ||
+        ((construction->generatedDefault && ([&] {
+            const auto *lifecycle =
+                owner != nullptr && owner->source != nullptr
+                    ? semantics.findClassLifecycle(*owner->source)
+                    : nullptr;
+            return lifecycle != nullptr &&
+                           lifecycle->generatedDefaultBaseConstructor != 0
+                       ? target != nullptr && target->generatedDefault &&
+                             targetOwner == owner
+                       : !value.constructorTarget;
+          }())) ||
          (!construction->generatedDefault && construction->constructor != 0 &&
           target != nullptr && targetOwner == owner &&
           target->declaration == construction->constructor));
@@ -927,15 +1394,17 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            value.operands.size() == value.parameterTypes.size() &&
            value.constructorKind == construction->kind &&
            value.definedFailure.propagation ==
-               (construction->constructor != 0 &&
-                        !construction->generatedDefault
+               ((construction->constructor != 0 &&
+                 !construction->generatedDefault) ||
+                        (target != nullptr && target->generatedDefault)
                     ? FailurePropagationKind::Constructor
                     : FailurePropagationKind::None);
   };
   const auto exactSyntheticCommon = [](const HirValue &value) {
     return value.source == nullptr &&
            value.unsafeOperation == UnsafeOperationKind::None &&
-           value.operands.empty() && value.parameterTypes.empty() &&
+           value.operands.empty() && value.conditionalInputs.empty() &&
+           value.sequencedInputs.empty() && value.parameterTypes.empty() &&
            !value.operation && !value.constant &&
            !value.programConstantSubstitution &&
            value.intrinsic == IntrinsicKind::None &&
@@ -972,7 +1441,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         value.info.category != ValueCategory::Value ||
         value.info.access != AccessMode::ReadOnly ||
         value.unsafeOperation != UnsafeOperationKind::None ||
-        !value.parameterTypes.empty() || value.operation || value.constant ||
+        !value.parameterTypes.empty() || !value.conditionalInputs.empty() ||
+        !value.sequencedInputs.empty() || value.operation || value.constant ||
         value.programConstantSubstitution ||
         value.intrinsic != IntrinsicKind::None ||
         value.synchronization != SynchronizationOperation{} ||
@@ -1174,15 +1644,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       vectorConstructor != nullptr &&
       vectorConstructor->declaration == semanticHosted->vectorConstructor &&
       exactOwner(vectorConstructor->owner, vectorType) &&
-      vectorConstructor->typeArguments == vectorType.arguments &&
-      vectorConstructor->valueArguments == vectorType.valueArguments &&
+      vectorConstructor->typeArguments.empty() &&
+      vectorConstructor->valueArguments.empty() &&
       vectorConstructor->parameterTypes.empty();
   const bool exactStringConstructor =
       stringConstructor != nullptr &&
       stringConstructor->declaration == semanticHosted->stringConstructor &&
       exactOwner(stringConstructor->owner, stringType) &&
-      stringConstructor->typeArguments == stringType.arguments &&
-      stringConstructor->valueArguments == stringType.valueArguments &&
+      stringConstructor->typeArguments.empty() &&
+      stringConstructor->valueArguments.empty() &&
       stringConstructor->parameterTypes ==
           std::vector<SemanticType>{SemanticType::StringView};
   if (append == nullptr || vectorConstructor == nullptr ||

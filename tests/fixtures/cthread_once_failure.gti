@@ -1,0 +1,12 @@
+#include <std/cthread>
+extern "C" { int32_t once_zero(); void once_cleanup(); }
+class Guard { public: Guard() {} ~Guard() { once_cleanup(); } };
+void initialize() {
+  Guard guard{};
+  if (100 / once_zero() == 1) { once_cleanup(); }
+}
+int main() {
+  std::once_flag flag{};
+  unsafe { std::call_once(flag, initialize); }
+  return 1;
+}

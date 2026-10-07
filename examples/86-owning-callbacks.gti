@@ -1,0 +1,101 @@
+#include <std/functional>
+#include <std/memory>
+
+class Authentication {
+  mut std::function<void()> login_callback{};
+
+public:
+  // Accept a lambda directly, then retain it in an owning callback field.
+  void set_auth_login_callback<Callback>(Callback callback) mut
+    requires std::copy_constructible<Callback> {
+    this.login_callback.replace(std::move(callback));
+  }
+
+  void login() {
+    if (!this.login_callback.empty()) {
+      this.login_callback();
+    }
+  }
+};
+
+void configure(mut Authentication& auth) {
+  int user_id = 42;
+  auth.set_auth_login_callback([user_id]() -> void {
+    std::println("login callback: user");
+    std::println(user_id);
+  });
+  // user_id was captured by value: the callback survives this function.
+}
+
+int multiply(int left, int right) { return left * right; }
+
+// Lambda value captures are immutable. Use a mutable function object when
+// repeated calls need to update retained state.
+class Counter {
+  mut int total = 0;
+
+public:
+  int operator()(int amount) mut {
+    this.total += amount;
+    return this.total;
+  }
+};
+
+int main() {
+  // 1. Register now, invoke later. The object owns the captured lambda.
+  mut Authentication auth{};
+  configure(auth);
+  auth.login();
+
+  // 2. A signature gives different concrete callables one public type.
+  int offset = 7;
+  mut std::function<int(int, int)> calculate{
+    [offset](int left, int right) -> int { return left + right + offset; }
+  };
+  auto original = calculate.clone(); // Explicit, independent target copy.
+  calculate.replace(multiply);       // A namespace function works too.
+  std::println("original sum plus offset / replacement product");
+  std::println(original(2, 3)); // 12
+  std::println(calculate(2, 3)); // 6
+  if (original(2, 3) != 12 || calculate(2, 3) != 6) { return 1; }
+  calculate.reset();
+  if (!calculate.empty()) { return 2; }
+  // Do not invoke an empty callback: it produces a checked runtime failure.
+
+  // 3. `mut` belongs to the signature as well as the wrapper binding.
+  mut std::function<int(int) mut> counter{Counter()};
+  int first = counter(2);
+  int second = counter(3);
+  mut auto independent = counter.clone(); // Copies the current total, 5.
+  int copied_total = independent(1);
+  int original_total = counter(2);
+  std::println("mutable counter / independent clone / original");
+  std::println(second);         // 5
+  std::println(copied_total);   // 6
+  std::println(original_total); // 7
+  if (first != 2 || second != 5 || copied_total != 6 || original_total != 7) {
+    return 3;
+  }
+
+  // 4. Move-only captures need move_only_function, which has no clone().
+  auto resource = std::make_unique<int>(42);
+  std::move_only_function<int()> reader{
+    [owned = std::move(resource)]() -> int { return *owned; }
+  };
+  auto relocated = std::move(reader); // reader and resource are consumed.
+  std::println("owned lambda capture");
+  std::println(relocated()); // 42; read-only invocation can be repeated.
+  if (relocated() != 42) { return 4; }
+
+  // 5. An && signature makes invocation itself consuming (one-shot).
+  auto ticket = std::make_unique<int>(99);
+  std::move_only_function<int() &&> once{
+    [owned = std::move(ticket)]() -> int { return *owned; }
+  };
+  int result = std::move(once)();
+  // once cannot be used again. Remaining captures live through the enclosing
+  // full expression, then are destroyed deterministically.
+  std::println("one-shot callback");
+  std::println(result); // 99
+  return result - 99;
+}

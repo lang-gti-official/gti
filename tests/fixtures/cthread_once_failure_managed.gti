@@ -1,0 +1,19 @@
+#include <std/cthread>
+#include <std/thread>
+extern "C" { int32_t once_zero(); void once_cleanup(); }
+class Guard { public: Guard() {} ~Guard() { once_cleanup(); } };
+std::once_flag flag{};
+void initialize() {
+  Guard guard{};
+  if (100 / once_zero() == 1) { once_cleanup(); }
+}
+int main() {
+  mut std::thread_result<int32_t> task{};
+  auto started = task.start([]() -> int32_t {
+    unsafe { std::call_once(flag, initialize); }
+    return 0;
+  });
+  if (!started.has_value()) { return 2; }
+  auto joined = task.join();
+  return 1;
+}

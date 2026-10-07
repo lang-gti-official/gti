@@ -1,9 +1,0 @@
-#include <std/string>
-
-int main() {
-  mut std::string text = std::string();
-  text.reserve(std::size_t(16));
-  text.append("ready");
-  std::println(text);
-  return 0;
-}

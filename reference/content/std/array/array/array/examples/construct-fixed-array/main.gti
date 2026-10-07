@@ -1,9 +1,0 @@
-#include <std/array>
-
-int main() {
-  std::array<int32_t, 3> values =
-      std::array<int32_t, 3>({3, 6, 9});
-  std::println(values.front());
-  std::println(values.back());
-  return 0;
-}

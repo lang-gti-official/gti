@@ -1,0 +1,31 @@
+#include <std/functional>
+
+void add(mut int& value, int amount) { value += amount; }
+void adjust(mut int& left, int& right, mut int& last) {
+  left += right;
+  last += left;
+}
+
+int main() {
+  std::function<void(mut int&, int)> callback{add};
+  mut int value = 1;
+  callback(value, 3);
+  callback(value, 4);
+  if (value != 8) { return 1; }
+  std::function<void(mut int&, int&, mut int&)> mixed{adjust};
+  mut int last = 2;
+  int offset = 3;
+  mixed(value, offset, last);
+  mixed(value, offset, last);
+  if (value != 14 || last != 27) { return 2; }
+  int step = 1;
+  auto lambda = [step](mut int& item) -> void { item += step; };
+  std::move_only_function<void(mut int&)> increment{lambda};
+  increment(value);
+  increment(last);
+  lambda(value);
+  std::function<void(mut int&)> copyable{lambda};
+  auto cloned = copyable.clone();
+  cloned(last);
+  return value + last - 45;
+}

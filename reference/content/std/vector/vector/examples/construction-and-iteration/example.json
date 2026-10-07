@@ -1,6 +1,0 @@
-{
-  "title": "Construct, append, and iterate",
-  "description": "Builds a vector from initial values, appends one element, and traverses the resulting sequence.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

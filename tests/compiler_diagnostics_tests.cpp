@@ -129,6 +129,647 @@ int main() {
          "semantic diagnostics should preserve literal source lines");
 }
 
+void testOwnershipAndMissingIncludeDiagnostics() {
+  const auto analyze = [](const std::string &source) {
+    return lang::Frontend().analyze("ownership-explanations.gti", source,
+                                    {standardLibraryPrelude()}, {},
+                                    {standardLibraryRoot()});
+  };
+  const std::string prefix = "#include <std/string>\n";
+  const std::string moved = prefix + R"(
+int main() {
+  std::string original = std::string("hello");
+  std::string destination = std::move(original);
+  return int(original.size());
+})";
+  const auto movedResult = analyze(moved);
+  const auto *movedError =
+      findDiagnosticByCode(movedResult.diagnostics, "GTI-S2018");
+  expect(movedError && movedError->primary.start == moved.rfind("original") &&
+             movedError->related.size() == 1 &&
+             movedError->related.front().span.start ==
+                 moved.find("original);") &&
+             movedError->related.front().span.end ==
+                 moved.find("original);") + 8 &&
+             movedError->related.front().message ==
+                 "Ownership transferred here." &&
+             !movedError->hints.empty() && movedError->fixes.empty(),
+         "use-after-move must explain the actual transfer without guessing a "
+         "repair");
+  const std::string branched = prefix + R"(
+void examine(bool condition) {
+  mut std::string original = std::string("hello");
+  if (condition) { std::string first = std::move(original); }
+  else { std::string second = std::move(original); }
+  std::println(original.view());
+})";
+  const auto branchResult = analyze(branched);
+  const auto *branchError =
+      findDiagnosticByCode(branchResult.diagnostics, "GTI-S2018");
+  expect(branchError && branchError->related.size() == 2 &&
+             branchError->related[0].span.start ==
+                 branched.find("original);") &&
+             branchError->related[1].span.start == branched.rfind("original);"),
+         "control-flow joins preserve both transfer causes in source order");
+  auto reinitialized = branched;
+  reinitialized.insert(reinitialized.find("  std::println"),
+                       "  original = std::string(\"replacement\");\n");
+  expect(
+      analyze(reinitialized).canGenerateCode(),
+      "diagnostic provenance must not change valid reinitialization semantics");
+  reinitialized.insert(reinitialized.find("  std::println"),
+                       "  std::string third = std::move(original);\n");
+  const auto newMove = analyze(reinitialized);
+  const auto *newMoveError =
+      findDiagnosticByCode(newMove.diagnostics, "GTI-S2018");
+  expect(newMoveError && newMoveError->related.size() == 1 &&
+             newMoveError->related[0].span.start ==
+                 reinitialized.rfind("original);"),
+         "reinitialization clears old move causes before a new transfer");
+  const std::string borrowed = prefix + R"(
+int main() {
+  mut std::string owner = std::string("hello");
+  auto view = owner.view();
+  owner.clear();
+  return int(view.size());
+})";
+  const auto borrowResult = analyze(borrowed);
+  expect(hasDiagnosticCode(borrowResult.diagnostics, "GTI-S2017") &&
+             hasRelatedDiagnostic(borrowResult.diagnostics,
+                                  "borrow originates here") &&
+             hasRelatedDiagnostic(borrowResult.diagnostics, "used later") &&
+             hasDiagnosticHint(borrowResult.diagnostics, "Finish using"),
+         "retained-borrow conflicts identify their origin and later use");
+  const auto *borrowError =
+      findDiagnosticByCode(borrowResult.diagnostics, "GTI-S2017");
+  expect(borrowError && borrowError->related.size() == 2 &&
+             borrowError->related[1].span.start ==
+                 borrowed.find("return int") &&
+             borrowError->related[1].span.end ==
+                 borrowed.find(";\n}", borrowed.find("return int")) + 1 &&
+             borrowError->fixes.empty(),
+         "the later-use explanation spans the actual statement without an "
+         "effect-reordering fix");
+  const auto endedBorrow = analyze(prefix + R"(
+int main() {
+  mut std::string owner = std::string("hello");
+  auto view = owner.view();
+  int result = int(view.size());
+  owner.clear();
+  return result;
+})");
+  expect(endedBorrow.canGenerateCode(),
+         "diagnostic provenance must not extend a borrow beyond its last use");
+
+  const std::string records = R"(
+struct Ticket {
+  mut int code = 7;
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+struct Holder { mut Ticket field = Ticket(); };
+)";
+  const std::string projected = records + R"(
+void examine(bool condition) {
+  mut Holder holder{};
+  if (condition) { Ticket first = std::move(holder.field); }
+  else { Ticket second = std::move(holder.field); }
+  int code = holder.field.code;
+})";
+  const auto projectedResult = analyze(projected);
+  const auto *projectedError =
+      findDiagnosticByCode(projectedResult.diagnostics, "GTI-S2018");
+  expect(
+      projectedError && projectedError->related.size() == 2 &&
+          projectedError->related[0].span.start == projected.find("field);") &&
+          projectedError->related[1].span.start == projected.rfind("field);") &&
+          projectedError->related[0].span.end == projected.find("field);") + 5,
+      "projected moves of a user-defined owner retain both exact field "
+      "transfer sites");
+  auto restoredField = projected;
+  restoredField.insert(restoredField.find("  int code"),
+                       "  holder.field = Ticket();\n");
+  expect(analyze(restoredField).canGenerateCode(),
+         "field restoration clears diagnostic provenance with the moved state");
+  restoredField.insert(restoredField.find("  int code"),
+                       "  Ticket third = std::move(holder.field);\n");
+  const auto fieldMovedAgain = analyze(restoredField);
+  const auto *fieldMoveError =
+      findDiagnosticByCode(fieldMovedAgain.diagnostics, "GTI-S2018");
+  expect(
+      fieldMoveError && fieldMoveError->related.size() == 1 &&
+          fieldMoveError->related[0].span.start ==
+              restoredField.rfind("field);"),
+      "a restored field reports only the new transfer, not old branch sites");
+  const auto shadowed = analyze(records + R"(
+void examine() {
+  Ticket original{};
+  { Ticket original{}; Ticket destination = std::move(original); }
+  int code = original.code;
+})");
+  expect(shadowed.canGenerateCode(),
+         "move notes follow declaration identity rather than a shadowed name");
+  const auto receiverResult = analyze(records + R"(
+class Owner {
+  mut Ticket field = Ticket();
+public:
+  void remove() mut { Ticket previous = std::move(this.field); }
+};
+)");
+  expect(hasDiagnosticCode(receiverResult.diagnostics, "GTI-S2018") &&
+             hasRelatedDiagnostic(receiverResult.diagnostics,
+                                  "Ownership transferred here.") &&
+             hasDiagnosticHint(receiverResult.diagnostics,
+                               "Reinitialize every moved field"),
+         "an unrestored receiver explains its transfer and restoration duty");
+  std::string manyPaths =
+      records + "\nvoid examine(int path) { Ticket source{};\n";
+  for (int path = 0; path < 5; ++path) {
+    manyPaths += "if (path == " + std::to_string(path) +
+                 ") { Ticket destination = std::move(source); } else ";
+  }
+  manyPaths +=
+      "{ Ticket destination = std::move(source); }\nint code = source.code; }";
+  const auto manyResult = analyze(manyPaths);
+  const auto *manyError =
+      findDiagnosticByCode(manyResult.diagnostics, "GTI-S2018");
+  expect(manyError && manyError->related.size() == 4 &&
+             std::is_sorted(manyError->related.begin(),
+                            manyError->related.end(),
+                            [](const auto &left, const auto &right) {
+                              return left.span.start < right.span.start;
+                            }),
+         "move causes are bounded and deterministic across many branch joins");
+  lang::FrontendOptions concurrentOptions;
+  concurrentOptions.target.executionProfile =
+      lang::ExecutionProfile::Concurrent;
+  concurrentOptions.target.runtimeCapabilities.threads = true;
+  const std::string guarded = R"(
+#include <std/mutex>
+int main() {
+  std::mutex<int32_t> owner{1};
+  std::mutex_guard<int32_t> first = owner.lock();
+  std::mutex_guard<int32_t> second = owner.lock();
+  return 0;
+})";
+  const auto scopedGuard =
+      lang::Frontend(concurrentOptions)
+          .analyze("guard-explanations.gti", guarded,
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      hasDiagnosticCode(scopedGuard.diagnostics, "GTI-S2017") &&
+          hasDiagnosticHint(scopedGuard.diagnostics,
+                            "until its carrier is destroyed") &&
+          !hasDiagnosticHint(scopedGuard.diagnostics, "Finish using"),
+      "a resource-bound loan explains destruction, not a last-read endpoint");
+  auto releasedGuard = guarded;
+  releasedGuard.insert(releasedGuard.find("  std::mutex_guard<int32_t> first"),
+                       "  {\n");
+  releasedGuard.insert(releasedGuard.find("  std::mutex_guard<int32_t> second"),
+                       "  }\n");
+  expect(lang::Frontend(concurrentOptions)
+             .analyze("ended-guard-explanations.gti", releasedGuard,
+                      {standardLibraryPrelude()}, {}, {standardLibraryRoot()})
+             .canGenerateCode(),
+         "ending a guard's scope still releases its lifecycle-bound loan");
+  const auto globalWrite =
+      lang::Frontend(concurrentOptions)
+          .analyze("concurrent-global-explanations.gti", R"(
+struct Command { mut int name = 0; };
+Command cmd{};
+int count = 0;
+void examine() { cmd.name = 1; count = 1; }
+)",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(hasDiagnosticHint(globalWrite.diagnostics, "must stay immutable") &&
+             !hasDiagnosticHint(globalWrite.diagnostics,
+                                "Declare 'cmd' with 'mut'") &&
+             !hasDiagnosticHint(globalWrite.diagnostics, "add 'mut'"),
+         "concurrent global mutation advice must preserve the "
+         "immutable-storage policy");
+  const std::string readonly = R"(
+struct Command { mut int name = 0; };
+int main() {
+  Command cmd{};
+  cmd.name = 1;
+  return 0;
+})";
+  const auto readonlyResult = analyze(readonly);
+  expect(hasRelatedDiagnostic(readonlyResult.diagnostics,
+                              "'cmd' is declared without mutable access") &&
+             hasDiagnosticHint(readonlyResult.diagnostics,
+                               "Declare 'cmd' with 'mut'"),
+         "mutable fields through immutable values explain the binding "
+         "restriction");
+  auto mutableSource = readonly;
+  mutableSource.insert(mutableSource.find("Command cmd"), "mut ");
+  expect(analyze(mutableSource).canGenerateCode(),
+         "an explicitly mutable owner still accepts field writes");
+  const auto referenceResult = analyze(R"(
+struct Command { mut int name = 0; };
+void update(Command& cmd) { cmd.name = 1; }
+)");
+  expect(hasRelatedDiagnostic(referenceResult.diagnostics,
+                              "read-only reference") &&
+             hasDiagnosticHint(referenceResult.diagnostics, "exclusive access"),
+         "read-only reference advice must explain the access contract, not "
+         "only binding mutability");
+  const auto arrayWrite =
+      analyze("void examine() { int values[2] = {1, 2}; values[0] = 3; }");
+  expect(hasRelatedDiagnostic(arrayWrite.diagnostics,
+                              "'values' is declared without mutable access") &&
+             hasDiagnosticHint(arrayWrite.diagnostics,
+                               "Declare 'values' with 'mut'"),
+         "a built-in fixed-array write identifies its immutable binding");
+  const auto capturedWrite = analyze(R"(
+struct Command { mut int name = 0; };
+void examine() {
+  mut Command cmd{};
+  auto modify = [cmd]() -> void { cmd.name = 1; };
+})");
+  expect(hasDiagnosticHint(capturedWrite.diagnostics,
+                           "immutable value snapshot") &&
+             !hasDiagnosticHint(capturedWrite.diagnostics,
+                                "Declare 'cmd' with 'mut'"),
+         "capture mutation advice must not suggest changing the mutable source "
+         "binding");
+  const auto immutableMethod = analyze(R"(
+struct Command { void update() mut {} };
+void examine() { Command cmd{}; cmd.update(); }
+)");
+  expect(hasRelatedDiagnostic(immutableMethod.diagnostics,
+                              "'cmd' is declared without mutable access") &&
+             hasRelatedDiagnostic(immutableMethod.diagnostics,
+                                  "requires mutable receiver access") &&
+             hasDiagnosticHint(immutableMethod.diagnostics, "Declare 'cmd'"),
+         "mutable method calls explain both binding and callable contracts");
+  const auto constantWrite =
+      analyze("void examine() { constexpr int fixed = 4; fixed = 5; }");
+  expect(hasDiagnosticHint(constantWrite.diagnostics,
+                           "A constant cannot be mutated") &&
+             !hasDiagnosticHint(constantWrite.diagnostics, "add 'mut'"),
+         "constexpr mutation advice must not recommend a forbidden mut prefix");
+  const std::string nonassignable = R"(
+class Slot {
+  mut int& value;
+public:
+  Slot(mut int& owner) : value(owner) {}
+};
+void examine() {
+  mut int first = 1;
+  mut int second = 2;
+  mut Slot destination = Slot(first);
+  Slot source = Slot(second);
+  destination = source;
+})";
+  const auto assignmentResult = analyze(nonassignable);
+  const auto *assignmentError =
+      findDiagnosticByCode(assignmentResult.diagnostics, "GTI-S2003");
+  expect(assignmentError &&
+             assignmentError->message.find("Cannot copy assign") !=
+                 std::string::npos &&
+             assignmentError->primary.start == nonassignable.rfind("source;") &&
+             hasDiagnosticHint(assignmentResult.diagnostics,
+                               "does not support move assignment") &&
+             !hasDiagnosticHint(assignmentResult.diagnostics,
+                                "use std::move(owner)") &&
+             assignmentError->fixes.empty(),
+         "copy failure must not recommend a move assignment the type lacks");
+  for (const std::string value : {"std::move(source)", "Slot(second)"}) {
+    auto unavailableMove = nonassignable;
+    unavailableMove.replace(unavailableMove.rfind("destination = source"),
+                            std::string("destination = source").size(),
+                            "destination = " + value);
+    const auto result = analyze(unavailableMove);
+    const auto *error = findDiagnosticByCode(result.diagnostics, "GTI-S2003");
+    expect(error &&
+               error->message.find("Move assignment is unavailable") !=
+                   std::string::npos &&
+               error->fixes.empty() &&
+               !hasDiagnosticHint(result.diagnostics, "use std::move(owner)"),
+           "explicit movement and fresh values both explain unavailable move "
+           "assignment");
+  }
+
+  const std::string dereferencePrefix = R"(
+#include <std/string>
+class Slot {
+  mut std::string value = std::string("old");
+public:
+  mut std::string& operator*() mut { return value; }
+};
+int main() {
+  mut Slot slot{};
+  std::string source = std::string("new");
+  *slot = )";
+  const std::string copied = dereferencePrefix + "source; return 0; }";
+  const auto copyResult = lang::Frontend().analyze(
+      "dereference-owner-copy.gti", copied, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *copyError =
+      findDiagnosticByCode(copyResult.diagnostics, "GTI-S2003");
+  expect(
+      !copyResult.canGenerateCode() && copyError != nullptr &&
+          copyError->phase == lang::DiagnosticPhase::Semantics &&
+          copyError->primary.source ==
+              std::filesystem::weakly_canonical("dereference-owner-copy.gti")
+                  .string() &&
+          copyError->primary.start == dereferencePrefix.size() &&
+          copyError->primary.end == dereferencePrefix.size() + 6 &&
+          copyError->message.find("Cannot copy assign") != std::string::npos &&
+          !copyError->hints.empty() && copyError->fixes.empty() &&
+          !hasDiagnosticCode(copyResult.diagnostics, "GTI-B0001"),
+      "user-defined dereference assignment must reject implicit owner copies "
+      "at the RHS before lowering, without an ownership-changing fix-it");
+  for (const std::string &value : {std::string("std::move(source)"),
+                                   std::string("std::string(\"fresh\")")}) {
+    const auto valid = lang::Frontend().analyze(
+        "dereference-owner-move.gti",
+        dereferencePrefix + value + "; return 0; }", {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+           "owned RHS values should retain valid dereference move assignment");
+  }
+
+  const std::string ownershipSource = R"(
+#include <std/string>
+#include <std/vector>
+
+class Options {
+  std::vector<std::string> arguments;
+public:
+  Options(std::vector<std::string> argv) : arguments(argv) {}
+};
+)";
+  const lang::FrontendResult ownership = lang::Frontend().analyze(
+      "move-only-field-initializer.gti", ownershipSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *copy =
+      findDiagnosticByCode(ownership.diagnostics, "GTI-S2003");
+  const std::size_t copiedArgument = ownershipSource.find("arguments(argv)") +
+                                     std::string("arguments(").size();
+  expect(!ownership.canGenerateCode() && copy != nullptr &&
+             copy->primary.start == copiedArgument &&
+             copy->primary.end == copiedArgument + 4 &&
+             copy->message ==
+                 "Cannot initialize field 'arguments' by copying move-only "
+                 "type 'std::vector<std::string>'." &&
+             copy->hints ==
+                 std::vector<std::string>{
+                     "Transfer ownership explicitly with "
+                     "std::move(argv), or initialize the field "
+                     "from a fresh value."} &&
+             copy->fixes.empty(),
+         "move-only field initialization should explain the ownership cause "
+         "without offering an intent-changing edit");
+
+  const std::string returnSource = R"(
+#include <std/string>
+
+std::string return_named(std::string result) {
+  return result;
+}
+)";
+  const lang::FrontendResult returned = lang::Frontend().analyze(
+      "move-only-return.gti", returnSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const lang::Diagnostic *returnCopy =
+      findDiagnosticByCode(returned.diagnostics, "GTI-S2003");
+  expect(returned.canGenerateCode() && returnCopy == nullptr,
+         "an exact named move-only return should move implicitly without "
+         "publishing the former copy diagnostic");
+
+  const std::string expectedReturnSource = R"(
+#include <std/string>
+enum class error { failed };
+expected<std::string, error> value() {
+  std::string text = std::string("tea");
+  return text;
+}
+int main() { return 0; }
+)";
+  const lang::FrontendResult expectedReturned = lang::Frontend().analyze(
+      "move-only-expected-return.gti", expectedReturnSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *expectedCopy =
+      findDiagnosticByCode(expectedReturned.diagnostics, "GTI-S2003");
+  const std::size_t expectedName =
+      expectedReturnSource.find("return text") + std::string("return ").size();
+  expect(!expectedReturned.canGenerateCode() && expectedCopy != nullptr &&
+             expectedCopy->primary.source ==
+                 std::filesystem::absolute("move-only-expected-return.gti")
+                     .lexically_normal()
+                     .string() &&
+             expectedCopy->primary.start == expectedName &&
+             expectedCopy->primary.end == expectedName + 4 &&
+             expectedCopy->message ==
+                 "Cannot return 'text' by copy because type 'std::string' "
+                 "is move-only." &&
+             expectedCopy->hints ==
+                 std::vector<std::string>{"Use 'return std::move(text);' to "
+                                          "transfer ownership."} &&
+             expectedCopy->fixes.empty(),
+         "wrapping a named success payload must diagnose its attempted copy "
+         "before backend admission, with the same exact ownership hint");
+  std::string nestedReturnSource = expectedReturnSource;
+  nestedReturnSource.replace(
+      nestedReturnSource.find("expected<std::string, error>"),
+      std::string("expected<std::string, error>").size(),
+      "expected<expected<std::string, error>, error>");
+  const auto nestedReturned = lang::Frontend().analyze(
+      "nested-expected-return.gti", nestedReturnSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const auto *nestedCopy =
+      findDiagnosticByCode(nestedReturned.diagnostics, "GTI-S2003");
+  expect(!nestedReturned.canGenerateCode() && nestedCopy != nullptr &&
+             nestedCopy->message == expectedCopy->message &&
+             nestedCopy->hints == expectedCopy->hints &&
+             nestedCopy->primary.start ==
+                 nestedReturnSource.find("return text") +
+                     std::string("return ").size(),
+         "nested expected success conversions cannot bypass payload ownership");
+  for (const std::string replacement :
+       {"std::move(text)", "std::string(\"tea\")"}) {
+    std::string valid = expectedReturnSource;
+    valid.replace(expectedName, 4, replacement);
+    const lang::FrontendResult accepted = lang::Frontend().analyze(
+        "owned-expected-success.gti", valid, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(accepted.canGenerateCode(),
+           "explicitly moved and fresh success payloads remain legal");
+  }
+
+  const std::string missingSource = "using values = std::vector<int>;\n";
+  const lang::FrontendResult missing = lang::Frontend().analyze(
+      "missing-vector-include.gti", missingSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  const lang::Diagnostic *include =
+      findDiagnosticByCode(missing.diagnostics, "GTI-S2089");
+  expect(!missing.semanticValid && include != nullptr &&
+             include->primary.start == missingSource.find("vector") &&
+             include->primary.end ==
+                 missingSource.find("vector") + std::string("vector").size() &&
+             include->message == "Unknown type 'std::vector'." &&
+             hasDiagnosticHint(missing.diagnostics, "#include <std/vector>") &&
+             include->fixes.size() == 1 &&
+             include->fixes.front().span.source == include->primary.source &&
+             include->fixes.front().span.start == 0 &&
+             include->fixes.front().span.end == 0 &&
+             include->fixes.front().replacement == "#include <std/vector>\n" &&
+             include->fixes.front().message == "Add #include <std/vector>",
+         "an unresolved canonical standard-library type should carry one "
+         "compiler-owned include fix");
+
+  for (const std::string name : {"function", "move_only_function"}) {
+    const std::string source = "using callback = std::" + name + "<void()>;\n";
+    const lang::FrontendResult callback = lang::Frontend().analyze(
+        "missing-callback-include.gti", source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    const lang::Diagnostic *missingCallback =
+        findDiagnosticByCode(callback.diagnostics, "GTI-S2089");
+    expect(
+        !callback.canGenerateCode() && missingCallback != nullptr &&
+            missingCallback->primary.start == source.find(name) &&
+            missingCallback->primary.end == source.find(name) + name.size() &&
+            missingCallback->fixes.size() == 1 &&
+            missingCallback->fixes.front().replacement ==
+                "#include <std/functional>\n" &&
+            missingCallback->fixes.front().span.start == 0 &&
+            missingCallback->fixes.front().span.end == 0,
+        "owning callback types should offer the canonical functional include");
+    const lang::FrontendResult corrected = lang::Frontend().analyze(
+        "missing-callback-include.gti", "#include <std/functional>\n" + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(
+        corrected.canGenerateCode(),
+        "applying the callback include fix should resolve the signature type");
+  }
+
+  for (const std::string name :
+       {"map", "unordered_map", "set", "unordered_set", "deque", "queue"}) {
+    const std::string source =
+        "using dictionary = std::" + name +
+        (name == "map" || name == "unordered_map" ? "<int, int>;\n"
+                                                  : "<int>;\n");
+    const auto missingMap = lang::Frontend().analyze(
+        "missing-associative-include.gti", source, {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    const lang::Diagnostic *diagnostic =
+        findDiagnosticByCode(missingMap.diagnostics, "GTI-S2089");
+    const std::string directive = "#include <std/" + name + ">\n";
+    expect(!missingMap.canGenerateCode() && diagnostic != nullptr &&
+               diagnostic->primary.start == source.find(name) &&
+               diagnostic->primary.end == source.find(name) + name.size() &&
+               diagnostic->fixes.size() == 1 &&
+               diagnostic->fixes.front().span.source ==
+                   diagnostic->primary.source &&
+               diagnostic->fixes.front().span.start == 0 &&
+               diagnostic->fixes.front().span.end == 0 &&
+               diagnostic->fixes.front().replacement == directive,
+           "associative containers should offer the canonical include fix");
+    const auto corrected = lang::Frontend().analyze(
+        "missing-associative-include.gti", directive + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(corrected.canGenerateCode(),
+           "applying an associative include fix should resolve the type");
+  }
+
+  const std::string compoundBorrow = R"(
+#include <std/unordered_set>
+int main() {
+  mut std::unordered_set<int> values{};
+  int key = 7;
+  if (values.insert(7).second || !values.contains(key)) { return 1; }
+  return 0;
+}
+)";
+  const auto compound = lang::Frontend().analyze(
+      "compound-result-loan.gti", compoundBorrow, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  const auto *conflict =
+      findDiagnosticByCode(compound.diagnostics, "GTI-S2017");
+  expect(!compound.semanticValid && conflict != nullptr &&
+             conflict->primary.start == compoundBorrow.find("||") &&
+             conflict->primary.end == compoundBorrow.find("||") + 2 &&
+             !conflict->related.empty() && !conflict->hints.empty() &&
+             conflict->fixes.empty() &&
+             !hasDiagnosticCode(compound.diagnostics, "GTI-B0001"),
+         "a copied field of a temporary borrowed carrier keeps its loan until "
+         "the full expression ends and receives a source diagnostic");
+
+  const std::string scalarReads = R"(
+#include <std/string>
+int main() {
+  mut std::string text = std::string("ab");
+  text.push_back('c');
+  return text[0] != text[1] && text[1] != text[2] ? 0 : 1;
+}
+)";
+  const auto reads = lang::Frontend().analyze(
+      "scalar-reference-reads.gti", scalarReads, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(reads.canGenerateCode(), "copied scalar reads must not acquire a "
+                                  "carrier's full-expression lifetime");
+
+  const std::string userCarrier = R"(
+class Lease {
+  mut int& value;
+public:
+  bool success = true;
+  Lease(mut int& value) : value(value) {}
+};
+Lease acquire(mut int& value) { return Lease(value); }
+int main() {
+  mut int value = 7;
+  if (acquire(value).success && value == 7) { return 1; }
+  return 0;
+}
+)";
+  const auto userConflict = lang::Frontend().analyze(
+      "user-carrier-operands.gti", userCarrier, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *userDiagnostic =
+      findDiagnosticByCode(userConflict.diagnostics, "GTI-S2017");
+  expect(!userConflict.semanticValid && userDiagnostic != nullptr &&
+             userDiagnostic->primary.source ==
+                 std::filesystem::weakly_canonical("user-carrier-operands.gti")
+                     .string() &&
+             userDiagnostic->primary.start == userCarrier.find("&&") &&
+             userDiagnostic->primary.end == userCarrier.find("&&") + 2 &&
+             !userDiagnostic->related.empty() &&
+             !userDiagnostic->hints.empty() && userDiagnostic->fixes.empty(),
+         "full-expression carrier exclusion is structural, not a container "
+         "name exception");
+
+  const lang::FrontendResult indirect = lang::Frontend().analyze(
+      "indirect-memory-include.gti",
+      "#include <std/cstdio>\nusing owner = std::unique_ptr<int>;\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *invisible =
+      findDiagnosticByCode(indirect.diagnostics, "GTI-S2024");
+  expect(!indirect.semanticValid && invisible != nullptr &&
+             invisible->fixes.size() == 1 &&
+             invisible->fixes.front().span.start == 0 &&
+             invisible->fixes.front().span.end == 0 &&
+             invisible->fixes.front().replacement ==
+                 "#include <std/memory>\n" &&
+             invisible->fixes.front().message == "Add #include <std/memory>",
+         "a loaded but non-visible standard declaration should carry the "
+         "same direct-include fix");
+
+  const lang::FrontendResult unrelated = lang::Frontend().analyze(
+      "unknown-vendor-vector.gti", "using values = vendor::vector<int>;\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *unknown =
+      findDiagnosticByCode(unrelated.diagnostics, "GTI-S2000");
+  expect(!unrelated.semanticValid && unknown != nullptr &&
+             unknown->message == "Unknown type 'vendor::vector'." &&
+             unknown->fixes.empty() &&
+             !hasDiagnosticCode(unrelated.diagnostics, "GTI-S2089"),
+         "unknown non-standard types must not receive a guessed include edit");
+}
+
 void testDiagnosticFoundation() {
   for (const auto &[spelling, kind] : lang::keywords) {
     expect(lang::isKeywordToken(kind) || lang::isTypeKeywordToken(kind) ||
@@ -425,16 +1066,20 @@ int main() {
              generated.find("[[discard]]") == std::string::npos,
          "discard should be a GTI-only call-site attribute");
 
-  auto invalidTokens = lexer.scan(R"(
+  const std::string invalidSource = R"(
 int calculate() { return 7; }
+namespace output {
+int write(int value) { return value; }
+}
 void perform() {}
 int main() {
-  calculate();
+  output::write(calculate());
   [[discard]] perform();
   [[discard]] 1 + 2;
   return 0;
 }
-)");
+)";
+  auto invalidTokens = lexer.scan(invalidSource);
   lang::Parser invalidParser(std::move(invalidTokens));
   lang::Program invalidProgram = invalidParser.parse();
   expect(!invalidParser.hadError(),
@@ -445,6 +1090,181 @@ int main() {
          "ignored function results and invalid discard attributes should fail");
   expect(invalidSemantic.errors().size() == 3,
          "nodiscard should produce focused diagnostics for all invalid uses");
+  const lang::Diagnostic *ignored =
+      findDiagnosticByCode(invalidSemantic.errors(), "GTI-S2009");
+  expect(ignored != nullptr && ignored->group == "unused-result" &&
+             ignored->fixes.size() == 1 &&
+             ignored->fixes.front().span.start ==
+                 invalidSource.find("output::write") &&
+             ignored->fixes.front().span.end ==
+                 invalidSource.find("output::write") &&
+             ignored->fixes.front().replacement == "[[discard]] " &&
+             !ignored->fixes.front().preferred,
+         "an ignored nested result should insert an explicit, non-preferred "
+         "discard fix at the complete expression start");
+}
+
+void testAdvisoryDiagnostics() {
+  const lang::FrontendResult result =
+      lang::Frontend().analyze("advisory-diagnostics.gti", R"(
+int main() {
+  mut int read_only = 1;
+  mut int changed = 2;
+  changed = 3;
+  return read_only + changed;
+  int unreachable = 4;
+}
+)");
+  expect(result.canGenerateCode(),
+         "warning-only programs should remain eligible for code generation");
+  const lang::Diagnostic *unnecessary =
+      findDiagnosticByCode(result.diagnostics, "GTI-S2096");
+  expect(unnecessary != nullptr &&
+             unnecessary->severity == lang::DiagnosticSeverity::Warning &&
+             unnecessary->group == "unused-mut" &&
+             unnecessary->tags ==
+                 std::vector{lang::DiagnosticTag::Unnecessary} &&
+             unnecessary->fixes.size() == 1 &&
+             unnecessary->fixes.front().replacement.empty() &&
+             unnecessary->fixes.front().preferred &&
+             unnecessary->primary.start == std::string_view(R"(
+int main() {
+  mut int read_only = 1;
+  mut int changed = 2;
+  changed = 3;
+  return read_only + changed;
+  int unreachable = 4;
+}
+)")
+                                               .find("mut int read_only"),
+         "an unused local mut should have a stable warning group, unnecessary "
+         "tag, and exact token removal fix");
+  expect(countDiagnosticCode(result.diagnostics, "GTI-S2096") == 1,
+         "a binding that is assigned later must retain mut without a warning");
+  const lang::Diagnostic *unreachable =
+      findDiagnosticByCode(result.diagnostics, "GTI-S2095");
+  expect(unreachable != nullptr &&
+             unreachable->severity == lang::DiagnosticSeverity::Warning &&
+             unreachable->group == "unreachable-code" &&
+             unreachable->tags ==
+                 std::vector{lang::DiagnosticTag::Unnecessary} &&
+             unreachable->fixes.empty(),
+         "the first statement in an unreachable tail should be tagged but "
+         "should not receive a semantics-changing deletion fix");
+
+  const lang::FrontendResult requiredMutation =
+      lang::Frontend().analyze("required-mutation.gti", R"(
+void replace(mut int& value) { value = 3; }
+struct Box {
+  mut int value = 0;
+  void change() mut { this.value = 4; }
+};
+int main() {
+  mut int referenced = 1;
+  replace(referenced);
+  mut int addressed = 2;
+  unsafe { int* pointer = &addressed; *pointer = 5; }
+  mut Box box = Box();
+  box.change();
+  box.value += 1;
+  mut int[1] values = {1};
+  values[0] *= 2;
+  return referenced + addressed + box.value + values[0];
+}
+)");
+  expect(requiredMutation.canGenerateCode() &&
+             countDiagnosticCode(requiredMutation.diagnostics, "GTI-S2096") ==
+                 0,
+         "mutable-reference arguments, mutable address-taking, and mutable "
+         "receivers, field writes, and indexed writes should each preserve a "
+         "required local mut qualifier");
+
+  for (const std::string_view construction :
+       {"mut View view{owner};", "mut View view = View(owner);",
+        "mut View view = (View(owner));"}) {
+    std::string source = R"(
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+};
+class View {
+  mut Counter& owner;
+public:
+  View(mut Counter& source) : owner(source) {}
+  void advance() mut { this.owner.value += 1; }
+};
+int main() {
+  mut Counter owner{4};
+)";
+    source += construction;
+    source += "\n  view.advance();\n  return 0;\n}\n";
+    const auto requiredConstructorMutation =
+        lang::Frontend().analyze("mutable-constructor-advisory.gti", source);
+    if (!requiredConstructorMutation.canGenerateCode() ||
+        countDiagnosticCode(requiredConstructorMutation.diagnostics,
+                            "GTI-S2096") != 0) {
+      std::cerr << "Constructor advisory spelling: " << construction << '\n';
+      for (const auto &diagnostic : requiredConstructorMutation.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    expect(requiredConstructorMutation.canGenerateCode() &&
+               countDiagnosticCode(requiredConstructorMutation.diagnostics,
+                                   "GTI-S2096") == 0,
+           "a selected mutable-reference constructor parameter must preserve "
+           "the argument owner's required mut qualifier for every construction "
+           "spelling");
+
+    source.erase(source.find("mut Counter owner"), 4);
+    const auto missingConstructorMutation =
+        lang::Frontend().analyze("immutable-constructor-advisory.gti", source);
+    expect(!missingConstructorMutation.canGenerateCode() &&
+               findDiagnosticByCode(missingConstructorMutation.diagnostics,
+                                    "GTI-S2012") != nullptr,
+           "removing the mutable constructor argument's mut must remain "
+           "invalid rather than becoming an advisory fix");
+  }
+
+  const std::string readOnlyConstructorSource = R"(
+class Inspect {
+public:
+  Inspect(int& source) {}
+};
+int main() {
+  mut int owner = 4;
+  Inspect view{owner};
+  return owner;
+}
+)";
+  const auto readOnlyConstructor = lang::Frontend().analyze(
+      "readonly-constructor-advisory.gti", readOnlyConstructorSource);
+  const auto *readOnlyWarning =
+      findDiagnosticByCode(readOnlyConstructor.diagnostics, "GTI-S2096");
+  expect(readOnlyConstructor.canGenerateCode() && readOnlyWarning != nullptr &&
+             countDiagnosticCode(readOnlyConstructor.diagnostics,
+                                 "GTI-S2096") == 1 &&
+             readOnlyWarning->primary.start ==
+                 readOnlyConstructorSource.find("mut int owner") &&
+             readOnlyWarning->fixes.size() == 1 &&
+             readOnlyWarning->fixes.front().replacement.empty() &&
+             readOnlyWarning->fixes.front().preferred,
+         "a read-only constructor argument must retain the safe unnecessary "
+         "mut warning and exact token-removal fix");
+
+  const auto payloadBorrow =
+      lang::Frontend().analyze("mutable-payload-advisory.gti", R"(
+enum class Data { some(int item), none };
+int main() {
+  mut Data input = Data::some(3);
+  switch (input) {
+    case Data::some(mut auto& item): item = 7; return item;
+    case Data::none: return 0;
+  }
+}
+)");
+  expect(payloadBorrow.canGenerateCode() &&
+             countDiagnosticCode(payloadBorrow.diagnostics, "GTI-S2096") == 0,
+         "a mutable payload borrow requires its enum owner's mut qualifier "
+         "and must not offer an invalid removal fix");
 }
 
 void testPrintIsAnIdentifier() {
@@ -540,6 +1360,95 @@ int main() {
          "formatter should produce stable C++-style GTI layout");
   expect(lang::Formatter().format(formatted) == formatted,
          "formatting should be idempotent");
+
+  const std::string nestedLambda = lang::Formatter().format(
+      "void invoke<Callback>(Callback callback){callback();}"
+      "void run(){invoke([]()->void{mut auto result=login();if(!result){"
+      "report();}for(mut int i=0;i<3;i++){tick();}});}");
+  expect(nestedLambda.find("login();\n    if (!result)") != std::string::npos &&
+             nestedLambda.find("for (mut int i = 0; i < 3; i++)") !=
+                 std::string::npos &&
+             lang::Formatter().format(nestedLambda) == nestedLambda,
+         "statements in a lambda argument should break at the lambda block "
+         "depth without splitting for-loop header semicolons");
+
+  const auto initializerLayout = [](const std::string &input,
+                                    const std::string &expected) {
+    const std::string output = lang::Formatter().format(input);
+    if (output != expected)
+      std::cerr << "Initializer formatting was:\n" << output;
+    expect(output == expected, "initializer layout should retain nesting");
+    expect(lang::Formatter().format(output) == output,
+           "initializer layout should be idempotent");
+    lang::Lexer beforeLexer;
+    lang::Lexer afterLexer;
+    const auto before = beforeLexer.scan(input);
+    const auto after = afterLexer.scan(output);
+    expect(!before.empty() && before.size() == after.size() &&
+               std::equal(before.begin(), std::prev(before.end()),
+                          after.begin(),
+                          [](const auto &a, const auto &b) {
+                            return a.kind == b.kind && a.lexeme == b.lexeme;
+                          }),
+           "initializer formatting must preserve tokens, even on broken input");
+  };
+  const std::string schemaSource =
+      "void setup(){Command schema={.name=std::string{\"tea\"},"
+      ".subcommands={{.name=std::string{\"auth\"},"
+      ".subcommands={{.name=std::string{\"login\"}}}}}};}";
+  initializerLayout(schemaSource, R"(void setup() {
+  Command schema = {
+    .name = std::string{"tea"},
+    .subcommands = {
+      {
+        .name = std::string{"auth"},
+        .subcommands = {
+          {
+            .name = std::string{"login"}
+          }
+        }
+      }
+    }
+  };
+}
+)");
+  initializerLayout("C c={.a=call(1,2),.b=make<int,int>(3,4),"
+                    ".c=[left,right](int a,int b){return a+b;},.d={}};",
+                    R"(C c = {
+  .a = call(1, 2),
+  .b = make<int, int>(3, 4),
+  .c = [left, right](int a, int b) {
+    return a + b;
+  },
+  .d = {}
+};
+)");
+  initializerLayout("int values[3]={\n1,2,3,\n};make({1,2},{3,4});",
+                    "int values[3] = {\n  1,\n  2,\n  3,\n};\n"
+                    "make({1, 2}, {3, 4});\n");
+  initializerLayout("C c={ // header\n.name=\"{,} 😀\", // name\n"
+                    ".count=call(1,2), /* count */ .empty={\n}};",
+                    "C c = { // header\n  .name = \"{,} 😀\", // name\n"
+                    "  .count = call(1, 2), /* count */\n  .empty = {}\n};\n");
+  initializerLayout("C root={.name=\"tea\",.children={.name=\"auth\"}}",
+                    "C root = {\n  .name = \"tea\",\n  .children = {\n"
+                    "    .name = \"auth\"\n  }\n}\n");
+  initializerLayout("C root={.name=\"tea\",.children={\n{.name=",
+                    "C root = {\n  .name = \"tea\",\n  .children = {\n"
+                    "    {\n      .name =\n");
+  const auto tabs =
+      lang::Formatter({.indentWidth = 4,
+                       .insertSpaces = false,
+                       .breakBeforeBraces = lang::BraceBreakingStyle::Allman})
+          .format("void f(){C c={.n=1,.child={.n=2}};}");
+  expect(tabs == "void f()\n{\n\tC c = {\n\t\t.n = 1,\n"
+                 "\t\t.child = {\n\t\t\t.n = 2\n\t\t}\n\t};\n}\n" &&
+             lang::Formatter(
+                 {.indentWidth = 4,
+                  .insertSpaces = false,
+                  .breakBeforeBraces = lang::BraceBreakingStyle::Allman})
+                     .format(tabs) == tabs,
+         "initializer indentation honors tabs without Allman block wrapping");
 
   const std::string separatedAmpersands = lang::Formatter().format("& &m");
   expect(separatedAmpersands == "& &m\n" &&
@@ -1268,6 +2177,16 @@ int main() {
          "namespace completion should preserve overloads, GTI signatures, and "
          "parameter snippets");
 
+  const std::string incompleteDeclarationSource =
+      "class Client { public: static int create() { return 1; } }; "
+      "int unfinished() { auto client = Client::\n}";
+  const lang::CompletionResult incompleteDeclarationCompletion =
+      complete(incompleteDeclarationSource, "Client::");
+  expect(findCandidate(incompleteDeclarationCompletion, "create") !=
+             incompleteDeclarationCompletion.candidates.end(),
+         "completion should retain a declaration whose initializer reaches "
+         "the cursor before its semicolon is written");
+
   const std::string languageSurfaceSource =
       "interface Renderable { int render(); }; "
       "void relay<Args...>(Args... values) {} "
@@ -1507,10 +2426,13 @@ private:
 constexpr NamedTest kTests[] = {
     {"testSemanticVisitorRequestReuse", testSemanticVisitorRequestReuse},
     {"testSemanticDiagnostics", testSemanticDiagnostics},
+    {"testOwnershipAndMissingIncludeDiagnostics",
+     testOwnershipAndMissingIncludeDiagnostics},
     {"testDiagnosticFoundation", testDiagnosticFoundation},
     {"testCppReservedIdentifiers", testCppReservedIdentifiers},
     {"testDefaultImmutability", testDefaultImmutability},
     {"testDefaultNodiscard", testDefaultNodiscard},
+    {"testAdvisoryDiagnostics", testAdvisoryDiagnostics},
     {"testPrintIsAnIdentifier", testPrintIsAnIdentifier},
     {"testFormatting", testFormatting},
     {"testLanguageQueries", testLanguageQueries},

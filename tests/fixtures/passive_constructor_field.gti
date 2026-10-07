@@ -1,0 +1,17 @@
+#include <std/functional>
+
+struct Tag { int marker = 11; };
+
+struct Packet {
+  Tag tag{};
+  int value;
+  Packet(int value) : value(value) {}
+};
+
+Packet make_packet(int value) { return Packet(value); }
+
+int main() {
+  std::function<Packet(int)> callback{make_packet};
+  Packet packet = callback(7);
+  return packet.value + packet.tag.marker - 18;
+}

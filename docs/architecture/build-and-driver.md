@@ -1,9 +1,12 @@
 # Build And Driver Architecture
 
 Status: Current implementation. Local and pinned-Git dependencies,
-deterministic workspaces, lockfiles, and explicit dependency acquisition are
-implemented. Finer-grained incremental compilation and a package registry
-remain plans.
+deterministic workspaces, lockfiles, explicit dependency acquisition, and
+consumer-approved native package build scripts are implemented. Finer-grained
+GTI compilation remains a plan. Source-package registries, SemVer resolution,
+explicit add/fetch and deterministic publication are implemented behind a
+backend-independent protocol; Gitea Generic Packages is the official bootstrap
+backend.
 
 GTI has one language compilation pipeline and two user entry modes:
 
@@ -20,6 +23,26 @@ gti build|check|run|test|clean|metadata project mode
 ```
 
 ## Target Boundaries
+
+Terminal status and diagnostic colour is CLI-only, not a manifest or build-cache
+input. Use `gti build --color=always` to retain ANSI styling in captured output,
+or `gti build --color=never` to disable it. Automatic terminal detection and
+`NO_COLOR` handling are described in [Diagnostics](diagnostics.md#terminal-colour).
+For `gti run`, build status remains on stderr and the program's stdout is left
+unchanged. Parallel `build --all` preserves both coloured child diagnostics and
+their aggregated counts without adding presentation policy to driver requests.
+For `gti test`, build/run progress is cyan, passed labels/counts are green, and
+failed labels/counts are red. Test-runner status stays on stderr; test-program
+stdout and stderr remain inherited and are never restyled or filtered. The
+same `auto`, `always`, `never`, and `NO_COLOR` policy applies to test output.
+Parallel build target-failure labels are red under that policy as well.
+
+An explicit `run/test --color` choice is passed only to the executed program as
+a `GTI_COLOR` environment override, using the existing process invocation API.
+The runtime applies it to panic/checked-failure reports, not arbitrary program
+text. With no explicit choice, the child's environment and automatic stderr
+detection remain authoritative. This includes `run --no-build`; no colour
+choice enters a compilation request, manifest, executable or cache key.
 
 - `gti_compiler` contains reusable frontend, IR, optimizer, backend contracts,
   and compiler-owned language queries. It does not depend on manifests, TOML,
@@ -119,26 +142,209 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-Stable and rolling-nightly toolchains are published for Linux x64, Linux
-arm64, and macOS arm64. Version `v0.299.0` is the final published macOS x64
-toolchain; source compilation can still target or run on Intel macOS when its
-prerequisites are supplied locally.
+Gitea is the Git, tag, workflow, and release authority. Release archives
+are downloaded by the plugin from `https://git.internal.howetotech.dev`.
+The plugin uses a full HTTPS Git URL, not GitHub-style owner/repository shorthand.
+Archive shapes
+exist for Linux x64, Linux arm64, and macOS arm64, but an archive is published
+only by a configured native runner job. The current workflow packages the
+native platform of the runner claiming `ubuntu-latest`; adding another
+advertised binary platform requires a statically labelled native package job.
+Version `v0.299.0` is the final historical macOS x64 toolchain; source
+compilation can still target or run on Intel macOS when its prerequisites are
+supplied locally.
 
-The stable release owns immutable, versioned archives. The `nightly` release is
-one mutable channel whose tag and `BUILD_ID` advance to each admitted `main`
-commit. Its publication step uploads the complete current asset set before
-removing any asset not produced by that build. This exact synchronization keeps
-retired platform archives from surviving a successful rolling publication
-while preserving the current archives if pruning is interrupted.
+`scripts/install_neovim_local.py` is a macOS-only local installation workflow:
+it builds with system LLVM, stages `gti_toolchain`, smoke-tests a checksummed
+archive, and activates it through the existing Lua release installer without
+network downloads. It writes a local-checkout Lazy spec with explicit tool
+paths and downloads disabled, backing up an existing different spec only after
+`--replace-config`. It preserves a supplied build directory's generator and
+does not change source compilation, project manifests, LSP semantics, or release
+publication authority. Discovery accepts LLVM 18–22, skips unsupported newer
+Homebrew formulas, and considers retained supported versions without assuming
+an Intel or Apple Silicon installation prefix. Existing build generators are
+preserved while configuration/install rules are refreshed.
+
+On macOS, the `gti_toolchain` CMake install step runs
+`scripts/bundle_macos_runtime.py` for both system and bundled LLVM builds. It
+resolves the non-Apple runtime dependency closure before modifying staged
+copies, gives the configured libclang identity precedence over volatile
+Homebrew `opt` aliases, includes dependency licenses, rewrites references
+relative to each loader, and ad-hoc signs and verifies the resulting tools and
+dylibs. An unresolved/ambiguous dependency or missing license fails installation
+before activation; a different dylib ABI is never substituted for a missing
+one. `share/gti/host-runtime.json` records the copied runtime paths. The installed
+CLI/LSP no longer depend on Homebrew directories. This runtime portability does
+not change the binary's architecture or minimum macOS version, bundle build
+prerequisites, or make a system-LLVM CMake developer SDK self-contained.
+Builds default to all detected logical CPUs (one if detection is unavailable),
+at normal process priority. `--jobs N` overrides the job count; the dry-run and
+normal output both report the selected parallelism.
+
+A single toolchain-release workflow builds, tests, stages, and smoke-tests each
+Gitea `main` commit once with bundled LLVM/Clang. That verified stage supplies
+nightly and, when `VERSION` changes, stable archives. Stable is archived before
+the nightly `BUILD_ID` stamp; the two channels retain separate artifact names.
+The stable publication job owns the matching immutable tag and versioned
+release. A manual dispatch may rebuild that exact tagged commit, but cannot
+move a stable tag to another commit. New main commits do not cancel stable
+publication.
+
+The `nightly` release is one mutable channel whose tag and `BUILD_ID` advance
+to each admitted Gitea `main` commit. Nightly publication is serialized and
+checks current remote main before changing the tag; a superseded build skips
+publication. Its publication step uploads the complete current asset set before a
+Gitea API pass removes any asset not produced by that build. This exact
+synchronization keeps retired platform archives from surviving a successful
+rolling publication while preserving current archives if upload is
+interrupted.
+
+Stable versions describe user-visible toolchain behavior. Internal compiler or
+runtime work, tests, and documentation alone retain `VERSION` and reach users
+through nightly. `scripts/check_release_version.py` conservatively identifies
+potentially shipped files, including deletions and moves. An unchanged version
+requires each affected first-parent commit (or a merge's complete destination-
+parent delta) to carry these Git trailers:
+
+```text
+Release-Impact: internal
+Release-Reason: Explain why no user-visible behavior or public API changes.
+```
+
+This is an explicit author/reviewer impact assertion, not automated proof that
+a change is invisible. User-visible fixes still require a patch increment;
+new or changed surface requires a minor increment. Missing, duplicate,
+malformed, or reason-free declarations fail the check, and a later internal
+commit cannot excuse earlier unclassified changes. Versions may not decrease;
+an internal declaration cannot authorize version churn. Documentation-only
+changes need no trailer. A stable-version advance retains the ordinary release
+workflow, with no competing manual tag.
+
+## Live Build Progress
+
+Executable direct compilation and project `build`, `run`, `test`, and `check`
+report live, Cargo-style aligned phase verbs on stderr. A successful build can
+look like this (counts and timings are illustrative):
+
+```text
+  Building  tea (dev, arm64-apple-macos)
+   Loading  source graph
+   Loading  24 source units
+     Cache  checking build cache
+   Parsing  24 source units
+  Checking  tea
+  Lowering  HIR
+  Lowering  MIR
+Optimizing  program (-O2)
+  Emitting  backend representation
+    Native  compiling and linking
+Publishing  executable and build cache
+  Finished  tea (2.81s)
+```
+
+`--progress=auto` is the default: a capable stderr terminal updates one active
+row in place, refreshing elapsed time every 200 ms. Redirected streams and
+`TERM=dumb` retain durable stage transitions without cursor controls. A silent
+stage emits an elapsed-time heartbeat every ten seconds in that log mode.
+`--progress=plain` forces durable output even on a terminal;
+`--progress=never` disables this telemetry without suppressing diagnostics or
+the existing artifact/test summaries. `--color` and `NO_COLOR` govern colours
+independently; forcing colour on a redirected stream never enables cursor
+rewriting. Live rows are bounded to the terminal width and source/path control
+bytes are escaped.
+
+Timings use a monotonic clock. Completed phase rows show a duration for slower
+work (at least 100 ms in terminals, one second in logs); `Finished`/`Failed`
+always includes total elapsed time. A heartbeat means the operation remains
+pending, not that the compiler or native subprocess is proven to be advancing.
+There are no estimated overall percentages or completion times.
+
+Source-unit totals come from the canonical loaded graph, including the prelude
+and dependencies. Parsing publishes actual per-unit events; `--verbose` exposes
+those paths and a slow interactive parse shows the current path. Semantic
+analysis, HIR/MIR lowering, optimization, and backend emission remain
+whole-program stages: the CLI does not invent a per-file semantic or object
+compilation counter. Declared native sources report their exact source paths;
+the final representation compilation and link are honestly one `Native` stage.
+Native dependency build scripts and Darwin symbol collection have separate
+rows. Neither the emission row nor the native row names the selected backend
+or its compiler executable. Exact commands remain available under `--verbose`.
+
+Human-readable build output describes GTI work rather than exposing the current
+representation language. Retention summaries say `Kept backend representation`.
+The legacy `--emit-cpp`, `--keep-cpp`, `--cxx`, standard-selection flags, manifest
+keys, artifact extensions and machine-readable metadata/provenance fields stay
+unchanged for compatibility; this presentation policy does not promise a new
+backend or change the representation itself.
+
+Backend generation exceptions produce an entry-anchored `GTI-B0001` diagnostic
+without the backend name or implementation exception text. `CompilationResult`
+retains the complete developer details separately. Executable builds preserve
+those details, or a failed native invocation's exact command, exit status,
+driver diagnostic and captured tool output, in a fresh private temporary
+`backend.log`. Direct emit-only CLI failures use the same log writer. The CLI
+reports the saved log path; `--verbose` additionally exposes the raw evidence.
+Logs are retained outside outputs/caches and POSIX directories/files are
+owner-only. If saving fails, the original evidence is displayed instead of
+being silently lost or claiming a saved file. They may contain sensitive native
+arguments, so review them before including them in a bug report.
+
+A retained artifact is identified explicitly as `backend 'c++' representation
+saved at <path>`: its format is relevant when inspecting evidence, not as the
+language's public compilation model. That line is emitted only when retention
+actually occurred. An emitter failure before artifact construction reports a
+log, not a nonexistent representation. A native compilation/link failure is
+reported as a backend build failure, not automatically an internal compiler
+bug: missing tools, native libraries and link inputs can also cause that stage
+to fail. Handwritten native source failures keep actionable tool diagnostics
+under language-neutral `native source` headings. GTI build-script compilation
+uses the same preservation/reporting contract. Failure exit codes, previous
+artifact preservation and successful output bytes remain unchanged.
+
+An optional caller-owned `ProgressObserver` observes synchronous begin/update/end
+events through the compiler frontend and reusable driver entry points.
+`ProgressScope` times only observed work; ending a phase does not assert success.
+Events borrow detail strings only during their callback, and neither caches,
+results, artifacts, nor compiler workers retain an observer. The compiler
+reports its own work; the driver reports cache/native/publication work; only
+the CLI owns colours, terminal state, output, and the heartbeat thread. A null
+observer leaves library and LSP clients silent. Progress policy never enters an
+immutable semantic/build request, provenance sidecar, or cache key.
+
+A cache hit reports `hit; restoring executable` and skips parsing, semantics,
+lowering, emission and native compilation. `run --no-build` does not create a
+build display. Direct emit-only modes remain silent by default for tooling;
+explicit `--progress` enables observation for them. Project emit-MIR supports
+the same display. stdout—including generated/metadata data and executed
+program output—is unchanged. The heartbeat is joined and transient rows are
+cleared before diagnostics or program execution.
+
+Parallel `build --all` disables child progress so captured diagnostics and
+artifact summaries still replay in deterministic target-name order. The parent
+reports its actual target waits, with target ordinal/count, while other children
+may also be running. `--progress=never` preserves byte-identical serial/parallel
+presentation; elapsed progress is intentionally not byte-stable. The display
+does not imply that waiting for one target means the other targets are idle.
 
 ## Direct Mode
+
+Executable requests explicitly require a compiler-selected global `main`
+definition in the entry source unit. `ExecutableBuildRequest` enables this
+policy, as does project `check`; it is diagnosed by the shared frontend as
+`GTI-S2094`, not delegated to the native linker. Default library compilation
+requests and direct/project emit-only modes remain valid without an entry.
+Externally supplied native entry points are not a GTI executable contract.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program C++ artifact and one native compiler
 invocation. Repeatable `-D NAME` options seed valueless GTI configuration flags
-for the invocation. Accepted native arguments after `--` remain exact argv
-values; native `-DNAME[=VALUE]` operands there are compiler arguments and do
-not define GTI flags.
+for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
+`--disable-warning <group>`) add validated warning groups to the immutable
+`CompilationRequest`; for example, `-Wno-unused-mut` suppresses `GTI-S2096`.
+Accepted native arguments after `--` remain exact argv values; native
+`-DNAME[=VALUE]` operands there are compiler arguments and do not define GTI
+flags.
 The shared native-argument policy rejects response files and recognized option
 families that replace driver-owned output, executable build mode,
 language/optimization, target, sysroot, or data layout. Raw Clang cc1/driver
@@ -225,7 +431,106 @@ path after publication, and a `project` section that is `null` for a direct
 build. Schema 1 records carry neither and are refused rather than partially
 interpreted.
 
+## Source-level Debug Builds
+
+Direct compilation and executable project commands (`build`, `run`, `test`)
+accept `-g` / `--debug-info`. `--no-debug-info` disables it; the last explicit
+selection wins. Profiles accept the Boolean `debug-info` field, defaulting to
+false in both built-in profiles. A CLI override wins over the profile. Debug
+info is independent of optimization: use `-O0` for predictable breakpoints.
+Metadata schema 14 reports `debugInfo` in each profile and resolved output plan.
+Analysis-only `check` and MIR/native-header emission do not enable debug
+output. Direct `--emit-cpp -g` emits mappings for a separately invoked native
+compiler, which must also receive `-g`.
+
+```toml
+[profiles.dev]
+optimization = 0
+debug-info = true
+```
+
+```sh
+gti build -g -O0
+lldb build/gti/dev/<host-triple>/<target-name>
+```
+
+At the LLDB prompt, use the real source file and an executable statement:
+
+```text
+breakpoint set --file main.gti --line 12
+run
+frame info
+next
+continue
+```
+
+For a standalone program, `gti main.gti -g -O0 -o app` followed by `lldb ./app`
+uses the same path. No generated C++ file needs to remain beside the binary.
+The C++ backend's [source debug contract](backend.md#opt-in-source-debug-locations)
+describes the first-phase limits: statement lines work, but GTI variable names,
+rich types, and expression evaluation are not yet provided.
+
+The immutable compilation and native requests carry the debug policy; the
+native command adds `-g` after forwarded arguments. On ELF toolchains symbols
+remain in the executable. On Darwin, Clang's `.dSYM` bundle (or a `dsymutil`
+fallback) is published beside the executable before link staging is cleaned
+up. Keep the executable and matching bundle together. Rebuilds replace only a
+GTI-marked bundle, refusing symlinks, unowned destinations, and loaded-source
+collisions. Bundle publication is recoverable but not a transaction with the
+separately atomic executable replacement. A non-debug build does not delete
+an existing bundle; the debugger checks native UUIDs before using it.
+
+Debug builds bypass the executable cache in this first slice: native metadata
+retains absolute source/checkout paths, and cached symbol sidecars are not yet
+modeled. Debug builds are not promised byte-reproducible native artifacts.
+Schema-2 build reports add `debug_info` (absent in old reports means false);
+the artifact fingerprint still covers the executable, not the `.dSYM` contents.
+The benchmark harness accepts old and new non-debug reports, validates the
+optional Boolean field, and rejects a source-debug policy it did not request.
+`verify` reuses that recorded policy and compares it, rather than silently
+rebuilding without source mappings. Debug artifacts can still report native
+byte differences. Raw native `-- -g` alone is not the GTI source-debug option.
+An explicit debug-info override on `verify` is also compared, not ignored.
+Syntax, ownership, LSP analysis, and runtime behavior are unchanged.
+
 ## Project Mode
+
+### Raw pointer audit policy
+
+Direct compilation and project `build`, `check`, `run`, `test`, and `verify`
+accept `--raw-pointer-audit=off|warn|strict` (also a separate value operand).
+The default is `off`. A project profile may select the same policy:
+
+```toml
+[profiles.dev]
+raw-pointer-audit = "warn"
+```
+
+An explicit command-line choice overrides the selected profile, including an
+explicit `off`; duplicate or unknown choices are rejected. `build --all`
+forwards the override to every child. `run --no-build` rejects it because no
+analysis takes place. Direct mode remains manifest-independent.
+The selection governs the requested GTI target. Approved `build.gti` host
+tools retain their independent fixed compilation policy, including audit
+`off`; changing the target's audit mode does not reinterpret a build script.
+
+This policy selects compiler-owned optional raw-pointer auditing, not the
+mandatory type, constness, unsafe-context, checked-borrow, or ownership rules.
+`warn` publishes demonstrated violations, potential violations, and incomplete
+analysis as distinct warning groups. `strict` promotes those findings to
+errors at the frontend boundary, after the same analysis; warning suppression
+cannot hide a strict error. Neither mode supplies optimization authority or
+proves that foreign pointers are valid.
+
+The immutable `CompilationRequest`, resolved profile/plan and read-only
+`ProjectFacts` carry the same enum into the frontend. The mode joins project
+model and executable cache identity; an `off` artifact cannot satisfy a
+`strict` request. Unchanged-policy cache hits keep the existing no-warning-
+replay contract; use `check` or `--no-cache` for fresh diagnostics. Metadata
+schema 14 includes the additive `rawPointerAudit` field on profiles and plans.
+Build-report schema 2 includes `raw_pointer_audit` (older reports imply `off`);
+`verify` replays that policy unless explicitly overridden and compares it as a
+separate provenance fact.
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
 resolves executable and test targets, profiles, declared cross-compilation
@@ -262,7 +567,7 @@ An optional top-level `[build]` table accepts
 they are sorted and deduplicated. Repeatable project-command `-D NAME` values
 are added to the manifest set. The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
-the shared frontend request. Metadata schema 9 reports that effective `defines`
+the shared frontend request. Metadata schema 14 reports that effective `defines`
 array beside each target/profile output plan.
 
 `gti build --all` builds every declared executable and test target of the
@@ -291,7 +596,19 @@ publish from unique sibling staging paths rather than following a leaf link.
 `new` and a source-creating `init` scaffold the implemented owned-argument
 entry form, `int main(int argc, std::vector<std::string> argv)`, with the
 required standard string and vector includes. `init` continues to preserve an
-existing regular entry source rather than modernizing or replacing it.
+existing regular entry source rather than modernizing or replacing it. An
+explicit `gti init --git` additionally initializes a standalone Git repository
+at the package root and writes the canonical GTI `.gitignore`, which ignores
+the root `/build/` subtree. The option refuses existing `.git` or `.gitignore`
+entries rather than modifying user-owned version-control state. Git follows
+the dependency tool convention (`GTI_GIT`, then `git`); a failed invocation
+rolls back the manifest, entry source, ignore file, source directory, and Git
+metadata created by that scaffold operation while preserving pre-existing
+files and directories. Repository-location Git environment overrides are
+rejected before any mutation, including empty overrides; `-C` alone does not
+isolate Git from inherited repository settings. The driver reserves the exact
+missing `.git` directory before invocation and rolls it back only when that
+reservation succeeds, never treating a preflight absence as deletion authority.
 
 `gti format init [directory]` is the bounded formatter-configuration scaffold.
 It defaults to the current directory, requires an existing real directory,
@@ -310,6 +627,41 @@ a failed source compile preserves any prior object and executable and retains
 the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
 then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
+
+### Objective-C++ bridges
+
+`cpp-sources` also accepts exact `.mm` paths for a selected macOS target.
+These are foreign Objective-C++ translation units: the same immutable
+`NativeCppCompileRequest` supplies the C++ standard, optimization, include
+scope, target/SDK policy and arguments, while both object compilation and
+dependency preprocessing explicitly select `-x objective-c++`. The generated
+GTI translation unit and final link stay ordinary C++. Manifest resolution
+rejects a selected `.mm` on another OS with `GTI-B1401` at its source path;
+unmatched platform fragments remain inactive. Approved build-script outputs
+accept the same extension and reject an unsupported target with `GTI-B2005`.
+The low-level executable build API checks root and dependency-group sources
+too, before frontend or filesystem work. The selected C++ driver must support
+Objective-C++ and the requested Apple SDK; GTI does not substitute another
+compiler or download SDKs.
+
+No separate Objective-C runtime/ownership model exists in GTI. The bridge
+exposes existing C-compatible `extern "C"` symbols and owns all Objective-C
+objects, autorelease pools, exceptions and retained-resource cleanup itself.
+Frameworks use ordinary structured `frameworks` link operands. ARC is not
+enabled implicitly: an application may explicitly supply `-fobjc-arc` through
+`compile-args`, which also reaches its ordinary C++/generated translation
+units (Clang accepts it without changing their language). Such opaque flags
+retain the existing conservative cache bypass and dependency-package argument
+restrictions. This first slice does not add `.m`, Objective-C type import,
+message syntax, ARC manifest policy, or non-Apple Objective-C runtimes.
+
+Without opaque flags, `.mm` participates in the existing exact source,
+preprocessed translation-unit, depfile/header and framework-link identity.
+Language selection is deterministic from the declared source extension and
+identical for discovery and compilation; a `.mm` cannot reuse a `.cpp` cache
+identity. Native compile failures retain the same prior-object/executable
+preservation guarantees. `objective_cpp_bridge`, `driver_pipeline`, and
+`project_model` cover the runtime, argument, cache and target boundaries.
 
 ### Cross Compilation
 
@@ -491,17 +843,19 @@ undefines = ["COUNTER_TRACE"]     # -U likewise
 # Opt-in import policy (C-07); every entry joins the model identity.
 allow = ["counter_*"]                 # import only matching declarations
 deny = ["counter_internal_*"]         # never import matching declarations
-rename = { counter__impl = "CounterImpl" }   # types and constants only
+rename = { counter_open = "open", counter__impl = "CounterImpl" }
 array-returns = [{ function = "counter_all", count = "count" }]
 ```
 
 `allow`/`deny` patterns are an exact name or one trailing `*`. An excluded
 declaration still resolves uses exactly like a system-provenance one.
-`rename` gives a type or constant whose C spelling GTI cannot use a usable
-name; functions are refused because a function's GTI name is its link
-symbol. `array-returns` declares the pointer-plus-count contract a C header
-cannot state, emitting `[[c_array(count)]]` after the planner validates the
-language's rule. A configured entry that matches nothing is reported.
+`rename` gives a declaration a usable GTI source name. A renamed function
+retains its original C symbol through `[[link_name("...")]]`; types and
+constants continue to replace their source spelling directly. Portable
+assembler labels use the same function metadata. `array-returns` declares the
+pointer-plus-count contract a C header cannot state, emitting
+`[[c_array(count)]]` after the planner validates the language's rule. A
+configured entry that matches nothing is reported.
 
 During `gti build`, `check`, `run`, and `test`, the driver generates GTI
 declarations from the header with the same pipeline as `gti bindgen`
@@ -590,6 +944,39 @@ includes cannot cross an owning package boundary to bypass the manifest edge.
 Direct mode receives no package graph and therefore rejects package angle
 includes without consulting nearby manifests.
 
+### Source Module Registration
+
+Source packages can declare a public module map independently of file layout:
+
+```toml
+[modules]
+main = "src/api.gti"
+geometry = "src/geometry_api.gti"
+```
+
+Each key is one non-reserved GTI identifier. Each value is a package-relative
+path to an existing regular `.gti` interface. Canonical paths must remain inside
+the package, including through symlinks. Duplicate physical files, portable
+case-fold name collisions, invalid names/types and missing paths are rejected
+by manifest loading. The frontend additionally requires the file to begin with
+`export module` using the registered name. Paths need not be under `source-root`;
+that field continues to control legacy angle includes, not public module names.
+
+The owning package writes `import geometry;`. Consumers write
+`import dependency.geometry;`, using their declared dependency alias. The
+shorter `import dependency;` selects the dependency's `main` module. An
+unqualified local-name/dependency-alias collision is an error. Only direct
+dependency aliases resolve; re-exporting declarations never leaks aliases.
+Direct compilation remains manifest-independent and can write a relative
+quoted import instead.
+
+`ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
+`SourceLoader` owns language resolution. Registrations are part of project
+model identity, while interface bytes and import/re-export edges participate in
+source cache keys and build-report provenance. The LSP receives the same
+read-only facts and does not fetch or build module artifacts. This adds no
+binary modules, BMI files, stable ABI, or separate-compilation promise.
+
 Dependency packages compose their package-scope native inputs into every
 dependent build as isolated per-package groups. Structured contained inputs
 compose — include directories, C and C++ sources, the C standard, library
@@ -610,7 +997,145 @@ only when that package is built directly. Plans that carry dependency native
 groups bypass the whole-program cache with an explicit reason until dependency
 discovery covers group sources.
 
+### Approved Package Build Scripts
+
+A package that must configure or compile an upstream native library may declare
+either a GTI build program or an exact external host command, plus its complete
+contained input set. The GTI-authored form is the preferred package surface:
+
+```toml
+[package.build-script]
+source = "build.gti"
+inputs = ["vendor/upstream"]
+```
+
+The external-command form remains supported for existing packages and for
+tools that are more naturally maintained in another language:
+
+```toml
+[package.build-script]
+command = ["python3", "build.py"]
+inputs = ["build.py", "vendor/upstream"]
+```
+
+The selected application owns the trust decision for dependency scripts. A
+dependency cannot approve itself:
+
+```toml
+[build]
+allow-build-scripts = ["gti-glfw@0.1.0"]
+```
+
+The identity is the dependency's manifest `name@version`; a pinned Git
+dependency's exact source revision and checksum remain enforced independently
+by `gti.lock`. Missing approval is `GTI-B2002` during project resolution, before
+any process starts. A selected root package may run its own script without a
+self-entry because selecting that package is already an explicit trust action.
+
+Exactly one of `source` and `command` is required. A source path must name a
+contained `.gti` file and is automatically part of the content cache inputs.
+The driver compiles it as an ordinary hosted GTI executable for the build host,
+using the installed standard library/runtime and host C++ toolchain; the
+package's requested target still governs the native artifacts it publishes.
+Compilation diagnostics retain `build.gti` source locations.
+
+Build programs run dependency-first, with the package root as their working
+directory, through exact argv execution rather than a shell. The driver exports
+`GTI_BUILD_PACKAGE_DIR`, `GTI_BUILD_OUT_DIR`, `GTI_BUILD_OUTPUT`,
+`GTI_BUILD_HOST`, `GTI_BUILD_TARGET`, `GTI_BUILD_PROFILE`, `GTI_BUILD_JOBS`,
+`CC`, and `CXX`. `GTI_BUILD_OUTPUT` must be written as TOML with `version = 1`
+and may declare `include-dirs`, `c-sources`, `cpp-sources`, `library-dirs`,
+`link-files`, `libraries`, and `frameworks`. Paths are relative to
+`GTI_BUILD_OUT_DIR`, must remain inside it, and must name existing files or
+directories. C and C++ source extensions and native names are validated before
+the outputs enter the resolved package-native group.
+
+`<std/build>` is the source-defined API for GTI build programs. Their entry
+point uses the normal owned argument form, checks `argc == 11`, and creates a
+`std::build::context` with `std::build::context_from_args(argv)`. The context
+exposes the output manifest, package/output directories, host/target facts,
+profile, parallelism budget, and selected target C/C++ compilers.
+`std::build::command` constructs and executes one exact argument vector without
+shell parsing. `std::build::outputs` records include directories, C and C++
+sources, library directories/files/names, and frameworks, then `publish`
+writes the versioned output manifest consumed by the same validation path as
+an external command.
+
+```gti
+#include <std/build>
+#include <std/string>
+#include <std/vector>
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 11) { return 64; }
+  mut std::build::context context = std::build::context_from_args(argv);
+  mut std::build::command configure = std::build::command("cmake");
+  configure.arg("-S");
+  configure.arg("vendor/upstream");
+  configure.arg("-B");
+  configure.arg(context.output_dir().view());
+  int32_t status = configure.run();
+  if (status != 0) { return status; }
+
+  mut std::build::outputs outputs = std::build::outputs();
+  outputs.link_file("lib/libupstream.a");
+  return outputs.publish(context);
+}
+```
+
+The output tree is managed below
+`build/gti/build-scripts/<package>/<version>/<target>/<profile>/<project-target>`.
+The cache identity includes the command or GTI source, host/target/profile,
+selected C/C++ compilers, and content of every declared input. GTI-authored
+programs additionally include the GTI compiler identity and host C++ compiler.
+A matching state is reused only when its structured output still validates;
+changed or missing inputs rerun the program. `--jobs N` is forwarded as the
+program's parallelism budget and defaults to at most four jobs. `gti check`,
+`fetch`, `metadata`, and project resolution never compile or execute build
+programs or create their output directories; executable-producing `build`,
+`run`, `test`, and `verify` do.
+
+This implementation deliberately does not claim process sandboxing or network
+isolation: both GTI-authored and external programs inherit the host environment
+except for the documented overrides. Approval therefore means permission to
+run arbitrary code from that reviewed, locked package revision. GTI syntax and
+ownership checks make the program safer to author; they do not make executing a
+third-party build program a sandbox. For correct cache reuse, a program must
+derive its outputs only from its declared inputs and the documented context;
+ambient environment values and undeclared host files are not part of the cache
+identity. Declared input trees must contain only ordinary files and
+directories; symbolic links and special files are rejected. Execution is
+supported on macOS and Linux; Windows process overrides and package build
+programs remain unsupported.
+
 ### Vendored Native Dependencies
+
+The repository's optional `packages/` collection exercises this contract with
+GLFW, GLAD, SQLite3, cimgui, zlib, libpng, Assimp, libgit2, and CLI11. Its explicit
+repository-maintainer preparation command verifies pinned upstream archives and
+generates reviewed public GTI units with `gti bindgen`. GLFW, Assimp, and
+libgit2 then compile their vendored upstream sources through approved package
+build scripts during an ordinary consumer build; no platform archive is checked
+into the package. Other native C/C++ inputs compile through isolated package
+groups. Libpng, Assimp, and libgit2 compose their zlib dependency through the
+normal package graph. Published standalone Git packages carry their vendored
+inputs, so their consumers do not run the repository preparation command.
+Libgit2 disables HTTPS and SSH transports in its pinned build.
+CLI11 remains header-only behind one exception-containing C++ adapter, so it
+needs no prepared archive or system library. Its reviewed public declarations
+spell the compiler-defined counted-text bridge directly because C bindgen
+deliberately rejects the reserved `gti_c_string_view` record.
+Generated public bindings are direct source units because including a private
+bindgen unit does not re-export its declarations. See
+[`packages/README.md`](../../packages/README.md) for commands and API limits.
+
+The directly compilable GLAD, SQLite3, cimgui, zlib, libpng, and CLI11 packages
+are also published as self-contained repositories under the `gti-lang` Gitea
+organization. Consumers pin their complete commit IDs and use the ordinary
+locked-Git dependency workflow below. Repository-local path copies remain as
+integration fixtures. GLFW, Assimp, and libgit2 manifests select their checked-in
+GTI build programs; consumers must explicitly approve their execution. Dependency
+acquisition and metadata inspection do not execute those programs.
 
 The composition rules above and the bindgen imports below combine into one
 workflow worth naming, because it is what makes a GTI project portable: a
@@ -679,7 +1204,7 @@ refuse the build with `GTI-B17xx` diagnostics. A plain build may materialize
 a lock-covered missing checkout; `--offline` and `--locked` never run git,
 so `gti fetch && gti build --locked` is the reproducible-pipeline shape.
 `gti metadata` and `gti clean` never acquire dependencies, and metadata
-schema 9 publishes each package's source as `path` or
+schema 10 publishes each package's source as `path` or
 `git+<url>#<rev>#<checksum>`. A fetched package's own path dependencies must
 stay inside its checkout; its git dependencies join the same locked closure
 transitively. The workspace model identity carries the git source identity,
@@ -738,6 +1263,224 @@ overwrite any loaded source. When capture is not requested, ordinary driver
 callers retain no optimizer dump/report strings and compilation output is
 unchanged.
 
+### Source Package Registries
+
+`gti add libc` queries the logical `official` registry, resolves a complete
+metadata graph and acquires verified source archives before editing the project.
+It selects the latest complete compatible direct version even when that package
+was already transitively locked, then inserts a caret requirement such as
+`libc = "^0.1.0"` in `gti.toml`, preserves
+unrelated bytes/comments, and publishes the exact closure to the workspace's
+`gti.lock`. `gti add libc@=0.1.0` requests an exact requirement. An already
+matching declaration is a no-op; another source/requirement requires an explicit
+manifest edit. Hyphens in registry names become underscores in default include
+aliases. The table form allows separate identity and alias:
+
+```toml
+[dependencies]
+libc = "^0.1.0"
+cli = { package = "gti-cli", version = "^0.1", registry = "official" }
+```
+
+The generic SemVer implementation is shared by registry inputs, metadata and
+resolution. Requirements support caret (including bare versions), tilde,
+`=major.minor.patch`, and `*`; missing minor/patch parts are zero-filled in
+ranges. Caret respects the first nonzero component, so `^0.2.1` excludes
+`0.3.0` and `^0.0.3` excludes `0.0.4`. Prereleases require explicit opt-in at
+the same major/minor/patch. Build metadata has no precedence. Version core
+components are bounded to unsigned 64-bit values; unsupported requirement
+operators fail rather than acquiring different semantics in a backend.
+
+`gti fetch` never edits dependency declarations. It first attempts the complete
+compatible locked solution, without version-list requests, then backtracks
+through descending candidates only if the declarations make that solution
+unusable. Sources are downloaded only after metadata resolution succeeds.
+`gti fetch --locked` may populate missing exact sources but refuses any lock
+change. `--offline` requires cached metadata/archives and may unpack them locally.
+Normal registry builds,
+checks, metadata and LSP facts require a compatible lock and already cached
+complete extracted sources; they neither perform registry HTTP requests nor
+create cache files/directories. Existing Git acquisition
+policy is unchanged. Registry versions are unified per logical registry/package;
+the existing unique canonical package-name and acyclic workspace rules remain
+authoritative. Published registry packages currently require registry-only
+dependencies; root projects may mix registry, path and pinned-Git sources.
+
+The default logical mapping is owned by one configuration layer:
+`official -> gitea-generic -> https://git.internal.howetotech.dev -> gti-lang`.
+Override it in `$XDG_CONFIG_HOME/gti/registries.toml` (falling back to
+`$HOME/.config/gti/registries.toml`) or a file selected by `GTI_REGISTRY_CONFIG`:
+
+```toml
+[registries.official]
+backend = "gitea-generic"
+url = "https://git.internal.howetotech.dev"
+owner = "gti-lang"
+token-env = "GTI_REGISTRY_TOKEN"
+```
+
+On macOS, authenticate once using `gti registry login` (default `official`) or
+`gti registry login <name>`. Normal login prompts for your Gitea username,
+hidden password, and an optional hidden six-digit authenticator code (leave it
+empty when 2FA is disabled). GTI explicitly creates one named token through
+Gitea's token API using Basic authentication, requests only `read:package`,
+verifies package-read access to the configured owner, and saves only the token
+in macOS Keychain. Passwords and authenticator codes are ephemeral inputs:
+never stored in Keychain, config, manifests, caches or reports, and never
+accepted in command-line arguments. Subsequent `add` and `fetch` commands use
+the saved token automatically. `gti registry login --publish` requests
+`write:package` instead; it implies read but does not grant any repository,
+user-profile or administrative scope. Gitea's package scope covers the account's
+package access, not one owner; the local credential lookup is owner-scoped.
+
+Use `login --token` for hidden entry of an existing personal access token,
+including accounts whose SSO/WebAuthn/server policy disallows password-based
+API authentication. Token validation and replacement retain the same behavior.
+OAuth/browser/device login and refresh are not implemented. Gitea's password
+and TOTP authentication policy remains server-owned; the optional 2FA prompt
+avoids inferring a challenge from version-specific error messages.
+
+Token names contain a scope fingerprint and a unique 128-bit attempt nonce.
+GTI never lists or deletes preexisting account tokens. A failed validation/save
+or malformed/uncertain issuance triggers best-effort revocation of only the
+attempt's generated token name; confirmed creation is not retried automatically.
+If cleanup cannot be confirmed, `GTI-B1727` directs manual removal in the account's
+access-token settings. An interruption or lost response can still leave that
+named token remotely; a server that consumes TOTP codes may reject cleanup using
+the already used code. A failed saved-credential replacement preserves the
+previous local login. Repeated successful password logins create new server
+tokens; GTI does not silently revoke previous logins on other devices.
+
+`gti registry status [name]` reports the selected credential source without
+showing the token or contacting the server. `gti registry logout [name]` removes
+only that scoped Keychain record, idempotently; it does not revoke the server's
+token. `login --token-stdin` retains its meaning: one preexisting token from a pipeline,
+with an optional final LF/CRLF. Avoid commands that expose the token in shell
+history or process arguments; use a secret manager's output instead.
+Nonterminal login without that option fails rather than reading a secret with
+echo enabled. Terminal cancellation restores echo.
+
+An explicitly set `token-env` variable takes precedence over Keychain, for CI
+and existing automation. An explicitly empty variable selects anonymous access
+and disables Keychain lookup; unset it to use saved login. Login always validates
+the newly entered token, ignoring existing stored/environment values, and only
+replaces the saved record after validation succeeds. Logout leaves environment
+overrides alone and reports that they remain set.
+
+`RegistryCredentialStore` is a backend-neutral protected-storage interface;
+`Registry::authentication()` and `validateCredential()` are optional transport
+capabilities. Optional `issueCredential()`/`discardIssuedCredential()` let a
+backend implement password-to-token exchange and rollback through GTI-owned
+ephemeral input and opaque attempt identity, independent of metadata/archive
+formats. The shared driver owns validation-before-save and rollback; the CLI
+owns prompts and permission intent; Gitea alone owns Basic/OTP headers, token
+paths/JSON and scope spellings. Credentials are typed
+access tokens in a versioned private record, scoped by the logical registry,
+normalized configured endpoint (trailing slashes removed) and owner/realm. The
+Keychain service is `dev.gti.registry.credentials.v1`; its account is the full
+SHA-256 of a length-framed scope tuple. Changing endpoint or owner deliberately
+requires a new login. Package-format/backend changes alone do not alter scope.
+No enumeration of unrelated Keychain items or plaintext fallback is performed.
+Keychain access errors fail visibly, with an environment-variable alternative;
+GTI requests noninteractive OS access. Unlocking/access authorization, stable
+code signing and reauthorization after replacing a locally built executable
+remain OS concerns. The private Objective-C++ adapter links system frameworks,
+not an external secret-storage library. Other hosts currently support environment
+tokens and anonymous access only; protected-store adapters and new credential
+kinds can be added without changing the resolver or package formats.
+
+Credentials belong only in the OS store or the named environment variable,
+not the project, lock, archive, metadata, reports or package cache. Store lookup
+is lazy and cached for one acquisition/publication provider lifetime; ordinary
+offline builds, checks, metadata and LSP facts never request credentials, nor
+does `publish --dry-run`. Anonymous public reads are supported when permitted
+by the server; a server that requires sign-in also needs a package-read token
+for `add`/`fetch`. The current official server requires authenticated discovery.
+Use `gti registry login` on macOS, or set `GTI_REGISTRY_TOKEN` outside the project
+for its default mapping.
+Publication requires a package-write token. HTTPS uses the existing dynamically loaded
+libcurl host transport with certificate verification; redirects are never
+followed and response bodies are not included in failures. Plain HTTP is
+admitted only on explicit localhost/127.0.0.1 ports for local development tests.
+Unsupported registry names/backends/configuration fail closed.
+Non-default registry definitions require explicit backend, URL and owner;
+their default credential variable is `GTI_REGISTRY_<UPPERCASE_NAME>_TOKEN`
+(hyphens become underscores), never the official registry's token. An explicit
+`token-env` may override that user-owned credential scope.
+
+Gitea adaptation alone owns its REST paths, response schema and pagination.
+`Registry`/`RegistryProvider` expose version enumeration, metadata, archive bytes
+and publication; the resolver has no Gitea URL construction. Each version has
+`source.gtipkg` and a normalized `package.toml` (`registry-version = 1`, canonical
+manifest name/version, public registry name, dependencies and archive SHA-256).
+`package.toml` is uploaded last and acts as the completeness marker. A version
+without it is not a GTI publication. Existing/partial versions are never resumed
+or overwritten; publication preflights files, then the no-overwrite archive PUT
+claims the version before final metadata is uploaded. Concurrent losers stop
+before publishing metadata. Administrator deletion/replacement is outside this
+immutability contract and cannot be made safe by client-side checksums alone.
+See [Gitea's Generic Package API](https://docs.gitea.com/usage/packages/generic/).
+
+`gti publish` inventories Git-tracked regular files without running repository
+code. The archive contains current working-tree bytes, not machine-local build
+outputs, with executable bits from the Git index. Symlinks, submodules, merge
+conflicts, credential-bearing `.env` paths, managed build/toolchain directories,
+lockfiles, traversal and portable path collisions are rejected. Its manifest
+is validated after relocation before any upload. `--name libc` separates the
+public registry name from a canonical manifest name such as `gti-libc`.
+`--dry-run` reports file count, size and checksum without reading credentials,
+uploading, executing native hooks, compiling or retaining a cache entry.
+
+The GTI-owned `.gtipkg` v1 container is deterministic and deliberately bounded,
+not tar/zip or a general archive extractor: ASCII magic `GTIPKG1\n`, little-endian
+32-bit file count, then records with 32-bit path-byte count, 64-bit content-byte
+count, one executable byte (`0`/`1`), UTF-8 path bytes restricted to portable ASCII
+in this slice, and exact content bytes. Records are sorted by path. The reader
+rejects trailing bytes and invalid/truncated records. Limits are 10,000 regular
+files, 4,096 path bytes, 64 MiB per file, 256 MiB per archive, 256 resolved
+packages, 1,024 metadata queries, 32 MiB of metadata and 8,192 solver attempts.
+No compression, timestamps, ownership,
+symlink/device entry or extraction command is interpreted. This narrow format
+avoids a platform archive-tool dependency; another codec requires a versioned
+GTI protocol change, not a Gitea-dependent parser.
+
+Registry closures use lock-version 2; pure Git closures retain byte-compatible
+v1 serialization and both are readable. Registry entries carry logical registry,
+public and canonical package names, exact version, archive and metadata SHA-256,
+and exact logical dependency edges. Physical Gitea URLs are not package identity.
+Archive manifests must match metadata identity and dependency declarations.
+
+The user cache is outside the source tree: `$GTI_PACKAGE_CACHE`, otherwise
+`$XDG_CACHE_HOME/gti/packages`, `$HOME/.cache/gti/packages`, or
+`$LOCALAPPDATA/gti/packages`. Managed keys hash logical registry/package, version
+and archive digest. Metadata, archive bytes and every extracted file are checked
+before source loading, including extra files and executable modes on POSIX.
+Cache descendants cannot be symlink redirects. Immutable cache files publish
+atomically with a no-replace hard link; cache filesystems must support hard links.
+Complete source directories publish by rename, and concurrent fetches verify
+the winning directory. Changed cached/server content is an integrity error,
+left untouched for investigation—not silently replaced or relocked. Removing
+only a known affected cache entry and fetching again does not authorize registry
+mutation: the old lock checksum still applies.
+
+Native inputs and consumer-approved build programs use the ordinary package
+graph and existing approval policy; acquisition executes neither. Direct
+`gti source.gti` behavior and frontend/language semantics are unchanged.
+Manifest editing uses a source overlay to resolve proposed declarations without
+writing them. Both output files are staged before atomic per-file renames; a
+failed lock publication restores the original manifest where possible. A crash
+between renames can leave a detectable stale lock, not a half-written file.
+No cross-file crash-atomic transaction or hostile-local-writer sandbox is claimed.
+Name ownership relies on Gitea's `gti-lang` publishing permissions; signatures,
+yanking, search, mirrors, multiple versions of one canonical package and general
+feature/target solving remain outside this bootstrap.
+
+Driver diagnostics `GTI-B1710`–`GTI-B1723` distinguish invalid requirements,
+missing packages, transport/authentication, malformed metadata, missing archives,
+resolution conflicts, integrity, unsafe archives, duplicate publication,
+configuration, resource limits, storage and conflicting manifest edits.
+Existing `GTI-B1701`/`GTI-B1703` retain stale/missing-lock and offline meanings.
+
 ### Read-Only Project Facts
 
 `gti/driver/project_facts.h` publishes the resolved project as a read-only
@@ -753,7 +1496,9 @@ direct alias edges, the package source-root graph, the selected package's
 declared profiles and targets, package-level configuration flags, the profile
 a command selects when none is named, and the workspace-graph model identity.
 `analysisConfiguration` assembles one declared profile's configuration exactly
-as the build path assembles it. Native settings, output layout, and cache
+as the build path assembles it. Profiles also publish their warning groups and
+dependency-warning setting; `packageWarnings` resolves the same consumer-owned
+package policy used by build plans. Native settings, output layout, and cache
 policy are build concerns and are deliberately absent.
 
 Resolution runs no native tool, no git process, and no build, and creates no
@@ -762,12 +1507,29 @@ checkout is still checksum-verified and `gti.lock` remains the coverage
 authority, so an unmaterialized or unlocked git dependency is reported as a
 diagnostic rather than acquired.
 
+`gti_lsp` consumes these facts before analysis and completion. It passes the
+published analysis configuration and package source-root graph to the same
+frontend APIs as project compilation, while canonical-path open-document
+overlays remain authoritative over disk. A project-resolution failure is
+published as the driver's structured diagnostic; a discovery miss retains
+standalone-file behavior. Watching `gti.toml` and `gti.lock` invalidates all
+open project snapshots without allowing the editor to fetch or build.
+
 The package source-root graph is the fact that makes this a shared answer
 rather than a convenience. It cannot be reconstructed from one manifest, so a
 consumer that reads `gti.toml` itself resolves no package includes at all
 while the build path resolves them, and the two silently disagree. A build
 plan's model identity extends the workspace-graph identity these facts publish
 with its configuration flags and bindgen imports.
+
+`projectIncludeSearchRoots` derives editor include-discovery authority from
+these same facts: the selected package root (excluding nested other packages)
+and each direct dependency's source root with its declared alias. The compiler
+then discovers and validates declarations; the driver does not interpret GTI
+names. Project-resolution errors never authorize a partial dependency search.
+The direct compilation driver retains standard-library include advice by
+calling the same compiler suggestion service after its loaded-input frontend;
+it does not need a second header catalog or a project scan on successful builds.
 
 ## Whole-Program Project Cache
 
@@ -777,11 +1539,15 @@ sources, declared native include directories, declared native library search
 directories, content-complete exact link files (regular non-thin archives and
 relocatable objects), and `-l` names that resolve to exactly one
 content-complete file inside a declared search directory participate in cache
-identity exactly and no longer force a bypass. A dependency package's composed
-native group participates on the same terms as the selected package's own
-native inputs. The remaining conservative bypasses are opaque native argument
-vectors, name-resolved frameworks, `-l` names that do not resolve inside the
-declared search directories or resolve ambiguously within one, link inputs
+identity exactly and no longer force a bypass. On Apple hosts, named frameworks
+also participate when a bounded probe through the selected compiler, target,
+and SDK policy produces a linker map naming one exact framework text stub or
+binary; that selected file joins by canonical path and content. A dependency
+package's composed native group participates on the same terms as the selected
+package's own native inputs. The remaining conservative bypasses are opaque
+native argument vectors, frameworks for which an exact Apple linker trace is
+unavailable, `-l` names that do not resolve inside the declared search
+directories or resolve ambiguously within one, link inputs
 that are not content-complete (thin archives, linker scripts, shared
 libraries, and unrecognized formats), dependency-injecting native environment
 search paths, and any input whose exact identity cannot be established. Direct
@@ -919,10 +1685,15 @@ The remaining bypasses are exact-identity boundaries, not native-source
 boundaries. Opaque `c-compile-args`, `compile-args`, `link-args`, and
 `raw-args` bypass because options such as `-include` and linker scripts can
 introduce undeclared inputs outside the probed translation units and the final
-generated-C++ link. Named frameworks bypass because a framework resolves
-through undeclared `-F` and system framework roots to a bundle whose binary,
-headers, and re-exported dependencies no declared path determines. A link file
-that is not a content-complete regular archive or relocatable object (thin
+generated-C++ link. A named framework is cacheable on Apple only after GTI
+links a temporary empty program with the selected compiler and target policy,
+requests an Apple linker map, locates the unique requested
+`Name.framework/Name.tbd` or binary row, and hashes that exact file and path.
+The ordinary native-source dependency probes independently identify any
+framework headers actually included by declared C/C++ sources. Probe failure,
+an absent or ambiguous map row, or a non-Apple host bypasses rather than
+guessing framework search behavior. A link file that is not a content-complete
+regular archive or relocatable object (thin
 archives, linker scripts, shared libraries, unrecognized formats) bypasses
 because its bytes do not determine its full contribution to the link.
 Non-empty compiler/SDK/include/library search environment variables likewise
@@ -954,12 +1725,57 @@ Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is
 resolved through the shared analysis configuration into the plan's
 `TargetInfo`, and the command-line option is an explicit project override.
-Metadata schema 9 publishes the declared value for every profile plus the
-selected workspace and sorted package/dependency graph. This build profile
-field selects static language policy only; the independently selected runtime
-profile derives the target/runtime `threads` capability. Public managed-thread
-and atomic operations require both the concurrent execution profile and that
-capability.
+The same table may set `disabled-warnings = ["unused-mut", ...]`; validated
+command-line warning suppressions are unioned with that profile policy and
+carried through the resolved build plan. Warning policy does not change emitted
+program semantics. Warning groups and resolved dependency-warning policy join
+the cache key; changing either forces frontend analysis under the new policy.
+Cache hits retain the existing contract: they restore artifacts without running
+semantic analysis or replaying its advisory warnings. Use `gti check` or
+`--no-cache` to request fresh diagnostics without relying on artifact reuse.
+Metadata schema 14 publishes the profile fields for every profile plus the
+selected workspace and sorted package/dependency graph. The execution profile
+selects static language policy
+only; the independently selected runtime profile derives the target/runtime
+`threads` capability. Public managed-thread and atomic operations require both
+the concurrent execution profile and that capability.
+
+### Dependency warnings
+
+The selected package may silence GTI compiler warnings from other packages for
+one profile:
+
+```toml
+[profiles.dev]
+dependency-warnings = false
+```
+
+The Boolean defaults to `true` in every profile. Set it independently in
+`[profiles.release]` or a named profile when that command should also be quiet.
+Errors are never suppressed. Warnings in the selected package, including its
+ordinary source includes, remain visible; use `disabled-warnings` or
+`-Wno-<group>` when intentionally suppressing a warning group in your own code.
+
+The driver resolves an immutable `PackageWarningPolicy` from the consumer's
+profile and actual workspace package identities before source loading. It
+filters only a `Warning` whose primary span belongs to an application
+`SourceUnit` owned by a registered non-selected package. This covers local,
+locked Git, transitive and workspace-member dependencies without guessing from
+`build/gti/deps` path spelling. A selected package's own file under a directory
+with that name is still its own code. Dependency-related notes do not hide a
+consumer-primary diagnostic. Unowned sources, prelude/standard-library units,
+synthetic bindgen packages and native-tool output are outside this policy.
+
+Only the selected package's profile is authoritative; a dependency cannot
+silence consumer diagnostics through its own manifest. Workspace `--package`
+selection changes the selected identity, so a member's own warnings stay
+visible when building that member. The LSP receives the same policy from
+read-only `ProjectFacts` and applies the same primary-source classifier when
+publishing frontend diagnostics. A dependency opened as its own project is its
+selected package, not a globally muted directory. Manifest changes invalidate
+editor snapshots. Direct compilation stays manifest-independent and keeps
+dependency warnings enabled by default. Metadata schema 14 reports
+`dependencyWarnings` on both profiles and resolved output plans.
 
 Arguments after `gti run --` are passed as exact program arguments and become
 owned values when the target uses
@@ -968,13 +1784,26 @@ direct compilation mode still belong to the native C++ compiler; run the
 produced executable separately to supply its program arguments. This routing
 rule is driver policy, while the typed `main` contract is compiler semantics.
 
+`gti run --no-build` resolves the selected package, executable target, profile,
+and host output path but deliberately skips dependency acquisition, bindgen,
+build scripts, source loading, compilation, cache lookup, and publication. It
+executes only an already present regular executable inside the symlink-free
+managed `build/gti` subtree and fails with an I/O status when that artifact is
+missing or unsafe. Compiler, optimization, execution-profile, configuration,
+cache, keep-C++, and job overrides are rejected because they cannot describe or
+validate an existing artifact. Warning-policy overrides are rejected for the
+same reason. The command makes no freshness claim; it is an explicit
+development escape hatch for running possibly stale output.
+
 ## Current Limits
 
 The cache is whole-program and workspace-local. It does not yet cache individual
 parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
-Git dependencies support pinned full revisions only; registry ranges, branch
-or tag selectors, replacement/override authority, arbitrary native build
-scripts, and a package registry are not implemented. Cross compilation
+Git dependencies support pinned full revisions only; mutable branch/tag
+selectors and replacement/override authority are not implemented. Registry
+bootstrap limits are recorded above; package signing, yanking, search and
+multiple canonical versions remain deferred. Native dependency build programs
+require explicit consumer approval, not arbitrary implicit execution. Cross compilation
 selects a target, a native compiler pair, a sysroot, and a native triple, but
 the GTI runtime archive and runtime headers are still discovered once for the
 host toolchain, so a cross link needs a target-built runtime supplied through
@@ -983,9 +1812,6 @@ host target, and `gti run`/`gti test` refuse a non-host target rather than
 modelling a runner or emulator.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
-The driver publishes resolved project facts, but the LSP does not consume them
-yet: it still reads the manifest directly for configuration flags and the
-default profile's execution profile, and analyzes with no package source
-roots, so package includes an editor opens do not resolve the way `gti check`
-resolves them. Consuming `ProjectFacts` without fetching or building, with
-dirty buffers authoritative, remains `T-LSP-04`.
+The LSP consumes the driver-published project facts for its default host-target
+analysis. Explicit editor selection of another workspace package, target,
+profile, or cross target is not implemented.

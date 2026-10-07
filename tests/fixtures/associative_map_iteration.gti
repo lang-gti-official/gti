@@ -1,0 +1,41 @@
+#include <std/map>
+
+int main() {
+  mut std::map<int, int> values{};
+  for (mut int key = 2; key <= 10; key += 2) {
+    [[discard]] values.insert(key, key * 10);
+  }
+  for (mut auto& entry : values) { entry.second += 1; }
+  int four = 4;
+  if (values.at(four) != 41 || values.count(four) != 1) { return 1; }
+  int five = 5;
+  if (values.count(five) != 0) { return 2; }
+  {
+    auto first = values.begin();
+    if (first->first != 2 || first->second != 21) { return 3; }
+    mut auto low = values.lower_bound(five);
+    if ((*low).first != 6) { return 4; }
+    ++low;
+    if ((*low).first != 8) { return 5; }
+    auto exact = values.lower_bound(four);
+    if ((*exact).first != 4) { return 6; }
+    auto upper = values.upper_bound(four);
+    if ((*upper).first != 6) { return 7; }
+    int big = 11;
+    auto missing = values.find(big);
+    auto end = values.end();
+    if (missing != end || values.upper_bound(big) != end) { return 8; }
+  }
+  {
+    mut auto found = values.find_mut(four);
+    (*found).second = 44;
+  }
+  if (values.at(four) != 44) { return 9; }
+  {
+    mut int& inserted = values.get_or_insert(5);
+    if (inserted != 0) { return 10; }
+    inserted = 55;
+  }
+  if (values.get_or_insert(5) != 55 || values.size() != 6) { return 11; }
+  return 0;
+}

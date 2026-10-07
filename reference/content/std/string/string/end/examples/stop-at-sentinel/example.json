@@ -1,6 +1,0 @@
-{
-  "title": "Stop at the end sentinel",
-  "description": "Counts characters until the cursor equals the sentinel returned by end.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

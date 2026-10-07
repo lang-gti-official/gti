@@ -1,0 +1,29 @@
+#include <std/string>
+#include <std/vector>
+
+mut int observed = 0;
+class Resource {
+public:
+  int value = 40;
+  ~Resource() { std::println(observed); }
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  // Failure-free cleanup still needs a real MIR drop before ending the loan.
+  // Running this a second time during native shell destruction changes output.
+  ~Guard() { observed ^= this.resource.value; }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item, int divisor) : item(std::move(item)) {
+    int checked = 1 / divisor;
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{};
+  Box<Guard> box{Guard(resource), argc > 1 ? 0 : 1};
+  return 0;
+}

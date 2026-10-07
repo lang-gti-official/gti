@@ -1,0 +1,38 @@
+#include <std/algorithm>
+#include <std/array>
+#include <std/string>
+#include <std/vector>
+
+struct Job {
+  std::string name;
+  int priority;
+  Job(std::string name, int priority) : name(std::move(name)), priority(priority) {}
+  Job(Job& other) = delete;
+};
+
+struct PriorityOrder {
+  // Sorting only borrows each job for a comparison. No clone or copy is needed.
+  bool operator()(Job& left, Job& right) {
+    return left.priority < right.priority;
+  }
+};
+
+int main() {
+  mut std::vector<Job> jobs{};
+  jobs.push_back(Job(std::string("textures"), 3));
+  jobs.push_back(Job(std::string("shaders"), 1));
+  jobs.push_back(Job(std::string("meshes"), 2));
+  std::sort(jobs, PriorityOrder());
+  for (Job& job : jobs) { std::println(job.name); }
+
+  std::reverse(jobs);
+  // Both indices are checked before anything moves. Equal valid indices work.
+  jobs.swap_elements(std::size_t(0), std::size_t(0));
+  jobs.swap_elements(std::size_t(0), std::size_t(2));
+
+  mut std::array<std::string, 2> active = std::array<std::string, 2>({std::string("day"), std::string("night")});
+  mut std::array<std::string, 2> standby = std::array<std::string, 2>({std::string("dawn"), std::string("dusk")});
+  active.swap(standby);
+  active.swap_elements(std::size_t(0), std::size_t(1));
+  return jobs[std::size_t(0)].priority == 1 && active[0] == "dusk" && standby[0] == "day" ? 0 : 1;
+}

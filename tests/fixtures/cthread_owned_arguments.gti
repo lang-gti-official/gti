@@ -1,0 +1,16 @@
+#include <std/cthread>
+#include <std/string>
+#include <std/vector>
+
+int32_t worker(void* context) { return 42; }
+
+int main(int32_t count, std::vector<std::string> arguments) {
+  if (count < 1 || arguments.empty()) { return 1; }
+  mut std::thrd_t handle = 0;
+  mut int32_t result = 0;
+  unsafe {
+    if (std::thrd_create(handle, worker, nullptr) != std::thrd_success) { return 2; }
+    if (std::thrd_join(handle, result) != std::thrd_success) { return 3; }
+  }
+  return result == 42 ? 0 : 4;
+}

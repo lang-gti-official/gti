@@ -1,0 +1,27 @@
+// Native C families retain their actual declaration identities on this target.
+// They use GTI's checked numeric operations, not C's unchecked arithmetic.
+extern "C" {
+  c_size_t strlen(c_string text);
+  c_long labs(c_long value);
+}
+
+struct Counter<T> {
+  mut T value;
+};
+
+int main() {
+  Counter<c_long> native{.value = c_long(-7)};
+  Counter<int64_t> fixed{.value = int64_t(11)};
+  if (labs(native.value) != c_long(7)) { return 1; }
+  if (fixed.value != int64_t(11)) { return 2; }
+  c_size_t length = strlen("native");
+  if (length != c_size_t(6)) { return 3; }
+  c_char character = c_char(65);
+  if (int32_t(character) != 65) { return 4; }
+  c_bool ready = true;
+  if (!ready) { return 5; }
+  int32_t values[2] = {3, 4};
+  c_char index = c_char(1);
+  if (values[index] != 4) { return 6; }
+  return 0;
+}

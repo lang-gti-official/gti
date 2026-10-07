@@ -1,0 +1,29 @@
+#include <std/cthread>
+
+int main() {
+  mut std::mtx_t mutex = 99;
+  unsafe {
+    if (std::mtx_init(mutex, -1) != std::thrd_error || mutex != 99) { return 1; }
+    if (std::mtx_init(mutex, std::mtx_recursive | std::mtx_timed) != std::thrd_success) { return 2; }
+    if (std::mtx_lock(mutex) != std::thrd_success) { return 3; }
+    if (std::mtx_trylock(&mutex) != std::thrd_success) { return 4; }
+    std::timespec past = std::timespec(int64_t(0), int64_t(0));
+    if (std::mtx_timedlock(&mutex, &past) != std::thrd_success) { return 5; }
+    if (std::mtx_unlock(mutex) != std::thrd_success ||
+        std::mtx_unlock(&mutex) != std::thrd_success ||
+        std::mtx_unlock(mutex) != std::thrd_success) { return 6; }
+    if (std::mtx_unlock(mutex) != std::thrd_error) { return 7; }
+    if (std::mtx_timedlock(mutex, std::timespec(int64_t(0), int64_t(1000000000))) != std::thrd_error) { return 13; }
+    if (std::mtx_lock(nullptr) != std::thrd_error ||
+        std::mtx_trylock(nullptr) != std::thrd_error ||
+        std::mtx_timedlock(nullptr, nullptr) != std::thrd_error ||
+        std::mtx_unlock(nullptr) != std::thrd_error) { return 8; }
+    std::mtx_t retired = mutex;
+    std::mtx_destroy(mutex);
+    if (mutex != 0 || std::mtx_lock(retired) != std::thrd_error) { return 9; }
+    if (std::mtx_init(&mutex, std::mtx_plain) != std::thrd_success) { return 10; }
+    if (std::mtx_timedlock(mutex, past) != std::thrd_error) { return 11; }
+    std::mtx_destroy(&mutex);
+  }
+  return mutex == 0 ? 0 : 12;
+}

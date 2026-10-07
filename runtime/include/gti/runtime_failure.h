@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 #define GTI_FAILURE_ABI_VERSION_V1 UINT32_C(1)
+#define GTI_FAILURE_ABI_VERSION_V2 UINT32_C(2)
+#define GTI_FAILURE_MESSAGE_CAPACITY_V2 UINT32_C(512)
 #define GTI_FAILURE_EXIT_STATUS 70
 #define GTI_FAILURE_ARTIFACT_IDENTITY_SIZE UINT32_C(32)
 
@@ -25,6 +27,10 @@ enum {
   GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1 = 11,
   GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1 = 12,
   GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1 = 13,
+  /* 14 is reserved for the cleanup-failure emergency envelope. */
+  GTI_FAILURE_CODE_KEY_NOT_FOUND_V1 = 15,
+  GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1 = 16,
+  GTI_FAILURE_CODE_PANIC_V2 = 17,
 };
 
 typedef uint16_t gti_failure_detail_v1;
@@ -64,6 +70,10 @@ enum {
   GTI_FAILURE_DETAIL_NEGATIVE_ARGUMENT_COUNT_V1 = 31,
   GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1 = 32,
   GTI_FAILURE_DETAIL_MUTEX_LOCK_V1 = 33,
+  GTI_FAILURE_DETAIL_KEY_LOOKUP_V1 = 34,
+  GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1 = 35,
+  GTI_FAILURE_DETAIL_SHARED_OWNER_V1 = 36,
+  GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2 = 37,
 };
 
 typedef struct gti_failure_record_v1 {
@@ -74,6 +84,23 @@ typedef struct gti_failure_record_v1 {
   uint32_t reserved;
   uint8_t artifact_identity[32];
 } gti_failure_record_v1;
+
+/* Version 1 remains byte-for-byte ABI compatible. Version 2 retains a bounded
+ * owned message, never a pointer into a value that language cleanup can drop.
+ * The artifact/site descriptor protocol remains version 1. */
+typedef struct gti_failure_record_v2 {
+  uint32_t abi_version;
+  gti_failure_code_v1 code;
+  gti_failure_detail_v1 detail;
+  uint32_t site_index;
+  uint32_t reserved;
+  uint8_t artifact_identity[32];
+  uint32_t message_size;
+  uint32_t message_flags;
+  uint8_t message[512];
+} gti_failure_record_v2;
+
+enum { GTI_FAILURE_MESSAGE_TRUNCATED_V2 = 1 };
 
 typedef struct gti_failure_outcome_descriptor_v1 {
   gti_failure_code_v1 code;
@@ -109,7 +136,16 @@ typedef struct gti_failure_emergency_v1 {
   gti_failure_record_v1 secondary;
 } gti_failure_emergency_v1;
 
+typedef struct gti_failure_emergency_v2 {
+  uint32_t abi_version;
+  uint32_t reserved;
+  gti_failure_record_v2 primary;
+  gti_failure_record_v2 secondary;
+} gti_failure_emergency_v2;
+
 typedef void (*gti_failure_observer_v1)(const gti_failure_record_v1 *record,
+                                        void *context);
+typedef void (*gti_failure_observer_v2)(const gti_failure_record_v2 *record,
                                         void *context);
 
 typedef uint32_t gti_failure_report_result_v1;
@@ -150,6 +186,32 @@ gti_failure_report_result_v1 gti_rt_failure_write_cleanup_report_v1(
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
     const gti_failure_artifact_descriptor_v1 *secondary_artifact);
 
+/* The compiler prepares the version/code/detail/site/identity header before
+ * calling this helper, before cleanup starts. Only Panic/ExplicitPanic admits
+ * a message. At most 512 source bytes are copied, without splitting a valid
+ * UTF-8 scalar at the truncation boundary. Malformed bytes remain byte-exact
+ * and are escaped by the reporter. A null view is valid only when empty.
+ * Returns OK or INVALID_ARGUMENT; invalid arguments leave the record alone.
+ * No allocation, formatting, retained view, or thread-local payload is used. */
+gti_failure_report_result_v1
+gti_rt_failure_capture_panic_v2(gti_failure_record_v2 *record,
+                                gti_c_string_view message);
+
+gti_failure_report_result_v1 gti_rt_failure_write_report_v2(
+    const gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 *artifact);
+
+/* Validates the complete record, bounded payload, descriptor identity and
+ * admitted outcome without reporting or other observable effects. */
+gti_failure_report_result_v1
+gti_rt_failure_validate_v2(const gti_failure_record_v2 *record,
+                           const gti_failure_artifact_descriptor_v1 *artifact);
+
+gti_failure_report_result_v1 gti_rt_failure_write_cleanup_report_v2(
+    const gti_failure_emergency_v2 *failure,
+    const gti_failure_artifact_descriptor_v1 *primary_artifact,
+    const gti_failure_artifact_descriptor_v1 *secondary_artifact);
+
 /*
  * Generated containment code calls this only after GTI cleanup completes.
  * The optional observer is invoked once over an immutable copy before the
@@ -165,6 +227,17 @@ gti_rt_failure_terminate_v1(const gti_failure_record_v1 *record,
 
 GTI_FAILURE_NORETURN void gti_rt_failure_terminate_cleanup_v1(
     const gti_failure_emergency_v1 *failure,
+    const gti_failure_artifact_descriptor_v1 *primary_artifact,
+    const gti_failure_artifact_descriptor_v1 *secondary_artifact);
+
+GTI_FAILURE_NORETURN void
+gti_rt_failure_terminate_v2(const gti_failure_record_v2 *record,
+                            const gti_failure_artifact_descriptor_v1 *artifact,
+                            gti_failure_observer_v2 observer,
+                            void *observer_context);
+
+GTI_FAILURE_NORETURN void gti_rt_failure_terminate_cleanup_v2(
+    const gti_failure_emergency_v2 *failure,
     const gti_failure_artifact_descriptor_v1 *primary_artifact,
     const gti_failure_artifact_descriptor_v1 *secondary_artifact);
 

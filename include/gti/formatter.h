@@ -31,6 +31,9 @@ enum class SpaceBeforeParensStyle {
   Always,
 };
 
+enum class PackConstructorInitializersStyle { BinPack, Never };
+enum class BreakConstructorInitializersStyle { BeforeColon, AfterColon };
+
 struct FormatOptions {
   std::size_t indentWidth = 2;
   bool insertSpaces = true;
@@ -46,6 +49,11 @@ struct FormatOptions {
   std::size_t spacesBeforeTrailingComments = 1;
   bool spaceBeforeAssignmentOperators = true;
   bool disableFormat = false;
+  PackConstructorInitializersStyle packConstructorInitializers =
+      PackConstructorInitializersStyle::BinPack;
+  BreakConstructorInitializersStyle breakConstructorInitializers =
+      BreakConstructorInitializersStyle::BeforeColon;
+  std::size_t constructorInitializerIndentWidth = 4;
 };
 
 class Formatter {

@@ -1,0 +1,124 @@
+#include <std/string>
+
+enum class lookup_errc { missing };
+
+int32_t global_value = 19;
+
+expected<std::string, lookup_errc> owned_success(bool named) {
+  if (named) {
+    std::string text = std::string("tea");
+    return std::move(text);
+  }
+  return std::string("tea");
+}
+
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t value) : value(value) {}
+
+  expected<int32_t&, lookup_errc> find(bool present) {
+    if (!present) {
+      return unexpected(lookup_errc::missing);
+    }
+    return this.value;
+  }
+
+  void set(int32_t value) mut { this.value = value; }
+  int32_t read() { return this.value; }
+};
+
+class owning_error {
+  std::string message;
+
+public:
+  owning_error(std::string_view message) : message(std::string(message)) {}
+  owning_error(owning_error& other) = delete;
+  owning_error(owning_error&& other) = default;
+
+  std::string& text() { return this.message; }
+};
+
+expected<int32_t&, owning_error> find_owned(int32_t& value, bool present) {
+  if (!present) {
+    return unexpected(owning_error("missing"));
+  }
+  return value;
+}
+
+expected<int32_t&, lookup_errc> forward(Box& box, bool present) {
+  auto result = box.find(present);
+  return result;
+}
+
+expected<int32_t&, lookup_errc> borrow_parameter(int32_t& value,
+                                                  bool present) {
+  if (!present) {
+    return unexpected(lookup_errc::missing);
+  }
+  return value;
+}
+
+expected<int32_t&, lookup_errc> borrow_global(bool present) {
+  if (!present) {
+    return unexpected(lookup_errc::missing);
+  }
+  return global_value;
+}
+
+int main() {
+  mut Box box{7};
+  auto found = forward(box, true);
+  if (!found.has_value()) {
+    return 1;
+  }
+  int32_t& alias = found.value();
+  int32_t observed = alias;
+
+  // The fallible carrier and extracted alias are no longer used, so their
+  // read-only owner dependency ends before this mutation.
+  box.set(11);
+  if (observed != 7 || box.read() != 11) {
+    return 2;
+  }
+
+  auto missing = forward(box, false);
+  if (missing.has_value() || missing.error() != lookup_errc::missing) {
+    return 3;
+  }
+
+  int32_t local = 13;
+  expected<int32_t&, lookup_errc> direct = local;
+  auto copied = direct;
+  auto moved = std::move(copied);
+  if (moved.value() != 13) {
+    return 4;
+  }
+
+  auto parameter = borrow_parameter(local, true);
+  if (parameter.value() != 13) {
+    return 5;
+  }
+
+  auto global = borrow_global(true);
+  if (global.value() != 19) {
+    return 6;
+  }
+
+  auto owned_found = find_owned(local, true);
+  if (!owned_found || owned_found.value() != 13) {
+    return 7;
+  }
+  auto owned_missing = find_owned(local, false);
+  if (owned_missing || owned_missing.error().text() != "missing") {
+    return 8;
+  }
+  auto named_success = owned_success(true);
+  auto direct_success = owned_success(false);
+  if (!named_success || !direct_success ||
+      named_success.value() != "tea" || direct_success.value() != "tea") {
+    return 9;
+  }
+  return 0;
+}

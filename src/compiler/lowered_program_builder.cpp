@@ -29,6 +29,120 @@ using lowered_detail::findBody;
 using lowered_detail::findDeclaration;
 using lowered_detail::fingerprint;
 
+[[nodiscard]] const HirBody *debugHirBody(const HirProgram &hir,
+                                          MirBodyAddress address) {
+  switch (address.kind) {
+  case MirBodyKind::Module:
+    return &hir.module();
+  case MirBodyKind::Function:
+    if (const auto *instance = hir.findFunctionInstance(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::Constructor:
+    if (const auto *instance = hir.findConstructorInstance(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::Destructor:
+    if (const auto *instance = hir.findDestructorInstance(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::Lambda:
+    if (const auto *instance = hir.findLambda(address.owner))
+      return &instance->body;
+    break;
+  case MirBodyKind::FieldInitializers:
+  case MirBodyKind::StaticFieldInitializers:
+    if (address.owner != 0 && address.owner <= hir.classInstances().size()) {
+      const auto &instance = hir.classInstances()[address.owner - 1];
+      return address.kind == MirBodyKind::FieldInitializers
+                 ? &instance.fieldInitializers
+                 : &instance.staticFieldInitializers;
+    }
+    break;
+  case MirBodyKind::HostedStartup:
+    break;
+  }
+  return nullptr;
+}
+
+[[nodiscard]] std::vector<LoweredSourceLocation>
+captureSourceLocations(const HirBody *hir, const MirBody &mir) {
+  std::vector<LoweredSourceLocation> result;
+  if (hir == nullptr)
+    return result;
+  std::unordered_map<HirStatementId, SourceSpan> statements;
+  std::unordered_map<HirValueId, SourceSpan> values;
+  for (const HirStatement &statement : hir->statements) {
+    if (statement.source == nullptr || !statement.source->extent())
+      continue;
+    const SourceSpan &span = *statement.source->extent();
+    if (span.source.empty() || span.source.front() == '<' ||
+        span.start >= span.end || span.line < 1)
+      continue;
+    statements.emplace(statement.id, span);
+    std::vector<HirValueId> pending;
+    for (const auto root :
+         {statement.value, statement.condition, statement.increment}) {
+      if (root)
+        pending.push_back(*root);
+    }
+    while (!pending.empty()) {
+      const HirValueId id = pending.back();
+      pending.pop_back();
+      if (!values.emplace(id, span).second)
+        continue;
+      if (const HirValue *value = hir->findValue(id)) {
+        pending.insert(pending.end(), value->operands.begin(),
+                       value->operands.end());
+        pending.insert(pending.end(), value->sequencedInputs.begin(),
+                       value->sequencedInputs.end());
+      }
+    }
+  }
+  const auto source = [&](HirStatementId statement,
+                          HirValueId value) -> const SourceSpan * {
+    if (const auto found = statements.find(statement);
+        found != statements.end())
+      return &found->second;
+    if (const auto found = values.find(value); found != values.end())
+      return &found->second;
+    return nullptr;
+  };
+  for (const MirBlock &block : mir.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      // Ownership/failure routing and transport scaffolding do not acquire a
+      // user statement merely because they retain a provenance identity.
+      switch (instruction.kind) {
+      case MirInstructionKind::Compute:
+      case MirInstructionKind::Load:
+      case MirInstructionKind::Initialize:
+      case MirInstructionKind::Assign:
+      case MirInstructionKind::Modify:
+      case MirInstructionKind::Call:
+      case MirInstructionKind::Construct:
+        if (const SourceSpan *span =
+                source(instruction.hirStatement, instruction.hirValue))
+          result.push_back({block.id, instruction.id, *span});
+        break;
+      default:
+        break;
+      }
+    }
+    const MirTerminator &terminator = block.terminator;
+    if (terminator.kind == MirTerminatorKind::Return ||
+        terminator.kind == MirTerminatorKind::Branch ||
+        terminator.kind == MirTerminatorKind::Switch ||
+        terminator.kind == MirTerminatorKind::Invoke) {
+      if (const SourceSpan *span =
+              source(terminator.hirStatement, terminator.hirValue))
+        result.push_back({block.id, 0, *span});
+    }
+  }
+  return result;
+}
+
 [[nodiscard]] LoweredBodyDefinitionKind
 bodyDefinition(MirDefinitionKind definition) {
   switch (definition) {
@@ -71,8 +185,14 @@ bodyDefinition(MirDefinitionKind definition) {
   case MirBodyKind::Constructor:
     if (const HirConstructorInstance *instance =
             hir.findConstructorInstance(address.owner);
-        instance != nullptr && instance->source != nullptr) {
-      return tokenSpan(instance->source->name());
+        instance != nullptr) {
+      if (instance->source != nullptr)
+        return tokenSpan(instance->source->name());
+      if (instance->generatedDefault) {
+        const auto *owner = findHirClass(hir, instance->owner);
+        if (owner != nullptr && owner->source != nullptr)
+          return tokenSpan(owner->source->name());
+      }
     }
     return {};
   case MirBodyKind::Destructor:
@@ -215,7 +335,8 @@ lowerGenericParameters(const std::vector<GenericParameterInfo> &parameters) {
          .constraintName = parameter.constraintName
                                ? lowerNamePath(*parameter.constraintName)
                                : std::vector<std::string>{},
-         .constraintConcept = parameter.conceptId});
+         .constraintConcept = parameter.conceptId,
+         .typeArgumentPath = parameter.typeArgumentPath});
   }
   return result;
 }
@@ -225,8 +346,21 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
   std::vector<LoweredConceptRequirement> result;
   result.reserve(requirements.size());
   for (const AppliedConceptRequirement &requirement : requirements) {
-    result.push_back({.conceptId = requirement.conceptId,
-                      .arguments = requirement.arguments});
+    result.push_back(
+        {.conceptId = requirement.conceptId,
+         .arguments = requirement.arguments,
+         .memberName =
+             requirement.syntax && requirement.syntax->memberRequirement
+                 ? requirement.syntax->memberRequirement->member().lexeme
+                 : std::string{},
+         .mutableReceiver = requirement.syntax &&
+                            requirement.syntax->memberRequirement &&
+                            requirement.syntax->memberRequirement->receiver()
+                                .referenceMutability.has_value(),
+         .requiresUnsafe =
+             requirement.syntax && requirement.syntax->memberRequirement &&
+             requirement.syntax->memberRequirement->unsafeKeyword()
+                 .has_value()});
   }
   return result;
 }
@@ -452,6 +586,7 @@ private:
       row.source = tokenSpan(declaration->name());
       row.generic = !declaration->genericParameters().empty();
       if (const ClassTypeInfo *info = semantics_.findClassType(*declaration)) {
+        row.generic = !info->genericParameters.empty();
         row.semanticIdentity = info->id;
         row.namespaceScope = info->namespaceScope;
         childNamespace = info->namespaceScope;
@@ -466,6 +601,7 @@ private:
             .exactValueArguments = info->exactValueArguments,
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
+            .genericArgumentPatterns = info->genericArgumentPatterns,
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
             .sharePolicy = info->sharePolicy,
@@ -577,6 +713,10 @@ private:
             .staticMember = info->staticMember,
             .internalLinkage = info->internalLinkage,
             .constexprFunction = info->constexprFunction,
+            .requiresUnsafe = info->requiresUnsafe,
+            .neverReturns = info->neverReturns,
+            .tracksCaller = info->tracksCaller,
+            .cThreadOperation = info->cThreadOperation,
             .virtualMethod = info->virtualMethod,
             .pureVirtual = info->pureVirtual,
             .overrideMethod = info->overrideMethod,
@@ -683,6 +823,14 @@ private:
     if (children != nullptr) {
       collectList(*children, id, childOwner, childNamespace);
     }
+    if (stmtAs<ClassDecl>(&statement) != nullptr) {
+      for (const auto &constructor : semantics_.designatedConstructors) {
+        const auto *info = semantics_.findConstructor(*constructor);
+        if (info != nullptr && info->owner == childOwner) {
+          collectStatement(*constructor, id, childOwner, childNamespace);
+        }
+      }
+    }
   }
 
   const SemanticModel &semantics_;
@@ -777,13 +925,16 @@ private:
                                     : semantics.findClassType(*source.source);
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.type != lowered.type || source.kind != lowered.kind ||
+        source.traits != lowered.traits ||
+        source.cOpaqueHandle != lowered.cOpaqueHandle ||
         source.fieldInitializers.placeDomain !=
             lowered.fieldInitializers.placeDomain ||
         source.staticFieldInitializers.placeDomain !=
             lowered.staticFieldInitializers.placeDomain ||
         info == nullptr || info->id != source.declaration ||
         info->declaration != source.source ||
-        info->sourceUnit != source.sourceUnit) {
+        info->sourceUnit != source.sourceUnit ||
+        info->cOpaqueHandle != source.cOpaqueHandle) {
       return reject("class instance " + std::to_string(index + 1) + " differs");
     }
   }
@@ -809,6 +960,15 @@ private:
         source.entryArgumentAppendTarget != lowered.entryArgumentAppendTarget ||
         source.staticMember != lowered.staticMember ||
         source.constexprFunction != lowered.constexprFunction ||
+        source.requiresUnsafe != lowered.requiresUnsafe ||
+        source.neverReturns != lowered.neverReturns ||
+        source.tracksCaller != lowered.tracksCaller ||
+        source.cThreadOperation != lowered.cThreadOperation ||
+        (info != nullptr &&
+         source.cThreadOperation != info->cThreadOperation) ||
+        (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
+        (info != nullptr && source.neverReturns != info->neverReturns) ||
+        (info != nullptr && source.tracksCaller != info->tracksCaller) ||
         source.linkage != lowered.linkage ||
         source.externalSymbol != lowered.externalSymbol ||
         source.body.placeDomain != lowered.body.placeDomain ||
@@ -823,7 +983,23 @@ private:
        ++index) {
     const HirConstructorInstance &source = hir.constructorInstances()[index];
     const MirConstructorInstance &lowered = mir.constructorInstances()[index];
+    const HirClassInstance *owner = findHirClass(hir, source.owner);
+    if (source.generatedDefault &&
+        (source.source != nullptr || source.declaration != 0 ||
+         !source.parameterTypes.empty() || owner == nullptr ||
+         owner->defaultConstructor != SpecialMemberStatus::Generated ||
+         !owner->fields.empty() || owner->destructor ||
+         source.initializers.size() != 1 ||
+         source.initializers.front().kind !=
+             ConstructorInitializerTargetKind::Base ||
+         lowered.definitionKind != MirDefinitionKind::Source))
+      return reject("generated constructor instance " +
+                    std::to_string(index + 1) +
+                    " has an invalid structural schedule");
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.constexprConstructor != lowered.constexprConstructor ||
+        source.constexprConstructor !=
+            (source.source != nullptr && source.source->isConstexpr()) ||
         source.typeArguments != lowered.typeArguments ||
         source.valueArguments != lowered.valueArguments ||
         source.parameterTypes != lowered.parameterTypes ||
@@ -863,7 +1039,8 @@ private:
     const MirNativeCallbackAdapter &lowered =
         mir.nativeCallbackAdapters()[index];
     if (source.id != lowered.id || source.target != lowered.target ||
-        source.type != lowered.type) {
+        source.type != lowered.type ||
+        source.cThreadCallback != lowered.cThreadCallback) {
       return reject("native callback adapter " + std::to_string(index + 1) +
                     " differs");
     }
@@ -900,7 +1077,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     const HirProgram &hir, const MirProgram &sourceMir,
     const MirProgram &optimizedMir,
     const std::vector<MirTransformRecord> &transformations,
-    const TargetInfo &target) const {
+    const TargetInfo &target, bool captureDebugLocations) const {
   LoweredProgramBuild build;
   if (!target.supported()) {
     addIssue(build.issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -1125,6 +1302,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     }
     lowered.bodies_.push_back(
         {.identity = *identity, .role = bodyRole(optimizedMir, *identity)});
+    if (captureDebugLocations) {
+      lowered.bodies_.back().sourceLocations = captureSourceLocations(
+          debugHirBody(hir, address), *findMirBody(optimizedMir, address));
+    }
   }
 
   DerivedGeneratedGraph graph = deriveGeneratedGraph(

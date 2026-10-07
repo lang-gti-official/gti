@@ -47,6 +47,12 @@ public:
       return "GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1";
     case DefinedFailureCode::HostedRuntimeContractFailure:
       return "GTI_FAILURE_CODE_HOSTED_RUNTIME_CONTRACT_FAILURE_V1";
+    case DefinedFailureCode::KeyNotFound:
+      return "GTI_FAILURE_CODE_KEY_NOT_FOUND_V1";
+    case DefinedFailureCode::InvalidContainerArgument:
+      return "GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1";
+    case DefinedFailureCode::Panic:
+      return "GTI_FAILURE_CODE_PANIC_V2";
     case DefinedFailureCode::None:
     case DefinedFailureCode::Count:
       break;
@@ -124,6 +130,14 @@ public:
       return "GTI_FAILURE_DETAIL_RECURSIVE_THREAD_LOCAL_INITIALIZATION_V1";
     case DefinedFailureDetail::MutexLock:
       return "GTI_FAILURE_DETAIL_MUTEX_LOCK_V1";
+    case DefinedFailureDetail::KeyLookup:
+      return "GTI_FAILURE_DETAIL_KEY_LOOKUP_V1";
+    case DefinedFailureDetail::ContainerArgument:
+      return "GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1";
+    case DefinedFailureDetail::SharedOwner:
+      return "GTI_FAILURE_DETAIL_SHARED_OWNER_V1";
+    case DefinedFailureDetail::ExplicitPanic:
+      return "GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2";
     case DefinedFailureDetail::None:
     case DefinedFailureDetail::Count:
       break;
@@ -280,7 +294,7 @@ struct mir_contained_constructor_tag_v1 {};
 
 struct mir_contained_constructor_state_v1 {
   bool success = false;
-  ::gti_failure_record_v1 record{};
+  ::gti_failure_record_v2 record{};
 };
 
 struct mir_empty_state_constructor_tag_v1 {};
@@ -319,13 +333,40 @@ template <typename T>
   return mir_empty_state_factory_v1<T>::make();
 }
 
+// The MIR Drop ends a completed field's GTI lifetime now. Recreate only its
+// proved observation-free representation so the enclosing unpublished C++
+// object's later destruction sees an empty field. Ordinary fields are
+// transparently replaceable; this helper must not be used for base subobjects.
+template <typename T>
+inline void mir_rollback_field_v1(T &field) noexcept {
+  static_assert(!std::is_const_v<T>);
+  T *address = std::addressof(field);
+  std::destroy_at(address);
+  ::new (static_cast<void *>(address)) T(mir_empty_state_v1<T>());
+}
+
 struct mir_failure_status_v1 {
   ::gti_failure_code_v1 code;
   ::gti_failure_detail_v1 detail;
+  bool propagated = false;
 };
 
 inline constexpr mir_failure_status_v1 mir_failure_success_v1{
     GTI_FAILURE_CODE_NONE_V1, GTI_FAILURE_DETAIL_NONE_V1};
+
+inline mir_failure_status_v1
+mir_checked_contract_v1(bool condition, ::gti_failure_code_v1 code,
+                        ::gti_failure_detail_v1 detail) noexcept {
+  return condition ? mir_failure_success_v1 : mir_failure_status_v1{code, detail};
+}
+
+template <typename Unexpected>
+inline decltype(auto) mir_unexpected_error_ref_v1(Unexpected &value) noexcept {
+  if constexpr (requires { value.error(); })
+    return value.error();
+  else
+    return value.value();
+}
 
 inline mir_failure_status_v1
 mir_checked_index_bounds_v1(std::uint64_t index, std::uint64_t size,
@@ -339,13 +380,14 @@ mir_checked_index_bounds_v1(std::uint64_t index, std::uint64_t size,
 template <typename Index>
 inline mir_failure_status_v1
 mir_checked_string_view_at_v1(std::string_view value, Index index,
-                              std::uint8_t *result) noexcept {
+                              char8_t *result) noexcept {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
-  if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
+  const auto numeric_index = static_cast<integer_comparison_type<Index>>(index);
+  if (std::cmp_less(numeric_index, 0) || std::cmp_greater_equal(numeric_index, value.size())) {
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_STRING_VIEW_V1};
   }
-  *result = static_cast<std::uint8_t>(static_cast<unsigned char>(
+  *result = static_cast<char8_t>(static_cast<unsigned char>(
       value[static_cast<std::size_t>(index)]));
   return mir_failure_success_v1;
 }
@@ -357,7 +399,9 @@ inline mir_failure_status_v1 mir_expected_value_v1(Expected &expected,
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
             GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
   }
-  *result = expected.value();
+  // GTI's state check owns the failure. The host value() accessor additionally
+  // requires a copyable error for bad_expected_access, even on the success path.
+  *result = *expected;
   return mir_failure_success_v1;
 }
 
@@ -378,7 +422,18 @@ mir_expected_value_ref_v1(Expected &expected, ResultPointer *result) noexcept {
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
             GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
   }
-  *result = std::addressof(expected.value());
+  *result = std::addressof(*expected);
+  return mir_failure_success_v1;
+}
+
+template <typename Expected, typename ResultSlot>
+inline mir_failure_status_v1
+mir_expected_value_copy_v1(const Expected &expected, ResultSlot *result) {
+  if (!expected.has_value()) {
+    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
+            GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
+  }
+  result->construct(*expected);
   return mir_failure_success_v1;
 }
 
@@ -389,7 +444,7 @@ mir_expected_value_move_v1(Expected &expected, ResultSlot *result) {
     return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
             GTI_FAILURE_DETAIL_VALUE_ON_ERROR_V1};
   }
-  result->construct(std::move(expected).value());
+  result->construct(*std::move(expected));
   return mir_failure_success_v1;
 }
 
@@ -412,6 +467,17 @@ mir_expected_error_ref_v1(Expected &expected, ResultPointer *result) noexcept {
             GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
   }
   *result = std::addressof(expected.error());
+  return mir_failure_success_v1;
+}
+
+template <typename Expected, typename ResultSlot>
+inline mir_failure_status_v1
+mir_expected_error_copy_v1(const Expected &expected, ResultSlot *result) {
+  if (expected.has_value()) {
+    return {GTI_FAILURE_CODE_INVALID_EXPECTED_ACCESS_V1,
+            GTI_FAILURE_DETAIL_ERROR_ON_VALUE_V1};
+  }
+  result->construct(expected.error());
   return mir_failure_success_v1;
 }
 
@@ -449,11 +515,12 @@ mir_checked_array_read_v1(const Array &array, std::uint64_t index,
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
-  *result = array[static_cast<std::size_t>(index)];
+  assign_representation(*result, array[static_cast<std::size_t>(index)]);
   return mir_failure_success_v1;
 }
 
 template <typename Array, typename Value>
+  requires (!std::is_trivially_copyable_v<Value>)
 inline mir_failure_status_v1
 mir_checked_array_write_v1(Array &array, std::uint64_t index,
                            Value value) noexcept {
@@ -461,7 +528,22 @@ mir_checked_array_write_v1(Array &array, std::uint64_t index,
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
-  array[static_cast<std::size_t>(index)] = std::move(value);
+  assign_representation(array[static_cast<std::size_t>(index)], std::move(value));
+  return mir_failure_success_v1;
+}
+
+// Avoid copying native pointer subobjects through a C++ by-value parameter.
+// For trivial values this adds no observable construction or cleanup event.
+template <typename Array, typename Value>
+  requires std::is_trivially_copyable_v<Value>
+inline mir_failure_status_v1
+mir_checked_array_write_v1(Array &array, std::uint64_t index,
+                           const Value &value) noexcept {
+  if (index >= std::size(array)) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
+  }
+  assign_representation(array[static_cast<std::size_t>(index)], value);
   return mir_failure_success_v1;
 }
 
@@ -477,7 +559,62 @@ inline mir_failure_status_v1 mir_checked_array_write_v1(
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_FIXED_ARRAY_V1};
   }
-  array[static_cast<std::size_t>(index)] = value;
+  assign_representation(array[static_cast<std::size_t>(index)], value);
+  return mir_failure_success_v1;
+}
+
+// A MIR allocation resource owns bytes, never a live T. Its destruction is an
+// integrity check; only a verified Drop or ownership publication releases it.
+template <typename T> class mir_object_allocation_v1 final {
+  void *storage_ = nullptr;
+public:
+  mir_object_allocation_v1() = default;
+  mir_object_allocation_v1(const mir_object_allocation_v1 &) = delete;
+  mir_object_allocation_v1 &operator=(const mir_object_allocation_v1 &) = delete;
+  ~mir_object_allocation_v1() {
+    if (storage_ != nullptr && !mir_cleanup_emergency_abandonment()) std::abort();
+  }
+  mir_failure_status_v1 allocate() noexcept {
+    if (storage_ != nullptr) std::abort();
+    if constexpr (alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+      storage_ = ::operator new(sizeof(T), std::align_val_t(alignof(T)), std::nothrow);
+    } else {
+      storage_ = ::operator new(sizeof(T), std::nothrow);
+    }
+    return storage_ != nullptr ? mir_failure_success_v1
+        : mir_failure_status_v1{GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
+                               GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1};
+  }
+  T *address() noexcept { return static_cast<T *>(storage_); }
+  T *release() noexcept {
+    T *result = address();
+    storage_ = nullptr;
+    return result;
+  }
+  void reset() noexcept {
+    if constexpr (alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+      ::operator delete(storage_, std::align_val_t(alignof(T)));
+    } else {
+      ::operator delete(storage_);
+    }
+    storage_ = nullptr;
+  }
+};
+
+// Scalar initialization cannot execute user code. Allocation is the sole
+// detector here; the caller's MIR owns its record, cleanup, and publication.
+template <typename T, typename... Args>
+inline mir_failure_status_v1
+mir_allocate_unique_scalar_v1(std::unique_ptr<T> *result, Args... args) noexcept {
+  static_assert((std::is_scalar_v<T> || is_raw_address_v<T>) && sizeof...(Args) <= 1);
+  // A direct allocation-function call cannot be elided as a C++ new-expression;
+  // GTI's allocation outcome must remain observable at this MIR instruction.
+  void *storage = ::operator new(sizeof(T), std::nothrow);
+  if (storage == nullptr) {
+    return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
+            GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1};
+  }
+  result->reset(std::construct_at(static_cast<T *>(storage), args...));
   return mir_failure_success_v1;
 }
 
@@ -510,6 +647,30 @@ mir_storage_construct_v1(::gti_internal::backend::storage<T> &storage,
   if (!storage.try_construct(index, std::forward<Args>(args)...)) {
     return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
             GTI_FAILURE_DETAIL_ELEMENT_CONSTRUCTION_V1};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1 mir_storage_preflight_v1(
+    const ::gti_internal::backend::storage<T> &storage, std::uint64_t index) {
+  if (index >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  if (storage.initialized(index)) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_DUPLICATE_CONSTRUCTION_V1};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename T, typename Constructor>
+inline mir_failure_status_v1 mir_storage_construct_with_v1(
+    ::gti_internal::backend::storage<T> &storage, std::uint64_t index,
+    ::gti_failure_record_v2 *record, Constructor construct) {
+  if (!storage.construct_with_constructor(index, construct)) {
+    return {record->code, record->detail, true};
   }
   return mir_failure_success_v1;
 }
@@ -562,7 +723,49 @@ mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
   return mir_failure_success_v1;
 }
 
+template <typename T, typename Cleanup>
+inline mir_failure_status_v1
+mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
+                       std::uint64_t index, ::gti_failure_record_v2 *record,
+                       Cleanup cleanup) {
+  if (index >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  if (!storage.initialized(index)) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
+  }
+  if (!storage.destroy_with_failure(index, record, cleanup)) {
+    return {record->code, record->detail, true};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename Array>
+inline mir_failure_status_v1
+mir_restoring_indexed_swap_v1(Array &storage,
+                              std::uint64_t left, std::uint64_t right) {
+  constexpr std::size_t N = fixed_array_extent<Array>::value;
+  if (left >= N || right >= N)
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  if (left != right) mir_restoring_swap_v1(storage[left], storage[right]);
+  return mir_failure_success_v1;
+}
+
 template <typename T>
+inline mir_failure_status_v1
+mir_restoring_indexed_swap_v1(prefix_storage<T> &storage,
+                              std::uint64_t left, std::uint64_t right) {
+  if (left >= storage.length() || right >= storage.length())
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  if (left != right) mir_restoring_swap_v1(storage.read_mut(left), storage.read_mut(right));
+  return mir_failure_success_v1;
+}
+
+template <bool Bitwise = false, typename T>
 inline mir_failure_status_v1
 mir_storage_relocate_v1(::gti_internal::backend::storage<T> &source,
                         ::gti_internal::backend::storage<T> &destination,
@@ -581,7 +784,7 @@ mir_storage_relocate_v1(::gti_internal::backend::storage<T> &source,
               GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1};
     }
   }
-  source.relocate_to(destination, count);
+  source.template relocate_to<Bitwise>(destination, count);
   return mir_failure_success_v1;
 }
 
@@ -692,6 +895,26 @@ mir_prefix_append_v1(::gti_internal::backend::prefix_storage<T> &storage,
   return mir_failure_success_v1;
 }
 
+template <typename T, typename Constructor>
+inline mir_failure_status_v1 mir_prefix_construct_v1(
+    ::gti_internal::backend::prefix_storage<T> &storage,
+    ::gti_failure_record_v2 *record, Constructor construct) {
+  if (!storage.append_with_constructor(construct)) {
+    return {record->code, record->detail, true};
+  }
+  return mir_failure_success_v1;
+}
+
+template <typename T>
+inline mir_failure_status_v1 mir_prefix_preflight_v1(
+    const ::gti_internal::backend::prefix_storage<T> &storage) {
+  if (storage.length() >= storage.capacity()) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
+  }
+  return mir_failure_success_v1;
+}
+
 template <typename T>
 inline mir_failure_status_v1
 mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage) {
@@ -700,6 +923,20 @@ mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage) {
             GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
   }
   storage.pop();
+  return mir_failure_success_v1;
+}
+
+template <typename T, typename Cleanup>
+inline mir_failure_status_v1
+mir_prefix_pop_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                  ::gti_failure_record_v2 *record, Cleanup cleanup) {
+  if (storage.length() == 0) {
+    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
+            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
+  }
+  if (!storage.pop_with_failure(record, cleanup)) {
+    return {record->code, record->detail, true};
+  }
   return mir_failure_success_v1;
 }
 
@@ -755,7 +992,23 @@ mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
   return mir_failure_success_v1;
 }
 
-template <typename T>
+template <typename T, typename Cleanup>
+inline mir_failure_status_v1
+mir_prefix_erase_v1(::gti_internal::backend::prefix_storage<T> &storage,
+                    std::uint64_t index, ::gti_failure_record_v2 *record,
+                    const ::gti_failure_artifact_descriptor_v1 *artifact,
+                    Cleanup cleanup) {
+  if (index >= storage.length()) {
+    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
+            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+  }
+  if (!storage.erase_with_failure(index, record, artifact, cleanup)) {
+    return {record->code, record->detail, true};
+  }
+  return mir_failure_success_v1;
+}
+
+template <bool Bitwise = false, typename T>
 inline mir_failure_status_v1
 mir_prefix_relocate_v1(::gti_internal::backend::prefix_storage<T> &source,
                        ::gti_internal::backend::prefix_storage<T>
@@ -768,7 +1021,7 @@ mir_prefix_relocate_v1(::gti_internal::backend::prefix_storage<T> &source,
     return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
             GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
   }
-  source.relocate_to(destination);
+  source.template relocate_to<Bitwise>(destination);
   return mir_failure_success_v1;
 }
 
@@ -1029,7 +1282,8 @@ inline mir_failure_status_v1 mir_checked_convert_v1(Source value,
                 std::is_arithmetic_v<Source>);
   if constexpr (std::is_integral_v<Target> &&
                 std::is_integral_v<Source>) {
-    if (!std::in_range<Target>(value)) {
+    if (!std::in_range<integer_comparison_type<Target>>(
+            static_cast<integer_comparison_type<Source>>(value))) {
       return {GTI_FAILURE_CODE_NUMERIC_CONVERSION_OUT_OF_RANGE_V1,
               GTI_FAILURE_DETAIL_NUMERIC_CAST_V1};
     }

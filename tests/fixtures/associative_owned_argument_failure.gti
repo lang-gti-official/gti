@@ -1,0 +1,22 @@
+#include <std/memory>
+#include <std/string>
+
+class Guard {
+  std::unique_ptr<int> token;
+public:
+  Guard() : token(std::make_unique<int>(7)) {}
+  Guard(Guard& other) = delete;
+  Guard(Guard&& other) = default;
+  ~Guard() { if (this.token != nullptr) std::println("cleaned"); }
+};
+
+void consume(Guard guard, std::size_t index) {}
+
+void prepare(Guard guard, int index) {
+  consume(std::move(guard), std::size_t(index));
+}
+
+int main() {
+  prepare(Guard(), -1);
+  return 1;
+}

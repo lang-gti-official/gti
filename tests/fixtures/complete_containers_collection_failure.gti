@@ -1,0 +1,70 @@
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+#include <std/set>
+#include <std/unordered_set>
+#include <std/string>
+#include <std/vector>
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(99); }
+};
+class Token {
+public:
+  int value;
+  Token(int value) : value(value) { std::println(value); }
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() { std::println(0 - this.value); }
+};
+class Order {
+public:
+  bool operator()(Token& left, Token& right) { return left.value < right.value; }
+};
+class Hash {
+public:
+  std::size_t operator()(Token& value) { return std::size_t(value.value); }
+};
+class Equal {
+public:
+  bool operator()(Token& left, Token& right) { return left.value == right.value; }
+};
+class FailingOrder {
+public:
+  bool operator()(Token& left, Token& right) {
+    int checked = 1 / (left.value == 2 || right.value == 2 ? 0 : 1);
+    return left.value < right.value;
+  }
+};
+class FailingHash {
+public:
+  std::size_t operator()(Token& value) { return std::size_t(1 / (value.value == 2 ? 0 : 1)); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  int zero = argc - argc;
+  if (argc == 1) {
+    std::list<Token> values = {Token(1), Token(2), Token(3 / zero)};
+  }
+  if (argc == 2) {
+    std::deque<Token> values = {Token(1), Token(2), Token(3 / zero)};
+  }
+  if (argc == 3) {
+    std::queue<Token> values = {Token(1), Token(2), Token(3 / zero)};
+  }
+  if (argc == 4) {
+    std::set<Token, Order> values = {Token(1), Token(2), Token(3 / zero)};
+  }
+  if (argc == 5) {
+    std::unordered_set<Token, Hash, Equal> values = {Token(1), Token(2), Token(3 / zero)};
+  }
+  if (argc == 6) {
+    std::set<Token, FailingOrder> values = {Token(1), Token(2), Token(3)};
+  }
+  if (argc == 7) {
+    std::unordered_set<Token, FailingHash, Equal> values = {Token(1), Token(2), Token(3)};
+  }
+  return 1;
+}

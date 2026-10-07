@@ -67,8 +67,12 @@ void AstPrinter::visitConversionExpr(const Conversion &expr) {
 
 void AstPrinter::visitDirectInitializerExpr(const DirectInitializer &expr) {
   std::string text = "(direct-init";
-  for (const ExprPtr &argument : expr.arguments()) {
-    text += " " + printPtr(argument);
+  for (std::size_t i = 0; i < expr.arguments().size(); ++i) {
+    text += " ";
+    if (!expr.designators().empty()) {
+      text += "." + expr.designators()[i].lexeme + "=";
+    }
+    text += printPtr(expr.arguments()[i]);
   }
   result = text + ")";
 }
@@ -121,6 +125,20 @@ void AstPrinter::visitLiteralExpr(const LiteralExpr &expr) {
   result = literalToString(expr.value());
 }
 
+void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
+  result = "(requires " + typeToString(expr.receiver()) + " " +
+           expr.binding().lexeme;
+  for (std::size_t index = 0; index < expr.parameters().size(); ++index)
+    result += " " + typeToString(expr.parameters()[index]) + " " +
+              expr.bindings()[index].lexeme;
+  if (expr.unsafeKeyword())
+    result += " unsafe";
+  result += " (" + expr.receiverUse().lexeme + "." + expr.member().lexeme;
+  for (const auto &argument : expr.arguments())
+    result += " " + argument.lexeme;
+  result += ") " + typeToString(expr.result()) + ")";
+}
+
 void AstPrinter::visitLogicalExpr(const Logical &expr) {
   result =
       parenthesize(expr.oper().lexeme, {expr.left().get(), expr.right().get()});
@@ -167,10 +185,29 @@ void AstPrinter::visitUnexpectedExpr(const Unexpected &expr) {
 }
 
 void AstPrinter::visitVariableExpr(const Variable &expr) {
-  result = expr.name().lexeme;
+  result = (expr.isMutablePattern() ? "mut " : "") +
+           std::string(expr.isReferencePattern() ? "auto& " : "") +
+           expr.name().lexeme;
 }
 
 std::string AstPrinter::typeToString(const TypeRef &type) {
+  if (type.isFunctionSignature()) {
+    const std::size_t count = *type.functionSignatureParameterCount;
+    if (type.arguments.size() != count + 1) {
+      return "?()";
+    }
+    std::string text = typeToString(type.arguments.back()) + "(";
+    for (std::size_t index = 0; index < count; ++index) {
+      if (index != 0) {
+        text += ",";
+      }
+      text += typeToString(type.arguments[index]);
+    }
+    return text + ")" +
+           (type.functionSignatureQualifier
+                ? " " + type.functionSignatureQualifier->lexeme
+                : "");
+  }
   if (type.isNativeFunction()) {
     std::string text = "(";
     const std::size_t parameterCount =
@@ -195,8 +232,11 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
     }
     text += type.name.segments[index].lexeme;
   }
-  if (type.pointeeConst) {
+  if (!type.pointers.empty() && type.pointers.front().pointeeConst) {
     text = "const " + text;
+  }
+  if (type.referenceMutability) {
+    text = "mut " + text;
   }
   if (!type.arguments.empty()) {
     text += "<";
@@ -208,10 +248,10 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
     }
     text += ">";
   }
-  if (type.pointer) {
-    text += "*";
-  }
-  if (type.outerPointer) {
+  for (std::size_t index = 0; index < type.pointers.size(); ++index) {
+    if (index != 0 && type.pointers[index].pointeeConst) {
+      text += " const";
+    }
     text += "*";
   }
   for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
@@ -220,6 +260,9 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
   }
   if (type.reference) {
     text += "&";
+  }
+  if (type.packExpansion) {
+    text += "...";
   }
   return text;
 }

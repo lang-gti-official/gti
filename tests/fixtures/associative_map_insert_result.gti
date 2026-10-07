@@ -1,0 +1,38 @@
+#include <std/map>
+#include <std/utility>
+
+using Dictionary = std::map<int, int>;
+
+int main() {
+  mut std::map<int, int> values{};
+  {
+    mut std::pair<Dictionary::iterator, bool> result = values.insert(7, 42);
+    if (!result.second || result.first->first != 7 || result.first->second != 42) {
+      return 1;
+    }
+    result.first->second = 43;
+    mut auto moved = std::move(result);
+    moved.first->second = 44;
+  }
+  Dictionary::key_type key = 7;
+  Dictionary::mapped_type expected_value = 44;
+  if (values.at(key) != expected_value) { return 2; }
+  {
+    auto duplicate = values.insert(7, 99);
+    if (duplicate.second || duplicate.first->second != 44) { return 3; }
+  }
+  {
+    auto assigned = values.insert_or_assign(7, 55);
+    if (assigned.second || assigned.first->second != 55) { return 4; }
+  }
+  {
+    auto fresh = values.try_emplace(9, 66);
+    if (!fresh.second || fresh.first->first != 9 || fresh.first->second != 66) {
+      return 5;
+    }
+  }
+  Dictionary::size_type expected_size = std::size_t(2);
+  if (values.size() != expected_size) { return 6; }
+  values.clear();
+  return 0;
+}

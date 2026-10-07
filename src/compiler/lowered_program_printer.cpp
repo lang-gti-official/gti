@@ -210,6 +210,7 @@ private:
            << ";length-parameter=" << value.arrayLengthParameterId
            << ";access=" << number(value.referenceAccess)
            << ";pointer-access=" << number(value.pointerAccess)
+           << ";signature-receiver=" << number(value.signatureReceiver)
            << ";concrete-pack=" << value.concretePack << ";args=[";
     for (std::size_t index = 0; index < value.arguments.size(); ++index) {
       separator(index);
@@ -365,7 +366,17 @@ private:
            << ";pack=" << value.pack << ";value=" << value.value
            << ";constraints=" << value.constraints << ";constraint=";
     strings(value.constraintName);
-    output << ";constraint-concept=" << value.constraintConcept << ')';
+    output << ";constraint-concept=" << value.constraintConcept;
+    if (!value.typeArgumentPath.empty()) {
+      output << ";type-argument-path=[";
+      for (std::size_t index = 0; index < value.typeArgumentPath.size();
+           ++index) {
+        separator(index);
+        output << value.typeArgumentPath[index];
+      }
+      output << ']';
+    }
+    output << ')';
   }
 
   void genericParameters(const std::vector<LoweredGenericParameter> &values) {
@@ -468,6 +479,15 @@ private:
     }
     output << "];generics=";
     genericParameters(value.genericParameters);
+    if (!value.genericArgumentPatterns.empty()) {
+      output << ";argument-patterns=[";
+      for (std::size_t index = 0; index < value.genericArgumentPatterns.size();
+           ++index) {
+        separator(index);
+        type(value.genericArgumentPatterns[index]);
+      }
+      output << ']';
+    }
     output << ";bases=[";
     for (std::size_t index = 0; index < value.bases.size(); ++index) {
       separator(index);
@@ -542,8 +562,15 @@ private:
     output << ";requirements=[";
     for (std::size_t index = 0; index < value.requirements.size(); ++index) {
       separator(index);
-      output << "{concept=" << value.requirements[index].conceptId
-             << ";arguments=[";
+      output << "{concept=" << value.requirements[index].conceptId;
+      if (!value.requirements[index].memberName.empty())
+        output << ";member="
+               << std::quoted(value.requirements[index].memberName);
+      if (value.requirements[index].mutableReceiver)
+        output << ";mutable-receiver=1";
+      if (value.requirements[index].requiresUnsafe)
+        output << ";requires-unsafe=1";
+      output << ";arguments=[";
       for (std::size_t argument = 0;
            argument < value.requirements[index].arguments.size(); ++argument) {
         separator(argument);
@@ -622,6 +649,8 @@ private:
       output << '-';
     }
     output << ";definition=" << number(value.definitionKind)
+           << ";never-returns=" << value.neverReturns
+           << ";tracks-caller=" << value.tracksCaller
            << ";linkage=" << number(value.linkage)
            << ";external=" << std::quoted(value.externalSymbol) << ";c-array=";
     if (value.cArrayCountParameter) {
@@ -657,7 +686,8 @@ private:
            << ':' << value.internalLinkage << ':' << value.constexprFunction
            << ':' << value.virtualMethod << ':' << value.pureVirtual << ':'
            << value.overrideMethod << ':' << value.hasRequiresClause << ':'
-           << value.compilerPrivate << ')';
+           << value.compilerPrivate << ':' << value.requiresUnsafe
+           << ";cthread-operation=" << number(value.cThreadOperation) << ')';
   }
 
   void printValue(const LoweredConstructorDeclaration &value) {
@@ -670,8 +700,15 @@ private:
     output << ";requirements=[";
     for (std::size_t index = 0; index < value.requirements.size(); ++index) {
       separator(index);
-      output << "{concept=" << value.requirements[index].conceptId
-             << ";arguments=[";
+      output << "{concept=" << value.requirements[index].conceptId;
+      if (!value.requirements[index].memberName.empty())
+        output << ";member="
+               << std::quoted(value.requirements[index].memberName);
+      if (value.requirements[index].mutableReceiver)
+        output << ";mutable-receiver=1";
+      if (value.requirements[index].requiresUnsafe)
+        output << ";requires-unsafe=1";
+      output << ";arguments=[";
       for (std::size_t argument = 0;
            argument < value.requirements[index].arguments.size(); ++argument) {
         separator(argument);
@@ -754,8 +791,8 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << (program.embeddingPlan() ? "lowered-program-v6\n"
-                                     : "lowered-program-v5\n");
+  output << (program.embeddingPlan() ? "lowered-program-v12\n"
+                                     : "lowered-program-v11\n");
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -825,6 +862,13 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
       printGeneratedIdentity(output, required);
     }
     output << '\n';
+    for (const LoweredSourceLocation &location : body.sourceLocations) {
+      output << "  source-location bb" << location.block << ":i"
+             << location.instruction << ' '
+             << std::quoted(location.source.source) << ':'
+             << location.source.start << ':' << location.source.end << ':'
+             << location.source.line << '\n';
+    }
   }
 
   output << "declarations " << program.declarations().size() << '\n';
@@ -1035,7 +1079,9 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
              << (callback->adapter.targetMayRaiseDefinedFailure ? "raise"
                                                                 : "no-raise")
              << ':'
-             << (callback->adapter.catchesNativeExceptions ? "catch" : "leak");
+             << (callback->adapter.catchesNativeExceptions ? "catch" : "leak")
+             << ":cthread-callback="
+             << static_cast<unsigned>(callback->adapter.cThreadCallback);
     } else if (const auto *thread =
                    std::get_if<LoweredThreadTaskAdapterItem>(&item.payload)) {
       output << " payload=thread-task:" << thread->adapter.id << ":type=";

@@ -1,0 +1,18 @@
+#include <std/functional>
+
+mut int destroyed = 0;
+class Call {
+public:
+  ~Call() { destroyed++; }
+  int operator()(int value) { return value; }
+};
+
+int exercise() {
+  std::move_only_function<int(int)> handler{Call()};
+  return handler(7) - 7;
+}
+
+int main() {
+  int result = exercise();
+  return result + destroyed - 1;
+}

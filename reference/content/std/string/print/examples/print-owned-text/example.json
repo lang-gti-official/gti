@@ -1,6 +1,0 @@
-{
-  "title": "Transfer an owning string",
-  "description": "Moves a local std::string directly into the consuming print overload.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

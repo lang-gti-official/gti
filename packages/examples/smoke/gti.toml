@@ -1,0 +1,42 @@
+manifest-version = 1
+
+[package]
+name = "native-bindings-smoke"
+version = "0.1.0"
+
+[dependencies]
+glfw = { path = "../../glfw" }
+glad = { path = "../../glad" }
+sqlite3 = { path = "../../sqlite3" }
+cimgui = { path = "../../cimgui" }
+zlib = { path = "../../zlib" }
+libpng = { path = "../../libpng" }
+cli11 = { path = "../../cli11" }
+
+[targets.glfw]
+kind = "test"
+root = "src/glfw.gti"
+
+[targets.glad]
+kind = "test"
+root = "src/glad.gti"
+
+[targets.sqlite3]
+kind = "test"
+root = "src/sqlite3.gti"
+
+[targets.cimgui]
+kind = "test"
+root = "src/cimgui.gti"
+
+[targets.zlib]
+kind = "test"
+root = "src/zlib.gti"
+
+[targets.libpng]
+kind = "test"
+root = "src/libpng.gti"
+
+[targets.cli11]
+kind = "test"
+root = "src/cli11.gti"

@@ -1,0 +1,71 @@
+#include <std/utility>
+extern "C" {
+  int gti_test_mode();
+  int gti_test_zero();
+  void gti_test_trace(int value);
+}
+
+struct Guard {
+  int identity;
+  Guard(int value) : identity(value) {}
+  ~Guard() { gti_test_trace(identity); }
+};
+
+enum class Cause { unavailable };
+enum class Domain { request };
+class Error {
+  Domain domain;
+  Cause cause;
+public:
+  Error(Domain first, Cause second) : domain(first), cause(second) {
+    if (gti_test_mode() != 0) {
+      int failed = 1 / gti_test_zero(); // error-constructor-failure
+    }
+  }
+  bool matches() { return domain == Domain::request && cause == Cause::unavailable; }
+};
+
+class Client {
+  Client() {}
+public:
+  Client(Client& other) = delete;
+  Client(Client&& other) = default;
+  static expected<Client, Error> create(bool fail) {
+    if (fail) { return unexpected(Error(Domain::request, Cause::unavailable)); }
+    return Client();
+  }
+};
+
+class Ticket {
+  int identity;
+public:
+  Ticket(int value) : identity(value) {}
+  Ticket(Ticket&& other) = default;
+  int get() { return identity; }
+};
+
+expected<Ticket, int> produce(bool fail) {
+  if (fail) { return unexpected(9); }
+  return Ticket(7);
+}
+
+expected<int, int> extract(bool fail) {
+  mut auto result = produce(fail);
+  if (!result) { return unexpected(std::move(result).error()); }
+  Ticket item = std::move(result).value();
+  return item.get();
+}
+
+int main() {
+  Guard outer{1};
+  Guard inner{2};
+  auto success = Client::create(false);
+  auto failure = Client::create(true);
+  if (!success || failure) { return 1; }
+  Error error = failure.error();
+  if (!error.matches()) { return 2; }
+  auto value = extract(false);
+  auto invalid = extract(true);
+  if (!value || invalid) { return 3; }
+  return value.value() == 7 && invalid.error() == 9 ? 0 : 4;
+}

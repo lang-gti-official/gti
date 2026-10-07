@@ -1,0 +1,39 @@
+#include <std/paired_span>
+#include <std/span>
+#include <std/vector>
+
+std::paired_span<int, int> make_pairs(std::span<int> left, std::span<int> right) {
+  return std::paired_span<int, int>(std::move(left), std::move(right));
+}
+
+int main() {
+  mut std::vector<int> keys{};
+  mut std::vector<int> values{};
+  keys.push_back(10);
+  keys.push_back(20);
+  values.push_back(2);
+  values.push_back(3);
+  values.push_back(99);
+
+  auto pairs = make_pairs(keys.as_span(), values.as_span());
+  if (pairs.size() != 2 || pairs.empty()) { return 1; }
+  auto copy = pairs;
+  mut int total = 0;
+  for (mut std::size_t index = 0; index < copy.size(); index++) {
+    total += copy.first(index) * copy.second(index);
+  }
+  if (total != 80) { return 2; }
+  auto tail = copy.subspan(std::size_t(1), std::size_t(1));
+  if (tail.size() != 1 || tail.first(std::size_t(0)) != 20 ||
+      tail.second(std::size_t(0)) != 3) {
+    return 3;
+  }
+  mut std::vector<double> weights{};
+  weights.push_back(double(0.5));
+  auto weighted = std::paired_span<int, double>(keys.as_span(), weights.as_span());
+  if (weighted.size() != 1 || weighted.first(std::size_t(0)) != 10 ||
+      weighted.second(std::size_t(0)) != 0.5) { return 4; }
+  auto empty = weighted.subspan(std::size_t(1), std::size_t(0));
+  if (!empty.empty()) { return 5; }
+  return 0;
+}

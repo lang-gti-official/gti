@@ -1,0 +1,15 @@
+manifest-version = 1
+
+[package]
+name = "gti-cimgui"
+version = "0.1.0"
+
+[package.native]
+include-dirs = ["native", "vendor/cimgui", "vendor/cimgui/imgui"]
+cpp-sources = [
+  "native/adapter.cpp", "vendor/cimgui/cimgui.cpp",
+  "vendor/cimgui/imgui/imgui.cpp", "vendor/cimgui/imgui/imgui_draw.cpp",
+  "vendor/cimgui/imgui/imgui_widgets.cpp", "vendor/cimgui/imgui/imgui_tables.cpp",
+  "vendor/cimgui/imgui/imgui_demo.cpp",
+  "vendor/cimgui/imgui/backends/imgui_impl_opengl3.cpp"
+]

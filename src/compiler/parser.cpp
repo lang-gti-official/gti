@@ -58,6 +58,11 @@ public:
 
     while (!isAtEnd()) {
       try {
+        if (check(TokenKind::IMPORT) ||
+            (check(TokenKind::EXPORT) && peekAt(1).kind == TokenKind::IMPORT)) {
+          sourceUnitImport();
+          continue;
+        }
         declarations.emplace_back(declaration());
       } catch (const ParseError &) {
         synchronize(false, false, true);
@@ -89,9 +94,26 @@ public:
   }
 
 private:
+  // Resolution belongs to SourceLoader. Retain the directive through parsing
+  // so only this source-unit boundary can consume it: an import embedded in a
+  // declaration or expression must not disappear before its syntax is checked.
+  void sourceUnitImport() {
+    match({TokenKind::EXPORT});
+    consume(TokenKind::IMPORT, "Expect 'import' after 'export'.");
+    if (!match({TokenKind::STRING_LITERAL})) {
+      consume(TokenKind::IDENTIFIER, "Expect a module name after 'import'.");
+      if (match({TokenKind::DOT})) {
+        consume(TokenKind::IDENTIFIER,
+                "Expect a module name after the dependency alias.");
+      }
+    }
+    consume(TokenKind::SEMICOLON, "Expect ';' after a module import.");
+  }
+
   void reset() {
     current = 0;
     nestingDepth = 0;
+    casePatternDepth = 0;
     conditionalDepth = 0;
     diagnostics.clear();
     currentClassName.reset();
@@ -113,6 +135,15 @@ private:
   }
 
   StmtPtr declarationWithoutExtent() {
+    if (match({TokenKind::EXPORT})) {
+      const Token keyword = previous();
+      StmtPtr result = declaration();
+      if (result->exportKeyword()) {
+        throw error(keyword, "A declaration cannot repeat 'export'.");
+      }
+      result->setExportKeyword(keyword);
+      return result;
+    }
     if (match({TokenKind::HASH_IF, TokenKind::HASH_IFDEF,
                TokenKind::HASH_IFNDEF})) {
       return conditionalCompilation(ItemContext::Declaration);
@@ -158,7 +189,7 @@ private:
                   "Structured bindings are local declarations and cannot "
                   "appear at namespace scope.");
     }
-    if (isTypedDeclaration()) {
+    if (check(TokenKind::UNSAFE) || isTypedDeclaration()) {
       return typedDeclaration(true);
     }
 
@@ -258,6 +289,24 @@ private:
       return std::make_shared<NamespaceAliasDecl>(name, std::move(target));
     }
 
+    return namespaceBody(std::move(name));
+  }
+
+  StmtPtr namespaceBody(Token name) {
+    if (match({TokenKind::SCOPE})) {
+      Token childName =
+          consume(TokenKind::IDENTIFIER, "Expect namespace name after '::'.");
+      // Shorthand retains the ordinary nested namespace representation and
+      // depth budget, including each component's exact declaration token.
+      const NestingGuard nesting = enterNesting(childName);
+      StmtPtr child = namespaceBody(childName);
+      stampExtent(child, childName);
+      StmtList declarations;
+      declarations.emplace_back(std::move(child));
+      return std::make_shared<NamespaceDecl>(std::move(name),
+                                             std::move(declarations));
+    }
+
     consume(TokenKind::LEFT_BRACE, "Expect '{' before namespace body.");
     StmtList declarations;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
@@ -355,6 +404,23 @@ private:
   }
 
   std::size_t constraintPrimary(ConstraintExpression &expression) {
+    if (match({TokenKind::REQUIRES})) {
+      auto requirement = memberRequirement(previous());
+      TypeRef receiver = requirement->receiver();
+      receiver.reference.reset();
+      const std::size_t application = expression.applications.size();
+      std::vector<TypeRef> arguments{std::move(receiver),
+                                     requirement->result()};
+      arguments.insert(arguments.end(), requirement->parameters().begin(),
+                       requirement->parameters().end());
+      expression.applications.push_back(
+          {.name = NamePath{{requirement->member()}},
+           .arguments = std::move(arguments),
+           .memberRequirement = std::move(requirement)});
+      expression.nodes.push_back({.kind = ConstraintExpressionKind::Application,
+                                  .application = application});
+      return expression.nodes.size() - 1;
+    }
     if (match({TokenKind::LEFT_PAREN})) {
       const NestingGuard nesting = enterNesting(previous());
       const std::size_t nested = constraintDisjunction(expression);
@@ -370,52 +436,190 @@ private:
   }
 
   StmtPtr bracketAttributedDeclaration(LanguageLinkage linkage) {
-    consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before declaration attributes.");
-    consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before declaration attributes.");
-    Token first =
-        consume(TokenKind::IDENTIFIER, "Expect an attribute name after '[['.");
-    if (match({TokenKind::LEFT_PAREN})) {
-      if (first.lexeme != "c_array") {
-        throw error(first, "Unknown function attribute '[[" + first.lexeme +
-                               "(...)]]'.");
+    std::optional<NativeCArrayAttribute> nativeCArray;
+    std::optional<NativeLinkNameAttribute> nativeLinkName;
+    std::vector<FunctionAttribute> functionAttributes;
+    bool parsedNativeFunctionAttribute = false;
+    while (true) {
+      const Token opening = peek();
+      consume(TokenKind::LEFT_BRACKET,
+              "Expect '[[' before declaration attributes.");
+      consume(TokenKind::LEFT_BRACKET,
+              "Expect '[[' before declaration attributes.");
+      if (match({TokenKind::UNSAFE})) {
+        Token keyword = previous();
+        if (parsedNativeFunctionAttribute) {
+          throw error(keyword,
+                      "[[unsafe]] cannot be combined with a native function "
+                      "attribute.");
+        }
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after unsafe attribute.");
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after unsafe attribute.");
+        if (linkage != LanguageLinkage::Gti || currentClassName ||
+            !isTypedDeclaration()) {
+          throw error(keyword,
+                      "[[unsafe]] requires a namespace-scope GTI function.");
+        }
+        // Keep the recovered declaration for tooling, but the obsolete spelling
+        // is a syntax error and can never pass the frontend generation gate.
+        SourceSpan spelling = tokenSpan(opening);
+        spelling.end = previous().position + previous().lexeme.size();
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-P0001", DiagnosticPhase::Parsing, spelling,
+            "The '[[unsafe]]' attribute has been replaced by the 'unsafe' "
+            "declaration keyword.");
+        diagnostic.hints.emplace_back(
+            "Write 'unsafe' before the function type.");
+        // Do not discard comments embedded in a non-contiguous attribute.
+        if (spelling.end - spelling.start == 10) {
+          // Attribute delimiters separated the following type/modifier even
+          // without written whitespace. The replacement keyword must do so too.
+          const bool adjacent = peek().source == opening.source &&
+                                peek().position == spelling.end;
+          diagnostic.fixes.push_back(
+              {.span = spelling,
+               .replacement = adjacent ? "unsafe " : "unsafe",
+               .message = "Replace obsolete '[[unsafe]]' with 'unsafe'"});
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
+        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+                                std::nullopt, std::nullopt, std::move(keyword),
+                                std::move(functionAttributes));
       }
-      Token count =
-          consume(TokenKind::IDENTIFIER,
-                  "Expect the count out-parameter name in '[[c_array(...)]]'.");
-      consume(TokenKind::RIGHT_PAREN,
-              "Expect ')' after the c_array count parameter.");
-      consume(TokenKind::RIGHT_BRACKET,
-              "Expect ']]' after the c_array attribute.");
-      consume(TokenKind::RIGHT_BRACKET,
-              "Expect ']]' after the c_array attribute.");
-      if (!isTypedDeclaration()) {
-        throw error(peek(), "[[c_array(...)]] must annotate a function "
-                            "declaration.");
+      Token first = consume(TokenKind::IDENTIFIER,
+                            "Expect an attribute name after '[['.");
+      if (first.lexeme == "c_array" || first.lexeme == "link_name") {
+        if (std::any_of(functionAttributes.begin(), functionAttributes.end(),
+                        [](const FunctionAttribute &attribute) {
+                          return attribute.name.lexeme != "discardable";
+                        })) {
+          throw error(first, "GTI function attributes cannot be combined with "
+                             "native function attributes.");
+        }
+        parsedNativeFunctionAttribute = true;
+        consume(TokenKind::LEFT_PAREN,
+                "Expect '(' after native function attribute '" + first.lexeme +
+                    "'.");
+        if (first.lexeme == "c_array") {
+          if (nativeCArray) {
+            throw error(first, "Duplicate [[c_array(...)]] attribute.");
+          }
+          Token count = consume(
+              TokenKind::IDENTIFIER,
+              "Expect the count out-parameter name in '[[c_array(...)]]'.");
+          nativeCArray =
+              NativeCArrayAttribute{.attribute = std::move(first),
+                                    .countParameter = std::move(count)};
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the c_array count parameter.");
+        } else {
+          if (nativeLinkName) {
+            throw error(first, "Duplicate [[link_name(...)]] attribute.");
+          }
+          Token symbol =
+              consume(TokenKind::STRING_LITERAL,
+                      "Expect a quoted native symbol in '[[link_name(...)]]'.");
+          nativeLinkName = NativeLinkNameAttribute{
+              .attribute = std::move(first), .symbol = std::move(symbol)};
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the link_name symbol.");
+        }
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after the native function attribute.");
+        consume(TokenKind::RIGHT_BRACKET,
+                "Expect ']]' after the native function attribute.");
+        if (check(TokenKind::LEFT_BRACKET) &&
+            peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+          continue;
+        }
+        if (!isTypedDeclaration()) {
+          throw error(peek(), "A native function attribute must annotate a "
+                              "function declaration.");
+        }
+        return typedDeclaration(true, std::nullopt, false, false, true, linkage,
+                                std::move(nativeCArray),
+                                std::move(nativeLinkName), std::nullopt,
+                                std::move(functionAttributes));
       }
-      return typedDeclaration(
-          true, std::nullopt, false, false, true, linkage,
-          NativeCArrayAttribute{.attribute = std::move(first),
-                                .countParameter = std::move(count)});
-    }
+      if (parsedNativeFunctionAttribute && first.lexeme != "discardable") {
+        throw error(first,
+                    "Only [[c_array(...)]], [[link_name(...)]] and "
+                    "[[discardable]] may be combined on a native function.");
+      }
 
-    std::vector<Token> attributes;
-    attributes.emplace_back(std::move(first));
-    while (match({TokenKind::COMMA})) {
-      attributes.emplace_back(consume(TokenKind::IDENTIFIER,
-                                      "Expect an attribute name after '[['."));
+      auto parseAttribute = [&](Token name) {
+        FunctionAttribute attribute{.name = std::move(name),
+                                    .argument = std::nullopt};
+        if (attribute.name.lexeme == "borrowed_from") {
+          consume(TokenKind::LEFT_PAREN, "Expect '(' after 'borrowed_from'.");
+          if (!match({TokenKind::IDENTIFIER, TokenKind::THIS})) {
+            throw error(peek(), "Expect an owner parameter name or 'this' in "
+                                "'[[borrowed_from(...)]]'.");
+          }
+          attribute.argument = previous();
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the borrowed_from owner.");
+        } else if (check(TokenKind::LEFT_PAREN)) {
+          throw error(attribute.name, "Unknown function attribute '[[" +
+                                          attribute.name.lexeme + "(...)]]'.");
+        }
+        return attribute;
+      };
+      std::vector<FunctionAttribute> attributes;
+      attributes.emplace_back(parseAttribute(std::move(first)));
+      while (match({TokenKind::COMMA})) {
+        attributes.emplace_back(parseAttribute(consume(
+            TokenKind::IDENTIFIER, "Expect an attribute name after '[['.")));
+      }
+      consume(TokenKind::RIGHT_BRACKET,
+              "Expect ']]' after declaration attributes.");
+      consume(TokenKind::RIGHT_BRACKET,
+              "Expect ']]' after declaration attributes.");
+      bool functionAttributeList = !functionAttributes.empty();
+      for (const FunctionAttribute &attribute : attributes) {
+        if (parsedNativeFunctionAttribute &&
+            attribute.name.lexeme != "discardable") {
+          throw error(attribute.name,
+                      "Only [[discardable]] may be combined with native "
+                      "function attributes.");
+        }
+        functionAttributeList = functionAttributeList ||
+                                attribute.name.lexeme == "noreturn" ||
+                                attribute.name.lexeme == "track_caller" ||
+                                attribute.name.lexeme == "discardable" ||
+                                attribute.name.lexeme == "borrowed_from";
+      }
+      if (functionAttributeList) {
+        for (FunctionAttribute &attribute : attributes) {
+          functionAttributes.push_back(std::move(attribute));
+        }
+        if (check(TokenKind::LEFT_BRACKET) &&
+            peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+          continue;
+        }
+        if (!isTypedDeclaration()) {
+          throw error(peek(), "Function attributes require a function "
+                              "declaration.");
+        }
+        return typedDeclaration(
+            true, std::nullopt, currentClassName.has_value(),
+            currentClassName.has_value(), true, linkage,
+            std::move(nativeCArray), std::move(nativeLinkName), std::nullopt,
+            std::move(functionAttributes));
+      }
+      if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
+                  TokenKind::UNION})) {
+        throw error(peek(), "These attributes apply only to class, "
+                            "struct, interface, or union declarations.");
+      }
+      std::vector<Token> classAttributes;
+      for (FunctionAttribute &attribute : attributes) {
+        classAttributes.emplace_back(std::move(attribute.name));
+      }
+      return classDeclaration(std::move(classAttributes), previous());
     }
-    consume(TokenKind::RIGHT_BRACKET,
-            "Expect ']]' after class or interface attributes.");
-    consume(TokenKind::RIGHT_BRACKET,
-            "Expect ']]' after class or interface attributes.");
-    if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE,
-                TokenKind::UNION})) {
-      throw error(peek(), "These attributes apply only to class, "
-                          "struct, interface, or union declarations.");
-    }
-    return classDeclaration(std::move(attributes), previous());
   }
 
   StmtPtr classDeclaration(std::vector<Token> attributes, Token keyword) {
@@ -427,6 +631,7 @@ private:
     Token name = consume(TokenKind::IDENTIFIER, "Expect type name.");
     std::optional<TypeRef> exactSpecialization;
     std::vector<GenericParameter> genericParameters;
+    std::vector<TypeRef> genericArgumentPatterns;
     if (check(TokenKind::SCOPE)) {
       NamePath target = parseNamePath(name);
       if (!check(TokenKind::LESS)) {
@@ -438,7 +643,11 @@ private:
       name = target.last();
       exactSpecialization.emplace(std::move(target), std::move(arguments));
     } else if (check(TokenKind::LESS)) {
-      genericParameters = genericParameterList();
+      if (classSignaturePatternAhead()) {
+        genericArgumentPatterns = typeArgumentList();
+      } else {
+        genericParameters = genericParameterList();
+      }
     }
     std::vector<BaseSpecifier> bases;
     if (match({TokenKind::COLON})) {
@@ -454,7 +663,8 @@ private:
       return std::make_shared<ClassDecl>(
           std::move(attributes), std::move(keyword), kind, std::move(name),
           std::move(exactSpecialization), std::move(genericParameters),
-          std::move(bases), StmtList{}, true);
+          std::move(bases), StmtList{}, true,
+          std::move(genericArgumentPatterns));
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before type body.");
 
@@ -485,7 +695,8 @@ private:
     return std::make_shared<ClassDecl>(
         std::move(attributes), std::move(keyword), kind, name,
         std::move(exactSpecialization), std::move(genericParameters),
-        std::move(bases), std::move(members), false);
+        std::move(bases), std::move(members), false,
+        std::move(genericArgumentPatterns));
   }
 
   StmtPtr enumDeclaration(Token keyword) {
@@ -530,7 +741,25 @@ private:
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       bool allowMutableReceiver = false, bool allowOperators = false,
       bool allowStatic = true, LanguageLinkage linkage = LanguageLinkage::Gti,
-      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt) {
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
+      std::optional<Token> unsafeKeyword = std::nullopt,
+      std::vector<FunctionAttribute> functionAttributes = {}) {
+    if (match({TokenKind::UNSAFE})) {
+      if (unsafeKeyword) {
+        throw error(previous(), "A function cannot repeat 'unsafe'.");
+      }
+      unsafeKeyword = previous();
+    }
+    if (unsafeKeyword &&
+        (!allowFunction || runtimeBinding || linkage != LanguageLinkage::Gti)) {
+      throw error(*unsafeKeyword,
+                  "An unsafe declaration requires a GTI function or method, "
+                  "not a native binding.");
+    }
+    if (unsafeKeyword && check(TokenKind::UNSAFE)) {
+      throw error(peek(), "A function cannot repeat 'unsafe'.");
+    }
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
       virtualKeyword = previous();
@@ -553,8 +782,12 @@ private:
     if (match({TokenKind::CONSTEXPR})) {
       constexprKeyword = previous();
     }
+    std::optional<Token> mutKeyword;
+    if (match({TokenKind::MUT})) {
+      mutKeyword = previous();
+    }
     const Mutability mutability =
-        match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;
+        mutKeyword ? Mutability::Mutable : Mutability::Immutable;
     TypeRef type = parseType();
     std::optional<OperatorName> operatorName;
     Token name;
@@ -597,7 +830,8 @@ private:
           std::move(runtimeBinding), allowMutableReceiver, mutability,
           std::move(operatorName), std::move(staticKeyword),
           std::move(virtualKeyword), linkage, std::move(constexprKeyword),
-          std::move(nativeCArray));
+          std::move(nativeCArray), std::move(nativeLinkName),
+          std::move(unsafeKeyword), std::move(functionAttributes));
     }
 
     if (operatorName) {
@@ -616,15 +850,27 @@ private:
       throw error(nativeCArray->attribute,
                   "[[c_array(...)]] must annotate a function declaration.");
     }
+    if (nativeLinkName) {
+      throw error(nativeLinkName->attribute,
+                  "[[link_name(...)]] must annotate a function declaration.");
+    }
+    if (unsafeKeyword) {
+      throw error(*unsafeKeyword,
+                  "'unsafe' must modify a function declaration.");
+    }
+    if (!functionAttributes.empty()) {
+      throw error(functionAttributes.front().name,
+                  "Function attributes must annotate a function declaration.");
+    }
     if (virtualKeyword) {
       throw error(*virtualKeyword,
                   "Only member functions can be declared virtual.");
     }
 
     parseArrayDeclaratorSuffix(type);
-    return variableDeclaration(mutability, std::move(type), name,
-                               std::move(staticKeyword),
-                               std::move(constexprKeyword));
+    return variableDeclaration(
+        mutability, std::move(type), name, std::move(staticKeyword),
+        std::move(constexprKeyword), std::move(mutKeyword));
   }
 
   StmtPtr functionDeclaration(
@@ -638,7 +884,10 @@ private:
       std::optional<Token> virtualKeyword = std::nullopt,
       LanguageLinkage linkage = LanguageLinkage::Gti,
       std::optional<Token> constexprKeyword = std::nullopt,
-      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt) {
+      std::optional<NativeCArrayAttribute> nativeCArray = std::nullopt,
+      std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
+      std::optional<Token> unsafeKeyword = std::nullopt,
+      std::vector<FunctionAttribute> functionAttributes = {}) {
     std::vector<Parameter> parameters = parameterList();
     if (operatorName && operatorName->kind == OverloadedOperator::Dereference &&
         !parameters.empty()) {
@@ -675,10 +924,6 @@ private:
             qualifier,
             "Only class and struct methods can have a consuming receiver.");
       }
-      if (!operatorName || operatorName->kind != OverloadedOperator::Call) {
-        throw error(qualifier, "Trailing '&&' is currently supported only on "
-                               "operator() declarations.");
-      }
       receiverMutability = ReceiverMutability::Consuming;
       if (check(TokenKind::MUT)) {
         throw error(peek(), "A receiver cannot combine trailing '&&' and 'mut' "
@@ -696,6 +941,14 @@ private:
     std::optional<Token> overrideKeyword;
     if (match({TokenKind::OVERRIDE})) {
       overrideKeyword = previous();
+    }
+
+    if (unsafeKeyword &&
+        (operatorName || virtualKeyword || overrideKeyword ||
+         currentClassKind == ClassKind::Interface || check(TokenKind::EQUAL))) {
+      throw error(*unsafeKeyword,
+                  "Unsafe methods must be non-polymorphic named methods; "
+                  "operators and virtual/interface methods are not supported.");
     }
 
     std::optional<PureSpecifier> pureSpecifier;
@@ -718,7 +971,8 @@ private:
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::move(pureSpecifier), linkage,
           std::move(constexprKeyword), std::move(requiresClause),
-          std::move(nativeCArray));
+          std::move(nativeCArray), std::move(nativeLinkName),
+          std::move(unsafeKeyword), std::move(functionAttributes));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -729,7 +983,8 @@ private:
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::nullopt, linkage,
           std::move(constexprKeyword), std::move(requiresClause),
-          std::move(nativeCArray));
+          std::move(nativeCArray), std::move(nativeLinkName),
+          std::move(unsafeKeyword), std::move(functionAttributes));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -741,7 +996,8 @@ private:
         std::move(staticKeyword), std::move(virtualKeyword),
         std::move(overrideKeyword), std::nullopt, linkage,
         std::move(constexprKeyword), std::move(requiresClause),
-        std::move(nativeCArray));
+        std::move(nativeCArray), std::move(nativeLinkName),
+        std::move(unsafeKeyword), std::move(functionAttributes));
   }
 
   StmtPtr conversionOperatorDeclaration(
@@ -883,6 +1139,47 @@ private:
     name.kind = TokenKind::IDENTIFIER;
     name.lexeme = std::string(operatorFunctionName(operatorName.kind));
     return name;
+  }
+
+  // The signature's '(' distinguishes a headerless patterned primary from
+  // the existing parameter declaration grammar. In particular, stop at '=':
+  // a default such as <S = void()> is still an ordinary generic parameter.
+  // This lookahead never resolves identifiers or edits/splits lexer tokens.
+  bool classSignaturePatternAhead() const {
+    std::size_t depth = 0;
+    for (std::size_t offset = 1;; ++offset) {
+      const TokenKind kind = peekAt(offset).kind;
+      if (kind == TokenKind::END_OF_FILE || kind == TokenKind::LEFT_BRACE ||
+          kind == TokenKind::RIGHT_BRACE || kind == TokenKind::SEMICOLON) {
+        return false;
+      }
+      if (depth == 0) {
+        if (kind == TokenKind::LEFT_PAREN) {
+          return true;
+        }
+        if (kind == TokenKind::COMMA || kind == TokenKind::EQUAL ||
+            kind == TokenKind::GREATER || kind == TokenKind::GREATER_EQUAL ||
+            kind == TokenKind::SHIFT_RIGHT ||
+            kind == TokenKind::SHIFT_RIGHT_EQUAL) {
+          return false;
+        }
+      }
+      if (kind == TokenKind::LESS) {
+        ++depth;
+      } else if (kind == TokenKind::GREATER ||
+                 kind == TokenKind::GREATER_EQUAL) {
+        if (depth == 0) {
+          return false;
+        }
+        --depth;
+      } else if (kind == TokenKind::SHIFT_RIGHT ||
+                 kind == TokenKind::SHIFT_RIGHT_EQUAL) {
+        if (depth < 2) {
+          return false;
+        }
+        depth -= 2;
+      }
+    }
   }
 
   std::vector<GenericParameter> genericParameterList() {
@@ -1081,7 +1378,9 @@ private:
   StmtPtr
   variableDeclaration(Mutability mutability, TypeRef type, Token name,
                       std::optional<Token> staticKeyword = std::nullopt,
-                      std::optional<Token> constexprKeyword = std::nullopt) {
+                      std::optional<Token> constexprKeyword = std::nullopt,
+                      std::optional<Token> mutKeyword = std::nullopt) {
+    const bool hadCompletion = consumedCompletion;
     ExprPtr initializer;
     if (match({TokenKind::EQUAL})) {
       initializer = initializerExpression();
@@ -1089,10 +1388,15 @@ private:
       initializer = directInitializer(previous());
     }
 
-    consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
+    if (check(TokenKind::SEMICOLON)) {
+      advance();
+    } else if (hadCompletion == consumedCompletion) {
+      consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
+    }
     return std::make_shared<VariableDecl>(
         mutability, std::move(type), name, std::move(initializer),
-        std::move(staticKeyword), false, std::move(constexprKeyword));
+        std::move(staticKeyword), false, std::move(constexprKeyword), false,
+        false, std::move(mutKeyword));
   }
 
   StmtPtr mutableFieldGroupDeclaration(Token keyword) {
@@ -1199,9 +1503,21 @@ private:
 
   ExprPtr directInitializer(Token brace) {
     ExprList arguments;
+    std::vector<Token> designators;
+    const bool designated = check(TokenKind::DOT);
     if (!check(TokenKind::RIGHT_BRACE)) {
       while (true) {
-        arguments.emplace_back(assignment());
+        if (designated) {
+          consume(TokenKind::DOT,
+                  "Expect '.field = value' in designated construction.");
+          designators.push_back(
+              consume(TokenKind::IDENTIFIER, "Expect a field name after '.'."));
+          consume(TokenKind::EQUAL, "Expect '=' after designated field name.");
+          arguments.emplace_back(
+              check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment());
+        } else {
+          arguments.emplace_back(assignment());
+        }
         if (!match({TokenKind::COMMA}) || check(TokenKind::RIGHT_BRACE)) {
           break;
         }
@@ -1211,33 +1527,60 @@ private:
         consume(TokenKind::RIGHT_BRACE,
                 "Expect '}' after direct constructor arguments.");
     return std::make_unique<DirectInitializer>(
-        std::move(brace), std::move(arguments), std::move(closingBrace));
+        std::move(brace), std::move(arguments), std::move(closingBrace),
+        std::move(designators));
   }
 
-  TypeRef parseType() {
+  TypeRef parseType(bool allowFunctionSignature = true) {
     const NestingGuard nesting = enterNesting(peek());
     std::optional<Token> pointeeConst;
     if (match({TokenKind::CONST})) {
       pointeeConst = previous();
     }
     TypeRef type = parseBaseType();
-    if (match({TokenKind::STAR})) {
-      type.pointer = previous();
-      if (match({TokenKind::STAR})) {
-        type.outerPointer = previous();
+    while (match({TokenKind::STAR})) {
+      checkNestingDepth(previous(), type.pointers.size());
+      type.pointers.push_back(
+          {.star = previous(), .pointeeConst = std::move(pointeeConst)});
+      pointeeConst.reset();
+      if (match({TokenKind::CONST})) {
+        pointeeConst = previous();
       }
     }
-    type.pointeeConst = std::move(pointeeConst);
-    if (type.pointeeConst && !type.pointer) {
-      throw error(*type.pointeeConst,
+    if (pointeeConst) {
+      throw error(*pointeeConst,
                   "'const' is currently supported only as a raw-pointer "
-                  "pointee qualifier, as in 'const T*'.");
+                  "pointee qualifier, as in 'const T*' or 'T* const*'.");
     }
     parseArrayTypeSuffix(type);
     if (match({TokenKind::AMPERSAND})) {
       type.reference = previous();
     } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
       type.reference = advance();
+    }
+    if (allowFunctionSignature && match({TokenKind::LEFT_PAREN})) {
+      std::vector<TypeRef> parameters;
+      if (!check(TokenKind::RIGHT_PAREN)) {
+        do {
+          std::optional<Token> access;
+          if (match({TokenKind::MUT})) {
+            access = previous();
+          }
+          parameters.emplace_back(parseType());
+          parameters.back().referenceMutability = std::move(access);
+          if (match({TokenKind::ELLIPSIS})) {
+            parameters.back().packExpansion = previous();
+          }
+        } while (match({TokenKind::COMMA}));
+      }
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after function signature parameter types.");
+      type = TypeRef::functionSignature(std::move(type), std::move(parameters));
+      if (match({TokenKind::MUT})) {
+        type.functionSignatureQualifier = previous();
+      } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
+        type.functionSignatureQualifier = advance();
+      }
     }
     return type;
   }
@@ -1281,9 +1624,11 @@ private:
       NamePath name = parseNamePath(previous());
       std::vector<TypeRef> arguments;
       if (match({TokenKind::LESS})) {
-        do {
-          arguments.emplace_back(parseGenericArgument());
-        } while (match({TokenKind::COMMA}));
+        if (!check(TokenKind::GREATER)) {
+          do {
+            arguments.emplace_back(parseGenericArgument());
+          } while (match({TokenKind::COMMA}));
+        }
         consumeGenericClose("Expect '>' after generic arguments.");
       }
       return TypeRef(std::move(name), std::move(arguments));
@@ -1355,10 +1700,13 @@ private:
     }
 
     TypeRef argument = parseType();
+    if (match({TokenKind::ELLIPSIS})) {
+      argument.packExpansion = previous();
+    }
     if (argument.name.segments.size() == 1 &&
         argument.name.last().kind == TokenKind::IDENTIFIER &&
         argument.arguments.empty() && argument.arrayExtents.empty() &&
-        !argument.pointer && !argument.reference) {
+        argument.pointers.empty() && !argument.reference) {
       argument.genericArgumentSyntax =
           GenericArgumentSyntax::UnresolvedIdentifier;
     }
@@ -1379,6 +1727,9 @@ private:
   ExprPtr arrayInitializer() {
     Token brace =
         consume(TokenKind::LEFT_BRACE, "Expect '{' before array initializer.");
+    if (check(TokenKind::DOT)) {
+      return directInitializer(std::move(brace));
+    }
     ExprList elements;
     if (!check(TokenKind::RIGHT_BRACE)) {
       do {
@@ -1493,6 +1844,10 @@ private:
     }
 
     if (context == ItemContext::ClassMember) {
+      if (check(TokenKind::LEFT_BRACKET) &&
+          peekAt(1).kind == TokenKind::LEFT_BRACKET) {
+        return bracketAttributedDeclaration(LanguageLinkage::Gti);
+      }
       if (check(TokenKind::MUT) && peekAt(1).kind == TokenKind::LEFT_BRACE) {
         Token keyword = advance();
         return mutableFieldGroupDeclaration(std::move(keyword));
@@ -2050,6 +2405,7 @@ private:
           Token label = advance();
           ExprPtr caseValue;
           if (label.kind == TokenKind::CASE) {
+            NestingGuard patternGuard(casePatternDepth);
             caseValue = logicalOr();
           }
           Token colon =
@@ -2098,13 +2454,15 @@ private:
   StmtPtr
   expressionStatement(std::optional<Token> discardAttribute = std::nullopt) {
     const bool hadCompletion = consumedCompletion;
+    Token expressionStart = peek();
     ExprPtr value = expression();
     if (check(TokenKind::SEMICOLON)) {
       advance();
     } else if (hadCompletion == consumedCompletion) {
       consume(TokenKind::SEMICOLON, "Expect ';' after expression.");
     }
-    return std::make_shared<ExpressionStmt>(std::move(value),
+    return std::make_shared<ExpressionStmt>(std::move(expressionStart),
+                                            std::move(value),
                                             std::move(discardAttribute));
   }
 
@@ -2320,8 +2678,26 @@ private:
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
-        ExprPtr argument =
-            check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
+        ExprPtr argument;
+        if (casePatternDepth != 0 &&
+            (check(TokenKind::AUTO) || check(TokenKind::MUT))) {
+          std::optional<Token> mutability;
+          if (match({TokenKind::MUT}))
+            mutability = previous();
+          Token automatic = consume(
+              TokenKind::AUTO, "Expect 'auto' in a borrowed payload pattern.");
+          Token reference =
+              consume(TokenKind::AMPERSAND,
+                      "Expect '&' after 'auto' in a payload pattern.");
+          Token name = consume(TokenKind::IDENTIFIER,
+                               "Expect a payload binding name after '&'.");
+          argument = std::make_unique<Variable>(
+              std::move(name), std::move(automatic), std::move(reference),
+              std::move(mutability));
+        } else {
+          argument =
+              check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
+        }
         if (match({TokenKind::ELLIPSIS})) {
           const auto *variable = exprAs<Variable>(argument.get());
           if (variable == nullptr) {
@@ -2358,14 +2734,98 @@ private:
   std::vector<TypeRef> typeArgumentList() {
     consume(TokenKind::LESS, "Expect '<' before generic arguments.");
     std::vector<TypeRef> arguments;
-    do {
-      arguments.emplace_back(parseGenericArgument());
-    } while (match({TokenKind::COMMA}));
+    if (!check(TokenKind::GREATER)) {
+      do {
+        arguments.emplace_back(parseGenericArgument());
+      } while (match({TokenKind::COMMA}));
+    }
     consumeGenericClose("Expect '>' after generic arguments.");
     return arguments;
   }
 
+  std::unique_ptr<MemberRequirement> memberRequirement(Token keyword) {
+    const NestingGuard nesting = enterNesting(keyword);
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after member requirement.");
+    std::optional<Token> receiverAccess;
+    if (match({TokenKind::MUT}))
+      receiverAccess = previous();
+    TypeRef receiver = parseType();
+    if (!receiver.reference ||
+        receiver.reference->kind != TokenKind::AMPERSAND) {
+      throw error(receiver.name.last(),
+                  "Member requirement receiver must be a reference.");
+    }
+    receiver.referenceMutability = std::move(receiverAccess);
+    Token binding =
+        consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
+    std::vector<TypeRef> parameters;
+    std::vector<Token> bindings;
+    while (match({TokenKind::COMMA})) {
+      std::optional<Token> access;
+      if (match({TokenKind::MUT}))
+        access = previous();
+      TypeRef parameter = parseType();
+      if (access && !parameter.reference)
+        throw error(*access,
+                    "Mutable requirement parameters must be references.");
+      parameter.referenceMutability = access;
+      Token name =
+          consume(TokenKind::IDENTIFIER, "Expect requirement parameter name.");
+      if (name.lexeme == binding.lexeme ||
+          std::any_of(
+              bindings.begin(), bindings.end(),
+              [&](const Token &other) { return other.lexeme == name.lexeme; }))
+        throw error(name, "Duplicate requirement parameter name.");
+      parameters.push_back(std::move(parameter));
+      bindings.push_back(std::move(name));
+    }
+    consume(TokenKind::RIGHT_PAREN, "Expect ')' after requirement receiver.");
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before member requirement.");
+    std::optional<Token> unsafeKeyword;
+    if (match({TokenKind::UNSAFE}))
+      unsafeKeyword = previous();
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before required member call.");
+    Token use =
+        consume(TokenKind::IDENTIFIER, "Expect requirement receiver name.");
+    if (use.lexeme != binding.lexeme) {
+      throw error(use, "Member requirement must use its declared receiver.");
+    }
+    consume(TokenKind::DOT, "Expect '.' before required member name.");
+    Token member =
+        consume(TokenKind::IDENTIFIER, "Expect required member name.");
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after required member name.");
+    std::vector<Token> arguments;
+    if (!check(TokenKind::RIGHT_PAREN)) {
+      do {
+        Token argument = consume(TokenKind::IDENTIFIER,
+                                 "Expect requirement parameter name.");
+        if (arguments.size() >= bindings.size() ||
+            argument.lexeme != bindings[arguments.size()].lexeme)
+          throw error(argument, "Required call must use each declared "
+                                "parameter once, in declaration order.");
+        arguments.push_back(std::move(argument));
+      } while (match({TokenKind::COMMA}));
+    }
+    if (arguments.size() != bindings.size())
+      throw error(peek(), "Required call must use every declared parameter.");
+    consume(TokenKind::RIGHT_PAREN,
+            "Expect ')' after required member arguments.");
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after required member call.");
+    consume(TokenKind::ARROW, "Expect '->' before exact required result type.");
+    TypeRef result = parseType();
+    consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after member requirement.");
+    return std::make_unique<MemberRequirement>(
+        std::move(keyword), std::move(receiver), std::move(binding),
+        std::move(use), std::move(member), std::move(result),
+        std::move(parameters), std::move(bindings), std::move(arguments),
+        std::move(unsafeKeyword));
+  }
+
   ExprPtr primary() {
+    if (match({TokenKind::REQUIRES})) {
+      return memberRequirement(previous());
+    }
     if (match({TokenKind::LEFT_BRACKET})) {
       return lambdaExpression(previous());
     }
@@ -2379,7 +2839,7 @@ private:
     }
     if ((isNumericTypeToken(peek().kind) || peek().kind == TokenKind::CHAR) &&
         peekAt(1).kind == TokenKind::LEFT_PAREN) {
-      TypeRef targetType = parseType();
+      TypeRef targetType = parseType(false);
       consume(TokenKind::LEFT_PAREN, "Expect '(' after conversion type.");
       ExprPtr value = assignment();
       Token paren =
@@ -2508,7 +2968,10 @@ private:
   }
 
   [[nodiscard]] bool isTypedDeclaration() const {
-    std::size_t offset = check(TokenKind::VIRTUAL) ? 1 : 0;
+    std::size_t offset = check(TokenKind::UNSAFE) ? 1 : 0;
+    if (peekAt(offset).kind == TokenKind::VIRTUAL) {
+      ++offset;
+    }
     if (peekAt(offset).kind == TokenKind::STATIC) {
       ++offset;
     }
@@ -2583,6 +3046,9 @@ private:
       return false;
     }
     std::size_t next = 1;
+    if (peekAt(next).kind == TokenKind::GREATER) {
+      return peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+    }
     const std::optional<std::size_t> firstArgumentEnd =
         genericArgumentEnd(next);
     if (!firstArgumentEnd) {
@@ -2615,7 +3081,10 @@ private:
           (isIdentifierUseToken(first) && *expressionEnd > offset + 1)))) {
       return expressionEnd;
     }
-    return typeEnd(offset);
+    const auto end = typeEnd(offset);
+    return end && peekAt(*end).kind == TokenKind::ELLIPSIS
+               ? std::optional<std::size_t>(*end + 1)
+               : end;
   }
 
   [[nodiscard]] std::optional<std::size_t>
@@ -2703,7 +3172,7 @@ private:
       if (!errorEnd || peekAt(*errorEnd).kind != TokenKind::GREATER) {
         return std::nullopt;
       }
-      return arrayTypeEnd(*errorEnd + 1);
+      return signatureTypeEnd(*errorEnd + 1);
     }
 
     if (first == TokenKind::AUTO || first == TokenKind::INT ||
@@ -2715,7 +3184,7 @@ private:
         first == TokenKind::DOUBLE || first == TokenKind::BOOL ||
         first == TokenKind::CHAR || first == TokenKind::NULLPTR_TYPE ||
         first == TokenKind::VOID) {
-      return arrayTypeEnd(offset + 1);
+      return signatureTypeEnd(offset + 1);
     }
     if (first != TokenKind::IDENTIFIER) {
       return std::nullopt;
@@ -2727,7 +3196,11 @@ private:
       next += 2;
     }
     if (peekAt(next).kind != TokenKind::LESS) {
-      return arrayTypeEnd(next);
+      return signatureTypeEnd(next);
+    }
+
+    if (peekAt(next + 1).kind == TokenKind::GREATER) {
+      return signatureTypeEnd(next + 2);
     }
 
     do {
@@ -2738,15 +3211,52 @@ private:
       }
       next = *argumentEnd;
     } while (peekAt(next).kind == TokenKind::COMMA);
-    return peekAt(next).kind == TokenKind::GREATER ? arrayTypeEnd(next + 1)
+    return peekAt(next).kind == TokenKind::GREATER ? signatureTypeEnd(next + 1)
                                                    : std::nullopt;
   }
 
   [[nodiscard]] std::optional<std::size_t>
+  signatureTypeEnd(std::size_t offset) const {
+    auto end = arrayTypeEnd(offset);
+    if (!end || peekAt(*end).kind != TokenKind::LEFT_PAREN) {
+      return end;
+    }
+    std::size_t next = *end + 1;
+    if (peekAt(next).kind != TokenKind::RIGHT_PAREN) {
+      while (true) {
+        if (peekAt(next).kind == TokenKind::MUT) {
+          ++next;
+        }
+        const auto parameter = typeEnd(next);
+        if (!parameter) {
+          return std::nullopt;
+        }
+        next = *parameter;
+        if (peekAt(next).kind == TokenKind::ELLIPSIS) {
+          ++next;
+        }
+        if (peekAt(next).kind != TokenKind::COMMA) {
+          break;
+        }
+        ++next;
+      }
+    }
+    if (peekAt(next).kind != TokenKind::RIGHT_PAREN) {
+      return std::nullopt;
+    }
+    ++next;
+    if (peekAt(next).kind == TokenKind::MUT ||
+        (peekAt(next).kind == TokenKind::AND && peekAt(next).lexeme == "&&")) {
+      ++next;
+    }
+    return next;
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
   arrayTypeEnd(std::size_t offset) const {
-    if (peekAt(offset).kind == TokenKind::STAR) {
+    while (peekAt(offset).kind == TokenKind::STAR) {
       ++offset;
-      if (peekAt(offset).kind == TokenKind::STAR) {
+      if (peekAt(offset).kind == TokenKind::CONST) {
         ++offset;
       }
     }
@@ -2912,8 +3422,8 @@ private:
     return ParseError{};
   }
 
-  [[nodiscard]] NestingGuard enterNesting(const Token &token) {
-    if (nestingDepth >= maximumNestingDepth) {
+  void checkNestingDepth(const Token &token, std::size_t additionalDepth = 0) {
+    if (nestingDepth + additionalDepth >= maximumNestingDepth) {
       missingTokenError = false;
       Diagnostic diagnostic =
           makeDiagnostic("GTI-P0005", DiagnosticPhase::Parsing, token,
@@ -2924,6 +3434,10 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
       throw ParseError{};
     }
+  }
+
+  [[nodiscard]] NestingGuard enterNesting(const Token &token) {
+    checkNestingDepth(token);
     return NestingGuard(nestingDepth);
   }
 
@@ -3087,6 +3601,7 @@ private:
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
   std::size_t nestingDepth = 0;
+  std::size_t casePatternDepth = 0;
   // Number of compile-time conditionals whose body is currently being parsed.
   // A conditional-continuation directive (`#elif`/`#else`/`#endif`) is a
   // recovery boundary only while one is open; nested recovery propagates it to

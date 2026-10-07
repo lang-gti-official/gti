@@ -1,0 +1,59 @@
+mut int32_t constructions = 0;
+mut int32_t destructions = 0;
+
+class Owner {
+public:
+  Owner(int32_t input) : value(input) {
+    constructions += 1;
+  }
+
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+
+  ~Owner() {
+    destructions += 1;
+  }
+
+  int32_t get() {
+    return this.value;
+  }
+
+private:
+  int32_t value;
+};
+
+Owner relay(Owner value) {
+  return value;
+}
+
+Owner make_owner(int32_t value, bool grouped) {
+  Owner local{value};
+  if (grouped) {
+    return (local);
+  }
+  return local;
+}
+
+int main() {
+  {
+    Owner relayed = relay(Owner(11));
+    if (relayed.get() != 11) {
+      return 1;
+    }
+  }
+  if (constructions != 1 || destructions != 1) {
+    return 2;
+  }
+
+  {
+    Owner plain = make_owner(17, false);
+    Owner grouped = make_owner(23, true);
+    if (plain.get() != 17 || grouped.get() != 23) {
+      return 3;
+    }
+  }
+  if (constructions != 3 || destructions != 3) {
+    return 4;
+  }
+  return 0;
+}

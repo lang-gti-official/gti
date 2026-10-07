@@ -1,0 +1,32 @@
+#include <std/memory>
+
+// The mutation is the operation; the returned reference is optional.
+struct Counter {
+  mut int value = 0;
+
+  [[discardable, borrowed_from(this)]]
+  mut int& add(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+};
+
+// Unannotated APIs still require using or explicitly discarding the result.
+int calculate() { return 42; }
+
+int main() {
+  mut Counter counter{};
+  counter.add(2);
+  mut int& total = counter.add(3);
+  if (total != 5) { return 1; }
+  // The checked borrow has ended; another mutation is now permitted.
+  [[discard]] counter.add(4); // Explicit discard remains legal too.
+  [[discard]] calculate();
+
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<int>(std::size_t(1));
+  if (!allocated) { return 2; } // Allocation results are not discardable.
+  mut auto slots = std::move(allocated).value();
+  slots.emplace(std::size_t(0), counter.value);
+  return slots.get(std::size_t(0)) == 9 ? 0 : 3;
+}

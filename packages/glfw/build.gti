@@ -1,0 +1,59 @@
+#include <std/build>
+#include <std/string>
+#include <std/vector>
+
+std::string joined(std::string& base, std::string_view suffix) {
+  mut std::string value = std::string(base.view());
+  value.append(suffix);
+  return std::move(value);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 11) { return 64; }
+  mut std::build::context context = std::build::context_from_args(argv);
+  if (context.target_os() == "windows") { return 69; }
+
+  mut std::string source = joined(context.package_dir(), "/vendor/glfw");
+  mut std::string build = joined(context.output_dir(), "/cmake");
+
+  mut std::build::command configure = std::build::command("cmake");
+  configure.arg("-S");
+  configure.arg(source.view());
+  configure.arg("-B");
+  configure.arg(build.view());
+  configure.arg("-DCMAKE_BUILD_TYPE=Release");
+  configure.arg("-DBUILD_SHARED_LIBS=OFF");
+  configure.arg("-DGLFW_BUILD_DOCS=OFF");
+  configure.arg("-DGLFW_BUILD_TESTS=OFF");
+  configure.arg("-DGLFW_BUILD_EXAMPLES=OFF");
+  configure.arg("-DGLFW_BUILD_WAYLAND=OFF");
+  int32_t configured = configure.run();
+  if (configured != 0) { return configured; }
+
+  mut std::build::command compile = std::build::command("cmake");
+  compile.arg("--build");
+  compile.arg(build.view());
+  compile.arg("--config");
+  compile.arg("Release");
+  compile.arg("--parallel");
+  compile.arg(context.jobs().view());
+  compile.arg("--target");
+  compile.arg("glfw");
+  int32_t compiled = compile.run();
+  if (compiled != 0) { return compiled; }
+
+  mut std::build::outputs outputs = std::build::outputs();
+  outputs.link_file("cmake/src/libglfw3.a");
+  if (context.target_os() == "macos") {
+    outputs.framework("Cocoa");
+    outputs.framework("IOKit");
+    outputs.framework("CoreFoundation");
+  } else if (context.target_os() == "linux") {
+    outputs.library("m");
+    outputs.library("dl");
+    outputs.library("pthread");
+  } else {
+    return 69;
+  }
+  return outputs.publish(context);
+}

@@ -1,0 +1,225 @@
+#include <std/io>
+#include <std/cstdio>
+#include <std/span>
+#include <std/string>
+
+// Ordinary user transport: one short write, one retryable failure, then success.
+class FlakySink {
+  mut std::byte_buffer bytes{};
+  mut std::size_t calls = 0;
+public:
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& input) mut {
+    this.calls++;
+    if (this.calls == 2) { return unexpected(std::io_errc::write_failed); }
+    mut std::size_t count = input.size();
+    if (this.calls == 1 && count > 2) { count = 2; }
+    for (mut std::size_t i = 0; i < count; i++) { this.bytes.push_back(input[i]); }
+    return count;
+  }
+  expected<void, std::io_errc> flush() mut { return; }
+  std::size_t size() { return this.bytes.size(); }
+  uint8_t at(std::size_t index) { return this.bytes[index]; }
+};
+
+class StalledSink {
+public:
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& input) mut {
+    return std::size_t(0);
+  }
+  expected<void, std::io_errc> flush() mut { return; }
+};
+
+class OversizedReader {
+public:
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& output) mut {
+    return output.size() + 1;
+  }
+};
+
+class OversizedWriter {
+public:
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& input) mut {
+    return input.size() + 1;
+  }
+  expected<void, std::io_errc> flush() mut { return; }
+};
+
+class FailingReader {
+  mut int calls = 0;
+public:
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& output) mut {
+    if (output.empty()) { return std::size_t(0); }
+    this.calls++;
+    if (this.calls > 1) { return unexpected(std::io_errc::read_failed); }
+    output[std::size_t(0)] = uint8_t(97);
+    return std::size_t(1);
+  }
+};
+
+// Transport flush can fail after it has accepted all buffered bytes.
+class FlushFailSink {
+  mut std::size_t accepted = 0;
+  mut int flushes = 0;
+public:
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& input) mut {
+    this.accepted += input.size();
+    return input.size();
+  }
+  expected<void, std::io_errc> flush() mut {
+    this.flushes++;
+    if (this.flushes == 1) { return unexpected(std::io_errc::flush_failed); }
+    return;
+  }
+  std::size_t size() { return this.accepted; }
+};
+
+int main() {
+  std::byte_buffer source = {uint8_t(0), uint8_t(1), uint8_t(255), uint8_t(3)};
+  mut std::byte_buffer destination{std::size_t(6)};
+  mut std::byte_buffer scratch{std::size_t(2)};
+  {
+    auto input = source.as_span();
+    mut std::io::memory_reader reader{input};
+    auto output = destination.as_mutable_span();
+    mut std::io::memory_stream writer{std::move(output)};
+    mut auto buffer = scratch.as_mutable_span();
+    auto copied = std::io::copy(reader, writer, buffer);
+    if (!copied || copied.value() != 4 || writer.tell() != 4) { return 1; }
+    auto seek = writer.seek(std::size_t(1));
+    if (!seek) { return 23; }
+    auto reread = writer.read_some(buffer);
+    if (!reread || reread.value() != 2 || buffer[std::size_t(0)] != uint8_t(1) ||
+        buffer[std::size_t(1)] != uint8_t(255)) { return 24; }
+    auto invalid = writer.seek(std::size_t(7));
+    if (invalid || writer.tell() != 3) { return 25; }
+  }
+  if (destination[std::size_t(2)] != uint8_t(255)) { return 2; }
+  {
+    auto input = source.as_span();
+    mut std::io::memory_reader reader{input};
+    auto output = destination.as_mutable_span();
+    mut std::io::memory_stream writer{std::move(output)};
+    mut std::io::buffered_reader<std::io::memory_reader> buffered_input{reader, std::size_t(3)};
+    mut std::io::buffered_writer<std::io::memory_stream> buffered_output{writer, std::size_t(3)};
+    mut std::io::buffered_reader<std::io::buffered_reader<std::io::memory_reader>> outer_input{buffered_input, std::size_t(2)};
+    mut std::io::buffered_writer<std::io::buffered_writer<std::io::memory_stream>> outer_output{buffered_output, std::size_t(2)};
+    mut auto buffer = scratch.as_mutable_span();
+    auto copied = std::io::copy(outer_input, outer_output, buffer);
+    if (!copied || copied.value() != 4) { return 3; }
+    auto flushed = outer_output.flush();
+    if (!flushed || outer_output.pending() != 0) { return 4; }
+  }
+  if (destination[std::size_t(2)] != uint8_t(255)) { return 5; }
+  {
+    mut FlakySink sink{};
+    {
+      mut std::io::buffered_writer<FlakySink> writer{sink, std::size_t(4)};
+      auto input = source.as_span();
+      auto written = writer.write_some(input);
+      if (!written || written.value() != 4 || writer.pending() != 4) { return 6; }
+      auto failed = writer.flush();
+      if (failed || failed.error() != std::io_errc::write_failed || writer.pending() != 2) { return 7; }
+      auto retried = writer.flush();
+      if (!retried || writer.pending() != 0) { return 8; }
+    }
+    if (sink.size() != 4 || sink.at(std::size_t(0)) != uint8_t(0) ||
+        sink.at(std::size_t(1)) != uint8_t(1) || sink.at(std::size_t(2)) != uint8_t(255) ||
+        sink.at(std::size_t(3)) != uint8_t(3)) { return 9; }
+  }
+  {
+    mut StalledSink sink{};
+    auto input = source.as_span();
+    auto written = std::io::write_all(sink, input);
+    if (written || written.error().transferred != 0 ||
+        written.error().code != std::io_errc::write_failed) { return 10; }
+  }
+  {
+    auto input = source.as_span();
+    mut std::io::memory_reader reader{input};
+    mut auto output = destination.as_mutable_span();
+    auto read = std::io::read_exact(reader, output);
+    if (read || read.error().transferred != 4 ||
+        read.error().code != std::io_errc::end_of_file) { return 11; }
+  }
+  {
+    std::byte_buffer lines = {uint8_t(97), uint8_t(10), uint8_t(0), uint8_t(122)};
+    auto input = lines.as_span();
+    mut std::io::memory_reader reader{input};
+    mut std::io::buffered_reader<std::io::memory_reader> buffer{reader, std::size_t(3)};
+    mut std::string line{};
+    auto first = std::io::getline(buffer, line);
+    if (!first || first.value() != 1 || line != "a") { return 12; }
+    auto last = std::io::getline(buffer, line);
+    if (!last || last.value() != 2 || line.size() != 2 ||
+        line[std::size_t(0)] != '\0' || line[std::size_t(1)] != 'z') { return 13; }
+    auto eof = std::io::getline(buffer, line);
+    if (eof || eof.error().code != std::io_errc::end_of_file || !line.empty()) { return 14; }
+  }
+  {
+    mut OversizedReader reader{};
+    mut auto output = scratch.as_mutable_span();
+    auto read = std::io::read_exact(reader, output);
+    if (read || read.error().transferred != 0 ||
+        read.error().code != std::io_errc::read_failed) { return 15; }
+    mut OversizedWriter writer{};
+    auto input = source.as_span();
+    auto written = std::io::write_all(writer, input);
+    if (written || written.error().transferred != 0 ||
+        written.error().code != std::io_errc::write_failed) { return 16; }
+  }
+  {
+    mut FailingReader reader{};
+    mut std::string line{"old"};
+    auto read = std::io::getline(reader, line);
+    if (read || read.error().transferred != 1 || line != "a" ||
+        read.error().code != std::io_errc::read_failed) { return 17; }
+  }
+  {
+    mut FlakySink writer{};
+    auto input = source.as_span();
+    auto written = std::io::write_all(writer, input);
+    if (written || written.error().transferred != 2 || writer.size() != 2) { return 18; }
+  }
+  {
+    auto input = source.as_span();
+    mut std::io::memory_reader reader{input};
+    mut std::io::buffered_reader<std::io::memory_reader> buffer{reader, std::size_t(0)};
+    mut auto output = scratch.as_mutable_span();
+    auto read = buffer.read_some(output);
+    if (read || read.error() != std::io_errc::invalid_stream) { return 19; }
+    mut auto empty = output.first(std::size_t(0));
+    auto nothing = buffer.read_some(empty);
+    if (!nothing || nothing.value() != 0) { return 20; }
+  }
+  {
+    mut StalledSink sink{};
+    mut std::io::buffered_writer<StalledSink> writer{sink, std::size_t(0)};
+    auto input = source.as_span();
+    auto written = writer.write_some(input);
+    if (written || written.error() != std::io_errc::invalid_stream) { return 21; }
+    auto empty = input.first(std::size_t(0));
+    auto nothing = writer.write_some(empty);
+    if (!nothing || nothing.value() != 0) { return 22; }
+  }
+  {
+    mut FlushFailSink sink{};
+    auto input = source.as_span();
+    {
+      mut std::io::buffered_writer<FlushFailSink> writer{sink, std::size_t(6)};
+      auto accepted = writer.write_some(input);
+      if (!accepted || accepted.value() != 4) { return 26; }
+      auto failed = writer.flush();
+      if (failed || failed.error() != std::io_errc::flush_failed || writer.pending() != 0) { return 27; }
+      auto retried = writer.flush();
+      if (!retried) { return 28; }
+    }
+    if (sink.size() != 4) { return 29; }
+    {
+      mut std::io::buffered_writer<FlushFailSink> discarded{sink, std::size_t(6)};
+      auto accepted = discarded.write_some(input);
+      if (!accepted || accepted.value() != 4) { return 30; }
+    }
+    if (sink.size() != 4) { return 31; }
+  }
+  return 0;
+}

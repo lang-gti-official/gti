@@ -1,6 +1,19 @@
 local M = {}
 
-local repository = "LukeHHA/gti"
+local release_server = "https://git.internal.howetotech.dev"
+local repository = "gti-lang/gti"
+
+local function release_url(tag, asset)
+  return string.format(
+    "%s/%s/releases/download/%s/%s",
+    release_server,
+    repository,
+    tag,
+    asset
+  )
+end
+
+M.release_url = release_url
 
 local function join(...)
   return vim.fs.joinpath(...)
@@ -217,10 +230,7 @@ local function fetch_nightly_build_id(root)
   ))
   vim.fn.mkdir(temporary, "p")
   local path = join(temporary, "BUILD_ID")
-  local ok, failure = pcall(download, string.format(
-    "https://github.com/%s/releases/download/nightly/BUILD_ID",
-    repository
-  ), path)
+  local ok, failure = pcall(download, release_url("nightly", "BUILD_ID"), path)
   local build_id = ok and trim(read_file(path)) or nil
   vim.fn.delete(temporary, "rf")
   if not ok then
@@ -279,12 +289,7 @@ function M.install(opts)
   end
 
   local archive_name = release.archive_name
-  local base_url = string.format(
-    "https://github.com/%s/releases/download/%s/%s",
-    repository,
-    release.tag,
-    archive_name
-  )
+  local base_url = release_url(release.tag, archive_name)
   local temporary = join(root, string.format(
     ".gti-install-%d-%s",
     vim.fn.getpid(),

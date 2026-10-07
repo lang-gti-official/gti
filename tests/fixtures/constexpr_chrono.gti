@@ -1,0 +1,44 @@
+#include <std/chrono>
+
+constexpr bool timestamp(int64_t ticks, int64_t seconds, int32_t fraction) {
+  std::chrono::nanoseconds duration{ticks};
+  std::chrono::system_time_point point{duration};
+  std::chrono::system_time_point epoch{std::chrono::nanoseconds()};
+  return duration.count() == ticks && point.nanoseconds_since_unix_epoch() == ticks &&
+         point.unix_seconds() == seconds && point.subsecond_nanoseconds() == fraction &&
+         point.before(epoch) == (ticks < int64_t(0)) &&
+         point.after(epoch) == (ticks > int64_t(0)) &&
+         point.equals(epoch) == (ticks == int64_t(0));
+}
+
+constexpr bool monotonic() {
+  std::chrono::steady_time_point earlier{std::chrono::nanoseconds(int64_t(-1))};
+  std::chrono::steady_time_point later{std::chrono::nanoseconds(int64_t(1))};
+  std::chrono::nanoseconds observed = earlier.time_since_origin();
+  return earlier.before(later) && later.after(earlier) && earlier.equals(earlier) &&
+         !earlier.equals(later) && observed.count() == int64_t(-1);
+}
+
+constexpr std::chrono::nanoseconds zero{};
+constexpr std::chrono::nanoseconds frame{int64_t(16666667)};
+static_assert(zero.count() == int64_t(0));
+static_assert(frame.count() == int64_t(16666667));
+static_assert(monotonic());
+static_assert(timestamp(int64_t(0), int64_t(0), 0));
+static_assert(timestamp(int64_t(1), int64_t(0), 1));
+static_assert(timestamp(int64_t(-1), int64_t(-1), 999999999));
+static_assert(timestamp(int64_t(-1000000000), int64_t(-1), 0));
+static_assert(timestamp(int64_t(-1000000001), int64_t(-2), 999999999));
+static_assert(timestamp(int64_t(9223372036854775807), int64_t(9223372036), 854775807));
+static_assert(timestamp(int64_t(-9223372036854775808), int64_t(-9223372037), 145224192));
+
+int main() {
+  if (!monotonic() || !timestamp(int64_t(0), int64_t(0), 0) ||
+      !timestamp(int64_t(1), int64_t(0), 1) ||
+      !timestamp(int64_t(-1), int64_t(-1), 999999999) ||
+      !timestamp(int64_t(-1000000000), int64_t(-1), 0) ||
+      !timestamp(int64_t(-1000000001), int64_t(-2), 999999999) ||
+      !timestamp(int64_t(9223372036854775807), int64_t(9223372036), 854775807) ||
+      !timestamp(int64_t(-9223372036854775808), int64_t(-9223372037), 145224192)) { return 1; }
+  return 0;
+}

@@ -13,16 +13,39 @@ namespace gti_internal {
   class prefix_storage<T> {};
   class text_view {};
   class c_string {};
+  class c_bool {};
+  class c_char {};
+  class c_schar {};
+  class c_uchar {};
+  class c_short {};
+  class c_ushort {};
+  class c_int {};
+  class c_uint {};
+  class c_long {};
+  class c_ulong {};
+  class c_longlong {};
+  class c_ulonglong {};
+  class c_float {};
+  class c_double {};
+  class c_size_t {};
+  class c_ptrdiff_t {};
+  class c_intptr_t {};
+  class c_uintptr_t {};
 
   @compiler_constraint("numeric") concept numeric_capability<T>;
   @compiler_constraint("signed_numeric") concept signed_numeric_capability<T>;
   @compiler_constraint("integral") concept integral_capability<T>;
+  @compiler_constraint("integral_enum") concept integral_enum_capability<T>;
+  @compiler_constraint("enum_underlying") concept enum_underlying_capability<T, U>;
   @compiler_constraint("signed_integral") concept signed_integral_capability<T>;
   @compiler_constraint("unsigned_integral") concept unsigned_integral_capability<T>;
   @compiler_constraint("floating_point") concept floating_point_capability<T>;
   @compiler_constraint("copy_constructible") concept copy_constructible_capability<T>;
+  @compiler_constraint("move_constructible") concept move_constructible_capability<T>;
   @compiler_constraint("copyable") concept copyable_capability<T>;
   @compiler_constraint("movable") concept movable_capability<T>;
+  @compiler_constraint("relocatable") concept relocatable_capability<T>;
+  @compiler_constraint("bitwise_relocatable") concept bitwise_relocatable_capability<T>;
   @compiler_constraint("transferable") concept transferable_capability<T>;
   @compiler_constraint("shareable") concept shareable_capability<T>;
   @compiler_constraint("default_initializable") concept default_initializable_capability<T>;
@@ -36,6 +59,14 @@ namespace gti_internal {
   // when `index >= size`, so container indexing reports the logical bound
   // rather than leaking the private storage invariant.
   void index_bounds_check(uint64_t index, uint64_t size);
+  void require_key(bool found);
+  void require_container_argument(bool valid);
+  T restoring_exchange<T>(mut T& destination, T replacement);
+  U enum_underlying_value<U, T>(T value);
+  void restoring_swap<T>(mut T& left, mut T& right);
+  void restoring_indexed_swap<S>(mut S& storage, uint64_t left, uint64_t right);
+  [[noreturn, track_caller]]
+  void panic(gti_internal::text_view message);
 
   gti_internal::prefix_storage<T> allocate_prefix_storage<T>(uint64_t count);
   void prefix_storage_append<T, Args...>(mut gti_internal::prefix_storage<T>& storage, Args... args);
@@ -49,6 +80,8 @@ namespace gti_internal {
   void prefix_storage_insert<T, Args...>(mut gti_internal::prefix_storage<T>& storage, uint64_t index, Args... args);
   void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
   gti_internal::text_view prefix_storage_text_view(gti_internal::prefix_storage<char>& storage);
+  gti_internal::c_string prefix_storage_c_string(gti_internal::prefix_storage<char>& storage);
+  gti_internal::c_string prefix_storage_try_c_string(gti_internal::prefix_storage<char>& storage);
 
   namespace runtime {
     extern "C" {
@@ -56,8 +89,11 @@ namespace gti_internal {
       int32_t gti_rt_write_stdout_byte(uint8_t value);
     }
 
+    [[track_caller]]
     void write_stdout(gti_internal::text_view value) {
-      [[discard]] gti_rt_write_stdout(value);
+      if (gti_rt_write_stdout(value) != 0) {
+        gti_internal::panic("Output failed: stdout write failed");
+      }
     }
 
     int32_t write_stdout_byte(uint8_t value) {
@@ -68,9 +104,36 @@ namespace gti_internal {
 }
 
 using c_string = gti_internal::c_string;
+using c_void = void;
+using c_bool = gti_internal::c_bool;
+using c_char = gti_internal::c_char;
+using c_schar = gti_internal::c_schar;
+using c_uchar = gti_internal::c_uchar;
+using c_short = gti_internal::c_short;
+using c_ushort = gti_internal::c_ushort;
+using c_int = gti_internal::c_int;
+using c_uint = gti_internal::c_uint;
+using c_long = gti_internal::c_long;
+using c_ulong = gti_internal::c_ulong;
+using c_longlong = gti_internal::c_longlong;
+using c_ulonglong = gti_internal::c_ulonglong;
+using c_float = gti_internal::c_float;
+using c_double = gti_internal::c_double;
+using c_size_t = gti_internal::c_size_t;
+using c_ptrdiff_t = gti_internal::c_ptrdiff_t;
+using c_intptr_t = gti_internal::c_intptr_t;
+using c_uintptr_t = gti_internal::c_uintptr_t;
 
 namespace std {
-  concept movable<T> = gti_internal::movable_capability<T>;
+  /// Can initialize a new value by movement; assignment is not required.
+  concept move_constructible<T> = gti_internal::move_constructible_capability<T>;
+  concept movable<T> = gti_internal::movable_capability<T> && std::move_constructible<T>;
+  /// Can transfer a complete value into empty storage without copying it.
+  /// Does not authorize replacement, moving a borrowed value, or raw access.
+  concept relocatable<T> = gti_internal::relocatable_capability<T> && std::move_constructible<T>;
+  /// Structurally eligible for bytewise relocation; native representation may
+  /// require an equivalent generated elementwise transfer instead.
+  concept bitwise_relocatable<T> = std::relocatable<T> && gti_internal::bitwise_relocatable_capability<T>;
   concept transferable<T> = gti_internal::transferable_capability<T>;
   concept shareable<T> = gti_internal::shareable_capability<T>;
   concept copy_constructible<T> = gti_internal::copy_constructible_capability<T>;
@@ -82,6 +145,14 @@ namespace std {
   concept numeric<T> = gti_internal::numeric_capability<T> && std::totally_ordered<T> && std::copyable<T> && std::default_initializable<T>;
   concept signed_numeric<T> = gti_internal::signed_numeric_capability<T> && std::numeric<T>;
   concept integral<T> = gti_internal::integral_capability<T> && std::numeric<T>;
+  /// A scoped enum with fixed-width integer values, excluding payload enums.
+  concept integral_enum<T> = gti_internal::integral_enum_capability<T>;
+  /// The exact declared underlying type of an integral enum.
+  concept enum_underlying<T, U> = gti_internal::enum_underlying_capability<T, U>;
+  /// Extract without widening, narrowing, or implicit enum conversion.
+  U to_underlying<U, T>(T value) requires std::enum_underlying<T, U> {
+    return gti_internal::enum_underlying_value<U, T>(value);
+  }
   concept signed_integral<T> = gti_internal::signed_integral_capability<T> && std::integral<T> && std::signed_numeric<T>;
   concept unsigned_integral<T> = gti_internal::unsigned_integral_capability<T> && std::integral<T>;
   concept floating_point<T> = gti_internal::floating_point_capability<T> && std::signed_numeric<T>;
@@ -112,22 +183,28 @@ namespace std {
   T move<T>(T& value);
 
   /// Writes `value` to standard output without adding a newline.
+  [[track_caller]]
   void print(string_view value) {
     gti_internal::runtime::write_stdout(value);
   }
 
   /// Writes one character to standard output without adding a newline.
+  [[track_caller]]
   void print(char value) {
-    [[discard]] gti_internal::runtime::write_stdout_byte(uint8_t(value));
+    if (gti_internal::runtime::write_stdout_byte(uint8_t(value)) != 0) {
+      gti_internal::panic("Output failed: stdout write failed");
+    }
   }
 
   /// Writes `value` to standard output followed by a newline.
+  [[track_caller]]
   void println(string_view value) {
     print(value);
     print("\n");
   }
 
   /// Writes one character to standard output followed by a newline.
+  [[track_caller]]
   void println(char value) {
     print(value);
     print("\n");
@@ -135,6 +212,7 @@ namespace std {
 }
 
 namespace gti_internal {
+  [[track_caller]]
   void print_decimal_digit(uint8_t digit) {
     switch (digit) {
     case uint8_t(0):
@@ -173,6 +251,7 @@ namespace gti_internal {
     }
   }
 
+  [[track_caller]]
   void print_integral<std::integral T>(T value) {
     if (value == T(0)) {
       runtime::write_stdout("0");
@@ -205,11 +284,13 @@ namespace gti_internal {
 
 namespace std {
   /// Writes an integral value in decimal without adding a newline.
+  [[track_caller]]
   void print<std::integral T>(T value) {
     gti_internal::print_integral(value);
   }
 
   /// Writes an integral value in decimal followed by a newline.
+  [[track_caller]]
   void println<std::integral T>(T value) {
     print(value);
     print("\n");

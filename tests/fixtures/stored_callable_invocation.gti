@@ -1,0 +1,85 @@
+#include <std/memory>
+
+mut int cleanup_count = 0;
+
+class Token {
+  int value;
+public:
+  Token(int value) : value(value) {}
+  ~Token() { cleanup_count++; }
+  int read() { return this.value; }
+};
+
+class CallableOwner<T> {
+  mut T value;
+public:
+  CallableOwner(T value) : value(std::move(value)) {}
+  int call(int argument) { return this.value(argument); }
+  int call_mut(int argument) mut { return this.value(argument); }
+};
+
+CallableOwner<T> transfer_owner<T>(CallableOwner<T> value) {
+  return std::move(value);
+}
+
+CallableOwner<T> own<T>(T value) {
+  auto first = CallableOwner<T>(std::move(value));
+  auto result = transfer_owner(std::move(first));
+  return std::move(result);
+}
+
+std::unique_ptr<CallableOwner<T>> heap_own<T>(T value) {
+  return std::make_unique<CallableOwner<T>>(std::move(value));
+}
+
+interface Invoker { int invoke(int value); };
+
+class Model<T> : public Invoker {
+  T callback;
+public:
+  Model(T callback) : callback(std::move(callback)) {}
+  int invoke(int value) override { return this.callback(value); }
+};
+
+std::unique_ptr<Invoker> erase<T>(T callback) {
+  auto model = std::make_unique<Model<T>>(std::move(callback));
+  auto result = std::upcast_unique<Invoker, Model<T>>(std::move(model));
+  return std::move(result);
+}
+
+class Counter {
+  mut int total = 0;
+public:
+  int operator()(int value) mut {
+    this.total += value;
+    return this.total;
+  }
+};
+
+int exercise() {
+  int offset = 7;
+  auto erased_operation = [offset](int value) -> int { return offset + value; };
+  auto erased_owner = erase(std::move(erased_operation));
+  if (erased_owner->invoke(5) != 12 || erased_owner->invoke(6) != 13) { return 5; }
+  auto heap_operation = [offset](int value) -> int { return offset + value; };
+  auto heap_owner = heap_own(std::move(heap_operation));
+  if (heap_owner->call(5) != 12 || heap_owner->call(6) != 13) { return 4; }
+  auto operation = [offset](int value) -> int { return offset + value; };
+  auto owner = own(std::move(operation));
+  if (owner.call(5) != 12 || owner.call(6) != 13) { return 1; }
+  Token token{11};
+  auto captured = [token = std::move(token)](int value) -> int {
+    return token.read() + value;
+  };
+  auto retained = own(std::move(captured));
+  if (retained.call(5) != 16 || retained.call(9) != 20) { return 2; }
+  mut CallableOwner<Counter> counter = CallableOwner<Counter>(Counter());
+  if (counter.call_mut(3) != 3 || counter.call_mut(4) != 7) { return 3; }
+  return 0;
+}
+
+int main() {
+  int result = exercise();
+  if (result != 0) { return result; }
+  return cleanup_count - 1;
+}

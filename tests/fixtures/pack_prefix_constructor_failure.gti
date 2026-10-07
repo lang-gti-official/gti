@@ -1,0 +1,40 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+};
+
+class Passive {
+public:
+  Passive(int divisor) {
+    std::println(10);
+    int checked = 12 / divisor;
+  }
+};
+
+void accept<Args...>(Passive value, Args... args) { std::println(7); }
+void accept_prior<Args...>(Token prior, Passive value, Args... args) {
+  std::println(8);
+}
+
+void forward<Args...>(int divisor, Args... args) {
+  accept(Passive(divisor), args...);
+}
+void forward_prior<Args...>(int divisor, Args... args) {
+  accept_prior(Token(1), Passive(divisor), args...);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  int divisor = argc == 2 || argc == 4 ? 0 : 1;
+  if (argc <= 2) {
+    forward(divisor, Token(2), 3, true);
+  } else {
+    forward_prior(divisor, Token(2), 3, true);
+  }
+  return 0;
+}

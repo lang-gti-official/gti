@@ -1,8 +1,0 @@
-#include <std/string>
-
-int main() {
-  mut std::string text = std::string("GTI");
-  std::print(std::move(text));
-  std::print(" reference\n");
-  return 0;
-}

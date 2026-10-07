@@ -1,0 +1,35 @@
+#include <std/memory>
+#include <std/string>
+
+// A second failure during cleanup of a completed base
+// with two owners must retain the constructor's primary failure (GTI-R0014).
+mut int32_t zero = 0;
+
+class Resource {
+public:
+  Resource() {}
+  ~Resource() {
+    std::println("cleanup");
+    int32_t secondary = 11 / zero;
+  }
+};
+
+class Base {
+  std::unique_ptr<Resource> first;
+  std::unique_ptr<Resource> second;
+public:
+  Base() : first(std::make_unique<Resource>()), second(std::make_unique<Resource>()) {}
+  virtual int32_t read() = 0;
+};
+
+class Derived : public Base {
+  int32_t checked;
+public:
+  Derived() : Base(), checked(7 / zero) {}
+  int32_t read() override { return this.checked; }
+};
+
+int main() {
+  auto owner = std::make_unique<Derived>();
+  return owner->read();
+}

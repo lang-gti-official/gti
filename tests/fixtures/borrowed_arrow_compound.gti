@@ -1,0 +1,28 @@
+#include <std/utility>
+
+mut int accesses = 0;
+
+struct Record {
+  mut int value = 7;
+};
+
+class Cursor {
+  mut Record& record;
+public:
+  Cursor(mut Record& record) : record(record) {}
+  mut Record& operator->() mut {
+    accesses++;
+    return this.record;
+  }
+};
+
+int main() {
+  mut Record record{};
+  {
+    mut auto nested = std::pair<Cursor, bool>(Cursor(record), true);
+    nested.first->value += 2;
+    nested.first->value *= 3;
+    if (accesses != 2) { return 1; }
+  }
+  return record.value - 27;
+}

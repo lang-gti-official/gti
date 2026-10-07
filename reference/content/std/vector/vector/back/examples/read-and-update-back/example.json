@@ -1,6 +1,0 @@
-{
-  "title": "Read and update the final element",
-  "description": "Mutates the final value through a scoped element borrow.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

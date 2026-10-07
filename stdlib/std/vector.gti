@@ -1,4 +1,5 @@
 #include <std/span>
+#include <std/utility>
 
 // The storage-backed value, capacity, indexed operations, move-aware
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
@@ -94,9 +95,16 @@ public:
 }
 
 /// An owning, move-only, contiguous sequence of `T` values.
-class vector<std::movable T> {
+class vector<std::move_constructible T> {
   mut gti_internal::prefix_storage<T> data;
   mut size_t reserved = 0;
+
+  gti_internal::prefix_storage<T> replace_storage(
+      gti_internal::prefix_storage<T> replacement) mut {
+    auto previous = std::move(this.data);
+    this.data = std::move(replacement);
+    return std::move(previous);
+  }
 
   void ensure_capacity_for_one() mut {
     size_t live = gti_internal::prefix_storage_length(this.data);
@@ -113,6 +121,18 @@ class vector<std::movable T> {
 
 public:
   vector() : data(gti_internal::allocate_prefix_storage<T>(uint64_t(0))) {}
+
+  /// Collection-brace protocol: reserve once, then consume each owned element.
+  static vector<T> collection_init(uint64_t count) {
+    mut vector<T> result{};
+    result.reserve(count);
+    return std::move(result);
+  }
+
+  static vector<T> collection_insert(mut vector<T> collection, T element) {
+    collection.push_back(std::move(element));
+    return std::move(collection);
+  }
 
   vector(size_t initial_size)
       : data(gti_internal::allocate_prefix_storage<T>(initial_size)),
@@ -141,6 +161,14 @@ public:
   /// Returns the number of elements that fit without growing storage.
   size_t capacity() {
     return this.reserved;
+  }
+
+  /// Check both live indices before mutation; equal valid indices are a no-op.
+  void swap_elements(size_t left, size_t right) mut
+    requires std::relocatable<T> {
+    gti_internal::index_bounds_check(left, this.size());
+    gti_internal::index_bounds_check(right, this.size());
+    gti_internal::restoring_indexed_swap(this.data, left, right);
   }
 
   /// Returns whether the vector contains no elements.
@@ -225,6 +253,12 @@ public:
                    gti_internal::prefix_storage_length(this.data));
   }
 
+  /// Exclusively borrows initialized elements without permitting reallocation.
+  mutable_span<T> as_mutable_span() mut {
+    size_t count = gti_internal::prefix_storage_length(this.data);
+    return mutable_span<T>(this.data, size_t(0), count);
+  }
+
   void reserve(size_t requested) mut {
     if (requested <= this.reserved) {
       return;
@@ -305,15 +339,23 @@ public:
     }
   }
 
-  void swap(mut vector<T>& other) mut;
+  /// Exchanges storage and capacity without allocating or moving elements.
+  void swap(mut vector<T>& other) mut {
+    auto previous = std::move(this.data);
+    this.data = other.replace_storage(std::move(previous));
+    size_t previous_capacity = this.reserved;
+    this.reserved = other.reserved;
+    other.reserved = previous_capacity;
+  }
 
-  vector<T> clone()
-    requires std::copyable<T> {
+  /// Duplicates each element using its clone contract (or ordinary copying).
+  vector<T> clone() requires std::cloneable<T> {
     mut vector<T> result = vector<T>();
     size_t live = gti_internal::prefix_storage_length(this.data);
     result.reserve(live);
     for (mut size_t index = 0; index < live; index++) {
-      result.push_back(gti_internal::prefix_storage_read(this.data, index));
+      result.push_back(
+          std::clone(gti_internal::prefix_storage_read(this.data, index)));
     }
     return std::move(result);
   }

@@ -11,6 +11,18 @@ exclusive runtime-performance campaign and every follow-on optimizer row are
 sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
 
+Implementation update (2026-10-01): the exhaustive optimizer language-growth
+gate is reconciled at `72a8087a`. The measured follow-up implements one bounded
+body-local exact-receiver dispatch refinement, with canonical replay and
+conservative loan/effect/cleanup boundaries. This does not implement general
+devirtualization, MIR inlining, interprocedural receiver specialization, or
+MemorySSA. `O-MEASURE-02` is now complete for this facility at measured clean
+implementation `2c8d4561`: paired local-interface runtime falls from 223.175 to
+120.008 ms, controls show no material regression, and broad/focused functional
+gates pass. Exact evidence and the larger, still-unimplemented callback/helper
+proxy ceilings are recorded in [performance-tooling.md](performance-tooling.md).
+Publication remains held; this is not completion of general devirtualization.
+
 Implementation update (2026-08-22): ADR 016 supersedes the migration mechanics
 in this proposal. `BackendInput`, HIR replacement-table emission, mixed AST/HIR
 body routes, and frontend-aware backend snapshots have been removed. The
@@ -26,7 +38,7 @@ client-backed pass/analysis manager, and opt-in MIR/report observability are
 implemented. O1 owns this local pipeline. O2/O3 additionally run independent
 bounds, initialized-storage-state, and arithmetic-overflow discharge passes
 backed by canonical body-local proofs. O-MIR-03 and the first O-MIR-04 slice are
-no longer blocked.
+have their architectural prerequisites in place.
 
 Implementation update (2026-08-24): O-MIR-05 adds one deterministic monotone
 forward-dataflow substrate, migrates safety analysis without changing its
@@ -97,9 +109,10 @@ continues to land only with a real client: the current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
 and alias facts remain available for later measured performance rows, but they
-do not dictate a pass. General loop transforms, MemorySSA, devirtualization, an
-LLVM backend, and broad optimizer frameworks remain deferred until a measured
-bottleneck and the sole operational sequence require them.
+do not dictate a pass. General loop transforms, MemorySSA, general/contextual
+devirtualization, an LLVM backend, and broad optimizer frameworks remain
+deferred until a measured bottleneck and the sole operational sequence require
+them.
 
 This proposal defines how GTI grows from typed-HIR compatibility folding into
 a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -190,11 +203,11 @@ canonical source MIR; `LoweredProgramBuilder` consumes the result before
 publishing optimized MIR to backends. A future backend does not reproduce any
 optimizer decision.
 
-HIR constant replacements remain only for non-body representation surfaces and
-as a transitional shadow comparison for the existing fold. The bridge cannot
-authorize a new CFG or dataflow transformation. Remaining architectural risk
-is therefore bounded to retiring that final representation compatibility path,
-not split executable-body authority.
+HIR constant replacements remain only as a transitional shadow comparison for
+the existing fold. They are not a backend or non-body representation input.
+The shadow result cannot authorize a new CFG or dataflow transformation;
+canonical semantic/lowered facts supply declaration constants. Remaining work
+is retiring the bounded shadow comparison, not split executable-body authority.
 
 ## Authority And IR Contract
 
@@ -222,7 +235,8 @@ executable behavior must materialize their result in MIR. Do not create a
 second mutable HIR and a second family of CFG or place analyses.
 
 The existing HIR constant-replacement table remains temporarily supported only
-for the current C++ emitter migration. It is not the API for new passes.
+for the existing MIR fold's shadow comparison. It is not an emitter input or
+the API for new passes.
 
 ### MIR
 
@@ -435,6 +449,14 @@ The following rules are mandatory:
 
 ## MIR Evolution Guardrail
 
+The compiler-owned exhaustive classification and runtime vocabulary gate are
+now implemented in `optimization/coverage.cpp`; see the canonical
+[conformance contract](../architecture/optimization.md#language-growth-conformance-gate).
+The gate names current consumers/barriers without duplicating `mir_effects`.
+Compile-failure growth probes supplement the existing effect-table census.
+Registering an enum member is necessary but does not replace the semantic,
+transfer-function, verifier, backend, or equivalence obligations below.
+
 Adding a `MirInstructionKind`, `MirOperation`, operand kind, terminator, place
 projection, intrinsic, or lifecycle effect requires all of the following in
 the same change:
@@ -502,7 +524,7 @@ verbosity are also independent of semantic optimization level.
 | redundant load/store removal | analysis gates partly complete; transform absent | MIR places | place alias/escape; exact call effects; memory versions or a proved local substitute; lifetime boundaries |
 | bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
 | loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
-| devirtualization | deferred | HIR instance graph plus MIR calls | closed-world reachability; exact receiver proof; override graph; lifecycle/layout compatibility |
+| devirtualization | bounded local exact-receiver slice implemented; general/contextual forms deferred | verified MIR calls, local loans, concrete instances and override identities | exact confined receiver, initialization dominance, authoritative effects, failure/cleanup compatibility, independent replay |
 | inlining/specialization | one candidate among the `O-PERF-02` choices; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; exact profile/proxy evidence |
 
 Do not implement a pass when one of its gates is represented only by C++
@@ -577,8 +599,8 @@ the sealed `LoweredProgram`; there is no AST/HIR execution fallback.
 
 Status: executable-body bridge retired. `BackendInput` and frontend-aware
 backend snapshots are removed; every backend consumes only `LoweredProgram`.
-HIR compatibility replacements remain solely for bounded non-body
-representation surfaces and the existing fold's shadow comparison.
+HIR compatibility replacements remain solely for the existing fold's shadow
+comparison. Declaration constants use canonical semantic/lowered facts.
 
 Do not add new passes to the legacy HIR replacement path during this migration.
 Fixing a correctness bug in the existing pass remains allowed.
@@ -656,7 +678,8 @@ Every optimization change must additionally answer:
 
 These questions belong in code review and in the
 `gti-language` change workflow. If a question cannot be answered from GTI IR,
-the optimization is blocked on architecture rather than delegated to C++.
+identify and implement the missing architectural fact before admitting the
+optimization; C++ behavior cannot supply its proof.
 
 ## Implementation Milestones
 
@@ -870,11 +893,12 @@ Status: the first bounded contextual proof-summary client is complete under
   metadata attachment explicitly preserves the immutable result. Replay
   validates all claims against one source and one candidate snapshot rather
   than recomputing the whole program per claim.
-- Closed-world reachability as a removal authority, body cloning,
-  devirtualization, and inlining are not implemented.
-- Devirtualization remains deferred. Do not generalize the selected family
-  until temporary lifetime, cleanup, layout, closed-world, and cost-model
-  requirements are met and another workload measures value.
+- Closed-world reachability as a removal authority, body cloning, and inlining
+  are not implemented. The later `O-MEASURE-02` local exact-receiver slice is
+  body-local dispatch refinement, not an interprocedural transform.
+- General/contextual devirtualization remains deferred. Do not generalize the
+  local slice until temporary lifetime, cleanup, layout, and cost requirements
+  are met and another workload measures value; do not assume a closed world.
 
 Acceptance criteria:
 

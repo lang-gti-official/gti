@@ -1,0 +1,59 @@
+#include <std/memory>
+
+mut int cleanup_count = 0;
+
+class Signature<S> {};
+
+interface MutableTarget<R, Args...> {
+  R invoke(Args... args) mut;
+};
+
+class MutableModel<F, R, Args...> : public MutableTarget<R, Args...> {
+  mut F callable;
+public:
+  MutableModel(F callable) : callable(std::move(callable)) {}
+  R invoke(Args... args) mut override { return this.callable(args...); }
+};
+
+std::unique_ptr<MutableTarget<R, Args...>> erase_mutable<R, F, Args...>(
+    F callable, Signature<R(Args...) mut>& signature) {
+  auto model = std::make_unique<MutableModel<F, R, Args...>>(std::move(callable));
+  return std::upcast_unique<MutableTarget<R, Args...>, MutableModel<F, R, Args...>>(
+      std::move(model));
+}
+
+// This source-defined client isolates qualified-pattern and mutable dispatch
+// support before the public wrapper selects among receiver-qualified patterns.
+class MutableCallback<R(Args...) mut> {
+  mut std::unique_ptr<MutableTarget<R, Args...>> target = nullptr;
+public:
+  MutableCallback<F>(F callable) {
+    Signature<R(Args...) mut> signature{};
+    this.target = erase_mutable(std::move(callable), signature);
+  }
+  R operator()(Args... args) mut { return this.target->invoke(args...); }
+};
+
+class Counter {
+  mut int total = 0;
+public:
+  ~Counter() { cleanup_count++; }
+  int operator()(int amount) mut {
+    this.total += amount;
+    return this.total;
+  }
+};
+
+int exercise() {
+  mut MutableCallback<int(int) mut> callback{Counter()};
+  if (callback(3) != 3 || callback(4) != 7) { return 1; }
+  mut auto moved = std::move(callback);
+  if (moved(5) != 12) { return 2; }
+  return 0;
+}
+
+int main() {
+  int result = exercise();
+  if (result != 0) { return result; }
+  return cleanup_count - 1;
+}

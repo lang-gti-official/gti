@@ -1,0 +1,51 @@
+#include <std/functional>
+
+class Counter {
+  mut int value = 0;
+public:
+  int operator()(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+};
+
+mut int cleanups = 0;
+class OwnedCounter {
+  mut int value = 0;
+public:
+  ~OwnedCounter() { cleanups++; }
+  int operator()(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+};
+
+int passthrough(int value) { return value; }
+
+int exercise() {
+  mut std::function<int(int) mut> counter{Counter()};
+  if (counter(3) != 3 || counter(4) != 7) { return 1; }
+  mut auto copy = counter.clone();
+  if (copy(2) != 9 || counter(1) != 8) { return 2; }
+  counter.replace(passthrough);
+  if (counter(5) != 5) { return 3; }
+  counter.reset();
+  if (!counter.empty()) { return 4; }
+  mut auto empty_copy = counter.clone();
+  if (!empty_copy.empty()) { return 5; }
+  mut std::move_only_function<int(int) mut> owned{OwnedCounter()};
+  if (owned(6) != 6) { return 6; }
+  mut auto moved = std::move(owned);
+  if (moved(7) != 13) { return 7; }
+  moved.replace(OwnedCounter());
+  if (cleanups != 1 || moved(1) != 1) { return 8; }
+  moved.reset();
+  if (cleanups != 2 || !moved.empty()) { return 9; }
+  return 0;
+}
+
+int main() {
+  int result = exercise();
+  if (result != 0) { return result; }
+  return cleanups - 2;
+}

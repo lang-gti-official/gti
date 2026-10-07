@@ -6,6 +6,7 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
@@ -2326,6 +2327,209 @@ int main() {
       "ordinary concrete C++ declarations after GTI selects them");
 }
 
+void testTypeOnlyConcreteAliases() {
+  const auto frontend = lang::Frontend().analyze("type-only-aliases.gti", R"(
+namespace sample {
+struct Value { int value = 0; };
+struct Box<T> { T value; };
+using Nested = Box<Box<Value>>;
+class Catalog {
+  using Entry = Box<Value>;
+public:
+  Catalog() {}
+};
+class Chain<T> {
+  using Next = Chain<Chain<T>>;
+  using Entry = Box<Value>;
+};
+}
+int main() { sample::Catalog catalog{}; return 0; }
+)");
+  expect(frontend.canGenerateCode(),
+         "unused namespace/member and recursive aliases pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto generated = gti_test::emitCpp(frontend, standard).contents;
+    std::size_t checked = 0;
+    const auto checkType = [&](const auto &self,
+                               const lang::SemanticType &type) -> void {
+      for (const auto &argument : type.arguments)
+        self(self, argument);
+      const auto name = lang::cppConcreteClassName(lowered, type);
+      if (!name)
+        return;
+      ++checked;
+      const auto forward = generated.find("struct " + *name + ";");
+      expect(forward != std::string::npos &&
+                 forward < generated.find("using Nested ="),
+             "every concrete alias component has its exact forward identity");
+      expect(generated.find("struct " + *name + " {") == std::string::npos,
+             "a type-only alias does not invent a concrete class layout");
+    };
+    for (const auto &row : lowered.declarations())
+      if (const auto *alias =
+              std::get_if<lang::LoweredTypeAliasDeclaration>(&row.payload))
+        checkType(checkType, alias->type);
+    expect(checked >= 2, "the test checks nested concrete alias applications");
+  }
+}
+
+void testNativeCarrierExactSpecializations() {
+  const auto frontend = lang::Frontend().analyze("exact-native-carrier.gti", R"(
+namespace sample {
+class Reader<T> {
+public:
+  int read() { return 1; }
+};
+}
+class sample::Reader<int> {
+public:
+  int read() { return 2; }
+};
+struct Unrelated {};
+int invoke<F>(F callback) { return callback(); }
+int main() {
+  sample::Reader<int> exact{};
+  sample::Reader<Unrelated> primary{};
+  return exact.read() + primary.read() + invoke([]() -> int { return 3; }) - 6;
+}
+)");
+  expect(
+      frontend.canGenerateCode(),
+      "exact specializations and a lexical callable share one valid program");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto generated = gti_test::emitCpp(frontend, standard).contents;
+    const auto primary = generated.find("class Reader {");
+    const auto exact = generated.find("class Reader<std::int32_t> {");
+    expect(
+        primary != std::string::npos && exact != std::string::npos &&
+            primary < exact,
+        "native carrier emits the selected exact definition after its primary");
+    expect(
+        generated.find("_Reader {") == std::string::npos,
+        "retained native carrier does not mix in direct concrete class ABIs");
+  }
+}
+
+void testCleanupFreeConstructorArguments() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  for (const bool fallible : {false, true}) {
+    std::string source = R"(
+struct Owner { ~Owner() {} };
+struct Item {
+  int value;
+  Item(int input) : value(input) {
+)";
+    if (fallible)
+      source += "int checked = 1 / input;";
+    source += R"(
+  }
+};
+expected<Owner, int> first() { return Owner(); }
+int consume(expected<Owner, int> owner, Item left, Item right) {
+  return left.value + right.value;
+}
+int exercise() { return consume(first(), Item(2), Item(3)); }
+int main() { return exercise() - 5; }
+)";
+    const auto frontend =
+        lang::Frontend().analyze("cleanup-free-arguments.gti", source,
+                                 {library / "prelude.gti"}, {}, {library});
+    expect(frontend.canGenerateCode(),
+           "cleanup-free constructor arguments retain valid source MIR");
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.message << '\n';
+      continue;
+    }
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      try {
+        expect(!gti_test::emitCppText(frontend, standard).empty(),
+               "plain and fallible constructors supply exact call arguments");
+      } catch (const std::exception &error) {
+        std::cerr << error.what() << '\n';
+        expect(false, "cleanup-free argument belongs to backend vocabulary");
+      }
+    }
+    lang::HirFunctionInstanceId exercise = 0;
+    lang::HirFunctionInstanceId consume = 0;
+    lang::HirFunctionInstanceId first = 0;
+    for (const auto &function : frontend.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto &name = function.source->name().lexeme;
+      if (name == "exercise")
+        exercise = function.id;
+      if (name == "consume")
+        consume = function.id;
+      if (name == "first")
+        first = function.id;
+    }
+    expect(exercise && consume && first,
+           "fixture retains exact call identities");
+    if (!exercise || !consume || !first)
+      continue;
+    for (unsigned mutation = 0; mutation < 4; ++mutation) {
+      auto malformed = frontend.mir;
+      auto &body = const_cast<lang::MirFunctionInstance *>(
+                       malformed.findFunctionInstance(exercise))
+                       ->body;
+      lang::MirInstruction *call = nullptr;
+      lang::MirBlockId consumerBlock = 0;
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.functionTarget == consume) {
+            call = &instruction;
+            consumerBlock = block.id;
+          }
+      expect(call && call->operands.size() == 3,
+             "mutation targets the exact three-argument consumer");
+      if (!call || call->operands.size() != 3)
+        continue;
+      if (mutation == 0)
+        call->operands[2] = call->operands[1];
+      if (mutation == 1)
+        call->parameterTypes[1] = lang::SemanticType::Int32;
+      if (mutation == 2)
+        call->functionTarget = first;
+      if (mutation == 3) {
+        lang::MirBlock bypass;
+        for (const auto &block : body.blocks)
+          bypass.id = std::max(bypass.id, block.id);
+        ++bypass.id;
+        bypass.terminator.kind = lang::MirTerminatorKind::Goto;
+        bypass.terminator.target = consumerBlock;
+        body.entry = bypass.id;
+        body.blocks.push_back(std::move(bypass));
+        lang::rebuildMirReachability(body);
+      }
+      expect(lang::rebuildMirValueUses(body),
+             "mutations rebuild the independent use census");
+      bool rejected = !lang::verifyMirProgram(malformed).valid();
+      if (!rejected) {
+        try {
+          static_cast<void>(gti_test::emitCpp(frontend, malformed, malformed));
+        } catch (const std::exception &) {
+          rejected = true;
+        }
+      }
+      expect(rejected,
+             "constructor argument admission fails closed on repeated use, "
+             "incoherent signatures/targets, or bypassed construction");
+    }
+  }
+}
+
 int main() {
   testImmutableProgramPlanOwnsOrderedText();
   testExhaustiveSealedInventory();
@@ -2352,6 +2556,9 @@ int main() {
   testReferenceReceiverCompoundAssignPlaceCoherence();
   testConcreteGenericFreeFunctionIdentity();
   testConcreteGenericClassAndMemberIdentity();
+  testTypeOnlyConcreteAliases();
+  testNativeCarrierExactSpecializations();
+  testCleanupFreeConstructorArguments();
 
   if (failures != 0) {
     std::cerr << failures

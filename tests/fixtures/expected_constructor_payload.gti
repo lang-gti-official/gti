@@ -1,0 +1,30 @@
+#include <std/optional>
+#include <std/string>
+#include <std/vector>
+
+class Marker {
+  int identity;
+public:
+  Marker(int value) : identity(value) {}
+  ~Marker() { std::println(this.identity); }
+};
+
+class Payload {
+  Marker first;
+  std::optional<std::string> text;
+  int number;
+public:
+  Payload(int divisor)
+      : first(Marker(1)),
+        text(std::optional<std::string>(std::string("payload"))),
+        number(12 / divisor) {}
+  ~Payload() { std::println(2); }
+  int value() { return this.number; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Marker caller{9};
+  expected<Payload, int> result = Payload(2 - argc);
+  std::println(result.value().value());
+  return 0;
+}

@@ -272,9 +272,19 @@ void observeFailure(const gti_failure_record_v1 *, void *opaque) {
                                                      std::memory_order_relaxed);
 }
 
+struct HandoffStateProbe {
+  bool emergency;
+  ~HandoffStateProbe() {
+    expect(gti_runtime_detail::managed_cleanup_emergency_handoff_active() ==
+               emergency,
+           "only explicit cleanup-emergency handoff permits abandonment");
+  }
+};
+
 void runFailingTask(void *opaque) {
   auto &context = *static_cast<FailureContext *>(opaque);
   gti_runtime_detail::run_managed_task_adapter([&] {
+    HandoffStateProbe ordinary{false};
     gti_rt_failure_terminate_v1(&context.record, context.artifact,
                                 observeFailure, context.observers);
   });
@@ -337,13 +347,31 @@ struct CleanupFailureContext {
 
 void runCleanupFailingTask(void *opaque) {
   auto &context = *static_cast<CleanupFailureContext *>(opaque);
+  // A foreign native exception cannot enable representation abandonment.
+  try {
+    HandoffStateProbe foreign{false};
+    throw 1;
+  } catch (int) {
+  }
   gti_runtime_detail::run_managed_task_adapter([&] {
+    HandoffStateProbe emergency{true};
     gti_rt_failure_terminate_cleanup_v1(
         &context.failure, context.primaryArtifact, context.secondaryArtifact);
   });
+  expect(!gti_runtime_detail::managed_cleanup_emergency_handoff_active(),
+         "generated adapter catch clears emergency abandonment");
+}
+
+void runCleanupFailingTaskWithoutAdapter(void *opaque) {
+  auto &context = *static_cast<CleanupFailureContext *>(opaque);
+  HandoffStateProbe emergency{true};
+  gti_rt_failure_terminate_cleanup_v1(&context.failure, context.primaryArtifact,
+                                      context.secondaryArtifact);
 }
 
 void destroyCleanupFailingTask(void *opaque) {
+  expect(!gti_runtime_detail::managed_cleanup_emergency_handoff_active(),
+         "task cleanup is outside the emergency handoff window");
   auto *context = static_cast<CleanupFailureContext *>(opaque);
   context->destructions->fetch_add(1, std::memory_order_relaxed);
   delete context;
@@ -399,6 +427,17 @@ void testWorkerCleanupFailureHandoff() {
          "join should return the worker's exact cleanup emergency envelope");
   expect(destructions.load(std::memory_order_relaxed) == 1,
          "cleanup emergency handoff should destroy task state exactly once");
+  spawn = gti_rt_thread_spawn_v1(
+      runCleanupFailingTaskWithoutAdapter,
+      new CleanupFailureContext{&destructions, original, &primaryArtifact,
+                                &secondaryArtifact},
+      destroyCleanupFailingTask);
+  expect(spawn.status == GTI_THREAD_SPAWN_OK_V1,
+         "defensive runtime handoff setup spawns successfully");
+  const auto defensiveJoin = gti_rt_thread_join_v1(&spawn.state);
+  expect(defensiveJoin.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
+             destructions.load(std::memory_order_relaxed) == 2,
+         "defensive runtime catch also clears abandonment before task cleanup");
 }
 
 struct TaskCleanupFailureContext {
@@ -480,6 +519,126 @@ void testTaskObjectCleanupFailureHandoff() {
          "task cleanup must not invoke the hosted failure observer");
   expect(destructions.load(std::memory_order_relaxed) == 1,
          "task cleanup failure should still release its context exactly once");
+}
+
+struct PanicContext {
+  std::atomic<int> *destructions;
+  std::atomic<int> *observers;
+  gti_failure_record_v2 primary;
+  gti_failure_record_v2 secondary;
+  bool failCleanup;
+};
+
+void observePanic(const gti_failure_record_v2 *, void *opaque) {
+  static_cast<std::atomic<int> *>(opaque)->fetch_add(1,
+                                                     std::memory_order_relaxed);
+}
+
+void runPanicTask(void *opaque) {
+  auto &context = *static_cast<PanicContext *>(opaque);
+  gti_runtime_detail::run_managed_task_adapter([&] {
+    gti_rt_failure_terminate_v2(&context.primary, nullptr, observePanic,
+                                context.observers);
+  });
+}
+
+void destroyPanicTask(void *opaque) {
+  auto *context = static_cast<PanicContext *>(opaque);
+  context->destructions->fetch_add(1, std::memory_order_relaxed);
+  if (context->failCleanup) {
+    expect(gti_runtime_detail::record_managed_task_cleanup_failure(
+               context->secondary, nullptr),
+           "panic during task cleanup uses the worker-owned failure channel");
+    expect(!gti_runtime_detail::managed_cleanup_emergency_handoff_active(),
+           "stored task-cleanup emergency is not an active private handoff");
+  }
+  // Wiping task-owned source records proves the join does not retain pointers.
+  std::memset(&context->primary, 0, sizeof(context->primary));
+  std::memset(&context->secondary, 0, sizeof(context->secondary));
+  delete context;
+}
+
+void testPanicHandoff() {
+  std::atomic<int> destructions{0};
+  std::atomic<int> observers{0};
+  gti_failure_record_v2 primary{.abi_version = GTI_FAILURE_ABI_VERSION_V2,
+                                .code = GTI_FAILURE_CODE_PANIC_V2,
+                                .detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2};
+  (void)gti_rt_failure_capture_panic_v2(
+      &primary, {.data = "worker failed", .length = 13});
+  auto secondary = primary;
+  (void)gti_rt_failure_capture_panic_v2(
+      &secondary, {.data = "cleanup failed", .length = 14});
+  for (bool failCleanup : {false, true}) {
+    auto spawn = gti_rt_thread_spawn_v1(
+        runPanicTask,
+        new PanicContext{&destructions, &observers, primary, secondary,
+                         failCleanup},
+        destroyPanicTask);
+    expect(spawn.status == GTI_THREAD_SPAWN_OK_V1,
+           "panic handoff setup spawns a worker");
+    const auto join = gti_rt_thread_join_v2(&spawn.state);
+    expect(join.abi_version == GTI_THREAD_ABI_VERSION_V2 &&
+               join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1 &&
+               spawn.state == nullptr,
+           "v2 join consumes the failed worker state exactly once");
+    if (failCleanup) {
+      expect(join.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
+                 join.cleanup_failure.abi_version ==
+                     GTI_FAILURE_ABI_VERSION_V2 &&
+                 std::memcmp(&join.cleanup_failure.primary, &primary,
+                             sizeof(primary)) == 0 &&
+                 std::memcmp(&join.cleanup_failure.secondary, &secondary,
+                             sizeof(secondary)) == 0,
+             "worker cleanup preserves both exact panic messages by value");
+    } else {
+      expect(join.failure_kind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1 &&
+                 std::memcmp(&join.failure, &primary, sizeof(primary)) == 0,
+             "ordinary worker handoff preserves the complete panic message by "
+             "value");
+    }
+  }
+  expect(
+      observers.load() == 0 && destructions.load() == 2,
+      "worker panics do not invoke hosted observers and clean task state once");
+
+  auto valueSpawn = gti_rt_thread_spawn_value_v1(
+      runPanicTask,
+      new PanicContext{&destructions, &observers, primary, secondary, false},
+      +[](void *) -> void * { std::terminate(); }, destroyPanicTask,
+      +[](void *, void *) { std::terminate(); },
+      +[](void *) { std::terminate(); });
+  const auto valueJoin = gti_rt_thread_join_value_v2(&valueSpawn.state);
+  expect(
+      valueJoin.join.status == GTI_THREAD_JOIN_WORKER_FAILURE_V1 &&
+          valueJoin.join.failure_kind ==
+              GTI_THREAD_WORKER_FAILURE_ORDINARY_V1 &&
+          std::memcmp(&valueJoin.join.failure, &primary, sizeof(primary)) ==
+              0 &&
+          valueJoin.result_context == nullptr &&
+          valueJoin.take_result == nullptr &&
+          valueJoin.abandon_result == nullptr && valueSpawn.state == nullptr &&
+          destructions.load() == 3 && observers.load() == 0,
+      "value-bearing worker panic abandons the task and publishes no result");
+
+  const gti_failure_record_v1 legacy{.abi_version = GTI_FAILURE_ABI_VERSION_V1,
+                                     .code =
+                                         GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
+                                     .detail = GTI_FAILURE_DETAIL_ADDITION_V1};
+  auto spawn = gti_rt_thread_spawn_v1(
+      runFailingTask,
+      new FailureContext{&observers, &destructions, legacy, nullptr},
+      destroyFailingTask);
+  const auto joined = gti_rt_thread_join_v2(&spawn.state);
+  expect(joined.failure.abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
+             joined.failure.code == legacy.code &&
+             joined.failure.detail == legacy.detail &&
+             joined.failure.message_size == 0 &&
+             joined.failure.message_flags == 0 &&
+             gti_rt_failure_validate_v2(&joined.failure, nullptr) ==
+                 GTI_FAILURE_REPORT_OK_V1,
+         "v2 join promotes legacy failures without inventing a message or "
+         "changing origin");
 }
 
 void testRepeatedSpawnJoin() {
@@ -565,6 +724,12 @@ static_assert(std::is_standard_layout_v<gti_thread_spawn_result_v1> &&
               std::is_trivially_copyable_v<gti_thread_spawn_result_v1>);
 static_assert(std::is_standard_layout_v<gti_thread_join_result_v1> &&
               std::is_trivially_copyable_v<gti_thread_join_result_v1>);
+static_assert(std::is_standard_layout_v<gti_thread_join_result_v2> &&
+              std::is_trivially_copyable_v<gti_thread_join_result_v2>);
+static_assert(sizeof(gti_thread_join_result_v2) == 1744);
+static_assert(offsetof(gti_thread_join_result_v2, failure) == 16);
+static_assert(offsetof(gti_thread_value_join_result_v2, result_context) ==
+              sizeof(gti_thread_join_result_v2));
 static_assert(std::is_standard_layout_v<gti_thread_value_join_result_v1> &&
               std::is_trivially_copyable_v<gti_thread_value_join_result_v1>);
 static_assert(offsetof(gti_thread_spawn_result_v1, state) == 8);
@@ -583,6 +748,7 @@ int main() {
   testWorkerFailureHandoff();
   testWorkerCleanupFailureHandoff();
   testTaskObjectCleanupFailureHandoff();
+  testPanicHandoff();
   testRepeatedSpawnJoin();
   testSimultaneousWorkers();
   return failures == 0 ? 0 : 1;

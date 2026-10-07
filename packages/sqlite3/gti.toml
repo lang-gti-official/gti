@@ -1,0 +1,14 @@
+manifest-version = 1
+
+[package]
+name = "gti-sqlite3"
+version = "0.1.0"
+
+[package.native]
+include-dirs = ["vendor/sqlite3", "native"]
+c-sources = ["vendor/sqlite3/sqlite3.c", "native/adapter.c"]
+c-compile-args = ["-DSQLITE_THREADSAFE=1", "-DSQLITE_OMIT_LOAD_EXTENSION=1"]
+
+[[package.native.platforms]]
+os = "linux"
+libraries = ["m", "dl", "pthread"]

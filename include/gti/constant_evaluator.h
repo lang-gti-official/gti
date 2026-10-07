@@ -129,6 +129,9 @@ struct ConstantEvaluation {
   [[nodiscard]] explicit operator bool() const { return value.has_value(); }
 };
 
+[[nodiscard]] ConstantEvaluation
+convertConstantToType(const ConstantValue &value, const SemanticType &target);
+
 [[nodiscard]] ConstantInteger makeConstantInteger(CheckedIntegerValue value,
                                                   CheckedIntegerDomain domain);
 [[nodiscard]] CheckedIntegerValue
@@ -166,6 +169,15 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
 [[nodiscard]] ConstantEvaluation
 evaluateConstantLogical(TokenKind operation, const ConstantValue &left,
                         const ConstantValue &right);
+// Literal-backed text uses owned bytes in ConstantValue. These kernels are
+// independent of AST spelling and can also serve staged MIR evaluation.
+[[nodiscard]] ConstantEvaluation
+evaluateConstantTextSize(const ConstantValue &text);
+[[nodiscard]] ConstantEvaluation
+evaluateConstantTextEmpty(const ConstantValue &text);
+[[nodiscard]] ConstantEvaluation
+evaluateConstantTextIndex(const ConstantValue &text,
+                          const ConstantValue &index);
 [[nodiscard]] ConstantEvaluation
 convertConstantInteger(const ConstantValue &value, CheckedIntegerDomain target);
 [[nodiscard]] ConstantEvaluation

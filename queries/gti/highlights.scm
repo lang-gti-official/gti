@@ -14,6 +14,9 @@
 (nullptr_literal) @constant.builtin
 (this_expression) @variable.builtin
 
+(designated_initializer
+  field: (identifier) @variable.member)
+
 (primitive_type) @type.builtin
 [
   "nullptr_t"
@@ -35,9 +38,16 @@
     name: (identifier) @type.definition))
 (class_attribute_list
   attribute: (identifier) @attribute)
+(function_declaration "unsafe" @keyword)
+(function_contract_attribute ["noreturn" "track_caller" "discardable"] @attribute)
+(borrow_origin_attribute "borrowed_from" @attribute)
+(borrow_origin_attribute origin: (identifier) @variable.parameter)
 (native_c_array_attribute
   attribute: (identifier) @attribute
   count: (identifier) @variable.parameter)
+(native_link_name_attribute
+  attribute: (identifier) @attribute
+  symbol: (string_literal) @string)
 (enum_declaration
   name: (identifier) @type.definition)
 (enumerator
@@ -69,6 +79,10 @@
   parameter: (identifier) @type.parameter)
 (concept_application
   name: (identifier) @type)
+(member_requirement_expression
+  binding: (identifier) @variable.parameter
+  receiver: (identifier) @variable.parameter
+  member: (identifier) @function.method)
 (concept_application
   name: (scoped_identifier
     name: (identifier) @type))
@@ -173,10 +187,15 @@
 
 [
   "#include"
+  "import"
 ] @keyword.import
+
+(module_declaration name: (identifier) @module)
+(module_name (identifier) @module)
 
 [
   "namespace"
+  "module"
   "class"
   "concept"
   "interface"
@@ -196,6 +215,7 @@
   "virtual"
   "override"
   "extern"
+  "export"
 ] @keyword.modifier
 
 ; The shipped ABI-14 parser preserves error recovery as an identifier. Keep
@@ -205,7 +225,7 @@
     "alignas" "and_eq" "asm" "bitand" "bitor" "catch" "char8_t"
     "char16_t" "char32_t" "compl" "const_cast" "consteval" "constinit"
     "co_await" "co_return" "co_yield" "decltype" "delete" "dynamic_cast"
-    "explicit" "export" "friend" "goto" "inline" "long" "mutable" "new"
+    "explicit" "friend" "goto" "inline" "long" "mutable" "new"
     "noexcept" "not" "not_eq" "or_eq" "protected" "register"
     "reinterpret_cast" "short" "signed" "static_cast"
     "template" "thread_local" "throw" "try" "typedef" "typeid" "typename"
@@ -229,7 +249,7 @@
 ] @keyword.repeat
 
 "return" @keyword.return
-"unsafe" @keyword
+(unsafe_statement "unsafe" @keyword)
 "unexpected" @keyword
 "requires" @keyword
 (layout_query_expression
@@ -308,6 +328,12 @@
 ] @keyword.operator
 
 (generic_parameter_clause
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+
+(generic_signature_pattern_clause
   [
     "<"
     ">"

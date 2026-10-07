@@ -1,0 +1,154 @@
+#include <std/resource>
+#include <std/memory>
+#include <std/numeric>
+
+namespace std {
+/// Growable resource-backed storage transfers elements by structural relocation.
+concept resource_vector_element<T> = std::movable<T> && std::relocatable<T>
+    && std::layout_queryable<T>;
+
+namespace detail {
+class resource_vector_sentinel {
+  size_t finish;
+public:
+  resource_vector_sentinel(size_t finish) : finish(finish) {}
+  size_t position() { return this.finish; }
+};
+
+class resource_vector_iterator<T, std::memory_resource R> {
+  resource_storage<T, R>& slots;
+  mut size_t position;
+public:
+  resource_vector_iterator(resource_storage<T, R>& slots, size_t position)
+      : slots(slots), position(position) {}
+  T& operator*() { return this.slots.get(this.position); }
+  void operator++() mut { this.position++; }
+  bool operator!=(resource_vector_sentinel& end) {
+    return this.position != end.position();
+  }
+};
+}
+
+/// A contiguous, move-only sequence retaining one checked resource binding.
+/// Moving the owner transfers that binding and does not move its elements.
+/// Growth preserves the old sequence on recoverable allocation failure.
+/// Assignment and implicit propagation between resources are not supported.
+class resource_vector<std::resource_vector_element T, std::memory_resource R> {
+  mut resource_storage<T, R> slots;
+  mut size_t live = 0;
+
+  expected<void, alloc_errc> try_grow_for_one() mut {
+    if (this.live < this.capacity()) { return; }
+    // GTI's public size_t is uint64_t; the storage boundary additionally
+    // checks the native target's representable byte extent.
+    size_t maximum = MAX_UINT64;
+    if (this.live == maximum) {
+      return unexpected(alloc_errc::size_overflow);
+    }
+    mut size_t grown = this.capacity();
+    if (grown == size_t(0)) {
+      grown = size_t(4);
+    } else if (grown <= maximum / size_t(2)) {
+      grown *= size_t(2);
+    } else {
+      grown = maximum;
+    }
+    return this.try_reserve(grown);
+  }
+
+public:
+  resource_vector(resource_ref<R> resource)
+      : slots(resource_storage<T, R>(resource)) {}
+  resource_vector(resource_vector<T, R>& other) = delete;
+  resource_vector(resource_vector<T, R>&& other) = default;
+
+  size_t size() { return this.live; }
+  size_t capacity() { return this.slots.capacity(); }
+  bool empty() { return this.live == size_t(0); }
+
+  expected<void, alloc_errc> try_reserve(size_t requested) mut {
+    return this.slots.try_reserve_prefix(requested, this.live);
+  }
+
+  void reserve(size_t requested) mut {
+    this.try_reserve(requested).expect("resource_vector could not reserve storage");
+  }
+
+  /// The argument is consumed even if allocation fails; existing elements stay.
+  expected<void, alloc_errc> try_push_back(T value) mut {
+    auto grown = this.try_grow_for_one();
+    if (!grown) { return unexpected(grown.error()); }
+    this.slots.emplace(this.live, std::move(value));
+    this.live++;
+    return;
+  }
+
+  void push_back(T value) mut {
+    this.try_push_back(std::move(value)).expect("resource_vector could not grow");
+  }
+
+  /// A failing constructor keeps its original failure and publishes no element.
+  expected<void, alloc_errc> try_emplace_back<Args...>(Args... args) mut {
+    auto grown = this.try_grow_for_one();
+    if (!grown) { return unexpected(grown.error()); }
+    this.slots.emplace(this.live, args...);
+    this.live++;
+    return;
+  }
+
+  void emplace_back<Args...>(Args... args) mut {
+    this.try_emplace_back(args...).expect("resource_vector could not grow");
+  }
+
+  T& get(size_t index) {
+    gti_internal::index_bounds_check(index, this.live);
+    return this.slots.get(index);
+  }
+
+  mut T& get_mut(size_t index) mut {
+    gti_internal::index_bounds_check(index, this.live);
+    return this.slots.get_mut(index);
+  }
+
+  T& operator[](size_t index) { return this.get(index); }
+  mut T& operator[](size_t index) mut { return this.get_mut(index); }
+  T& front() { return this.get(size_t(0)); }
+  mut T& front() mut { return this.get_mut(size_t(0)); }
+
+  T& back() {
+    gti_internal::index_bounds_check(size_t(0), this.live);
+    return this.slots.get(this.live - size_t(1));
+  }
+
+  mut T& back() mut {
+    gti_internal::index_bounds_check(size_t(0), this.live);
+    return this.slots.get_mut(this.live - size_t(1));
+  }
+
+  void pop_back() mut {
+    gti_internal::index_bounds_check(size_t(0), this.live);
+    this.live--;
+    this.slots.destroy(this.live);
+  }
+
+  void clear() mut {
+    while (this.live > size_t(0)) {
+      this.live--;
+      this.slots.destroy(this.live);
+    }
+  }
+
+  void release() mut {
+    this.live = size_t(0);
+    this.slots.release();
+  }
+
+  detail::resource_vector_iterator<T, R> begin() {
+    return detail::resource_vector_iterator<T, R>(this.slots, size_t(0));
+  }
+
+  detail::resource_vector_sentinel end() {
+    return detail::resource_vector_sentinel(this.live);
+  }
+};
+}

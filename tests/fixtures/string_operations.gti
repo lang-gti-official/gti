@@ -1,0 +1,68 @@
+#include <std/string>
+
+int main() {
+  std::string empty{};
+  std::string text{"abcabc\0tail"};
+  if (empty.find("") != 0 || empty.find('a') != std::string::npos ||
+      empty.rfind("") != 0 || !empty.starts_with("") || !empty.ends_with("")) { return 1; }
+  if (text.find("abc") != 0 || text.find("abc", std::size_t(1)) != 3 ||
+      text.find('\0') != 6 || text.find("tail") != 7 || text.find("no") != std::string::npos) { return 2; }
+  if (text.find("", text.size()) != text.size() ||
+      text.find("", std::string::npos) != std::string::npos ||
+      text.find('a', std::string::npos) != std::string::npos) { return 3; }
+  if (text.rfind("abc") != 3 || text.rfind("abc", std::size_t(2)) != 0 ||
+      text.rfind('a') != 8 || text.rfind('a', std::size_t(2)) != 0 ||
+      text.rfind('z') != std::string::npos || text.rfind("") != text.size()) { return 4; }
+  if (!text.contains("c\0t") || !text.contains('\0') || !text.starts_with("abc") ||
+      !text.starts_with('a') || !text.ends_with("tail") || !text.ends_with('l') ||
+      text.starts_with("abcabc\0tail!") || text.ends_with('x')) { return 5; }
+  auto all = text.substr();
+  auto tail = text.substr(std::size_t(7));
+  auto clipped = text.substr(std::size_t(7), std::string::npos);
+  auto middle = text.substr(std::size_t(2), std::size_t(5));
+  auto end = text.substr(text.size());
+  if (all != text || tail != "tail" || clipped != "tail" || middle != "cabc\0" || !end.empty()) { return 6; }
+
+  mut std::string edited{"abcd"};
+  edited.reserve(std::size_t(64));
+  edited.insert(std::size_t(2), "XY");
+  if (edited != "abXYcd" || edited.capacity() != 64) { return 7; }
+  edited.replace(std::size_t(1), std::size_t(4), "Q");
+  if (edited != "aQd" || edited.capacity() != 64) { return 8; }
+  edited.replace(std::size_t(1), std::size_t(1), "12345");
+  if (edited != "a12345d") { return 9; }
+  edited.replace(std::size_t(1), std::size_t(5), "98765");
+  if (edited != "a98765d") { return 10; }
+  edited.insert(edited.size(), "\0!");
+  if (edited.size() != 9 || edited[7] != '\0' || edited[8] != '!') { return 11; }
+  edited.erase(std::size_t(2), std::size_t(3));
+  if (edited != "a95d\0!") { return 12; }
+  edited.erase(std::size_t(2));
+  if (edited != "a9") { return 13; }
+  edited.erase(edited.size(), std::string::npos);
+  edited.insert(std::size_t(0), "front");
+  if (edited != "fronta9") { return 14; }
+  edited.erase();
+  edited.replace(std::size_t(0), std::string::npos, "new");
+  if (edited != "new" || edited.compare("new") != 0 || edited.compare("next") >= 0) { return 15; }
+  // A slice owns its bytes independently of subsequent source mutation.
+  auto snapshot = edited.substr();
+  edited.clear();
+  if (snapshot != "new") { return 16; }
+  // Exact-capacity strings force insert and replacement through reallocation.
+  mut std::string growing{"ab"};
+  std::string addition{"0123456789"};
+  growing.insert(std::size_t(1), addition);
+  if (growing != "a0123456789b" || addition != "0123456789") { return 17; }
+  growing.shrink_to_fit();
+  growing.replace(std::size_t(1), std::size_t(1), addition.view());
+  if (growing != "a0123456789123456789b") { return 18; }
+  if (!growing.contains(addition) || growing.find(addition) != 1 ||
+      growing.find(addition, std::size_t(0)) != 1 || growing.rfind(addition) != 1 ||
+      growing.rfind(addition, growing.size()) != 1 ||
+      !addition.starts_with(addition) || !addition.ends_with(addition) ||
+      addition.compare(addition) != 0) { return 19; }
+  growing.replace(std::size_t(0), std::string::npos, addition);
+  if (growing != addition) { return 20; }
+  return 0;
+}

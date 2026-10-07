@@ -1,0 +1,9 @@
+#include <std/cthread>
+extern "C" { void once_terminal(); }
+void initialize() {}
+int main() {
+  once_terminal();
+  const std::once_flag* flag = nullptr;
+  unsafe { std::call_once(flag, initialize); }
+  return 1;
+}

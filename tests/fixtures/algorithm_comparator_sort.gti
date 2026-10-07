@@ -1,0 +1,91 @@
+#include <std/algorithm>
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+mut uint64_t comparisons = 0;
+mut int comparator_drops = 0;
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+class Ordering {
+  std::string label;
+  bool descending;
+  mut uint64_t calls = uint64_t(0);
+public:
+  Ordering(bool descending) : label(std::string("owning comparator")), descending(descending) {}
+  Ordering(Ordering& other) = delete;
+  Ordering(Ordering&& other) = default;
+  ~Ordering() {
+    if (this.calls != comparisons) { std::panic("comparator state was not retained"); }
+    comparator_drops++;
+  }
+  bool operator()(int& left, int& right) mut {
+    this.calls++;
+    comparisons++;
+    return this.descending ? left > right : left < right;
+  }
+};
+
+int exercise(int count, int shape, bool descending) {
+  mut std::vector<int> values{};
+  mut std::vector<int> frequencies{};
+  values.reserve(std::size_t(count));
+  frequencies.resize(std::size_t(count));
+  for (mut int i = 0; i < count; i++) {
+    mut int value = i;
+    if (shape == 0) { value = count - i - 1; }
+    if (shape == 2) { value = 0; }
+    if (shape == 3) { value = i <= count / 2 ? i : count - i; }
+    if (shape == 4) { value = i % 2 == 0 && i + 1 < count ? i + 1 : i - 1; }
+    if (shape == 5) { value = (i * 137 + 43) % count; }
+    values.push_back(value);
+    frequencies[std::size_t(value)]++;
+  }
+  comparisons = uint64_t(0);
+  int drops_before = comparator_drops;
+  Ordering ordering{descending};
+  unsafe { adoption_count_begin(); }
+  std::sort(values, std::move(ordering));
+  mut uint64_t allocations = uint64_t(0);
+  unsafe {
+    adoption_count_end();
+    allocations = adoption_allocations();
+  }
+  if (allocations != uint64_t(0)) { return 6; }
+  if (comparator_drops != drops_before + 1) { return 1; }
+  for (mut std::size_t i = std::size_t(0); i < values.size(); i++) {
+    int current = values[i];
+    if (current < 0 || current >= count) { return 2; }
+    frequencies[std::size_t(current)]--;
+    if (i > std::size_t(0)) {
+      int previous = values[i - std::size_t(1)];
+      if (descending ? previous < current : previous > current) { return 3; }
+    }
+  }
+  for (auto& remaining : frequencies) { if (remaining != 0) { return 4; } }
+  // 2*n*(ceil(log2(n))+1) bounds both heap construction and extraction.
+  mut uint64_t levels = uint64_t(0);
+  mut std::size_t width = std::size_t(1);
+  while (width < values.size()) { width *= std::size_t(2); levels++; }
+  if (comparisons > uint64_t(2) * uint64_t(count) * (levels + uint64_t(1))) { return 7; }
+  if (shape == 0 && !descending) { std::println(comparisons); }
+  return 0;
+}
+
+int main() {
+  for (mut int count = 128; count <= 1024; count *= 2) {
+    for (mut int shape = 0; shape < 6; shape++) {
+      int result = exercise(count, shape, false);
+      if (result != 0) { return result; }
+      int reverse = exercise(count, shape, true);
+      if (reverse != 0) { return reverse; }
+    }
+  }
+  if (exercise(0, 1, false) != 0 || exercise(1, 1, false) != 0) { return 5; }
+  return 0;
+}

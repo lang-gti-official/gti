@@ -1,0 +1,42 @@
+#include <std/functional>
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int identity;
+  int cleanup_divisor;
+public:
+  Token(int identity, int cleanup_divisor = 1)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.identity);
+    int checked = 1 / this.cleanup_divisor;
+  }
+  int read() { return 14; }
+};
+
+int later(int divisor) {
+  std::println(2);
+  return 6 / divisor;
+}
+
+int combine(int first, int second) {
+  std::println(3);
+  return first + second;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{99};
+  mut std::move_only_function<int() &&> callback{};
+  if (argc != 4) {
+    Token resource{7, argc >= 5 ? 0 : 1};
+    int divisor = argc == 2 || argc == 6 ? 0 : 1;
+    callback.replace([value = std::move(resource), divisor]() -> int {
+      std::println(1);
+      return value.read() / divisor;
+    });
+  }
+  int result = combine(std::move(callback)(), later(argc == 3 || argc == 7 ? 0 : 1));
+  std::println(5);
+  return result - 20;
+}

@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimization/report.h"
@@ -148,6 +149,451 @@ std::size_t operatorDischarges(const lang::OptimizedProgram &optimized,
     }
   }
   return count;
+}
+
+void testClosedCallMutableInputInvalidation() {
+  const std::string source = R"(
+mut int32_t shared = 0;
+void set_max(mut int32_t& value) { value = 2147483647; }
+void forward_set(mut int32_t& value) { set_max(value); }
+void set_global() { shared = 2147483647; }
+void observe(int32_t& value) { int32_t copy = value; }
+void opaque();
+int32_t exact_leaf() { return 7; }
+int32_t exact_nested() { return exact_leaf(); }
+
+class View {
+  mut int32_t& value;
+public:
+  View(mut int32_t& source) : value(source) {}
+  void set_maximum() mut {
+    mut int32_t& target = this.value;
+    target = 2147483647;
+  }
+};
+class Counter {
+  mut int32_t value = 0;
+public:
+  Counter() {}
+  void set(int32_t replacement) mut { this.value = replacement; }
+  int32_t get() { return this.value; }
+};
+
+int32_t direct() {
+  mut int32_t value = 0;
+  set_max(value);
+  return value + int32_t(1);
+}
+int32_t forwarded() {
+  mut int32_t value = 0;
+  forward_set(value);
+  return value + int32_t(1);
+}
+int32_t projected() {
+  mut int32_t values[2] = {0, 0};
+  set_max(values[1]);
+  return values[1] + int32_t(1);
+}
+int32_t carrier() {
+  mut int32_t value = 0;
+  { mut View view{value}; view.set_maximum(); }
+  return value + int32_t(1);
+}
+int32_t carrier_shell() {
+  mut int32_t value = 0;
+  {
+    mut View view{value};
+    mut View& shell = view;
+    shell.set_maximum();
+  }
+  return value + int32_t(1);
+}
+int32_t local_reference() {
+  mut int32_t value = 0;
+  { mut int32_t& alias = value; set_max(alias); }
+  return value + int32_t(1);
+}
+int32_t global() {
+  shared = 0;
+  set_global();
+  return shared + int32_t(1);
+}
+int32_t global_loop() {
+  shared = 0;
+  for (mut int32_t index = 0; index < 2; index++) {
+    set_global();
+    shared = shared + int32_t(1);
+  }
+  return shared;
+}
+int32_t unresolved() {
+  mut int32_t value = 0;
+  opaque();
+  return value + int32_t(1);
+}
+int32_t unrelated() {
+  mut int32_t value = 0;
+  mut int32_t other = 0;
+  set_max(other);
+  return value + int32_t(1);
+}
+int32_t readonly() {
+  mut int32_t value = 0;
+  observe(value);
+  return value + int32_t(1);
+}
+int32_t nested_exact() {
+  mut int32_t value = 0;
+  [[discard]] exact_nested();
+  return value + int32_t(1);
+}
+int32_t object_postcondition() {
+  mut Counter counter{};
+  counter.set(7);
+  return counter.get() + int32_t(1);
+}
+int32_t main() {
+  if (shared == 0) { return direct(); }
+  if (shared == 1) { return forwarded(); }
+  if (shared == 2) { return projected(); }
+  if (shared == 3) { return carrier(); }
+  if (shared == 4) { return global(); }
+  if (shared == 5) { return global_loop(); }
+  if (shared == 6) { return carrier_shell(); }
+  if (shared == 7) { return local_reference(); }
+  if (shared == 8) { return unrelated(); }
+  if (shared == 9) { return readonly(); }
+  if (shared == 10) { return nested_exact(); }
+  if (shared == 11) { return object_postcondition(); }
+  return unresolved();
+}
+)";
+  const auto frontend =
+      lang::Frontend().analyze("closed-call-mutable-inputs.gti", source);
+  expect(frontend.canGenerateCode(),
+         "closed mutable-input fixtures must pass source analysis");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  const auto *direct = findFunction(frontend, "direct");
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = direct ? direct->id : 0};
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  std::optional<lang::MirInstructionId> addition;
+  std::optional<lang::MirSafetyDischarge> discharge;
+  if (body) {
+    for (const auto &block : body->blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.operation != lang::MirOperation::Add)
+          continue;
+        for (std::size_t origin = 0;
+             origin < instruction.definedFailure.localOrigins.size();
+             ++origin) {
+          for (const auto outcome :
+               instruction.definedFailure.localOrigins[origin].outcomes) {
+            if (outcome.code == lang::DefinedFailureCode::IntegerOverflow) {
+              addition = instruction.id;
+              discharge = lang::MirSafetyDischarge{
+                  .family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                  .origin = origin,
+                  .outcome = outcome};
+            }
+          }
+        }
+      }
+    }
+  }
+  expect(addition && discharge,
+         "the direct call client must retain an exact overflow origin");
+  const auto closed = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
+  expect(
+      closed.converged,
+      "closed-call mutable-input analysis must converge within its budget: " +
+          std::to_string(closed.iterations) + " rounds");
+  for (const std::string_view name :
+       {"direct", "forwarded", "projected", "carrier", "carrier_shell",
+        "local_reference", "global", "global_loop", "unrelated", "readonly",
+        "nested_exact", "object_postcondition"}) {
+    const auto *function = findFunction(frontend, name);
+    const auto *context =
+        function ? closed.find({lang::MirBodyKind::Function, function->id})
+                 : nullptr;
+    expect(context && context->reached,
+           std::string(name) + " must be reached by the contextual analysis");
+  }
+  const lang::OptimizationPipeline pipeline;
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+        lang::OptimizationLevel::O3}) {
+    const auto optimized = pipeline.run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(), "mutable call invalidation must remain verified");
+    for (const std::string_view name :
+         {"direct", "forwarded", "projected", "carrier", "carrier_shell",
+          "local_reference", "global", "unresolved"}) {
+      expect(
+          functionOperationDischarges(
+              frontend, optimized, name,
+              lang::MirSafetyCheckFamily::ArithmeticOverflow,
+              lang::MirOperation::Add) == 0,
+          "mutated referent facts must not discharge the following overflow");
+    }
+    if (level == lang::OptimizationLevel::O0)
+      continue;
+    for (const std::string_view name :
+         {"unrelated", "readonly", "nested_exact", "object_postcondition"}) {
+      const auto actual = functionOperationDischarges(
+          frontend, optimized, name,
+          lang::MirSafetyCheckFamily::ArithmeticOverflow,
+          lang::MirOperation::Add);
+      expect(actual == 1, std::string(name) +
+                              " must preserve its exact "
+                              "post-call proof: " +
+                              std::to_string(actual) + " actual, 1 expected");
+    }
+    expect(functionOperationDischarges(
+               frontend, optimized, "global_loop",
+               lang::MirSafetyCheckFamily::ArithmeticOverflow,
+               lang::MirOperation::Add) == 1,
+           "global mutation must block the affected recurrence while keeping "
+           "the independent loop counter provable");
+    expect(lang::verifyMirOptimizationCoherence(
+               frontend.mir, optimized.mir, optimized.report.transformations)
+               .valid(),
+           "mutable call invalidation evidence must independently replay");
+    if (addition && discharge) {
+      auto forged = optimized.mir;
+      for (auto &block : lang::findMirBody(forged, address)->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == *addition)
+            instruction.safetyDischarges.push_back(*discharge);
+      expect(!lang::verifyMirOptimizationCoherence(
+                  frontend.mir, forged, optimized.report.transformations)
+                  .valid(),
+             "replay must reject a fabricated post-mutation safety discharge");
+    }
+  }
+  if (addition && discharge) {
+    auto candidate = frontend.mir;
+    const std::string before = lang::MirPrinter().print(candidate);
+    lang::MirEditor editor(candidate, "forged-mutable-call-proof");
+    editor.queueSafetyDischarge({.body = address, .instruction = *addition},
+                                *discharge);
+    const auto edited = editor.apply();
+    expect(!edited.valid() && !edited.changed &&
+               lang::MirPrinter().print(candidate) == before,
+           "the editor must reject stale pre-call scalar facts atomically");
+
+    for (const bool cycle : {false, true}) {
+      auto malformed = frontend.mir;
+      auto *malformedBody = lang::findMirBody(malformed, address);
+      bool changed = false;
+      for (auto &block : malformedBody->blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::CallInput ||
+              instruction.callInputKind !=
+                  lang::HirCallInputKind::MutableBorrow ||
+              !instruction.result)
+            continue;
+          if (cycle) {
+            instruction.operands.front() = {.kind = lang::MirOperandKind::Value,
+                                            .value = *instruction.result,
+                                            .type = instruction.info.type};
+          } else {
+            instruction.operands.clear();
+          }
+          changed = true;
+        }
+      }
+      (void)lang::rebuildMirValueUses(*malformedBody);
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "malformed staged-input graphs must fail production MIR "
+             "verification");
+      const auto analysis = lang::analyzeMirClosedCallSafetyChecks(malformed);
+      const auto *analyzed = analysis.find(address);
+      expect(analyzed == nullptr ||
+                 analyzed->safety.find(*addition, *discharge) == nullptr,
+             "standalone safety queries must fail closed on unknown or cyclic "
+             "staged-input identity without certifying malformed MIR");
+    }
+  }
+}
+
+void testSynchronizingCallInvalidation() {
+  const auto frontend = analyzeTrusted("optimizer-sync-call.gti", R"(
+#include <std/atomic>
+std::atomic<int32_t> signal{0};
+void synchronize(std::atomic<int32_t>& signal) {
+  [[discard]] signal.load();
+}
+int32_t synchronized_loop(std::atomic<int32_t>& signal) {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 2; index++) {
+    synchronize(signal);
+    total += 1;
+  }
+  return total;
+}
+int main() {
+  return synchronized_loop(signal);
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "a real synchronizing call fixture must pass source/MIR verification");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  bool hasSynchronization = false;
+  for (const auto address : lang::enumerateMirBodyAddresses(frontend.mir))
+    for (const auto &block : lang::findMirBody(frontend.mir, address)->blocks)
+      for (const auto &instruction : block.instructions)
+        hasSynchronization |= instruction.synchronization.kind ==
+                              lang::SynchronizationOperationKind::AtomicLoad;
+  expect(hasSynchronization,
+         "the negative must contain an actual MIR atomic-load boundary");
+  const auto analysis = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
+  const auto *function = findFunction(frontend, "synchronized_loop");
+  const auto *summary =
+      function ? analysis.find({lang::MirBodyKind::Function, function->id})
+               : nullptr;
+  expect(analysis.converged && summary && summary->reached && !summary->closed,
+         "an actual synchronization boundary must not export a complete "
+         "closed recurrence summary");
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid() &&
+               functionDischarges(
+                   frontend, optimized, "synchronized_loop",
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
+           "synchronizing calls must retain the recurrence arithmetic checks");
+  }
+}
+
+void testOpaqueRuntimeCallInvalidation() {
+  const std::string source = R"(
+#include <std/memory>
+mut bool inspect_runtime = false;
+int32_t inspect_shared(gti_internal::shared_owner<int32_t>& owner, bool inspect) {
+  if (inspect) {
+    [[discard]] gti_internal::shared_owner_use_count(owner);
+  }
+  return 1;
+}
+int32_t transport_result(gti_internal::shared_owner<int32_t>& owner, bool inspect) {
+  return inspect_shared(owner, inspect) + 1;
+}
+int main() {
+  auto owner = gti_internal::shared_owner_empty<int32_t>();
+  [[discard]] transport_result(owner, inspect_runtime);
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 2; index++) {
+    [[discard]] inspect_shared(owner, inspect_runtime);
+    total += 1;
+  }
+  return total;
+}
+)";
+  const auto frontend = analyzeTrusted("optimizer-opaque-runtime.gti", source);
+  expect(frontend.canGenerateCode(),
+         "an unsupported runtime intrinsic fixture must remain valid GTI/MIR");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  const auto *function = findFunction(frontend, "inspect_shared");
+  bool hasOpaqueSynchronization = false;
+  if (function)
+    for (const auto &block :
+         frontend.mir.findFunctionInstance(function->id)->body.blocks)
+      for (const auto &instruction : block.instructions)
+        hasOpaqueSynchronization |=
+            instruction.intrinsic == lang::IntrinsicKind::SharedOwnerUseCount &&
+            instruction.synchronization.kind ==
+                lang::SynchronizationOperationKind::None &&
+            lang::effects(instruction).maySynchronize;
+  expect(hasOpaqueSynchronization,
+         "the negative must use authoritative runtime synchronization effects "
+         "without relying on an explicit AtomicLoad marker");
+  const auto analysis = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
+  const auto *summary =
+      function ? analysis.find({lang::MirBodyKind::Function, function->id})
+               : nullptr;
+  expect(analysis.converged && summary && summary->reached && !summary->closed,
+         "an unsupported runtime operation must not export effect closure "
+         "when one successful joined path crossed its memory barrier");
+  const auto *transport = findFunction(frontend, "transport_result");
+  const auto *transportSummary =
+      transport ? analysis.find({lang::MirBodyKind::Function, transport->id})
+                : nullptr;
+  expect(transportSummary && transportSummary->reached &&
+             !transportSummary->closed,
+         "opaque successful effects must survive exact nested calls even "
+         "when their scalar return facts remain known");
+  const auto *main = findFunction(frontend, "main");
+  const auto accumulatorStart = source.find("total += 1;");
+  expect(accumulatorStart != std::string::npos,
+         "the opaque-loop accumulator source must be present");
+  if (accumulatorStart == std::string::npos)
+    return;
+  const int accumulatorLine =
+      1 + std::count(source.begin(), source.begin() + accumulatorStart, '\n');
+  std::vector<std::pair<lang::MirInstructionId, lang::MirSafetyDischarge>>
+      accumulatorChecks;
+  if (main)
+    for (const auto &block :
+         frontend.mir.findFunctionInstance(main->id)->body.blocks)
+      for (const auto &instruction : block.instructions)
+        for (std::size_t index = 0;
+             index < instruction.definedFailure.localOrigins.size(); ++index) {
+          const auto &origin = instruction.definedFailure.localOrigins[index];
+          if (origin.line != accumulatorLine)
+            continue;
+          for (const auto &outcome : origin.outcomes)
+            if (outcome.code == lang::DefinedFailureCode::IntegerOverflow)
+              accumulatorChecks.emplace_back(
+                  instruction.id,
+                  lang::MirSafetyDischarge{
+                      .family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                      .origin = index,
+                      .outcome = outcome});
+        }
+  expect(!accumulatorChecks.empty(),
+         "the opaque-loop negative must identify the accumulator's actual "
+         "MIR instruction and original integer-overflow outcome by source");
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(), "opaque-runtime optimization must stay verified");
+    for (const auto &[id, check] : accumulatorChecks) {
+      const lang::MirInstruction *retained = nullptr;
+      for (const auto &block :
+           optimized.mir.findFunctionInstance(main->id)->body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.id == id)
+            retained = &instruction;
+      expect(retained && !retained->tombstone &&
+                 retained->definedFailure.localOrigins.size() > check.origin &&
+                 retained->definedFailure.localOrigins[check.origin].line ==
+                     accumulatorLine &&
+                 !lang::hasMirSafetyDischarge(*retained, check),
+             "opaque runtime synchronization must retain the exact accumulator "
+             "overflow check even when the independent counter is provable");
+    }
+    expect(functionOperationDischarges(
+               frontend, optimized, "transport_result",
+               lang::MirSafetyCheckFamily::ArithmeticOverflow,
+               lang::MirOperation::Add) == 1,
+           "an independently proven scalar result may cross an opaque call "
+           "without claiming that its effects are closed");
+  }
 }
 
 void testProofCarryingSafetyCheckElimination() {
@@ -421,15 +867,24 @@ int32_t main() {
       frontend, o2, "mutating_closed_call_recurrence",
       lang::MirSafetyCheckFamily::ArithmeticOverflow,
       lang::MirOperation::AddAssign);
-  expect(boundedRecurrence == 2 && dynamicRecurrence == 0 &&
-             repeatedRecurrence == 1 && callRecurrence == 0 &&
-             contextualRecurrence == 2 && boundedIntervalRecurrence == 2 &&
-             observerRecurrence == 2 && mutatingCallRecurrence == 1 &&
-             mutatingAccumulator == 0,
-         "finite exact or interval bounds and unrelated exact calls should "
-         "prove independent counter arithmetic while dynamic bounds, repeated "
-         "writes, native calls, and exact calls mutating the accumulator keep "
-         "the affected arithmetic checked");
+  const auto expectCount = [&](std::string_view name, std::size_t actual,
+                               std::size_t expected) {
+    expect(actual == expected,
+           std::string(name) +
+               " must retain its exact recurrence proof count: " +
+               std::to_string(actual) + " actual, " + std::to_string(expected) +
+               " expected");
+  };
+  expectCount("bounded_recurrence", boundedRecurrence, 2);
+  expectCount("dynamic_recurrence", dynamicRecurrence, 0);
+  expectCount("repeated_recurrence_write", repeatedRecurrence, 1);
+  expectCount("recurrence_call_barrier", callRecurrence, 0);
+  expectCount("contextual_bound_recurrence", contextualRecurrence, 2);
+  expectCount("bounded_interval_recurrence", boundedIntervalRecurrence, 2);
+  expectCount("exact_observer_recurrence", observerRecurrence, 2);
+  expectCount("mutating_closed_call_recurrence", mutatingCallRecurrence, 1);
+  expectCount("mutating_closed_call_recurrence accumulator",
+              mutatingAccumulator, 0);
 
   const std::size_t arrayEnvelope =
       functionDischarges(frontend, o2, "fixed_array_envelope",
@@ -846,9 +1301,10 @@ int32_t main() {
 
   expect(o2.valid() && o3.valid() && overflow(o2, "closed_indexed_sum") == 2 &&
              overflow(o3, "closed_indexed_sum") == 2,
-         "an exact closed call chain should carry the prefix-storage element "
-         "envelope through an indexed return borrow and prove both loop "
-         "arithmetic checks");
+         "closed_indexed_sum must preserve its two exact prefix-envelope "
+         "proofs: O2=" +
+             std::to_string(overflow(o2, "closed_indexed_sum")) +
+             ", O3=" + std::to_string(overflow(o3, "closed_indexed_sum")));
   expect(overflow(o2, "unknown_indexed_sum") == 0 &&
              overflow(o3, "unknown_indexed_sum") == 0,
          "an indexed receiver without a closed object context must retain "
@@ -950,8 +1406,71 @@ int32_t main() {
   return direct;
 }
 )";
+  // Preserve the original sequential client as a conservative boundary
+  // control. Its local owning helper performs cleanup whose authoritative
+  // effect summary has unknown writes; the earlier caller buffer cannot keep
+  // its field envelope across that call.
+  const auto crossingFrontend =
+      analyzeTrusted("optimizer-indexed-record-opaque-cleanup.gti", source);
+  expect(crossingFrontend.canGenerateCode(),
+         "the sequential record cleanup-boundary client must remain valid");
+  if (!crossingFrontend.canGenerateCode())
+    return;
+  const auto crossingAnalysis =
+      lang::analyzeMirClosedCallSafetyChecks(crossingFrontend.mir);
+  for (const auto name :
+       {"increment_narrow", "repeat_narrow", "increment_then_barrier"}) {
+    const auto *function = findFunction(crossingFrontend, name);
+    const auto *context =
+        function
+            ? crossingAnalysis.find({lang::MirBodyKind::Function, function->id})
+            : nullptr;
+    expect(crossingAnalysis.converged && context && context->reached,
+           "opaque cleanup must not hide later record clients from analysis");
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto crossing =
+        lang::OptimizationPipeline().run({.hir = crossingFrontend.hir,
+                                          .mir = crossingFrontend.mir,
+                                          .level = level});
+    expect(crossing.valid() &&
+               functionDischarges(
+                   crossingFrontend, crossing, "increment_narrow",
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0 &&
+               functionDischarges(
+                   crossingFrontend, crossing, "repeat_narrow",
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 1 &&
+               functionDischarges(
+                   crossingFrontend, crossing, "increment_then_barrier",
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
+           "opaque cleanup must erase the earlier caller record envelope, "
+           "while the independent loop counter remains provable");
+    expect(lang::verifyMirOptimizationCoherence(crossingFrontend.mir,
+                                                crossing.mir,
+                                                crossing.report.transformations)
+               .valid(),
+           "cleanup-boundary proofs must independently replay");
+  }
+
+  // Separately retain every original exact-record positive. Constructing the
+  // caller buffer after the unrelated helper cleanup establishes fresh facts
+  // without crossing that opaque boundary.
+  std::string isolatedSource = source;
+  const std::string before =
+      "  mut CheckedRecordBuffer values = CheckedRecordBuffer();\n"
+      "  int32_t direct = direct_increment_narrow();";
+  const std::string after =
+      "  int32_t direct = direct_increment_narrow();\n"
+      "  mut CheckedRecordBuffer values = CheckedRecordBuffer();";
+  const auto position = isolatedSource.find(before);
+  expect(position != std::string::npos,
+         "the isolated positive must retain the same record call chain");
+  if (position == std::string::npos)
+    return;
+  isolatedSource.replace(position, before.size(), after);
   const lang::FrontendResult frontend =
-      analyzeTrusted("optimizer-indexed-record-envelope.gti", source);
+      analyzeTrusted("optimizer-indexed-record-envelope.gti", isolatedSource);
   expect(frontend.canGenerateCode(),
          "closed indexed-record envelope fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -987,9 +1506,10 @@ int32_t main() {
   const std::size_t repeatUnboundedO2 = overflow(o2, "repeat_unbounded");
   const std::size_t repeatUnboundedO3 = overflow(o3, "repeat_unbounded");
   expect(repeatNarrowO2 == 5 && repeatNarrowO3 == 5,
-         "a result-bounded record field update should preserve its envelope "
-         "across a finite loop and discharge its field arithmetic plus the "
-         "guard-bounded loop increment");
+         "repeat_narrow must preserve its five record-envelope and loop "
+         "proofs: O2=" +
+             std::to_string(repeatNarrowO2) +
+             ", O3=" + std::to_string(repeatNarrowO3));
   expect(repeatUnboundedO2 == 0 && repeatUnboundedO3 == 0,
          "an unbounded record field recurrence must retain its field check");
   expect(overflow(o2, "increment_then_barrier") == 2 &&
@@ -1209,6 +1729,9 @@ int32_t main() { return proven_chain(); }
 int main() {
   lang::installCrashHandlers("gti_optimizer_safety_tests");
   testProofCarryingSafetyCheckElimination();
+  testClosedCallMutableInputInvalidation();
+  testSynchronizingCallInvalidation();
+  testOpaqueRuntimeCallInvalidation();
   testPrefixStorageBoundsRelation();
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();

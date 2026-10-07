@@ -1,0 +1,24 @@
+#include <std/memory>
+
+interface SignatureInvoker<R, Args...> { R invoke(Args... args); };
+class SignatureTag<S> {};
+
+class SignatureModel<T, R, Args...> : public SignatureInvoker<R, Args...> {
+  T callback;
+public:
+  SignatureModel(T callback) : callback(std::move(callback)) {}
+  R invoke(Args... args) override { return this.callback(args...); }
+};
+
+std::unique_ptr<SignatureInvoker<R, Args...>> erase_signature<R, T, Args...>(T callback, SignatureTag<R(Args...)>& signature) {
+  auto model = std::make_unique<SignatureModel<T, R, Args...>>(std::move(callback));
+  return std::upcast_unique<SignatureInvoker<R, Args...>, SignatureModel<T, R, Args...>>(std::move(model));
+}
+
+int main() {
+  int offset = 7;
+  auto callback = [offset](int value) -> int { return offset + value; };
+  SignatureTag<int(int)> signature{};
+  auto owner = erase_signature(std::move(callback), signature);
+  return owner->invoke(5) - 12;
+}

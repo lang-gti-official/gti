@@ -1,23 +1,29 @@
 // C++-familiar API scaffold for <std/forward_list>.
 //
-// The unique-owner front operations are implemented. The iterator remains a
-// move-only, read-only scaffold; before_begin/insert_after/erase_after,
-// splice_after, and middle-node algorithms still require nullable owner-tied
-// traversal and invalidation support.
+// Node algorithms transfer exclusive node owners instead of retaining mutable
+// traversal borrows. Iteration still needs nullable owner-tied traversal.
 
 #include <std/memory>
 
 namespace std {
   namespace detail {
+    enum class forward_list_in_place { value };
+
     struct forward_list_node<T> {
       mut T value;
       mut std::unique_ptr<forward_list_node<T>> next =
           std::unique_ptr<forward_list_node<T>>();
 
+      forward_list_node() requires std::default_initializable<T>
+          : value(T()) {}
+
       forward_list_node(
           T initial,
           std::unique_ptr<forward_list_node<T>> following)
           : value(std::move(initial)), next(std::move(following)) {}
+
+      forward_list_node<Args...>(forward_list_in_place tag, Args... args)
+          : value(T(args...)) {}
     };
 
     class forward_list_sentinel<T> {};
@@ -37,14 +43,46 @@ namespace std {
     mut std::unique_ptr<detail::forward_list_node<T>> head =
         std::unique_ptr<detail::forward_list_node<T>>();
 
+    std::unique_ptr<detail::forward_list_node<T>> replace_head(
+        std::unique_ptr<detail::forward_list_node<T>> replacement) mut {
+      mut auto previous = std::move(this.head);
+      this.head = std::move(replacement);
+      return std::move(previous);
+    }
+
+    // Callers first establish that the list is nonempty. Restore the detached
+    // node's next field before returning its whole owner.
+    std::unique_ptr<detail::forward_list_node<T>> detach_front() mut {
+      mut auto node = std::move(this.head);
+      this.head = std::move(node->next);
+      node->next = std::unique_ptr<detail::forward_list_node<T>>();
+      return std::move(node);
+    }
+
+    void prepend_node(mut std::unique_ptr<detail::forward_list_node<T>> node) mut {
+      node->next = std::move(this.head);
+      this.head = std::move(node);
+    }
+
+    forward_list<T> take_prefix(size_t count) mut {
+      mut forward_list<T> result = forward_list<T>();
+      for (mut size_t index = 0; index < count && !this.empty(); index++) {
+        result.prepend_node(this.detach_front());
+      }
+      result.reverse();
+      return std::move(result);
+    }
+
   public:
     forward_list() {}
 
     forward_list(forward_list<T>& other) = delete;
     forward_list(forward_list<T>&& other) = default;
 
-    // Field cleanup recursively destroys the owned node chain.
-    ~forward_list() {}
+    // Release nodes iteratively instead of recursing with the chain length.
+    ~forward_list() {
+      this.clear();
+    }
 
     bool empty() {
       return this.head == nullptr;
@@ -59,7 +97,9 @@ namespace std {
     }
 
     void clear() mut {
-      this.head = std::unique_ptr<detail::forward_list_node<T>>();
+      while (!this.empty()) {
+        this.pop_front();
+      }
     }
 
     void push_front(T value) mut
@@ -76,29 +116,153 @@ namespace std {
       this.head = std::move(removed->next);
     }
 
-    mut T& emplace_front<Args...>(Args... args) mut;
+    mut T& emplace_front<Args...>(Args... args) mut {
+      // Keep the old chain intact until allocation and value construction have
+      // both succeeded. Linking moves node owners, never the stored T.
+      mut auto node = std::make_unique<detail::forward_list_node<T>>(
+          detail::forward_list_in_place::value, args...);
+      node->next = std::move(this.head);
+      this.head = std::move(node);
+      return this.head->value;
+    }
 
     void resize(size_t requested) mut
-      requires std::default_initializable<T>;
+      requires std::default_initializable<T> {
+      mut forward_list<T> result = forward_list<T>();
+      mut size_t count = 0;
+      while (count < requested && !this.empty()) {
+        result.prepend_node(this.detach_front());
+        count++;
+      }
+      this.clear();
+      while (count < requested) {
+        result.prepend_node(std::make_unique<detail::forward_list_node<T>>());
+        count++;
+      }
+      result.reverse();
+      this.head = std::move(result.head);
+      result.head = std::unique_ptr<detail::forward_list_node<T>>();
+    }
     void resize(size_t requested, T value) mut
-      requires std::copyable<T>;
+      requires std::copyable<T> {
+      mut forward_list<T> result = forward_list<T>();
+      mut size_t count = 0;
+      while (count < requested && !this.empty()) {
+        result.prepend_node(this.detach_front());
+        count++;
+      }
+      this.clear();
+      while (count < requested) {
+        result.push_front(value);
+        count++;
+      }
+      result.reverse();
+      this.head = std::move(result.head);
+      result.head = std::unique_ptr<detail::forward_list_node<T>>();
+    }
 
-    void swap(mut forward_list<T>& other) mut;
+    /// Exchanges node chains without allocating or moving elements.
+    void swap(mut forward_list<T>& other) mut {
+      mut auto previous = std::move(this.head);
+      this.head = other.replace_head(std::move(previous));
+    }
 
     // GTI consumes the other move-only owner by value; callers pass an
     // explicit std::move rather than a general C++ rvalue reference.
-    void merge(forward_list<T> other) mut
-      requires std::totally_ordered<T>;
+    void merge(mut forward_list<T> other) mut
+      requires std::totally_ordered<T> {
+      mut forward_list<T> result = forward_list<T>();
+      while (!this.empty() && !other.empty()) {
+        // Choose this list on equality, preserving both lists' stable order.
+        if (other.front() < this.front()) {
+          result.prepend_node(other.detach_front());
+        } else {
+          result.prepend_node(this.detach_front());
+        }
+      }
+      while (!this.empty()) {
+        result.prepend_node(this.detach_front());
+      }
+      while (!other.empty()) {
+        result.prepend_node(other.detach_front());
+      }
+      result.reverse();
+      this.head = std::move(result.head);
+      result.head = std::unique_ptr<detail::forward_list_node<T>>();
+    }
 
     size_t remove(T& value) mut
-      requires std::equality_comparable<T>;
+      requires std::equality_comparable<T> {
+      mut forward_list<T> retained = forward_list<T>();
+      mut size_t removed = 0;
+      while (!this.empty()) {
+        mut auto node = this.detach_front();
+        if (node->value == value) {
+          removed++;
+        } else {
+          retained.prepend_node(std::move(node));
+        }
+      }
+      retained.reverse();
+      this.head = std::move(retained.head);
+      retained.head = std::unique_ptr<detail::forward_list_node<T>>();
+      return removed;
+    }
     size_t unique() mut
-      requires std::equality_comparable<T>;
+      requires std::equality_comparable<T> {
+      mut forward_list<T> retained = forward_list<T>();
+      mut size_t removed = 0;
+      while (!this.empty()) {
+        mut auto node = this.detach_front();
+        if (!retained.empty() && retained.front() == node->value) {
+          removed++;
+        } else {
+          retained.prepend_node(std::move(node));
+        }
+      }
+      retained.reverse();
+      this.head = std::move(retained.head);
+      retained.head = std::unique_ptr<detail::forward_list_node<T>>();
+      return removed;
+    }
 
     void sort() mut
-      requires std::totally_ordered<T>;
+      requires std::totally_ordered<T> {
+      // Bottom-up stable mergesort: O(n log n), constant auxiliary node
+      // ownership, no allocation or element copy/move, and no recursive calls.
+      mut size_t width = 1;
+      while (!this.empty()) {
+        mut forward_list<T> result = forward_list<T>();
+        mut size_t merges = 0;
+        while (!this.empty()) {
+          mut forward_list<T> left = this.take_prefix(width);
+          mut forward_list<T> right = this.take_prefix(width);
+          left.merge(std::move(right));
+          while (!left.empty()) {
+            result.prepend_node(left.detach_front());
+          }
+          merges++;
+        }
+        result.reverse();
+        this.head = std::move(result.head);
+        result.head = std::unique_ptr<detail::forward_list_node<T>>();
+        if (merges <= size_t(1)) {
+          return;
+        }
+        width *= size_t(2);
+      }
+    }
 
-    void reverse() mut;
+    void reverse() mut {
+      mut std::unique_ptr<detail::forward_list_node<T>> reversed =
+          std::unique_ptr<detail::forward_list_node<T>>();
+      while (!this.empty()) {
+        mut auto node = this.detach_front();
+        node->next = std::move(reversed);
+        reversed = std::move(node);
+      }
+      this.head = std::move(reversed);
+    }
 
     // Initial iterator support is read-only.
     detail::forward_list_iterator<T> begin();

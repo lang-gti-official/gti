@@ -1,0 +1,10 @@
+#include <std/string>
+
+class json_error_repro {
+  std::string path = std::string("");
+};
+
+int main() {
+  expected<int, json_error_repro> result = 1;
+  return 0;
+}

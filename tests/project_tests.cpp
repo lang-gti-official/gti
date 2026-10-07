@@ -1,3 +1,4 @@
+#include "gti/driver/build_script.h"
 #include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
@@ -96,7 +97,11 @@ root = "src/main.gti"
          "optimization = 2\n"
          "cpp-standard = \"c++20\"\n"
          "execution-profile = \"concurrent\"\n"
-         "keep-cpp = true\n";
+         "disabled-warnings = [\"unused-mut\"]\n"
+         "keep-cpp = true\n"
+         "debug-info = true\n"
+         "dependency-warnings = false\n"
+         "raw-pointer-audit = \"warn\"\n";
 }
 
 void testDiscoveryParsingAndResolution() {
@@ -175,14 +180,24 @@ void testDiscoveryParsingAndResolution() {
                development->cppStandard == lang::CppStandard::Cpp23 &&
                development->executionProfile ==
                    lang::ExecutionProfile::SingleThreaded &&
-               !development->keepCpp,
+               !development->keepCpp && !development->debugInfo &&
+               development->dependencyWarnings,
            "the built-in dev profile should have stable defaults");
+    expect(
+        development &&
+            development->rawPointerAudit == lang::RawPointerAuditMode::Off &&
+            release &&
+            release->rawPointerAudit == lang::RawPointerAuditMode::Warn,
+        "raw pointer auditing defaults off and retains exact profile policy");
     expect(release != nullptr &&
                release->optimization == lang::OptimizationLevel::O2 &&
                release->cppStandard == lang::CppStandard::Cpp20 &&
                release->executionProfile ==
                    lang::ExecutionProfile::Concurrent &&
-               release->keepCpp,
+               release->warningPolicy.disabledGroups() ==
+                   std::vector<std::string>{"unused-mut"} &&
+               release->keepCpp && release->debugInfo &&
+               !release->dependencyWarnings,
            "manifest profile fields should refine built-in defaults");
   }
 
@@ -190,7 +205,10 @@ void testDiscoveryParsingAndResolution() {
   overrides.optimization = lang::OptimizationLevel::O3;
   overrides.cppStandard = lang::CppStandard::Cpp23;
   overrides.executionProfile = lang::ExecutionProfile::SingleThreaded;
+  overrides.rawPointerAudit = lang::RawPointerAuditMode::Strict;
   overrides.keepCpp = false;
+  overrides.debugInfo = false;
+  overrides.warningPolicy = lang::WarningPolicy({"unreachable-code"});
   const lang::TargetInfo targetInfo{
       .os = "testos", .vendor = "testvendor", .arch = "testarch"};
   const lang::driver::ProjectResolutionResult resolution =
@@ -200,6 +218,8 @@ void testDiscoveryParsingAndResolution() {
          "one target should be inferred from a nested project directory");
   if (resolution.plan) {
     const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+    expect(plan.rawPointerAudit() == lang::RawPointerAuditMode::Strict,
+           "explicit audit override wins over the profile");
     const std::filesystem::path expectedDirectory =
         std::filesystem::canonical(temporary.root()) /
         "build/gti/release/testarch-testvendor-testos";
@@ -208,12 +228,17 @@ void testDiscoveryParsingAndResolution() {
                plan.generatedSource() ==
                    expectedDirectory / ".gti-intermediate/game.gti.cpp",
            "project artifacts should use the deterministic project layout");
-    expect(plan.optimization() == lang::OptimizationLevel::O3 &&
-               plan.cppStandard() == lang::CppStandard::Cpp23 &&
-               plan.target().executionProfile ==
-                   lang::ExecutionProfile::SingleThreaded &&
-               !plan.keepCpp(),
-           "explicit build overrides should win over profile settings");
+    expect(
+        plan.optimization() == lang::OptimizationLevel::O3 &&
+            plan.cppStandard() == lang::CppStandard::Cpp23 &&
+            plan.target().executionProfile ==
+                lang::ExecutionProfile::SingleThreaded &&
+            plan.warnings().disabledGroups() ==
+                (std::vector<std::string>{"unreachable-code", "unused-mut"}) &&
+            !plan.keepCpp() && !plan.debugInfo() &&
+            !plan.packageWarnings().dependencyWarnings() &&
+            plan.packageWarnings().selectedPackage() == "engine_tools@0.1.0",
+        "explicit build overrides should win over profile settings");
   }
 
   const lang::driver::ProjectMetadataResult metadata =
@@ -307,6 +332,58 @@ void testManifestDiagnostics() {
              invalidProfile->message.find("concurrent") != std::string::npos,
          "manifest execution profiles should use the exact compiler-owned "
          "vocabulary");
+
+  std::string invalidWarning = validManifest();
+  for (const std::string &spelling : {"true", "3", "[]", "\"unknown\""}) {
+    std::string invalidAudit = validManifest();
+    const auto valueOffset = invalidAudit.find("\"warn\"");
+    invalidAudit.replace(valueOffset, 6, spelling);
+    expect(writeFile(manifest, invalidAudit),
+           "invalid audit fixture should be writable");
+    const auto badAudit = lang::driver::loadProjectManifest(manifest);
+    const auto *diagnostic =
+        findDiagnostic(badAudit.diagnostics,
+                       spelling == "\"unknown\"" ? "GTI-B1005" : "GTI-B1004");
+    expect(!badAudit.succeeded() && diagnostic &&
+               diagnostic->primary.start == valueOffset &&
+               diagnostic->primary.end == valueOffset + spelling.size(),
+           "invalid audit policy reports the exact manifest value");
+  }
+  invalidWarning.replace(invalidWarning.find("unused-mut"),
+                         std::string_view("unused-mut").size(),
+                         "unused-mutable-binding");
+  expect(writeFile(manifest, invalidWarning),
+         "the invalid warning-group fixture should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *unknownWarning =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(unknownWarning != nullptr &&
+             unknownWarning->message.find("unknown warning group") !=
+                 std::string::npos &&
+             loaded.sources.locate(unknownWarning->primary).line == 15,
+         "manifest warning suppression should reject unknown groups at the "
+         "array element");
+
+  for (const std::string &spelling : {"1", "0", "\"false\"", "[]"}) {
+    std::string invalidDependencyWarnings = validManifest();
+    const std::size_t valueOffset = invalidDependencyWarnings.find("false");
+    invalidDependencyWarnings.replace(valueOffset, 5, spelling);
+    expect(writeFile(manifest, invalidDependencyWarnings),
+           "the invalid dependency-warning fixture should be writable");
+    loaded = lang::driver::loadProjectManifest(manifest);
+    const lang::Diagnostic *invalidDependencyWarning =
+        findDiagnostic(loaded.diagnostics, "GTI-B1004");
+    expect(!loaded.succeeded() && invalidDependencyWarning != nullptr &&
+               invalidDependencyWarning->message.find(
+                   "'dependency-warnings' must be a Boolean") !=
+                   std::string::npos &&
+               invalidDependencyWarning->primary.start == valueOffset &&
+               invalidDependencyWarning->primary.end ==
+                   valueOffset + spelling.size(),
+           "dependency-warnings should reject non-Booleans at the exact "
+           "manifest value: " +
+               spelling);
+  }
 
   std::string invalidKind = validManifest();
   invalidKind.replace(invalidKind.find("executable"),
@@ -1508,6 +1585,9 @@ root = "src/main.gti"
 
 [profiles.release]
 execution-profile = "concurrent"
+raw-pointer-audit = "strict"
+dependency-warnings = false
+disabled-warnings = ["unused-mut"]
 )";
   const std::string mathManifest = R"(manifest-version = 1
 
@@ -1515,6 +1595,8 @@ execution-profile = "concurrent"
 name = "math"
 version = "2.0.0"
 source-root = "lib"
+[profiles.dev]
+dependency-warnings = false
 )";
   expect(writeFile(root / "gti.toml", rootManifest) &&
              writeFile(app / "gti.toml", appManifest) &&
@@ -1590,9 +1672,27 @@ source-root = "lib"
          "command selects when none is named");
   const lang::driver::ProjectFactsProfile *releaseProfile =
       facts.findProfile("release");
-  expect(releaseProfile != nullptr && releaseProfile->executionProfile ==
-                                          lang::ExecutionProfile::Concurrent,
-         "a declared profile should carry its resolved execution profile");
+  expect(releaseProfile != nullptr &&
+             releaseProfile->rawPointerAudit ==
+                 lang::RawPointerAuditMode::Strict &&
+             releaseProfile->executionProfile ==
+                 lang::ExecutionProfile::Concurrent &&
+             !releaseProfile->dependencyWarnings &&
+             releaseProfile->warningPolicy.disabledGroups() ==
+                 std::vector<std::string>{"unused-mut"},
+         "a declared profile should carry its resolved execution and warning "
+         "policies");
+  const lang::driver::PackageWarningPolicy packageWarnings =
+      facts.packageWarnings("release");
+  expect(!packageWarnings.dependencyWarnings() &&
+             packageWarnings.selectedPackage() == "app@1.0.0" &&
+             packageWarnings.dependencyPackages() ==
+                 (std::vector<std::string>{"math@2.0.0",
+                                           "workspace_root@0.1.0"}) &&
+             facts.packageWarnings("dev").dependencyWarnings() &&
+             facts.packageWarnings("missing").dependencyWarnings(),
+         "read-only facts should resolve selected-package warning ownership "
+         "and preserve visible warnings for default or unknown profiles");
 
   expect(facts.configurationFlags().size() == 1 &&
              facts.configurationFlags().front() == "FEATURE_FAST",
@@ -1612,6 +1712,18 @@ source-root = "lib"
                                      lang::driver::RuntimeProfile::Hosted)
               .has_value(),
          "an undeclared profile should not produce an analysis configuration");
+
+  const auto selectedMath =
+      lang::driver::resolveProjectFacts(root, std::string("math"));
+  expect(
+      selectedMath.succeeded() && selectedMath.facts &&
+          !selectedMath.facts->packageWarnings("dev").dependencyWarnings() &&
+          selectedMath.facts->packageWarnings("dev").selectedPackage() ==
+              "math@2.0.0" &&
+          selectedMath.facts->packageWarnings("dev").dependencyPackages() ==
+              (std::vector<std::string>{"app@1.0.0", "workspace_root@0.1.0"}),
+      "explicit workspace-member selection should change warning ownership "
+      "instead of treating every member as a dependency of the root");
 
   expect(facts.targets().size() == 2 && facts.targets().front().name == "app" &&
              facts.targets().front().kind ==
@@ -1634,7 +1746,13 @@ source-root = "lib"
   expect(built.succeeded() && built.plan, "the same project should build-plan");
   if (built.plan) {
     expect(built.plan->packageSources().size() == roots.size() &&
-               built.plan->configurationFlags() == facts.configurationFlags(),
+               built.plan->configurationFlags() == facts.configurationFlags() &&
+               built.plan->packageWarnings().dependencyWarnings() ==
+                   packageWarnings.dependencyWarnings() &&
+               built.plan->packageWarnings().selectedPackage() ==
+                   packageWarnings.selectedPackage() &&
+               built.plan->packageWarnings().dependencyPackages() ==
+                   packageWarnings.dependencyPackages(),
            "project facts should agree with the build plan about source roots "
            "and configuration flags");
     // A build plan extends the workspace-graph identity with configuration
@@ -1746,7 +1864,7 @@ void testProjectFactsDiagnostics() {
   }
 }
 
-void testProjectScaffolding() {
+void testProjectScaffolding(const std::filesystem::path &testExecutable) {
   TemporaryDirectory temporary;
   const std::string expectedSource = R"(#include <std/string>
 #include <std/vector>
@@ -1830,6 +1948,130 @@ int main(int argc, std::vector<std::string> argv) {
              std::filesystem::is_regular_file(emptyRoot / "src/main.gti") &&
              readFile(emptyRoot / "src/main.gti") == expectedSource,
          "init scaffolding should create an entry source when one is absent");
+
+  const std::filesystem::path gitRoot =
+      temporary.root() / "git package;literal";
+  std::filesystem::create_directory(gitRoot);
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, gitRoot,
+      std::string("git_package"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.succeeded() && scaffold.initializedGit &&
+             scaffold.createdGitIgnore &&
+             std::filesystem::is_directory(gitRoot / ".git") &&
+             readFile(gitRoot / ".gitignore") ==
+                 "# GTI build output\n/build/\n" &&
+             std::filesystem::is_regular_file(gitRoot / "gti.toml") &&
+             std::filesystem::is_regular_file(gitRoot / "src/main.gti"),
+         "git init scaffolding should create repository metadata and the "
+         "canonical GTI ignore file");
+
+  const std::filesystem::path existingIgnoreRoot =
+      temporary.root() / "existing-ignore";
+  std::filesystem::create_directory(existingIgnoreRoot);
+  expect(writeFile(existingIgnoreRoot / ".gitignore", "user-owned\n"),
+         "the existing ignore fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, existingIgnoreRoot,
+      std::string("existing_ignore"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1503") != nullptr &&
+             readFile(existingIgnoreRoot / ".gitignore") == "user-owned\n" &&
+             !std::filesystem::exists(existingIgnoreRoot / "gti.toml"),
+         "git init scaffolding should preserve an existing .gitignore and "
+         "fail before project mutation");
+
+  const std::filesystem::path existingGitRoot =
+      temporary.root() / "existing-git";
+  std::filesystem::create_directories(existingGitRoot / ".git");
+  expect(writeFile(existingGitRoot / ".git/sentinel", "repository-owned\n"),
+         "the existing Git metadata fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, existingGitRoot,
+      std::string("existing_git"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1503") != nullptr &&
+             readFile(existingGitRoot / ".git/sentinel") ==
+                 "repository-owned\n" &&
+             !std::filesystem::exists(existingGitRoot / "gti.toml"),
+         "git init scaffolding should refuse existing repository metadata "
+         "before project mutation");
+
+  for (const std::string entry : {".git", ".gitignore"}) {
+    const auto redirectedRoot =
+        temporary.root() / ("redirected-" + entry.substr(1));
+    std::filesystem::create_directory(redirectedRoot);
+    std::error_code linkError;
+    std::filesystem::create_directory_symlink(
+        existingGitRoot / ".git", redirectedRoot / entry, linkError);
+    if (!linkError) {
+      scaffold =
+          lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+              lang::driver::ProjectScaffoldMode::ExistingDirectory,
+              redirectedRoot, std::string("redirected_git"),
+              lang::driver::ProjectScaffoldGit{.executable =
+                                                   testExecutable.string()}));
+      expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+                 std::filesystem::is_symlink(redirectedRoot / entry) &&
+                 !std::filesystem::exists(redirectedRoot / "gti.toml") &&
+                 readFile(existingGitRoot / ".git/sentinel") ==
+                     "repository-owned\n",
+             "Git scaffold must reject existing metadata and ignore symlinks "
+             "without following or removing them");
+    }
+  }
+
+  const std::filesystem::path failedGitRoot = temporary.root() / "failed-git";
+  std::filesystem::create_directory(failedGitRoot);
+  const std::filesystem::path failedGitSource = failedGitRoot / "src/main.gti";
+  const std::string failedGitSourceContents = "int main() { return 17; }\n";
+  expect(writeFile(failedGitSource, failedGitSourceContents),
+         "the failed Git init source fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, failedGitRoot,
+      std::string("failed_git"),
+      lang::driver::ProjectScaffoldGit{
+          .executable = (temporary.root() / "missing-git").string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::ToolFailure &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1504") != nullptr &&
+             !std::filesystem::exists(failedGitRoot / "gti.toml") &&
+             readFile(failedGitSource) == failedGitSourceContents &&
+             !std::filesystem::exists(failedGitRoot / ".gitignore") &&
+             !std::filesystem::exists(failedGitRoot / ".git"),
+         "a Git process failure should roll back scaffold-owned output while "
+         "preserving an existing entry source");
+
+  const std::filesystem::path partialGitRoot =
+      temporary.root() / "partial-git-failure";
+  std::filesystem::create_directory(partialGitRoot);
+  expect(writeFile(partialGitRoot / "sentinel", "user-owned\n"),
+         "the partial Git initialization fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, partialGitRoot,
+      std::string("partial_git_failure"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::ToolFailure &&
+             readFile(partialGitRoot / "sentinel") == "user-owned\n" &&
+             !std::filesystem::exists(partialGitRoot / ".git") &&
+             !std::filesystem::exists(partialGitRoot / ".gitignore") &&
+             !std::filesystem::exists(partialGitRoot / "gti.toml") &&
+             !std::filesystem::exists(partialGitRoot / "src"),
+         "a failed Git child must remove its reserved partial metadata but "
+         "preserve unrelated files");
+
+  const std::filesystem::path unsupportedNewRoot =
+      temporary.root() / "new-with-git";
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::NewPackage, unsupportedNewRoot,
+      std::string("new_with_git"),
+      lang::driver::ProjectScaffoldGit{.executable = testExecutable.string()}));
+  expect(scaffold.status ==
+                 lang::driver::ProjectScaffoldStatus::InvalidRequest &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1500") != nullptr &&
+             !std::filesystem::exists(unsupportedNewRoot),
+         "Git initialization should remain scoped to gti init");
 
   scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
       lang::driver::ProjectScaffoldMode::ExistingDirectory,
@@ -1996,7 +2238,7 @@ void testDependencyLockModel() {
                result.diagnostics.front().code == "GTI-B1702",
            std::string(why));
   };
-  rejects("lock-version = 2\n", "an unsupported lock version is rejected");
+  rejects("lock-version = 3\n", "an unsupported lock version is rejected");
   rejects("lock-version = 1\nmystery = true\n",
           "unknown lock fields are rejected");
   rejects("lock-version = 1\n[[package]]\nname = \"a\"\nversion = \"1\"\n"
@@ -2753,7 +2995,316 @@ void testCrossToolchainManifestDiagnostics() {
   }
 }
 
-int main() {
+void testPackageBuildScripts() {
+  {
+    TemporaryDirectory sourcePackage;
+    expect(writeFile(sourcePackage.root() / "src/main.gti",
+                     "int main() { return 0; }\n") &&
+               writeFile(sourcePackage.root() / "build.gti",
+                         "int main() { return 0; }\n") &&
+               writeFile(sourcePackage.root() / "gti.toml",
+                         validManifest("\n[package.build-script]\n"
+                                       "source = \"build.gti\"\n"
+                                       "inputs = []\n")),
+           "GTI build-script manifest fixture should be writable");
+    const lang::driver::ManifestLoadResult loaded =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(loaded.succeeded() && loaded.manifest &&
+               loaded.manifest->package().buildScript &&
+               loaded.manifest->package().buildScript->source ==
+                   std::filesystem::canonical(sourcePackage.root() /
+                                              "build.gti") &&
+               loaded.manifest->package().buildScript->command.empty() &&
+               loaded.manifest->package().buildScript->inputs.size() == 1,
+           "a GTI source build program should parse and automatically enter "
+           "its own content into the cache inputs");
+
+    expect(writeFile(sourcePackage.root() / "gti.toml",
+                     validManifest("\n[package.build-script]\n"
+                                   "source = \"build.gti\"\n"
+                                   "command = [\"true\"]\n"
+                                   "inputs = []\n")),
+           "ambiguous build-script fixture should be writable");
+    const lang::driver::ManifestLoadResult ambiguous =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(!ambiguous.succeeded() &&
+               findDiagnostic(ambiguous.diagnostics, "GTI-B1002") != nullptr,
+           "a package must choose either a GTI source program or an external "
+           "command, never both");
+
+    expect(writeFile(sourcePackage.root() / "build.txt", "not GTI\n") &&
+               writeFile(sourcePackage.root() / "gti.toml",
+                         validManifest("\n[package.build-script]\n"
+                                       "source = \"build.txt\"\n"
+                                       "inputs = []\n")),
+           "wrong-extension build-script fixture should be writable");
+    const lang::driver::ManifestLoadResult wrongExtension =
+        lang::driver::loadProjectManifest(sourcePackage.root() / "gti.toml");
+    expect(!wrongExtension.succeeded() &&
+               findDiagnostic(wrongExtension.diagnostics, "GTI-B2001") !=
+                   nullptr,
+           "a GTI build-program source must use the .gti extension");
+  }
+
+  TemporaryDirectory temporary;
+  const std::filesystem::path app = temporary.root() / "app";
+  const std::filesystem::path native = temporary.root() / "native";
+  expect(writeFile(app / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(native / "src/.gitkeep", "") &&
+             writeFile(native / "build.cmake",
+                       R"(file(MAKE_DIRECTORY "$ENV{GTI_BUILD_OUT_DIR}/include")
+file(WRITE "$ENV{GTI_BUILD_OUT_DIR}/libnative.a" "")
+file(WRITE "$ENV{GTI_BUILD_OUTPUT}" "version = 1\ninclude-dirs = [\"include\"]\nlink-files = [\"libnative.a\"]\n")
+)") &&
+             writeFile(native / "gti.toml",
+                       "manifest-version = 1\n\n[package]\n"
+                       "name = \"native_pkg\"\nversion = \"0.1.0\"\n\n"
+                       "[package.build-script]\n"
+                       "command = [\"cmake\", \"-P\", \"build.cmake\"]\n"
+                       "inputs = [\"build.cmake\"]\n") &&
+             writeFile(app / "gti.toml",
+                       "manifest-version = 1\n\n[package]\n"
+                       "name = \"build_script_app\"\nversion = \"0.1.0\"\n\n"
+                       "[dependencies]\nnative = { path = \"../native\" }\n\n"
+                       "[build]\nallow-build-scripts = "
+                       "[\"native_pkg@0.1.0\"]\n\n"
+                       "[targets.app]\nkind = \"executable\"\n"
+                       "root = \"src/main.gti\"\n"),
+         "build-script fixtures should be writable");
+
+  lang::driver::ProjectResolutionResult resolved =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), {}, std::nullopt,
+          {}, lang::driver::RuntimeProfile::Hosted));
+  expect(resolved.succeeded() && resolved.plan &&
+             resolved.plan->buildScripts().size() == 1 &&
+             resolved.plan->nativeInputs().dependencyGroups.size() == 1,
+         "an explicitly approved dependency build script should enter the "
+         "resolved plan without executing during resolution");
+  if (resolved.plan) {
+    expect(!std::filesystem::exists(
+               resolved.plan->buildScripts().front().outputDirectory /
+               "gti-build-output.toml"),
+           "project resolution must not execute a build script");
+    const lang::driver::BuildScriptExecutionResult execution =
+        lang::driver::executeBuildScripts(
+            *resolved.plan,
+            {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+    expect(execution.succeeded() && execution.nativeInputs &&
+               execution.nativeInputs->dependencyGroups.size() == 1 &&
+               execution.nativeInputs->dependencyGroups.front()
+                       .includeDirectories.size() == 1 &&
+               execution.nativeInputs->dependencyGroups.front()
+                       .linkOperands.size() == 1,
+           "a successful build script should contribute validated native "
+           "outputs to its dependency group");
+    expect(execution.outcomes.size() == 1 && !execution.outcomes.front().reused,
+           "the first build-script execution should report a native build");
+    const lang::driver::BuildScriptExecutionResult reused =
+        lang::driver::executeBuildScripts(
+            *resolved.plan,
+            {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+    expect(reused.succeeded() && reused.outcomes.size() == 1 &&
+               reused.outcomes.front().reused,
+           "unchanged declared inputs should reuse validated build-script "
+           "outputs");
+  }
+
+  expect(writeFile(app / "gti.toml",
+                   "manifest-version = 1\n\n[package]\n"
+                   "name = \"build_script_app\"\nversion = \"0.1.0\"\n\n"
+                   "[dependencies]\nnative = { path = \"../native\" }\n\n"
+                   "[targets.app]\nkind = \"executable\"\n"
+                   "root = \"src/main.gti\"\n"),
+         "unapproved build-script fixture should be writable");
+  resolved =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          app, std::nullopt, "dev", lang::TargetInfo::host(), {}, std::nullopt,
+          {}, lang::driver::RuntimeProfile::Hosted));
+  expect(!resolved.succeeded() &&
+             findDiagnostic(resolved.diagnostics, "GTI-B2002") != nullptr,
+         "a dependency build script must be rejected until the selected "
+         "package explicitly approves it");
+}
+
+void testObjectiveCppSourceResolution() {
+  TemporaryDirectory temporary;
+  const auto root = temporary.root();
+  const std::string manifest =
+      "manifest-version = 1\n[package]\nname = \"bridge\"\nversion = "
+      "\"1.0.0\"\n"
+      "[package.native]\ncpp-sources = [\"native/bridge.mm\"]\n"
+      "[targets.bridge]\nkind = \"executable\"\nroot = \"src/main.gti\"\n";
+  expect(writeFile(root / "gti.toml", manifest) &&
+             writeFile(root / "native/bridge.mm", "// Objective-C++\n") &&
+             writeFile(root / "src/main.gti", "int main() { return 0; }\n"),
+         "Objective-C++ fixtures should be writable");
+  const auto resolve = [&](std::string os) {
+    return lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+        root, std::nullopt, "dev",
+        {.os = std::move(os), .vendor = "apple", .arch = "arm64"}));
+  };
+  const auto mac = resolve("macos");
+  expect(mac.succeeded() && mac.plan &&
+             mac.plan->nativeInputs().cppSources ==
+                 std::vector<std::filesystem::path>{
+                     std::filesystem::canonical(root / "native/bridge.mm")},
+         "Objective-C++ should use the existing immutable C++ source plan");
+  for (const std::string os : {"linux", "windows"}) {
+    const auto other = resolve(os);
+    const auto *diagnostic = findDiagnostic(other.diagnostics, "GTI-B1401");
+    expect(!other.succeeded() && diagnostic &&
+               diagnostic->message.find("Objective-C++") != std::string::npos &&
+               diagnostic->message.find(os) != std::string::npos &&
+               diagnostic->primary.source ==
+                   std::filesystem::canonical(root / "gti.toml").string() &&
+               manifest.substr(diagnostic->primary.start,
+                               diagnostic->primary.end -
+                                   diagnostic->primary.start) ==
+                   "\"native/bridge.mm\"" &&
+               diagnostic->fixes.empty(),
+           "unsupported Objective-C++ targets should point at the exact source "
+           "without guessing a fix");
+  }
+  expect(
+      writeFile(
+          root / "gti.toml",
+          "manifest-version = 1\n[package]\nname = \"bridge\"\nversion = "
+          "\"1.0.0\"\n"
+          "[[package.native.platforms]]\nos = \"macos\"\n"
+          "cpp-sources = [\"missing.mm\"]\n"
+          "[targets.bridge]\nkind = \"executable\"\nroot = \"src/main.gti\"\n"),
+      "unselected Objective-C++ fixture should be writable");
+  expect(resolve("linux").succeeded(),
+         "unselected macOS bridge paths must not be checked on other targets");
+  expect(findDiagnostic(resolve("macos").diagnostics, "GTI-B1103") != nullptr,
+         "selected Objective-C++ paths must still exist");
+
+  // Approved build programs use the same language boundary for generated
+  // sources, both on a fresh result and when considering cached output.
+  expect(
+      writeFile(root / "emit.cmake",
+                R"(file(WRITE "$ENV{GTI_BUILD_OUT_DIR}/bridge.mm" "// bridge\n")
+file(WRITE "$ENV{GTI_BUILD_OUTPUT}" "version = 1\ncpp-sources = [\"bridge.mm\"]\n")
+)") && writeFile(root / "gti.toml",
+                 "manifest-version = 1\n[package]\nname = \"bridge\"\nversion "
+                 "= \"1.0.0\"\n"
+                 "[package.build-script]\ncommand = [\"cmake\", \"-P\", "
+                 "\"emit.cmake\"]\ninputs = [\"emit.cmake\"]\n"
+                 "[targets.bridge]\nkind = \"executable\"\nroot = "
+                 "\"src/main.gti\"\n"),
+      "generated Objective-C++ fixtures should be writable");
+  for (const std::string os : {"macos", "linux"}) {
+    const auto plan = resolve(os);
+    expect(plan.succeeded() && plan.plan,
+           "bridge build-script plan should resolve");
+    if (!plan.plan) {
+      continue;
+    }
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      const auto output = lang::driver::executeBuildScripts(
+          *plan.plan, {.cCompiler = "cc", .cppCompiler = "c++", .jobs = 1});
+      if (os == "macos") {
+        expect(
+            output.succeeded() && output.nativeInputs &&
+                output.nativeInputs->cppSources.size() == 1 &&
+                output.nativeInputs->cppSources.front().extension() == ".mm",
+            "approved build outputs should admit macOS Objective-C++ sources");
+      } else {
+        const auto *diagnostic =
+            findDiagnostic(output.diagnostics, "GTI-B2005");
+        expect(
+            !output.succeeded() && diagnostic &&
+                diagnostic->message.find("macOS") != std::string::npos,
+            "generated Objective-C++ sources must reject a non-macOS target");
+      }
+    }
+  }
+}
+
+void testModuleManifest() {
+  TemporaryDirectory temporary;
+  const auto root = temporary.root();
+  const auto manifest = root / "gti.toml";
+  const auto first = root / "src/api.gti";
+  const auto second = root / "src/other.gti";
+  expect(
+      writeFile(first,
+                "export module main; export int answer() { return 42; }\n") &&
+          writeFile(
+              second,
+              "export module main; export int answer() { return 43; }\n") &&
+          writeFile(root / "src/main.gti",
+                    "import main; int main() { return answer(); }\n"),
+      "module fixtures should be writable");
+  const std::string base = validManifest();
+  expect(writeFile(manifest, base + "\n[modules]\nmain = \"src/api.gti\"\n"),
+         "module manifest should be writable");
+  const auto loaded = lang::driver::loadProjectManifest(manifest);
+  expect(loaded.succeeded() && loaded.manifest->package().modules.size() == 1 &&
+             loaded.manifest->package().modules.front().second ==
+                 std::filesystem::canonical(first),
+         "module paths resolve once into immutable package inputs");
+  const auto workspace = lang::driver::resolveProjectWorkspace(root);
+  expect(workspace.succeeded() &&
+             !workspace.workspace->packageSourceRoots().front().modules.empty(),
+         "the resolved workspace forwards module maps to the compiler");
+  const std::string identity =
+      workspace.succeeded() ? workspace.workspace->modelIdentity() : "";
+  expect(writeFile(manifest, base + "\n[modules]\nmain = \"src/other.gti\"\n"),
+         "module registration should be editable");
+  const auto moved = lang::driver::resolveProjectWorkspace(root);
+  expect(moved.succeeded() && moved.workspace->modelIdentity() != identity,
+         "moving a public module changes project/cache identity");
+  for (const std::string registration :
+       {"main = 42", "main = \"missing.gti\"", "main = \"\"",
+        "main = \"/outside.gti\"", "main = \"C:/outside.gti\"",
+        "main = \"src/api.cpp\"", "main = \"src\"", "import = \"src/api.gti\"",
+        "\"bad.name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
+        "main = \"src/api.gti\"\nother = \"src/api.gti\"",
+        "main = \"src/api.gti\"\nMAIN = \"src/other.gti\""}) {
+    expect(writeFile(manifest, base + "\n[modules]\n" + registration + "\n"),
+           "invalid module fixture should be writable");
+    const auto invalid = lang::driver::loadProjectManifest(manifest);
+    expect(!invalid.succeeded() && !invalid.diagnostics.empty(),
+           "invalid module map must fail before frontend entry: " +
+               registration);
+  }
+  TemporaryDirectory outside;
+  expect(writeFile(outside.root() / "api.gti", "export module main;"),
+         "external fixture exists");
+  std::error_code error;
+  std::filesystem::create_symlink(outside.root() / "api.gti",
+                                  root / "escape.gti", error);
+  if (!error) {
+    expect(writeFile(manifest, base + "\n[modules]\nmain = \"escape.gti\"\n"),
+           "escape fixture exists");
+    const auto escaped = lang::driver::loadProjectManifest(manifest);
+    expect(!escaped.succeeded() &&
+               findDiagnostic(escaped.diagnostics, "GTI-B1104") != nullptr,
+           "module registrations cannot escape their package through symlinks");
+  }
+}
+
+int main(int argc, char *argv[]) {
+  if (argc == 5 && std::string_view(argv[1]) == "-C" &&
+      std::string_view(argv[3]) == "init" &&
+      std::string_view(argv[4]) == "--quiet") {
+    const std::filesystem::path root(argv[2]);
+    std::error_code error;
+    if (!std::filesystem::is_directory(root / ".git", error) || error) {
+      return 2;
+    }
+    // A child may fail after publishing partial metadata. Only the directory
+    // reserved by this scaffold operation is eligible for rollback.
+    if (root.filename() == "partial-git-failure") {
+      if (!writeFile(root / ".git/partial", "partial repository state\n")) {
+        return 3;
+      }
+      return 1;
+    }
+    return 0;
+  }
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
@@ -2762,6 +3313,7 @@ int main() {
   testTestTargetResolution();
   testNativeManifestResolution();
   testNativeManifestDiagnostics();
+  testObjectiveCppSourceResolution();
   testCleanSafety();
   testWorkspaceAndPathDependencies();
   testDependencyLockModel();
@@ -2769,7 +3321,7 @@ int main() {
   testNativeDependencyComposition();
   testProjectFacts();
   testProjectFactsDiagnostics();
-  testProjectScaffolding();
+  testProjectScaffolding(std::filesystem::absolute(argv[0]));
   testFormatConfigScaffolding();
   testBindgenImportManifest();
   testBindgenImportManifestDiagnostics();
@@ -2778,6 +3330,8 @@ int main() {
   testCrossToolchainManifest();
   testCrossToolchainFailClosed();
   testCrossToolchainManifestDiagnostics();
+  testPackageBuildScripts();
+  testModuleManifest();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

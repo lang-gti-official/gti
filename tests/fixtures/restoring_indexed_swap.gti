@@ -1,0 +1,85 @@
+#include <std/algorithm>
+#include <std/array>
+#include <std/string>
+#include <std/vector>
+#include <std/panic>
+
+class Resource {
+  int identity;
+  std::string label;
+public:
+  Resource(int id) : identity(id), label(std::string("resource")) {
+    if (id == 99) { std::panic("array element construction"); }
+  }
+  Resource(Resource& other) = delete;
+  ~Resource() { std::println(this.identity); }
+  int id() { return this.identity; }
+};
+
+class Compare {
+  mut int count = 0;
+  int fail_at;
+public:
+  Compare(int fail_at) : fail_at(fail_at) {}
+  bool operator()(Resource& left, Resource& right) mut {
+    this.count++;
+    if (this.count == this.fail_at) { std::panic("comparison failed"); }
+    return left.id() < right.id();
+  }
+};
+
+// The owning-array argument protocol is not specific to std::array.
+class Bundle {
+  Resource entries[2];
+public:
+  Bundle(Resource initial[2], bool fail) : entries(std::move(initial)) {
+    if (fail) { std::panic("bundle construction"); }
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 6) {
+    std::array<Resource, 2> partial = std::array<Resource, 2>({Resource(10), Resource(99)});
+    return 9;
+  }
+  if (argc == 10) {
+    Bundle partial = Bundle({Resource(10), Resource(20)}, true);
+    return 10;
+  }
+  mut std::vector<Resource> values{};
+  values.push_back(Resource(3));
+  values.push_back(Resource(1));
+  values.push_back(Resource(2));
+  if (argc == 2) { values.swap_elements(std::size_t(3), std::size_t(0)); }
+  if (argc == 3) { values.swap_elements(std::size_t(0), std::size_t(3)); }
+  if (argc == 4) { values.swap_elements(std::size_t(3), std::size_t(3)); }
+  if (argc == 5) { std::sort(values, Compare(3)); }
+  values.swap_elements(std::size_t(0), std::size_t(0));
+  std::sort(values, Compare(0));
+  if (values[std::size_t(0)].id() != 1 || values[std::size_t(1)].id() != 2 || values[std::size_t(2)].id() != 3) { return 1; }
+  std::reverse(values);
+  if (values[std::size_t(0)].id() != 3 || values[std::size_t(1)].id() != 2 || values[std::size_t(2)].id() != 1) { return 2; }
+  mut std::array<int, 2> left = std::array<int, 2>({1, 2});
+  mut std::array<int, 2> right = std::array<int, 2>({3, 4});
+  left.swap(right);
+  left.swap_elements(std::size_t(0), std::size_t(1));
+  if (left[0] != 4 || left[1] != 3 || right[0] != 1 || right[1] != 2) { return 3; }
+  mut std::array<Resource, 2> resources = std::array<Resource, 2>({Resource(10), Resource(20)});
+  mut std::array<Resource, 2> others = std::array<Resource, 2>({Resource(30), Resource(40)});
+  if (argc == 7) { resources.swap_elements(std::size_t(2), std::size_t(0)); }
+  if (argc == 8) { resources.swap_elements(std::size_t(0), std::size_t(2)); }
+  if (argc == 9) { resources.swap_elements(std::size_t(2), std::size_t(2)); }
+  resources.swap(others);
+  resources.swap_elements(std::size_t(0), std::size_t(1));
+  if (resources[0].id() != 40 || resources[1].id() != 30 || others[0].id() != 10) { return 4; }
+  mut std::vector<std::string> words{};
+  words.push_back(std::string("z"));
+  words.push_back(std::string("a"));
+  words.push_back(std::string("m"));
+  std::sort(words);
+  if (words[std::size_t(0)] != "a" || words[std::size_t(2)] != "z") { return 5; }
+  mut std::array<std::string, 2> names = std::array<std::string, 2>({std::string("left"), std::string("right")});
+  names.swap_elements(std::size_t(1), std::size_t(0));
+  if (names[0] != "right" || names[1] != "left") { return 6; }
+  return 0;
+}

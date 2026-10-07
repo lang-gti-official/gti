@@ -1,0 +1,32 @@
+#include <std/vector>
+enum class data { empty, items(std::vector<int32_t> values) };
+class owner {
+  mut data content;
+  data replace(data replacement) mut {
+    data previous = std::move(this.content);
+    this.content = std::move(replacement);
+    return std::move(previous);
+  }
+public:
+  owner(data input) : content(std::move(input)) {}
+  int32_t first() {
+    switch (this.content) {
+      case data::empty: return -1;
+      case data::items(auto& values): return values[std::size_t(0)];
+    }
+  }
+  void swap(mut owner& other) mut {
+    data previous = std::move(this.content);
+    this.content = other.replace(std::move(previous));
+  }
+};
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(7);
+  mut owner first = owner(data::items(std::move(values)));
+  mut owner second = owner(data::empty);
+  first.swap(second);
+  if (first.first() != -1 || second.first() != 7) { return 1; }
+  second.swap(first);
+  return first.first() == 7 && second.first() == -1 ? 0 : 2;
+}

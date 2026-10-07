@@ -1,6 +1,0 @@
-{
-  "title": "Build and edit owned text",
-  "description": "Constructs, grows, clones, and independently mutates an owning string.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

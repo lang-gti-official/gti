@@ -1,0 +1,232 @@
+#include <std/string>
+
+namespace std {
+namespace encoding {
+
+/// Recoverable failures shared by the binary-to-text decoders in this unit.
+enum class decode_errc {
+  invalid_length,
+  invalid_character,
+  invalid_padding,
+  non_canonical_input,
+};
+
+namespace detail {
+
+char base64_character(uint8_t value) {
+  std::string_view alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  return alphabet[std::size_t(value)];
+}
+
+int32_t base64_value(char value) {
+  uint8_t code = uint8_t(value);
+  if (code >= uint8_t(65) && code <= uint8_t(90)) {
+    return int32_t(code - uint8_t(65));
+  }
+  if (code >= uint8_t(97) && code <= uint8_t(122)) {
+    return int32_t(code - uint8_t(97)) + int32_t(26);
+  }
+  if (code >= uint8_t(48) && code <= uint8_t(57)) {
+    return int32_t(code - uint8_t(48)) + int32_t(52);
+  }
+  if (value == '+') {
+    return int32_t(62);
+  }
+  if (value == '/') {
+    return int32_t(63);
+  }
+  return int32_t(-1);
+}
+
+char lower_hex_character(uint8_t value) {
+  std::string_view alphabet = "0123456789abcdef";
+  return alphabet[std::size_t(value)];
+}
+
+int32_t hex_value(char value) {
+  uint8_t code = uint8_t(value);
+  if (code >= uint8_t(48) && code <= uint8_t(57)) {
+    return int32_t(code - uint8_t(48));
+  }
+  if (code >= uint8_t(65) && code <= uint8_t(70)) {
+    return int32_t(code - uint8_t(65)) + int32_t(10);
+  }
+  if (code >= uint8_t(97) && code <= uint8_t(102)) {
+    return int32_t(code - uint8_t(97)) + int32_t(10);
+  }
+  return int32_t(-1);
+}
+
+}
+
+namespace base64 {
+
+/// Encodes the exact counted input bytes with the standard RFC 4648 alphabet
+/// and canonical `=` padding. Embedded zero bytes are preserved.
+std::string encode(std::string_view bytes) {
+  mut std::string result{};
+  mut std::size_t index = std::size_t(0);
+
+  while (index + std::size_t(2) < bytes.size()) {
+    uint8_t first = uint8_t(bytes[index]);
+    uint8_t second = uint8_t(bytes[index + std::size_t(1)]);
+    uint8_t third = uint8_t(bytes[index + std::size_t(2)]);
+
+    uint8_t first_index = uint8_t(first >> uint8_t(2));
+    uint8_t second_index = uint8_t(
+        uint8_t((first & uint8_t(0x03)) << uint8_t(4)) |
+        uint8_t(second >> uint8_t(4)));
+    uint8_t third_index = uint8_t(
+        uint8_t((second & uint8_t(0x0f)) << uint8_t(2)) |
+        uint8_t(third >> uint8_t(6)));
+    uint8_t fourth_index = uint8_t(third & uint8_t(0x3f));
+
+    result.push_back(detail::base64_character(first_index));
+    result.push_back(detail::base64_character(second_index));
+    result.push_back(detail::base64_character(third_index));
+    result.push_back(detail::base64_character(fourth_index));
+    index += std::size_t(3);
+  }
+
+  std::size_t remainder = bytes.size() - index;
+  if (remainder == std::size_t(1)) {
+    uint8_t first = uint8_t(bytes[index]);
+    uint8_t first_index = uint8_t(first >> uint8_t(2));
+    uint8_t second_index =
+        uint8_t((first & uint8_t(0x03)) << uint8_t(4));
+
+    result.push_back(detail::base64_character(first_index));
+    result.push_back(detail::base64_character(second_index));
+    result.push_back('=');
+    result.push_back('=');
+  } else if (remainder == std::size_t(2)) {
+    uint8_t first = uint8_t(bytes[index]);
+    uint8_t second = uint8_t(bytes[index + std::size_t(1)]);
+    uint8_t first_index = uint8_t(first >> uint8_t(2));
+    uint8_t second_index = uint8_t(
+        uint8_t((first & uint8_t(0x03)) << uint8_t(4)) |
+        uint8_t(second >> uint8_t(4)));
+    uint8_t third_index =
+        uint8_t((second & uint8_t(0x0f)) << uint8_t(2));
+
+    result.push_back(detail::base64_character(first_index));
+    result.push_back(detail::base64_character(second_index));
+    result.push_back(detail::base64_character(third_index));
+    result.push_back('=');
+  }
+  return result;
+}
+
+/// Decodes strict canonical RFC 4648 Base64. The input length must be a
+/// multiple of four, padding is mandatory when required, and whitespace is
+/// not ignored.
+expected<std::string, decode_errc> decode(std::string_view text) {
+  if (text.size() % std::size_t(4) != std::size_t(0)) {
+    return unexpected(decode_errc::invalid_length);
+  }
+
+  mut std::string result{};
+  mut std::size_t index = std::size_t(0);
+  while (index < text.size()) {
+    char first_character = text[index];
+    char second_character = text[index + std::size_t(1)];
+    char third_character = text[index + std::size_t(2)];
+    char fourth_character = text[index + std::size_t(3)];
+    bool final_quantum = index + std::size_t(4) == text.size();
+    bool third_padding = third_character == '=';
+    bool fourth_padding = fourth_character == '=';
+
+    if (first_character == '=' || second_character == '=' ||
+        (third_padding && !fourth_padding) ||
+        (!final_quantum && (third_padding || fourth_padding))) {
+      return unexpected(decode_errc::invalid_padding);
+    }
+
+    int32_t first_value = detail::base64_value(first_character);
+    int32_t second_value = detail::base64_value(second_character);
+    mut int32_t third_value = int32_t(0);
+    mut int32_t fourth_value = int32_t(0);
+    if (!third_padding) {
+      third_value = detail::base64_value(third_character);
+    }
+    if (!fourth_padding) {
+      fourth_value = detail::base64_value(fourth_character);
+    }
+    if (first_value < int32_t(0) || second_value < int32_t(0) ||
+        third_value < int32_t(0) || fourth_value < int32_t(0)) {
+      return unexpected(decode_errc::invalid_character);
+    }
+
+    uint8_t first = uint8_t(first_value);
+    uint8_t second = uint8_t(second_value);
+    uint8_t third = uint8_t(third_value);
+    uint8_t fourth = uint8_t(fourth_value);
+    if (third_padding && (second & uint8_t(0x0f)) != uint8_t(0)) {
+      return unexpected(decode_errc::non_canonical_input);
+    }
+    if (!third_padding && fourth_padding &&
+        (third & uint8_t(0x03)) != uint8_t(0)) {
+      return unexpected(decode_errc::non_canonical_input);
+    }
+
+    uint8_t first_byte = uint8_t(
+        uint8_t(first << uint8_t(2)) | uint8_t(second >> uint8_t(4)));
+    result.push_back(char(first_byte));
+    if (!third_padding) {
+      uint8_t second_byte = uint8_t(
+          uint8_t((second & uint8_t(0x0f)) << uint8_t(4)) |
+          uint8_t(third >> uint8_t(2)));
+      result.push_back(char(second_byte));
+    }
+    if (!fourth_padding) {
+      uint8_t third_byte = uint8_t(
+          uint8_t((third & uint8_t(0x03)) << uint8_t(6)) | uint8_t(fourth));
+      result.push_back(char(third_byte));
+    }
+    index += std::size_t(4);
+  }
+  return std::move(result);
+}
+
+}
+
+namespace hex {
+
+/// Encodes the exact counted input bytes as canonical lowercase hexadecimal.
+std::string encode(std::string_view bytes) {
+  mut std::string result{};
+  for (mut std::size_t index = std::size_t(0); index < bytes.size(); index++) {
+    uint8_t value = uint8_t(bytes[index]);
+    result.push_back(
+        detail::lower_hex_character(uint8_t(value >> uint8_t(4))));
+    result.push_back(
+        detail::lower_hex_character(uint8_t(value & uint8_t(0x0f))));
+  }
+  return result;
+}
+
+/// Decodes an even-length hexadecimal string. Both uppercase and lowercase
+/// digits are accepted; separators and prefixes are not accepted.
+expected<std::string, decode_errc> decode(std::string_view text) {
+  if (text.size() % std::size_t(2) != std::size_t(0)) {
+    return unexpected(decode_errc::invalid_length);
+  }
+
+  mut std::string result{};
+  mut std::size_t index = std::size_t(0);
+  while (index < text.size()) {
+    int32_t high = detail::hex_value(text[index]);
+    int32_t low = detail::hex_value(text[index + std::size_t(1)]);
+    if (high < int32_t(0) || low < int32_t(0)) {
+      return unexpected(decode_errc::invalid_character);
+    }
+    result.push_back(char(uint8_t(high * int32_t(16) + low)));
+    index += std::size_t(2);
+  }
+  return std::move(result);
+}
+
+}
+}
+}

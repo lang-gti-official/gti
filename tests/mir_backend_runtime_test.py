@@ -89,7 +89,10 @@ def main() -> int:
                         "// GTI verified-MIR body: native-boundary-v1 "
                         "function-instance"
                     )
-                    != 4
+                    # Seven declaration-bound prelude operations (including
+                    # panic and the two container checks) and two native stdout
+                    # declarations each retain their verified boundary.
+                    != 9
                 ):
                     sys.stderr.write(
                         "generated C++ lost the verified prelude initializer, "
@@ -175,15 +178,15 @@ def main() -> int:
                 constant = function_definition(generated, "mir_constant")
                 if optimization == "O0":
                     exact_transform = (
-                        "__gti_mir_v_1 = __gti_mir_v_2;" in constant
-                        and "__gti_mir_v_1 = static_cast<std::int32_t>(42);"
+                        "__gti_mir_v_2 = __gti_mir_v_1;" in constant
+                        and "__gti_mir_v_2 = static_cast<std::int32_t>(42);"
                         not in constant
                     )
                 else:
                     exact_transform = (
-                        "__gti_mir_v_1 = static_cast<std::int32_t>(42);"
+                        "__gti_mir_v_2 = static_cast<std::int32_t>(42);"
                         in constant
-                        and "__gti_mir_v_1 = __gti_mir_v_2;" not in constant
+                        and "__gti_mir_v_2 = __gti_mir_v_1;" not in constant
                     )
                 if not exact_transform:
                     sys.stderr.write(

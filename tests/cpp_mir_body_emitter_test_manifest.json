@@ -2,6 +2,26 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testGeneratedMoveReferenceBindings",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPreparedConstructorReplacement",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNonFailingOwningDeclarationInitializer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCopiedBorrowedArgumentAcrossInvoke",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPackParameterCleanup",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testOwningPayloadEnumRepresentationAdmission",
       "suite": "preflight"
     },
@@ -19,6 +39,14 @@
     },
     {
       "name": "testReadyBodyAndRepresentationFailures",
+      "suite": "preflight"
+    },
+    {
+      "name": "testLargeScalarAggregateAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testProgramPlanValidationIsOperationScoped",
       "suite": "preflight"
     },
     {
@@ -54,11 +82,39 @@
       "suite": "preflight"
     },
     {
+      "name": "testByteFieldRepresentationFailsClosed",
+      "suite": "preflight"
+    },
+    {
+      "name": "testNativeExpectedCopyPublication",
+      "suite": "preflight"
+    },
+    {
       "name": "testConcreteClassStaticStorage",
       "suite": "preflight"
     },
     {
       "name": "testDischargedStorageReadAnalysis",
+      "suite": "preflight"
+    },
+    {
+      "name": "testDefaultPrefixConstructorStatusAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testScalarPrefixConstructorStatusAdmission",
+      "suite": "preflight"
+    },
+    {
+      "name": "testOwningConstructorAcrossArgumentDiamond",
+      "suite": "preflight"
+    },
+    {
+      "name": "testOptionalPayloadCleanupComposition",
+      "suite": "preflight"
+    },
+    {
+      "name": "testPrefixStorageCStringAdmissionFailsClosed",
       "suite": "preflight"
     },
     {
@@ -178,8 +234,20 @@
       "suite": "text"
     },
     {
+      "name": "testOpaquePointerFailureResults",
+      "suite": "text"
+    },
+    {
       "name": "testInvokePublishesScalarEdgeArguments",
       "suite": "text"
+    },
+    {
+      "name": "testForwardListEmplacementPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testContainerSwapStorageAndMemberResults",
+      "suite": "lifecycle"
     },
     {
       "name": "testOwningCheckedBodyEmitsWholeCleanupProof",
@@ -187,6 +255,14 @@
     },
     {
       "name": "testRichFieldInitializerSchedule",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testToyEngineConstructorInitializers",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testFallibleFieldInitializerPropagation",
       "suite": "lifecycle"
     },
     {
@@ -206,7 +282,19 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testSourceDestructorOwningFieldCleanup",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testOwningBaseConstructorStatus",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveOwnedParameterConstructorFields",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBodyOrderedPassivePolicyConstructor",
       "suite": "lifecycle"
     },
     {
@@ -259,6 +347,10 @@
     },
     {
       "name": "testPassiveConstructorFailureSummary",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveRecordComposition",
       "suite": "lifecycle"
     },
     {
@@ -322,6 +414,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testConstructedArgumentTemporaryBorrow",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testFailureCapableClassReturnTemporaryReceiver",
       "suite": "lifecycle"
     },
@@ -331,6 +427,126 @@
     },
     {
       "name": "testCleanupFreeConstructorTemporaryFieldRead",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testDiscardedCleanupFreeClassResult",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedCleanupFreeClassResult",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCleanupFreeConstructorFieldFailure",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testExpectedConstructorPayloadPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testScalarConstructorFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveUnexpectedBinding",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveConstructorFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGenericScalarConstructedFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testRawPointerConstructorFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveClassFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBoundPassiveClassFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNativeStatusFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveBorrowedConstructedFieldPrefix",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPhysicalCarrierReferencePublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveExpectedMoveReturnHasNoSsaShell",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDefaultOwningFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testProvenanceOnlyReceiverFields",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedConstructorRepresentationPrecedence",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConservativeConstructorAssignmentFusion",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBorrowedFieldCompoundAssignment",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedBorrowedFieldProjection",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedOwnedFieldAssignment",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveNestedConstructorArgument",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBorrowedTemporaryOperatorReceiver",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testMovedClassArgumentBeforeCheckedArgument",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testOwningConstructedFieldInputTransfers",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testConstructedCallbackConditionalArgument",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testErasedOwnedResultReturn",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testFreshOwnedCallableArgument",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDefaultOwningFieldInitializer",
       "suite": "lifecycle"
     },
     {

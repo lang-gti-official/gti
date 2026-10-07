@@ -4,10 +4,21 @@ Status: Normative scaffold
 
 ## 1.1 Scope
 
+GTI is an independent systems language intended to become fully usable for
+serious systems programming, with excellent safety, strong C++ syntax familiarity,
+and a sound architecture. It is not a wrapper around C++. Familiar spelling does
+not import C++ behavior into the language.
+
 This specification defines the GTI source language, its static semantics, its
 abstract runtime behaviour, and the contracts of its standard library. It does
 not define the internal structure of the reference compiler or require
 translation through C++.
+
+Public library policy should be expressible in ordinary GTI over general
+facilities. Compiler and runtime support remains appropriate for facts and
+operations that source cannot establish, including layout, object lifetime,
+ownership verification and host access. The split is justified by each operation's
+invariant rather than by a public library name or the current backend.
 
 The specification covers hosted GTI programs compiled from an entry source
 unit and its dependency graph. Freestanding execution, a stable binary ABI,
@@ -20,9 +31,14 @@ analysis. Together with an independently advertised target/runtime `threads`
 capability, that selection exposes the bounded production source-defined
 `std::thread`, `std::thread_result<Result>`, ordered scalar `std::atomic<T>`
 (including fixed-width integer fetch operations), and scoped
-`std::mutex<T>`/`std::mutex_guard<T>` surfaces. It does not expose detach,
-condition variables, scoped cross-thread borrows, or foreign-thread entry;
-those facilities retain separate runtime and conformance gates.
+`std::mutex<T>`/`std::mutex_guard<T>` surfaces. Separately,
+`<std/cthread>` provides scheduling, sleep, and identity operations in either
+profile and, in the concurrent profile with the `threads` capability, unsafe
+manual create/join, once-initialization, mutex, and condition-variable
+operations. Neither surface exposes detach, a safe scoped condition-variable
+wrapper, scoped cross-thread borrows, thread-specific storage, or arbitrary
+foreign-thread entry; those facilities retain separate runtime and
+conformance gates.
 
 ## 1.2 Conforming Programs
 
@@ -104,8 +120,8 @@ Optimization may change execution only when observable behaviour is preserved.
   checked failure condition is encountered. It performs specified
   cleanup to an explicit containment boundary, which terminates the hosted
   program, returns a structured record through a future generated embedding
-  boundary, or captures a future task record for re-raise at join. It is not a
-  source exception or an `expected` error.
+  boundary, or captures a managed-task record for re-raise at join. It is not
+  a source exception or an `expected` error.
 - A **compiler intrinsic** is a semantically identified operation whose
   behaviour cannot yet be expressed as ordinary GTI source. It is not thereby
   a public application API.

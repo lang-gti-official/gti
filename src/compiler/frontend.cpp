@@ -24,6 +24,56 @@
 namespace lang {
 namespace {
 
+bool promoteRawAuditDiagnostics(std::vector<Diagnostic> &diagnostics,
+                                RawPointerAuditMode mode) {
+  if (mode != RawPointerAuditMode::Strict)
+    return false;
+  bool promoted = false;
+  for (auto &diagnostic : diagnostics) {
+    if (diagnostic.severity == DiagnosticSeverity::Warning &&
+        (diagnostic.code == "GTI-S2101" || diagnostic.code == "GTI-S2102" ||
+         diagnostic.code == "GTI-S2103")) {
+      diagnostic.severity = DiagnosticSeverity::Error;
+      promoted = true;
+    }
+  }
+  return promoted;
+}
+
+// These are syntax requests, not a second declaration catalog. Semantic
+// publication validates export eligibility and uses exact declaration names.
+bool collectExportRequests(const StmtList &statements, SourceUnit &unit,
+                           const TargetInfo &target, bool inherited = false) {
+  bool any = false;
+  for (const StmtPtr &statement : statements) {
+    if (!statement) {
+      continue;
+    }
+    const bool exported = inherited || statement->exportKeyword().has_value();
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      if (collectExportRequests(space->declarations(), unit, target,
+                                exported) ||
+          exported) {
+        unit.exportedNamespaces.push_back(tokenSpan(space->name()));
+        any = true;
+      }
+    } else if (const auto *conditional =
+                   stmtAs<ConditionalStmt>(statement.get())) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        any = collectExportRequests(*branch, unit, target, exported) || any;
+      }
+    } else if (const auto *linkage = stmtAs<ExternCDecl>(statement.get())) {
+      any = collectExportRequests(linkage->declarations(), unit, target,
+                                  exported) ||
+            any;
+    } else if (exported && statement->extent()) {
+      unit.exportedDeclarations.push_back(*statement->extent());
+      any = true;
+    }
+  }
+  return any;
+}
+
 std::string cacheContext(const FrontendOptions &options) {
   ConfigurationFlags flags = options.configurationFlags;
   normalizeConfigurationFlags(flags);
@@ -42,6 +92,7 @@ std::string cacheContext(const FrontendOptions &options) {
     result += flag;
   }
   result += '\n';
+  result += options.requireEntryPoint ? "entry:required\n" : "entry:optional\n";
   result += options.target.dataLayout.supported() ? "layout:supported"
                                                   : "layout:unsupported";
   for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
@@ -214,10 +265,13 @@ FrontendResult Frontend::analyze(
   const auto sourceLoadStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-source-load");
+    const ProgressScope loadProgress(options.progress, ProgressPhase::Loading);
     result.sourceGraph = sourceLoader.load(
         entryPath, std::move(entrySource), preludePaths, sourceOverrides,
         standardLibraryRoots, options.completionOffset, packageSourceRoots,
         options.target, options.configurationFlags);
+    loadProgress.update({}, result.sourceGraph.sourceUnits().size(),
+                        result.sourceGraph.sourceUnits().size());
   }
   if (options.workMetrics != nullptr) {
     options.workMetrics->sourceLoadMicroseconds = static_cast<std::size_t>(
@@ -228,7 +282,14 @@ FrontendResult Frontend::analyze(
   result.sources = sourceLoader.sources();
   append(result.diagnostics, sourceLoader.errors());
   result.sourceValid = !sourceLoader.hadError();
-  return finishAnalysis(entryPath, std::move(result));
+  result = finishAnalysis(entryPath, std::move(result));
+  if (options.suggestIncludes && !options.completionOffset &&
+      options.stopAfter != FrontendPhase::Parsing) {
+    addIncludeSuggestions(result, options, entryPath, preludePaths,
+                          sourceOverrides, standardLibraryRoots,
+                          packageSourceRoots);
+  }
+  return result;
 }
 
 // Continues the canonical frontend pipeline from a graph produced by the
@@ -279,10 +340,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const auto parseStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-parse");
+    const ProgressScope progress(options.progress, ProgressPhase::Parsing, {},
+                                 result.sourceGraph.compilationOrder().size());
+    std::size_t completed = 0;
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       SourceUnit *unit = result.sourceGraph.findUnit(unitId);
       if (unit == nullptr) {
         continue;
+      }
+      if (options.progress != nullptr) {
+        progress.update(unit->path.string(), completed);
       }
       unit->declarationStart = declarations.size();
       StmtList unitDeclarations;
@@ -325,8 +392,15 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         }
       }
       unit->declarationCount = unitDeclarations.size();
+      unit->exportedDeclarations.clear();
+      unit->exportedNamespaces.clear();
+      collectExportRequests(unitDeclarations, *unit, options.target);
       declarations.insert(declarations.end(), unitDeclarations.begin(),
                           unitDeclarations.end());
+      ++completed;
+      if (options.progress != nullptr) {
+        progress.update(unit->path.string(), completed);
+      }
     }
   }
   if (options.workMetrics != nullptr) {
@@ -337,12 +411,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
   result.program = Program(std::move(declarations));
   result.syntaxValid = syntaxValid;
+  if (options.stopAfter == FrontendPhase::Parsing) {
+    return result;
+  }
   if (!result.syntaxValid && !options.analyzeRecoveredProgram) {
     return result;
   }
 
   SemanticVisitor semantic(options.target, &result.sourceGraph,
-                           options.toolingOccurrences, options.workMetrics);
+                           options.toolingOccurrences, options.workMetrics,
+                           &result.sources, options.rawPointerAudit);
   if (options.workMetrics != nullptr) {
     for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
       if (const SourceUnit *unit = result.sourceGraph.findUnit(unitId)) {
@@ -354,6 +432,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const auto semanticStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-semantics");
+    const ProgressScope progress(options.progress, ProgressPhase::Checking);
     result.semanticValid = semantic.check(result.program);
     if (result.semanticValid) {
       result.semanticValid =
@@ -367,15 +446,34 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             .count());
   }
   append(result.diagnostics, semantic.errors());
+  // Complete the requested inference phases before applying CI policy, so
+  // Strict and Warn discover the same concrete bodies and audit findings.
+  const auto applyAuditPolicy = [&] {
+    if (promoteRawAuditDiagnostics(result.diagnostics, options.rawPointerAudit))
+      result.semanticValid = false;
+  };
+  if (options.requireEntryPoint && result.sourceValid && result.syntaxValid &&
+      result.semanticValid && !options.completionOffset) {
+    const SourceUnit *entry =
+        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    if (auto diagnostic = semantic.model().executableEntryDiagnostic(
+            result.sourceGraph.entryUnit(),
+            entry == nullptr ? entryPath.string() : entry->path.string())) {
+      result.diagnostics.push_back(std::move(*diagnostic));
+      result.semanticValid = false;
+    }
+  }
   if (!result.semanticValid || options.completionOffset ||
       options.stopAfter == FrontendPhase::Semantics) {
     result.semantics = semantic.takeModel();
+    applyAuditPolicy();
     return result;
   }
 
   const auto hirStart = std::chrono::steady_clock::now();
   HirLoweringResult hir = [&] {
     const PhaseTimeScope timeScope("gti-hir-lowering");
+    const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
     return HirLowerer(options.target)
         .lower(result.program, semantic.model(), semantic);
   }();
@@ -392,6 +490,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // move the model into the result instead of deep-copying it.
   result.semantics = semantic.takeModel();
   if (!result.hirValid || options.stopAfter == FrontendPhase::Hir) {
+    applyAuditPolicy();
     return result;
   }
 
@@ -415,12 +514,15 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         SourceSpan{entry == nullptr ? entryPath.string() : entry->path.string(),
                    0, 0, 1},
         std::move(message)));
+    applyAuditPolicy();
     return result;
   }
 
   const PhaseTimeScope mirTimeScope("gti-mir-lowering");
+  ProgressScope mirProgress(options.progress, ProgressPhase::MirLowering);
   MirLoweringResult mir =
       MirLowerer().lower(result.hir, result.failureMetadata);
+  mirProgress.finish();
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
   if (!result.mirValid) {
@@ -459,6 +561,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                    0, 0, 1},
         std::move(message)));
   }
+  applyAuditPolicy();
   return result;
 }
 

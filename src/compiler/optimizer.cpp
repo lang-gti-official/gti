@@ -3,6 +3,8 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "gti/optimization/coverage.h"
+#include "gti/optimization/devirtualization.h"
 #include "gti/optimization/pass.h"
 
 #include <algorithm>
@@ -639,10 +641,24 @@ public:
         }
         ++outcome.report.candidates;
         ++outcome.report.missed;
+        std::string explanation = std::string(lang::name(miss.reason));
+        if (const auto *aliases =
+                analyses.placeAliasEscape(context.program, address)) {
+          if (const auto *escape = aliases->escape(miss.place);
+              escape != nullptr && escape->escapesBody()) {
+            explanation += "; place escapes the body";
+            if (escape->has(MirPlaceEscapeReason::UnknownCall))
+              explanation += " through an unknown call";
+            if (escape->has(MirPlaceEscapeReason::RetainedBorrow))
+              explanation += " through a retained borrow";
+            if (escape->has(MirPlaceEscapeReason::RawMemory))
+              explanation += " through raw memory";
+          }
+        }
         outcome.report.remarks.push_back(
             {.kind = OptimizationRemarkKind::Missed,
              .pass = outcome.report.name,
-             .message = "not promoted: " + std::string(lang::name(miss.reason)),
+             .message = "not promoted: " + explanation,
              .body = address,
              .place = miss.place});
       }
@@ -652,6 +668,60 @@ public:
       return outcome;
     }
     const MirEditResult edited = editor.apply(analyses);
+    mergeEditReport(outcome.report, edited);
+    outcome.transformations = edited.transformations;
+    outcome.verification = edited.verification;
+    outcome.analysesInvalidated = edited.analysesInvalidated;
+    outcome.preserved = edited.changed ? MirPreservedAnalyses::none()
+                                       : MirPreservedAnalyses::all();
+    return outcome;
+  }
+};
+
+class ExactReceiverPass final : public MirPass {
+public:
+  std::string_view name() const override { return "exact-receiver-dispatch"; }
+  MirPassOutcome run(MirPassContext &context,
+                     MirBodyAnalysisManager &analyses) override {
+    MirPassOutcome outcome;
+    outcome.report.name = std::string(name());
+    MirEditor editor(context.program, std::string(name()));
+    bool queued = false;
+    for (const auto address : enumerateMirBodyAddresses(context.program)) {
+      const auto *body = findMirBody(context.program, address);
+      if (!body)
+        continue;
+      ++outcome.report.analyzedBodies;
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.tombstone ||
+              instruction.dispatch != CallDispatch::Virtual)
+            continue;
+          ++outcome.report.candidates;
+          std::string reason;
+          if (proveMirExactReceiver(context.program, address, instruction.id,
+                                    &reason)) {
+            editor.queueExactReceiver({address, instruction.id});
+            queued = true;
+          } else {
+            ++outcome.report.missed;
+            outcome.report.remarks.push_back(
+                {.kind = OptimizationRemarkKind::Missed,
+                 .pass = std::string(name()),
+                 .message = "virtual dispatch retained: " + reason,
+                 .body = address,
+                 .block = block.id,
+                 .instruction = instruction.id,
+                 .sourceValue = instruction.hirValue,
+                 .sourceStatement = instruction.hirStatement});
+          }
+        }
+    }
+    if (!queued) {
+      outcome.preserved = MirPreservedAnalyses::all();
+      return outcome;
+    }
+    const auto edited = editor.apply(analyses);
     mergeEditReport(outcome.report, edited);
     outcome.transformations = edited.transformations;
     outcome.verification = edited.verification;
@@ -865,12 +935,59 @@ public:
       }
       for (const MirBlock &block : body->blocks) {
         for (const MirInstruction &instruction : block.instructions) {
+          // Report conservative boundaries once, rather than repeating them
+          // for every check family. These are facts about this instruction,
+          // not a claim that it caused an unrelated check's missing proof.
+          if (family == MirSafetyCheckFamily::Bounds &&
+              !instruction.tombstone &&
+              ((instruction.kind == MirInstructionKind::Call &&
+                (instruction.intrinsic == IntrinsicKind::None
+                     ? !exactMirInvocationSummary(context.program, *body,
+                                                  instruction)
+                     : optimizationCoverage(instruction.intrinsic).handling ==
+                           MirOptimizationHandling::Barrier)) ||
+               instruction.rawMemoryAccess ||
+               instruction.unsafeOperation != UnsafeOperationKind::None ||
+               instruction.kind == MirInstructionKind::CleanupBeforeAssign ||
+               instruction.kind == MirInstructionKind::Drop)) {
+            const std::string reason = mirOptimizationBarrierReason(
+                context.program, instruction, body);
+            if (!reason.empty()) {
+              outcome.report.remarks.push_back(
+                  {.kind = OptimizationRemarkKind::Missed,
+                   .pass = passName,
+                   .message = "conservative analysis boundary: " + reason,
+                   .body = address,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .sourceValue = instruction.hirValue,
+                   .sourceStatement = instruction.hirStatement});
+            }
+          }
           for (std::size_t origin = 0;
                origin < instruction.definedFailure.localOrigins.size();
                ++origin) {
             for (const DefinedFailureOutcome failure :
                  instruction.definedFailure.localOrigins[origin].outcomes) {
               if (safetyFamily(failure) != family) {
+                if (family == MirSafetyCheckFamily::Bounds &&
+                    !safetyFamily(failure)) {
+                  outcome.report.remarks.push_back(
+                      {.kind = OptimizationRemarkKind::Missed,
+                       .pass = passName,
+                       .message =
+                           "check retained: unsupported failure discharge "
+                           "family " +
+                           std::string(definedFailureCodeName(failure.code)) +
+                           "/" +
+                           std::string(
+                               definedFailureDetailName(failure.detail)),
+                       .body = address,
+                       .block = block.id,
+                       .instruction = instruction.id,
+                       .sourceValue = instruction.hirValue,
+                       .sourceStatement = instruction.hirStatement});
+                }
                 continue;
               }
               const MirSafetyDischarge discharge{
@@ -1072,11 +1189,16 @@ public:
                   {.body = address, .instruction = instruction.id});
             } else {
               ++outcome.report.missed;
+              const std::string reason = mirOptimizationBarrierReason(
+                  context.program, instruction, body);
               outcome.report.remarks.push_back(
                   {.kind = OptimizationRemarkKind::Missed,
                    .pass = outcome.report.name,
-                   .message = "unused computation retained because it may "
-                              "trap or has observable effects",
+                   .message =
+                       "unused computation retained: " +
+                       (reason.empty()
+                            ? "unsupported rewrite shape or retained metadata"
+                            : reason),
                    .body = address,
                    .block = block.id,
                    .instruction = instruction.id,
@@ -1153,6 +1275,23 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
                           .mir = std::move(request.mir)};
   result.report.verificationEnabled = request.options.verifyMir;
 
+  // Vocabulary admission is unconditional. Disabling expensive verification
+  // must never let an unknown terminator masquerade as a CFG exit.
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(result.mir)) {
+    const MirBody *body = findMirBody(result.mir, address);
+    if (body == nullptr) {
+      result.report.inputVerification.errors.push_back(
+          {.bodyKind = address.kind,
+           .owner = address.owner,
+           .message = "unresolved MIR optimizer body"});
+      return result;
+    }
+    result.report.inputVerification =
+        verifyMirOptimizationVocabulary(*body, address.owner);
+    if (!result.report.inputVerification.valid())
+      return result;
+  }
+
   if (request.options.verifyMir) {
     result.report.inputVerification = verifyMirProgram(result.mir);
     if (!result.report.inputVerification.valid()) {
@@ -1213,6 +1352,7 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
     ScalarPromotionPass scalarPromotion;
     LiteralIdentityFoldPass literalFolding(*compatibility);
     SparseConditionalConstantPass sparseConstants;
+    ExactReceiverPass exactReceivers;
     SafetyCheckEliminationPass boundsChecks(MirSafetyCheckFamily::Bounds);
     SafetyCheckEliminationPass storageChecks(
         MirSafetyCheckFamily::StorageState);
@@ -1225,9 +1365,9 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
     if (!execute(scalarPromotion) || !execute(literalFolding) ||
         ((request.level == OptimizationLevel::O2 ||
           request.level == OptimizationLevel::O3) &&
-         (!execute(sparseConstants) || !execute(boundsChecks) ||
-          !execute(storageChecks) || !execute(overflowChecks) ||
-          !execute(domainChecks))) ||
+         (!execute(sparseConstants) || !execute(exactReceivers) ||
+          !execute(boundsChecks) || !execute(storageChecks) ||
+          !execute(overflowChecks) || !execute(domainChecks))) ||
         !execute(unreachableCleanup) || !execute(deadComputations)) {
       return result;
     }

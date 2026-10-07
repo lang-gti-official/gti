@@ -9,6 +9,21 @@ project(gti_installed_library_smoke LANGUAGES C CXX)
 include(CTest)
 find_package(GTI CONFIG REQUIRED)
 
+add_executable(gti_installed_charconv_smoke ../runtime_charconv_tests.cpp)
+target_link_libraries(gti_installed_charconv_smoke PRIVATE GTI::runtime)
+target_compile_features(gti_installed_charconv_smoke PRIVATE cxx_std_20)
+add_test(NAME installed_charconv_boundary COMMAND gti_installed_charconv_smoke)
+
+add_executable(gti_installed_filesystem_smoke ../runtime_filesystem_tests.cpp)
+target_link_libraries(gti_installed_filesystem_smoke PRIVATE GTI::runtime)
+target_compile_features(gti_installed_filesystem_smoke PRIVATE cxx_std_20)
+add_test(NAME installed_filesystem_boundary COMMAND gti_installed_filesystem_smoke)
+
+add_executable(gti_installed_cthread_smoke ../cthread_library_smoke.c)
+target_compile_features(gti_installed_cthread_smoke PRIVATE c_std_11)
+target_link_libraries(gti_installed_cthread_smoke PRIVATE GTI::runtime)
+add_test(NAME installed_cthread_library COMMAND gti_installed_cthread_smoke)
+
 add_executable(gti_installed_compiler_smoke ../compiler_library_smoke.cpp)
 target_link_libraries(gti_installed_compiler_smoke PRIVATE GTI::compiler)
 add_test(NAME installed_compiler_library
@@ -49,3 +64,8 @@ target_link_libraries(gti_installed_native_header_smoke
                       PRIVATE GTI::cpp_backend)
 add_test(NAME installed_native_header_pipeline
          COMMAND gti_installed_native_header_smoke)
+
+add_executable(gti_installed_unsafe_function_smoke ../unsafe_function_tests.cpp)
+target_link_libraries(gti_installed_unsafe_function_smoke PRIVATE GTI::cpp_backend)
+add_test(NAME installed_unsafe_function_contract
+         COMMAND gti_installed_unsafe_function_smoke)

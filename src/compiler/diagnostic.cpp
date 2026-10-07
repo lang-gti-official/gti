@@ -1,12 +1,39 @@
 #include "gti/diagnostic.h"
 
+#include "diagnostic_registry.h"
 #include "source_text.h"
 
 #include <algorithm>
 #include <iterator>
+#include <stdexcept>
 #include <utility>
 
 namespace lang {
+
+WarningPolicy::WarningPolicy(std::vector<std::string> disabledGroups)
+    : disabledWarningGroups(std::move(disabledGroups)) {
+  std::ranges::sort(disabledWarningGroups);
+  const auto duplicate = std::ranges::unique(disabledWarningGroups).begin();
+  disabledWarningGroups.erase(duplicate, disabledWarningGroups.end());
+}
+
+const std::vector<std::string> &WarningPolicy::disabledGroups() const {
+  return disabledWarningGroups;
+}
+
+bool WarningPolicy::suppresses(const Diagnostic &diagnostic) const {
+  return diagnostic.severity == DiagnosticSeverity::Warning &&
+         !diagnostic.group.empty() &&
+         std::ranges::binary_search(disabledWarningGroups, diagnostic.group);
+}
+
+bool isKnownWarningGroup(std::string_view group) {
+  return std::ranges::any_of(
+      diagnosticDescriptors, [group](const DiagnosticDescriptor &descriptor) {
+        return descriptor.severity == DiagnosticSeverity::Warning &&
+               descriptor.group == group;
+      });
+}
 
 SourceSpan tokenSpan(const Token &token) {
   const std::size_t length = token.generated ? 1 : token.lexeme.size();
@@ -19,6 +46,45 @@ Diagnostic makeDiagnostic(std::string code, DiagnosticPhase phase,
           .phase = phase,
           .primary = std::move(primary),
           .message = std::move(message)};
+}
+
+namespace {
+
+std::string
+formatDiagnosticMessage(const DiagnosticDescriptor &descriptor,
+                        std::initializer_list<std::string_view> arguments) {
+  if (arguments.size() != descriptor.argumentCount) {
+    throw std::invalid_argument("diagnostic format argument count mismatch");
+  }
+  std::string result(descriptor.messageFormat);
+  std::size_t index = 0;
+  for (const std::string_view argument : arguments) {
+    const std::string placeholder = "{" + std::to_string(index++) + "}";
+    for (std::size_t position = result.find(placeholder);
+         position != std::string::npos;
+         position = result.find(placeholder, position + argument.size())) {
+      result.replace(position, placeholder.size(), argument);
+    }
+  }
+  return result;
+}
+
+} // namespace
+
+Diagnostic makeDiagnostic(DiagnosticId id, SourceSpan primary,
+                          std::initializer_list<std::string_view> arguments) {
+  const DiagnosticDescriptor &descriptor = diagnosticDescriptor(id);
+  Diagnostic diagnostic = makeDiagnostic(
+      std::string(descriptor.code), descriptor.phase, std::move(primary),
+      formatDiagnosticMessage(descriptor, arguments));
+  diagnostic.severity = descriptor.severity;
+  diagnostic.group = descriptor.group;
+  return diagnostic;
+}
+
+Diagnostic makeDiagnostic(DiagnosticId id, const Token &token,
+                          std::initializer_list<std::string_view> arguments) {
+  return makeDiagnostic(id, tokenSpan(token), arguments);
 }
 
 Diagnostic makeDiagnostic(std::string code, DiagnosticPhase phase,

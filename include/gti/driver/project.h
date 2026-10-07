@@ -16,8 +16,11 @@ struct ProjectBuildOverrides {
   std::optional<OptimizationLevel> optimization;
   std::optional<CppStandard> cppStandard;
   std::optional<ExecutionProfile> executionProfile;
+  std::optional<RawPointerAuditMode> rawPointerAudit;
   std::optional<bool> keepCpp;
+  std::optional<bool> debugInfo;
   ConfigurationFlags configurationFlags;
+  WarningPolicy warningPolicy;
 };
 
 // Native compiler selections supplied by the caller rather than the
@@ -124,6 +127,21 @@ struct BindgenImportPlan {
   SourceSpan declaration;
 };
 
+// One approved host build program, resolved before frontend entry but not run
+// by metadata/check/fetch operations. Dependency scripts are ordered
+// dependency-first so generated native artifacts exist before dependents run.
+struct BuildScriptPlan {
+  std::string packageIdentity;
+  std::filesystem::path packageRoot;
+  std::vector<std::string> command;
+  std::optional<std::filesystem::path> source;
+  std::vector<std::filesystem::path> inputs;
+  std::vector<std::string> declaredInputs;
+  std::filesystem::path outputDirectory;
+  SourceSpan declaration;
+  bool selectedPackage = false;
+};
+
 class ProjectBuildPlan final {
 public:
   ProjectBuildPlan(
@@ -136,9 +154,13 @@ public:
       OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
       NativeInputs nativeInputs,
       std::vector<PackageSourceRoot> packageSourceRoots,
-      ConfigurationFlags configurationFlags, std::string projectModelIdentity,
+      ConfigurationFlags configurationFlags, WarningPolicy warningPolicy,
+      std::string projectModelIdentity,
       std::vector<BindgenImportPlan> bindgenImports = {},
-      ResolvedProjectToolchain toolchain = {},
+      std::vector<BuildScriptPlan> buildScripts = {},
+      ResolvedProjectToolchain toolchain = {}, bool debugInfo = false,
+      PackageWarningPolicy packageWarnings = {},
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       ProjectTargetLinkage targetLinkage = ProjectTargetLinkage::None,
       std::vector<ProjectExport> exports = {});
 
@@ -160,11 +182,16 @@ public:
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] bool keepCpp() const;
+  [[nodiscard]] bool debugInfo() const;
+  [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] const NativeInputs &nativeInputs() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
+  [[nodiscard]] const WarningPolicy &warnings() const;
+  [[nodiscard]] const PackageWarningPolicy &packageWarnings() const;
   [[nodiscard]] const std::string &projectModelIdentity() const;
   [[nodiscard]] const std::vector<BindgenImportPlan> &bindgenImports() const;
+  [[nodiscard]] const std::vector<BuildScriptPlan> &buildScripts() const;
   [[nodiscard]] const ResolvedProjectToolchain &toolchain() const;
 
 private:
@@ -187,10 +214,15 @@ private:
   NativeInputs resolvedNativeInputs;
   std::vector<PackageSourceRoot> resolvedPackageSources;
   ConfigurationFlags resolvedConfigurationFlags;
+  WarningPolicy resolvedWarningPolicy;
+  PackageWarningPolicy resolvedPackageWarningPolicy;
   std::string resolvedProjectModelIdentity;
   std::vector<BindgenImportPlan> resolvedBindgenImports;
+  std::vector<BuildScriptPlan> resolvedBuildScripts;
   ResolvedProjectToolchain resolvedToolchain;
   std::vector<ProjectExport> resolvedExports;
+  bool sourceDebugInfo = false;
+  RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
 };
 
 class ProjectMetadata final {
@@ -292,20 +324,27 @@ enum class ProjectScaffoldMode {
   ExistingDirectory,
 };
 
+struct ProjectScaffoldGit final {
+  std::string executable;
+};
+
 class ProjectScaffoldRequest final {
 public:
   ProjectScaffoldRequest(ProjectScaffoldMode mode,
                          std::filesystem::path destination,
-                         std::optional<std::string> packageName = std::nullopt);
+                         std::optional<std::string> packageName = std::nullopt,
+                         std::optional<ProjectScaffoldGit> git = std::nullopt);
 
   [[nodiscard]] ProjectScaffoldMode mode() const;
   [[nodiscard]] const std::filesystem::path &destination() const;
   [[nodiscard]] const std::optional<std::string> &packageName() const;
+  [[nodiscard]] const std::optional<ProjectScaffoldGit> &git() const;
 
 private:
   ProjectScaffoldMode scaffoldMode;
   std::filesystem::path destinationPath;
   std::optional<std::string> requestedPackageName;
+  std::optional<ProjectScaffoldGit> requestedGit;
 };
 
 enum class ProjectScaffoldStatus {
@@ -313,6 +352,7 @@ enum class ProjectScaffoldStatus {
   InvalidRequest,
   Conflict,
   FilesystemFailure,
+  ToolFailure,
 };
 
 struct ProjectScaffoldResult {
@@ -320,6 +360,8 @@ struct ProjectScaffoldResult {
   std::filesystem::path packageRoot;
   std::string packageName;
   bool createdSource = false;
+  bool initializedGit = false;
+  bool createdGitIgnore = false;
   std::vector<Diagnostic> diagnostics;
 
   [[nodiscard]] bool succeeded() const {

@@ -1,0 +1,27 @@
+#include <std/memory>
+
+struct Reading {
+  mut int value = 42;
+};
+
+// This is ordinary source policy: aliases select the general type-call rule.
+using Erased = void*;
+void* erase_reading(Reading* address) {
+  return Erased(address);
+}
+
+int main() {
+  mut Reading owner{};
+  void* erased = erase_reading(&owner);
+  Reading* restored = std::typed_address<Reading>(erased);
+  const void* shared = std::erase_address(restored);
+  const Reading* readonly = std::typed_address<Reading>(shared);
+
+  // Address conversion creates no reference, ownership or initialization.
+  // The checked bridge still needs an explicit owner and an unsafe assertion.
+  unsafe {
+    mut Reading& edit = std::assume_mut(restored, owner);
+    edit.value = 43;
+  }
+  unsafe { return readonly->value - 43; }
+}

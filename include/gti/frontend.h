@@ -6,9 +6,11 @@
 #include "gti/frontend_cache.h"
 #include "gti/frontend_work.h"
 #include "gti/hir.h"
+#include "gti/include_suggestions.h"
 #include "gti/mir.h"
 #include "gti/parser.h"
 #include "gti/program_request.h"
+#include "gti/progress.h"
 #include "gti/semantic_model.h"
 #include "gti/source_graph.h"
 #include "gti/target.h"
@@ -24,6 +26,7 @@
 namespace lang {
 
 enum class FrontendPhase {
+  Parsing,
   Semantics,
   Hir,
   Mir,
@@ -33,10 +36,14 @@ struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
   ProgramRequest program;
   ConfigurationFlags configurationFlags;
+  RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   bool analyzeRecoveredProgram = false;
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;
   bool toolingOccurrences = true;
+  // Set only for an executable root, never inferred from a source filename.
+  bool requireEntryPoint = false;
+  ProgressObserver *progress = nullptr;
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.
   FrontendWorkMetrics *workMetrics = nullptr;
@@ -46,6 +53,8 @@ struct FrontendOptions {
   // source generation. Missing identities force SourceLoader to read and
   // digest the file before it may populate or reuse a cache row.
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
+  bool suggestIncludes = true;
+  std::vector<IncludeSearchRoot> includeSearchRoots;
 };
 
 struct FrontendResult {
@@ -63,6 +72,10 @@ struct FrontendResult {
   bool hirValid = false;
   bool failureMetadataValid = false;
   bool mirValid = false;
+  // Files consulted while discovering fixes, including negative candidates.
+  // Editors must invalidate suggestions when any of these inputs changes.
+  std::vector<std::filesystem::path> includeSuggestionInputs;
+  bool includeSuggestionsRequested = false;
 
   [[nodiscard]] bool canGenerateCode() const {
     return sourceValid && syntaxValid && semanticValid && hirValid &&

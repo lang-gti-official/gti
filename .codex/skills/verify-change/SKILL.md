@@ -55,7 +55,12 @@ not a second semantic or test-selection authority.
    tooling gate. Use exact CTest names or a deliberately bounded `-R` regex.
 2. Build before running a target when its executable may be stale or absent.
    Do not destructively reconfigure an existing build tree or fetch new
-   dependencies without the authority required by the task.
+   dependencies without the authority required by the task. Every check that
+   compiles or analyzes GTI must use a GTI compiler executable built as
+   `Release`, `RelWithDebInfo`, or `MinSizeRel`; never report an unoptimized
+   compiler as verification evidence. If the available tree is unoptimized,
+   create a separate optimized Ninja build rather than repurposing the active
+   tree.
 3. For a substantial compiler change, use the broad sequence in the canonical
    verification document after focused checks pass. Keep
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds

@@ -357,9 +357,19 @@ private:
   }
 
   std::string cppType(const SemanticType &type) const {
+    if (type.nativeCScalar != NativeCScalarKind::None) {
+      if (SemanticType::nativeCScalarType(type.nativeCScalar,
+                                          program.target()) != type) {
+        throw std::logic_error(
+            "invalid native C scalar identity reached native header");
+      }
+      return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+    }
     switch (type.kind) {
     case SemanticType::Void:
       return "void";
+    case SemanticType::Bool:
+      return "bool";
     case SemanticType::Int8:
       return "std::int8_t";
     case SemanticType::Int16:
@@ -392,9 +402,15 @@ private:
       if (type.arguments.size() != 1) {
         break;
       }
-      return std::string(type.pointerAccess == AccessMode::ReadOnly ? "const "
-                                                                    : "") +
-             cppType(type.arguments.front()) + "*";
+      const SemanticType &pointee = type.arguments.front();
+      std::string spelling = cppType(pointee);
+      if (type.pointerAccess == AccessMode::ReadOnly)
+        spelling = pointee.kind == SemanticType::RawPointer ||
+                           pointee.kind == SemanticType::CString ||
+                           pointee.kind == SemanticType::NativeFunction
+                       ? spelling + " const"
+                       : "const " + spelling;
+      return spelling + "*";
     }
     default:
       break;
@@ -404,9 +420,19 @@ private:
   }
 
   std::string cType(const SemanticType &type) const {
+    if (type.nativeCScalar != NativeCScalarKind::None) {
+      if (SemanticType::nativeCScalarType(type.nativeCScalar,
+                                          program.target()) != type) {
+        throw std::logic_error(
+            "invalid native C scalar identity reached native header");
+      }
+      return std::string(nativeCScalarDeclarationName(type.nativeCScalar));
+    }
     switch (type.kind) {
     case SemanticType::Void:
       return "void";
+    case SemanticType::Bool:
+      return "_Bool";
     case SemanticType::Int8:
       return "int8_t";
     case SemanticType::Int16:
@@ -439,9 +465,15 @@ private:
       if (type.arguments.size() != 1) {
         break;
       }
-      return std::string(type.pointerAccess == AccessMode::ReadOnly ? "const "
-                                                                    : "") +
-             cType(type.arguments.front()) + "*";
+      const SemanticType &pointee = type.arguments.front();
+      std::string spelling = cType(pointee);
+      if (type.pointerAccess == AccessMode::ReadOnly)
+        spelling = pointee.kind == SemanticType::RawPointer ||
+                           pointee.kind == SemanticType::CString ||
+                           pointee.kind == SemanticType::NativeFunction
+                       ? spelling + " const"
+                       : "const " + spelling;
+      return spelling + "*";
     }
     default:
       break;
@@ -648,8 +680,9 @@ private:
     // A using-declaration that imports a C-linkage function from the isolated
     // namespace is not a portable definition point: GCC binds a later public
     // definition back to the imported declaration and performs body lookup in
-    // the private namespace. Declare the function at its source name directly
-    // unless the consumer explicitly requests the isolated surface.
+    // the private namespace. Declare the selected external symbol directly
+    // unless the consumer explicitly requests the isolated surface. A GTI
+    // `[[link_name]]` alias is not an implementation definition point.
     output << "#ifndef GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n";
     for (const NativeFunction &function : functions) {
       emitCppFunction(output, function, true);

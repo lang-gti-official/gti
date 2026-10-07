@@ -1,0 +1,4 @@
+interface:
+  display_name: "GTI Agent Workflow"
+  short_description: "Publish, integrate, sync and clean up GTI tasks"
+  default_prompt: "Use $agent-workflow to implement a GTI task through a clean worktree, validated PR merge, and local-main synchronization."

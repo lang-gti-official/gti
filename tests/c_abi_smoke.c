@@ -4,6 +4,125 @@
 #include <stddef.h>
 #include <stdint.h>
 
+_Static_assert(_Generic(&gti_rt_once_invoke_v1,
+                   void (*)(gti_once_initializer_v1): 1,
+                   default: 0),
+               "registered once invocation ABI");
+_Static_assert(_Generic(&gti_rt_once_enter_v1,
+                   void (*)(gti_once_initializer_v1): 1,
+                   default: 0),
+               "exact once entry ABI");
+_Static_assert(_Generic(&gti_rt_once_leave_v1,
+                   void (*)(gti_once_initializer_v1): 1,
+                   default: 0),
+               "exact once leave ABI");
+
+_Static_assert(_Generic(&gti_rt_cthread_current_v1,
+                   uint64_t (*)(void): 1,
+                   default: 0),
+               "C-thread identity ABI");
+
+_Static_assert(_Generic(&gti_rt_cthread_sleep_v1,
+                   int32_t (*)(int64_t, int64_t, int64_t *, int64_t *): 1,
+                   default: 0),
+               "C-thread sleep scalar ABI");
+
+_Static_assert(_Generic(&gti_rt_cthread_yield_v1,
+                   void (*)(void): 1,
+                   default: 0),
+               "the C-style yield entry must retain its void C prototype");
+_Static_assert(_Generic(&gti_rt_mtx_init_v1,
+                   int32_t (*)(uint64_t *, int32_t): 1,
+                   default: 0),
+               "manual mutex init ABI");
+_Static_assert(_Generic(&gti_rt_cnd_init_v1,
+                   int32_t (*)(uint64_t *): 1,
+                   default: 0),
+               "condition init ABI");
+_Static_assert(_Generic(&gti_rt_cnd_destroy_v1,
+                   void (*)(uint64_t): 1,
+                   default: 0),
+               "condition destroy ABI");
+_Static_assert(_Generic(&gti_rt_cnd_signal_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "condition signal ABI");
+_Static_assert(_Generic(&gti_rt_cnd_broadcast_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "condition broadcast ABI");
+_Static_assert(_Generic(&gti_rt_cnd_wait_v1,
+                   int32_t (*)(uint64_t, uint64_t): 1,
+                   default: 0),
+               "condition wait ABI");
+_Static_assert(_Generic(&gti_rt_cnd_timedwait_v1,
+                   int32_t (*)(uint64_t, uint64_t, int64_t, int64_t): 1,
+                   default: 0),
+               "condition deadline ABI");
+_Static_assert(_Generic(&gti_rt_mtx_destroy_v1,
+                   void (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex destruction ABI");
+_Static_assert(_Generic(&gti_rt_mtx_lock_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex acquire ABI");
+_Static_assert(_Generic(&gti_rt_mtx_trylock_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex try-acquire ABI");
+_Static_assert(_Generic(&gti_rt_mtx_timedlock_v1,
+                   int32_t (*)(uint64_t, int64_t, int64_t): 1,
+                   default: 0),
+               "manual mutex deadline ABI");
+_Static_assert(_Generic(&gti_rt_mtx_unlock_v1,
+                   int32_t (*)(uint64_t): 1,
+                   default: 0),
+               "manual mutex release ABI");
+_Static_assert(_Generic(&gti_rt_cthread_create_v1,
+                   int32_t (*)(uint64_t *, gti_cthread_entry_v1, void *): 1,
+                   default: 0),
+               "C-thread create ABI");
+_Static_assert(_Generic(&gti_rt_cthread_join_v1,
+                   int32_t (*)(uint64_t, int32_t *): 1,
+                   default: 0),
+               "C-thread join ABI");
+_Static_assert(_Generic(&gti_rt_cthread_enter_v1,
+                   void (*)(gti_cthread_entry_v1): 1,
+                   default: 0),
+               "C-thread exact-entry ABI");
+
+#define GTI_CHECK_UNARY_MATH(name)                                             \
+  _Static_assert(                                                              \
+      _Generic(&gti_rt_math_##name##_f32_v1, float (*)(float): 1, default: 0), \
+      "binary32 math must retain its scalar C prototype")
+GTI_CHECK_UNARY_MATH(floor);
+GTI_CHECK_UNARY_MATH(ceil);
+GTI_CHECK_UNARY_MATH(round);
+GTI_CHECK_UNARY_MATH(trunc);
+GTI_CHECK_UNARY_MATH(sqrt);
+GTI_CHECK_UNARY_MATH(cbrt);
+GTI_CHECK_UNARY_MATH(exp);
+GTI_CHECK_UNARY_MATH(log);
+GTI_CHECK_UNARY_MATH(log10);
+GTI_CHECK_UNARY_MATH(sin);
+GTI_CHECK_UNARY_MATH(cos);
+GTI_CHECK_UNARY_MATH(tan);
+GTI_CHECK_UNARY_MATH(asin);
+GTI_CHECK_UNARY_MATH(acos);
+GTI_CHECK_UNARY_MATH(atan);
+#undef GTI_CHECK_UNARY_MATH
+_Static_assert(_Generic(&gti_rt_math_pow_f32_v1,
+                       float (*)(float, float): 1,
+                       default: 0) &&
+                   _Generic(&gti_rt_math_fmod_f32_v1,
+                       float (*)(float, float): 1,
+                       default: 0) &&
+                   _Generic(&gti_rt_math_atan2_f32_v1,
+                       float (*)(float, float): 1,
+                       default: 0),
+               "binary32 two-argument math must retain its scalar C prototype");
+
 _Static_assert(sizeof(((gti_c_string_view *)0)->length) == sizeof(uint64_t),
                "the GTI C ABI string-view length must remain uint64_t");
 _Static_assert(
@@ -36,6 +155,26 @@ _Static_assert(GTI_FILE_OPEN_READ_V1 == 0 && GTI_FILE_OPEN_READ_APPEND_V1 == 5,
                "the v1 file-open mode ordinals must remain stable");
 _Static_assert(GTI_FILE_SEEK_BEGIN_V1 == 0 && GTI_FILE_SEEK_END_V1 == 2,
                "the v1 file-seek origin ordinals must remain stable");
+_Static_assert(
+    _Generic(&gti_rt_chrono_steady_now_v1,
+            gti_chrono_status_v1 (*)(int64_t *): 1,
+            default: 0) &&
+        _Generic(&gti_rt_chrono_system_now_v1,
+            gti_chrono_status_v1 (*)(int64_t *): 1,
+            default: 0),
+    "the v1 clock entries must retain their scalar output prototypes");
+_Static_assert(GTI_CHRONO_OK_V1 == 0 && GTI_CHRONO_OUT_OF_RANGE_V1 == 2,
+               "the v1 clock status ordinals must remain stable");
+_Static_assert(
+    _Generic(&gti_rt_process_run_v1,
+        gti_process_error_v1 (*)(gti_c_string_view, int32_t *, int32_t *,
+                                 int32_t *): 1,
+        default: 0),
+    "the v1 process entry must retain counted argv and scalar outputs");
+_Static_assert(GTI_PROCESS_OK_V1 == 0 && GTI_PROCESS_WAIT_FAILED_V1 == 5 &&
+                   GTI_PROCESS_TERMINATION_EXITED_V1 == 0 &&
+                   GTI_PROCESS_TERMINATION_SIGNALED_V1 == 1,
+               "the v1 process status ordinals must remain stable");
 _Static_assert(_Generic(&gti_rt_write_stdout_bytes_v1,
                    int64_t (*)(gti_c_string_view): 1,
                    default: 0),
@@ -85,6 +224,16 @@ _Static_assert(
 
 _Static_assert(sizeof(gti_failure_record_v1) == 48,
                "the v1 failure record ABI must remain 48 bytes");
+_Static_assert(sizeof(gti_failure_record_v2) == 568 &&
+                   _Alignof(gti_failure_record_v2) == 4 &&
+                   offsetof(gti_failure_record_v2, message_size) == 48 &&
+                   offsetof(gti_failure_record_v2, message_flags) == 52 &&
+                   offsetof(gti_failure_record_v2, message) == 56,
+               "v2 panic payload extends a separately versioned record");
+_Static_assert(sizeof(gti_failure_emergency_v2) == 1144 &&
+                   GTI_FAILURE_CODE_PANIC_V2 == 17 &&
+                   GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2 == 37,
+               "v2 emergency and panic vocabulary must remain stable");
 _Static_assert(_Alignof(gti_failure_record_v1) == 4,
                "the v1 failure record alignment must remain four");
 _Static_assert(offsetof(gti_failure_record_v1, abi_version) == 0 &&

@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Optional raw-pointer auditing never decides allocator acceptance or code.
+
+The allocator example and resource fixtures rely on documented unsafe provider
+contracts. Their checked ownership and borrowing must not depend on the
+optional audit: Off and Warn accept the same programs and emit identical C++.
+Warn findings are advisory and may report analysis limitations.
+"""
+
+import argparse
+import pathlib
+import subprocess
+import tempfile
+
+
+SOURCES = (
+    "examples/121-programmable-allocators.gti",
+    "tests/fixtures/arena_placement.gti",
+    "tests/fixtures/programmable_allocators.gti",
+    "tests/fixtures/resource_container_usage.gti",
+)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compiler", type=pathlib.Path)
+    arguments = parser.parse_args()
+    compiler = arguments.compiler.resolve()
+    root = pathlib.Path(__file__).resolve().parent.parent
+    with tempfile.TemporaryDirectory(prefix="gti-allocator-audit-") as directory:
+        temporary = pathlib.Path(directory)
+        for relative in SOURCES:
+            source = root / relative
+            emitted = {}
+            for mode in ("off", "warn"):
+                output = temporary / f"{source.stem}-{mode}.cpp"
+                result = subprocess.run(
+                    [str(compiler), str(source), "--emit-cpp", "-o", str(output),
+                     f"--raw-pointer-audit={mode}"],
+                    capture_output=True, text=True, timeout=300)
+                assert result.returncode == 0, (relative, mode, result.stderr)
+                assert "error[" not in result.stderr, (relative, mode, result.stderr)
+                emitted[mode] = output.read_bytes()
+            assert emitted["off"] == emitted["warn"], (
+                relative, "raw-pointer auditing changed generated code")
+    print("allocator raw-pointer audit independence passed")
+
+
+if __name__ == "__main__":
+    main()

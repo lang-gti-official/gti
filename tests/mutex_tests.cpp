@@ -3,6 +3,8 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
+#include "../src/compiler/cpp_mir_body_emitter.h"
+#include "../src/compiler/cpp_mir_representation_snapshot.h"
 #include "cpp_backend_test_support.h"
 
 #include <algorithm>
@@ -71,7 +73,7 @@ std::mutex<int32_t> program_value{1};
 
 int main() {
   {
-    mut std::mutex_guard<int32_t> first = program_value.lock();
+    std::mutex_guard<int32_t> first = program_value.lock();
     mut std::mutex_guard<int32_t> moved = std::move(first);
     mut int32_t& current = moved.get();
     current = current + 1;
@@ -115,6 +117,55 @@ void forEachInstruction(lang::MirProgram &program, Function &&function) {
            program.lambdaInstances())) {
     visit(instance.body);
   }
+}
+
+template <typename Function>
+void forEachDrop(lang::MirProgram &program, Function &&function) {
+  const auto visit = [&](lang::MirBody &body) {
+    for (lang::MirDropObligation &drop :
+         const_cast<std::vector<lang::MirDropObligation> &>(
+             body.dropObligations)) {
+      function(drop);
+    }
+  };
+  visit(const_cast<lang::MirBody &>(program.module()));
+  for (lang::MirFunctionInstance &instance :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           program.functionInstances())) {
+    visit(instance.body);
+  }
+  for (lang::MirConstructorInstance &instance :
+       const_cast<std::vector<lang::MirConstructorInstance> &>(
+           program.constructorInstances())) {
+    visit(instance.body);
+  }
+  for (lang::MirDestructorInstance &instance :
+       const_cast<std::vector<lang::MirDestructorInstance> &>(
+           program.destructorInstances())) {
+    visit(instance.body);
+  }
+  for (lang::MirLambdaInstance &instance :
+       const_cast<std::vector<lang::MirLambdaInstance> &>(
+           program.lambdaInstances())) {
+    visit(instance.body);
+  }
+}
+
+lang::MirDropType *findMutexDropRecipe(lang::MirProgram &program,
+                                       lang::MirDropType &drop) {
+  const lang::MirClassInstance *owner =
+      drop.classInstance ? program.findClassInstance(*drop.classInstance)
+                         : nullptr;
+  if (owner != nullptr && owner->compilerCapability ==
+                              lang::CompilerCapabilityTypeKind::MutexStorage) {
+    return &drop;
+  }
+  for (lang::MirDropType &child : drop.aggregate) {
+    if (lang::MirDropType *found = findMutexDropRecipe(program, child)) {
+      return found;
+    }
+  }
+  return nullptr;
 }
 
 bool isMutex(lang::IntrinsicKind kind) {
@@ -237,6 +288,189 @@ void testPublicPipeline() {
            "both native standards should consume the sealed mutex and guard "
            "vocabulary");
   }
+}
+
+void testReferencePrefixBeforeOwnedField() {
+  const auto frontend = analyze("mutex-reference-prefix.gti", validProgram());
+  expect(frontend.canGenerateCode(), "mutex reference-prefix fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  bool found = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (constructor.initializers.size() != 2 ||
+        !constructor.initializers.front().storesReference ||
+        !constructor.initializers.back().ownedParameter)
+      continue;
+    found = true;
+    const auto bindings =
+        lang::cppMirOwnedParameterFieldBindings(frontend.mir, constructor);
+    expect(bindings && bindings->size() == 1 &&
+               bindings->front().initializeInstruction != 0,
+           "stored reference prefix preserves exact owned-field publication");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto malformed = frontend.mir;
+      auto &changed = const_cast<lang::MirConstructorInstance &>(
+          *malformed.findConstructorInstance(constructor.id));
+      auto &entry = *changed.body.findBlock(changed.body.entry);
+      if (mutation == 0)
+        std::swap(entry.instructions[0], entry.instructions[1]);
+      if (mutation == 1)
+        entry.instructions[0].operands.front().place = 0;
+      if (mutation == 2)
+        entry.instructions[1].hirValue = 0;
+      if (mutation == 3)
+        entry.instructions[2].fullExpressionEnd = 0;
+      expect(!lang::cppMirOwnedParameterFieldBindings(malformed, changed),
+             "reference prefix requires exact order, source, borrow identity "
+             "and full-expression boundary");
+    }
+  }
+  expect(found,
+         "mutex guard exercises mixed reference and owner initialization");
+}
+
+void testPreparedMutexPayload() {
+  const auto frontend = analyze("mutex-prepared-payload.gti", R"gti(
+#include <std/mutex>
+class payload {
+  int value;
+public:
+  payload(int initial) : value(initial) {}
+  payload(payload& other) = delete;
+  payload(payload&& other) = default;
+};
+int main() { std::mutex<payload> value{payload(4)}; return 0; }
+)gti");
+  expect(frontend.canGenerateCode(), "prepared native payload lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto lowered = gti_test::lowerProgram(frontend, frontend.mir,
+                                              frontend.mir, concurrentTarget());
+  const lang::CppMirBodyEmissionMap map(
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23));
+  bool found = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != lang::MirInstructionKind::CallInput ||
+            !stage.preparedParameterDrop || !stage.result)
+          continue;
+        const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+            frontend.mir, constructor);
+        if (bindings.empty())
+          continue;
+        found = true;
+        expect(bindings.size() == 1 && bindings.front().arguments.size() == 1 &&
+                   bindings.front().arguments.front().moved,
+               "native payload initializer preserves its exact parameter move");
+        const auto text =
+            lang::CppMirBodyEmitter(frontend.mir, map)
+                .emitFailureBodyText(
+                    {lang::MirBodyKind::Constructor, constructor.id},
+                    "passive-native-initializer", 1)
+                .text;
+        expect(text.find("if (__gti_mir_construct_success_" +
+                         std::to_string(bindings.front().constructInstruction) +
+                         ")") == std::string::npos,
+               "an initializer executed before the body must follow success, "
+               "not branch on an unset body-local status flag");
+        for (int mutation = 0; mutation != 8; ++mutation) {
+          auto malformed = frontend.mir;
+          auto &changed = const_cast<lang::MirConstructorInstance &>(
+              *malformed.findConstructorInstance(constructor.id));
+          if (mutation == 4)
+            changed.body.dropObligations[*stage.preparedParameterDrop - 1]
+                .initiallyActive = true;
+          for (auto &candidateBlock : changed.body.blocks)
+            for (auto &instruction : candidateBlock.instructions) {
+              if (instruction.id == stage.id) {
+                if (mutation == 0)
+                  instruction.destination.reset();
+                if (mutation == 1)
+                  instruction.lifecycle.clear();
+                if (mutation == 2)
+                  instruction.lifecycle.front().conditional = true;
+              }
+              if (mutation == 3 &&
+                  instruction.id == bindings.front().constructInstruction)
+                instruction.lifecycle.clear();
+              if (candidateBlock.failureParameter != 0 &&
+                  instruction.kind == lang::MirInstructionKind::Drop &&
+                  instruction.lifecycle.size() == 1) {
+                const auto dropId = instruction.lifecycle.front().source;
+                if (mutation == 5)
+                  instruction.lifecycle.front().failureCleanup = false;
+                if (mutation == 6)
+                  changed.body.dropObligations[dropId - 1].initiallyActive =
+                      false;
+                if (mutation == 7)
+                  changed.body.dropObligations[dropId - 1]
+                      .dropType.requiresActiveCleanup = true;
+              }
+            }
+          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                                 changed)
+                     .empty(),
+                 "prepared native payload needs exact slot, activation, "
+                 "invocation transfer, inactive prepared state and exact "
+                 "passive parameter cleanup on the impossible failure edge");
+        }
+      }
+    }
+  }
+  expect(found, "fixture exercises a prepared native payload initializer");
+  expect(
+      !gti_test::emitCpp(frontend, lang::CppStandard::Cpp23, concurrentTarget())
+           .contents.empty(),
+      "a passive move-only payload must have production emission; "
+      "retiring its parameter shell cannot require a copy constructor");
+}
+
+void testMutexCleanupRecipe() {
+  const auto frontend = analyze("mutex-cleanup-recipe.gti", R"gti(
+#include <std/memory>
+#include <std/mutex>
+class item {
+public:
+  item() {}
+  ~item() {}
+};
+class payload {
+  std::unique_ptr<item> value;
+public:
+  payload() : value(std::make_unique<item>()) {}
+};
+int main() {
+  std::mutex<payload> value{payload()};
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "mutex payloads with active cleanup should retain a verified nested "
+         "drop recipe");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+
+  lang::MirProgram malformed = frontend.mir;
+  bool found = false;
+  forEachDrop(malformed, [&](lang::MirDropObligation &obligation) {
+    if (found) {
+      return;
+    }
+    if (lang::MirDropType *mutex =
+            findMutexDropRecipe(malformed, obligation.dropType)) {
+      found = mutex->aggregate.size() == 1 &&
+              mutex->aggregate.front().requiresActiveCleanup;
+      mutex->aggregate.clear();
+    }
+  });
+  expect(found,
+         "the mutex drop recipe should name its one active payload child");
+  expect(found && !lang::verifyMirProgram(malformed).valid(),
+         "MIR should reject a mutex cleanup recipe with its payload removed");
 }
 
 void testSemanticBoundaries() {
@@ -414,6 +648,9 @@ void testVerifierMutations() {
 int main() {
   testDormantImport();
   testPublicPipeline();
+  testReferencePrefixBeforeOwnedField();
+  testPreparedMutexPayload();
+  testMutexCleanupRecipe();
   testSemanticBoundaries();
   testVerifierMutations();
   return failures == 0 ? 0 : 1;

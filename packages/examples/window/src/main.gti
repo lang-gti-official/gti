@@ -1,0 +1,38 @@
+#include <glfw/glfw>
+#include <glad/glad>
+
+int main() {
+  unsafe {
+    if (glfwInit() == GLFW_FALSE) { return 1; }
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+    GLFWwindow* window = glfwCreateWindow(640, 480, "GTI OpenGL", nullptr, nullptr);
+    if (window == nullptr) {
+      glfwTerminate();
+      return 2;
+    }
+    glfwMakeContextCurrent(window);
+    if (gl::gti_glad_load() == 0) {
+      glfwDestroyWindow(window);
+      glfwTerminate();
+      return 3;
+    }
+    glfwSwapInterval(1);
+    while (glfwWindowShouldClose(window) == GLFW_FALSE) {
+      mut int32_t width = 0;
+      mut int32_t height = 0;
+      glfwGetFramebufferSize(window, &width, &height);
+      gl::gti_glad_viewport(0, 0, width, height);
+      gl::gti_glad_clear_color(0.12, 0.18, 0.28, 1.0);
+      gl::gti_glad_clear(uint32_t(gl::GL_COLOR_BUFFER_BIT));
+      glfwSwapBuffers(window);
+      glfwPollEvents();
+    }
+    gl::gti_glad_unload();
+    glfwDestroyWindow(window);
+    glfwTerminate();
+  }
+  return 0;
+}

@@ -1,0 +1,38 @@
+#include <std/string>
+#include <std/vector>
+
+class Secret {
+  std::string label;
+  Secret(int divisor, std::string label) : label(std::move(label)) {
+    std::println(1);
+    int checked = 12 / divisor;
+  }
+public:
+  ~Secret() { std::println(2); }
+  static Secret direct(int divisor) {
+    return Secret(divisor, std::string("secret"));
+  }
+  static Secret named(int divisor) {
+    Secret result = Secret(divisor, std::string("secret"));
+    return std::move(result);
+  }
+  std::size_t size() { return this.label.size(); }
+};
+
+class Guard {
+public:
+  ~Guard() { std::println(9); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  {
+    auto direct = Secret::direct(argc == 2 ? 0 : 1);
+    std::println(direct.size());
+  }
+  {
+    auto named = Secret::named(argc == 3 ? 0 : 1);
+    std::println(named.size());
+  }
+  return 0;
+}

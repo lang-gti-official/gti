@@ -1,0 +1,43 @@
+#include <std/utility>
+extern "C" { void gti_test_trace(int value); }
+
+class Ticket {
+  int identity;
+public:
+  Ticket(int value) : identity(value) {}
+  Ticket(Ticket&& other) = default;
+  int get() { return identity; }
+};
+
+struct Parcel {
+  int identity;
+  Parcel(int value) : identity(value) {}
+  Parcel(Parcel& other) = delete;
+  Parcel(Parcel&& other) = default;
+};
+
+struct Resource {
+  int identity;
+  Resource(int value) : identity(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { gti_test_trace(identity); }
+};
+
+T apply<T, F>(F action, T value) { return action(std::move(value)); }
+
+Ticket finish(Ticket input) {
+  auto action = [](Ticket value) -> Ticket { return std::move(value); };
+  return action(std::move(input));
+}
+
+int main() {
+  auto ticket_action = [](Ticket value) -> Ticket { return std::move(value); };
+  Ticket first = apply(std::move(ticket_action), Ticket(7));
+  Ticket second = finish(Ticket(11));
+  auto parcel_action = [](Parcel value) -> Parcel { return std::move(value); };
+  Parcel parcel = apply(std::move(parcel_action), Parcel(13));
+  auto owning_action = [](Resource value) -> Resource { return std::move(value); };
+  Resource resource = apply(std::move(owning_action), Resource(17));
+  return first.get() + second.get() + parcel.identity + resource.identity - 48;
+}

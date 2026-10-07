@@ -1,0 +1,19 @@
+manifest-version = 1
+
+[package]
+name = "gti-spdlog"
+version = "0.1.0"
+
+[targets.spdlog-tests]
+kind = "test"
+root = "tests/spdlog_test.gti"
+
+[profiles.dev]
+optimization = 1
+cpp-standard = "c++23"
+execution-profile = "concurrent"
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"
+execution-profile = "concurrent"

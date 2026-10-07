@@ -1,0 +1,57 @@
+#include <std/string>
+#include <std/vector>
+
+mut int failing_stage = 0;
+
+class Marker {
+  int identity;
+public:
+  Marker(int value) : identity(value) {}
+  ~Marker() { std::println(this.identity); }
+};
+
+class Payload {
+  Marker marker;
+  std::string text;
+public:
+  Payload() : marker(Marker(9)), text(std::string("owned")) {}
+  ~Payload() { std::println(8); }
+};
+
+expected<Payload, int> produce() {
+  std::println(1);
+  int divisor = failing_stage == 1 ? 0 : 1;
+  int checked = 1 / divisor;
+  if (failing_stage == 4) { return unexpected(44); }
+  return Payload();
+}
+
+class Inner {
+  expected<Payload, int> payload;
+public:
+  Inner(expected<Payload, int> value) : payload(std::move(value)) {
+    std::println(2);
+    int divisor = failing_stage == 2 ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+  ~Inner() { std::println(7); }
+};
+
+class Outer {
+  Inner inner;
+public:
+  Outer(Inner value) : inner(std::move(value)) {
+    std::println(3);
+    int divisor = failing_stage == 3 ? 0 : 1;
+    int checked = 3 / divisor;
+  }
+  ~Outer() { std::println(6); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  failing_stage = argc - 1;
+  Marker caller{0};
+  Outer result{Inner(produce())};
+  std::println(4);
+  return 0;
+}

@@ -136,8 +136,8 @@ enum class RecordBinding { CAbi, Opaque, Unavailable };
 // a direct function parameter. `RecordField` marks uses inside a [[c_abi]]
 // record, whose field set admits neither.
 // `ArrayResult` marks the result of a function the caller annotated with
-// `[[c_array(count)]]`, which the language admits one pointer level deeper
-// than an ordinary result.
+// `[[c_array(count)]]`; its count contract does not change pointer type
+// identity.
 enum class TypeUse {
   Ordinary,
   DirectFunctionParameter,
@@ -178,19 +178,6 @@ public:
       }
       for (const NativeEnumerator &enumerator : declaration->enumerators) {
         usedNames_.insert(enumerator.name);
-      }
-    }
-    for (const NativeDeclarationId id : model_.order) {
-      const NativeDeclaration *declaration = model_.findDeclaration(id);
-      if (declaration == nullptr ||
-          declaration->kind != NativeDeclarationKind::Function) {
-        continue;
-      }
-      if (options_.renames.count(declaration->name) != 0) {
-        // A function's GTI name is its link symbol; renaming one would bind
-        // a different function than the header declares.
-        matchedRenames_.insert(declaration->name);
-        renamedFunctions_.insert(declaration->name);
       }
     }
     classifyRecords();
@@ -304,16 +291,10 @@ public:
                                       "' matched no declaration");
       }
     }
-    for (const std::string &name : renamedFunctions_) {
-      plan.policyProblems.push_back(
-          "rename '" + name +
-          "' names a function; a function's GTI name is its link symbol and "
-          "cannot be renamed");
-    }
     for (const auto &[from, to] : options_.renames) {
       if (matchedRenames_.count(from) == 0) {
         plan.policyProblems.push_back("rename '" + from +
-                                      "' matched no imported type or constant");
+                                      "' matched no imported declaration");
       }
     }
     for (const BindingArrayReturn &entry : options_.arrayReturns) {
@@ -360,7 +341,6 @@ private:
   mutable std::set<std::string> matchedPatterns_;
   mutable std::set<std::string> matchedRenames_;
   std::set<std::string> matchedArrayReturns_;
-  std::set<std::string> renamedFunctions_;
 
   // -- Opt-in policy (C-07) -------------------------------------------------
 
@@ -389,13 +369,11 @@ private:
     return false;
   }
 
-  // The GTI spelling of a declaration's name: a configured rename, or the C
-  // name. Functions never rename — their name is the link symbol.
+  // The GTI source spelling of a declaration's name: a configured rename, or
+  // the C name. A renamed function retains its separate native symbol in the
+  // emitted `[[link_name]]` attribute.
   [[nodiscard]] const std::string &
   spelled(const NativeDeclaration &declaration) const {
-    if (declaration.kind == NativeDeclarationKind::Function) {
-      return declaration.name;
-    }
     const auto rename = options_.renames.find(declaration.name);
     if (rename == options_.renames.end()) {
       return declaration.name;
@@ -431,6 +409,15 @@ private:
   }
 
   [[nodiscard]] static std::string scalarSpelling(const NativeType &type) {
+    if (type.scalarIdentity != NativeCScalarKind::None) {
+      return std::string(nativeCScalarKindName(type.scalarIdentity));
+    }
+    if (type.kind == NativeTypeKind::Bool) {
+      return "c_bool";
+    }
+    if (type.kind == NativeTypeKind::Char) {
+      return "c_char";
+    }
     if (type.kind == NativeTypeKind::Floating) {
       return type.bitWidth == 64 ? "double" : "float";
     }
@@ -439,6 +426,10 @@ private:
   }
 
   [[nodiscard]] static bool admittedScalar(const NativeType &type) {
+    if (type.kind == NativeTypeKind::Bool ||
+        type.kind == NativeTypeKind::Char) {
+      return true;
+    }
     if (type.kind == NativeTypeKind::Integer) {
       return type.bitWidth == 8 || type.bitWidth == 16 || type.bitWidth == 32 ||
              type.bitWidth == 64;
@@ -493,13 +484,8 @@ private:
       }
       return unsupportedType("'void' is only a result type");
     case NativeTypeKind::Bool:
-      return unsupportedType(
-          "'bool' is not a GTI C ABI scalar; use a fixed-width integer in "
-          "the header");
     case NativeTypeKind::Char:
-      return unsupportedType(
-          "plain 'char' is not a GTI C ABI scalar; use int8_t/uint8_t, or "
-          "'const char*' for strings");
+      return supportedType(scalarSpelling(*direct));
     case NativeTypeKind::Integer:
     case NativeTypeKind::Floating:
       if (!admittedScalar(*direct)) {
@@ -558,9 +544,9 @@ private:
 
   [[nodiscard]] MappedType mapPointer(const NativeType &pointer, TypeUse use,
                                       std::size_t pointerDepth) const {
-    if (pointerDepth >= 1) {
-      return unsupportedType("pointers deeper than the bounded C out-parameter "
-                             "surface are not supported");
+    if (pointerDepth >= 64) {
+      return unsupportedType("native pointer nesting exceeds the source "
+                             "parser's structural depth budget");
     }
     const NativeType *pointee = canonical(pointer.pointee);
     if (pointee == nullptr) {
@@ -570,60 +556,22 @@ private:
       return mapFunctionPointer(*pointee);
     }
     if (pointee->kind == NativeTypeKind::Pointer) {
-      if (use == TypeUse::RecordField) {
-        return unsupportedType("a nested pointer has no GTI [[c_abi]] field "
-                               "representation");
-      }
-      const NativeType *innerPointee = canonical(pointee->pointee);
-      if (innerPointee == nullptr) {
-        return unsupportedType("the nested pointee type is invalid");
-      }
-      if (innerPointee->kind == NativeTypeKind::Char && pointee->constPointee) {
-        // `const char**` out parameters and `const char* const*` string
-        // arrays share the language's c_string* spelling.
-        return supportedType("c_string*");
-      }
-      if (pointer.constPointee) {
-        return unsupportedType(
-            "a const-qualified inner pointer has no bounded GTI C ABI "
-            "out-parameter spelling");
-      }
-      if (use == TypeUse::DirectFunctionParameter && !pointee->constPointee &&
-          innerPointee->kind == NativeTypeKind::Record) {
-        const NativeDeclaration *record =
-            model_.findDeclaration(innerPointee->declaration);
-        const auto binding = recordBindings_.find(innerPointee->declaration);
-        if (record != nullptr && binding != recordBindings_.end() &&
-            binding->second == RecordBinding::Opaque) {
-          return supportedType(spelled(*record) + "**");
-        }
-      }
-      if (use == TypeUse::ArrayResult) {
-        // The language's `[[c_array(count)]]` result rule: one outer pointer
-        // over an otherwise admitted one-level pointer.
-        const MappedType inner =
-            mapType(pointer.pointee, false, TypeUse::Ordinary, 0);
-        if (inner.supported) {
-          return supportedType(inner.spelling + "*");
-        }
-        return inner;
-      }
-      return unsupportedType(
-          "two-level pointers are limited to const char** and exact opaque "
-          "C handle out parameters");
+      // Nested slots are the same recursive C pointer family in parameters,
+      // results and fields. Avoid the call-only c_string convenience spelling
+      // inside this tree so every qualification level remains explicit.
+      const MappedType inner = mapType(pointer.pointee, false,
+                                       TypeUse::RecordField, pointerDepth + 1);
+      return inner.supported
+                 ? supportedType(inner.spelling +
+                                 (pointer.constPointee ? " const*" : "*"))
+                 : inner;
     }
     if (pointee->kind == NativeTypeKind::Char) {
-      if (use == TypeUse::RecordField) {
-        return unsupportedType(
-            "a 'char' pointer field has no GTI [[c_abi]] representation; "
-            "c_string crosses only function and callback boundaries");
-      }
-      if (pointer.constPointee) {
+      if (pointer.constPointee && use != TypeUse::RecordField) {
         return supportedType("c_string");
       }
-      return unsupportedType("a writable 'char*' has no GTI C ABI "
-                             "representation; 'const char*' maps to "
-                             "c_string");
+      return supportedType(std::string(pointer.constPointee ? "const " : "") +
+                           "c_char*");
     }
     const std::string qualifier = pointer.constPointee ? "const " : "";
     if (pointee->kind == NativeTypeKind::Void) {
@@ -957,21 +905,24 @@ private:
 
   [[nodiscard]] BindingItem planFunction(const NativeDeclaration &declaration) {
     BindingItem item;
-    item.name = declaration.name;
+    item.name = spelled(declaration);
     item.origin = declaration.origin;
     if (const std::optional<std::string> problem =
-            identifierProblem(declaration.name, true)) {
+            identifierProblem(item.name, false)) {
       return skipped(declaration, *problem);
+    }
+    const std::string &nativeSymbol =
+        declaration.asmLabel.empty() ? declaration.name : declaration.asmLabel;
+    if (const std::optional<std::string> problem =
+            identifierProblem(nativeSymbol, true)) {
+      return skipped(declaration, "link symbol: " + *problem);
+    }
+    if (item.name != nativeSymbol) {
+      item.linkName = nativeSymbol;
     }
     const NativeType *type = model_.findType(declaration.type);
     if (type == nullptr || type->kind != NativeTypeKind::Function) {
       return skipped(declaration, "the function type is invalid");
-    }
-    if (!declaration.asmLabel.empty()) {
-      return skipped(declaration,
-                     "the assembler label '" + declaration.asmLabel +
-                         "' renames the link symbol; importing the C name "
-                         "would bind a different function");
     }
     if (!declaration.callingConvention.empty()) {
       return skipped(declaration, "the '" + declaration.callingConvention +

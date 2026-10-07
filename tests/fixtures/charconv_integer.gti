@@ -1,0 +1,109 @@
+#include <std/charconv>
+#include <std/string>
+
+bool check<std::integral T>(std::string_view text, T expected_value) {
+  mut T value = T(7);
+  auto result = std::from_chars(text, value);
+  return result.ec == std::parse_errc::none && result.position == text.size() && value == expected_value;
+}
+
+bool invalid<std::integral T>(std::string_view text, std::parse_errc error, std::size_t consumed) {
+  mut T value = T(7);
+  auto result = std::from_chars(text, value);
+  return result.ec == error && result.position == consumed && value == T(7);
+}
+
+bool radix_check<std::integral T>(std::string_view text, T expected_value, int base) {
+  mut T value = T(7);
+  auto result = std::from_chars(text, value, base);
+  return result.ec == std::parse_errc::none && result.position == text.size() && value == expected_value;
+}
+
+int main() {
+  if (!check<int8_t>("-128", int8_t(-128)) || !check<int8_t>("127", int8_t(127)) ||
+      !check<uint8_t>("255", uint8_t(255)) || !check<int16_t>("-32768", int16_t(-32768)) ||
+      !check<uint16_t>("65535", uint16_t(65535)) ||
+      !check<int32_t>("-2147483648", int32_t(-2147483648)) ||
+      !check<uint32_t>("4294967295", uint32_t(4294967295)) ||
+      !check<int64_t>("-9223372036854775808", int64_t(-9223372036854775808)) ||
+      !check<int64_t>("9223372036854775807", int64_t(9223372036854775807)) ||
+      !check<uint64_t>("18446744073709551615", uint64_t(18446744073709551615))) { return 1; }
+  if (!invalid<int8_t>("128", std::parse_errc::result_out_of_range, std::size_t(3)) ||
+      !invalid<int8_t>("-129", std::parse_errc::result_out_of_range, std::size_t(4)) ||
+      !invalid<uint64_t>("18446744073709551616!", std::parse_errc::result_out_of_range, std::size_t(20)) ||
+      !invalid<int>("", std::parse_errc::invalid_argument, std::size_t(0)) ||
+      !invalid<int>("-", std::parse_errc::invalid_argument, std::size_t(0)) ||
+      !invalid<int>("+12", std::parse_errc::invalid_argument, std::size_t(0)) ||
+      !invalid<int>(" 12", std::parse_errc::invalid_argument, std::size_t(0)) ||
+      !invalid<uint32_t>("-1", std::parse_errc::invalid_argument, std::size_t(0))) { return 2; }
+  mut int parsed = 7;
+  auto hex = std::from_chars("ff!", parsed, 16);
+  if (parsed != 255 || hex.position != 2 || hex.ec != std::parse_errc::none) { return 3; }
+  auto prefix = std::from_chars("0xff", parsed, 16);
+  if (parsed != 0 || prefix.position != 1) { return 4; }
+  auto radix = std::from_chars("Zz", parsed, 36);
+  if (parsed != 1295 || radix.position != 2) { return 5; }
+  auto badbase = std::from_chars("10", parsed, 1);
+  if (parsed != 1295 || badbase.ec != std::parse_errc::invalid_argument) { return 6; }
+  auto binary = std::from_chars("101\0x", parsed, 2);
+  if (parsed != 5 || binary.position != 3) { return 7; }
+  mut std::size_t position = 99;
+  auto relaxed = std::stoi(" \t-0x80!", position, 0);
+  if (!relaxed.has_value() || relaxed.value() != -128 || position != 7) { return 8; }
+  auto failed = std::stoi("  +", position);
+  if (failed.has_value() || failed.error() != std::parse_errc::invalid_argument || position != 7) { return 9; }
+  auto octal = std::stol("077", 0);
+  auto unsigned_max = std::stoull("+18446744073709551615");
+  auto minimum = std::stoll("-9223372036854775808");
+  auto unsigned_negative = std::stoul("-1");
+  if (!octal.has_value() || octal.value() != 63 || !unsigned_max.has_value() ||
+      unsigned_max.value() != uint64_t(18446744073709551615) || !minimum.has_value() ||
+      minimum.value() != int64_t(-9223372036854775808) || unsigned_negative.has_value()) { return 10; }
+  if (!check<int16_t>("32767", int16_t(32767)) ||
+      !check<int32_t>("2147483647", int32_t(2147483647)) ||
+      !check<uint8_t>("0", uint8_t(0)) || !check<uint16_t>("0", uint16_t(0)) ||
+      !check<uint32_t>("0", uint32_t(0)) || !check<uint64_t>("0", uint64_t(0))) { return 11; }
+  if (!invalid<uint8_t>("256", std::parse_errc::result_out_of_range, std::size_t(3)) ||
+      !invalid<int16_t>("32768", std::parse_errc::result_out_of_range, std::size_t(5)) ||
+      !invalid<int16_t>("-32769", std::parse_errc::result_out_of_range, std::size_t(6)) ||
+      !invalid<uint16_t>("65536", std::parse_errc::result_out_of_range, std::size_t(5)) ||
+      !invalid<int32_t>("2147483648", std::parse_errc::result_out_of_range, std::size_t(10)) ||
+      !invalid<int32_t>("-2147483649", std::parse_errc::result_out_of_range, std::size_t(11)) ||
+      !invalid<uint32_t>("4294967296", std::parse_errc::result_out_of_range, std::size_t(10)) ||
+      !invalid<int64_t>("9223372036854775808", std::parse_errc::result_out_of_range, std::size_t(19)) ||
+      !invalid<int64_t>("-9223372036854775809", std::parse_errc::result_out_of_range, std::size_t(20))) { return 12; }
+  if (!radix_check<int8_t>("-80", int8_t(-128), 16) ||
+      !radix_check<int8_t>("7f", int8_t(127), 16) ||
+      !radix_check<uint8_t>("11111111", uint8_t(255), 2) ||
+      !radix_check<int16_t>("-100000", int16_t(-32768), 8) ||
+      !radix_check<uint16_t>("FFFF", uint16_t(65535), 16) ||
+      !radix_check<uint64_t>("ffffffffffffffff", uint64_t(18446744073709551615), 16) ||
+      !radix_check<int64_t>("-8000000000000000", int64_t(-9223372036854775808), 16) ||
+      !radix_check<uint8_t>("73", uint8_t(255), 36)) { return 13; }
+  int invalid_bases[4] = {-1, 0, 1, 37};
+  for (auto& base : invalid_bases) {
+    parsed = 91;
+    auto rejected = std::from_chars("10", parsed, base);
+    if (rejected.ec != std::parse_errc::invalid_argument || rejected.position != 0 || parsed != 91) { return 14; }
+  }
+  mut uint8_t byte = 7;
+  auto overflow_digits = std::from_chars("FFFFFFFFFFFFFFFFFFFFG", byte, 16);
+  if (overflow_digits.ec != std::parse_errc::result_out_of_range ||
+      overflow_digits.position != 20 || byte != 7) { return 15; }
+  auto leading_zeroes = std::from_chars("0000000000000000000000000000000000000255!", byte);
+  if (leading_zeroes.ec != std::parse_errc::none || leading_zeroes.position != 40 || byte != 255) { return 16; }
+  // from_chars deliberately takes a counted view, not an owning string.
+  mut std::string owner{"42tail"};
+  auto owned = std::from_chars(owner.view(), parsed);
+  owner.clear();
+  if (owned.ec != std::parse_errc::none || owned.position != 2 || parsed != 42 || !owner.empty()) { return 17; }
+  auto temporary = std::from_chars(std::string("-17!").view(), parsed);
+  if (temporary.ec != std::parse_errc::none || temporary.position != 3 || parsed != -17) { return 18; }
+  owner.append("  +77!");
+  auto convenience = std::stoi(owner.view(), position);
+  owner.clear();
+  if (!convenience.has_value() || convenience.value() != 77 || position != 5) { return 19; }
+  auto temporary_convenience = std::stoll(std::string(" -31").view());
+  if (!temporary_convenience.has_value() || temporary_convenience.value() != -31) { return 20; }
+  return 0;
+}

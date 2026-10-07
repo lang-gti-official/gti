@@ -1,0 +1,31 @@
+#include <std/string>
+#include <std/vector>
+#include <std/utility>
+
+// Exact read-member requirements let a generic function call a user operation.
+concept snapshot_source<T> = requires(T& value) { { value.snapshot() } -> T; };
+T snapshot<T>(T& value) requires snapshot_source<T> { return value.snapshot(); }
+
+struct Settings {
+  int jobs = 4;
+  Settings snapshot() {
+    Settings result{.jobs = this.jobs};
+    return result;
+  }
+};
+
+int main() {
+  std::vector<std::string> original = {std::string("build"), std::string("test")};
+  // vector<string> is not implicitly copyable. clone duplicates its elements.
+  mut auto copy = original.clone();
+  copy[std::size_t(0)].push_back('!');
+  std::println(original[std::size_t(0)]);
+  std::println(copy[std::size_t(0)]);
+  if (original[std::size_t(0)].view() != "build" ||
+      copy[std::size_t(0)].view() != "build!") { return 1; }
+  auto owned = std::move(copy); // transfer instead of cloning; copy is now unavailable
+  auto again = std::clone(owned); // uses its clone member, or copying for copyable types
+  Settings settings{};
+  auto saved = snapshot(settings);
+  return again.size() == 2 && saved.jobs == 4 ? 0 : 2;
+}

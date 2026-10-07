@@ -1,0 +1,41 @@
+#include <std/memory>
+
+interface MixedInvoker<R, Args...> { R invoke(Args... args); };
+class MixedSignature<S> {};
+class MixedModel<T, R, Args...> : public MixedInvoker<R, Args...> {
+  T callback;
+public:
+  MixedModel(T callback) : callback(std::move(callback)) {}
+  R invoke(Args... args) override { return this.callback(args...); }
+};
+
+std::unique_ptr<MixedInvoker<R, Args...>> erase_mixed_signature<R, T, Args...>(
+    T callback, MixedSignature<R(Args...)>& signature) {
+  auto model = std::make_unique<MixedModel<T, R, Args...>>(std::move(callback));
+  return std::upcast_unique<MixedInvoker<R, Args...>, MixedModel<T, R, Args...>>(
+      std::move(model));
+}
+
+mut int call_count = 0;
+int main() {
+  MixedSignature<int(int)> unary{};
+  auto first = [](int value) -> int { return value + 7; };
+  auto one = erase_mixed_signature(std::move(first), unary);
+  if (one->invoke(5) != 12) { return 1; }
+  MixedSignature<void()> empty{};
+  auto second = []() -> void { call_count++; };
+  auto two = erase_mixed_signature(std::move(second), empty);
+  two->invoke();
+  MixedSignature<int(int, bool, int)> ternary{};
+  int offset = 2;
+  auto third = [offset](int value, bool enabled, int extra) -> int {
+    return enabled ? value + extra + offset : 0;
+  };
+  auto three = erase_mixed_signature(std::move(third), ternary);
+  if (three->invoke(3, true, 4) != 9) { return 2; }
+  MixedSignature<void(int)> action{};
+  auto fourth = [](int value) -> void { call_count += value; };
+  auto four = erase_mixed_signature(std::move(fourth), action);
+  four->invoke(2);
+  return call_count - 3;
+}

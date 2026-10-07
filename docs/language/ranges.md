@@ -1,5 +1,37 @@
 # Ranges and iterators
 
+## Mutable contiguous views
+
+`<std/span>` provides `std::mutable_span<T>`, an exclusive, move-only view of
+initialized elements. `vector<T>::as_mutable_span() mut` and
+`string::as_mutable_span() mut` create checked views of their current size, not
+their spare capacity. This slice uses the existing prefix-storage owner
+representation; construction from fixed arrays, arbitrary pointers and native
+memory is not supplied.
+
+The familiar operations are `size`, `empty`, checked `at`/`operator[]`,
+`front`, `back`, `first(count)`, `last(count)` and `subspan(offset, count)`.
+Empty end subspans are valid; element access, front/back on empty views, and
+invalid subranges raise defined bounds failure. Subviews retain the original
+storage and their parent loan; they do not allocate or copy elements.
+
+A mutable receiver returns mutable element references and exclusive subviews.
+Read-only access returns read-only elements. `as_span()` creates a checked
+shared view without transferring ownership. While a shared child or any copy
+of it remains live, the exclusive parent cannot be used for mutation or moved.
+When children end, parent access resumes. Owner mutation/reallocation,
+movement and destruction cannot invalidate a live view.
+
+`begin_mut()` supports mutable range-for; `begin()`/`end()` support read-only
+iteration. A retained iterator protects both the physical carrier and its
+stored owner dependency. No public type name grants borrowing permission;
+ordinary user-defined single-owner carriers follow the same rules.
+
+See [composable I/O](io.md#composable-buffered-io) for `std::byte_buffer` and
+byte-slice transports.
+
+## Range protocol
+
 Status: current through the bounded L-RANGE-03 single-owner view release,
 M-OWN-04 named Expected-payload range loans, and the L-RANGE-04
 iterator/sentinel plus complete-range algorithm cluster
@@ -215,6 +247,11 @@ analysis replaces them with the selected source declarations or fixed-array
 strategy before HIR; HIR/MIR never carry an unresolved public associated type
 or delegate range selection to C++.
 
+The fixed-array case applies to a written reference parameter whose bare
+generic type is substituted with the array, such as `Range&` or `mut Range&`.
+It does not enable explicitly spelled or aliased array-reference parameters,
+array-reference storage or returns, or array-reference callback signatures.
+
 `<std/functional>` similarly provides `std::range_predicate<Predicate, Range>`
 and `std::range_operation<Operation, Range, Result>`. They derive the exact
 read-only element from the complete range and require one repeatable exact
@@ -348,10 +385,24 @@ iterator-pair spelling would either need a read borrow of the owner while its
 exclusive mutable cursor is live (`values.begin_mut()` and `values.end()` in
 one call) or retainable mutable cursors in ordinary bodies. Each form keeps one
 exclusive borrow for the whole rewrite and names the element type for locals.
-In-place element rewrites copy the element out and assign it back, so their
-element types require `std::copyable` until moving out of an indexed element is
-representable. `std::sort` orders by `operator<` through a partition exchange
-whose recursion always descends into the smaller side.
+`reverse` and both sort forms use checked indexed swaps and require
+`std::relocatable`, not copyability or move assignment. They borrow elements
+read-only for comparisons and never clone them or move out an exposed element.
+`transform`
+instead borrows each source element, obtains an owned same-type result, and
+moves that result into the existing destination element. It requires
+`std::movable`, supports move-only resources and strings, and never moves from
+the source. Overlapping whole-owner access is rejected; an undersized
+destination fails at the checked write after evaluating that element's mapper.
+
+Both `std::sort(values)` (using `operator<`) and `std::sort(values, compare)`
+use iterative heapsort with O(n log n) comparisons and constant auxiliary
+storage. The latter retains one owned repeatable comparator throughout. The comparator
+must supply a strict weak order. Neither overload promises stability; equal
+elements may be reordered. This does not change the stable node-container
+sort contracts. Source comparisons, checked element accesses and cleanup keep
+their ordinary deterministic evaluation/failure behavior; a failed comparison
+does not roll back preceding permutations.
 
 `for_each` invokes its by-value callable zero or more times with the exact
 checked-reference type produced by dereference, then returns that same callable
@@ -403,8 +454,9 @@ widening, a mutable child detached from its exclusive parent, an escaping
 element loan, an inconsistent array strategy, a mismatched owner/drop, or a
 broken condition/body/increment/cleanup cycle before backend admission.
 
-Multiple-origin or nested stored views, pointer decay, and mutable spans or
-text views remain later lifetime layers. Mutable iteration currently uses
+Mutable spans and their shared/subspan projections use the retained-loan rules
+described above. Pointer decay and independently splittable disjoint mutable
+views remain outside that surface. Mutable iteration currently uses
 conservative whole-owner invalidation exclusion rather than a public
 container-specific invalidation trait. Confined generic `void` operations,
 Exact `bool` predicates, exact context-supplied non-reference value results
@@ -438,3 +490,48 @@ remain bounded to `std::vector` while their additional output, movement, and
 random-access complete-range relationships are not yet public. Public
 invalidation capabilities also remain absent; ownership conservatively
 protects the whole owner during iteration.
+
+### Searching and rewriting containers
+
+`<std/algorithm>` also supplies whole-range `contains`, `count`,
+`is_partitioned`, `replace`, and `replace_if`. They work with structural
+user-defined ranges as well as fixed arrays and standard containers. A value
+needle is an exact readable `T&`; bind scalar needles to a local first rather
+than relying on C++ temporary-to-reference conversions. Associative containers
+keep their key-based member `find` and `contains`; generic algorithms perform
+linear sequence traversal and do not substitute for tree/hash lookup.
+
+Iterator/sentinel algorithms include `contains`, `is_partitioned`,
+`adjacent_find`, `search`, `search_n`, `find_first_of`, `lower_bound`,
+`upper_bound`, `min_element`, `max_element`, `is_sorted`, and
+`is_sorted_until`. `equal`, `starts_with`, and `lexicographical_compare` take
+four endpoints, checking both sequence boundaries. Empty patterns match at
+the start; missing searches return the exhausted first cursor; empty extrema
+return that same cursor without dereferencing it. Extrema keep the first
+equivalent element. Bounds require an already sorted sequence, use logarithmic
+comparisons and linear cursor increments. Subsequence search is the ordinary
+quadratic worst-case algorithm, not an allocation-backed optimized search.
+
+`copy_if`, `copy_n`, `replace_copy`, `replace_copy_if`, `remove_copy`, and
+`remove_copy_if` write into pre-existing output elements and return `void`,
+like the existing `copy`. They neither resize the destination nor move from
+the source. Writes require valid copy assignment; move-only elements must be
+handled through an explicit ownership-aware operation. Checked destination
+access reports exhaustion, and `copy_n` also checks source access. Predicates
+are confined, repeatable, exact-`bool` callables. Comparison-only algorithms
+check the concrete element operators during instantiation; input-iterator
+capability alone does not promise that arbitrary element pairs compare.
+
+Read-only `list` iterators support bidirectional traversal; `deque` and
+`array` iterators additionally support signed jumps and sentinel distances.
+Set key iterators support forward algorithms. `array`, `list`, and `deque`
+provide `begin_mut()` for mutable range-for and confined output algorithms.
+The cursors borrow their owner and expose no raw pointer or array decay.
+Retaining a search result keeps that owner borrowed: mutation, movement, and
+destruction cannot invalidate it. Array/list/deque mutable cursors can also be
+bound locally under the existing nominal stored-reference rules, retaining an
+exclusive owner borrow; they cannot escape a local owner. Vector's private
+storage cursor retains its narrower confined contract. This slice adds neither
+iterator reseating nor paired mutable subranges.
+Iterator-returning search still uses explicit endpoints, not a
+whole-range overload with an inferred associated iterator return type.

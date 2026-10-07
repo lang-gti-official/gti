@@ -16,7 +16,7 @@ Result integer_checked_mul<Result, T>(T left, T right);
 }
 
 namespace std {
-  constexpr uint64_t MAX_UINT64 = 9223372036854775807;
+  constexpr uint64_t MAX_UINT64 = uint64_t(18446744073709551615);
 
   enum class arithmetic_errc {
     result_out_of_range,
@@ -330,65 +330,51 @@ namespace std {
     return initial;
   }
 
+  /// Nonnegative greatest common divisor; gcd(0, 0) is zero. The result must
+  /// fit T. Keep signed remainders until the end so a minimum signed input
+  /// does not fail when its greatest common divisor is representable.
   constexpr T gcd<std::integral T>(mut T left, mut T right) {
-    if (left == T(0) && right == T(0)) {
-      return T(0);
-    }
     while (right != T(0)) {
       T remainder = T(left % right);
       left = right;
       right = remainder;
     }
 
+    if (left < T(0)) { return T(T(0) - left); }
     return left;
   }
 
-  T lcm<std::integral T>(T left, T right) {
-    return (left / std::gcd(left, right)) * right;
+  /// Nonnegative least common multiple; either zero input gives zero.
+  /// A result outside T takes the ordinary checked numeric failure path.
+  constexpr T lcm<std::integral T>(T left, T right) {
+    if (left == T(0) || right == T(0)) { return T(0); }
+    T product = T((left / std::gcd(left, right)) * right);
+    if (product < T(0)) { return T(T(0) - product); }
+    return product;
   }
 
-  T midpoint<std::numeric T>(T left, T right) {
-    return (left + right) / 2;
-  }
-
-  namespace detail {
-    std::size_t multiply_shift_hash(uint64_t& value, uint64_t l) {
-      // Must be odd so multiplication is a permutation of uint64_t values.
-      constexpr uint64_t multiplier = uint64_t(11400714819323198485);
-      auto product = std::wrapping_mul(multiplier, value);
-      return product >> (64 - l);
+  /// Overflow-free halfway value. Integral ties round toward left. Floating
+  /// inputs follow GTI IEEE arithmetic, including signed zero and nonfinites.
+  constexpr T midpoint<std::numeric T>(T left, T right) {
+    // This ordinary constant condition keeps explicit midpoint<T> valid for
+    // every numeric T without requiring type reflection or specialization.
+    if (T(T(1) / 2) == 0) {
+      T left_half = T(left / 2);
+      T right_half = T(right / 2);
+      T remainder = T((left - left_half * 2) + (right - right_half * 2));
+      T remainder_half = T(remainder / 2);
+      T result = T(left_half + right_half + remainder_half);
+      T odd = T(remainder - remainder_half * 2);
+      if (odd > 0 && left > right) { return T(result + 1); }
+      if (odd < 0 && left < right) { return T(result - 1); }
+      return result;
     }
+    // A finite sum can be halved directly, preserving subnormal accuracy.
+    // If addition overflows, halving each finite input is exact. Floating
+    // status flags are not observable GTI state; no integer uses this branch.
+    T sum = T(left + right);
+    if (T(sum - sum) == 0) { return T(sum / 2); }
+    return T(left / 2 + right / 2);
   }
+
 }
-
-class std::hash<uint64_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(64));
-  }
-};
-
-class std::hash<uint32_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(32));
-  }
-};
-
-class std::hash<uint16_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(16));
-  }
-};
-
-class std::hash<uint8_t> {
-public:
-  hash() {}
-  std::size_t operator()(uint64_t& value) {
-    return detail::multiply_shift_hash(value, uint64_t(8));
-  }
-};

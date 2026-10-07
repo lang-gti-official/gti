@@ -1,0 +1,47 @@
+#include <std/string>
+
+// A fallible lookup need not copy its resource. The success refers to an
+// existing owner; the error carries the reason no reference could be returned.
+enum class lookup_errc { missing };
+
+class Entry {
+  std::string name;
+public:
+  Entry(std::string_view name) : name(std::string(name)) {}
+  Entry(Entry& other) = delete;
+  Entry(Entry&& other) = default;
+  std::string& label() { return this.name; }
+};
+
+expected<Entry&, lookup_errc> lookup(Entry& entry, bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  return entry;
+}
+
+// Prefix ? forwards failure and returns a read-only reference on success.
+expected<bool, lookup_errc> is_login(Entry& entry, bool present) {
+  Entry& found = ?lookup(entry, present);
+  return found.label() == "login";
+}
+
+int main() {
+  Entry entry{"login"};
+  auto success = is_login(entry, true);
+  auto missing = is_login(entry, false);
+  if (!success || !success.value() || missing ||
+      missing.error() != lookup_errc::missing) {
+    return 1;
+  }
+
+  // Require a successful borrow or panic with this message and call site.
+  // Consuming the carrier never consumes or copies the borrowed Entry.
+  Entry& required = lookup(entry, true).expect("login entry must exist");
+  auto result = lookup(entry, true);
+  Entry& again = std::move(result).expect("login entry must still exist");
+  if (required.label() != "login" || again.label() != "login") { return 2; }
+
+  // entry must outlive the references. Neither can mutate it, and moving or
+  // replacing entry while either reference is still used would be rejected.
+  std::println(required.label());
+  return 0;
+}

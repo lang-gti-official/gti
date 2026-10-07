@@ -1,0 +1,72 @@
+#include <std/process>
+
+int main() {
+  mut std::process::command success = std::process::command("true");
+  if (!success.valid() || success.argument_count() != std::size_t(1)) {
+    return 1;
+  }
+  mut auto successful = success.run();
+  if (!successful || !successful.value().success() ||
+      !successful.value().exited() || successful.value().signaled() ||
+      successful.value().exit_code() != int32_t(0) ||
+      successful.value().terminating_signal() != int32_t(0)) {
+    return 2;
+  }
+
+  mut std::process::command status = std::process::command("sh");
+  status.arg("-c");
+  status.arg("exit 7");
+  mut auto completed = status.run();
+  if (!completed || completed.value().success() ||
+      completed.value().exit_code() != int32_t(7)) {
+    return 3;
+  }
+
+  mut std::process::command exact = std::process::command("sh");
+  exact.arg("-c");
+  exact.arg("test \"$1\" = \"two words\" && test -z \"$2\"");
+  exact.arg("gti-process-test");
+  exact.arg("two words");
+  exact.arg("");
+  mut auto exact_result = exact.run();
+  if (!exact_result || !exact_result.value().success() ||
+      exact.argument_count() != std::size_t(6)) {
+    return 4;
+  }
+
+  mut std::process::command signaled = std::process::command("sh");
+  signaled.arg("-c");
+  signaled.arg("kill -TERM $$");
+  mut auto signal_result = signaled.run();
+  if (!signal_result || !signal_result.value().signaled() ||
+      signal_result.value().exited() ||
+      signal_result.value().exit_code() != int32_t(-1) ||
+      signal_result.value().terminating_signal() <= int32_t(0)) {
+    return 5;
+  }
+
+  mut std::process::command missing =
+      std::process::command("gti-process-command-that-does-not-exist-7d4c9f3e");
+  mut auto missing_result = missing.run();
+  if (missing_result ||
+      missing_result.error() != std::process::errc::execute_failed) {
+    return 6;
+  }
+
+  mut std::process::command invalid = std::process::command("");
+  mut auto invalid_result = invalid.run();
+  if (invalid.valid() || invalid_result ||
+      invalid_result.error() != std::process::errc::invalid_argument) {
+    return 7;
+  }
+
+  mut std::process::command embedded = std::process::command("true");
+  embedded.arg("bad\0argument");
+  mut auto embedded_result = embedded.run();
+  if (embedded.valid() || embedded_result ||
+      embedded_result.error() != std::process::errc::invalid_argument) {
+    return 8;
+  }
+
+  return 0;
+}

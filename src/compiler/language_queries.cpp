@@ -21,6 +21,16 @@ namespace lang {
 SignaturePrinter::SignaturePrinter(const SemanticModel &semantics)
     : semantics(semantics), types(semantics) {}
 
+std::string SignaturePrinter::nativeCall(const ResolvedCallInfo &selected,
+                                         std::string_view name) const {
+  std::string result = "unsafe " + types.print(selected.returnType) + " ";
+  result += name;
+  result += '(';
+  appendParameters(result, selected.parameterTypes, nullptr, false);
+  result += ')';
+  return result;
+}
+
 [[nodiscard]] std::string
 SignaturePrinter::function(const FunctionInfo &info,
                            const ResolvedCallInfo *selected) const {
@@ -30,9 +40,37 @@ SignaturePrinter::function(const FunctionInfo &info,
   const std::vector<SemanticType> &parameterTypes =
       selected == nullptr ? info.parameterTypes : selected->parameterTypes;
   std::string result;
+  if (info.neverReturns) {
+    result += "[[noreturn]] ";
+  }
+  if (info.tracksCaller) {
+    result += "[[track_caller]] ";
+  }
+  if (info.discardableResult) {
+    result += "[[discardable]] ";
+  }
+  if (info.explicitReturnBorrowOrigin) {
+    if (info.returnBorrowOrigin == BorrowOriginKind::Receiver) {
+      result += "[[borrowed_from(this)]] ";
+    } else if (info.returnBorrowOrigin == BorrowOriginKind::Argument &&
+               declaration != nullptr &&
+               info.returnBorrowParameter < declaration->parameters().size()) {
+      result +=
+          "[[borrowed_from(" +
+          declaration->parameters()[info.returnBorrowParameter].name.lexeme +
+          ")]] ";
+    }
+  }
+  if (info.requiresUnsafe) {
+    result += "unsafe ";
+  }
   if (declaration != nullptr && declaration->nativeCArray()) {
     result += "[[c_array(" +
               declaration->nativeCArray()->countParameter.lexeme + ")]] ";
+  }
+  if (declaration != nullptr && declaration->nativeLinkName()) {
+    result += "[[link_name(\"" +
+              std::string(declaration->nativeLinkName()->name()) + "\")]] ";
   }
   if (info.declaration != nullptr && info.declaration->isStatic()) {
     result += "static ";
@@ -89,7 +127,8 @@ std::vector<std::string> SignaturePrinter::parameterLabels(
       label += "mut ";
     }
     label += types.print(parameterTypes[index]);
-    if (preservePackSyntax && parameter != nullptr && parameter->pack) {
+    if (preservePackSyntax && parameter != nullptr && parameter->pack &&
+        parameterTypes[index].kind != SemanticType::TypePack) {
       label += "...";
     }
     if (parameter != nullptr && !parameter->name.lexeme.empty()) {
@@ -268,7 +307,11 @@ SignaturePrinter::classType(const ClassTypeInfo &info) const {
   }
   if (info.exactSpecializationPrimary == 0 && !info.genericParameters.empty()) {
     result += '<';
-    appendGenericParameters(result, info.genericParameters);
+    if (info.genericArgumentPatterns.empty()) {
+      appendGenericParameters(result, info.genericParameters);
+    } else {
+      appendTypes(result, info.genericArgumentPatterns);
+    }
     result += '>';
   }
   if (info.cOpaqueHandle) {
@@ -498,7 +541,8 @@ void SignaturePrinter::appendParameters(
       result += "mut ";
     }
     result += types.print(parameterTypes[index]);
-    if (preservePackSyntax && parameter != nullptr && parameter->pack) {
+    if (preservePackSyntax && parameter != nullptr && parameter->pack &&
+        parameterTypes[index].kind != SemanticType::TypePack) {
       result += "...";
     }
     if (parameter != nullptr && !parameter->name.lexeme.empty()) {
@@ -512,6 +556,33 @@ void SignaturePrinter::appendParameters(
 
 void SignaturePrinter::appendConceptApplication(
     std::string &result, const ConceptApplication &application) {
+  if (application.memberRequirement) {
+    const auto &query = *application.memberRequirement;
+    result += "requires (" +
+              (query.receiver().referenceMutability ? std::string("mut ")
+                                                    : std::string()) +
+              semantic_spelling::typeRefSpelling(query.receiver()) + " " +
+              query.binding().lexeme;
+    for (std::size_t index = 0; index < query.parameters().size(); ++index)
+      result +=
+          ", " +
+          (query.parameters()[index].referenceMutability ? std::string("mut ")
+                                                         : std::string()) +
+          semantic_spelling::typeRefSpelling(query.parameters()[index]) + " " +
+          query.bindings()[index].lexeme;
+    result += ") { ";
+    if (query.unsafeKeyword())
+      result += "unsafe ";
+    result += "{ " + query.binding().lexeme + "." + query.member().lexeme + "(";
+    for (std::size_t index = 0; index < query.arguments().size(); ++index) {
+      if (index != 0)
+        result += ", ";
+      result += query.arguments()[index].lexeme;
+    }
+    result +=
+        ") } -> " + semantic_spelling::typeRefSpelling(query.result()) + "; }";
+    return;
+  }
   result += path(application.name);
   result += '<';
   for (std::size_t index = 0; index < application.arguments.size(); ++index) {
@@ -544,6 +615,10 @@ void SignaturePrinter::appendRequirements(
   const std::vector<ConceptApplication> &syntax = expression.applications;
   const auto appendApplication = [&](std::size_t index) {
     if (index >= syntax.size()) {
+      return;
+    }
+    if (syntax[index].memberRequirement) {
+      appendConceptApplication(result, syntax[index]);
       return;
     }
     const AppliedConceptRequirement *resolvedRequirement = nullptr;
@@ -628,6 +703,10 @@ public:
     switch (occurrence->kind) {
     case SemanticOccurrenceKind::SelectedCall: {
       const ResolvedCallInfo &selected = *occurrence->selectedCall;
+      if (selected.nativeCalleeType) {
+        result.signature = signatures.nativeCall(selected, occurrence->name);
+        break;
+      }
       const FunctionInfo *function = semantics.findFunction(selected.function);
       if (function != nullptr) {
         result.signature = signatures.function(*function, &selected);
@@ -760,7 +839,9 @@ public:
         break;
       case SymbolKind::TypeAlias:
         result.signature = "using " + symbol->qualifiedName + " = " +
-                           types.print(symbol->type);
+                           types.print(occurrence->type != SemanticType::Unknown
+                                           ? occurrence->type
+                                           : symbol->type);
         break;
       case SymbolKind::ValueParameter:
         result.signature = "uint64_t " + symbol->name;
@@ -1001,17 +1082,24 @@ public:
     if (selected->kind == SemanticOccurrenceKind::SelectedCall &&
         selected->selectedCall) {
       const ResolvedCallInfo &resolved = *selected->selectedCall;
-      const FunctionInfo *function = semantics.findFunction(resolved.function);
-      if (function == nullptr) {
-        return std::nullopt;
+      if (resolved.nativeCalleeType) {
+        result.label = signatures.nativeCall(resolved, selected->name);
+        result.parameterLabels =
+            signatures.parameterLabels(resolved.parameterTypes, nullptr, false);
+      } else {
+        const FunctionInfo *function =
+            semantics.findFunction(resolved.function);
+        if (function == nullptr) {
+          return std::nullopt;
+        }
+        result.label = signatures.function(*function, &resolved);
+        result.parameterLabels = signatures.parameterLabels(
+            resolved.parameterTypes,
+            function->declaration == nullptr
+                ? nullptr
+                : &function->declaration->parameters(),
+            false);
       }
-      result.label = signatures.function(*function, &resolved);
-      result.parameterLabels =
-          signatures.parameterLabels(resolved.parameterTypes,
-                                     function->declaration == nullptr
-                                         ? nullptr
-                                         : &function->declaration->parameters(),
-                                     false);
     } else if (selected->kind == SemanticOccurrenceKind::SelectedConstruction &&
                selected->selectedConstruction) {
       const ResolvedConstructionInfo &resolved =
@@ -1081,6 +1169,9 @@ public:
     }
 
     FrontendOptions options;
+    options.target = input.target;
+    options.configurationFlags = input.configurationFlags;
+    options.rawPointerAudit = input.rawPointerAudit;
     options.analyzeRecoveredProgram = true;
     options.completionOffset = input.byteOffset;
     options.workMetrics = input.workMetrics;
@@ -1395,6 +1486,7 @@ private:
     switch (kind) {
     case SymbolKind::LocalVariable:
     case SymbolKind::Parameter:
+    case SymbolKind::RequirementParameter:
     case SymbolKind::TypeParameter:
     case SymbolKind::ValueParameter:
     case SymbolKind::LambdaCapture:

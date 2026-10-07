@@ -1,0 +1,56 @@
+#include <std/array>
+
+struct AssetInfo {
+  uint32_t key;
+  std::size_t byte_length;
+  bool texture;
+  constexpr AssetInfo(uint32_t id, std::size_t length, bool is_texture)
+      : key(id), byte_length(length), texture(is_texture) {}
+};
+
+// This small bounded hash is for demonstration, not a collision-free asset ID.
+constexpr AssetInfo inspect_asset(std::string_view path) {
+  mut uint32_t key = 0;
+  mut std::size_t dot = path.size();
+  for (mut std::size_t index = 0; index < path.size(); index++) {
+    char code = path[index];
+    key = (key * 131 + uint8_t(code)) % 65521;
+    if (code == '.') { dot = index; }
+  }
+  bool texture = dot < path.size() && path.size() - dot == 4 &&
+                 path[dot + 1] == 'p' && path[dot + 2] == 'n' &&
+                 path[dot + 3] == 'g';
+  return AssetInfo(key, path.size(), texture);
+}
+
+constexpr std::array<AssetInfo, 3> assets = std::array<AssetInfo, 3>({
+    inspect_asset("textures/player.png"),
+    inspect_asset("audio/menu.ogg"),
+    inspect_asset("textures/tiles.png")
+});
+
+constexpr int texture_count(std::array<AssetInfo, 3>& table) {
+  mut int count = 0;
+  for (mut std::size_t index = 0; index < table.size(); index++) {
+    if (table.at(index).texture) { count++; }
+  }
+  return count;
+}
+
+static_assert(assets.size() == 3);
+static_assert(texture_count(assets) == 2);
+static_assert(assets.front().byte_length == 19);
+static_assert(assets.at(1).byte_length == 14);
+static_assert(assets.front().key != assets.back().key);
+
+int main() {
+  AssetInfo runtime = inspect_asset("textures/player.png");
+  std::array<AssetInfo, 3> runtime_assets = std::array<AssetInfo, 3>({
+      inspect_asset("textures/player.png"),
+      inspect_asset("audio/menu.ogg"),
+      inspect_asset("textures/tiles.png")
+  });
+  return runtime.key == assets.front().key && runtime.texture &&
+         texture_count(assets) == 2 && texture_count(runtime_assets) == 2 &&
+         runtime_assets.back().key == assets.back().key ? 0 : 1;
+}

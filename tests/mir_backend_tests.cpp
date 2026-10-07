@@ -277,11 +277,11 @@ void testVerifiedMirRouteAndOptimizationCoherence() {
     const std::string_view o1Constant =
         functionDefinition(o1Artifact.contents, "mir_constant");
     expect(
-        o0Constant.find("__gti_mir_v_1 = __gti_mir_v_2;") !=
+        o0Constant.find("__gti_mir_v_2 = __gti_mir_v_1;") !=
                 std::string_view::npos &&
-            o1Constant.find("__gti_mir_v_1 = static_cast<std::int32_t>(42);") !=
+            o1Constant.find("__gti_mir_v_2 = static_cast<std::int32_t>(42);") !=
                 std::string_view::npos &&
-            o1Constant.find("__gti_mir_v_1 = __gti_mir_v_2;") ==
+            o1Constant.find("__gti_mir_v_2 = __gti_mir_v_1;") ==
                 std::string_view::npos,
         "the marked constant body should execute the verified O1 "
         "Identity-to-Literal MIR rewrite");

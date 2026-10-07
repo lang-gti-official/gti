@@ -20,13 +20,14 @@ enum class SemanticLoanEndKind {
 
 enum class UnsafeOperationKind {
   None,
-  AddressOf,
   RawDereference,
   RawIndex,
   RawMember,
   UnionMember,
   PointerArithmetic,
   ForeignPointerCall,
+  DeclaredUnsafeCall,
+  StorageAdoption,
 };
 
 struct SemanticLoanEndpoint {
@@ -39,6 +40,19 @@ using SemanticLoanPlaceProjectionKind = PlaceProjectionKind;
 using SemanticLoanPlaceProjection = PlaceProjection;
 using SemanticLoanPlace = PlaceKey;
 
+// One field of a composed borrowed value protects its own independent owner.
+// The first dependency remains in the scalar loan fields for the ordinary
+// one-owner reference path; these records contain the additional dependencies.
+struct SemanticLoanDependency {
+  SemanticLoanPlace place;
+  std::vector<SymbolId> designatedFields;
+  AccessMode access = AccessMode::ReadOnly;
+  bool protectsStorage = false;
+
+  friend bool operator==(const SemanticLoanDependency &,
+                         const SemanticLoanDependency &) = default;
+};
+
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -46,7 +60,17 @@ struct SemanticLoanInfo {
   SymbolId owner = 0;
   bool receiverOrigin = false;
   SemanticLoanId parent = 0;
+  // A reference to a borrowed-state carrier protects the carrier's physical
+  // storage separately from the external owners retained by this StoredValue
+  // loan. Unlike parent, this edge neither denotes containment nor suspends
+  // the dependency's access permission.
+  SemanticLoanId storedDependency = 0;
   bool entry = false;
+  // Receiver-only abstract entry dependencies have no source binding. This
+  // identity keeps them in their declaring body when one model holds many
+  // functions and destructors; it is consumed during HIR lowering, never by
+  // the backend.
+  const Stmt *entryDeclaration = nullptr;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
@@ -55,10 +79,10 @@ struct SemanticLoanInfo {
   // the carrier's destructor performs the operation that releases the
   // protected resource.
   bool lifecycleBound = false;
-  // For a StoredValue loan carried by a direct stored-reference parameter,
-  // this is the exact semantic field that designates the external referent.
-  // Zero for ordinary reference loans and non-entry retained loans.
-  SymbolId designatedField = 0;
+  // For a StoredValue parameter loan, this exact nominal field path ends at
+  // the reference designating its external referent. Empty for other loans.
+  std::vector<SymbolId> designatedFields;
+  std::vector<SemanticLoanDependency> additionalDependencies;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
@@ -186,6 +210,9 @@ enum class CallableOwnedTransportKind {
   ExactReturn,
   ExactField,
   ThreadTask,
+  // An ordinary owned value at parameter entry. Subsequent transfers and
+  // cleanup are governed by value/loan/lifecycle analysis, not return syntax.
+  Value,
 };
 
 struct CallableOwnedTransport {
@@ -239,6 +266,7 @@ enum class IntrinsicKind {
   UniqueOwnerBorrow,
   UniqueOwnerBorrowMut,
   UniqueOwnerIsNull,
+  UniqueOwnerSwap,
   UniqueOwnerUpcast,
   AllocateStorage,
   StorageTryAllocate,
@@ -271,6 +299,8 @@ enum class IntrinsicKind {
   PrefixStorageInsert,
   PrefixStorageErase,
   PrefixStorageTextView,
+  PrefixStorageCString,
+  PrefixStorageTryCString,
   OptionalStorageHasValue,
   OptionalStorageConstruct,
   OptionalStorageRead,
@@ -299,7 +329,65 @@ enum class IntrinsicKind {
   MutexGuardRead,
   MutexGuardReadMut,
   MutexLockFailure,
+  ExactTypeParameterConstruction,
+  RequireKey,
+  RequireContainerArgument,
+  Panic,
+  SharedOwnerEmpty,
+  SharedOwnerFromUnique,
+  SharedOwnerClone,
+  SharedOwnerBorrow,
+  SharedOwnerIsNull,
+  SharedOwnerUseCount,
+  SharedOwnerSwap,
+  SharedOwnerUpcast,
+  SourceFileName,
+  SourceFunctionName,
+  SourceLine,
+  SourceColumn,
+  SimdAdd,
+  SimdSubtract,
+  SimdMultiply,
+  SimdDivide,
+  SimdEqual,
+  SimdLess,
+  // Sealed initialized-place transfers: all owned inputs are prepared before
+  // entry; eligible generated relocation cannot fail or invoke user code.
+  RestoringExchange,
+  RestoringSwap,
+  RestoringIndexedSwap,
+  EnumUnderlyingValue,
+  RawBorrow,
+  RawBorrowMut,
+  RawPointerConversion,
+  ObjectSize,
+  ObjectAlignment,
+  StorageTryAdopt,
   Count,
+};
+
+[[nodiscard]] constexpr bool simdIntrinsic(IntrinsicKind intrinsic) {
+  return intrinsic >= IntrinsicKind::SimdAdd &&
+         intrinsic <= IntrinsicKind::SimdLess;
+}
+
+[[nodiscard]] constexpr bool simdComparisonIntrinsic(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::SimdEqual ||
+         intrinsic == IntrinsicKind::SimdLess;
+}
+
+// A compiler-resolved source call site. These facts are language meaning, not
+// a backend spelling: HIR captures them while expanding caller-side defaults,
+// MIR preserves and verifies them, and each backend only chooses a concrete
+// representation for the already-resolved values.
+struct SourceLocationLiteral {
+  std::string file;
+  std::string function;
+  std::uint32_t line = 0;
+  std::uint32_t column = 0;
+
+  friend bool operator==(const SourceLocationLiteral &,
+                         const SourceLocationLiteral &) = default;
 };
 
 struct IntegerArithmeticIntrinsic {
@@ -324,6 +412,8 @@ enum class CompilerCapabilityTypeKind {
   AtomicStorage,
   MutexStorage,
   MutexLockToken,
+  SharedOwner,
+  NativeCScalar,
 };
 
 enum class ProgramEntryKind {
@@ -413,6 +503,21 @@ enum class BorrowOriginKind {
   Global,
 };
 
+// One returned reference-bearing path and the exact caller-relative field
+// path supplying it. Empty resultFields denotes a reference return itself.
+// The semantic declaration owns this contract; HIR/MIR preserve it verbatim
+// and verification checks it against executable return and call publications.
+struct BorrowedFieldOrigin {
+  std::vector<SymbolId> resultFields;
+  BorrowOriginKind origin = BorrowOriginKind::None;
+  std::size_t parameter = 0;
+  std::vector<SymbolId> sourceFields;
+  AccessMode access = AccessMode::ReadOnly;
+
+  friend bool operator==(const BorrowedFieldOrigin &,
+                         const BorrowedFieldOrigin &) = default;
+};
+
 // An exact, domain-independent global/static storage origin. Callers qualify
 // this place into their own semantic/HIR/MIR body domain.
 struct BorrowOriginPlace {
@@ -423,6 +528,32 @@ struct BorrowOriginPlace {
 
   friend bool operator==(const BorrowOriginPlace &,
                          const BorrowOriginPlace &) = default;
+};
+
+// A receiver-relative path to private unique-owner storage returned through
+// its checked borrow operation. This describes an accessor, not permission to
+// consume an arbitrary reference. MIR independently verifies the source body.
+struct OwnedPointeeProjection {
+  std::vector<SymbolId> fields;
+  IntrinsicKind borrowIntrinsic = IntrinsicKind::None;
+
+  friend bool operator==(const OwnedPointeeProjection &,
+                         const OwnedPointeeProjection &) = default;
+};
+
+// A source-derived precondition for turning an unknown raw input into a
+// checked borrow. These are not loans: passing a pointer does not retain it.
+// Formal indices survive concrete generic substitution and wrapper calls.
+struct RawBorrowContract {
+  std::size_t pointerParameter = 0;
+  bool pointerReceiver = false;
+  std::optional<std::size_t> ownerParameter;
+  bool ownerReceiver = false;
+  std::vector<PlaceProjection> ownerProjections;
+  AccessMode access = AccessMode::ReadOnly;
+
+  friend bool operator==(const RawBorrowContract &,
+                         const RawBorrowContract &) = default;
 };
 
 struct FunctionInfo {
@@ -445,6 +576,14 @@ struct FunctionInfo {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  bool requiresUnsafe = false;
+  bool neverReturns = false;
+  bool tracksCaller = false;
+  bool discardableResult = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
+  // Derived from resolved calls, after all source bodies have been analyzed.
+  bool requiresCThreadRuntime = false;
+  std::vector<RawBorrowContract> rawBorrowContracts;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   std::optional<std::size_t> cArrayCountParameter;
@@ -453,12 +592,22 @@ struct FunctionInfo {
   bool overrideMethod = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  bool explicitReturnBorrowOrigin = false;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> returnBorrowParameters;
+  std::vector<BorrowedFieldOrigin> returnBorrowFields;
   std::optional<BorrowOriginPlace> returnBorrowPlace;
+  std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
   bool compilerPrivate = false;
+
+  // Source contracts use formal declaration indices. Concrete contracts use
+  // flattened call indices, including each element of a final value pack.
+  [[nodiscard]] std::vector<CallableParameterContract>
+  instantiatedCallableParameters(
+      const std::vector<SemanticType> &concreteParameters) const;
 };
 
 // One semantically selected host export. This is the first point where a
@@ -503,6 +652,9 @@ struct LambdaInfo {
   std::vector<SemanticType> parameterTypes;
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
+  // Exact concrete instance proven by ordinary body analysis to perform no
+  // raw memory/address-arithmetic access. Unknown remains conservative.
+  SemanticType rawAccessFreeType = SemanticType::Unknown;
 };
 
 struct LambdaCaptureLink {
@@ -579,9 +731,13 @@ struct ClassTypeInfo {
   std::vector<SemanticType> exactTypeArguments;
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<GenericParameterInfo> genericParameters;
+  std::vector<SemanticType> genericArgumentPatterns;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
   std::optional<StoredReferenceInfo> storedReference;
+  bool lifecycleBoundBorrowCarrier = false;
+  // Separate trusted lock authority from general dependency retention.
+  bool mutexGuardBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;
@@ -704,8 +860,12 @@ struct ConstructorInfo {
   std::vector<std::size_t> defaultArgumentEffectOwners;
   std::optional<std::size_t> borrowParameter;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  // Distinct formal inputs retained by a composed read-only carrier. Includes
+  // the primary borrowParameter when there is more than one input.
+  std::vector<std::size_t> borrowParameters;
   bool constexprConstructor = false;
   bool compilerPrivate = false;
+  bool parameterPack = false;
 };
 
 struct DestructorInfo {
@@ -722,6 +882,9 @@ struct ClassLifecycleInfo {
   std::optional<ConstructorInfo> declaredMoveConstructor;
   std::optional<DestructorInfo> declaredDestructor;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  // Exact source base selected by the bounded generated-constructor schedule.
+  // Zero retains the existing structural declaration-initializer route.
+  ConstructorId generatedDefaultBaseConstructor = 0;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
@@ -741,9 +904,14 @@ struct ResolvedConstructionInfo {
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::vector<const Expr *> defaultArguments;
+  // Designated struct construction supplies every field in declaration order,
+  // including declaration defaults. These are caller-side MIR inputs.
+  std::vector<const Expr *> designatedArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
 };
@@ -792,6 +960,10 @@ enum class CallReceiverMode {
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
+  // A native indirect target is a value with this exact C signature, never
+  // a selected GTI function or a callback-adapter declaration.
+  std::optional<SemanticType> nativeCalleeType;
+  std::optional<CallableBoundary> callableBoundary;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<const Expr *> defaultArguments;
@@ -799,25 +971,74 @@ struct ResolvedCallInfo {
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  bool neverReturns = false;
+  bool tracksCaller = false;
   SynchronizationOperation synchronization;
   std::optional<ResolvedThreadTaskEntry> threadTaskEntry;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   std::optional<BorrowOriginPlace> borrowPlace;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   CallReceiverMode receiverMode = CallReceiverMode::None;
+  // An immediate invocation keeps the owned field in consuming this.
+  bool retainedReceiverProjection = false;
+  // Exact owning accessor receiver whose availability is consumed, while its
+  // returned pointee is invoked in place. Null for ordinary field forwarding.
+  const Expr *retainedReceiverOwner = nullptr;
   // Exact read-only reference parameters that borrow one fresh value only for
   // this invocation. The full expression retains ownership of each value.
   std::vector<std::size_t> ephemeralBorrowArguments;
   std::vector<CallableArgumentBoundary> callableArguments;
 };
 
+// A lexical unsafe raw dereference returned under an explicit declaration
+// contract. The owner is a resolved checked input, never inferred from the
+// pointer's representation. HIR lowers this to the shared raw-borrow operation.
+struct RawReferenceAssertionInfo {
+  PlaceKey owner;
+  SemanticType ownerReference = SemanticType::Unknown;
+};
+
+enum class ExpectedCombinatorKind {
+  TransformError,
+  Transform,
+  AndThen,
+  Expect
+};
+
+// One exact consuming expected<T, E> mapper. Expected is a
+// language type, but the mapped alternative is still computed by an ordinary
+// GTI function or lambda whose exact identity remains authoritative through
+// lowering. Mapping selects exactly one mapper/lambda and retains its type.
+// Expect instead retains the exact message type and selects the shared Panic
+// intrinsic on its failure arm; it has no mapper target.
+struct ExpectedCombinatorInfo {
+  ExpectedCombinatorKind kind = ExpectedCombinatorKind::TransformError;
+  SemanticType sourceType = SemanticType::Unknown;
+  SemanticType resultType = SemanticType::Unknown;
+  SemanticType mapperType = SemanticType::Unknown;
+  FunctionId mapper = 0;
+  LambdaId lambda = 0;
+};
+
+// Contextual collection braces select ordinary static GTI functions. The
+// compiler owns sequencing/transfer; the selected library owns storage policy.
+struct ResolvedCollectionInfo {
+  SemanticType type = SemanticType::Unknown;
+  SemanticType elementType = SemanticType::Unknown;
+  FunctionId initialize = 0;
+  FunctionId insert = 0;
+};
+
 struct NativeFunctionConversionInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   SemanticType type = SemanticType::Unknown;
+  CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
 };
 
 // One context-selected, namespace-scope GTI function item. The semantic type
@@ -864,7 +1085,10 @@ struct DeferredCallableCallInfo {
   std::vector<SemanticType> parameterTypes;
   AccessMode access = AccessMode::ReadOnly;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
-  CallableBoundary boundary = CallableBoundary::Confined;
+  std::optional<CallableBoundary> boundary = CallableBoundary::Confined;
+  // A stored receiver is checked again against its concrete field type.
+  // It is not a confined parameter or an ownership-transfer boundary.
+  SymbolId receiverField = 0;
 };
 
 struct ResolvedOperatorInfo {
@@ -880,6 +1104,8 @@ struct ResolvedOperatorInfo {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
   // Exact semantic receiver facts used by overload resolution. Synthetic
@@ -987,6 +1213,9 @@ enum class SymbolKind {
   TypeParameter,
   ValueParameter,
   LambdaCapture,
+  // A source-only name inside an unevaluated member requirement. It never
+  // denotes runtime storage and may have a concept-dependent type.
+  RequirementParameter,
 };
 
 enum class OccurrenceRole : std::uint32_t {
@@ -1257,6 +1486,11 @@ struct SemanticFullExpression {
   std::vector<const Expr *> roots;
 };
 
+struct ImplicitReturnMoveInfo {
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
+};
+
 enum class StaticAssertResult {
   Passed,
   Failed,
@@ -1265,6 +1499,9 @@ enum class StaticAssertResult {
 
 class SemanticModel {
 public:
+  // Own semantic-generated constructor syntax for the lifetime of every
+  // downstream reference; cached parsed source trees remain immutable.
+  std::vector<std::shared_ptr<const ConstructorDecl>> designatedConstructors;
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
 
   [[nodiscard]] ExecutionProfile executionProfile() const;
@@ -1280,6 +1517,12 @@ public:
 
   [[nodiscard]] const DefinedFailureOperation *
   findDefinedFailure(const Expr &expression) const;
+
+  [[nodiscard]] const CallerLocationOrigin *
+  findCallerLocation(const Expr &expression) const;
+
+  [[nodiscard]] const RawReferenceAssertionInfo *
+  findRawReferenceAssertion(const Expr &expression) const;
 
   [[nodiscard]] const ProgramInitializationPlan &
   programInitializationPlan() const;
@@ -1300,6 +1543,9 @@ public:
 
   [[nodiscard]] const OwnershipEvent *
   findOwnershipEvent(const Expr &expression) const;
+
+  [[nodiscard]] const ImplicitReturnMoveInfo *
+  findImplicitReturnMove(const Expr &expression) const;
 
   [[nodiscard]] std::optional<LambdaCaptureMode>
   lambdaCaptureMode(SymbolId symbol) const;
@@ -1431,6 +1677,10 @@ public:
   findPayloadPattern(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const;
+  [[nodiscard]] const ExpectedCombinatorInfo *
+  findExpectedCombinator(const Call &call) const;
+  [[nodiscard]] const ResolvedCollectionInfo *
+  findCollection(const ArrayInitializer &initializer) const;
 
   [[nodiscard]] const NativeFunctionConversionInfo *
   findNativeFunctionConversion(const Expr &expression) const;
@@ -1473,6 +1723,12 @@ public:
   [[nodiscard]] SymbolId findResolvedSymbol(const Expr &expression) const;
 
   [[nodiscard]] std::size_t functionCount() const;
+
+  // Query after successful semantic analysis. Entry selection remains the
+  // compiler's resolved function fact, not a driver/editor spelling heuristic.
+  [[nodiscard]] std::optional<Diagnostic>
+  executableEntryDiagnostic(SourceUnitId entryUnit,
+                            const std::string &entryPath) const;
 
   [[nodiscard]] std::size_t lambdaCount() const;
 
@@ -1573,9 +1829,18 @@ private:
   void recordDefinedFailure(const Expr &expression,
                             DefinedFailureOperation operation);
 
+  void recordCallerLocation(const Expr &expression,
+                            CallerLocationOrigin origin);
+
+  void recordRawReferenceAssertion(const Expr &expression,
+                                   RawReferenceAssertionInfo info);
+
   void recordPlace(const Expr &expression, PlaceKey place);
 
   void recordOwnershipEvent(const Expr &expression, OwnershipEvent event);
+
+  void recordImplicitReturnMove(const Expr &expression,
+                                ImplicitReturnMoveInfo info);
 
   void recordLambdaCaptureMode(SymbolId symbol, LambdaCaptureMode mode);
 
@@ -1603,7 +1868,8 @@ private:
                                        const IfStmt &statement,
                                        bool thenBranch);
 
-  void recordConstexprBranch(const IfStmt &statement, bool thenBranch);
+  void recordConstexprBranch(const IfStmt &statement,
+                             std::optional<bool> thenBranch);
 
   void recordStaticAssertResult(const StaticAssertDecl &declaration,
                                 StaticAssertResult result);
@@ -1655,6 +1921,9 @@ private:
                             ResolvedPayloadPatternInfo info);
 
   void record(const Call &call, ResolvedCallInfo info);
+  void recordExpectedCombinator(const Call &call, ExpectedCombinatorInfo info);
+  void recordCollection(const ArrayInitializer &initializer,
+                        ResolvedCollectionInfo info);
 
   void recordNativeFunctionConversion(const Expr &expression,
                                       NativeFunctionConversionInfo info);
@@ -1754,6 +2023,7 @@ private:
   std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const Expr *, DefinedFailureOperation> definedFailures;
+  std::unordered_map<const Expr *, CallerLocationOrigin> callerLocations;
   ProgramInitializationPlan programInitialization;
   std::optional<HostedProgramEntryPlan> hostedProgramEntry;
   ProgramKind programKind_ = ProgramKind::Executable;
@@ -1761,6 +2031,7 @@ private:
   std::unordered_set<const Expr *> programConstantSubstitutions;
   std::unordered_map<const Expr *, PlaceKey> places;
   std::unordered_map<const Expr *, OwnershipEvent> ownershipEvents;
+  std::unordered_map<const Expr *, ImplicitReturnMoveInfo> implicitReturnMoves;
   std::unordered_map<SymbolId, LambdaCaptureMode> lambdaCaptureModes;
   std::vector<const Expr *> ownershipEventOrder;
   std::unordered_map<const Expr *, std::size_t> placeSelections;
@@ -1774,7 +2045,8 @@ private:
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;
-  std::unordered_map<const IfStmt *, bool> constexprBranches;
+  // nullopt is an explicitly deferred primary selection, not a false branch.
+  std::unordered_map<const IfStmt *, std::optional<bool>> constexprBranches;
   std::unordered_map<const StaticAssertDecl *, StaticAssertResult>
       staticAssertResults;
   std::unordered_map<const SwitchStmt *,
@@ -1807,6 +2079,9 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const Expr *, RawReferenceAssertionInfo>
+      rawReferenceAssertions;
+  std::unordered_map<const Call *, ExpectedCombinatorInfo> expectedCombinators;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>
       nativeFunctionConversions;
   std::unordered_map<const Expr *, FunctionItemSelectionInfo>
@@ -1824,6 +2099,8 @@ private:
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
+  std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
+      collections;
   std::unordered_map<const ArrayInitializer *, ResolvedConstructionInfo>
       arrayElementConstructions;
   std::unordered_map<const ConstructorInitializer *,
@@ -1852,7 +2129,7 @@ struct SemanticInstanceAnalysis {
   SemanticModel model;
   std::vector<SemanticDiagnostic> diagnostics;
 
-  [[nodiscard]] bool valid() const { return diagnostics.empty(); }
+  [[nodiscard]] bool valid() const { return !hasErrorDiagnostics(diagnostics); }
 };
 
 } // namespace lang

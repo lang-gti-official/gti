@@ -25,6 +25,8 @@ enum class SourceDependencyKind {
   Prelude,
   StandardLibrary,
   Package,
+  Import,
+  ExportImport,
 };
 
 enum class SourceUnitRole {
@@ -71,6 +73,13 @@ struct SourceUnit {
   // analysis. Retain its exact roles so tooling does not need to reconstruct
   // directive grammar from neighbouring lexical tokens.
   std::vector<ConfigurationToken> configurationTokens;
+  // Source-level interfaces only; no backend or binary-module identity.
+  std::optional<Token> moduleDeclaration;
+  // Parser-derived declaration ranges carrying an explicit/inherited export.
+  // Namespace names are retained separately so exporting one child does not
+  // expose its private siblings. Invalid exports are rejected by semantics.
+  std::vector<SourceSpan> exportedDeclarations;
+  std::vector<SourceSpan> exportedNamespaces;
   std::size_t declarationStart = 0;
   std::size_t declarationCount = 0;
   std::optional<std::string> standardLibraryName;
@@ -95,6 +104,8 @@ struct PackageSourceRoot {
   std::filesystem::path packageRoot;
   std::filesystem::path sourceRoot;
   std::vector<PackageSourceDependency> dependencies;
+  // Public package-local module name -> absolute, contained interface path.
+  std::vector<std::pair<std::string, std::filesystem::path>> modules;
 };
 
 class SourceGraph {
@@ -108,6 +119,11 @@ public:
   [[nodiscard]] bool isCompilerTrusted(SourceUnitId id) const;
   [[nodiscard]] bool isVisible(SourceUnitId requester,
                                SourceUnitId declaration) const;
+  [[nodiscard]] bool isDeclarationVisible(SourceUnitId requester,
+                                          SourceUnitId declaration,
+                                          std::size_t nameOffset) const;
+  [[nodiscard]] bool isExported(SourceUnitId declaration,
+                                std::size_t nameOffset) const;
   [[nodiscard]] std::vector<SourceUnitId> compilationOrder() const;
 
 private:

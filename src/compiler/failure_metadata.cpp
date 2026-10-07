@@ -26,6 +26,8 @@ namespace {
 
 constexpr std::string_view artifactPrefix = "GTI-FAILURE-ARTIFACT-V1";
 constexpr std::string_view externalSourcePrefix = "GTI-EXTERNAL-SOURCE-V1";
+constexpr DefinedFailureOutcome callerPanicOutcome{
+    DefinedFailureCode::Panic, DefinedFailureDetail::ExplicitPanic};
 
 struct OriginKey {
   SourceUnitId sourceUnit = 0;
@@ -145,6 +147,13 @@ serializeSites(const std::vector<FailureSiteDescriptor> &sites) {
                                   const FailureOriginAssignment &right) {
   return std::tie(left.sourceUnit, left.start, left.end) <
          std::tie(right.sourceUnit, right.start, right.end);
+}
+
+[[nodiscard]] bool callerAssignmentLess(const CallerLocationAssignment &left,
+                                        const CallerLocationAssignment &right) {
+  return std::tie(left.origin.sourceUnit, left.origin.start, left.origin.end) <
+         std::tie(right.origin.sourceUnit, right.origin.start,
+                  right.origin.end);
 }
 
 [[nodiscard]] bool containedRelativePath(const std::filesystem::path &root,
@@ -387,13 +396,25 @@ FailureMetadata::siteFor(const DefinedFailureOrigin &origin) const {
       originAssignments.begin(), originAssignments.end(), key, assignmentLess);
   if (found == originAssignments.end() ||
       found->sourceUnit != origin.sourceUnit || found->start != origin.start ||
-      found->end != origin.end ||
+      found->end != origin.end || found->line != origin.line ||
       std::any_of(origin.outcomes.begin(), origin.outcomes.end(),
                   [&](DefinedFailureOutcome outcome) {
                     return std::find(found->outcomes.begin(),
                                      found->outcomes.end(),
                                      outcome) == found->outcomes.end();
                   })) {
+    return std::nullopt;
+  }
+  return found->site;
+}
+
+std::optional<FailureSiteId>
+FailureMetadata::callerSiteFor(const CallerLocationOrigin &origin) const {
+  const CallerLocationAssignment key{.origin = origin};
+  const auto found = std::lower_bound(callerLocationAssignments.begin(),
+                                      callerLocationAssignments.end(), key,
+                                      callerAssignmentLess);
+  if (found == callerLocationAssignments.end() || found->origin != origin) {
     return std::nullopt;
   }
   return found->site;
@@ -426,34 +447,61 @@ verifyFailureMetadata(const FailureMetadata &metadata) {
     }
   }
 
-  std::vector<bool> referenced(metadata.sites().size(), false);
+  std::vector<std::vector<DefinedFailureOutcome>> admissions(
+      metadata.sites().size());
+  const auto exactAnchor = [&](SourceUnitId sourceUnit, std::size_t start,
+                               std::size_t end, int line,
+                               const FailureSiteDescriptor *site) {
+    const auto source = std::lower_bound(
+        metadata.sourceUnits().begin(), metadata.sourceUnits().end(),
+        sourceUnit,
+        [](const FailureSourceDescriptor &candidate, SourceUnitId unit) {
+          return candidate.sourceUnit < unit;
+        });
+    return sourceUnit != 0 && line >= 1 && end > start && site != nullptr &&
+           source != metadata.sourceUnits().end() &&
+           source->sourceUnit == sourceUnit &&
+           site->logicalSource == source->logicalName && site->line == line &&
+           site->start == start && site->end == end;
+  };
   for (std::size_t index = 0; index < metadata.assignments().size(); ++index) {
     const FailureOriginAssignment &assignment = metadata.assignments()[index];
     const FailureSiteDescriptor *site = metadata.findSite(assignment.site);
-    const auto source = std::lower_bound(
-        metadata.sourceUnits().begin(), metadata.sourceUnits().end(),
-        assignment.sourceUnit,
-        [](const FailureSourceDescriptor &candidate, SourceUnitId sourceUnit) {
-          return candidate.sourceUnit < sourceUnit;
-        });
-    if (assignment.sourceUnit == 0 || assignment.line < 1 ||
-        assignment.end <= assignment.start ||
-        !outcomesValidAndSorted(assignment.outcomes) || site == nullptr ||
-        source == metadata.sourceUnits().end() ||
-        source->sourceUnit != assignment.sourceUnit ||
-        site->logicalSource != source->logicalName ||
-        site->line != assignment.line || site->start != assignment.start ||
-        site->end != assignment.end || site->outcomes != assignment.outcomes ||
+    if (!exactAnchor(assignment.sourceUnit, assignment.start, assignment.end,
+                     assignment.line, site) ||
+        !outcomesValidAndSorted(assignment.outcomes) ||
         (index != 0 &&
          !assignmentLess(metadata.assignments()[index - 1], assignment))) {
       report("failure origin assignments do not exactly match the site table");
       break;
     }
-    referenced[assignment.site - 1] = true;
+    auto &outcomes = admissions[assignment.site - 1];
+    outcomes.insert(outcomes.end(), assignment.outcomes.begin(),
+                    assignment.outcomes.end());
   }
-  if (std::any_of(referenced.begin(), referenced.end(),
-                  [](bool value) { return !value; })) {
-    report("failure site table contains an unreferenced site");
+  for (std::size_t index = 0; index < metadata.callerAssignments().size();
+       ++index) {
+    const auto &assignment = metadata.callerAssignments()[index];
+    const auto &origin = assignment.origin;
+    if (!exactAnchor(origin.sourceUnit, origin.start, origin.end, origin.line,
+                     metadata.findSite(assignment.site)) ||
+        (index != 0 &&
+         !callerAssignmentLess(metadata.callerAssignments()[index - 1],
+                               assignment))) {
+      report("caller location assignments do not exactly match the site table");
+      break;
+    }
+    admissions[assignment.site - 1].push_back(callerPanicOutcome);
+  }
+  for (std::size_t index = 0; index < admissions.size(); ++index) {
+    auto &outcomes = admissions[index];
+    sortAndUniqueOutcomes(outcomes);
+    if (outcomes.empty()) {
+      report("failure site table contains an unreferenced site");
+    } else if (outcomes != metadata.sites()[index].outcomes) {
+      report("failure site outcomes do not exactly match detector and caller "
+             "admissions");
+    }
   }
 
   const std::vector<std::uint8_t> expected = serializeSites(metadata.sites());
@@ -479,34 +527,45 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
       selectRoutes(sourceGraph);
 
   std::map<OriginKey, PendingOrigin> origins;
-  const auto collectOrigin = [&](const DefinedFailureOrigin &origin) {
+  std::map<OriginKey, CallerLocationOrigin> callers;
+  const auto validAnchor = [&](const auto &origin, std::string_view purpose) {
     const SourceUnit *unit = sourceGraph.findUnit(origin.sourceUnit);
     const std::string *source =
         unit == nullptr ? nullptr : sources.find(unit->path.string());
     if (unit == nullptr || source == nullptr || origin.end <= origin.start ||
-        origin.end > source->size() || origin.outcomes.empty()) {
-      result.errors.push_back(
-          "failure origin cannot be resolved to exact source bytes");
-      return;
+        origin.end > source->size()) {
+      result.errors.push_back(std::string(purpose) +
+                              " cannot be resolved to exact source bytes");
+      return false;
     }
     const std::size_t precedingLines = static_cast<std::size_t>(
         std::count(source->begin(), source->begin() + origin.start, '\n'));
     if (precedingLines >=
         static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-      result.errors.push_back(
-          "failure origin line exceeds the metadata line-number range");
-      return;
+      result.errors.push_back(std::string(purpose) +
+                              " line exceeds the metadata line-number range");
+      return false;
     }
     const int exactLine = 1 + static_cast<int>(precedingLines);
     if (origin.line != exactLine) {
-      result.errors.push_back(
-          "failure origin line does not match its exact source bytes");
+      result.errors.push_back(std::string(purpose) +
+                              " line does not match its exact source bytes");
+      return false;
+    }
+    return true;
+  };
+  const auto collectOrigin = [&](const DefinedFailureOrigin &origin) {
+    if (origin.outcomes.empty()) {
+      result.errors.push_back("failure origin contains no outcomes");
+      return;
+    }
+    if (!validAnchor(origin, "failure origin")) {
       return;
     }
     PendingOrigin &pending =
         origins[{origin.sourceUnit, origin.start, origin.end}];
     pending.key = {origin.sourceUnit, origin.start, origin.end};
-    pending.line = exactLine;
+    pending.line = origin.line;
     pending.outcomes.insert(pending.outcomes.end(), origin.outcomes.begin(),
                             origin.outcomes.end());
   };
@@ -515,6 +574,12 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
       for (const DefinedFailureOrigin &origin :
            value.definedFailure.localOrigins) {
         collectOrigin(origin);
+      }
+      if (value.callerLocation &&
+          validAnchor(*value.callerLocation, "caller location")) {
+        const auto &origin = *value.callerLocation;
+        callers.emplace(OriginKey{origin.sourceUnit, origin.start, origin.end},
+                        origin);
       }
     }
   });
@@ -551,8 +616,19 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
     return result;
   }
 
+  // The runtime table is shared reporting provenance, but the two assignment
+  // maps remain separate so admission never manufactures a local detector.
+  auto reportingSites = origins;
+  for (const auto &[key, origin] : callers) {
+    auto &pending = reportingSites[key];
+    pending.key = key;
+    pending.line = origin.line;
+    pending.outcomes.push_back(callerPanicOutcome);
+    sortAndUniqueOutcomes(pending.outcomes);
+  }
+
   std::unordered_map<SourceUnitId, std::string> logicalNames;
-  for (const auto &[key, _] : origins) {
+  for (const auto &[key, _] : reportingSites) {
     if (logicalNames.contains(key.sourceUnit)) {
       continue;
     }
@@ -588,8 +664,8 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
     PendingOrigin origin;
   };
   std::vector<PendingSite> pendingSites;
-  pendingSites.reserve(origins.size());
-  for (const auto &[key, origin] : origins) {
+  pendingSites.reserve(reportingSites.size());
+  for (const auto &[key, origin] : reportingSites) {
     pendingSites.push_back(
         {.descriptor = {.logicalSource = logicalNames.at(key.sourceUnit),
                         .line = origin.line,
@@ -621,16 +697,27 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
       site = descriptor.id;
       result.metadata.siteTable.push_back(std::move(descriptor));
     }
-    result.metadata.originAssignments.push_back(
-        {.sourceUnit = pending.origin.key.sourceUnit,
-         .start = pending.origin.key.start,
-         .end = pending.origin.key.end,
-         .line = pending.origin.line,
-         .outcomes = pending.origin.outcomes,
-         .site = site});
+    if (const auto local = origins.find(pending.origin.key);
+        local != origins.end()) {
+      result.metadata.originAssignments.push_back(
+          {.sourceUnit = local->second.key.sourceUnit,
+           .start = local->second.key.start,
+           .end = local->second.key.end,
+           .line = local->second.line,
+           .outcomes = local->second.outcomes,
+           .site = site});
+    }
+    if (const auto caller = callers.find(pending.origin.key);
+        caller != callers.end()) {
+      result.metadata.callerLocationAssignments.push_back(
+          {.origin = caller->second, .site = site});
+    }
   }
   std::sort(result.metadata.originAssignments.begin(),
             result.metadata.originAssignments.end(), assignmentLess);
+  std::sort(result.metadata.callerLocationAssignments.begin(),
+            result.metadata.callerLocationAssignments.end(),
+            callerAssignmentLess);
   result.metadata.serialization = serializeSites(result.metadata.siteTable);
   result.metadata.identity = hashBytes(result.metadata.serialization);
   if (result.metadata.identity.isZero()) {

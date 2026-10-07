@@ -1,0 +1,193 @@
+#include <std/array>
+
+namespace gti_internal {
+// These exact installed declarations bind immediate, nonescaping array
+// borrows. They do not expose references to arrays in the public language.
+void simd_add<A, B, C>(A& left, B& right, mut C& output);
+void simd_subtract<A, B, C>(A& left, B& right, mut C& output);
+void simd_multiply<A, B, C>(A& left, B& right, mut C& output);
+void simd_divide<A, B, C>(A& left, B& right, mut C& output);
+void simd_equal<A, B, C>(A& left, B& right, mut C& output);
+void simd_less<A, B, C>(A& left, B& right, mut C& output);
+}
+
+namespace std {
+/// Fixed-size logical lane mask. No implicit scalar truth conversion.
+class simd_mask<uint64_t N> {
+  mut bool values[N];
+public:
+  simd_mask() : values({}) {
+    static_assert(N >= 1 && N <= 64, "SIMD lane count must be in [1, 64].");
+  }
+  simd_mask(bool initial[N]) : values(initial) {
+    static_assert(N >= 1 && N <= 64, "SIMD lane count must be in [1, 64].");
+  }
+  simd_mask(simd_mask<N>& other) = default;
+  simd_mask(simd_mask<N>&& other) = default;
+
+  size_t size() { return N; }
+  bool operator[](size_t lane) { return this.values[lane]; }
+  void set(size_t lane, bool value) mut { this.values[lane] = value; }
+  bool all_of() {
+    for (mut size_t i = 0; i < N; i++) {
+      if (!this.values[i]) { return false; }
+    }
+    return true;
+  }
+  bool any_of() {
+    for (mut size_t i = 0; i < N; i++) {
+      if (this.values[i]) { return true; }
+    }
+    return false;
+  }
+  bool none_of() { return !this.any_of(); }
+  size_t count() {
+    mut size_t result = 0;
+    for (mut size_t i = 0; i < N; i++) {
+      if (this.values[i]) { result++; }
+    }
+    return result;
+  }
+  simd_mask<N> inverted() {
+    mut simd_mask<N> result{};
+    for (mut size_t i = 0; i < N; i++) { result.set(i, !this.values[i]); }
+    return result;
+  }
+  simd_mask<N> operator&(simd_mask<N>& other) {
+    mut simd_mask<N> result{};
+    for (mut size_t i = 0; i < N; i++) {
+      bool lane = this.values[i] && other[i];
+      result.set(i, lane);
+    }
+    return result;
+  }
+  simd_mask<N> operator|(simd_mask<N>& other) {
+    mut simd_mask<N> result{};
+    for (mut size_t i = 0; i < N; i++) {
+      bool lane = this.values[i] || other[i];
+      result.set(i, lane);
+    }
+    return result;
+  }
+  simd_mask<N> operator^(simd_mask<N>& other) {
+    mut simd_mask<N> result{};
+    for (mut size_t i = 0; i < N; i++) {
+      result.set(i, this.values[i] != other[i]);
+    }
+    return result;
+  }
+};
+
+/// Floating-point lane values with scalar IEEE arithmetic in each lane.
+class simd<std::floating_point T, uint64_t N> {
+  mut T values[N];
+public:
+  simd() : values({}) {
+    static_assert(N >= 1 && N <= 64, "SIMD lane count must be in [1, 64].");
+  }
+  simd(T value) : values({}) {
+    static_assert(N >= 1 && N <= 64, "SIMD lane count must be in [1, 64].");
+    for (mut size_t i = 0; i < N; i++) { this.values[i] = value; }
+  }
+  simd(T initial[N]) : values(initial) {
+    static_assert(N >= 1 && N <= 64, "SIMD lane count must be in [1, 64].");
+  }
+  simd(simd<T, N>& other) = default;
+  simd(simd<T, N>&& other) = default;
+
+  size_t size() { return N; }
+  T operator[](size_t lane) { return this.values[lane]; }
+  void set(size_t lane, T value) mut { this.values[lane] = value; }
+
+  /// Copies N lanes from a checked owner, with no alignment precondition.
+  void copy_from<uint64_t M>(array<T, M>& source, size_t offset) mut {
+    if (offset > M) { gti_internal::index_bounds_check(offset, M); }
+    if (N > M - offset) { gti_internal::index_bounds_check(N, M - offset); }
+    for (mut size_t i = 0; i < N; i++) { this.values[i] = source[offset + i]; }
+  }
+  /// Checks the complete destination before writing any lane.
+  void copy_to<uint64_t M>(mut array<T, M>& destination, size_t offset) {
+    if (offset > M) { gti_internal::index_bounds_check(offset, M); }
+    if (N > M - offset) { gti_internal::index_bounds_check(N, M - offset); }
+    for (mut size_t i = 0; i < N; i++) { destination[offset + i] = this.values[i]; }
+  }
+  simd<T, N> operator+(simd<T, N>& other) {
+    mut simd<T, N> result{};
+    gti_internal::simd_add(this.values, other.values, result.values);
+    return result;
+  }
+  simd<T, N> operator-(simd<T, N>& other) {
+    mut simd<T, N> result{};
+    gti_internal::simd_subtract(this.values, other.values, result.values);
+    return result;
+  }
+  simd<T, N> operator*(simd<T, N>& other) {
+    mut simd<T, N> result{};
+    gti_internal::simd_multiply(this.values, other.values, result.values);
+    return result;
+  }
+  simd<T, N> operator/(simd<T, N>& other) {
+    mut simd<T, N> result{};
+    gti_internal::simd_divide(this.values, other.values, result.values);
+    return result;
+  }
+  void operator+=(simd<T, N>& other) mut {
+    mut T result[N] = {};
+    gti_internal::simd_add(this.values, other.values, result);
+    this.values = result;
+  }
+  void operator-=(simd<T, N>& other) mut {
+    mut T result[N] = {};
+    gti_internal::simd_subtract(this.values, other.values, result);
+    this.values = result;
+  }
+  void operator*=(simd<T, N>& other) mut {
+    mut T result[N] = {};
+    gti_internal::simd_multiply(this.values, other.values, result);
+    this.values = result;
+  }
+  void operator/=(simd<T, N>& other) mut {
+    mut T result[N] = {};
+    gti_internal::simd_divide(this.values, other.values, result);
+    this.values = result;
+  }
+  // GTI comparison operators return scalar bool; named lane comparisons
+  // preserve that rule and make the mask result explicit.
+  simd_mask<N> equal(simd<T, N>& other) {
+    mut bool result[N] = {};
+    gti_internal::simd_equal(this.values, other.values, result);
+    return simd_mask<N>(result);
+  }
+  simd_mask<N> less(simd<T, N>& other) {
+    mut bool result[N] = {};
+    gti_internal::simd_less(this.values, other.values, result);
+    return simd_mask<N>(result);
+  }
+  simd_mask<N> not_equal(simd<T, N>& other) {
+    simd_mask<N> same = this.equal(other);
+    return same.inverted();
+  }
+  simd_mask<N> greater(simd<T, N>& other) { return other.less(this); }
+  simd_mask<N> less_equal(simd<T, N>& other) {
+    simd_mask<N> less_lanes = this.less(other);
+    simd_mask<N> equal_lanes = this.equal(other);
+    return less_lanes | equal_lanes;
+  }
+  simd_mask<N> greater_equal(simd<T, N>& other) { return other.less_equal(this); }
+  /// Selects this lane when the mask is true and the other lane otherwise.
+  simd<T, N> select(simd_mask<N>& mask, simd<T, N>& other) {
+    mut simd<T, N> result{};
+    for (mut size_t i = 0; i < N; i++) {
+      if (mask[i]) { result.set(i, this.values[i]); }
+      else { result.set(i, other[i]); }
+    }
+    return result;
+  }
+  /// Left-to-right sum, starting from lane zero; no reassociation.
+  T reduce() {
+    mut T result = this.values[0];
+    for (mut size_t i = 1; i < N; i++) { result += this.values[i]; }
+    return result;
+  }
+};
+}

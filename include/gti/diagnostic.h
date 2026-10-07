@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -29,6 +30,11 @@ enum class DiagnosticPhase {
   Backend,
 };
 
+enum class DiagnosticTag {
+  Unnecessary = 1,
+  Deprecated = 2,
+};
+
 struct SourceSpan {
   std::string source;
   std::size_t start = 0;
@@ -47,18 +53,53 @@ struct FixIt {
   SourceSpan span;
   std::string replacement;
   std::string message;
+  bool preferred = true;
 };
 
 struct Diagnostic {
   std::string code;
   DiagnosticPhase phase = DiagnosticPhase::Semantics;
   DiagnosticSeverity severity = DiagnosticSeverity::Error;
+  std::string group;
   SourceSpan primary;
   std::string message;
   std::vector<RelatedDiagnostic> related;
   std::vector<FixIt> fixes;
   std::vector<std::string> hints;
+  std::vector<DiagnosticTag> tags;
+  // Compiler-owned unresolved declaration query. Discovery may use this leaf
+  // name to find candidates, but only ordinary frontend reanalysis can prove
+  // an include fixes the lookup in its actual scope. Never parse message text.
+  std::string missingIncludeName;
 };
+
+[[nodiscard]] inline bool
+hasErrorDiagnostics(std::span<const Diagnostic> diagnostics) {
+  for (const Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.severity == DiagnosticSeverity::Error)
+      return true;
+  }
+  return false;
+}
+
+// Immutable diagnostic presentation policy resolved by a driver adapter.
+// Warning groups are compiler-owned stable names such as `unused-mut`; only
+// diagnostics whose registered severity is Warning can be suppressed.
+class WarningPolicy final {
+public:
+  WarningPolicy() = default;
+  explicit WarningPolicy(std::vector<std::string> disabledGroups);
+
+  [[nodiscard]] const std::vector<std::string> &disabledGroups() const;
+  [[nodiscard]] bool suppresses(const Diagnostic &diagnostic) const;
+
+private:
+  std::vector<std::string> disabledWarningGroups;
+};
+
+// Warning names accepted by command-line and manifest adapters come from the
+// typed diagnostic registry rather than a second hand-maintained list.
+[[nodiscard]] bool isKnownWarningGroup(std::string_view group);
 
 SourceSpan tokenSpan(const Token &token);
 Diagnostic makeDiagnostic(std::string code, DiagnosticPhase phase,

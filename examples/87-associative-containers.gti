@@ -1,0 +1,36 @@
+#include <std/map>
+#include <std/unordered_map>
+#include <std/string>
+
+int main() {
+  mut std::map<std::string, int> commands{};
+  {
+    // first is an exclusive iterator; second says whether insertion happened.
+    mut auto result = commands.insert(std::string("tea"), 1);
+    if (!result.second) { return 1; }
+    result.first->second = 2;
+
+    // Moving the pair transfers its one dependency on commands.
+    mut auto moved = std::move(result);
+    moved.first->second += 1;
+    // commands.clear() here would conflict with the retained iterator.
+  }
+
+  // The result's lifetime has ended, so the map can be changed again.
+  [[discard]] commands.try_emplace(std::string("auth"), 4);
+  for (auto& command : commands) {
+    std::println(command.first);
+    std::println(command.second);
+  }
+
+  mut std::unordered_map<int, int> counts{};
+  {
+    mut int& count = counts.get_or_insert(7);
+    count = 10;
+  }
+  int key = 7;
+  if (!counts.contains(key) || counts.at(key) != 10) { return 2; }
+  counts.reserve(std::size_t(100));
+  [[discard]] counts.erase(key);
+  return counts.empty() ? 0 : 3;
+}

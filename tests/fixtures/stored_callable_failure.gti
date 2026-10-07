@@ -1,0 +1,116 @@
+#include <std/string>
+#include <std/vector>
+#include <std/memory>
+
+class Token {
+  int identity;
+  int cleanup_divisor;
+public:
+  Token(int identity, int cleanup_divisor)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.identity);
+    int result = 1 / this.cleanup_divisor;
+  }
+  int read() { return this.identity; }
+};
+
+class Owner<T> {
+  T callback;
+public:
+  Owner(T callback) : callback(std::move(callback)) {}
+  int call(int divisor) { return this.callback(divisor); }
+};
+
+Owner<T> own<T>(T value) {
+  auto result = Owner<T>(std::move(value));
+  return std::move(result);
+}
+
+std::unique_ptr<Owner<T>> heap_own<T>(T value) {
+  auto result = std::make_unique<Owner<T>>(std::move(value));
+  return std::move(result);
+}
+
+interface Callback {
+  int call(int divisor);
+};
+
+class CallbackModel<T> : public Callback {
+  T callback;
+public:
+  CallbackModel(T callback) : callback(std::move(callback)) {}
+  int call(int divisor) override { return this.callback(divisor); }
+};
+
+std::unique_ptr<Callback> erase<T>(T value) {
+  auto model = std::make_unique<CallbackModel<T>>(std::move(value));
+  auto result = std::upcast_unique<Callback, CallbackModel<T>>(std::move(model));
+  return std::move(result);
+}
+
+int erased_stored(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  auto owner = erase(std::move(callback));
+  int divisor = argc < 3 || argc == 5 || argc == 7 ? 1 : 0;
+  int result = owner->call(divisor);
+  return result - 1;
+}
+
+int heap_stored(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  auto owner = heap_own(std::move(callback));
+  int divisor = argc < 3 || argc == 5 || argc == 7 ? 1 : 0;
+  int result = owner->call(divisor);
+  return result - 1;
+}
+
+int stored(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  auto owner = own(std::move(callback));
+  int result = owner.call(argc < 3 || argc == 5 || argc == 7 ? 1 : 0);
+  return result - 1;
+}
+
+int direct(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  int result = callback(argc < 3 || argc == 5 || argc == 7 ? 1 : 0);
+  return result - 1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 21) {
+    return erased_stored(argc - 21);
+  }
+  if (argc > 14) {
+    return heap_stored(argc - 14);
+  }
+  if (argc <= 7) {
+    return stored(argc);
+  }
+  return direct(argc - 7);
+}

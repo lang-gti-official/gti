@@ -1,0 +1,35 @@
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  std::string text;
+public:
+  // Declaring only this constructor leaves no source default constructor.
+  Token(std::string_view value) : text(std::string(value)) {}
+  Token clone() { return Token(this.text.view()); }
+  void show() { std::println(this.text); }
+};
+
+class Holder {
+  Token token;
+public:
+  Holder(Token& source, int divisor) : token(source.clone()) {
+    std::println(12 / divisor);
+    this.token.show();
+  }
+  ~Holder() { std::println("holder"); }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println("guard"); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  Token source{"source"};
+  Holder holder{source, 2 - argc};
+  source.show();
+  return 0;
+}

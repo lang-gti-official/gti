@@ -1,6 +1,0 @@
-{
-  "title": "Read and update by index",
-  "description": "Uses checked access for both a read and a scoped mutable borrow.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

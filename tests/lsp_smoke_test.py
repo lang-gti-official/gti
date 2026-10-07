@@ -48,6 +48,13 @@ def lsp_position(source, offset):
     return {"line": line, "character": character}
 
 
+def has_error_diagnostics(params):
+    return any(
+        diagnostic.get("severity", 1) == 1
+        for diagnostic in params.get("diagnostics", [])
+    )
+
+
 def semantic_tokens_by_position(data):
     tokens = {}
     line = 0
@@ -217,7 +224,7 @@ def test_inheritance_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -531,7 +538,7 @@ def test_unsaved_dependency_reanalysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == library_uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -571,7 +578,7 @@ def test_unsaved_dependency_reanalysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == library_uri
             and message["params"].get("version") == 4
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -793,6 +800,9 @@ def test_missing_include_and_format_config(executable, root):
         "IndentWidth: 4\n"
         "UseTab: Never\n"
         "BreakBeforeBraces: Allman\n"
+        "PackConstructorInitializers: Never\n"
+        "BreakConstructorInitializers: AfterColon\n"
+        "ConstructorInitializerIndentWidth: 6\n"
         "SpaceBeforeParens: Never\n"
         "IndentCaseLabels: true\n"
         "AccessModifierOffset: -4\n"
@@ -808,6 +818,8 @@ def test_missing_include_and_format_config(executable, root):
         "int inspect(int& value,Box& box){int bits=value&value;// note\n"
         "switch(bits){case 0:return 0;default:if(bits>0&&true||false){"
         "return(bits);}}return bits;}"
+        "class Service{int first;int second;"
+        "Service(int value):first(value),second(value){}};"
     )
     format_path.write_text(format_source, encoding="utf-8")
     format_uri = format_path.resolve().as_uri()
@@ -860,6 +872,11 @@ def test_missing_include_and_format_config(executable, root):
         assert "\n        case 0:\n            return 0;" in formatted
         assert "if(bits > 0 && true || false)\n" in formatted
         assert "return (bits);" in formatted
+        assert (
+            "    Service(int value) :\n"
+            "          first(value),\n"
+            "          second(value)\n    {}"
+        ) in formatted
 
         (config_root / ".gti-format").write_text(
             "BasedOnStyle: GTI\n", encoding="utf-8"
@@ -908,6 +925,24 @@ def test_missing_include_and_format_config(executable, root):
             "observe(External& reference, External* pointer)" in default_formatted
         )
         assert "return left & right;" in default_formatted
+
+        # Configuration changes apply to the same unsaved document without
+        # restarting the server; the default must retain packed initializers.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": format_uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        restored = session.receive_until(lambda message: message.get("id") == 4)
+        assert "Service(int value) : first(value), second(value) {}" in (
+            restored["result"][0]["newText"]
+        )
     finally:
         session.close()
 
@@ -966,7 +1001,7 @@ def test_semantic_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         call_offset = source.index("choose(uint64_t", source.index("int main"))
@@ -1065,7 +1100,7 @@ def test_semantic_hover(executable, root):
         )["result"]
         assert variadic_hover["contents"]["value"].startswith(
             "```gti\nvoid relay<Args...>(Args... values)\n```"
-        )
+        ), variadic_hover
 
         capability_offset = source.index("Affine")
         session.send(
@@ -1180,7 +1215,7 @@ def test_class_scoped_type_alias_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         alias_declaration = source.index("value_type = int32_t")
         alias_use = source.index("value_type", source.index("using Value"))
@@ -1358,7 +1393,7 @@ def test_documentation_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -1429,7 +1464,7 @@ def test_documentation_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == dependency_uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
         updated = hover(5, call + 1)
         updated_value = updated["contents"]["value"]
@@ -1531,7 +1566,7 @@ def test_documentation_completion_and_signature_help(executable, root):
                 == "textDocument/publishDiagnostics"
                 and message["params"]["uri"] == uri
                 and message["params"].get("version") == 1
-                and not message["params"]["diagnostics"]
+                and not has_error_diagnostics(message["params"])
             )
 
             call = source.index("calculate(uint64_t(1))")
@@ -1626,6 +1661,59 @@ def test_documentation_completion_and_signature_help(executable, root):
     run_session(markdown_capabilities=False)
 
 
+def test_consuming_methods(executable, root):
+    source = ("class Builder { public: int take() && { return 1; } };\n"
+              "int main() { return Builder().take() - 1; }\n")
+    path = root / "consuming-methods.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"capabilities": {"textDocument": {
+                          "publishDiagnostics": {"relatedInformation": True}}}}})
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                      "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                                   "version": 1, "text": source}}})
+
+        def diagnostics(version):
+            return session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version)["params"]
+
+        assert not has_error_diagnostics(diagnostics(1))
+        session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+                      "params": {"textDocument": {"uri": uri},
+                                 "position": {"line": 1, "character": source.splitlines()[1].index("take")}}})
+        hover = session.receive_until(lambda message: message.get("id") == 2)
+        assert "take() &&" in str(hover["result"]), hover
+        invalid = (source.splitlines()[0] + "\n"
+                   "int main() { Builder value{}; /* 🧭 */ return value.take(); }\n")
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 2},
+                                 "contentChanges": [{"text": invalid}]}})
+        errors = diagnostics(2)["diagnostics"]
+        consuming = next(item for item in errors if item.get("code") == "GTI-S2022")
+        assert "explicitly moved receiver" in consuming["message"], consuming
+        line = invalid.splitlines()[1]
+        paren = line.index("take()") + len("take(")
+        character = len(line[:paren].encode("utf-16-le")) // 2
+        assert consuming["range"] == {
+            "start": {"line": 1, "character": character},
+            "end": {"line": 1, "character": character + 1},
+        }, consuming
+        assert consuming.get("relatedInformation"), consuming
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 3},
+                                 "contentChanges": [{"text": source}]}})
+        assert not has_error_diagnostics(diagnostics(3))
+    finally:
+        session.close()
+
+
 def test_callable_contract_hover(executable, root):
     source = (
         "T map<T, Operation>(T value, Operation operation) {\n"
@@ -1707,7 +1795,7 @@ def test_callable_contract_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -1877,7 +1965,7 @@ def test_requires_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -2132,7 +2220,7 @@ def test_requires_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 5
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2333,7 +2421,7 @@ def test_constructor_local_generic_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
         recovered_hover = request(10, "textDocument/hover", construction + 1)
         assert selected_signature in recovered_hover["contents"]["value"]
@@ -2525,7 +2613,7 @@ def test_copy_constructible_carrier_provenance_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 4
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2688,7 +2776,7 @@ def test_defaulted_lifecycle_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2833,7 +2921,7 @@ def test_constexpr_aggregate_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -2904,7 +2992,7 @@ def test_semantic_definition(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def definition(request_id, offset):
@@ -3079,7 +3167,7 @@ def test_exact_qualified_specialization_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         primary_declaration = source.index("Value<T>")
@@ -3320,7 +3408,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
         refresh = session.receive_until(
             lambda message: message.get("method")
@@ -3428,8 +3516,10 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             "newText": "local",
         }
 
-        namespace_source = source.replace(
-            "return choose(1, 2);", "uint64_t result = math::po; return 0;"
+        namespace_source = source + (
+            "uint64_t unfinished() {\n"
+            "  uint64_t result = math::\n"
+            "}\n"
         )
         session.send(
             {
@@ -3441,13 +3531,17 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
                 },
             }
         )
-        session.receive_until(
+        namespace_diagnostics = session.receive_until(
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-        )
-        namespace_prefix = namespace_source.index("po;", namespace_source.index("math::"))
+        )["params"]["diagnostics"]
+        assert any(
+            diagnostic.get("code") == "GTI-S2031"
+            for diagnostic in namespace_diagnostics
+        ), namespace_diagnostics
+        namespace_prefix = namespace_source.rindex("math::") + len("math::")
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -3455,9 +3549,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
                 "method": "textDocument/completion",
                 "params": {
                     "textDocument": {"uri": uri},
-                    "position": lsp_position(
-                        namespace_source, namespace_prefix + 2
-                    ),
+                    "position": lsp_position(namespace_source, namespace_prefix),
                 },
             }
         )
@@ -3575,7 +3667,7 @@ def test_io_tooling_boundary(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"],
+            and not has_error_diagnostics(message["params"]),
             timeout=20,
         )
 
@@ -4029,7 +4121,7 @@ def test_atomic_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def position_request(request_id, method, offset, text=source):
@@ -4292,7 +4384,7 @@ def test_mutex_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def position_request(request_id, method, offset, text=source):
@@ -4547,7 +4639,7 @@ def test_managed_thread_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def position_request(request_id, method, offset, text=source):
@@ -4961,6 +5053,457 @@ def test_diagnostic_code_actions(executable, root):
         assert session.receive_until(lambda message: message.get("id") == 4)[
             "result"
         ] == []
+    finally:
+        session.close()
+
+
+def test_advisory_diagnostics_and_actions(executable, root):
+    warning_source = (
+        "int main() {\n"
+        "  mut int value = 1;\n"
+        "  return value;\n"
+        "  int unreachable = 2;\n"
+        "}\n"
+    )
+    ignored_source = (
+        "int calculate() { return 1; }\n"
+        "namespace output {\n"
+        "  int write(int value) { return value; }\n"
+        "}\n"
+        "int main() { /* 🙂 */ (output::write(calculate())); return 0; }\n"
+    )
+    corrected_ignored_source = ignored_source.replace(
+        "(output::write(calculate()));",
+        "[[discard]] (output::write(calculate()));",
+    )
+    path = root / "advisory-diagnostics.gti"
+    path.write_text(warning_source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "workspaceEdit": {"documentChanges": True}
+                        },
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "dataSupport": True,
+                                "tagSupport": {"valueSet": [1, 2]},
+                            },
+                            "codeAction": {
+                                "isPreferredSupport": True,
+                                "codeActionLiteralSupport": {
+                                    "codeActionKind": {
+                                        "valueSet": ["quickfix"]
+                                    }
+                                },
+                            },
+                        },
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        publication = open_document(
+            session, uri, warning_source, expect_clean=False, version=1
+        )["params"]
+        by_code = {
+            diagnostic["code"]: diagnostic
+            for diagnostic in publication["diagnostics"]
+        }
+        assert set(by_code) == {"GTI-S2095", "GTI-S2096"}, by_code
+        for code, group in (
+            ("GTI-S2095", "unreachable-code"),
+            ("GTI-S2096", "unused-mut"),
+        ):
+            assert by_code[code]["severity"] == 2
+            assert by_code[code]["tags"] == [1]
+            assert by_code[code]["data"]["group"] == group
+        unnecessary = by_code["GTI-S2096"]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": unnecessary["range"],
+                    "context": {
+                        "diagnostics": [unnecessary],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        actions = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert len(actions) == 1, actions
+        assert actions[0]["isPreferred"] is True
+        assert actions[0]["edit"]["documentChanges"][0]["edits"][0][
+            "newText"
+        ] == ""
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": ignored_source}],
+                },
+            }
+        )
+        ignored_publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 2
+            and any(
+                diagnostic.get("code") == "GTI-S2009"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )["params"]
+        ignored = next(
+            diagnostic
+            for diagnostic in ignored_publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2009"
+        )
+        assert ignored["data"]["group"] == "unused-result"
+        assert ignored["message"].endswith(" (fix available)"), ignored
+        expression_start = ignored_source.index("(output::write")
+        assert ignored["data"]["fixes"][0]["range"] == {
+            "start": lsp_position(ignored_source, expression_start),
+            "end": lsp_position(ignored_source, expression_start),
+        }, ignored
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": ignored["range"],
+                    "context": {
+                        "diagnostics": [ignored],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        ignored_actions = session.receive_until(
+            lambda message: message.get("id") == 3
+        )["result"]
+        assert len(ignored_actions) == 1, ignored_actions
+        assert ignored_actions[0]["isPreferred"] is False
+        assert ignored_actions[0]["diagnostics"] == [ignored]
+        assert ignored_actions[0]["edit"]["documentChanges"][0]["textDocument"] == {
+            "uri": uri,
+            "version": 2,
+        }
+        assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
+            "newText"
+        ] == "[[discard]] "
+        assert ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0][
+            "range"
+        ] == ignored["data"]["fixes"][0]["range"]
+        edit = ignored_actions[0]["edit"]["documentChanges"][0]["edits"][0]
+        applied_source = (
+            ignored_source[:expression_start]
+            + edit["newText"]
+            + ignored_source[expression_start:]
+        )
+        assert applied_source == corrected_ignored_source
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": applied_source}],
+                },
+            }
+        )
+        corrected = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        assert not has_error_diagnostics(corrected), corrected
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 30,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": ignored["range"],
+                    "context": {"diagnostics": [ignored], "only": ["quickfix"]},
+                },
+            }
+        )
+        assert session.receive_until(lambda message: message.get("id") == 30)[
+            "result"
+        ] == []
+
+        constructor_source = (
+            "class Touch {\n"
+            "public:\n"
+            "  Touch(int& source) {}\n"
+            "};\n"
+            "int main() {\n"
+            "  /* 😀 */ mut int source = 1;\n"
+            "  Touch use{source};\n"
+            "  return source;\n"
+            "}\n"
+        )
+        for version, source in (
+            (4, constructor_source),
+            (
+                5,
+                constructor_source.replace(
+                    "Touch(int& source) {}",
+                    "Touch(mut int& source) { source += 1; }",
+                ),
+            ),
+        ):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": version},
+                        "contentChanges": [{"text": source}],
+                    },
+                }
+            )
+            current = session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"].get("uri") == uri
+                and message["params"].get("version") == version
+            )["params"]["diagnostics"]
+            if version == 4:
+                assert len(current) == 1, current
+                old_constructor_warning = current[0]
+                assert old_constructor_warning["code"] == "GTI-S2096"
+                assert old_constructor_warning["range"] == {
+                    "start": {"line": 5, "character": 11},
+                    "end": {"line": 5, "character": 14},
+                }, old_constructor_warning
+            else:
+                assert current == [], current
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": old_constructor_warning["range"],
+                    "context": {
+                        "diagnostics": [old_constructor_warning],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        stale_actions = session.receive_until(
+            lambda message: message.get("id") == 4
+        )["result"]
+        assert stale_actions == [], stale_actions
+    finally:
+        session.close()
+
+    plain_session = LspSession(executable)
+    try:
+        plain_session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True}
+                        }
+                    }
+                },
+            }
+        )
+        plain_session.receive_until(lambda message: message.get("id") == 1)
+        plain_session.send(
+            {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+        )
+        publication = open_document(
+            plain_session, uri, warning_source, expect_clean=False, version=1
+        )["params"]
+        assert publication["diagnostics"]
+        assert all("tags" not in item for item in publication["diagnostics"])
+        assert all(
+            not item["message"].endswith(" (fix available)")
+            for item in publication["diagnostics"]
+        )
+    finally:
+        plain_session.close()
+
+
+def test_missing_standard_library_include_code_action(
+    executable, root, symbol="vector", argument="int", header="std/vector"
+):
+    suffix = f"<{argument}>" if argument is not None else ""
+    source = f"// 🙂\nusing values = std::{symbol}{suffix};\n"
+    include = f"#include <{header}>\n"
+    corrected_source = include + source
+    path = root / "missing-standard-include.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "workspaceEdit": {"documentChanges": True}
+                        },
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True},
+                            "codeAction": {
+                                "isPreferredSupport": True,
+                                "codeActionLiteralSupport": {
+                                    "codeActionKind": {
+                                        "valueSet": ["quickfix"]
+                                    }
+                                },
+                            },
+                        },
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and any(
+                item.get("code") == "GTI-S2089"
+                for item in message["params"]["diagnostics"]
+            )
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2089"
+        )
+        vector = source.index(symbol)
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, vector),
+            "end": lsp_position(source, vector + len(symbol)),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert diagnostic["data"]["fixes"] == [
+            {
+                "uri": uri,
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 0},
+                },
+                "replacement": include,
+                "message": f"Add #include <{header}>",
+            }
+        ], diagnostic
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": diagnostic["range"],
+                    "context": {
+                        "diagnostics": [diagnostic],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        actions = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert len(actions) == 1, actions
+        action = actions[0]
+        assert action["title"] == f"Add #include <{header}>", action
+        assert action["kind"] == "quickfix", action
+        assert action["isPreferred"] is True, action
+        assert action["edit"]["documentChanges"] == [
+            {
+                "textDocument": {"uri": uri, "version": 1},
+                "edits": [
+                    {
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 0},
+                        },
+                        "newText": include,
+                    }
+                ],
+            }
+        ], action
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": corrected_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and not has_error_diagnostics(message["params"])
+        )
     finally:
         session.close()
 
@@ -5476,6 +6019,196 @@ def test_static_assertion_tooling(executable, root):
         session.close()
 
 
+def test_function_contract_diagnostics(executable, root):
+    source = "[[noreturn]] void stop() { /* 😀 */ return; }\nint main() { return 0; }\n"
+    path = root / "function-contract.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"capabilities": {"textDocument": {
+                "publishDiagnostics": {"dataSupport": True}
+            }}},
+        })
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                         "version": 1, "text": source}},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]
+        diagnostic = next(item for item in publication["diagnostics"]
+                          if item.get("code") == "GTI-S2099")
+        start = source.index("return;")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, start),
+            "end": lsp_position(source, start + len("return")),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert "cannot return normally" in diagnostic["message"], diagnostic
+        assert not diagnostic["data"].get("fixes"), diagnostic
+        corrected = source.replace("return;", "while (true) {}")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 2},
+                       "contentChanges": [{"text": corrected}]},
+        })
+        cleared = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        assert not has_error_diagnostics(cleared), cleared
+
+        incomplete = "/* 😀 */ [[track_caller] void broken() {}\nint main() { return 0; }\n"
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 3},
+                       "contentChanges": [{"text": incomplete}]},
+        })
+        broken = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        malformed = next(item for item in broken["diagnostics"]
+                         if item.get("code") == "GTI-P0001")
+        unexpected = incomplete.index("void")
+        assert malformed["range"] == {
+            "start": lsp_position(incomplete, unexpected),
+            "end": lsp_position(incomplete, unexpected + len("void")),
+        }, malformed
+        assert malformed["data"]["phase"] == "parsing", malformed
+        assert "after declaration attributes" in malformed["message"], malformed
+        fixes = malformed["data"]["fixes"]
+        assert len(fixes) == 1, fixes
+        fix = fixes[0]
+        assert fix["replacement"] == "]" and fix["uri"] == uri, fix
+        assert fix["range"] == {
+            "start": lsp_position(incomplete, unexpected),
+            "end": lsp_position(incomplete, unexpected),
+        }, fix
+
+        repaired = incomplete[:unexpected] + fix["replacement"] + incomplete[unexpected:]
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 4},
+                       "contentChanges": [{"text": repaired}]},
+        })
+        repaired_publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+        )["params"]
+        assert not has_error_diagnostics(repaired_publication), repaired_publication
+    finally:
+        session.close()
+
+
+def test_constraint_failure_provenance(executable, root):
+    contract = (
+        "namespace library {\n"
+        "concept snapshot_as<R, T> = requires(T& value) "
+        "{ { value.snapshot() } -> R; };\n"
+        "concept readable<T> = snapshot_as<int, T>;\n"
+        "int read<A, B>(A& unrelated, B& value) requires readable<B> "
+        "{ return value.snapshot(); }\n"
+        "}\n"
+    )
+    library_path = root / "constraint-contract.gti"
+    library_path.write_text(contract, encoding="utf-8")
+    source = (
+        '#include "constraint-contract.gti"\n'
+        "struct Item {};\n"
+        "int main() { Item first{}; Item target{}; "
+        "return library::read(first, /* 😀 */ target); }\n"
+    )
+    path = root / "constraint-provenance.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"capabilities": {"textDocument": {
+                "publishDiagnostics": {"relatedInformation": True,
+                                       "dataSupport": True}
+            }}},
+        })
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                         "version": 1, "text": source}},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]
+        diagnostic = next(item for item in publication["diagnostics"]
+                          if item.get("code") == "GTI-S2029")
+        assert "Argument 2 has type 'Item'" in diagnostic["message"], diagnostic
+        assert "library::readable<Item>" in diagnostic["message"], diagnostic
+        target = source.index("target);")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, target),
+            "end": lsp_position(source, target + len("target")),
+        }, diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert diagnostic["data"]["hints"], diagnostic
+        assert not diagnostic["data"].get("fixes"), diagnostic
+        related = diagnostic["relatedInformation"]
+        assert any("has no member 'snapshot()'" in item["message"]
+                   and item["location"]["uri"] == library_path.resolve().as_uri()
+                   for item in related), diagnostic
+        assert any("library::snapshot_as<int32_t, Item>" in item["message"]
+                   for item in related), diagnostic
+
+        # The same source contract now finds a member but rejects its result.
+        wrong_result = source.replace(
+            "struct Item {};", "struct Item { bool snapshot() { return true; } };")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 2},
+                       "contentChanges": [{"text": wrong_result}]},
+        })
+        changed = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        mismatch = next(item for item in changed["diagnostics"]
+                        if item.get("code") == "GTI-S2029")
+        assert any("returns 'bool'" in item["message"]
+                   and item["location"]["uri"] == uri
+                   for item in mismatch["relatedInformation"]), mismatch
+
+        valid = source.replace(
+            "struct Item {};", "struct Item { int snapshot() { return 7; } };")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 3},
+                       "contentChanges": [{"text": valid}]},
+        })
+        cleared = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        assert not has_error_diagnostics(cleared), cleared
+    finally:
+        session.close()
+
+
 def test_concrete_generic_diagnostics(executable, root):
     source = (
         "class Bound<T, uint64_t N> {\n"
@@ -5666,6 +6399,60 @@ def test_constructor_ownership_diagnostic(executable, root):
             "end": lsp_position(source, declaration + len("Path")),
         }
         assert related["message"] == "Exact-type candidate: Path(std::string)"
+    finally:
+        session.close()
+
+
+def test_expected_success_ownership_diagnostic(executable, root):
+    source = (
+        '#include <std/string>\n'
+        'enum class error { failed };\n'
+        'std::string relay(std::string word) { return word; }\n'
+        'expected<std::string, error> value() {\n'
+        '  std::string text = std::string("tea");\n'
+        '  /*😀*/ return text;\n'
+        '}\n'
+        'int main() { return 0; }\n'
+    )
+    path = root / "expected-success-ownership.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+
+    def publication(version):
+        return session.receive_until(lambda message:
+            message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == version)["params"]["diagnostics"]
+
+    try:
+        session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"capabilities": {"textDocument": {
+                          "publishDiagnostics": {"dataSupport": True}}}}})
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                      "params": {"textDocument": {"uri": uri, "languageId": "gti",
+                                                  "version": 1, "text": source}}})
+        errors = publication(1)
+        assert sum(item.get("code") == "GTI-S2003" for item in errors) == 1, errors
+        diagnostic = next((item for item in errors
+                           if item.get("code") == "GTI-S2003"), None)
+        assert diagnostic is not None, errors
+        offset = source.index("return text") + len("return ")
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, offset),
+            "end": lsp_position(source, offset + 4)}, diagnostic
+        assert diagnostic["message"].startswith(
+            "Cannot return 'text' by copy because type 'std::string' is move-only."), diagnostic
+        assert diagnostic["data"]["hints"] == [
+            "Use 'return std::move(text);' to transfer ownership."]
+        assert "fixes" not in diagnostic["data"]
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 2},
+                                 "contentChanges": [{"text": source.replace(
+                                     "return text;", "return std::move(text);")}]}})
+        assert not publication(2)
     finally:
         session.close()
 
@@ -5868,7 +6655,7 @@ def test_global_borrow_return_diagnostics(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -5923,7 +6710,7 @@ def test_global_borrow_return_diagnostics(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -5988,7 +6775,7 @@ def test_unique_ptr_null_state_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -6038,7 +6825,7 @@ def test_unique_ptr_null_state_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -6194,6 +6981,43 @@ def test_contextual_signed_integer_diagnostic(executable, root):
             "start": lsp_position(source, digit),
             "end": lsp_position(source, digit + 1),
         }, diagnostic
+        # The same compiler-owned rule applies to broad numeric constraints.
+        # Changing only the concrete instance clears the range error; changing
+        # the literal then admits the unsigned instance in a fresh generation.
+        for version, literal, argument, rejected in (
+            (2, "-1", "uint8_t(0)", True),
+            (3, "-1", "-1.0d", False),
+            (4, "0", "uint8_t(0)", False),
+        ):
+            updated = (
+                "// numeric literal context 😀\n"
+                f"bool equal<std::numeric T>(T value) {{ return value == ({literal}); }}\n"
+                f"int main() {{ if (equal({argument})) {{ return 0; }} return 1; }}\n"
+            )
+            session.send({
+                "jsonrpc": "2.0", "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": version},
+                    "contentChanges": [{"text": updated}],
+                },
+            })
+            changed = session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version
+            )["params"]
+            errors = [item for item in changed["diagnostics"]
+                      if item.get("severity", 1) == 1]
+            if rejected:
+                assert len(errors) == 1, changed
+                assert errors[0]["code"] == "GTI-S2004", changed
+                start = updated.index("(-1)") + 2
+                assert errors[0]["range"] == {
+                    "start": lsp_position(updated, start),
+                    "end": lsp_position(updated, start + 1),
+                }, changed
+            else:
+                assert not errors, changed
     finally:
         session.close()
 
@@ -6250,7 +7074,7 @@ def test_layout_query_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         session.send(
             {
@@ -6471,7 +7295,7 @@ def test_integer_arithmetic_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         selected = source.index("checked_add")
         session.send(
@@ -6642,7 +7466,7 @@ def test_owned_move_capture_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         capture_target = source.index("owned = std::move")
         capture_source = source.index("source)", capture_target)
@@ -6791,7 +7615,8 @@ def test_native_record_tooling(executable, root):
         "NativePoint point_roundtrip(NativePoint value); "
         "c_string native_name(); "
         "int32_t native_length(c_string value); "
-        "[[c_array(count)]] NativeHandle** native_handles(int32_t* count); }\n"
+        '[[c_array(count)]] [[link_name("gti_native_handles")]] '
+        "NativeHandle** handles(int32_t* count); }\n"
         "int main() { return native_length(\"gti\") - 3 + "
         "int32_t(sizeof(NativePoint) - uint64_t(8)); }\n"
     )
@@ -6847,7 +7672,7 @@ def test_native_record_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         session.send(
             {
@@ -6945,7 +7770,7 @@ def test_native_record_tooling(executable, root):
             c_string_hover
         )
 
-        native_handles_name = source.index("native_handles")
+        native_handles_name = source.index("handles(int32_t")
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -6962,6 +7787,9 @@ def test_native_record_tooling(executable, root):
         )["result"]
         assert native_array_hover and "[[c_array(count)]]" in json.dumps(
             native_array_hover
+        ), native_array_hover
+        assert "link_name" in json.dumps(native_array_hover) and (
+            "gti_native_handles" in json.dumps(native_array_hover)
         ), native_array_hover
 
         count_attribute = source.index("count)")
@@ -7013,6 +7841,10 @@ def test_native_record_tooling(executable, root):
         assert tokens[(c_array_position["line"], c_array_position["character"])][
             "type"
         ] == attribute_type
+        link_name_position = lsp_position(source, source.index("link_name"))
+        assert tokens[(link_name_position["line"], link_name_position["character"])][
+            "type"
+        ] == attribute_type
         count_attribute_position = lsp_position(source, count_attribute)
         assert tokens[
             (
@@ -7026,7 +7858,7 @@ def test_native_record_tooling(executable, root):
         ]["type"] == struct_type
 
         invalid_source = (
-            "[[c_abi]] struct Bad { bool value; };\n"
+            "[[c_abi]] struct Bad { char value; };\n"
             "int main() { return 0; }\n"
         )
         session.send(
@@ -7050,15 +7882,15 @@ def test_native_record_tooling(executable, root):
             for item in invalid["diagnostics"]
             if item.get("code") == "GTI-S2064"
         )
-        field_type = invalid_source.index("bool")
+        field_type = invalid_source.index("char")
         assert diagnostic["range"] == {
             "start": lsp_position(invalid_source, field_type),
-            "end": lsp_position(invalid_source, field_type + len("bool")),
+            "end": lsp_position(invalid_source, field_type + len("char")),
         }, diagnostic
         assert "fixes" not in diagnostic.get("data", {}), diagnostic
 
         invalid_array_source = (
-            "[[c_abi]] struct Bad { bool values[4]; };\n"
+            "[[c_abi]] struct Bad { char values[4]; };\n"
             "int main() { return 0; }\n"
         )
         session.send(
@@ -7082,11 +7914,11 @@ def test_native_record_tooling(executable, root):
             for item in invalid_array["diagnostics"]
             if item.get("code") == "GTI-S2070"
         )
-        array_type = invalid_array_source.index("bool")
+        array_type = invalid_array_source.index("char")
         assert array_diagnostic["range"] == {
             "start": lsp_position(invalid_array_source, array_type),
             "end": lsp_position(
-                invalid_array_source, array_type + len("bool")
+                invalid_array_source, array_type + len("char")
             ),
         }, array_diagnostic
         assert array_diagnostic["data"]["phase"] == "semantics", (
@@ -7245,7 +8077,7 @@ def test_native_callback_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         alias_use = source.index("Callback set_callback")
         session.send(
@@ -7506,6 +8338,7 @@ def test_watched_dependency_reanalysis(executable, root):
         assert watchers == [
             {"globPattern": "**/*.gti"},
             {"globPattern": "**/gti.toml"},
+            {"globPattern": "**/gti.lock"},
         ]
         session.send(
             {
@@ -7533,7 +8366,7 @@ def test_watched_dependency_reanalysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message.get("params", {}).get("uri") == entry_uri
         )
-        assert initial["params"]["diagnostics"] == []
+        assert not has_error_diagnostics(initial["params"])
 
         dependency_path.write_text(
             "int renamed_watched_value() { return 1; }\n", encoding="utf-8"
@@ -7725,7 +8558,7 @@ def test_worker_survives_failed_analysis(executable, root):
             == "textDocument/publishDiagnostics"
             and message.get("params", {}).get("uri") == healthy_uri
         )
-        assert recovered["params"]["diagnostics"] == [], recovered
+        assert not has_error_diagnostics(recovered["params"]), recovered
 
         # And shared state must still serve a semantic request, which proves
         # the snapshot map and its mutex were never left locked.
@@ -7807,7 +8640,7 @@ def test_contextual_array_hover(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def hover(request_id, offset):
@@ -7917,7 +8750,7 @@ def test_pack_fold_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         pack_declaration = source.index(
@@ -8059,7 +8892,10 @@ def open_document(session, uri, source, expect_clean=True, version=1):
         and message["params"].get("version") == version
     )
     if expect_clean:
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not any(
+            diagnostic.get("severity", 1) == 1
+            for diagnostic in publication["params"]["diagnostics"]
+        ), publication
     return publication
 
 
@@ -8873,7 +9709,7 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
         )
-        assert publication["params"]["diagnostics"] == [], publication
+        assert not has_error_diagnostics(publication["params"]), publication
 
         session.send(
             {
@@ -8959,7 +9795,7 @@ def main():
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
             "[allocator-policy|atomic|mutex|constexpr-aggregate|"
-            "expected-payload-range|io|mutable-stored|owner-dependent-views]"
+            "expected-payload-range|constraint-provenance|function-contracts|io|mutable-stored|owner-dependent-views]"
         )
 
     if len(sys.argv) == 3:
@@ -9003,6 +9839,14 @@ def main():
                     sys.argv[1], pathlib.Path(root)
                 )
             print("GTI mutable stored dependency LSP test passed")
+        elif sys.argv[2] == "constraint-provenance":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-constraints-") as root:
+                test_constraint_failure_provenance(sys.argv[1], pathlib.Path(root))
+            print("GTI constraint provenance LSP test passed")
+        elif sys.argv[2] == "function-contracts":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-contracts-") as root:
+                test_function_contract_diagnostics(sys.argv[1], pathlib.Path(root))
+            print("GTI function contract LSP test passed")
         elif sys.argv[2] == "io":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-io-") as root:
                 test_io_tooling_boundary(sys.argv[1], pathlib.Path(root))
@@ -9046,6 +9890,7 @@ def main():
     test_class_scoped_type_alias_tooling(sys.argv[1], root)
     test_documentation_hover(sys.argv[1], root)
     test_documentation_completion_and_signature_help(sys.argv[1], root)
+    test_consuming_methods(sys.argv[1], root)
     test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
     test_constructor_local_generic_tooling(sys.argv[1], root)
@@ -9063,12 +9908,31 @@ def main():
     test_standalone_managed_thread_profile(sys.argv[1], root)
     test_managed_thread_tooling(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
+    test_missing_standard_library_include_code_action(sys.argv[1], root)
+    for symbol in ("deque", "queue", "set", "unordered_set"):
+        test_missing_standard_library_include_code_action(
+            sys.argv[1], root, symbol, "int", f"std/{symbol}"
+        )
+    for symbol in ("parse_errc", "chars_format", "from_chars_result"):
+        test_missing_standard_library_include_code_action(
+            sys.argv[1], root, symbol, None, "std/charconv"
+        )
+    test_missing_standard_library_include_code_action(
+        sys.argv[1], root, "print_errc", None, "std/format"
+    )
+    for symbol in ("function", "move_only_function"):
+        test_missing_standard_library_include_code_action(
+            sys.argv[1], root, symbol, "void()", "std/functional"
+        )
     test_current_language_diagnostics(sys.argv[1], root)
     test_recursive_layout_diagnostic(sys.argv[1], root)
     test_expected_propagation_tooling(sys.argv[1], root)
     test_static_assertion_tooling(sys.argv[1], root)
     test_concrete_generic_diagnostics(sys.argv[1], root)
+    test_constraint_failure_provenance(sys.argv[1], root)
+    test_function_contract_diagnostics(sys.argv[1], root)
     test_constructor_ownership_diagnostic(sys.argv[1], root)
+    test_expected_success_ownership_diagnostic(sys.argv[1], root)
     test_read_only_receiver_diagnostic(sys.argv[1], root)
     test_unique_ptr_null_state_tooling(sys.argv[1], root)
     test_global_borrow_return_diagnostics(sys.argv[1], root)
@@ -9082,12 +9946,14 @@ def main():
     test_owned_move_capture_tooling(sys.argv[1], root)
     test_pack_fold_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
+    test_advisory_diagnostics_and_actions(sys.argv[1], root)
     test_references_and_highlights(sys.argv[1], root)
     test_document_symbols(sys.argv[1], root)
     test_flat_document_symbols(sys.argv[1], root)
     test_rename_tooling(sys.argv[1], root)
     test_signature_help_tooling(sys.argv[1], root)
     test_mutable_temporary_receiver_tooling(sys.argv[1], root)
+    test_ephemeral_carrier_receiver_tooling(sys.argv[1], root)
     test_range_loan_tooling(sys.argv[1], root)
     test_expected_payload_range_tooling(sys.argv[1], root)
     test_mutable_stored_dependency_tooling(sys.argv[1], root)
@@ -9290,14 +10156,21 @@ def main():
         {"jsonrpc": "2.0", "method": "exit", "params": None},
     ]
 
-    process = subprocess.run(
-        [sys.argv[1]],
-        input=b"".join(frame(request) for request in requests),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=15,
-    )
+    # This preframed batch does not model an interactive client. A seekable
+    # input avoids bidirectional pipe backpressure in Python's blocking
+    # communicate() writes on macOS; the separate LspSession cases retain
+    # interactive pipes, cancellation, and generation ordering coverage.
+    with tempfile.TemporaryFile() as batch_input:
+        batch_input.write(b"".join(frame(request) for request in requests))
+        batch_input.seek(0)
+        process = subprocess.run(
+            [sys.argv[1]],
+            stdin=batch_input,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=15,
+        )
     if process.returncode != 0:
         raise AssertionError(
             f"gti_lsp exited with {process.returncode}: {process.stderr.decode()}"
@@ -9490,10 +10363,10 @@ def main():
         and "std::numeric" in diagnostic["message"]
     )
     constraint_call = source.index("constrained(\"text\")")
-    constraint_close = source.index(")", constraint_call)
+    constraint_argument = source.index('"text"', constraint_call)
     assert constraint_diagnostic["range"] == {
-        "start": lsp_position(source, constraint_close),
-        "end": lsp_position(source, constraint_close + 1),
+        "start": lsp_position(source, constraint_argument),
+        "end": lsp_position(source, constraint_argument + len('"text"')),
     }
     constraint_name = source.index("numeric", source.index("std::numeric T"))
     assert constraint_diagnostic["relatedInformation"][0]["location"]["range"] == {
@@ -9957,13 +10830,12 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         "class Probe {\n"
         "public:\n"
         "  Probe() {}\n"
-        "  void reset() mut {}\n"
+        "  virtual void reset() mut {}\n"
         "  int inspect() { return 1; }\n"
         "  int inspect() mut { return 2; }\n"
         "};\n"
         "int main() {\n"
-        "  mut Probe probe = Probe();\n"
-        "  std::move(probe).reset();\n"
+        "  Probe().reset();\n"
         "  return 0;\n"
         "}\n"
     )
@@ -9976,6 +10848,8 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         "  int inspect() mut { return 2; }\n"
         "};\n"
         "int main() {\n"
+        "  Probe probe = Probe();\n"
+        "  std::move(probe).reset();\n"
         "  Probe().reset();\n"
         "  return Probe().inspect();\n"
         "}\n"
@@ -10034,7 +10908,7 @@ def test_mutable_temporary_receiver_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         inspect = valid_source.index("inspect", valid_source.index("int main"))
@@ -10073,6 +10947,84 @@ def test_mutable_temporary_receiver_tooling(executable, root):
         assert signature and signature["signatures"][0]["label"].endswith(
             "inspect() mut"
         ), signature
+    finally:
+        session.close()
+
+
+def test_ephemeral_carrier_receiver_tooling(executable, root):
+    declarations = """\
+// Service calls use the compiler's stored-borrow contract.
+class Resource {
+  mut int value = 0;
+public:
+  int add(int amount) mut { this.value += amount; return this.value; }
+  int read() { return this.value; }
+};
+class Service {
+  mut Resource& resource;
+public:
+  Service(mut Resource& source) : resource(source) {}
+  int update(int amount) mut { return this.resource.add(amount); }
+  Resource& borrow() { return this.resource; }
+};
+class Client {
+  mut Resource resource{};
+public:
+  Service auth() mut { return Service(this.resource); }
+  int read() { return this.resource.read(); }
+};
+"""
+    valid = declarations + "int main() { mut Client api{}; return api.auth().update(1); }\n"
+    escaping = declarations + "int main() { /* 🌱 */ mut Client api{}; [[discard]] api.auth().borrow(); return 0; }\n"
+    conflicting = declarations + "int main() { mut Client api{}; return api.auth().update(api.read()); }\n"
+    incomplete = declarations + "int main() { mut Client api{}; return api.auth().update( }\n"
+    path = root / "ephemeral-carrier-receiver.gti"
+    path.write_text(valid, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"capabilities": {"textDocument": {
+                          "publishDiagnostics": {"relatedInformation": True}}}}})
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        for version, text in enumerate((valid, escaping, conflicting, incomplete, valid), 1):
+            if version == 1:
+                method = "textDocument/didOpen"
+                params = {"textDocument": {"uri": uri, "languageId": "gti",
+                                            "version": version, "text": text}}
+            else:
+                method = "textDocument/didChange"
+                params = {"textDocument": {"uri": uri, "version": version},
+                          "contentChanges": [{"text": text}]}
+            session.send({"jsonrpc": "2.0", "method": method, "params": params})
+            published = session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version
+            )["params"]
+            diagnostics = published["diagnostics"]
+            if text == valid:
+                assert not has_error_diagnostics(published), diagnostics
+            elif text == escaping:
+                errors = [item for item in diagnostics if item.get("code") == "GTI-S2081"]
+                assert errors and "borrowed" in errors[0]["message"], diagnostics
+                assert errors[0].get("relatedInformation"), errors
+                offset = text.index("api.auth().borrow()") + len("api.auth().borrow(")
+                assert errors[0]["range"] == {
+                    "start": lsp_position(text, offset),
+                    "end": lsp_position(text, offset + 1),
+                }, errors
+            elif text == conflicting:
+                assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
+            else:
+                assert has_error_diagnostics(published), diagnostics
+        offset = valid.index("update(1)")
+        session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+                      "params": {"textDocument": {"uri": uri},
+                                 "position": lsp_position(valid, offset + 1)}})
+        hover = session.receive_until(lambda message: message.get("id") == 2)["result"]
+        assert hover and "update(int32_t amount) mut" in json.dumps(hover), hover
     finally:
         session.close()
 
@@ -10161,7 +11113,7 @@ def test_range_loan_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -10275,7 +11227,7 @@ def test_expected_payload_range_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -10302,7 +11254,7 @@ def test_mutable_stored_dependency_tooling(executable, root):
         "  return owner - 3;\n"
         "}\n"
     )
-    invalid_source = valid_source.replace(
+    nested_source = valid_source.replace(
         "MutView relay(MutView view) { return std::move(view); }\n",
         "class Nested {\n"
         "  MutView view;\n"
@@ -10311,6 +11263,12 @@ def test_mutable_stored_dependency_tooling(executable, root):
         "};\n"
         "MutView relay(MutView view) { return std::move(view); }\n",
     )
+    invalid_source = nested_source.replace(
+        "  MutView view;\n", "  MutView view;\n  MutView second;\n")
+    repaired_source = invalid_source.replace(
+        "Nested(MutView source) : view(std::move(source)) {}",
+        "Nested(MutView source, MutView other) "
+        ": view(std::move(source)), second(std::move(other)) {}")
     path = root / "mutable-stored-dependency.gti"
     path.write_text(valid_source, encoding="utf-8")
     uri = path.resolve().as_uri()
@@ -10341,15 +11299,23 @@ def test_mutable_stored_dependency_tooling(executable, root):
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {"uri": uri, "version": 2},
-                    "contentChanges": [{"text": invalid_source}],
+                    "contentChanges": [{"text": nested_source}],
                 },
             }
         )
+        nested_publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"].get("uri") == uri
+            and message["params"].get("version") == 2)["params"]
+        assert not has_error_diagnostics(nested_publication), nested_publication
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": uri, "version": 3},
+                                 "contentChanges": [{"text": invalid_source}]}})
         invalid = session.receive_until(
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 2
+            and message["params"].get("version") == 3
             and any(
                 item.get("code") == "GTI-S2045"
                 for item in message["params"]["diagnostics"]
@@ -10359,17 +11325,27 @@ def test_mutable_stored_dependency_tooling(executable, root):
             item
             for item in invalid["diagnostics"]
             if item.get("code") == "GTI-S2045"
-            and "cannot be nested" in item.get("message", "")
+            and item.get("message") == (
+                "Every constructor of a composed borrowed value must bind "
+                "each borrowed field directly from an exact reference or "
+                "carrier parameter."
+            )
         )
         assert nested["data"]["phase"] == "semantics", nested
+        nested_line = invalid_source.splitlines().index(
+            "  Nested(MutView source) : view(std::move(source)) {}")
+        assert nested["range"] == {
+            "start": {"line": nested_line, "character": 2},
+            "end": {"line": nested_line, "character": 8},
+        }, nested
 
         session.send(
             {
                 "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
-                    "textDocument": {"uri": uri, "version": 3},
-                    "contentChanges": [{"text": valid_source}],
+                    "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": repaired_source}],
                 },
             }
         )
@@ -10377,8 +11353,8 @@ def test_mutable_stored_dependency_tooling(executable, root):
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
-            and message["params"].get("version") == 3
-            and not message["params"]["diagnostics"]
+            and message["params"].get("version") == 4
+            and not has_error_diagnostics(message["params"])
         )
     finally:
         session.close()
@@ -10511,11 +11487,19 @@ def test_owner_dependent_span_tooling(executable, root):
         ), diagnostic
         assert diagnostic["data"]["phase"] == "semantics", diagnostic
         assert diagnostic["data"]["hints"] == [
-            "Place the borrowed value in a narrower block when an explicit "
-            "lexical end is required across control flow."
+            "Finish using the borrowed value before changing or moving its "
+            "owner, or perform the owner operation before creating the borrow. "
+            "Choose an order that preserves the intended effects."
         ], diagnostic
         assert any(
             related["message"] == "Retained borrow originates here."
+            for related in diagnostic["relatedInformation"]
+        ), diagnostic
+        assert any(
+            related["message"] == "The borrowed value is used later here."
+            and related["location"]["uri"] == uri
+            and related["location"]["range"]["start"]
+            == lsp_position(invalidated_source, invalidated_source.index("return "))
             for related in diagnostic["relatedInformation"]
         ), diagnostic
 
@@ -10561,7 +11545,7 @@ def test_owner_dependent_span_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 4
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         session.send(
@@ -10579,7 +11563,7 @@ def test_owner_dependent_span_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 5
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         view_call = valid_text_source.index("text.view") + len("text.")
@@ -10669,8 +11653,41 @@ def test_owner_dependent_span_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 8
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
+        field_source = '''#include <std/string>
+class Token {
+  mut std::string _token{"secret"};
+public:
+  std::string_view view() { /*😀*/ return _token.view(); }
+  void clear() mut { _token.clear(); }
+};
+int main() {
+  mut Token token{};
+  auto text = token.view();
+  return int(text.size());
+}
+'''
+        for version, text, code in (
+            (9, field_source, None),
+            (10, field_source.replace("return _token.view()", "return this._token.view()"), None),
+            (11, field_source.replace("return int(text.size());", "token.clear(); return int(text.size());"), "GTI-S2017"),
+            (12, field_source.replace("return _token.view();", 'std::string _token{"local"}; return _token.view();'), "GTI-S2045"),
+            (13, field_source.replace("return _token.view();", "return _token.;"), "GTI-P0001"),
+            (14, field_source, None),
+        ):
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                          "params": {"textDocument": {"uri": uri, "version": version},
+                                     "contentChanges": [{"text": text}]}})
+            published = session.receive_until(lambda message:
+                message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"].get("uri") == uri
+                and message["params"].get("version") == version)["params"]
+            if code is None:
+                assert not has_error_diagnostics(published), published
+            else:
+                assert any(item.get("code") == code
+                           for item in published["diagnostics"]), published
     finally:
         session.close()
 
@@ -10756,7 +11773,7 @@ def test_temporary_argument_borrow_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def help_at(request_id, offset):
@@ -10845,7 +11862,7 @@ def test_signature_help_tooling(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 1
-            and not message["params"]["diagnostics"]
+            and not has_error_diagnostics(message["params"])
         )
 
         def help_at(request_id, offset):

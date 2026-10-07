@@ -391,6 +391,24 @@ def main():
         )
         assert "warning[GTI-S2075]" in unknown_result.stderr
 
+        advisory_source = root / "advisory-diagnostics.gti"
+        advisory_source.write_text(
+            "int main() { mut int value = 1; return value; "
+            "int unreachable = 2; }\n",
+            encoding="utf-8",
+        )
+        advisory_result = run(
+            [
+                gti,
+                str(advisory_source),
+                "--emit-cpp",
+                "-o",
+                str(root / "advisory.cpp"),
+            ]
+        )
+        assert "warning[GTI-S2095]" in advisory_result.stderr
+        assert "warning[GTI-S2096]" in advisory_result.stderr
+
         long_output = root / "long-output"
         run([gti, str(direct_source), "--output", str(long_output)])
         run([str(long_output)])
@@ -437,15 +455,17 @@ def main():
             "namespace native {\n"
             "struct gti_c_string_view {};\n"
             'extern "C" {\n'
-            "  int32_t gti_test_add(int32_t left, int32_t right);\n"
-            "  int32_t gti_test_length(std::string_view value);\n"
-            "  double gti_test_scale(double value);\n"
+            '  [[link_name("gti_test_add")]] int32_t add('
+            "int32_t left, int32_t right);\n"
+            '  [[link_name("gti_test_length")]] int32_t length('
+            "std::string_view value);\n"
+            '  [[link_name("gti_test_scale")]] double scale(double value);\n'
             "}\n"
             "}\n"
             "int main() {\n"
-            "  if (native::gti_test_add(20, 22) == 42 and "
-            'native::gti_test_length("hello") == 5 and '
-            "native::gti_test_scale(2.0d) == 3.0d) { return 0; }\n"
+            "  if (native::add(20, 22) == 42 and "
+            'native::length("hello") == 5 and '
+            "native::scale(2.0d) == 3.0d) { return 0; }\n"
             "  return 1;\n"
             "}\n",
             encoding="utf-8",
@@ -1826,8 +1846,12 @@ def main():
             capture_output=True,
             check=False,
         )
-        assert empty_owner_failure.returncode != 0
-        assert "dereferenced an empty unique owner" in empty_owner_failure.stderr
+        assert empty_owner_failure.returncode == 70
+        assert empty_owner_failure.stdout == ""
+        assert (
+            "runtime error[GTI-R0008]: empty_owner_access in member_access\n"
+            in empty_owner_failure.stderr
+        )
 
         moved_owner_source = root / "moved-owner.gti"
         moved_owner_source.write_text(
@@ -3010,7 +3034,14 @@ def main():
         assert "static_cast<std::int32_t>(42)" in emitted_source
         assert "#include <expected>" in emitted_source
         assert "std::expected<std::int32_t, std::int32_t>" in emitted_source
-        assert "#if" not in emitted_source
+        # Source target branches must be resolved before program emission.
+        # The backend support preamble independently guards its native ABI;
+        # those host preprocessor checks are not unlowered GTI conditionals.
+        _, program_namespace, emitted_program = emitted_source.partition(
+            "namespace __gti_program {"
+        )
+        assert program_namespace, "expected the lowered program namespace"
+        assert "#if" not in emitted_program
         assert "target.vendor" not in emitted_source
 
         emitted_cpp20 = root / "main-cpp20.cpp"
@@ -3068,11 +3099,19 @@ def main():
             ],
             9,
         )
-        assert "gti: native C++ compiler diagnostics:" in native_failure.stderr
-        assert "native compiler rejection" in native_failure.stderr
+        assert "backend failed while compiling and linking" in native_failure.stderr
+        assert "native compiler rejection" not in native_failure.stderr
+        diagnostics_prefix = "gti: backend diagnostics saved at "
+        diagnostics_line = next(line for line in native_failure.stderr.splitlines()
+                                if line.startswith(diagnostics_prefix))
+        diagnostics_log = pathlib.Path(diagnostics_line.removeprefix(diagnostics_prefix))
+        assert "native compiler rejection" in diagnostics_log.read_text()
+        assert "Command:" in diagnostics_log.read_text()
+        diagnostics_log.unlink()
+        diagnostics_log.parent.rmdir()
         assert failed_output.read_text(encoding="utf-8") == "previous artifact\n"
         assert not list(root.glob(".native-failure.gti-stage-*"))
-        retained_prefix = "gti: generated C++ retained at "
+        retained_prefix = "gti: backend 'c++' representation saved at "
         retained_line = next(
             line
             for line in native_failure.stderr.splitlines()
@@ -3130,6 +3169,58 @@ def main():
         assert "1 | int main()" in rejected.stderr
         assert "note: Binding declared here." in rejected.stderr
         assert "help: Bindings are immutable by default" in rejected.stderr
+        assert re.fullmatch(
+            r"Diagnostics: [1-9][0-9]* errors?, [0-9]+ warnings?",
+            rejected.stdout.splitlines()[-1],
+        )
+
+        warning_source = root / "warning.gti"
+        warning_source.write_text(
+            "int main() { mut int result = 1; return result; }\n",
+            encoding="utf-8",
+        )
+        warning_cpp = root / "warning.cpp"
+        warned = run(
+            [gti, str(warning_source), "--emit-cpp", "-o", str(warning_cpp)]
+        )
+        assert "warning[GTI-S2096]" in warned.stderr
+        assert warned.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 1 warning"
+
+        suppressed_cpp = root / "warning-suppressed.cpp"
+        suppressed = run(
+            [
+                gti,
+                str(warning_source),
+                "--emit-cpp",
+                "-Wno-unused-mut",
+                "-o",
+                str(suppressed_cpp),
+            ]
+        )
+        assert "GTI-S2096" not in suppressed.stderr
+        assert (
+            suppressed.stdout.splitlines()[-1]
+            == "Diagnostics: 0 errors, 0 warnings"
+        )
+        unknown_warning = run(
+            [gti, str(warning_source), "-Wno-unused-mutable-binding"], 64
+        )
+        assert "unknown warning group 'unused-mutable-binding'" in (
+            unknown_warning.stderr
+        )
+
+        unsafe_warning_source = root / "unused-unsafe.gti"
+        unsafe_warning_source.write_text(
+            "int main() { unsafe { return 0; } }\n", encoding="utf-8"
+        )
+        unsafe_warned = run([gti, str(unsafe_warning_source), "--emit-mir",
+                             "-o", str(root / "unused-unsafe.mir")])
+        assert "warning[GTI-S2100]" in unsafe_warned.stderr
+        assert unsafe_warned.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 1 warning"
+        unsafe_suppressed = run([gti, str(unsafe_warning_source), "--emit-mir",
+                                 "-Wno-unused-unsafe", "-o", str(root / "unused-unsafe-suppressed.mir")])
+        assert "GTI-S2100" not in unsafe_suppressed.stderr
+        assert unsafe_suppressed.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 0 warnings"
 
         profile_global = root / "profile-global.gti"
         profile_global.write_text(
@@ -3228,29 +3319,55 @@ def main():
             "255|65535|4294967295|18446744073709551615\n"
         )
 
+        # Missing formatter support is a static constraint failure, even for
+        # recoverable APIs. Runtime rejection remains covered below by a valid
+        # source-defined formatter that rejects the particular value.
+        for operation in ("try_format", "try_print", "try_println"):
+            unsupported_source = root / f"unsupported-{operation}.gti"
+            unsupported_source.write_text(
+                "#include <std/format>\n"
+                "class unsupported_format_value {};\n"
+                "int main() { mut auto result = std::" + operation +
+                '("{}", unsupported_format_value()); return 0; }\n',
+                encoding="utf-8",
+            )
+            unsupported_binary = root / f"unsupported-{operation}"
+            rejected = run([gti, str(unsupported_source), "-o",
+                            str(unsupported_binary)], 65)
+            assert "error[GTI-S2029]" in rejected.stderr
+            assert "std::formattable<unsupported_format_value>" in rejected.stderr
+            assert "Member 'format()' has unsatisfied requirements of its own" in rejected.stderr
+            assert not unsupported_binary.exists()
+
         formatted_output = root / "formatted-output.gti"
         formatted_output.write_text(
             "#include <std/format>\n"
             "#include <std/string>\n"
+            "class rejected_format_value {}; "
+            "class std::formatter<rejected_format_value> { public: "
+            "expected<void, std::format_errc> format(rejected_format_value& value, "
+            "mut std::string& output, std::format_spec& spec) { "
+            'output.append("DISCARDED"); '
+            "return unexpected(std::format_errc::unsupported_argument); } }; "
             "int main() { "
             "mut std::string bytes = std::string(); "
             "bytes.push_back('A'); bytes.push_back('\\0'); "
             "bytes.push_back('B'); std::print(bytes); std::print('|'); "
             'mut auto empty_print = std::try_print(""); '
             "if (!empty_print) { return 1; } "
-            'mut auto plain = std::format("escaped={{}}" ); '
+            'mut auto plain = std::try_format("escaped={{}}" ); '
             'if (!plain or plain.value() != "escaped={}") { return 2; } '
-            'mut auto braces = std::format("{{}}|{{{{|}}}}|{{{}}}", '
+            'mut auto braces = std::try_format("{{}}|{{{{|}}}}|{{{}}}", '
             "int32_t(-7)); "
             'if (!braces or braces.value() != "{}|{{|}}|{-7}") '
             "{ return 3; } "
-            'mut auto nul = std::format("A\\0{}B", uint8_t(7)); '
+            'mut auto nul = std::try_format("A\\0{}B", uint8_t(7)); '
             "if (!nul or nul.value().size() != std::size_t(4) or "
             "nul.value()[std::size_t(0)] != 'A' or "
             "nul.value()[std::size_t(1)] != '\\0' or "
             "nul.value()[std::size_t(2)] != '7' or "
             "nul.value()[std::size_t(3)] != 'B') { return 4; } "
-            'mut auto all = std::format("{}|{}|{}|{}|{}|{}|{}|{}", '
+            'mut auto all = std::try_format("{}|{}|{}|{}|{}|{}|{}|{}", '
             "int8_t(-128), uint8_t(255), int16_t(-32768), "
             "uint16_t(65535), int32_t(-2147483647 - 1), "
             "uint32_t(4294967295), int64_t(-9223372036854775807 - 1), "
@@ -3263,34 +3380,56 @@ def main():
             'if (!moved or moved.value() != "-128|255|-32768|65535|'
             '-2147483648|4294967295|-9223372036854775808|'
             '18446744073709551615") { return 6; } '
+            'mut std::string host = std::string("gitea.example"); '
+            'std::string_view method = "api/v1/user"; '
+            'mut auto endpoint = std::try_format("https://{}/{}", '
+            'host.view(), method); '
+            'if (!endpoint or endpoint.value() != '
+            '"https://gitea.example/api/v1/user") { return 16; } '
+            'mut std::string owned = std::string("owned"); '
+            'mut auto heterogeneous = std::try_format("{}|{}|{}|{}|{}", '
+            "true, 'X', int32_t(-7), 1.25, std::move(owned)); "
+            'if (!heterogeneous or heterogeneous.value() != '
+            '"true|X|-7|1.25|owned") { return 17; } '
+            'mut auto unsupported = std::try_format("{}", '
+            'rejected_format_value()); '
+            'if (unsupported or unsupported.error() != '
+            'std::format_errc::unsupported_argument) { return 18; } '
+            'mut auto binary64 = std::try_format("{}", 1.5d); '
+            'if (!binary64 or binary64.value() != "1.5") { return 19; } '
+            'mut auto unsupported_print = std::try_print("LEAK {}", '
+            'rejected_format_value()); '
+            'if (unsupported_print or unsupported_print.error() != '
+            'std::print_errc::unsupported_argument) { return 20; } '
             'mut auto malformed = std::try_print("LEAK {", int32_t(1)); '
             "if (malformed or malformed.error() != "
-            "std::format_errc::invalid_format) { return 7; } "
-            'mut auto malformed_zero = std::try_println("LEAK}"); '
+            "std::print_errc::invalid_format) { return 7; } "
+            'mut auto malformed_zero = std::try_println("LEAK}", 1); '
             "if (malformed_zero or malformed_zero.error() != "
-            "std::format_errc::invalid_format) { return 8; } "
-            'mut auto invalid_field = std::try_print("LEAK{x}"); '
+            "std::print_errc::invalid_format) { return 8; } "
+            'mut auto invalid_field = std::try_print("LEAK{x}", 1); '
             "if (invalid_field or invalid_field.error() != "
-            "std::format_errc::invalid_format) { return 9; } "
-            'mut auto invalid_escape = std::try_print("LEAK{{}"); '
+            "std::print_errc::invalid_format) { return 9; } "
+            'mut auto invalid_escape = std::try_print("LEAK{{}", 1); '
             "if (invalid_escape or invalid_escape.error() != "
-            "std::format_errc::invalid_format) { return 10; } "
-            'mut auto invalid_close = std::try_print("LEAK}}}"); '
+            "std::print_errc::invalid_format) { return 10; } "
+            'mut auto invalid_close = std::try_print("LEAK}}}", 1); '
             "if (invalid_close or invalid_close.error() != "
-            "std::format_errc::invalid_format) { return 11; } "
+            "std::print_errc::invalid_format) { return 11; } "
             'mut auto too_few = std::try_print("{} {}", int32_t(1)); '
             "if (too_few or too_few.error() != "
-            "std::format_errc::argument_count_mismatch) { return 12; } "
+            "std::print_errc::argument_count_mismatch) { return 12; } "
             'mut auto too_many = std::try_print("{}", int32_t(1), int32_t(2)); '
             "if (too_many or too_many.error() != "
-            "std::format_errc::argument_count_mismatch) { return 13; } "
+            "std::print_errc::argument_count_mismatch) { return 13; } "
             "std::print(nul.value()); "
             'mut auto first = std::try_print("signed={} unsigned={} braces={{}}", '
             "int64_t(-9223372036854775807 - 1), "
             "uint64_t(18446744073709551615)); "
             "if (!first) { return 14; } "
-            'mut auto second = std::try_println(" mixed={} {}", int8_t(-8), '
-            "uint16_t(65535)); "
+            'mut auto second = std::try_println('
+            '" mixed={} {} host={} enabled={} code={} ratio={}", '
+            "int8_t(-8), uint16_t(65535), host.view(), true, 'X', 1.25); "
             "if (!second) { return 15; } return 0; }\n",
             encoding="utf-8",
         )
@@ -3312,34 +3451,9 @@ def main():
                 )
                 assert run([str(formatted_executable)]).stdout == (
                     "A\x00B|A\x007Bsigned=-9223372036854775808 "
-                    "unsigned=18446744073709551615 braces={} mixed=-8 65535\n"
+                    "unsigned=18446744073709551615 braces={} mixed=-8 65535 "
+                    "host=gitea.example enabled=true code=X ratio=1.25\n"
                 )
-
-        invalid_formatted_type = root / "invalid-formatted-type.gti"
-        invalid_formatted_type.write_text(
-            "#include <std/format>\n"
-            "int main() { "
-            '[[discard]] std::try_print("{}", 1.5); '
-            '[[discard]] std::try_print("{}", true); '
-            '[[discard]] std::try_print("{}", \'A\'); '
-            "return 0; }\n",
-            encoding="utf-8",
-        )
-        rejected_formatted_type = run(
-            [
-                gti,
-                str(invalid_formatted_type),
-                "-o",
-                str(root / "invalid-formatted-type"),
-            ],
-            65,
-        )
-        assert rejected_formatted_type.stderr.count(
-            "does not satisfy generic constraint 'std::integral'"
-        ) == 3
-        assert "Type 'float'" in rejected_formatted_type.stderr
-        assert "Type 'bool'" in rejected_formatted_type.stderr
-        assert "Type 'char'" in rejected_formatted_type.stderr
 
         invalid_float_print = root / "invalid-float-print.gti"
         invalid_float_print.write_text(
@@ -3354,7 +3468,7 @@ def main():
             ],
             65,
         )
-        assert "does not satisfy generic constraint 'std::integral'" in (
+        assert "does not satisfy concept 'std::integral<float>'" in (
             rejected_float_print.stderr
         )
 
@@ -3558,7 +3672,7 @@ def main():
             assert "meter_feature" in bindings_text
             assert "meter_disabled" not in bindings_text
             assert (
-                "meter_open_out(int32_t mode, Meter** out_meter)"
+                "meter_open_out(c_int mode, Meter** out_meter)"
                 in bindings_text
             )
             assert 'extern "C" {' in bindings_text
@@ -3587,8 +3701,8 @@ def main():
                     "x86_64-unknown-linux-gnu",
                 ]
             ).stdout
-            assert "using NativeLong = int32_t;" in windows_bindings
-            assert "using NativeLong = int64_t;" in linux_bindings
+            assert "using NativeLong = c_long;" in windows_bindings
+            assert "using NativeLong = c_long;" in linux_bindings
             invalid_bindgen_target = run(
                 [gti, "bindgen", str(target_header), "--target", "banana"],
                 64,
@@ -3687,6 +3801,7 @@ def main():
         help_output = run([gti, "--help"]).stdout
         assert "Usage: gti" in help_output
         assert "--build-report <path>" in help_output
+        assert "-Wno-unused-mut" in help_output
         run([gti], 64)
         run([gti, str(source), "--unknown"], 64)
         run([gti, str(source), "--emit-cpp", "--keep-cpp"], 64)

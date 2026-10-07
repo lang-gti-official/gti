@@ -1,6 +1,0 @@
-{
-  "title": "Construct a class in its final slot",
-  "description": "Passes constructor arguments to emplace_back and reads the returned element borrow.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

@@ -1,0 +1,57 @@
+#include <std/cthread>
+#include <std/thread>
+
+extern "C" {
+  void once_write(int32_t slot);
+  int32_t once_read(int32_t slot);
+  void once_arrive();
+}
+std::once_flag initial_flag{};
+std::once_flag nested_flag{std::ONCE_FLAG_INIT};
+std::once_flag worker_flag{};
+std::once_flag managed_flag{};
+
+void initialize_nested() { once_write(0); }
+void initialize_initial() {
+  unsafe { std::call_once(nested_flag, initialize_nested); }
+  once_write(1);
+}
+void initialize_worker() { once_write(2); }
+void initialize_managed() { once_write(3); }
+
+int32_t worker(void* context) {
+  once_arrive();
+  unsafe { std::call_once(&worker_flag, initialize_worker); }
+  return once_read(2);
+}
+int main() {
+  unsafe {
+    std::call_once(initial_flag, initialize_initial);
+    std::call_once(initial_flag, initialize_initial);
+    std::call_once(nested_flag, initialize_nested);
+  }
+  if (once_read(0) != 1 || once_read(1) != 1) { return 1; }
+  mut std::thrd_t handles[8] = {};
+  for (mut int32_t index = 0; index < 8; index++) {
+    unsafe {
+      if (std::thrd_create(handles[index], worker, nullptr) != 0) { return 2; }
+    }
+  }
+  for (mut int32_t index = 0; index < 8; index++) {
+    mut int32_t result = 0;
+    unsafe {
+      if (std::thrd_join(handles[index], result) != 0 || result != 1) { return 3; }
+    }
+  }
+  for (mut int32_t index = 0; index < 4; index++) {
+    mut std::thread_result<int32_t> task{};
+    auto started = task.start([]() -> int32_t {
+      unsafe { std::call_once(managed_flag, initialize_managed); }
+      return once_read(3);
+    });
+    if (!started.has_value()) { return 4; }
+    auto joined = task.join();
+    if (!joined.has_value() || joined.value() != 1) { return 5; }
+  }
+  return once_read(2) == 1 && once_read(3) == 1 ? 0 : 6;
+}

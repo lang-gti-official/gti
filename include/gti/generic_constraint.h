@@ -20,12 +20,16 @@ enum class GenericConstraintKind : std::uint8_t {
   CopyConstructible,
   Copyable,
   Movable,
+  Relocatable,
+  BitwiseRelocatable,
   Transferable,
   Shareable,
   DefaultInitializable,
   EqualityComparable,
   RelationallyOrdered,
   AtomicScalar,
+  MoveConstructible,
+  IntegralEnum,
   Count,
 };
 
@@ -34,6 +38,7 @@ enum class GenericConstraintKind : std::uint8_t {
 // and are carried separately through generic semantic analysis.
 enum class StructuralConstraintKind : std::uint8_t {
   None,
+  ReadMember,
   InputIterator,
   SentinelFor,
   DereferencesTo,
@@ -62,6 +67,8 @@ enum class StructuralConstraintKind : std::uint8_t {
   IndirectOperation,
   RangePredicate,
   RangeOperation,
+  EnumUnderlying,
+  ObjectLayout,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -80,7 +87,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 15> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 19> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -90,15 +97,19 @@ inline constexpr std::array<GenericConstraintKind, 15> genericConstraintKinds{{
     GenericConstraintKind::CopyConstructible,
     GenericConstraintKind::Copyable,
     GenericConstraintKind::Movable,
+    GenericConstraintKind::MoveConstructible,
+    GenericConstraintKind::Relocatable,
+    GenericConstraintKind::BitwiseRelocatable,
     GenericConstraintKind::Transferable,
     GenericConstraintKind::Shareable,
     GenericConstraintKind::DefaultInitializable,
     GenericConstraintKind::EqualityComparable,
     GenericConstraintKind::RelationallyOrdered,
     GenericConstraintKind::AtomicScalar,
+    GenericConstraintKind::IntegralEnum,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 15> compilerConstraints{{
+inline constexpr std::array<CompilerConstraintRecord, 19> compilerConstraints{{
     {"numeric", GenericConstraintKind::Numeric},
     {"signed_numeric", GenericConstraintKind::SignedNumeric},
     {"integral", GenericConstraintKind::Integral},
@@ -106,17 +117,21 @@ inline constexpr std::array<CompilerConstraintRecord, 15> compilerConstraints{{
     {"unsigned_integral", GenericConstraintKind::UnsignedIntegral},
     {"floating_point", GenericConstraintKind::FloatingPoint},
     {"copy_constructible", GenericConstraintKind::CopyConstructible},
+    {"move_constructible", GenericConstraintKind::MoveConstructible},
     {"copyable", GenericConstraintKind::Copyable},
     {"movable", GenericConstraintKind::Movable},
+    {"relocatable", GenericConstraintKind::Relocatable},
+    {"bitwise_relocatable", GenericConstraintKind::BitwiseRelocatable},
     {"transferable", GenericConstraintKind::Transferable},
     {"shareable", GenericConstraintKind::Shareable},
     {"default_initializable", GenericConstraintKind::DefaultInitializable},
     {"equality_comparable", GenericConstraintKind::EqualityComparable},
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},
     {"atomic_scalar", GenericConstraintKind::AtomicScalar},
+    {"integral_enum", GenericConstraintKind::IntegralEnum},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 28>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 30>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -150,6 +165,8 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 28>
         {"indirect_operation", StructuralConstraintKind::IndirectOperation, 3},
         {"range_predicate", StructuralConstraintKind::RangePredicate, 2},
         {"range_operation", StructuralConstraintKind::RangeOperation, 3},
+        {"enum_underlying", StructuralConstraintKind::EnumUnderlying, 2},
+        {"object_layout", StructuralConstraintKind::ObjectLayout, 1},
     }};
 
 static_assert(compilerConstraints.size() + 2 ==

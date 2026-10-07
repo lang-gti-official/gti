@@ -82,11 +82,27 @@
   "[[" @delimiter
   "]]" @delimiter) @container
 
+(function_contract_attribute
+  "[[" @delimiter
+  "]]" @delimiter) @container
+
+(borrow_origin_attribute
+  "(" @delimiter
+  ")" @delimiter) @container
+
 (native_c_array_attribute
   "[[" @delimiter
   "]]" @delimiter) @container
 
 (native_c_array_attribute
+  "(" @delimiter
+  ")" @delimiter) @container
+
+(native_link_name_attribute
+  "[[" @delimiter
+  "]]" @delimiter) @container
+
+(native_link_name_attribute
   "(" @delimiter
   ")" @delimiter) @container
 

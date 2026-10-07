@@ -130,7 +130,7 @@ def main() -> int:
             )
             if (
                 rejected.returncode != 65
-                or rejected.stdout
+                or rejected.stdout != "Diagnostics: 1 error, 0 warnings\n"
                 or "error[GTI-S2029]" not in rejected.stderr
                 or f"concept '{concept}'" not in rejected.stderr
                 or hint not in rejected.stderr

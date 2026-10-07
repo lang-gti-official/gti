@@ -63,7 +63,7 @@ def validate_emission(
         return False
     required = (
         "std::int32_t *__gti_mir_out_result",
-        "::gti_failure_record_v1 *__gti_mir_failure_record",
+        "::gti_failure_record_v2 *__gti_mir_failure_record",
         "GTI_FAILURE_EXIT_STATUS",
         "catch (...)",
     )
@@ -78,7 +78,7 @@ def validate_emission(
         r"  bool (?:__gti_entry|__gti_fn_[0-9]+_[A-Za-z_][A-Za-z0-9_]*)"
         r"__gti_mir_failure\("
         r"[^{};]*std::int32_t \*__gti_mir_out_result, "
-        r"::gti_failure_record_v1 \*__gti_mir_failure_record\) \{\n"
+        r"::gti_failure_record_v2 \*__gti_mir_failure_record\) \{\n"
         r"    "
         + re.escape(MARKER)
     )
@@ -94,7 +94,7 @@ def validate_emission(
     main_index = generated.find("int main()")
     if (
         main_index == -1
-        or generated[main_index:].count("::gti_rt_failure_terminate_v1(") != 1
+        or generated[main_index:].count("::gti_rt_failure_terminate_v2(") != 1
     ):
         sys.stderr.write(
             f"{label} {optimization}/{standard} hosted main did not own "

@@ -12,6 +12,12 @@
 namespace lang {
 namespace {
 
+[[nodiscard]] bool lifecycleContainsClosure(const SemanticType &type) {
+  return type.kind == SemanticType::Lambda ||
+         std::any_of(type.arguments.begin(), type.arguments.end(),
+                     lifecycleContainsClosure);
+}
+
 template <typename Enum>
 [[nodiscard]] constexpr std::size_t ordinal(Enum value) {
   return static_cast<std::size_t>(value);
@@ -719,8 +725,10 @@ CppMirProgramPlan planCppMirProgram(const MirProgram &program,
           lifecycle != nullptr &&
           ordinal(lifecycle->form) < ordinal(CppMirLifecycleCleanupForm::Count);
       const CppMirLifecycleCleanupForm expectedForm =
-          owner != nullptr && (!owner->type.arguments.empty() ||
-                               !owner->type.valueArguments.empty())
+          owner != nullptr && lifecycleContainsClosure(owner->type)
+              ? CppMirLifecycleCleanupForm::RetainedPrimary
+          : owner != nullptr && (!owner->type.arguments.empty() ||
+                                 !owner->type.valueArguments.empty())
               ? CppMirLifecycleCleanupForm::ConcreteSpecialization
               : CppMirLifecycleCleanupForm::OrdinaryClass;
       if (!validForm || destructor == nullptr || owner == nullptr ||

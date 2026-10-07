@@ -1,0 +1,32 @@
+#include <std/string>
+#include <std/vector>
+#include <std/functional>
+
+struct Packet {
+  int value;
+  Packet(int value) : value(value) { std::println(value); }
+};
+
+class Target {
+public:
+  ~Target() { std::println(90); }
+  Packet operator()(int divisor) { return Packet(12 / divisor); }
+};
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+};
+
+void accept(Packet packet, int after) {
+  std::println(100 + packet.value);
+  std::println(after);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  std::move_only_function<Packet(int)> callback{Target()};
+  accept(callback(argc == 2 ? 0 : 2), 24 / (argc == 3 ? 0 : 3));
+  std::println(8);
+  return 0;
+}

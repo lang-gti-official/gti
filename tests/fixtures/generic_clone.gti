@@ -1,0 +1,67 @@
+#include <std/string>
+#include <std/vector>
+#include <std/utility>
+#include <std/memory>
+
+concept snapshot_value<T> = requires(T& x) { { x.snapshot() } -> T; };
+T snapshot<T>(T& x) requires snapshot_value<T> { return x.snapshot(); }
+T direct_snapshot<T>(T& x)
+    requires requires(T& value) { { value.snapshot() } -> T; } {
+  return x.snapshot();
+}
+
+struct Record {
+  int value = 0;
+  Record clone() { Record result{.value = this.value + 1}; return result; }
+  Record clone() mut { Record result{.value = 999}; return result; }
+  Record snapshot() { Record result{.value = this.value + 2}; return result; }
+};
+
+struct QueryOnly {
+  int divisor = 0;
+  int snapshot() { return 10 / this.divisor; }
+};
+
+int main() {
+  // This would fail if the signature query executed the method body.
+  bool supports = requires(QueryOnly& x) { { x.snapshot() } -> int; };
+  if (!supports) { return 9; }
+  std::string text{"alice"};
+  mut std::string copy = std::clone(text);
+  copy.push_back('!');
+  if (text.view() != "alice" || copy.view() != "alice!") { return 1; }
+
+  std::vector<std::string> names = {std::string("alice"), std::string("bob")};
+  mut std::vector<std::string> other = names.clone();
+  other[std::size_t(0)].push_back('!');
+  if (names[std::size_t(0)].view() != "alice" ||
+      other[std::size_t(0)].view() != "alice!") { return 2; }
+  std::vector<std::vector<std::string>> tree = {std::move(names)};
+  auto tree_copy = std::clone(tree);
+  if (tree_copy[std::size_t(0)][std::size_t(1)].view() != "bob") { return 3; }
+
+  std::vector<int> integers = {4, 7};
+  auto integers_copy = integers.clone();
+  if (integers_copy[std::size_t(1)] != 7) { return 4; }
+  std::vector<std::string> empty{};
+  if (!empty.clone().empty()) { return 5; }
+
+  // Member cloning takes precedence even when the type is also copyable.
+  Record record{.value = 10};
+  auto record_copy = std::clone(record);
+  auto snapshot_copy = snapshot(record);
+  auto direct_copy = direct_snapshot(record);
+  if (record.value != 10 || record_copy.value != 11 || snapshot_copy.value != 12 ||
+      direct_copy.value != 12) {
+    return 6;
+  }
+  std::vector<Record> records = {{.value = 20}};
+  auto records_copy = records.clone();
+  if (records_copy[std::size_t(0)].value != 21) { return 7; }
+
+  // Clone follows the element's contract: shared ownership remains shared.
+  auto shared = std::make_shared<int>(42);
+  auto shared_copy = std::clone(shared);
+  if (shared.use_count() != std::size_t(2) || *shared_copy != 42) { return 8; }
+  return 0;
+}

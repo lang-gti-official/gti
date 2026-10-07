@@ -1,6 +1,0 @@
-{
-  "title": "Construct from contextual braces",
-  "description": "Creates an exact three-element fixed-array argument for the value constructor.",
-  "mode": "run",
-  "stdout": "stdout.txt"
-}

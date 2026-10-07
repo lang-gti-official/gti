@@ -106,6 +106,9 @@ void writeFunction(const BindingItem &item, std::string_view indent,
   if (!item.arrayCountParameter.empty()) {
     out << "[[c_array(" << item.arrayCountParameter << ")]] ";
   }
+  if (!item.linkName.empty()) {
+    out << "[[link_name(\"" << item.linkName << "\")]] ";
+  }
   out << item.resultSpelling << ' ' << item.name << '(';
   for (std::size_t index = 0; index < item.parameters.size(); ++index) {
     const BindingParameter &parameter = item.parameters[index];

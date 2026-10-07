@@ -10,6 +10,18 @@
       "suite": "frontend"
     },
     {
+      "name": "testSourceModuleInterfaces",
+      "suite": "frontend"
+    },
+    {
+      "name": "testSourceModuleResolution",
+      "suite": "frontend"
+    },
+    {
+      "name": "testSourceModuleConfigurationDomains",
+      "suite": "frontend"
+    },
+    {
       "name": "testStandardLibraryImports",
       "suite": "frontend"
     },
@@ -56,6 +68,14 @@
     {
       "name": "testSupportFacilities",
       "suite": "frontend"
+    },
+    {
+      "name": "testStructuralClassConstraints",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFunctionContracts",
+      "suite": "declarations"
     },
     {
       "name": "testContainerScaffoldSurfaces",
@@ -114,11 +134,31 @@
       "suite": "declarations"
     },
     {
+      "name": "testUninstantiatedGenericSignatureClosure",
+      "suite": "declarations"
+    },
+    {
+      "name": "testDependentCarrierRepresentationClosure",
+      "suite": "declarations"
+    },
+    {
       "name": "testExactQualifiedClassSpecializations",
       "suite": "declarations"
     },
     {
+      "name": "testContextualNumericLiterals",
+      "suite": "declarations"
+    },
+    {
       "name": "testConstrainedGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testMoveConstructionCapability",
+      "suite": "declarations"
+    },
+    {
+      "name": "testFiniteWrapperTraits",
       "suite": "declarations"
     },
     {
@@ -127,6 +167,18 @@
     },
     {
       "name": "testSourceDefinedConcepts",
+      "suite": "declarations"
+    },
+    {
+      "name": "testMemberRequirementConcepts",
+      "suite": "declarations"
+    },
+    {
+      "name": "testExactMemberSignatureConcepts",
+      "suite": "declarations"
+    },
+    {
+      "name": "testConstraintFailureProvenance",
       "suite": "declarations"
     },
     {
@@ -154,7 +206,15 @@
       "suite": "declarations"
     },
     {
+      "name": "testPackSpecialMemberConstruction",
+      "suite": "declarations"
+    },
+    {
       "name": "testValueGenerics",
+      "suite": "declarations"
+    },
+    {
+      "name": "testDependentTypeDefaultConstraints",
       "suite": "declarations"
     },
     {
@@ -218,6 +278,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testImplicitReturnMoves",
+      "suite": "ownership"
+    },
+    {
       "name": "testEdgeSensitiveMoveFlow",
       "suite": "ownership"
     },
@@ -274,7 +338,15 @@
       "suite": "ownership"
     },
     {
+      "name": "testNestedBorrowedFields",
+      "suite": "ownership"
+    },
+    {
       "name": "testNestedMemberReferenceReturnForwarding",
+      "suite": "ownership"
+    },
+    {
+      "name": "testProjectedAccessorReturnLoanOrder",
       "suite": "ownership"
     },
     {
@@ -314,6 +386,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testUniqueOwnerSwap",
+      "suite": "ownership"
+    },
+    {
       "name": "testPolymorphicUniqueOwnerUpcast",
       "suite": "ownership"
     },
@@ -347,6 +423,10 @@
     },
     {
       "name": "testConsumingCallableOperators",
+      "suite": "ownership"
+    },
+    {
+      "name": "testConsumingMethodsAndValueOperators",
       "suite": "ownership"
     },
     {
@@ -386,6 +466,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testFallibleBorrows",
+      "suite": "ownership"
+    },
+    {
       "name": "testExpectedPropagationOperator",
       "suite": "ownership"
     },
@@ -403,6 +487,10 @@
     },
     {
       "name": "testConstructorPartialRollbackRepresentation",
+      "suite": "ownership"
+    },
+    {
+      "name": "testEphemeralBorrowedCarrierReceivers",
       "suite": "ownership"
     },
     {
@@ -466,6 +554,34 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConstexprStringViewInspection",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testMirConstantEvaluation",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testMirConstantRecords",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprLibrary",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprOperators",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testDependentConstexprBranches",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstexprReadOnlyReferences",
+      "suite": "constexpr"
+    },
+    {
       "name": "testStaticAssertions",
       "suite": "constexpr"
     },
@@ -490,6 +606,10 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testOwnershipAndMissingIncludeDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testDiagnosticFoundation",
       "suite": "diagnostics"
     },
@@ -503,6 +623,10 @@
     },
     {
       "name": "testDefaultNodiscard",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testAdvisoryDiagnostics",
       "suite": "diagnostics"
     },
     {

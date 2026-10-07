@@ -1,0 +1,27 @@
+#include <std/cthread>
+
+extern "C" {
+  void* cthread_context();
+  void cthread_write(void* context);
+  int32_t cthread_read();
+  void cthread_reset();
+}
+
+int32_t worker(void* context) {
+  unsafe { cthread_write(context); }
+  return 42;
+}
+
+int main() {
+  for (mut int32_t i = 0; i < 128; i++) {
+    cthread_reset();
+    mut std::thrd_t handle = 0;
+    mut int32_t result = 0;
+    unsafe {
+      if (std::thrd_create(handle, worker, cthread_context()) != std::thrd_success) { return 1; }
+      if (std::thrd_join(handle, result) != std::thrd_success) { return 2; }
+    }
+    if (result != 42 || cthread_read() != 91) { return 3; }
+  }
+  return 0;
+}

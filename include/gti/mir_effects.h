@@ -64,6 +64,35 @@ deriveMirDefinedFailureEffects(const MirProgram &program);
 [[nodiscard]] bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
                                                    const SemanticType &type);
 
+// Generated relocation into an empty slot, including lifecycle-guarded
+// source-destructor classes and their complete base/field state. This does
+// not prove assignment safe: replacement must still run the old cleanup.
+[[nodiscard]] bool
+mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
+                                      const SemanticType &type);
+
+// Replays semantic structural relocation eligibility over concrete MIR type
+// identities. Verification compares published nominal traits with this proof;
+// backend selection must consume it, never infer eligibility from C++ names.
+[[nodiscard]] RelocationKind mirTypeRelocationKind(const MirProgram &program,
+                                                   const SemanticType &type);
+
+// Exact ordered class/unique-owner/collection cleanup: the class's guarded
+// source body, if any, precedes its active subobjects. All are represented;
+// recursive ownership uses exact class back-edges; unsupported subobjects
+// have no descriptor.
+[[nodiscard]] std::optional<MirDropType>
+mirUniqueCleanupType(const MirProgram &program, const SemanticType &type);
+
+// All exact source-destructor effects of a represented cleanup schedule, not
+// one representative leaf standing in for a whole aggregate. The argument
+// must be a complete root recipe, not a projected child containing back-edges.
+[[nodiscard]] std::vector<HirDestructorInstanceId>
+mirDropDestructorTargets(const MirDropType &type);
+[[nodiscard]] bool mirDropHasPolymorphicCleanup(const MirDropType &type);
+[[nodiscard]] bool mirDropMayRaiseDefinedFailure(const MirProgram &program,
+                                                 const MirDropType &type);
+
 // Compatibility accessor for clients of MIR v20's function-only slice.
 [[nodiscard]] std::vector<bool>
 deriveMirScalarDefinedFailureEffects(const MirProgram &program);

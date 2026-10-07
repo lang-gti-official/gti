@@ -1,0 +1,80 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int id;
+public:
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.id); }
+};
+
+class Entry {
+  Resource first;
+  Resource second;
+  int number;
+  mut const int* address = nullptr;
+public:
+  Entry(Resource input, int divisor, int& source)
+      : first(std::move(input)), second(Resource(20)), number(source) {
+    this.address = &this.number;
+    int checked = 12 / divisor; // constructor failure
+  }
+  Entry(Entry& other) = delete;
+  Entry(Entry&& other) = default;
+  ~Entry() { std::println(30); }
+  bool stable_address() {
+    return this.address == &this.number;
+  }
+};
+
+// Failure during an application-defined owner's constructor must clean its
+// already-live allocation field, but not run the incomplete owner's body.
+class EntryOwner {
+  mut std::storage<Entry> slots;
+public:
+  EntryOwner(std::storage<Entry> backing, int& source)
+      : slots(std::move(backing)) {
+    [[discard]] this.slots.emplace(std::size_t(1), Resource(15), 1, source);
+    [[discard]] this.slots.emplace(std::size_t(0), Resource(16), 0, source);
+  }
+  ~EntryOwner() { std::println(99); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<Entry>(std::size_t(2));
+  if (!allocated) { return 1; }
+  mut auto slots = std::move(allocated).value();
+  Resource caller{90};
+  int source = 42;
+  if (argc == 7) {
+    EntryOwner owner{std::move(slots), source};
+    return 0;
+  }
+  int divisor = argc == 2 ? 0 : 1;
+  [[discard]] slots.emplace(std::size_t(1), Resource(10), divisor, source);
+  if (!slots.get(std::size_t(1)).stable_address()) { return 2; }
+  if (argc == 3) {
+    [[discard]] slots.emplace(std::size_t(1), Resource(11), 1, source);
+  }
+  if (argc == 4) {
+    [[discard]] slots.emplace(std::size_t(2), Resource(12), 1, source);
+  }
+  if (argc == 5) {
+    [[discard]] slots.emplace(std::size_t(0), Resource(14), 0, source);
+  }
+  slots.destroy(std::size_t(1));
+  if (slots.initialized(std::size_t(1))) { return 3; }
+  [[discard]] slots.emplace(std::size_t(1), Resource(13), 1, source);
+  if (argc == 6) {
+    slots.release();
+    if (slots.capacity() != std::size_t(0)) { return 5; }
+    slots.release();
+    std::println(77);
+  }
+  if (argc == 6) { return 0; }
+  return slots.get(std::size_t(1)).stable_address() ? 0 : 4;
+}

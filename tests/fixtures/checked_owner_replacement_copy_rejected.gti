@@ -1,0 +1,17 @@
+// A source destructor makes Node noncopyable. Checked replacement must not
+// weaken that rule when the RHS is a named value without an explicit move.
+#include <std/string>
+
+struct Node {
+  int32_t identity;
+  Node(int32_t id) : identity(id) {}
+  ~Node() { std::println(identity); }
+};
+
+int main() {
+  mut Node values[2] = {Node(1), Node(2)};
+  Node replacement = Node(3);
+  mut std::size_t index = 0;
+  values[index] = replacement;
+  return 0;
+}

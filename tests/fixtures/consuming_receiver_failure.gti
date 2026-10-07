@@ -1,0 +1,51 @@
+#include <std/string>
+#include <std/vector>
+
+class Receiver {
+  int identity;
+  int cleanup_divisor;
+public:
+  Receiver(int identity, int cleanup_divisor)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Receiver() {
+    std::println(this.identity);
+    int checked = 1 / this.cleanup_divisor;
+  }
+  int operator()(int divisor) && {
+    std::println(20 + this.identity);
+    return 12 / divisor;
+  }
+};
+
+int argument(int divisor, int value) {
+  std::println(6);
+  int checked = 1 / divisor;
+  return value;
+}
+
+int later(int divisor) {
+  std::println(3);
+  return 1 / divisor;
+}
+
+int combine(int left, int right) {
+  std::println(4);
+  return left + right;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int mode = argc - 1;
+  Receiver caller{9, 1};
+  int first_cleanup = mode == 4 || mode == 5 || mode == 7 ? 0 : 1;
+  int second_cleanup = mode == 6 || mode == 7 ? 0 : 1;
+  Receiver first{1, first_cleanup};
+  Receiver second{2, second_cleanup};
+  int body_divisor = mode == 1 || mode == 5 ? 0 : 1;
+  int later_divisor = mode == 2 || mode == 6 ? 0 : 1;
+  int argument_divisor = mode == 3 ? 0 : 1;
+  int value = combine(
+      std::move(first)(argument(argument_divisor, body_divisor)),
+      std::move(second)(later(later_divisor)));
+  std::println(5);
+  return value - 24;
+}

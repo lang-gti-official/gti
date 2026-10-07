@@ -74,10 +74,23 @@ struct LoweredGeneratedItemIdentity {
                          const LoweredGeneratedItemIdentity &) = default;
 };
 
+// Optional statement-level provenance for an exact optimized MIR stage.
+// Instruction zero denotes the block terminator; generated glue has no row.
+// This is debug metadata only, never executable or ownership authority.
+struct LoweredSourceLocation {
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  SourceSpan source;
+
+  friend bool operator==(const LoweredSourceLocation &,
+                         const LoweredSourceLocation &) = default;
+};
+
 struct LoweredBody {
   LoweredBodyIdentity identity;
   LoweredBodyRole role = LoweredBodyRole::SourceExecutable;
   std::vector<LoweredGeneratedItemIdentity> requiredGeneratedItems;
+  std::vector<LoweredSourceLocation> sourceLocations;
 
   friend bool operator==(const LoweredBody &, const LoweredBody &) = default;
 };
@@ -108,6 +121,7 @@ struct LoweredGenericParameter {
   GenericConstraintSet constraints = 0;
   std::vector<std::string> constraintName;
   ConceptId constraintConcept = 0;
+  std::vector<std::size_t> typeArgumentPath;
 
   friend bool operator==(const LoweredGenericParameter &,
                          const LoweredGenericParameter &) = default;
@@ -116,6 +130,12 @@ struct LoweredGenericParameter {
 struct LoweredConceptRequirement {
   ConceptId conceptId = 0;
   std::vector<SemanticType> arguments;
+  // For an unnamed structural leaf, arguments are receiver/result followed by
+  // exact parameter types. Semantics establishes receiver access and the
+  // caller's unsafe obligation; neither is inferred from a member spelling.
+  std::string memberName;
+  bool mutableReceiver = false;
+  bool requiresUnsafe = false;
 
   friend bool operator==(const LoweredConceptRequirement &,
                          const LoweredConceptRequirement &) = default;
@@ -198,6 +218,7 @@ struct LoweredClassDeclaration {
   std::vector<SemanticType> exactTypeArguments;
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<LoweredGenericParameter> genericParameters;
+  std::vector<SemanticType> genericArgumentPatterns;
   std::vector<LoweredClassBase> bases;
   SemanticTypeTraits traits;
   ConcurrencyCapabilityPolicy transferPolicy =
@@ -285,6 +306,10 @@ struct LoweredFunctionDeclaration {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  bool requiresUnsafe = false;
+  bool neverReturns = false;
+  bool tracksCaller = false;
+  CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;
@@ -561,6 +586,7 @@ struct LoweredCallableAdapterItem {
 enum class LoweredLifecycleCleanupForm {
   OrdinaryClass,
   ConcreteSpecialization,
+  RetainedPrimary,
   Count,
 };
 

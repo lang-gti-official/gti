@@ -3,6 +3,18 @@
 Canonical GTI knowledge lives here. Source code and tests remain authoritative
 for the current implementation when a document is stale or ambiguous.
 
+GTI is an independent systems language with strong C++ syntax familiarity,
+excellent safety as a design goal, and source-defined public library policy over
+general language facilities. The reference C++ backend implements GTI semantics;
+it does not define them. [ADR 012](decisions/012-outcome-first-systems-readiness.md)
+records this direction and the goal-oriented planning policy.
+
+Read historical decisions and bounded implementation slices in their original
+scope. Their assumptions may need explicit revision as the language grows;
+neither an old restriction nor a current backend limitation automatically defines
+the future language. Plans name goals, prerequisites and acceptance evidence,
+while canonical language documents continue to describe actual support.
+
 ## Compiler Architecture
 
 - [Overview](architecture/overview.md) — pipeline, ownership boundaries, and
@@ -34,8 +46,9 @@ for the current implementation when a document is stale or ambiguous.
 - [Formatting](architecture/formatting.md) — current formatter contract and
   syntax-tooling boundary.
 - [Reference documentation](architecture/reference-documentation.md) —
-  compiler-owned API projection, authored MDX, page-owned examples, and static
-  site validation.
+  compiler-owned API projection and the standalone
+  [organisation reference website](https://git.internal.howetotech.dev/gti-lang/gti-reference),
+  which owns authored MDX, examples, validation, and deployment.
 - [Verification](architecture/verification.md) — test ownership, broad checks,
   and the optional local language audit.
 
@@ -59,7 +72,11 @@ for the current implementation when a document is stale or ambiguous.
 - [Concepts](language/concepts.md), [ranges](language/ranges.md),
   [expected values](language/expected.md), and
   [concurrency](language/concurrency.md) — focused feature contracts.
-- [I/O](language/io.md), [TCP](language/tcp.md), and
+- [I/O](language/io.md), [binary-to-text encoding](language/encoding.md),
+  [filesystem operations](language/filesystem.md),
+  [clocks and durations](language/chrono.md),
+  [child processes](language/process.md), [TCP](language/tcp.md),
+  [HTTP/HTTPS](language/http.md), [JSON](language/json.md), and
   [standard library](language/standard-library.md) — current library-facing
   semantics and boundaries.
 
@@ -108,10 +125,19 @@ for the current implementation when a document is stale or ambiguous.
   — adopts the direct `std::allocator`/`std::storage<T>` boundary, typed
   provenance and slot lifetimes, recoverable allocation, alignment and
   zero-size rules, and the arena/pool composition boundary.
-- [023: Versioned engine embedding ABI](decisions/023-versioned-engine-embedding-abi.md)
+- [026: Versioned engine embedding ABI](decisions/026-versioned-engine-embedding-abi.md)
   — fixes the generated C wrapper, descriptor, context, status, lifecycle,
   signature, symbol, and unload contract without exposing ordinary GTI or
   generated C++ layout as an engine ABI.
+- [023: Bounded implicit return movement](decisions/023-implicit-return-movement.md)
+  — moves one exact whole noncopyable local or by-value parameter at return
+  while preserving copyable returns and explicit movement elsewhere.
+- [024: Explicit source module interfaces](decisions/024-source-module-interfaces.md)
+  — package-registered interfaces, private declarations, imports
+  and explicit re-exports while preserving legacy includes and whole-program compilation.
+- [025: Backend-independent source package registry](decisions/025-source-package-registry.md)
+  — logical identities, shared SemVer, exact integrity locks and explicit
+  acquisition/publication over the official Gitea storage backend.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
@@ -125,7 +151,10 @@ than mixed into the active queue.
 - [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
   — the sole prompt-sized work queue, prerequisites, status, and exit gates;
   retains the completed runtime-performance campaign baseline and owns the
-  resumed queue
+  resumed queue, including the
+  [general object-lifetime and source-defined storage brief](plans/implementation-sequence.md#s-alloc-06-general-object-lifetimes-and-source-defined-storage)
+  and its follow-on
+  [source-defined process allocation phase](plans/implementation-sequence.md#s-alloc-07-source-defined-process-allocation-over-native-byte-providers)
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
 - [Language restriction ledger](plans/language-alignment.md) — current
@@ -160,6 +189,10 @@ Implemented behavior must be documented in `docs/architecture/` or
   boundary; intentionally non-canonical for current implementation status
 
 ## Maintenance
+
+Repository implementation tasks use the maintained
+[agent workflow](architecture/agent-workflow.md) for published checkpoints,
+PR integration, local-main synchronization and recoverable cleanup.
 
 When behavior changes, update the existing owning document, its tests, and any
 affected plan status. Create an ADR only for rationale worth preserving. Remove
