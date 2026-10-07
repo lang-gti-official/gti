@@ -111,6 +111,10 @@ adapter.
 
 Bounded member requirements render their compiler-owned
 `requires(T& value) { { value.method() } -> R; }` signature in concept hover.
+An explicitly unsafe compound requirement retains `unsafe { ... } -> R` in
+that signature. Ordinary unsafe methods use the existing resolved function
+contract for hover and unsafe-call diagnostics; no protocol-owned effect
+inference is involved.
 The synthetic receiver declaration and use share a `RequirementParameter`
 symbol for definition, references, rename, and read-only parameter tokens.
 That symbol is source-only: it does not declare runtime parameter storage or

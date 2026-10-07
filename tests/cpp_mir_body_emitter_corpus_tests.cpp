@@ -26,7 +26,9 @@ void testExampleCorpusEmissionReadiness() {
     }
     const lang::FrontendResult frontend =
         lang::Frontend({.target = target})
-            .analyze(source.filename().string(), buffer.str(),
+            // Preserve source identity so quoted sibling includes resolve
+            // exactly as they do when compiling this example from the CLI.
+            .analyze(source.string(), buffer.str(),
                      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
     if (!frontend.canGenerateCode()) {
       ++rejected;
@@ -158,8 +160,8 @@ void testGeneralTextStepMatchesProductionEmission() {
     buffer << input.rdbuf();
     const std::filesystem::path standardLibrary = repository / "stdlib";
     const lang::FrontendResult frontend = lang::Frontend().analyze(
-        source.filename().string(), buffer.str(),
-        {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+        source.string(), buffer.str(), {standardLibrary / "prelude.gti"}, {},
+        {standardLibrary});
     if (!frontend.canGenerateCode()) {
       continue;
     }

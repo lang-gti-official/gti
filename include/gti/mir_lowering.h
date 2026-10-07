@@ -35,7 +35,8 @@ private:
       const HirProgramInitializationPlan *programInitialization = nullptr,
       MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
       bool compilerTrusted = false,
-      const MirClassInstance *constructorOwner = nullptr);
+      const MirClassInstance *constructorOwner = nullptr,
+      const HirDestructorInstance *destructor = nullptr);
 
   [[nodiscard]] static bool
   lowerHostedStartup(const HirProgram &source,

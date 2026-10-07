@@ -1,0 +1,32 @@
+struct Resource { int value = 42; };
+class View {
+  Resource& owner;
+public:
+  View(Resource& owner) : owner(owner) {}
+  Resource& get() { return this.owner; }
+};
+class Wrapper {
+  View view;
+  mut int reads = 0;
+public:
+  Wrapper(View view) : view(view) {}
+  int read() mut {
+    this.reads++;
+    return this.view.get().value;
+  }
+  int count() { return this.reads; }
+  Resource& get() mut {
+    this.reads++;
+    return this.view.get();
+  }
+  ~Wrapper() {}
+};
+int main() {
+  Resource resource{};
+  View view{resource};
+  mut Wrapper wrapper{view};
+  int value = wrapper.read();
+  int returned = wrapper.get().value;
+  int count = wrapper.count();
+  return value + returned + count - 86;
+}

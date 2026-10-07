@@ -526,6 +526,7 @@ private:
     const ConceptApplication *application = nullptr;
     std::string memberName;
     bool mutableReceiver = false;
+    bool requiresUnsafe = false;
   };
 
   struct ContextualCallableResult {
@@ -1113,6 +1114,7 @@ private:
       std::vector<Argument> arguments;
       std::string memberName;
       bool mutableReceiver = false;
+      bool requiresUnsafe = false;
 
       friend bool operator==(const StructuralPattern &,
                              const StructuralPattern &) = default;
@@ -1483,6 +1485,8 @@ private:
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type);
 
+  [[nodiscard]] bool runtimeObjectLayoutType(const SemanticType &type) const;
+
   [[nodiscard]] IntrinsicKind
   trustedIntrinsicKind(SourceUnitId sourceUnit,
                        const std::vector<std::string> &scope,
@@ -1596,6 +1600,7 @@ private:
   [[nodiscard]] SemanticLoanPlace transientLoanPlace(const ExprPtr &expression);
 
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const ExprPtr &expression);
+  [[nodiscard]] bool receiverStorageBorrow(const ExprPtr &expression) const;
 
   static const ExprPtr *operatorReceiverExpression(const ExprPtr &expression);
 
@@ -1654,7 +1659,8 @@ private:
   SemanticLoanId recordStoredEntryDependency(Symbol &carrier,
                                              SymbolId carrierSymbol,
                                              const SemanticType &type,
-                                             bool receiver);
+                                             bool receiver,
+                                             const Stmt *declaration = nullptr);
 
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression);
@@ -1944,7 +1950,7 @@ private:
       const SemanticType &result,
       SemanticMemberRequirementFailure *failure = nullptr,
       std::span<const SemanticType> parameters = {},
-      bool mutableReceiver = false) const;
+      bool mutableReceiver = false, bool requiresUnsafe = false) const;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {
@@ -1953,6 +1959,7 @@ private:
     SemanticType result;
     std::vector<SemanticType> parameters;
     bool mutableReceiver = false;
+    bool requiresUnsafe = false;
   };
   mutable std::vector<ActiveMemberRequirement> activeMemberRequirements;
   [[nodiscard]] std::optional<SemanticType>
@@ -2570,7 +2577,8 @@ private:
   std::vector<GenericParameterInfo>
   makeGenericParameters(const std::vector<GenericParameter> &parameters,
                         const Token &declarationName,
-                        const std::vector<std::string> &fromScope);
+                        const std::vector<std::string> &fromScope,
+                        bool allowStructural = false);
 
   [[nodiscard]] std::shared_ptr<const GenericValueExpression>
   normalizeGenericValueDefault(const ArrayExtentExpr &expression,

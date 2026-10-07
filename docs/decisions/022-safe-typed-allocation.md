@@ -326,7 +326,16 @@ Expected/enum alternatives and storage transport have focused native evidence.
 The full completion suite and installed/tooling checks complement those
 focused checks; the local evidence is recorded in
 [verification](../architecture/verification.md#low-level-memory-phase-1).
-Stateful allocator policies and resource leases remain Phase 2.
+Stateful allocator policies and resource leases were deferred to Phase 2; see
+[the programmable resource revision](#revision-programmable-resources-phase-2).
+
+The Phase 2 storage extension removes the public movable-element restriction
+from allocation and final-address emplacement. Handle movement transfers the
+same slots without moving their objects. Completed-value construction and
+element relocation keep their distinct capability requirements. The existing
+MIR constructor/preflight and cleanup engines already represent those facts;
+there is no second immovable-object lifecycle. Example 120 demonstrates the
+distinction with an ordinary owning class whose copy and move are deleted.
 
 ## Revision: optional unsafe auditing
 
@@ -355,3 +364,56 @@ Independent per-demand query budgets and root-only reuse also remove the
 declaration-order bug within the optional analyzer itself. Disabling the audit
 is not the fix for that bug. Existing useful Phase 1 storage, placement,
 release, transport and owner-witness facilities are retained.
+
+## Revision: programmable resources (Phase 2)
+
+Phase 2 (`S-ALLOC-05`) lets applications implement allocation policy in
+ordinary GTI and supply it to typed owners and a growable container. The
+accepted design, chosen with the owner on 2026-10-06:
+
+- **Small structural protocol.** `memory_resource<R>` requires read-only
+  `unsafe allocate(layout) -> expected<raw_allocation, alloc_errc>` and
+  `unsafe release(raw_allocation)`. Resources are selected by generic type
+  argument. `raw_allocation` is passive address/extent/alignment/identity
+  metadata. There is no traits, propagation, fancy-pointer or runtime-erasure
+  framework, and nothing in the protocol assumes a process heap.
+- **One explicit trust step.** `unsafe bind_resource(resource)` is the caller's
+  single acknowledgement that the provider honours its documented raw-memory
+  contract. The sealed `resource_ref<R>` it returns is an ordinary checked
+  shared borrow; later storage and container use is safe. Concept satisfaction
+  and the optional raw audit check signatures and effects, never allocator
+  correctness.
+- **Statically borrowed, move-only leases.** Each typed owner holds a lease
+  that retains its resource borrow through final cleanup and owns exactly one
+  region. Several leases coexist without an exclusive borrow of the resource.
+  A safe reset or move of the resource needs exclusive access and is rejected
+  while any lease is live. Element references borrow the owner as well, so
+  growth, release and movement are blocked until their last use. No reference
+  counting, shared ownership or broad interior mutability is introduced:
+  bookkeeping mutation goes through a provider's own raw pointers under its
+  unsafe contract.
+- **Existing lifecycle engine.** Typed owners adopt a provider-selected region
+  through a compiler-private, declaration-bound capability, then reuse the
+  established final-address construction, partial-construction rollback,
+  destruction and failure machinery. Elements are destroyed before the lease
+  returns the original descriptor to the original resource.
+- **General language support, not client exceptions.** The prerequisites are
+  general rules proven with unrelated types: unsafe member functions and unsafe
+  structural requirements, runtime object-layout queries for ordinary owning and
+  immovable types, and destructor-bearing borrowed classes whose dependencies
+  persist through cleanup, movement and constructor rollback. The compiler
+  recognises no public resource or container name.
+- **Small differing-resource rule.** Owners never rebind: moving an owner moves
+  its binding with it, assignment between owners is unavailable, and explicit
+  relocation between distinct resource instances leaves each region released
+  through its own binding.
+
+Rejected alternatives: per-allocation `unsafe` (it repeats the same
+obligation at every safe call site); runtime lease counting or shared ownership
+of the resource (hidden dynamic cost and a second ownership model); an opaque
+request that always delegates to the process heap (no placement control); and
+a C++-style allocator-traits/propagation framework (large surface with no
+current client). The implemented contract, its remaining unsafe obligations and
+its structural limits are specified in
+[raw pointers](../language/raw-pointers.md#explicit-resource-binding) and the
+[standard library](../language/standard-library.md#custom-resource-protocol).

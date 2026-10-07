@@ -201,6 +201,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .traits = instance.traits,
         .compilerCapability = instance.compilerCapability,
         .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
+        .mutexGuardBorrowCarrier = instance.mutexGuardBorrowCarrier,
         .kind = instance.kind,
         .bases = instance.bases,
         .structuralBases = instance.bases,
@@ -440,7 +441,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              source, failureMetadata, instance.body, MirBodyKind::Destructor,
              SemanticType::Void, {}, definedFailureEffects, valid, false,
              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-             compilerTrustedSourceUnit(source, instance.sourceUnit))});
+             compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
+             &instance)});
   }
 
   result.program.lambdas.reserve(source.lambdaInstances().size());

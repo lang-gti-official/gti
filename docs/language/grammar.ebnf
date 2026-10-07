@@ -96,8 +96,9 @@ declaration            = conditional-declaration
 empty-declaration      = ";" ;
 
 unsafe-function-modifier = "unsafe" ;
-(* Namespace-scope GTI free functions only; not methods, operators, runtime
-   bindings, extern-C declarations or hosted main. Every call requires a
+(* GTI free functions and ordinary non-polymorphic instance/static methods;
+   not constructors, destructors, operators, virtual/interface/override methods,
+   runtime bindings, extern-C declarations or hosted main. Every call requires a
    lexical unsafe block. The modifier grants no unsafe permission to the body
    and cannot be erased by callback or safe function-item conversion. *)
 
@@ -201,14 +202,17 @@ constraint-primary     = concept-application
 
 member-requirement     = "requires" "(" [ "mut" ] type IDENTIFIER
                          { "," [ "mut" ] type IDENTIFIER } ")"
-                         "{" "{" IDENTIFIER "." IDENTIFIER "("
+                         "{" [ "unsafe" ] "{" IDENTIFIER "." IDENTIFIER "("
                          [ IDENTIFIER { "," IDENTIFIER } ] ")" "}"
                          "->" type ";" "}" ;
 (* The receiver type is a reference with explicit read-only/mutable access.
    The receiver identifiers match; each additional binding appears once in
    declaration order. Parameter reference access and all signature types match
    exactly. The result is an owned type, not a C++ result concept.
-   Member requirements are also boolean primary expressions. *)
+   An unsafe requirement preserves the caller obligation in generic bodies;
+   it accepts safe or unsafe implementations. An ordinary requirement accepts
+   only safe implementations. Member requirements are also boolean primary
+   expressions. Neither spelling executes its synthetic call. *)
 
 compiler-concept-declaration
                        = compiler-constraint-binding "concept" IDENTIFIER
@@ -522,7 +526,8 @@ constructor-initializer
 destructor-declaration = "~" IDENTIFIER "(" ")"
                          ( block | default-member-specifier ) ;
 
-method-declaration     = [ "virtual" ] [ "static" ] [ "constexpr" ]
+method-declaration     = [ unsafe-function-modifier ]
+                         [ "virtual" ] [ "static" ] [ "constexpr" ]
                          [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause [ call-receiver-qualifier ] [ requires-clause ]

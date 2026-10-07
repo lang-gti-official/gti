@@ -566,6 +566,10 @@ private:
       if (!value.requirements[index].memberName.empty())
         output << ";member="
                << std::quoted(value.requirements[index].memberName);
+      if (value.requirements[index].mutableReceiver)
+        output << ";mutable-receiver=1";
+      if (value.requirements[index].requiresUnsafe)
+        output << ";requires-unsafe=1";
       output << ";arguments=[";
       for (std::size_t argument = 0;
            argument < value.requirements[index].arguments.size(); ++argument) {
@@ -700,6 +704,10 @@ private:
       if (!value.requirements[index].memberName.empty())
         output << ";member="
                << std::quoted(value.requirements[index].memberName);
+      if (value.requirements[index].mutableReceiver)
+        output << ";mutable-receiver=1";
+      if (value.requirements[index].requiresUnsafe)
+        output << ";requires-unsafe=1";
       output << ";arguments=[";
       for (std::size_t argument = 0;
            argument < value.requirements[index].arguments.size(); ++argument) {

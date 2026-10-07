@@ -1,0 +1,45 @@
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+public:
+  int divisor;
+  Resource(int divisor) : divisor(divisor) {}
+  ~Resource() { std::println(99); }
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() {
+    std::println(41);
+    int guard_cleanup = 7 / this.resource.divisor;
+  }
+};
+class Outer {
+  Guard guard;
+public:
+  Outer(Guard guard) : guard(std::move(guard)) {}
+  ~Outer() { std::println(42); }
+};
+class Trace {
+  int divisor;
+public:
+  Trace(int divisor) : divisor(divisor) {}
+  ~Trace() {
+    std::println(55);
+    int return_cleanup = 9 / this.divisor;
+  }
+};
+Outer acquire(Resource& resource, int divisor) {
+  Trace trace{divisor};
+  Guard guard{resource};
+  Outer result{std::move(guard)};
+  return std::move(result);
+}
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{argc > 2 ? 0 : 1};
+  auto published = acquire(resource, argc == 2 or argc == 3 ? 0 : 1);
+  std::println(77);
+  return 0;
+}

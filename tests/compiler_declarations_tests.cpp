@@ -4477,16 +4477,15 @@ int main() {
            "missing, mismatched, mutable, consuming, static and inaccessible "
            "members must fail the declared concept");
   }
-  const auto unsafeMember =
-      lang::Frontend().analyze("member-requirement-unsafe.gti",
-                               "struct Item { unsafe Item snapshot() { "
-                               "Item result{}; return result; "
-                               "} };",
-                               {standardLibraryPrelude()});
-  expect(!unsafeMember.canGenerateCode() &&
-             hasDiagnosticCode(unsafeMember.diagnostics, "GTI-P0001"),
-         "member requirements must not enable currently unsupported unsafe "
-         "method declarations");
+  const auto unsafeMember = lang::Frontend().analyze(
+      "member-requirement-unsafe.gti",
+      "struct Item { unsafe Item snapshot() { "
+      "Item result{}; return result; "
+      "} }; int main() { static_assert(!(requires(Item& x) "
+      "{ { x.snapshot() } -> Item; })); return 0; }",
+      {standardLibraryPrelude()});
+  expect(unsafeMember.canGenerateCode(),
+         "safe member requirements must reject unsafe method declarations");
   const auto bounded =
       lang::Frontend().analyze("member-requirement-boundaries.gti", R"(
 concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };
@@ -11089,7 +11088,118 @@ int main() { return 0; }
          "attributes");
 }
 
+void testStructuralClassConstraints() {
+  const std::string declarations = R"(
+mut int closed = 0;
+struct Counter {
+  unsafe int read() { return 7; }
+  unsafe void close() { closed += 1; }
+};
+concept readable<T> = requires(T& source) {
+  unsafe { source.read() } -> int;
+};
+concept closable<T> = readable<T> && requires(T& source) {
+  unsafe { source.close() } -> void;
+};
+int observe<T>(T& source) requires readable<T> {
+  unsafe { return source.read(); }
+}
+class Monitor<closable T> {
+  T& source;
+  mut int initial = 0;
+public:
+  Monitor(T& source) : source(source) {
+    unsafe { this.initial = this.source.read(); }
+  }
+  int read() { return observe(this.source); }
+  ~Monitor() { unsafe { this.source.close(); } }
+};
+class Outer<closable T> {
+  Monitor<T> inner;
+public:
+  Outer(Monitor<T> inner) : inner(std::move(inner)) {}
+  int read() { return this.inner.read(); }
+};
+class Unused<closable T> { int value = 0; };
+class Defaulted<closable T = Counter> { int value = 0; };
+class Packed<closable T...> { int value = 0; };
+)";
+  const auto analyze = [&](const std::string &source) {
+    return lang::Frontend().analyze("structural-class-contract.gti", source,
+                                    {standardLibraryPrelude()});
+  };
+  const auto valid = analyze(declarations + R"(
+int main() {
+  Counter counter{};
+  Defaulted<> defaulted{};
+  Packed<Counter, Counter> packed{};
+  { Monitor<Counter> inner{counter};
+    Outer<Counter> monitor{std::move(inner)};
+    if (monitor.read() != 7) { return 1; } }
+  return closed - 1;
+}
+)");
+  if (!valid.canGenerateCode())
+    for (const auto &diagnostic : valid.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "unary class contracts reach constructors, methods, destructors, "
+         "forwarding and nested class arguments");
+  if (valid.canGenerateCode())
+    expect(!gti_test::emitCppText(valid).empty(),
+           "concrete structural class contract emits from verified MIR");
+  const auto formatted = lang::Formatter().format(
+      declarations +
+      "int main() { Counter counter{}; Monitor<Counter> value{counter}; "
+      "return value.read() - 7; }");
+  expect(analyze(formatted).canGenerateCode(),
+         "existing generic annotation syntax formats without losing facts");
+
+  for (const auto &suffix :
+       {"struct Missing {}; int main() { Unused<Missing> value{}; return 0; }",
+        "struct Wrong { int read(){return 1;} int close(){return 0;} }; "
+        "int main() { Unused<Wrong> value{}; return 0; }",
+        "class Hidden { int read(){return 1;} void close(){} }; "
+        "int main() { Unused<Hidden> value{}; return 0; }",
+        "struct Missing {}; int main() { Packed<Counter, Missing> value{}; "
+        "return 0; }",
+        "struct Missing {}; class InvalidDefault<closable T=Missing> {}; "
+        "int main() { InvalidDefault<> value{}; return 0; }"}) {
+    const auto rejected = analyze(declarations + suffix);
+    expect(!rejected.canGenerateCode() &&
+               hasDiagnosticCode(rejected.diagnostics, "GTI-S2029") &&
+               !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+           "class argument contract fails in semantics even without a "
+           "selected member body");
+    expect(std::any_of(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                       [](const auto &diagnostic) {
+                         return diagnostic.code == "GTI-S2029" &&
+                                !diagnostic.related.empty();
+                       }),
+           "class constraint failure retains the required member declaration");
+  }
+  for (const auto &source :
+       {declarations + "class Bad<readable T> { T& source; public: "
+                       "Bad(T& value):source(value){} "
+                       "~Bad(){ unsafe { this.source.close(); } } }; "
+                       "int main(){return 0;}",
+        declarations + "class Bad<closable T> { T& source; public: "
+                       "Bad(T& value):source(value){} "
+                       "~Bad(){ this.source.close(); } }; "
+                       "int main(){return 0;}",
+        std::string("concept pair<T,U> = std::copyable<T> && "
+                    "std::copyable<U>; class Bad<pair T> { int value=0; }; "
+                    "int main(){return 0;}")}) {
+    const auto rejected = analyze(source);
+    expect(!rejected.canGenerateCode() &&
+               !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+           "class annotations do not invent members, waive unsafe blocks "
+           "or admit non-unary concepts");
+  }
+}
+
 constexpr NamedTest kTests[] = {
+    {"testStructuralClassConstraints", testStructuralClassConstraints},
     {"testFunctionContracts", testFunctionContracts},
     {"testContainerScaffoldSurfaces", testContainerScaffoldSurfaces},
     {"testMovedLoopLocalRedeclarations", testMovedLoopLocalRedeclarations},

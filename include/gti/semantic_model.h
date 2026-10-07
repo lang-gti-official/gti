@@ -26,6 +26,7 @@ enum class UnsafeOperationKind {
   PointerArithmetic,
   ForeignPointerCall,
   DeclaredUnsafeCall,
+  StorageAdoption,
 };
 
 struct SemanticLoanEndpoint {
@@ -66,8 +67,9 @@ struct SemanticLoanInfo {
   bool entry = false;
   // Receiver-only abstract entry dependencies have no source binding. This
   // identity keeps them in their declaring body when one model holds many
-  // functions; it is consumed during HIR lowering, never by the backend.
-  const FunctionDecl *entryFunction = nullptr;
+  // functions and destructors; it is consumed during HIR lowering, never by
+  // the backend.
+  const Stmt *entryDeclaration = nullptr;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
@@ -357,6 +359,9 @@ enum class IntrinsicKind {
   RawBorrow,
   RawBorrowMut,
   RawPointerConversion,
+  ObjectSize,
+  ObjectAlignment,
+  StorageTryAdopt,
   Count,
 };
 
@@ -705,6 +710,8 @@ struct ClassTypeInfo {
   std::vector<ClassFieldTypeInfo> staticFields;
   std::optional<StoredReferenceInfo> storedReference;
   bool lifecycleBoundBorrowCarrier = false;
+  // Separate trusted lock authority from general dependency retention.
+  bool mutexGuardBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;

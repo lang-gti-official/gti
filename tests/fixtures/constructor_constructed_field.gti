@@ -163,6 +163,45 @@ int32_t nested_holder() {
   return 0;
 }
 
+// Copying raw pointer values is passive; it must still have an exact MIR field
+// publication when a default class field needs a native initializer list.
+class Empty {
+public:
+  Empty() {}
+  void use() {}
+};
+
+using Address = void*;
+
+class RawOwner {
+  Empty empty{};
+  void* data = nullptr;
+  const int* unused = nullptr;
+  int tag;
+public:
+  RawOwner(void* data, int tag) : data(data), tag(tag) {}
+  ~RawOwner() {
+    this.empty.use();
+    drop_order = drop_order * 10 + this.tag;
+    drop_count++;
+  }
+  bool matches(void* address) {
+    return this.data == address && this.unused == nullptr;
+  }
+};
+
+int32_t raw_pointer_and_default_class_fields() {
+  drop_order = 0;
+  drop_count = 0;
+  mut int sentinel = 17;
+  Address address = Address(&sentinel);
+  {
+    RawOwner owner{address, 9};
+    if (!owner.matches(address) || owner.matches(nullptr)) { return 1; }
+  }
+  return drop_count == 1 && drop_order == 9 ? 0 : 2;
+}
+
 int main() {
   if (single_field() != 0) {
     return 1;
@@ -178,6 +217,9 @@ int main() {
   }
   if (nested_holder() != 0) {
     return 5;
+  }
+  if (raw_pointer_and_default_class_fields() != 0) {
+    return 6;
   }
   return 0;
 }

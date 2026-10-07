@@ -191,9 +191,12 @@ scan written comment ranges separately.
 ## Parser And AST
 
 `FunctionDecl::unsafeKeyword()` retains the written `unsafe` declaration
-modifier separately from contract attributes. The parser admits it only on
-namespace-scope GTI free functions, in `unsafe static constexpr` order before
-the return type. It rejects the obsolete `[[unsafe]]` spelling with a
+modifier separately from contract attributes. The parser admits it on GTI free
+functions and ordinary non-polymorphic instance/static methods, in
+`unsafe static constexpr` order before the return type. `MemberRequirement`
+separately retains an optional unsafe keyword before its compound signature;
+semantics propagates that effect through structural requirement facts.
+The parser rejects the obsolete `[[unsafe]]` spelling with a
 spelling-only migration diagnostic while retaining a recovered declaration
 for tooling. Neither syntax form grants implicit permission to the body;
 semantics owns the caller contract and each lexical unsafe operation.

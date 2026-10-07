@@ -1,0 +1,49 @@
+#include <std/memory>
+
+// These types have GTI object representations, not a promised C ABI. Merely
+// asking for their layout neither creates an object nor runs its cleanup.
+mut int cleanups = 0;
+
+class Pinned {
+  uint64_t payload = 42;
+public:
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+  ~Pinned() { cleanups += 1; }
+};
+
+class Owner {
+  std::unique_ptr<int> value;
+public:
+  Owner(int value) : value(std::make_unique<int>(value)) {}
+};
+
+struct Envelope<T> {
+  T object;
+};
+
+std::layout requested_layout<T>() requires std::layout_queryable<T> {
+  return std::layout_of<T>();
+}
+
+int main() {
+  std::layout scalar = requested_layout<int32_t>();
+  std::layout array = requested_layout<uint64_t[3]>();
+  std::layout pinned = requested_layout<Pinned>();
+  std::layout owner = requested_layout<Owner>();
+  std::layout envelope = requested_layout<Envelope<Owner>>();
+  if (scalar.bytes != sizeof(int32_t) || scalar.alignment != alignof(int32_t) ||
+      array.bytes != sizeof(uint64_t[3]) ||
+      array.alignment != alignof(uint64_t[3])) {
+    return 1;
+  }
+  if (pinned.bytes < sizeof(uint64_t) || pinned.alignment < alignof(uint64_t) ||
+      owner.bytes == uint64_t(0) || envelope.bytes < owner.bytes ||
+      pinned.bytes % pinned.alignment != uint64_t(0) ||
+      owner.bytes % owner.alignment != uint64_t(0) || cleanups != 0) {
+    return 2;
+  }
+  // A custom resource can consume bytes/alignment. The descriptor itself
+  // does not allocate, initialize an object, or assert pointer validity.
+  return 0;
+}

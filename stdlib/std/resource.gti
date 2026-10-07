@@ -1,0 +1,243 @@
+#include <std/memory>
+#include <std/numeric>
+
+namespace gti_internal {
+// Source policy seal: no public spelling establishes allocator trust.
+enum class resource_binding { trusted };
+namespace runtime {
+extern "C" {
+void* gti_rt_memory_allocate_v1(uint64_t bytes, uint64_t alignment,
+                              int32_t* status);
+void gti_rt_memory_release_v1(void* address, uint64_t alignment);
+}
+}
+}
+
+namespace std {
+/// Passive provider descriptor. Ownership belongs to a lease, not this value.
+/// Copying it copies metadata only: it neither retains a region nor authorizes
+/// a second release. The provider defines id; the process resource uses zero.
+struct raw_allocation {
+  void* address = nullptr;
+  size_t bytes;
+  size_t alignment;
+  uint64_t id;
+  raw_allocation(void* address, size_t bytes, size_t alignment, uint64_t id)
+      : address(address), bytes(bytes), alignment(alignment), id(id) {}
+};
+
+/// Signature/effect contract only; satisfying this concept is not a proof that
+/// returned addresses supply disjoint, writable regions until matching release.
+concept memory_resource<R> = requires(R& resource, layout request) {
+  unsafe { resource.allocate(request) } -> expected<raw_allocation, alloc_errc>;
+} && requires(R& resource, raw_allocation allocation) {
+  unsafe { resource.release(allocation) } -> void;
+};
+
+/// Reusable checked shared borrow of an explicitly trusted resource.
+/// It retains the provider's lifetime, not ownership or synchronization rights.
+class resource_ref<memory_resource R> {
+  R& resource;
+public:
+  resource_ref(gti_internal::resource_binding token, R& resource)
+      : resource(resource) {}
+  R& get() { return this.resource; }
+};
+
+/// The caller proves the provider contract for every future use through this
+/// binding and its copies, including overlapping live leases. Successful
+/// nonempty allocations are writable, sufficiently aligned, large enough,
+/// disjoint from all outstanding regions, and contain no preexisting objects
+/// whose lifetime adoption would overwrite. Their addresses and descriptors
+/// remain valid until matching release; release retires exactly that region
+/// and does not access destroyed elements. Raw aliases, independent reset,
+/// reentrant calls and concurrent calls must not violate these promises.
+/// Shared borrowing checks the provider shell's lifetime; it cannot validate
+/// raw memory or add locks.
+unsafe resource_ref<R> bind_resource<R>(R& resource) requires memory_resource<R> {
+  return resource_ref<R>(gti_internal::resource_binding::trusted, resource);
+}
+
+/// Portable process allocation with no global resource selection.
+/// Direct calls remain unsafe: release requires an outstanding descriptor from
+/// this allocation family, with its original address and alignment.
+class process_resource {
+public:
+  process_resource() {}
+  unsafe expected<raw_allocation, alloc_errc> allocate(layout request) {
+    mut int32_t status = 0;
+    unsafe {
+      void* address = gti_internal::runtime::gti_rt_memory_allocate_v1(
+          request.bytes, request.alignment, &status);
+      if (status == 1) { return unexpected(alloc_errc::invalid_alignment); }
+      if (status == 2) { return unexpected(alloc_errc::size_overflow); }
+      if (status == 3) { return unexpected(alloc_errc::resource_exhausted); }
+      if (status != 0) { return unexpected(alloc_errc::invalid_region); }
+      return raw_allocation(address, request.bytes, request.alignment, uint64_t(0));
+    }
+  }
+  unsafe void release(raw_allocation allocation) {
+    unsafe {
+      gti_internal::runtime::gti_rt_memory_release_v1(allocation.address,
+                                                   allocation.alignment);
+    }
+  }
+};
+}
+
+namespace gti_internal {
+class resource_lease<std::memory_resource R> {
+  std::resource_ref<R> resource;
+  mut std::raw_allocation allocation;
+public:
+  resource_lease(std::resource_ref<R> resource)
+      : resource(resource),
+        allocation(std::raw_allocation(nullptr, uint64_t(0), uint64_t(0), uint64_t(0))) {}
+  resource_lease(std::resource_ref<R> resource, std::raw_allocation allocation)
+      : resource(resource), allocation(allocation) {}
+  resource_lease(resource_lease<R>& other) = delete;
+  resource_lease(resource_lease<R>&& other) = default;
+  std::resource_ref<R> binding() {
+      return this.resource;
+  }
+  uint64_t alignment() { return this.allocation.alignment; }
+  std::raw_allocation take() mut {
+    std::raw_allocation previous = this.allocation;
+    this.allocation = std::raw_allocation(nullptr, uint64_t(0), uint64_t(0), uint64_t(0));
+    return previous;
+  }
+  void attach(std::raw_allocation allocation) mut { this.allocation = allocation; }
+  void release() mut {
+    std::raw_allocation previous = this.take();
+    if (previous.address != nullptr) {
+      unsafe { this.resource.get().release(previous); }
+    }
+  }
+  ~resource_lease() {
+    if (this.allocation.address != nullptr) {
+      unsafe { this.resource.get().release(this.allocation); }
+    }
+  }
+};
+}
+
+namespace std {
+/// Typed owner over a region chosen by a checked, explicitly bound resource.
+/// The lease precedes storage: reverse field cleanup destroys elements first.
+/// Adopted storage owns element lifetimes and its liveness bitmap, but never
+/// frees the provider region; the lease alone returns the original descriptor.
+/// Region shape checks do not prove provenance, disjointness or provider honesty.
+class resource_storage<T, memory_resource R> {
+  mut gti_internal::resource_lease<R> lease;
+  mut gti_internal::storage<T> data;
+public:
+  resource_storage(resource_ref<R> resource)
+      : lease(gti_internal::resource_lease<R>(resource)),
+        data(gti_internal::allocate_storage<T>(uint64_t(0))) {}
+  resource_storage(resource_storage<T,R>& other) = delete;
+  resource_storage(resource_storage<T,R>&& other) = default;
+
+  size_t capacity() { return gti_internal::storage_capacity(this.data); }
+  bool initialized(size_t index) {
+    return gti_internal::storage_initialized(this.data, index);
+  }
+  expected<void, alloc_errc> try_allocate(size_t count) mut
+      requires layout_queryable<T> {
+    return this.try_allocate(count, alignment(layout_of<T>().alignment));
+  }
+  expected<void, alloc_errc> try_allocate(size_t count, alignment requested) mut
+      requires layout_queryable<T> {
+    if (this.capacity() != size_t(0)) { return unexpected(alloc_errc::invalid_state); }
+    size_t minimum = requested.bytes();
+    if (minimum == size_t(0) or (minimum & (minimum-size_t(1))) != size_t(0)) {
+      return unexpected(alloc_errc::invalid_alignment);
+    }
+    layout object = layout_of<T>();
+    mut size_t selected = object.alignment;
+    if (minimum > selected) { selected = minimum; }
+    auto extent = std::checked_mul(count, object.bytes);
+    if (!extent) { return unexpected(alloc_errc::size_overflow); }
+    if (count == size_t(0)) { return; }
+    unsafe {
+      resource_ref<R> bound = this.lease.binding();
+      auto attempt = bound.get().allocate(layout(extent.value(), selected));
+      if (!attempt) { return unexpected(attempt.error()); }
+      raw_allocation allocation = std::move(attempt).value();
+      this.lease.attach(allocation);
+      if (allocation.alignment < selected) {
+        this.lease.release();
+        return unexpected(alloc_errc::invalid_region);
+      }
+      int32_t status = gti_internal::storage_try_adopt(this.data,
+          allocation.address, count, allocation.bytes, allocation.alignment);
+      if (status != 0) {
+        this.lease.release();
+        if (status == 1) { return unexpected(alloc_errc::invalid_alignment); }
+        if (status == 2) { return unexpected(alloc_errc::size_overflow); }
+        if (status == 3) { return unexpected(alloc_errc::resource_exhausted); }
+        return unexpected(alloc_errc::invalid_region);
+      }
+    }
+    return;
+  }
+  [[discardable]]
+  mut T& emplace<Args...>(size_t index, Args... args) mut {
+    gti_internal::storage_construct(this.data, index, args...);
+    return gti_internal::storage_read_mut(this.data, index);
+  }
+  T& get(size_t index) { return gti_internal::storage_read(this.data, index); }
+  mut T& get_mut(size_t index) mut { return gti_internal::storage_read_mut(this.data, index); }
+  void destroy(size_t index) mut { gti_internal::storage_destroy(this.data, index); }
+  void clear() mut {
+    mut size_t index = this.capacity();
+    while (index > size_t(0)) {
+      index--;
+      if (gti_internal::storage_initialized(this.data, index)) {
+        gti_internal::storage_destroy(this.data, index);
+      }
+    }
+  }
+  void relocate_to(mut resource_storage<T,R>& destination, size_t count) mut
+      requires std::movable<T> && std::relocatable<T> {
+    gti_internal::storage_relocate(this.data, destination.data, count);
+  }
+  /// Grows a fully initialized prefix, retaining this owner's resource binding.
+  /// Allocation failure leaves the original region and elements untouched.
+  expected<void, alloc_errc> try_reserve_prefix(size_t requested, size_t live) mut
+      requires layout_queryable<T> && std::movable<T> && std::relocatable<T> {
+    if (live > this.capacity()) { return unexpected(alloc_errc::invalid_state); }
+    mut size_t index = 0;
+    while (index < this.capacity()) {
+      if (gti_internal::storage_initialized(this.data, index) != (index < live)) {
+        return unexpected(alloc_errc::invalid_state);
+      }
+      index++;
+    }
+    if (requested <= this.capacity()) { return; }
+    mut size_t selected = this.lease.alignment();
+    if (selected == size_t(0)) { selected = layout_of<T>().alignment; }
+    mut resource_storage<T,R> candidate{this.lease.binding()};
+    auto attempt = candidate.try_allocate(requested, alignment(selected));
+    if (!attempt) { return unexpected(attempt.error()); }
+    this.relocate_to(candidate, live);
+    gti_internal::storage<T> previous = std::move(this.data);
+    this.data = std::move(candidate.data);
+    candidate.data = std::move(previous);
+    raw_allocation previous_allocation = this.lease.take();
+    this.lease.attach(candidate.lease.take());
+    candidate.lease.attach(previous_allocation);
+    return;
+  }
+  /// Destroys live elements, then returns the region to its own resource.
+  /// The binding is retained, so the owner can allocate again afterwards.
+  void release() mut {
+    raw_allocation allocation = this.lease.take();
+    gti_internal::resource_lease<R> previous_lease{this.lease.binding(), allocation};
+    mut gti_internal::storage<T> empty = gti_internal::allocate_storage<T>(uint64_t(0));
+    // Reverse local cleanup destroys previous's elements before
+    // previous_lease returns their region.
+    gti_internal::storage<T> previous = std::move(this.data);
+    this.data = std::move(empty);
+  }
+};
+}

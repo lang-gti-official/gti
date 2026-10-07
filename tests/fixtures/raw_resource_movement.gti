@@ -1,0 +1,40 @@
+#include <std/resource>
+#include <std/memory>
+
+mut int releases = 0;
+
+// An unrelated raw-region owner exercises GTI's generated active-cleanup
+// transfer. Raw pointer fields remain representations, not additional owners.
+class RawOwner {
+  void* data = nullptr;
+  std::size_t alignment;
+public:
+  RawOwner(void* data, std::size_t alignment) : data(data), alignment(alignment) {}
+  RawOwner(RawOwner& other) = delete;
+  RawOwner(RawOwner&& other) = default;
+  void* address() { return this.data; }
+  ~RawOwner() {
+    std::process_resource process{};
+    unsafe {
+      process.release(std::raw_allocation(this.data, std::size_t(64),
+                                          this.alignment, uint64_t(0)));
+    }
+    releases++;
+  }
+};
+
+int main() {
+  unsafe {
+    std::process_resource process{};
+    auto allocation = process.allocate(std::layout(std::size_t(64), std::size_t(64)))
+        .expect("raw-owner move proof allocation");
+    RawOwner first{allocation.address, allocation.alignment};
+    void* address = first.address();
+    RawOwner second = std::move(first);
+    if (second.address() != address || releases != 0) { return 1; }
+    RawOwner third = std::move(second);
+    if (third.address() != address || releases != 0) { return 2; }
+  }
+  if (releases != 1) { return 3; }
+  return 0;
+}

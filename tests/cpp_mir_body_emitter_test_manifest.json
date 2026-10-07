@@ -2,6 +2,10 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testGeneratedMoveReferenceBindings",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPreparedConstructorReplacement",
       "suite": "lifecycle"
     },
@@ -455,6 +459,42 @@
     },
     {
       "name": "testGenericScalarConstructedFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testRawPointerConstructorFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveClassFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testBoundPassiveClassFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNativeStatusFieldRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveBorrowedConstructedFieldPrefix",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPhysicalCarrierReferencePublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveExpectedMoveReturnHasNoSsaShell",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDefaultOwningFieldPublication",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testProvenanceOnlyReceiverFields",
       "suite": "lifecycle"
     },
     {

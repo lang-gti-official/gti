@@ -1304,7 +1304,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v75\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v76\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3497,7 +3497,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v88 ") &&
+  expect(mirDump.starts_with("mir-v90 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -4304,6 +4304,26 @@ int main() {
   expect(frontend.canGenerateCode(),
          "unqualified instance fields should retain receiver provenance for "
          "reference and stored-reference returns");
+
+  auto movedWrapperSource = source;
+  movedWrapperSource.insert(movedWrapperSource.find("  int& wrapped_value"),
+                            "  auto moved_wrapper = std::move(wrapped);\n");
+  const auto movedWrapper =
+      lang::Frontend().analyze("stored-reference-external-adapter-move.gti",
+                               movedWrapperSource, {standardLibraryPrelude()});
+  expect(movedWrapper.canGenerateCode() &&
+             lang::verifyMirProgram(movedWrapper.mir).valid(),
+         "an adapter relayed through a stored reference does not freeze the "
+         "independently movable wrapper shell");
+  auto invalidWrapperSource = source;
+  invalidWrapperSource.insert(invalidWrapperSource.find("  int& wrapped_value"),
+                              "  wrapped_range.replace(9);\n");
+  const auto invalidWrapper = lang::Frontend().analyze(
+      "stored-reference-external-adapter-reset.gti", invalidWrapperSource,
+      {standardLibraryPrelude()});
+  expect(!invalidWrapper.canGenerateCode() &&
+             hasDiagnosticCode(invalidWrapper.diagnostics, "GTI-S2017"),
+         "an externally relayed adapter still freezes its actual range owner");
 
   const lang::FunctionDecl *storedReferenceMain =
       findTopLevelFunction(frontend.program, "main");
@@ -6042,7 +6062,6 @@ int main() {
                         "cannot duplicate an exclusive dependency") &&
           hasDiagnostic(invalid.diagnostics,
                         "Every constructor of a stored-reference class") &&
-          hasDiagnostic(invalid.diagnostics, "cannot declare a destructor") &&
           hasDiagnostic(invalid.diagnostics,
                         "cannot have global or static storage") &&
           hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
@@ -6488,6 +6507,243 @@ int main() {
 }
 
 void testStoredCarrierReturnProvenance() {
+  const std::string projectedSource = R"(
+struct Counter { mut int value = 4; };
+class ProjectedCarrier {
+  Counter& owner;
+public:
+  ProjectedCarrier(Counter& source) : owner(source) {}
+  int& relay() { return this.read(); }
+  int& read() { return this.owner.value; }
+};
+int main() {
+  mut Counter owner{};
+  ProjectedCarrier original = ProjectedCarrier(owner);
+  ProjectedCarrier& alias = original;
+  int& value = alias.relay();
+  ProjectedCarrier moved = std::move(original);
+  return value + moved.read() - 8;
+}
+)";
+  const auto projected =
+      lang::Frontend().analyze("stored-carrier-projected-relay.gti",
+                               projectedSource, {standardLibraryPrelude()});
+  expect(
+      projected.canGenerateCode() &&
+          lang::verifyMirProgram(projected.mir).valid(),
+      "an accessor relay through a stored reference must retain the external "
+      "field, not freeze the independently movable carrier shell");
+  if (!projected.canGenerateCode())
+    for (const auto &diagnostic : projected.diagnostics)
+      std::cerr << "Projected relay diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  auto invalidProjected = projectedSource;
+  invalidProjected.insert(invalidProjected.find("  return value"),
+                          "  owner.value = 9;\n");
+  const auto invalidProjection =
+      lang::Frontend().analyze("stored-carrier-projected-relay-owner-write.gti",
+                               invalidProjected, {standardLibraryPrelude()});
+  expect(!invalidProjection.canGenerateCode() &&
+             hasDiagnosticCode(invalidProjection.diagnostics, "GTI-S2017"),
+         "moving a relay's carrier must not allow mutation of its still "
+         "borrowed external field");
+
+  const std::string ownedAccessorSource = R"(
+class ValueBox<T> {
+  mut T payload;
+public:
+  ValueBox(T value) : payload(value) {}
+  T& get() { return this.payload; }
+  void set(T value) mut { this.payload = value; }
+};
+class BorrowedBox<T> {
+  ValueBox<T>& owner;
+public:
+  BorrowedBox(ValueBox<T>& owner) : owner(owner) {}
+  T& get() { return this.owner.get(); }
+};
+int main() {
+  mut ValueBox<int> owner{4};
+  BorrowedBox<int> carrier{owner};
+  int& value = carrier.get();
+  auto moved = std::move(carrier);
+  return value + moved.get() - 8;
+}
+)";
+  const auto ownedAccessor =
+      lang::Frontend().analyze("stored-carrier-generic-owned-accessor.gti",
+                               ownedAccessorSource, {standardLibraryPrelude()});
+  expect(ownedAccessor.canGenerateCode() &&
+             lang::verifyMirProgram(ownedAccessor.mir).valid(),
+         "generic accessor composition must preserve the called method's "
+         "receiver-owner contract without exposing its private field path");
+  if (!ownedAccessor.canGenerateCode())
+    for (const auto &diagnostic : ownedAccessor.diagnostics)
+      std::cerr << "Owned accessor relay diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  auto invalidOwnedAccessorSource = ownedAccessorSource;
+  invalidOwnedAccessorSource.insert(
+      invalidOwnedAccessorSource.find("  return value"), "  owner.set(9);\n");
+  const auto invalidOwnedAccessor = lang::Frontend().analyze(
+      "stored-carrier-generic-owned-accessor-write.gti",
+      invalidOwnedAccessorSource, {standardLibraryPrelude()});
+  expect(!invalidOwnedAccessor.canGenerateCode() &&
+             hasDiagnosticCode(invalidOwnedAccessor.diagnostics, "GTI-S2017"),
+         "a composed owned-storage accessor still freezes its external owner "
+         "after the passive carrier moves");
+
+  const std::string mutableStorageSource = R"(
+class MixedStorage<T> {
+  T& external;
+  mut T local;
+public:
+  MixedStorage(T& external, T local) : external(external), local(local) {}
+  T& get() { return this.local; }
+  mut T& get_mut() mut { return this.local; }
+  T implicit_read() { T& value = get(); return value; }
+  T& external_value() { return this.external; }
+  ~MixedStorage() {}
+};
+int main() {
+  int external = 4;
+  mut MixedStorage<int> owner{external, 7};
+  mut int& element = owner.get_mut();
+  element = 9;
+  return owner.implicit_read() + owner.external_value() - 13;
+}
+)";
+  const auto mutableStorage = lang::Frontend().analyze(
+      "stored-carrier-mutable-owned-storage.gti", mutableStorageSource,
+      {standardLibraryPrelude()});
+  expect(mutableStorage.canGenerateCode() &&
+             lang::verifyMirProgram(mutableStorage.mir).valid(),
+         "mutable owned storage is independent of the carrier's read-only "
+         "external dependency");
+  if (!mutableStorage.canGenerateCode())
+    for (const auto &diagnostic : mutableStorage.diagnostics)
+      std::cerr << "Mutable owned-storage diagnostic: " << diagnostic.code
+                << ' ' << diagnostic.message << '\n';
+  auto invalidMutableStorageSource = mutableStorageSource;
+  invalidMutableStorageSource.replace(
+      invalidMutableStorageSource.find("owner.get_mut()"),
+      std::string("owner.get_mut()").size(), "owner.external_value()");
+  const auto invalidMutableStorage = lang::Frontend().analyze(
+      "stored-carrier-read-only-external-storage.gti",
+      invalidMutableStorageSource, {standardLibraryPrelude()});
+  expect(!invalidMutableStorage.canGenerateCode() &&
+             hasDiagnosticCode(invalidMutableStorage.diagnostics, "GTI-S2017"),
+         "mutable carrier storage cannot upgrade its read-only external "
+         "reference to mutable access");
+
+  const std::string factorySource = R"(
+class Cell {
+  int& resource;
+  mut int value = 7;
+public:
+  Cell(int& resource) : resource(resource) {}
+  int read() { return this.value; }
+  void reset() mut { this.value = 9; }
+  ~Cell() {}
+};
+class Reference<T> {
+  T& owner;
+public:
+  Reference(T& owner) : owner(owner) {}
+  T& get() { return this.owner; }
+};
+Reference<T> bind<T>(T& owner) { return Reference<T>(owner); }
+int main() {
+  int resource = 4;
+  mut Cell owner{resource};
+  auto reference = bind(owner);
+  return reference.get().read() - 7;
+}
+)";
+  const auto factory =
+      lang::Frontend().analyze("stored-carrier-reference-factory.gti",
+                               factorySource, {standardLibraryPrelude()});
+  expect(factory.canGenerateCode() &&
+             lang::verifyMirProgram(factory.mir).valid(),
+         "a source factory retains both its argument's physical shell and "
+         "the borrowed owners inside that shell");
+  if (!factory.canGenerateCode())
+    for (const auto &diagnostic : factory.diagnostics)
+      std::cerr << "Reference factory diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  auto invalidFactorySource = factorySource;
+  invalidFactorySource.insert(invalidFactorySource.find("  return reference"),
+                              "  owner.reset();\n");
+  const auto invalidFactory = lang::Frontend().analyze(
+      "stored-carrier-reference-factory-reset.gti", invalidFactorySource,
+      {standardLibraryPrelude()});
+  expect(!invalidFactory.canGenerateCode() &&
+             hasDiagnosticCode(invalidFactory.diagnostics, "GTI-S2017"),
+         "a reference factory must not allow mutation of its carrier shell "
+         "while the returned wrapper still uses it");
+
+  const std::string adapterSource = R"(
+class Cell {
+  int& resource;
+  mut int value = 7;
+public:
+  Cell(int& resource) : resource(resource) {}
+  int read() { return this.value; }
+  int& get() { return this.value; }
+  void reset() mut { this.value = 9; }
+  ~Cell() {}
+};
+class Cursor {
+  Cell& cell;
+public:
+  Cursor(Cell& cell) : cell(cell) {}
+  int read() { return this.cell.read(); }
+  int& operator*() { return this.cell.get(); }
+};
+Cursor relay(Cursor cursor) { return cursor; }
+class Collection {
+  mut Cell cell;
+public:
+  Collection(int& resource) : cell(Cell(resource)) {}
+  Cursor cursor() { return Cursor(this.cell); }
+  void reset() mut { this.cell.reset(); }
+};
+int main() {
+  int resource = 4;
+  mut Collection owner{resource};
+  auto cursor = owner.cursor();
+  auto copied = relay(cursor);
+  int& element = *copied;
+  int result = element;
+  owner.reset();
+  return result - 7;
+}
+)";
+  const auto adapter =
+      lang::Frontend().analyze("stored-carrier-value-receiver-adapter.gti",
+                               adapterSource, {standardLibraryPrelude()});
+  expect(adapter.canGenerateCode() &&
+             lang::verifyMirProgram(adapter.mir).valid(),
+         "a value-returning receiver adapter and its copies retain physical "
+         "storage until their final use, not the receiver's external resource");
+  if (!adapter.canGenerateCode())
+    for (const auto &diagnostic : adapter.diagnostics)
+      std::cerr << "Receiver adapter diagnostic: " << diagnostic.code << ' '
+                << diagnostic.message << '\n';
+  for (const auto &mutation : {std::string("owner.reset();"),
+                               std::string("auto moved = std::move(owner);")}) {
+    auto invalidAdapterSource = adapterSource;
+    invalidAdapterSource.insert(invalidAdapterSource.find("  int result"),
+                                "  " + mutation + "\n");
+    const auto invalidAdapter = lang::Frontend().analyze(
+        "stored-carrier-value-adapter-invalidation.gti", invalidAdapterSource,
+        {standardLibraryPrelude()});
+    expect(!invalidAdapter.canGenerateCode() &&
+               hasDiagnosticCode(invalidAdapter.diagnostics, "GTI-S2017"),
+           "an independently copied adapter rejects physical owner "
+           "invalidation before its last use: " +
+               mutation);
+  }
+
   const std::string validSource = R"(
 class ReadCarrier {
 public:
@@ -8576,6 +8832,7 @@ int main() {
   mut ReadingView<int> relay_source = make_view<int>(reading.read());
   ReadingView<int> generic_relay =
       unconstrained_relay<ReadingView<int>>(std::move(relay_source));
+  ViewCallable<int> relocated_callable = std::move(callable);
   return relayed + static_view.get() + called_view.get() + indexed_view.get() +
       direct_value.value + generic_relay.get() + shared_aliases() - 42;
 }
@@ -8833,6 +9090,48 @@ int shared_aliases() {
   expect(callsPreserveArgumentDependency,
          "resolved free and static calls should carry the selected owner "
          "argument into lowering");
+
+  const std::string externalOperatorSource = R"(
+class ReadingView<T> {
+  T& value;
+public:
+  ReadingView(T& value) : value(value) {}
+  T& get() { return this.value; }
+};
+class ViewCallable<T> {
+  T& source;
+public:
+  ViewCallable(T& value) : source(value) {}
+  ReadingView<T> operator()() { return ReadingView<T>(this.source); }
+  ReadingView<T> operator[](uint64_t index) {
+    return ReadingView<T>(this.source);
+  }
+};
+int main() {
+  mut int owner = 7;
+  ViewCallable<int> callable{owner};
+)";
+  for (const auto *operation : {"callable()", "callable[uint64_t(0)]"}) {
+    const auto invalidOwner = analyzeWithMemory(
+        "operator-external-owner-invalidation.gti",
+        externalOperatorSource + "  auto view = " + operation + R"(;
+  ViewCallable<int> relocated = std::move(callable);
+  owner = 8;
+  return view.get();
+}
+)");
+    expect(!invalidOwner.canGenerateCode() &&
+               hasDiagnosticCode(invalidOwner.diagnostics, "GTI-S2017") &&
+               hasDiagnostic(invalidOwner.diagnostics,
+                             "Cannot assign to storage while an overlapping "
+                             "borrow") &&
+               !hasDiagnostic(invalidOwner.diagnostics,
+                              "Cannot move storage while an overlapping "
+                              "borrow") &&
+               !hasDiagnosticCode(invalidOwner.diagnostics, "GTI-B0001"),
+           "moving an operator wrapper must not release the returned view's "
+           "external owner loan");
+  }
 
   const lang::FrontendResult invalid =
       analyzeWithMemory("invalid-owner-dependent-returns.gti", R"(
@@ -10983,7 +11282,10 @@ public:
 int main() {
   std::storage<int32_t> forged = std::storage<int32_t>();
   std::allocator allocator = std::allocator();
-  auto unsupported = allocator.try_storage<fixed_value>(std::size_t(1));
+  auto pinned = allocator.try_storage<fixed_value>(std::size_t(1));
+  if (!pinned) { return 2; }
+  mut auto fixed = std::move(pinned).value();
+  fixed.construct(std::size_t(0), fixed_value());
   mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
   if (!allocated) { return 1; }
   mut std::storage<int32_t> values = std::move(allocated).value();
@@ -11008,8 +11310,8 @@ int main() {
                         "live") &&
           hasDiagnostic(invalidPublicStorage.diagnostics,
                         "Cannot initialize 'copied'"),
-      "public storage should require movable elements and prevent owner "
-      "forgery, variadic emplacement, copies, and mutation while a "
+      "completed-value insertion should require movability; storage prevents "
+      "owner forgery, extra construct arguments, copies, and mutation while a "
       "receiver-tied element borrow remains live");
 }
 
@@ -16819,7 +17121,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v88 ") &&
+             mirDump.starts_with("mir-v90 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -17243,6 +17545,21 @@ int main() {
              lang::verifyMirProgram(frontend.mir).valid(),
          "receiver-, parameter-, and global-tied fallible borrows should "
          "reach verified MIR, including local copy, move, and forwarding");
+  for (const auto &loan : frontend.semantics.loans()) {
+    const auto *call = dynamic_cast<const lang::Call *>(loan.origin);
+    const auto *projection =
+        call == nullptr ? nullptr : frontend.semantics.findCall(*call);
+    if (projection != nullptr &&
+        projection->intrinsic == lang::IntrinsicKind::ExpectedValue &&
+        projection->returnType.kind == lang::SemanticType::Reference &&
+        projection->returnType.arguments.size() == 1 &&
+        projection->returnType.arguments.front().kind ==
+            lang::SemanticType::Int32) {
+      expect(loan.storedDependency == 0,
+             "extracting a scalar fallible borrow retains the external "
+             "referent, not a physical shell dependency on its carrier");
+    }
+  }
 
   std::size_t fallibleFunctions = 0;
   std::size_t escapingReturnLoans = 0;
@@ -18365,6 +18682,17 @@ public:
   CleanupReadPair(Resource& left, Resource& right) : first(left), second(right) {}
   int read() { return this.first.read() + this.second.read(); }
 };
+class CleanupInspector {
+  CarrierGuard guard{};
+  Resource& resource;
+public:
+  CleanupInspector(Resource& source) : resource(source) {}
+  int read(int divisor) { return this.resource.read() / divisor; }
+};
+int conditional_cleanup(Resource& resource, bool take) {
+  return take ? CleanupInspector(resource).read(1)
+              : CleanupInspector(resource).read(2);
+}
 class VirtualClient {
   mut Resource resource{};
 public:
@@ -18409,6 +18737,10 @@ Resource global_resource{};
   Resource first{};
   Resource second{};
   return CleanupReadPair(first, second).read();
+)"),
+                                  std::string(R"(
+  Resource resource{};
+  return conditional_cleanup(resource, true);
 )")}) {
     const auto frontend =
         lang::Frontend().analyze("ephemeral-carrier-valid.gti",
@@ -18421,7 +18753,92 @@ Resource global_resource{};
     expect(frontend.canGenerateCode(),
            "borrowed temporaries support immediate readonly and "
            "mutable method calls, preserving owner reuse between expressions");
+    if (frontend.canGenerateCode() &&
+        body.find("CleanupReadPair(first, second)") != std::string::npos) {
+      bool checkedCarrier = false;
+      bool checkedEarlyEnd = false;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        const auto *hir = frontend.hir.findFunctionInstance(function.id);
+        if (hir == nullptr || hir->source == nullptr ||
+            hir->source->name().lexeme != "main")
+          continue;
+        for (const auto &shell : function.body.loans) {
+          if (shell.kind != lang::MirLoanKind::CallArgument ||
+              shell.storedDependency == 0)
+            continue;
+          const auto *place = function.body.findPlace(shell.source);
+          const auto carrier = place == nullptr
+                                   ? lang::MirTemporaryCarrierDependency{}
+                                   : lang::findMirTemporaryCarrierDependency(
+                                         function.body, *place);
+          expect(carrier && carrier.loan->lifecycleBound &&
+                     !shell.lifecycleBound &&
+                     carrier.loan->additionalDependencies.size() == 1,
+                 "cleanup-bearing temporary keeps both owners in its owning "
+                 "Stored loan and a distinct non-owning receiver shell");
+          if (!carrier)
+            continue;
+          checkedCarrier = true;
+          for (const auto id : {shell.id, carrier.loan->id}) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            changed->body.loans[id - 1].lifecycleBound =
+                !changed->body.loans[id - 1].lifecycleBound;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "temporary receiver cannot gain cleanup authority or "
+                   "erase its producer's cleanup obligation");
+          }
+          for (const auto &block : function.body.blocks) {
+            const auto drop = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind == lang::MirInstructionKind::Drop &&
+                         instruction.destination == carrier.drop->place;
+                });
+            const auto end = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::EndBorrow &&
+                         instruction.loan == carrier.loan->id;
+                });
+            if (drop == block.instructions.end() ||
+                end == block.instructions.end() || drop >= end)
+              continue;
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &instructions =
+                changed->body.blocks[block.id - 1].instructions;
+            const auto dropIndex = drop - block.instructions.begin();
+            const auto endIndex = end - block.instructions.begin();
+            std::rotate(instructions.begin() + dropIndex,
+                        instructions.begin() + endIndex,
+                        instructions.begin() + endIndex + 1);
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "cleanup-bearing temporary cannot release its owners "
+                   "before the exact full-expression value drop");
+            checkedEarlyEnd = true;
+          }
+        }
+      }
+      expect(checkedCarrier && checkedEarlyEnd,
+             "cleanup-bearing temporary exercises marker and early-end proofs");
+    }
   }
+
+  const auto temporaryMutex =
+      analyzeTrustedPreludeFixture("ephemeral-mutex-escape.gti", R"(
+#include <std/mutex>
+int main() {
+  std::mutex<int> owner{1};
+  int& escaped = owner.lock().get();
+  return escaped;
+}
+)");
+  expect(!temporaryMutex.canGenerateCode(),
+         "temporary mutex guard cannot export its protected reference");
 
   struct InvalidCase {
     std::string_view body;

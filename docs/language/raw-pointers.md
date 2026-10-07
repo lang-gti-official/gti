@@ -422,10 +422,45 @@ meet these obligations for every input accepted by their safe public API. A
 safe abstraction must not require its caller to know about an undocumented raw
 pointer precondition.
 
+### Explicit resource binding
+
+The custom-resource protocol in `<std/resource>` makes the trust
+boundary explicit with `unsafe std::bind_resource(resource)`. The result is a
+reusable checked shared borrow, not ownership of the provider. The unsafe
+obligation applies to every later allocation through that binding or any copy:
+successful nonempty regions must be writable, sufficiently large and aligned,
+disjoint from all outstanding allocations, and free of preexisting object
+lifetimes that adoption would overwrite. The provider must keep each region
+and its descriptor valid until matching release, and release exactly that
+region without accessing already-destroyed elements. Independent raw aliases,
+resets, reentrant calls or concurrent use must preserve these promises too.
+
+The structural `memory_resource` concept checks callable signatures and unsafe
+effects. It does not prove allocator correctness. A `raw_allocation` is passive
+address/extent/alignment/identity metadata: copying it creates neither a loan
+nor another right to release the region. Direct provider calls remain unsafe.
+
+The compiler checks the ordinary provider borrow and cleanup/transfer schedule.
+The private typed-storage adoption operation additionally checks its empty
+destination, count arithmetic, reported extent, non-null address for nonempty
+storage and numeric alignment. These checks cannot prove actual allocation
+extent, address provenance, non-overlap, writability or synchronization. A
+malformed provider is already outside the binding contract even when one
+contradiction is detected dynamically; an error return is not a general
+containment guarantee for arbitrary unsafe code.
+
+The source lease is declared before typed storage so reverse field cleanup
+destroys live elements before returning the region. This is ordinary checked
+lifecycle composition, not recognition of a public standard-library name.
+See [custom resources](standard-library.md#custom-resource-protocol)
+for typed storage, growable containers and the example arena's bookkeeping/thread
+limits. Empty typed owners conservatively retain their provider borrow until
+their cleanup; releasing their region does not permit an early provider reset.
+
 ## Functions With A Caller Obligation
 
-Use `unsafe` when a namespace-scope GTI function requires the caller to
-establish a precondition that its types and implementation cannot enforce:
+Use `unsafe` when a GTI function or named non-polymorphic method requires the
+caller to establish a precondition that its types and implementation cannot enforce:
 
 ```gti
 // Caller: pointer must address a live, initialized int32_t for this call.
@@ -444,13 +479,23 @@ blocks.
 The implementation must document the actual obligation; the compiler checks
 the caller's acknowledgement, not the truth of a lifetime or aliasing claim.
 
-This bounded surface admits namespace-scope GTI free functions, including
-`static`, `constexpr`, and generic declarations. It excludes methods,
+This surface admits namespace-scope GTI free functions and ordinary instance
+or static methods, including `constexpr` and generic declarations and methods
+of generic classes. Instance methods retain their ordinary read-only, mutable,
+or consuming receiver rules. It excludes virtual/interface/override methods,
 constructors, destructors, operators, runtime bindings, `extern "C"`
 declarations, and hosted `main`. Unsafe callable types are not implemented:
 an unsafe function cannot convert to a native callback or a safe function item,
 including an algorithm argument or managed-thread task, even inside `unsafe`.
 A safe wrapper is appropriate only when it establishes the precondition itself.
+
+An exact structural member requirement acknowledges this effect explicitly:
+`requires(T& value) { unsafe { value.inspect() } -> int; }`. The query is
+unevaluated; its keyword grants no permission to a generic body. Calls through
+that requirement still require a lexical unsafe block. A safe implementation
+can satisfy it, but an unsafe implementation cannot satisfy a requirement
+without the keyword. See [concepts](concepts.md#exact-member-signature-requirements)
+and runnable example 117.
 
 The canonical modifier order is `unsafe static constexpr` before the return
 type, omitting modifiers that do not apply. Function contract attributes such

@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.379.0 — Programmable allocators
+
+- Write allocation policies in ordinary GTI. A resource implements the small
+  `std::memory_resource` protocol (`unsafe allocate(layout)` and
+  `unsafe release(raw_allocation)`) and chooses where each allocation goes,
+  for example an engine arena that serves aligned subregions of one backing
+  region.
+- Acknowledge a resource's raw-memory contract once with
+  `unsafe std::bind_resource(resource)`; `std::resource_storage<T, R>` and the
+  growable `std::resource_vector<T, R>` are then safe and lifetime-checked.
+  Several containers can allocate from one resource at once, and the resource
+  cannot be reset or moved while any of them is live.
+- Fixed-address storage accepts immovable elements, moving an owner never moves
+  its elements, allocation failure is recoverable, and constructor failure
+  keeps its original identity.
+- New general language support used by these facilities: `unsafe` member
+  functions and unsafe structural requirements, destructors on borrowed classes
+  that retain their dependencies through cleanup, and runtime object-layout
+  queries for owning and immovable types. See examples 117–121.
+
 ## 0.368.0 — Project include actions and namespace shorthand
 
 - Offer missing-include code actions for actual project and direct-dependency

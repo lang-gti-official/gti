@@ -1339,7 +1339,7 @@ private:
   TypeRef type_;
 };
 
-// A bounded unevaluated exact nullary read-member signature query. Neither
+// A bounded unevaluated exact instance-member signature query. Neither
 // the synthetic receiver nor the member invocation creates runtime storage.
 class MemberRequirement final : public ExprOfKind<ExprKind::MemberRequirement> {
 public:
@@ -1347,12 +1347,14 @@ public:
                     Token receiverUse, Token member, TypeRef result,
                     std::vector<TypeRef> parameters = {},
                     std::vector<Token> bindings = {},
-                    std::vector<Token> arguments = {})
+                    std::vector<Token> arguments = {},
+                    std::optional<Token> unsafeKeyword = std::nullopt)
       : keyword_(std::move(keyword)), receiver_(std::move(receiver)),
         binding_(std::move(binding)), receiverUse_(std::move(receiverUse)),
         member_(std::move(member)), result_(std::move(result)),
         parameters_(std::move(parameters)), bindings_(std::move(bindings)),
-        arguments_(std::move(arguments)) {}
+        arguments_(std::move(arguments)),
+        unsafeKeyword_(std::move(unsafeKeyword)) {}
 
   void accept(ExprVisitor &visitor) const override {
     visitor.visitMemberRequirementExpr(*this);
@@ -1366,6 +1368,7 @@ public:
   const std::vector<TypeRef> &parameters() const { return parameters_; }
   const std::vector<Token> &bindings() const { return bindings_; }
   const std::vector<Token> &arguments() const { return arguments_; }
+  const std::optional<Token> &unsafeKeyword() const { return unsafeKeyword_; }
 
 private:
   Token keyword_;
@@ -1377,6 +1380,7 @@ private:
   std::vector<TypeRef> parameters_;
   std::vector<Token> bindings_;
   std::vector<Token> arguments_;
+  std::optional<Token> unsafeKeyword_;
 };
 
 class LiteralExpr final : public ExprOfKind<ExprKind::LiteralExpr> {

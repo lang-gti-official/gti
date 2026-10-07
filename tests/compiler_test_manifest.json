@@ -70,6 +70,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testStructuralClassConstraints",
+      "suite": "declarations"
+    },
+    {
       "name": "testFunctionContracts",
       "suite": "declarations"
     },

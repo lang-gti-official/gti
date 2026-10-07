@@ -3703,6 +3703,224 @@ do not expose C++ object layout as GTI semantics.
   execution or bundled-LLVM release packaging; see
   [verification](../architecture/verification.md#low-level-memory-phase-1).
 
+### S-ALLOC-05: Programmable Allocators And Safe Container Integration
+
+- **State/role:** complete (2026-10-07). The statically borrowed lease
+  direction was approved on 2026-10-06 through the user's delegated design
+  review. The public protocol, a real placement-choosing arena, fixed-address
+  owners, the growable `resource_vector` and an unrelated application container
+  are implemented and pass the full production, installed-toolchain and tooling
+  gates recorded below. Remaining structural limits are listed under
+  **Completion evidence**; they are follow-up work, not open Phase 2 gates.
+- **Outcome:** an engine-defined arena obtains one backing region, chooses
+  differently sized/aligned subregions, and simultaneously supplies owning
+  objects, a substantial growable container and an unrelated application-defined
+  container. Ordinary default allocation remains straightforward.
+- **Prerequisite checkpoint (2026-10-06):** unsafe member declarations and
+  structural requirements preserve call-site permission; runtime object-layout
+  queries cover ordinary owning and immovable types; general cleanup-bound
+  borrowed guards retain their resources across moves, by-value calls, nested
+  field publication and constructor rollback. Examples 117–119 demonstrate
+  these capabilities. Focused verifier mutations and optimized native matrices
+  cover the guard/rollback path, including no-elide and ASan/UBSan modes;
+  broader reconciliation is still in progress. The original nested mutex
+  capability boundary remains explicit and distinct from ordinary cleanup
+  retention. None of this is yet allocator acceptance: selected-region
+  adoption, the public resource/lease API, real arena placement, fixed-address
+  immovable ownership and allocator-aware containers remained to implement at
+  that checkpoint.
+- **Storage prerequisite (implemented):** private external-region adoption
+  now carries explicit unsafe permission, an exact mutable destination and a
+  writable address/extent/alignment contract through MIR verification and
+  backend admission. Its fallible slot-bitmap allocation does not take over
+  region release authority. Public sparse storage now permits immovable
+  elements through final-address emplacement; completed-value insertion and
+  relocation retain their capability constraints. Example 120 and native
+  cleanup fixtures pass the eight-mode C++20/C++23, no-elide and sanitizer
+  matrix. The public resource clients below build on these primitives;
+  primitive-only evidence is not allocator/container acceptance.
+- **Starting evidence (2026-10-06):** inspected main `db6622a3`, including the
+  optional-audit revision. `storage<std::movable T>` and its factories still
+  restrict immovable elements; the private sparse storage representation obtains
+  its allocation and initialization bitmap from the process heap. Application
+  source cannot adopt an independently selected region. Public layout queries
+  reject ordinary owning classes, although private allocation knows their
+  representation. Unsafe declarations currently reject members, and structural
+  member requirements exclude unsafe methods. Ordinary reference-bearing
+  classes reject source destructors; the trusted mutex guard is a separate
+  existing exception, not a general allocation-lease facility.
+  Four disposable baseline probes with the optimized Release compiler 0.376.0
+  reproduce unsafe-member rejection (`GTI-P0001`), borrowed-destructor rejection
+  (`GTI-S2045`), owning-layout rejection (`GTI-S2063`) and immovable storage's
+  `std::movable` requirement (`GTI-S2029`). The frontend and library sources for
+  these rules are unchanged between the validated 0.376.0 candidate and the
+  inspected head. These are prerequisite evidence, not Phase 2 acceptance tests.
+- **Completion evidence (2026-10-07):** source-defined `resource_ref`,
+  `resource_storage` and `resource_vector` clients, a real monotonic arena,
+  a counting/failure adapter and an unrelated fixed-address container are
+  implemented. The optimized macOS arm64 Release compiler (LLVM 22.1.8,
+  AppleClang) passes all 460 registered gates in one full run. The allocator
+  matrix runs example 121 and seven resource fixtures in all eight native
+  configurations (C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan):
+  aligned placement from one backing region, simultaneous leases, zero size,
+  invalid alignment, overflow, exhaustion, injected growth failure, a consumed
+  failed push, constructor rollback through storage and `try_emplace_back`,
+  owner-only movement, independent element destruction, cross-resource
+  relocation and exactly-once destruction/release through the correct resource.
+  Ordinary client shapes are executable: owners as class members, mutable
+  container parameters, owning and unique elements, and the process resource.
+  Negative controls reject provider reset or movement beneath live owners,
+  reset through a shared binding, conflicting element access, element escape,
+  forged bindings and immovable elements on relocating paths. Off/Warn
+  raw-pointer auditing accepts the same allocator programs and emits identical
+  C++. An isolated install passes all eleven external SDK consumers, example
+  121 and the client fixture at C++20/O0 and C++23/O3, the resource LSP gate
+  and the installed raw-audit policy harness. Tree-sitter's 72 corpus cases,
+  highlight/locals/rainbow checks, 183 shipped sources and pinned regeneration
+  pass; all 453 first-party C/C++ sources pass formatting and API
+  documentation generation is deterministic. Linux/Windows execution and
+  bundled-LLVM release packaging are not claimed.
+  Integration repaired three backend gaps: chain-form generated moves now
+  admit their `TransferOut` handoff as a native no-op, direct concrete
+  instances of generic active-drop classes no longer receive duplicate
+  explicit-specialization lifecycle definitions, and storage release publishes
+  a prebuilt empty storage. Remaining structural limits: a free function cannot
+  return a borrowed carrier constructed from a by-value carrier parameter
+  (`GTI-S2085`, pre-existing and general, so resource-owner factories are
+  unavailable); only `resource_vector` is allocator-aware; resources are
+  compile-time selected, single-threaded unless their own contract says
+  otherwise, and the example arena reclaims space only by whole reset; and the
+  optional audit reports many analysis-limitation findings inside provider
+  implementations.
+  Explicit nested constructors now
+  compose formal-to-field dependency paths, with generic three-level and
+  reordered two-origin tests, and backend nested publication is admitted.
+  Client integration exposed a separate lifetime bug:
+  an accessor returning an owned field of a borrowed carrier must protect that
+  carrier's physical storage, not substitute its external resource dependency.
+  Unrelated-class semantic regressions now cover reset/move conflicts, exact
+  nested shared-view returns and physical-shell versus external-owner
+  references. The expanded ownership suite, the resource-protocol contract,
+  the lifecycle emitter and the forged lifetime/return proof mutations all
+  pass in the full run. The owned-field,
+  passive-field assignment and constructor-rollback regressions pass all
+  eight native modes, including copied-formal status failure. Generic source
+  destructors retain caller-owned receiver dependencies without acquiring
+  their own release authority; normal, primary-failure, destructor-failure and
+  double-failure traces pass all eight configurations. Iterator/reference
+  tests distinguish physical container storage from its external resource,
+  including explicitly retained iterators, copied adapters and range loops.
+  A separate raw-region owner regression passes O0/O1/O3 under C++20/C++23,
+  disabled elision and ASan/UBSan: generated movement preserves the region
+  address and transfers exactly one release obligation. The arena shell now
+  uses this existing generated-move contract; its separately allocated backing
+  region and metadata do not move. This is not evidence for safe owner loans.
+  The independent arena-placement fixture now passes all eight native modes,
+  including aligned subregions, invalid requests, recoverable exhaustion,
+  reset and reuse. The separate typed-owner/container matrix now also covers
+  growth, failure preservation and exact release; unrelated raw placement alone
+  was not used as evidence for those loans.
+- **Approved resource model:** a move-only allocation lease
+  retains a shared checked borrow of its resource through final cleanup. Each
+  allocation owns an independent region; object references borrow its typed
+  owner, not merely the backing resource. Several leases may coexist. A safe
+  reset requires exclusive access to the resource and is rejected while any
+  lease remains live. No implicit reference counting, shared ownership or new
+  broad interior-mutability permission is introduced. Stateful bookkeeping may
+  use encapsulated unsafe raw operations under an explicit protocol contract;
+  it cannot mutate, release or reuse another live region. The initial resource
+  is local unless its separate concurrency contract establishes more.
+  General destructor-bearing borrowed objects must retain every dependency
+  through cleanup, including movement, constructor rollback and failure, rather
+  than inheriting a view's ordinary last-use endpoint. This rule must be tested
+  with an unrelated non-allocation resource guard and audited against the
+  existing mutex-guard special case before implementation.
+- **Approved binding boundary:** application code acknowledges a custom
+  resource's unsafe provider contract once, with an explicit unsafe binding
+  operation. The resulting checked handle can supply safe typed owners and
+  containers without repeating unsafe at each allocation. Concept satisfaction
+  only checks the operation signatures; it does not prove alignment, valid
+  extents, disjoint live regions, truthful identity or matching release.
+  Binding never authorizes safe reset/reuse beneath a live owner or reference.
+- **Bookkeeping mechanism:** keep mutable metadata in separately allocated,
+  non-const storage, reached through private writable raw pointers rather than
+  by casting away access on a shared resource reference. A shared borrow of the
+  resource retains its shell/release authority; it grants no checked reference
+  into this metadata. No checked metadata reference may overlap a raw mutation.
+  Unsafe implementation obligations cover exclusive metadata access, reentrancy,
+  live-region disjointness and correctly ordered release. Ordinary fields of a
+  shared resource remain read-only. Raw writes retain their MIR memory effects;
+  no backend purity/no-alias permission follows from a read-only receiver.
+  Verify this mechanism with an unrelated source-defined bookkeeping owner
+  before using it in the allocator, and do not add automatic thread safety.
+  If the actual general aliasing/representation rules cannot support this
+  separation, propose a narrow general mutation capability before introducing
+  broader semantics. No implicit shared ownership or refcount is authorized.
+- **Cleanup-path audit:** at the starting head, `createRetainedLoan` set
+  `lifecycleBound` only for the trusted mutex-guard shape. The program verifier
+  validated that marker specifically against mutex storage and a lock token.
+  The prerequisite checkpoint separates general cleanup-bound dependency
+  retention from mutex authority (including the guard's effective exclusive
+  access), preserving the dependency set through normal/failure drop and
+  independently verifying both contracts. This is a prerequisite for the
+  approved model, not permission to broaden ordinary reference access.
+  The canonical runtime architecture's
+  pre-emplacement allocation description has been corrected to match the
+  existing source-constructor/preflight MIR path; no executable behavior changed.
+- **Protocol and placement requirements:** compile-time generic resource
+  selection; validated size/alignment requests; recoverable allocation failure;
+  allocation identity, usable extent and matching resource/release authority.
+  Publish compiler-owned ordinary-object layout information usable for actual
+  placement, without promising stable foreign ABI or universal constexpr
+  layout. Provide aligned subregion selection with checked overflow, selected
+  storage adoption, final-address construction and independent destruction.
+  Unsafe member operations and structural requirements must preserve their
+  caller obligations through ordinary/generic calls and forwarding. Safe
+  wrappers establish those preconditions; neither concept satisfaction nor
+  optional raw auditing proves an allocator algorithm correct.
+- **Storage and container requirements:** preserve the existing MIR lifecycle
+  engine, exact constructor-failure identity and partial-member rollback.
+  Moving the allocation owner transfers the region and release obligation,
+  without moving its elements. Provide a fixed-address owning path for
+  immovable elements; only relocation operations and growable-container paths
+  may require the corresponding element capability. Integrate one substantial
+  allocator-aware growable container (prefer vector or its substrate), process
+  allocation, a stateful application allocator, a counting/failure-injection
+  adapter and an unrelated user container. Specify differing-resource movement
+  and release explicitly; failed growth preserves the original contents and
+  ownership. No silent allocator-propagation framework.
+- **Reviewable implementation order:** (1) resource and unsafe contracts
+  approved; (2) implement general missing lifetime/unsafe-call prerequisites
+  and a process/custom-resource vertical slice; (3) prove genuine aligned
+  suballocation and simultaneous leases; (4) close immovable emplacement,
+  growable-container integration and rollback; (5) close diagnostics, tooling,
+  canonical documentation, runnable examples and broader validation. Keep
+  syntax in parsing, resolved ownership and effects in semantics, concrete
+  facts in HIR, lifecycle/cleanup in verified MIR and representation in the
+  backend. Reuse declaration-bound private capabilities only for irreducible
+  mechanics; no recognition of public allocator/container names.
+- **Completion gates:** demonstrate multiple live allocations from one backing
+  region, natural/requested alignment, zero size, invalid alignment, arithmetic
+  overflow, recoverable exhaustion, injected growth failure, original
+  constructor failure and rollback, checked-reference escapes/conflicts, safe
+  reset/reuse rejection, owner-only movement, relocation restrictions and
+  exactly-once destruction/release through the correct resource. Exercise the
+  same protocol with an unrelated application container and owning elements.
+  Add focused positive/negative compiler and verifier tests, optimized-compiler
+  runtime/cleanup matrices, applicable C++20/C++23 and optimization parity,
+  Off/Warn audit independence, LSP/syntax/formatter coverage where affected,
+  installed-toolchain checks, runnable examples and their index/corpus/census
+  registrations. Use the repository's broader production gates after focused
+  iteration. Update the canonical ownership/raw-pointer, runtime/IR and ADR 022
+  contracts to implemented behavior, including stale Phase 1 descriptions of
+  final-address emplacement; record all evidence and remaining structural limits.
+- **Non-goals:** stable object ABI, arbitrary integer/address conversion,
+  virtual-memory/device/mapped allocation, lock-free resources and migration of
+  every container. Do not encode process-heap assumptions into the generic
+  protocol that would exclude those later extensions. The final report must
+  identify the new application capabilities, public resource/lifetime contract,
+  remaining unsafe obligations, allocator/container examples and validation.
+
 ### S-FREE-01: Freestanding Target Profile
 
 - **State/role:** later breadth; `S-LAYOUT-01`, `D-LANG-01`, and `D-FAIL-01`
