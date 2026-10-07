@@ -20,8 +20,8 @@ int main() {
 ```
 
 This is a bounded C ABI rather than a general foreign-definition facility. It
-supports fixed-width values, passive `[[c_abi]]` records, nominal pointer-only
-`[[c_opaque]]` handles, bounded one-level raw pointers, NUL-terminated
+supports fixed-width and target-correct C scalar values, passive `[[c_abi]]` records, nominal pointer-only
+`[[c_opaque]]` handles, recursively nested raw pointers, NUL-terminated
 `c_string` values, and annotated native pointer-plus-count returns behind
 lexical `unsafe`. It also supports named exact native callback types and
 same-thread adapters for eligible GTI free functions, plus the exact registered
@@ -43,6 +43,42 @@ identity because a C++ consumer must be able to complete that type. This is
 deliberately a C ABI that C++ code can implement and consume, not an
 `extern "C++"` ABI for classes, overloads, exceptions, templates, or native
 C++ ownership.
+
+## Target-Correct C Scalar Types
+
+The prelude supplies `c_bool`, `c_char`, `c_schar`, `c_uchar`, `c_short`,
+`c_ushort`, `c_int`, `c_uint`, `c_long`, `c_ulong`, `c_longlong`,
+`c_ulonglong`, `c_float`, `c_double`, `c_size_t`, `c_ptrdiff_t`,
+`c_intptr_t`, `c_uintptr_t`, and the `c_void` alias for `void`.
+These describe the selected target's native declaration, not the compiler host.
+For example, `c_long` is 64-bit on accepted macOS/Linux targets and 32-bit on
+Windows. `c_char` is C's distinct plain `char`: unsigned on Linux arm64 and
+signed on the other accepted profiles. GTI's ordinary `char` remains a distinct
+code unit and is not a C ABI scalar.
+
+Equal width does not imply equal type: `c_long` and `c_longlong` remain distinct
+even on LP64, including overloads, generic arguments and pointer pointees.
+Genuine native typedef aliases do canonicalize. For example, `c_int` is the
+same type as `int32_t`, and `c_size_t` canonicalizes to `c_ulong` on
+macOS/Linux or `c_ulonglong` on Windows. `c_bool` aliases GTI `bool` and has
+C `_Bool` / C++ `bool` representation. Numeric C families retain ordinary GTI
+checked arithmetic and explicit narrowing conversions rather than C wrapping
+or implicit narrowing. Mixed equal-width integer families choose the higher
+native rank (`long long` over `long` over `int`) independently of operand order.
+
+```gti
+extern "C" {
+  c_long labs(c_long value);
+  c_size_t strlen(c_string text);
+}
+```
+
+The runnable [native scalar example](../../examples/123-native-c-scalars.gti)
+uses real C library calls, unrelated generic aggregates and checked numeric
+conversion. `gti bindgen` emits these families for the corresponding C
+primitives; native header emission preserves exact primitive identity or a
+genuine target-native fixed-width typedef alias. Long double and target-specific
+extended scalar formats are not admitted by this vocabulary.
 
 ## Declaration Contract
 
@@ -121,20 +157,18 @@ header generation.
 The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
 
-- returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
+- returns: `void`, the C scalar families above, `bool`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
   `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
-  records, `c_string`, exact named native function types, and one-level raw
-  pointers whose pointee is `void`, one
+  records, `c_string`, exact named native function types, and recursive raw
+  pointers whose terminal pointee is `void`, one
   of those scalar types, `c_string`, a valid C ABI record, or a
-  `[[c_opaque]]` handle. A `[[c_array(count)]]` declaration may additionally
-  return the exact bounded two-level form whose inner pointer satisfies this
-  same allowlist;
-- parameters: the same fixed-width scalar types, passed immutably by value,
-  valid C ABI records passed immutably by value, one-level raw pointers with
+  `[[c_opaque]]` handle or an exact named native callback type.
+  `[[c_array(count)]]` supplies count metadata independently of pointer depth;
+- parameters: the same scalar types, passed immutably by value,
+  valid C ABI records passed immutably by value, recursive raw pointers with
   immutable bindings and the same permitted pointees, plus
   `std::string_view` as the counted input-buffer case and `c_string` as the
-  NUL-terminated input-pointer case, exact named native function types, and
-  the exact `OpaqueHandle**` out-parameter form described below; and
+  NUL-terminated input-pointer case and exact named native function types; and
 - compatibility spellings `int`, `uint`, `int8` through `int64`, and `uint8`
   through `uint64` resolve to their documented fixed-width types and therefore
   follow the corresponding scalar rule.
@@ -144,25 +178,19 @@ native writable and read-only pointee access respectively; leading declaration
 `mut` is not permitted on a C parameter and would only describe reseating the
 local parameter binding, not the C ABI.
 
-`bool` and `char` are intentionally not C ABI scalars in this contract because
-their source meaning should not inherit platform C representation choices.
+GTI `char` is not a C ABI scalar; use `c_char` for native plain `char`.
 Enums, ordinary complete classes/structs/interfaces, `expected`, owners,
 references, arrays, mutable parameters, packs, string-view returns,
-general pointer-to-pointer types, anonymous or general function-pointer
+anonymous or general function-pointer
 declarators, and pointers to non-ABI pointees are also rejected. The bounded
-exceptions do not create general
-nested pointer types: `c_string*` spells `const char**` for a C out parameter,
-an immutable direct `extern "C"` parameter may be `OpaqueHandle**`, and a
-`[[c_array(count)]]` return may add one outer pointer to an otherwise admitted
-one-level C pointer. At a call, the opaque out parameter accepts only
-`&binding`, where `binding` is a mutable raw pointer to the exact opaque handle;
-the address expression must be the direct argument and the call remains
-lexical `unsafe`. It cannot be stored, returned, forwarded, used for ordinary
-GTI overload resolution, or written in any other local, field, parameter, or
-unannotated return position. The C call may replace the binding with null or a
-native address but does not confer ownership or cleanup policy. A named native
-function type recursively uses the ordinary ABI-safe parameter/result family
-and does not inherit the opaque out-parameter exception. The allowlist does
+pointer rules apply equally to `c_char**`, `OpaqueHandle**`, deeper pointers,
+record fields, aliases and named native callback signatures. A mutable slot's
+address can be captured with `auto` or an explicit pointer type, stored,
+forwarded and returned. A C call may replace its value without conferring
+ownership or cleanup policy. Retaining the slot address requires the unsafe
+caller to preserve its lifetime; there is no call-local staging buffer.
+`T* const*` makes the slot read-only; `const T**` instead makes the final
+object read-only. These are distinct types. The allowlist does
 not define array parameters, captured callbacks, opaque ownership transfer, or
 direct C++ linkage.
 
@@ -193,7 +221,7 @@ set, including callback fields and fixed arrays with multiple extents or record,
 pointer, callback, and scalar elements; `restrict` qualifiers are read and
 dropped because they do not change the caller's contract. Field positions the
 record surface
-rejects — `char` pointers and nested pointers — degrade the record to an
+rejects — unsupported nested pointers — degrade the record to an
 opaque handle with the reason recorded, so generated source always satisfies
 this contract's own validation. Everything
 the bounded surface cannot express is reported with its
@@ -359,8 +387,7 @@ extern "C" {
 ```
 
 The attribute is valid only on a bodyless `extern "C"` function. Its result
-must be an admitted one-level C pointer, or the exact two-level form whose
-inner pointer is itself admitted. The named count must be an immutable
+must be an admitted recursive C raw pointer. The named count must be an immutable
 parameter binding of type `I*`, where `I` is a fixed-width integer and the
 pointee is writable. Consequently the parameter is written as `int32_t* count`,
 not `mut int32_t* count`: leading `mut` would make the local pointer binding
@@ -374,10 +401,8 @@ An API whose returned storage must be freed belongs to a separate ownership
 transfer family.
 
 Calling the pointer-bearing function and indexing the returned storage require
-`unsafe`. A two-level result can be captured with `auto`; explicit `T**`
-locals, fields, ordinary GTI parameters, and unannotated returns remain
-invalid. The separate opaque-handle out-parameter exception does not change
-this returned-array rule:
+`unsafe`. Results can use `auto` or their exact explicit pointer type.
+The annotation does not restrict ordinary nested-pointer composition:
 
 ```gti
 mut int32_t count = 0;
@@ -431,15 +456,16 @@ layout and should be used as the safe policy wrapper.
 
 An admitted field is one of:
 
-- a fixed-width signed or unsigned integer, `float`, or `double`;
+- a target-correct C scalar, fixed-width integer, `bool`, `float`, or `double`;
 - another valid `[[c_abi]]` record by value; or
 - a named exact native callback alias; or
 - a positive concrete fixed array whose ultimate element is itself an
   admitted field type; or
-- a one-level raw pointer to `void`, an admitted scalar, a valid C ABI record,
-  or a `[[c_opaque]]` handle, with optional pointee `const`.
+- a recursive raw pointer ending in `void`, an admitted scalar, a valid C ABI
+  record, a `[[c_opaque]]` handle, `c_string` or a named native callback,
+  with independent qualification at each layer.
 
-Transparent aliases follow the resolved type. `bool`, `char`, enums, ordinary
+Transparent aliases follow the resolved type. GTI `char`, enums, ordinary
 nominal types, references, owners, borrowed values, `expected`, symbolic or
 zero-length arrays, symbolic types, and cleanup-owning values are rejected.
 `c_string` is a function- and callback-boundary type, not a field type.
@@ -448,8 +474,7 @@ branches and generated C++, never `std::array`; their ordinary GTI indexing
 remains bounds checked. Multiple concrete extents nest in declarator order,
 and an array element takes its layout facts recursively, including by-value
 record elements. Empty records and recursive by-value records — directly or
-through an array element — are rejected; a one-level pointer is the bounded
-linked/opaque edge.
+through an array element — are rejected; pointers provide linked/opaque edges.
 
 Fields remain in source order. Starting at offset zero, semantics rounds each
 field offset up to that field's ABI alignment, advances by its size, records
@@ -480,7 +505,7 @@ standard-layout, trivially-copyable, `sizeof`, `alignof`, and `offsetof`
 assertions to audit the native compiler. Native C++ layout never substitutes
 for the frontend calculation.
 
-C ABI records may cross `extern "C"` by value or one-level pointer. Generate
+C ABI records may cross `extern "C"` by value or through recursive pointers. Generate
 the checked declarations with:
 
 ```sh
@@ -533,8 +558,8 @@ declaration ending in `;`. Ordinary forward declarations are not a second
 incomplete-type system: omitting the attribute is `GTI-S2065`. An opaque
 handle has nominal type identity but no public fields, size, alignment,
 construction, destruction, inheritance, or concurrency policy. It may appear
-as the pointee of one raw pointer, in the exact direct C out-parameter form
-`NativeDatabase**`, or in the bounded returned-array form below. Passing it by
+as the terminal pointee of a recursive raw pointer, including ordinary
+`NativeDatabase**` slot values and native array results. Passing it by
 value, defining a GTI body, using it as a base or generic argument, or querying
 the pointee layout is invalid. `sizeof(NativeDatabase*)` and
 `alignof(NativeDatabase*)` remain valid pointer queries.
@@ -679,8 +704,8 @@ function's documented contract. In the example, that includes proving that
 `output` remains live and writable for at least one byte for the duration of
 the call and that the callee does not retain the address.
 
-A C function whose source signature contains only the fixed-width scalar
-allowlist, pointer-free C ABI records, `float`, `double`, `void`, or the special
+A C function whose source signature contains only the C ABI scalar families
+above, pointer-free C ABI records, `float`, `double`, `void`, or the special
 non-retained `std::string_view` parameter remains callable from safe code. The
 private pointer inside the `gti_c_string_view` lowering does not turn the
 source-level call into a raw pointer operation.

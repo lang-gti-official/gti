@@ -512,6 +512,48 @@ int main() { return invoke(identity, 0); }
          "function failure contract beside native specialization");
 }
 
+void testNativeViewReturnBoundary() {
+  for (const std::string declaration : {
+           "using Bad = () -> std::string_view;",
+           "using Text = std::string_view; using Bad = () -> Text;",
+           "using Bad = (std::string_view) -> std::string_view;",
+       }) {
+    const std::string source = declaration + "\nint main() { return 0; }\n";
+    const auto result = analyze("native-view-return.gti", source);
+    const std::size_t begin = source.find("-> ") + 3;
+    const std::size_t tokenBegin = source.find("::", begin) == std::string::npos
+                                       ? begin
+                                       : source.find("::", begin) + 2;
+    const std::size_t tokenEnd = source.find(';', tokenBegin);
+    expect(!result.canGenerateCode() && !hasCode(result, "GTI-B0001") &&
+               std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                           [&](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2076" &&
+                                    diagnostic.phase ==
+                                        lang::DiagnosticPhase::Semantics &&
+                                    diagnostic.primary.start == tokenBegin &&
+                                    diagnostic.primary.end == tokenEnd &&
+                                    diagnostic.message.find(
+                                        "native function return") !=
+                                        std::string::npos;
+                           }),
+           "counted-view return must fail at its semantic return token");
+  }
+  const auto factory = analyze("native-view-factory.gti", R"(
+using Reader = (std::string_view) -> c_int;
+using Factory = () -> Reader;
+extern "C" { Factory obtain(); }
+int main() { unsafe { return obtain()()("hello"); } }
+)");
+  expect(factory.canGenerateCode() &&
+             lang::verifyMirProgram(factory.mir).valid(),
+         "a callback factory may return a callback accepting counted input");
+  if (factory.canGenerateCode()) {
+    expect(!gti_test::emitCpp(factory).contents.empty(),
+           "counted-input callback factories must reach production emission");
+  }
+}
+
 void testFormatterSurface() {
   const std::string source = "using Factory=()->(int32_t,c_string)->int32_t;\n";
   const std::string first = lang::Formatter().format(source);
@@ -531,6 +573,7 @@ int main() {
   testNativeIndirectVerificationAndQueries();
   testExecutionProfileBoundary();
   testConcreteFailureOverlay();
+  testNativeViewReturnBoundary();
   testFormatterSurface();
   if (failures != 0) {
     std::cerr << failures << " native callback test(s) failed\n";

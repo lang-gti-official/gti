@@ -35,6 +35,7 @@ bool isMirNativeIndirectCall(const MirProgram &program, const MirBody &body,
     switch (type.kind) {
     case SemanticType::Void:
       return result;
+    case SemanticType::Bool:
     case SemanticType::Int8:
     case SemanticType::Int16:
     case SemanticType::Int32:

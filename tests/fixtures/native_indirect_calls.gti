@@ -3,6 +3,9 @@ using Unary = (int32_t) -> int32_t;
 using Factory = () -> Unary;
 using Writer = (int32_t*, int32_t) -> void;
 using ViewLength = (std::string_view) -> int32_t;
+using NativeScalars = (c_long, c_char, c_bool) -> c_longlong;
+using SlotWriter = (int32_t**, int32_t*) -> void;
+using SlotReader = (int32_t* const*) -> int32_t;
 [[c_abi]] struct Point { mut int32_t x; mut int32_t y; };
 using PointTransform = (Point) -> Point;
 [[c_abi]] struct Dispatch { Binary combine; Factory factory; Writer write; };
@@ -14,6 +17,9 @@ extern "C" {
   Point obtain_point();
   PointTransform obtain_point_transform();
   ViewLength obtain_view_length();
+  NativeScalars obtain_native_scalars();
+  SlotWriter obtain_slot_writer();
+  SlotReader obtain_slot_reader();
   int32_t next_argument(int32_t digit);
   int32_t trace_value();
   void clear_trace();
@@ -75,6 +81,16 @@ int main() {
     if (length("hello") != 5) { return 11; }
     ViewLength adapted = gti_view_length;
     if (adapted("hello") != 5) { return 13; }
+    NativeScalars scalars = obtain_native_scalars();
+    if (scalars(c_long(4), c_char(65), true) != c_longlong(70)) { return 16; }
+    SlotWriter write_slot = obtain_slot_writer();
+    SlotReader read_slot = obtain_slot_reader();
+    mut int32_t* slot = nullptr;
+    mut int32_t** stored = &slot;
+    write_slot(stored, &value);
+    if (slot != &value || read_slot(stored) != 99) { return 17; }
+    write_slot(stored, nullptr);
+    if (slot != nullptr) { return 18; }
   }
   return 0;
 }

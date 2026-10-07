@@ -2294,7 +2294,9 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
     return true;
   }
 
-  if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
+  if (pattern.kind != argument.kind ||
+      pattern.nativeCScalar != argument.nativeCScalar ||
+      pattern.classId != argument.classId ||
       pattern.signatureReceiver != argument.signatureReceiver ||
       pattern.arrayLength != argument.arrayLength ||
       pattern.arrayLengthParameterId != argument.arrayLengthParameterId ||
