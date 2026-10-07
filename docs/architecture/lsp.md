@@ -443,6 +443,9 @@ compiler work.
 - Completed analysis is published only if the document and dependency
   generations still match. Only then may its source digests be learned. Stale
   semantic requests and stale digest publications are rejected.
+  Diagnostic aggregation also excludes retained roots whose snapshot generation
+  is obsolete, rather than republishing their old errors under a newer document
+  version while replacement analysis is queued.
 - The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
   A manifest or lockfile change invalidates semantic-token caches and
   reanalyses every open document, so configuration, package aliases, and
