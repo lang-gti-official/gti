@@ -161,8 +161,23 @@ network downloads. It writes a local-checkout Lazy spec with explicit tool
 paths and downloads disabled, backing up an existing different spec only after
 `--replace-config`. It preserves a supplied build directory's generator and
 does not change source compilation, project manifests, LSP semantics, or release
-publication authority. Its local system-LLVM archive is not a self-contained
-release artifact.
+publication authority. Discovery accepts LLVM 18–22, skips unsupported newer
+Homebrew formulas, and considers retained supported versions without assuming
+an Intel or Apple Silicon installation prefix. Existing build generators are
+preserved while configuration/install rules are refreshed.
+
+On macOS, the `gti_toolchain` CMake install step runs
+`scripts/bundle_macos_runtime.py` for both system and bundled LLVM builds. It
+resolves the non-Apple runtime dependency closure before modifying staged
+copies, gives the configured libclang identity precedence over volatile
+Homebrew `opt` aliases, includes dependency licenses, rewrites references
+relative to each loader, and ad-hoc signs and verifies the resulting tools and
+dylibs. An unresolved/ambiguous dependency or missing license fails installation
+before activation; a different dylib ABI is never substituted for a missing
+one. `share/gti/host-runtime.json` records the copied runtime paths. The installed
+CLI/LSP no longer depend on Homebrew directories. This runtime portability does
+not change the binary's architecture or minimum macOS version, bundle build
+prerequisites, or make a system-LLVM CMake developer SDK self-contained.
 Builds default to all detected logical CPUs (one if detection is unavailable),
 at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
