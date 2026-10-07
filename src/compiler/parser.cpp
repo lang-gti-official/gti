@@ -193,10 +193,8 @@ private:
       return typedDeclaration(true);
     }
 
-    throw error(
-        peek(),
-        "Expect a namespace, concept, enum class, class, struct, interface, "
-        "union, function, or variable declaration.");
+    throw error(peek(), "Expect a namespace, concept, enum, class, struct, "
+                        "interface, union, function, or variable declaration.");
   }
 
   StmtPtr attributedDeclaration() {

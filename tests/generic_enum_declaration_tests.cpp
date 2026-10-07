@@ -44,6 +44,26 @@ void testDeclarationSyntax() {
   }
 }
 
+void testDeclarationRecoveryGuidance() {
+  lang::Lexer lexer;
+  auto tokens = lexer.scan("return; enum Message<T> { item(T value) };",
+                           "enum-declaration-recovery.gti");
+  const auto unexpectedSpan = lang::tokenSpan(tokens.front());
+  lang::Parser parser(std::move(tokens));
+  const auto program = parser.parse();
+  expect(parser.errors().size() == 1 &&
+             parser.errors().front().code == "GTI-P0001" &&
+             parser.errors().front().phase == lang::DiagnosticPhase::Parsing &&
+             parser.errors().front().primary == unexpectedSpan &&
+             parser.errors().front().message.find("concept, enum, class") !=
+                 std::string::npos,
+         "namespace recovery guidance includes the optional-class enum "
+         "spelling without changing its diagnostic source span");
+  expect(program.declarations().size() == 1 &&
+             lang::stmtAs<lang::EnumDecl>(program.declarations().front().get()),
+         "namespace recovery retains the following plain generic enum");
+}
+
 void testDependentPayloads() {
   const std::string source = R"(
 struct Box<T> { T value; };
@@ -385,6 +405,7 @@ void testCrossNominalDefaultsAndFiniteLayouts() {
 
 int main() {
   testDeclarationSyntax();
+  testDeclarationRecoveryGuidance();
   testDependentPayloads();
   testOptionalClassSpelling();
   testInvalidDeclarations();
