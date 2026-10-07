@@ -102,9 +102,9 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | Kind | Findings |
 | --- | --- |
 | Silent miscompile | A25: an `expected<T&, E>` relay returns the parameter, not the referent |
-| Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256; A13: nondeterministic `--emit-mir` |
+| Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256 |
 | Compiler hang or silent failure | A06 and A57 resolved; A41 now reports a located internal failure but its forwarding defect remains unresolved |
-| ICE or invalid generated C++ on valid code | A01, A14–A17, A26–A32, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
+| ICE or invalid generated C++ on valid code | A01, A14, A15, A17, A26–A31, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
 | Valid code rejected | A03, A18, A19, A23, A34, A36 |
 | Specification gap | A04: a dependency's own `[build] defines` is ignored |
 | Diagnostic quality | A05, A07–A12, A20–A22, A24, A33, A35, A43, A44, A53, A60, A61 |
@@ -123,10 +123,10 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A10 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a10-payload-arity-cascade` |
 | A11 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a11-explicit-generic-argument-messages` |
 | A12 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a12-extern-c-overload-duplicate` |
-| A13 | [#59](https://git.internal.howetotech.dev/gti-lang/gti/issues/59) --emit-mir output is not deterministic (field symbol IDs vary between runs) | nondeterministic | `reproducers/a13-mir-field-symbol-order` |
+| A13 | [#59](https://git.internal.howetotech.dev/gti-lang/gti/issues/59) Resolved: physical field identities are published in active declaration order before borrow/layout queries | pass | `reproducers/a13-mir-field-symbol-order`, `field_symbol_identity`, `mir_field_determinism`, `mir_associative_determinism` |
 | A14 | [#60](https://git.internal.howetotech.dev/gti-lang/gti/issues/60) C++ backend ICE: constructor-less struct field initializer inside a class with a user constructor | fixed; focused native and representation checks | `reproducers/a14-generated-ctor-field-in-user-ctor` |
 | A15 | [#61](https://git.internal.howetotech.dev/gti-lang/gti/issues/61) ICE: local declared inside a dependent if constexpr branch (absent lowered symbol) | ice | `reproducers/a15-dependent-if-constexpr-local` |
-| A16 | [#62](https://git.internal.howetotech.dev/gti-lang/gti/issues/62) Documented relay<T> example fails in the C++ backend for a copyable lambda | backend | `reproducers/a16-relay-copyable-lambda` |
+| A16 | [#62](https://git.internal.howetotech.dev/gti-lang/gti/issues/62) Resolved: copyable lambda return retains its verified Load SSA publication | pass | `reproducers/a16-relay-copyable-lambda`, `testCopyableLambdaReturnRetainsSsa`, `generic_callable_transport_runtime` |
 | A17 | [#63](https://git.internal.howetotech.dev/gti-lang/gti/issues/63) Contextual signed fixed-array literals | resolved: pass | `reproducers/a17-narrow-negative-array-literal` |
 | A18 | [#64](https://git.internal.howetotech.dev/gti-lang/gti/issues/64) Function item rejected as a callable argument invoked with a parameter pack | rejected | `reproducers/a18-function-item-pack-invoke` |
 | A19 | [#65](https://git.internal.howetotech.dev/gti-lang/gti/issues/65) Trailing requires-clause facts are ignored when validating a dependent compound argument | rejected | `reproducers/a19-trailing-clause-dependent-compound` |
@@ -142,7 +142,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A29 | [#74](https://git.internal.howetotech.dev/gti-lang/gti/issues/74) C++ backend ICE: calling a method on a string_view returned by a call | ice | `reproducers/a29-method-on-returned-string-view`<br>`reproducers/a29-string-view-size-on-dynamic-view` |
 | A30 | [#75](https://git.internal.howetotech.dev/gti-lang/gti/issues/75) Consuming member results stage before replacing existing owning bindings, retaining receiver and replacement failure cleanup | pass | `reproducers/a30-assign-consuming-call-result` |
 | A31 | [#76](https://git.internal.howetotech.dev/gti-lang/gti/issues/76) MIR ICE: move on a loop's break path, then reinitialization after the loop | ice | `reproducers/a31-move-on-break-path-then-reinit` |
-| A32 | [#77](https://git.internal.howetotech.dev/gti-lang/gti/issues/77) move_only_function cannot be stored in vector (invalid C++) or optional (MIR ICE) | backend, ice | `reproducers/a32-optional-emplace-move-only-function`<br>`reproducers/a32-vector-push-back-move-only-function` |
+| A32 | [#77](https://git.internal.howetotech.dev/gti-lang/gti/issues/77) Resolved: same-owner value construction preserves selected copy/move lifecycle instead of a generic converting constructor | pass | `reproducers/a32-optional-emplace-move-only-function`<br>`reproducers/a32-vector-push-back-move-only-function`, `constructor_transport`, `generic_callable_transport_runtime` |
 | A33 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a33-unnecessary-mut-deref-store` |
 | A34 | [#78](https://git.internal.howetotech.dev/gti-lang/gti/issues/78) string_view relayed through a receiver-tied subscript is rejected (GTI-S2045) | rejected | `reproducers/a34-view-relay-through-subscript` |
 | A35 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a35-expected-ref-field-stale-message` |
