@@ -45,7 +45,8 @@ def main():
         for name, source in (
             ("immutable", "struct V{int n=1;};struct H{V v=V();};int main(){H h{};V v{};h.v=v;return 0;}"),
             ("moved", "#include <std/utility>\nstruct V{int n=1;};struct H{mut V v=V();};int main(){mut H h{};V v{};h.v=std::move(v);h.v=v;return 0;}"),
-            ("owning-copy", "#include <std/string>\nstruct V{std::string s;};struct H{mut V v;};int main(){mut H h{};V v{};h.v=v;return 0;}"),
+            ("owning-copy", sources[1].read_text().replace(
+                "owner.value = std::move(replacement);", "owner.value = replacement;")),
             ("unknown-designator", "struct V{int n=1;};struct H{V v{};};int main(){H h={.missing=1};return 0;}"),
         ):
             path = scratch / f"{name}.gti"
@@ -53,6 +54,8 @@ def main():
             rejected = run([str(compiler), str(path), "--progress", "never", "--emit-cpp",
                             "-o", str(scratch / "bad.cpp")], expected=65)
             assert "error[GTI-S" in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
+            if name == "owning-copy":
+                assert "GTI-S2003" in rejected.stderr and "Cannot assign a value of type 'OwnedValue'" in rejected.stderr, rejected
     print("class fields: 48 native cases, two ASan/UBSan runs and four semantic negatives passed")
 
 
