@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v90`, `mir-body-v76`).
+instruction, body, and caller-assignment facts (`mir-v91`, `mir-body-v77`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,7 +236,13 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v90`/`mir-body-v76`.
+The deterministic serialization is currently `mir-v91`/`mir-body-v77`.
+The program header retains the selected target's identity, pointer width and
+execution profile. Every serialized type retains its native C primitive
+discriminator separately from its numeric kind; equal-width `long` and
+`long long`, and plain `char` versus signed/unsigned char, cannot disappear
+from the snapshot. Program verification checks these facts against the selected
+target across declaration, aggregate, callable, cleanup and body inventories.
 Field-aware borrowed-return and construction contracts serialize each result
 field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
@@ -1065,6 +1071,14 @@ Finishing a derived view does not retire an external-owner loan still retained
 by another live physical-shell alias. Child-first endpoint selection accounts
 for both parent reborrows and stored dependencies; independent verification
 rejects ending either kind of authority before its dependents.
+Read-only structural range elements retain the exact iterator dereference
+`CallResult` chain when it terminates at the semantic range loan, including
+a range reached through a borrowed-success carrier and reference accessor.
+They do not retire that chain and replace it with a `Local` loan against the
+coarser shared range. The selected returned address and child-first lifetime
+therefore survive through each iteration's last use, break, continue, return
+and defined-failure cleanup. Mutable iteration retains its existing direct
+exclusive parent/element contract; no shared access is widened.
 
 Targetless generated move construction preserves the source carrier's complete
 dependency set: origin places, permissions, ancestry and destination field
@@ -1730,7 +1744,8 @@ verification checks its scalar pointee, zero/one exact initializer, result,
 absence of constructor dispatch, and failure metadata. Named native callback
 values are passive ordered by-value inputs, including expanded packs; an
 ordinary callback parameter may also receive the already-admitted null value.
-This does not admit callback invocation or foreign-thread entry.
+Native invocation uses the separate exact-signature call contract below; null
+transport does not make invocation safe or admit foreign-thread entry.
 
 Class unique allocation with a selected ordinary constructor evaluates and
 prepares arguments first, then issues `AllocateObject`. Its local allocation
@@ -2486,6 +2501,20 @@ the verified target invocation, retaining the existing terminating failure
 firewall. Callback thunk text
 and calling-convention spelling remain backend representation choices; MIR
 owns the executable target and containment decision.
+
+An indirect native `Call` instead carries `nativeCalleeType` and a staged
+receiver value. It has no function, lambda, constructor, body, or adapter
+target. `isMirNativeIndirectCall` checks the exact admitted signature, result,
+argument roles/types, receiver `CallInput`, lexical `ForeignPointerCall`, and
+absence of a GTI failure channel. The ordinary ordered-input verifier checks
+callee-before-arguments scheduling and single invocation, while generic
+callable verification retains the concrete parameter boundary. Empty concrete
+semantic failure facts shadow deferred generic facts rather than falling back
+to an inapplicable callable failure channel. Foreign effects remain
+conservative: no GTI body-effect summary is inferred from an arbitrary address.
+Production emission reads this verified signature and staged value, reusing
+the ordinary native ABI operand bridge; it does not resolve a source name or
+consult AST/HIR to discover a target.
 
 MIR v57 retains `CThreadRuntimeOperation` on exact private native declarations.
 Create/join stay ordinary native `Call` instructions with explicit

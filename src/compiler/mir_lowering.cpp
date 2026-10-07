@@ -153,6 +153,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
 
   bool valid = verifyFailureMetadata(failureMetadata).valid();
   result.program.executionProfile_ = source.executionProfile();
+  result.program.target_ = source.analysisSeal().target;
   result.program.failureMetadata_ = failureMetadata;
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
@@ -285,7 +286,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              .requiredCapability = signature.requiredCapability,
              .selectedCapability = signature.selectedCapability,
              .functionTarget = signature.functionTarget,
-             .lambdaTarget = signature.lambdaTarget});
+             .lambdaTarget = signature.lambdaTarget,
+             .nativeCalleeType = signature.nativeCalleeType});
       }
       lowered.forwardings.reserve(parameter.forwardings.size());
       for (const HirCallableForwarding &forwarding : parameter.forwardings) {

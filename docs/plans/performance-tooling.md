@@ -1,5 +1,125 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## C-TIME-03: HTTP/JSON representation-admission latency (2026-10-07)
+
+Status: bounded compiler improvement; paired emission measurements and complete
+selected regression validation passed. Integration uses the agent-workflow PR
+lifecycle.
+
+The client is the edit/build loop for `examples/93-http-json-client.gti`, a
+real source-defined HTTP/JSON consumer rather than a padded synthetic program.
+The investigation measures GTI compiling GTI, not the host build of GTI itself.
+Both measured executables are Release/Ninja, AppleClang 21 with LLVM 22.1.8 on
+macOS arm64. The baseline is clean `52f27033`; the candidate is that same
+source plus the bounded production change in `cpp_mir_body_emitter.cpp`.
+The candidate was built before its checkpoint commit, so it is a recorded
+working-tree experiment, not exact-commit build provenance.
+
+Sampling found whole-body temporary receiver/argument searches for scalar
+values and repeated whole-program subscript-boundary searches for unrelated
+functions. The change moves necessary existing conditions ahead of those
+searches: direct borrowed temporary producers must be class values; a slot's
+candidate must have its exact source-value identity, class type and mutable
+access; terminal subscript boundaries can only select an existing GTI source
+subscript member with an owner and one parameter. Potential matches still run
+the complete original materialization, use, publication, activation, drop,
+failure-edge and subscript selection proofs. No verification is disabled,
+successful admission cached, MIR changed, or runtime check removed.
+
+### Paired measurements
+
+One warmup and five seeded (`20261007`), randomized/interleaved sequential
+pairs use the same source paths and standard-library files, a warm filesystem,
+and direct uncached `--emit-cpp` commands. Another agent paused its full test
+batch for the timing window. Reported wall and child CPU medians closely agree;
+subsequent full-build observations encountered a competing host compiler build
+and are explicitly separated below. Time thresholds are not CI gates.
+
+| Workload | GTI level | Baseline seconds | Candidate seconds | Change |
+| --- | --- | ---: | ---: | ---: |
+| HTTP/JSON client | O0 | 5.221 | 3.559 | 31.8% less time |
+| HTTP/JSON client | O2 | 11.092 | 9.288 | 16.3% less time |
+| Game update | O2 | 2.097 | 2.097 | unchanged |
+| Fixed-array scan | O0 | 1.002 | 1.002 | unchanged |
+| Vector loop | O2 | 0.365 | 0.370 | +5 ms; no demonstrated material change |
+
+All sixty emission outputs are byte-identical within their before/after pair,
+and stderr is identical. The HTTP rows demonstrate a workload-specific
+improvement, not a claim that every GTI compile or the entire test suite is
+32% faster. Project no-op cache hits are not measured. Remaining O2 latency
+requires separate profiling; neither these results nor native C++ resemblance
+justify weakening GTI proof or failure requirements.
+
+Five paired **full native builds**, after one warmup, also succeeded with
+C++23, `/usr/bin/clang++`, and progress/color disabled. HTTP O0 medians were
+6.245/4.770 s; game O2 medians were 2.343/2.300 s. A concurrent ten-job host
+build was detected during this batch, so these are contested supporting
+observations, **not uncontended full-build speedup evidence**. Generated C++
+remained byte-identical and both executable variants produced the same complete
+stdout/stderr and successful exit status. HTTP executes the offline recipe;
+no external HTTP request or credentials are used.
+
+Local raw commands, seeded order, individual wall/CPU samples, binary/source/
+stdlib SHA-256 identities, output files, diagnostics and the production diff
+are retained under `/private/tmp/gti-compile-performance-evidence/`:
+`paired/report.json` owns emission data and `full/report.json` owns the
+contested full-build data. `paired.py` is the adjacent local measurement runner;
+the earlier `paired-full*` directories preserve two failed harness attempts
+(output suffix and progress-duration comparison), not passing evidence.
+These temporary records are not durable CI storage. The checked-in workloads,
+existing `scripts/compile_time_compare.py`, production diff and structural
+regressions provide the repository reproduction inputs.
+
+The scalar aggregate preflight regression now mixes a 1,024-element aggregate
+with an unrelated owning `Token`'s read/mutable temporary receivers and a
+borrowed argument, while retaining malformed-aggregate rejection. The
+subscript-boundary regression checks ordinary and unresolved function targets
+alongside the genuinely selected mutable accessor. Existing lifecycle
+corruption and native runtime gates cover the applicable exact proofs; no
+assertion or timeout is weakened.
+
+### Integrity validation
+
+The fresh Release build passes 58 distinct relevant CTest gates: the selected
+57-gate compiler/MIR/backend/optimizer/stdlib/runtime/differential set and the
+independent `compile_time_harness`. The original concurrent 57-gate run passed
+55 and timed out in `optimizer_mutable_call_runtime` and `stdlib_surface`.
+Both subsequently passed complete serial reruns with their original timeouts
+and inputs unchanged (224.11 s and 786.45 s respectively). The standard-library
+gate covers all 143 cases; no modes or cases were skipped. Recorded owning
+source hashes bind those reruns to the same tested implementation.
+
+The emitter corpus and independent MIR/native corpus oracle pass; the latter
+reviews 118 runnable examples and 16,070 bodies across two endpoint
+configurations. Focused tests retain malformed representation/lifecycle
+rejection and native temporary-borrow behavior. All 453 registered C++ files
+pass the pinned clang-format 22 check, and release-version and whitespace checks
+pass. This is proportionate selected validation, not a claim that every
+repository test or every host platform was rerun. Evidence is macOS arm64;
+other host platforms remain CI/platform validation boundaries. `VERSION` stays
+unchanged because this preserves externally observable semantics and output.
+
+An additional O2 MIR-text comparison is not byte-identical: internal field
+symbol numbers vary. Repeating the **same baseline executable** reproduces
+that variation (874 differing lines, beginning with field-symbol metadata),
+so this is not evidence of a new semantic change from the emitter-only patch.
+The raw baseline, repeated-baseline and candidate MIR files are preserved
+beside the reports. Do not claim byte-identical MIR or normalize arbitrary
+IDs away as an independent equivalence proof. The admission/verifier,
+corruption, corpus and runtime gates own integrity evidence; all paired C++
+outputs remain byte-identical. Deterministic field-symbol registration needs
+its own regression and owning-layer investigation before MIR text is used as
+a cross-process cache/equality contract.
+
+Follow-on goal: reduce the remaining latency of optimized, library-heavy edit/
+build workflows. Prerequisite: attribute the current O2 cost on a stable,
+uncontended baseline. Candidate work is operation-local indexing of repeated
+immutable graph queries, with exact snapshot ownership and independent
+malformed-input rejection. Acceptance requires paired representative timings,
+unchanged diagnostics/IR/output where semantics are unchanged, and the owning
+regression gates. Persistent semantic caches or precompiled libraries require
+a separate identity/invalidation design and are not part of this slice.
+
 ## C-TIME-02: Chip8 aggregate-admission latency (2026-10-04)
 
 Status: bounded compiler improvement, original-project successful-cache

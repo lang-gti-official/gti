@@ -1,0 +1,21 @@
+#include <std/json>
+#include <std/vector>
+#include <std/string>
+
+// Reduced from Tea's token decoder: checked object lookup followed by an
+// accessor returning a range reference and a read-only element reference.
+int main() {
+  auto root = std::json::parse("{\"scopes\":[\"read\",\"write\"]}").expect("parse");
+  mut auto scopes = root.get("scopes");
+  if (!scopes) { return 1; }
+  mut std::vector<std::string> names{};
+  for (auto& item : scopes.value().elements()) {
+    mut auto text = item.as_string();
+    if (!text) { return 2; }
+    names.push_back(std::move(text).value());
+  }
+  if (names.size() != std::size_t(2)) { return 3; }
+  if (names[std::size_t(0)].view() != "read") { return 4; }
+  if (names[std::size_t(1)].view() != "write") { return 5; }
+  return 0;
+}

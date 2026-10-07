@@ -39,5 +39,6 @@ if(BUILD_TESTING)
             "$<TARGET_FILE:gti_source_loader_fuzzer>"
             "${CMAKE_CURRENT_SOURCE_DIR}/corpus"
   )
-  set_tests_properties(fuzzer_smoke PROPERTIES TIMEOUT 600)
+  set_tests_properties(fuzzer_smoke PROPERTIES TIMEOUT 600
+                      LABELS "coverage-full;end-to-end")
 endif()

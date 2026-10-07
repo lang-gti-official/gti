@@ -60,7 +60,13 @@ void printType(const NativeModel &model, NativeTypeId id, std::ostream &out) {
     out << "char";
     return;
   case NativeTypeKind::Integer:
+    if (type->scalarIdentity != NativeCScalarKind::None) {
+      out << nativeCScalarKindName(type->scalarIdentity) << '[';
+    }
     out << (type->isSigned ? "i" : "u") << type->bitWidth;
+    if (type->scalarIdentity != NativeCScalarKind::None) {
+      out << ']';
+    }
     return;
   case NativeTypeKind::Floating:
     out << 'f' << type->bitWidth;
