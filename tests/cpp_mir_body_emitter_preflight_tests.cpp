@@ -144,13 +144,32 @@ void testLargeScalarAggregateAdmission() {
   // A ROM-sized aggregate must not be mistaken for an owning Expected
   // extraction candidate at each scalar element. Keep this structural test
   // threshold-free; paired benchmark runs measure the admission cost.
-  std::string source = "int32_t main() { int32_t rom[1024] = {";
+  // Mix unrelated scalar values with real class temporary receivers and a
+  // borrowed argument. Necessary-type exclusions must not suppress an
+  // applicable materialization or its exact cleanup schedule.
+  std::string source = R"(
+class Token {
+  mut int32_t value;
+public:
+  Token(int32_t initial) : value(initial) {}
+  ~Token() {}
+  int32_t read() { return this.value; }
+  int32_t update() mut { this.value++; return this.value; }
+};
+int32_t observe(Token& token) { return token.read(); }
+int32_t main() { int32_t rom[1024] = {
+)";
   for (int index = 0; index < 1024; ++index) {
     if (index != 0)
       source += ",";
     source += std::to_string(index);
   }
-  source += "}; return rom[1023] - 1023; }";
+  source += R"(
+};
+  int32_t answer = Token(7).read() + Token(8).update() + observe(Token(9));
+  return rom[1023] - 1023 + answer - 25;
+}
+)";
   const auto frontend = analyze("large-scalar-aggregate.gti", source);
   expect(frontend.canGenerateCode(), "ROM-sized scalar aggregate must verify");
   if (!frontend.canGenerateCode())
@@ -4758,13 +4777,24 @@ int main() {
 
   const lang::CppMirBodyEmissionMap map(
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
+  expect(
+      !lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(frontend.mir, map,
+                                                         0) &&
+          !lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(
+              frontend.mir, map, frontend.mir.functionInstances().size() + 1),
+      "unresolved targets cannot require a subscript boundary");
   std::size_t selectedBoundaries = 0;
   std::size_t readOnlyInstances = 0;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
     if (!function.overloadedOperator ||
-        *function.overloadedOperator != lang::OverloadedOperator::Subscript)
+        *function.overloadedOperator != lang::OverloadedOperator::Subscript) {
+      expect(!lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(
+                 frontend.mir, map, function.id),
+             "ordinary functions cannot select a subscript boundary even "
+             "when other bodies use class-indexed places");
       continue;
+    }
     readOnlyInstances +=
         function.receiverMutability == lang::ReceiverMutability::ReadOnly;
     if (lang::cppMirNeedsTerminalSubscriptBoundaryWrapper(frontend.mir, map,
