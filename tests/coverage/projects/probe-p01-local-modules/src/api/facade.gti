@@ -1,0 +1,7 @@
+export module main;
+export import shapes;
+
+export namespace app {
+  int version() { return 7; }
+  int describe(int code) { return code * 10 + version(); }
+}

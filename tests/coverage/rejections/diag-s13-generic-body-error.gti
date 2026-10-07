@@ -1,0 +1,7 @@
+T twice<T>(T value) {
+  return value.doubled(); //!ERR
+}
+
+int main() {
+  return twice(3) - 6; //!ERR
+}

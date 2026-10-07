@@ -1,0 +1,65 @@
+// A class-owned type pack forwarding into std::function targets stored in a
+// vector, generic variadic invocation of lambdas / function items / nominal
+// callables.
+#include <std/functional>
+#include <std/vector>
+
+namespace ops {
+int32_t add3(int32_t a, int32_t b, int32_t c) { return a + b + c; }
+int32_t mul2(int32_t a, int32_t b) { return a * b; }
+}
+
+class Weighted {
+  int32_t weight;
+
+public:
+  Weighted(int32_t weight) : weight(weight) {}
+  int32_t operator()(int32_t a, int32_t b) { return a * this.weight + b; }
+};
+
+int32_t invoke_with<F, Args...>(F f, Args... args) {
+  return f(args...);
+}
+
+class Registry<Args...> {
+  mut std::vector<std::function<int32_t(Args...)>> handlers;
+
+public:
+  Registry() : handlers(std::vector<std::function<int32_t(Args...)>>()) {}
+  void add(std::function<int32_t(Args...)> handler) mut {
+    this.handlers.push_back(std::move(handler));
+  }
+  int32_t sum(Args... args) {
+    mut int32_t total = 0;
+    for (mut std::size_t i = 0; i < this.handlers.size(); i++) {
+      total += this.handlers[i](args...);
+    }
+    return total;
+  }
+  std::size_t size() { return this.handlers.size(); }
+};
+
+int main() {
+  // Workaround: binding the item first avoids the contextual-selection failure.
+  auto add3_item = ops::add3;
+  if (invoke_with(add3_item, 1, 2, 3) != 6) { return 1; }
+  if (invoke_with([](int32_t a, bool flip) -> int32_t { return flip ? -a : a; }, 7, true) != -7) { return 2; }
+  if (invoke_with([]() -> int32_t { return 11; }) != 11) { return 3; }
+  Weighted w = Weighted(10);
+  if (invoke_with(w, 4, 2) != 42) { return 4; }
+
+  mut Registry<int32_t, int32_t> registry = Registry<int32_t, int32_t>();
+  registry.add(std::function<int32_t(int32_t, int32_t)>(ops::mul2));
+  registry.add(std::function<int32_t(int32_t, int32_t)>(
+      [](int32_t a, int32_t b) -> int32_t { return a - b; }));
+  registry.add(std::function<int32_t(int32_t, int32_t)>(Weighted(2)));
+  // 3*4 + (3-4) + (3*2+4) = 12 - 1 + 10
+  int32_t total = registry.sum(3, 4);
+  std::println(total);
+  if (total != 21 || registry.size() != std::size_t(3)) { return 5; }
+
+  mut Registry<> nullary = Registry<>();
+  nullary.add(std::function<int32_t()>([]() -> int32_t { return 5; }));
+  if (nullary.sum() != 5) { return 6; }
+  return 0;
+}

@@ -1,0 +1,69 @@
+#include <std/string>
+#include <std/vector>
+#define APP_LOCAL
+#include <dep/feature>
+#include "config.gti"
+
+class Settings {
+public:
+  Settings() {}
+#ifdef FEATURE_B
+  int level() { return 2; }
+#else
+  int level() { return 1; }
+#endif
+};
+
+#if defined(FEATURE_A) && !defined(VERBOSE)
+constexpr int combo = 1;
+#elif defined(FEATURE_A)
+constexpr int combo = 2;
+#else
+constexpr int combo = 3;
+#endif
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::string mask{};
+#ifdef FEATURE_A
+  mask.append("A");
+#endif
+#ifdef FEATURE_B
+  mask.append("B");
+#endif
+#ifdef VERBOSE
+  mask.append("V");
+#endif
+#ifdef FROM_CONFIG
+  mask.append("C");
+#endif
+#ifdef DEP_DEFINED
+  mask.append("D");
+#endif
+  if (dep::saw_app_local) {
+    mask.append("L");
+  }
+  Settings settings{};
+  std::println(mask);
+  if (argc != 2) {
+    return 10;
+  }
+  if (!(argv[std::size_t(1)] == mask)) {
+    return 11;
+  }
+  if (combo != 1) {
+    return 12;
+  }
+  if (dep::feature_a_bonus() != 100) {
+    return 13;
+  }
+#ifdef FEATURE_B
+  if (settings.level() != 2) {
+    return 14;
+  }
+#else
+  if (settings.level() != 1) {
+    return 15;
+  }
+#endif
+  return 0;
+}

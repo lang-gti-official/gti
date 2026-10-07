@@ -1,0 +1,7 @@
+constexpr int limit = 10;
+mut constexpr int other = 3; //!ERR
+
+int main() {
+  limit = 11; //!ERR
+  return limit;
+}

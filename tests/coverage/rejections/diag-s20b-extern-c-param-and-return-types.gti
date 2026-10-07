@@ -1,0 +1,10 @@
+extern "C" {
+  int32_t takes_string(std::string text); //!ERR
+  bool flag_out(); //!ERR
+  int32_t takes_ref(int32_t& value); //!ERR
+  int32_t main(); //!ERR
+}
+
+int main() {
+  return 0;
+}

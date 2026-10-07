@@ -1,0 +1,16 @@
+#include <std/memory>
+
+struct Widget {
+  mut int v = 0;
+  Widget(int v) : v(v) {}
+  ~Widget() {}
+};
+
+int consume(std::unique_ptr<Widget> w) { return w->v; }
+
+int main() {
+  mut std::unique_ptr<Widget> w = std::make_unique<Widget>(3);
+  int a = consume(std::move(w));
+  int b = w->v; //!ERR
+  return a + b;
+}

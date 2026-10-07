@@ -1,0 +1,10 @@
+unsafe int32_t read_raw(const int32_t* p) {
+  unsafe {
+    return *p;
+  }
+}
+
+int main() {
+  int32_t r = read_raw(nullptr); //!ERR
+  return r;
+}

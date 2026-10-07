@@ -1,0 +1,40 @@
+manifest-version = 1
+
+[package]
+name = "p05-targets"
+version = "0.1.0"
+
+[targets.server]
+kind = "executable"
+root = "apps/server.gti"
+
+[targets.cli]
+kind = "executable"
+root = "apps/cli.gti"
+
+[targets.t_gamma]
+kind = "test"
+root = "tests/gamma.gti"
+
+[targets.t_beta]
+kind = "test"
+root = "tests/beta.gti"
+
+[targets.t_alpha]
+kind = "test"
+root = "tests/alpha.gti"
+
+[targets.t_epsilon]
+kind = "test"
+root = "tests/epsilon.gti"
+
+[targets.t_delta]
+kind = "test"
+root = "tests/delta.gti"
+
+[profiles.release]
+optimization = 2
+
+[targets.t_c_broken]
+kind = "test"
+root = "tests/broken.gti"

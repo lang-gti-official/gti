@@ -1,0 +1,28 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+mid = { path = "../mid" }
+
+[targets.transitive_package_decl]
+kind = "executable"
+root = "src/transitive_package_decl.gti"
+
+[targets.undeclared_alias]
+kind = "test"
+root = "src/undeclared_alias.gti"
+
+[targets.quoted_escape]
+kind = "test"
+root = "src/quoted_escape.gti"
+
+[targets.local_transitive]
+kind = "test"
+root = "src/local_transitive.gti"
+
+[targets.transitive_type]
+kind = "test"
+root = "src/transitive_type.gti"

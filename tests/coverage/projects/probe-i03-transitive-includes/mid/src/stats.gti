@@ -1,0 +1,6 @@
+#include <base/core>
+
+namespace mid::stats {
+  int quadruple(int value) { return base::core::twice(base::core::twice(value)); }
+  base::core::Box boxed(int value) { return base::core::Box(value); }
+}

@@ -1,0 +1,88 @@
+// `namespace a::b {}` shorthand combined with interfaces implemented across
+// sibling namespaces, reopening with both spellings, a shorthand nested inside
+// another namespace, namespace aliases, class static fields/methods reached by
+// qualified names, namespace-scoped aliases and same-named functions in
+// different namespaces.
+#include <std/format>
+#include <std/memory>
+
+namespace geo::shapes {
+interface Shape {
+  int32_t area();
+  int32_t id();
+};
+int32_t scale() { return 1; }
+}
+
+namespace geo::impl {
+class Square : public geo::shapes::Shape {
+  int32_t side;
+public:
+  static mut int32_t created = 0;
+  static int32_t sides() { return 4; }
+  Square(int32_t side) : side(side) { created += 1; }
+  int32_t area() override { return this.side * this.side; }
+  int32_t id() override { return 1; }
+};
+int32_t scale() { return 2; }
+}
+
+// Reopen geo::impl with nested spelling.
+namespace geo {
+namespace impl {
+class Rect : public shapes::Shape {
+  int32_t w;
+  int32_t h;
+public:
+  Rect(int32_t w, int32_t h) : w(w), h(h) {}
+  int32_t area() override { return this.w * this.h; }
+  int32_t id() override { return 2; }
+};
+}
+}
+
+// Shorthand nested inside another namespace.
+namespace outer {
+namespace deep::inner {
+using Number = int32_t;
+class Counter {
+public:
+  static mut Number hits = 0;
+  static Number bump(Number by) {
+    hits += by;
+    return hits;
+  }
+};
+}
+}
+
+namespace gi = geo::impl;
+namespace di = outer::deep::inner;
+
+int32_t total_area(geo::shapes::Shape& a, geo::shapes::Shape& b) {
+  return a.area() + b.area();
+}
+
+int main() {
+  gi::Square sq = gi::Square(3);
+  geo::impl::Rect r = geo::impl::Rect(2, 5);
+  if (total_area(sq, r) != 19) { return 1; }
+  if (gi::Square::created != 1 || geo::impl::Square::sides() != 4) { return 2; }
+
+  mut std::unique_ptr<geo::shapes::Shape> owned =
+      std::upcast_unique<geo::shapes::Shape, gi::Rect>(std::make_unique<gi::Rect>(4, 4));
+  if (owned->area() != 16 || owned->id() != 2) { return 3; }
+
+  if (geo::shapes::scale() + gi::scale() != 3) { return 4; }
+
+  di::Number n = di::Counter::bump(5);
+  [[discard]] outer::deep::inner::Counter::bump(2);
+  if (n != 5 || di::Counter::hits != 7 || outer::deep::inner::Counter::hits != 7) { return 5; }
+
+  gi::Square::created = 10;
+  gi::Square another = gi::Square(1);
+  if (geo::impl::Square::created != 11 || another.area() != 1) { return 6; }
+
+  std::println("namespaces ok {}", di::Counter::hits);
+  return 0;
+}

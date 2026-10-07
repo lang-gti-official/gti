@@ -1,0 +1,29 @@
+export module geo;
+#include "internal/storage.gti"
+
+namespace lib::geo {
+  export enum class Axis { x, y, z };
+
+  export struct Point {
+    int x;
+    int y;
+    Point(int a, int b) : x(a), y(b) {}
+    int manhattan() { return x + y; }
+  };
+
+  int axis_weight(Axis axis) {
+    switch (axis) {
+      case Axis::x:
+        return 1;
+      case Axis::y:
+        return 2;
+      case Axis::z:
+        return 3;
+    }
+    return 0;
+  }
+
+  export int weighted(Point& p, Axis axis) {
+    return lib::internal::stored_twice(p.manhattan()) * axis_weight(axis);
+  }
+}

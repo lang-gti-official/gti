@@ -1,0 +1,4 @@
+int main() {
+  double d = 1.5e3; //!ERR
+  return d > 1.0d ? 0 : 1;
+}

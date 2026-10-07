@@ -1,0 +1,19 @@
+// Invalid: an unsafe member of a generic class called without lexical unsafe,
+// once directly and once through a concept that omits the unsafe effect.
+class Slot<T> {
+  T* at = nullptr;
+public:
+  Slot(T* at) : at(at) {}
+  unsafe T load() { unsafe { return *this.at; } }
+};
+
+concept loads<S, T> = requires(S& slot) { { slot.load() } -> T; };
+
+T fetch<S, T>(S& slot) requires loads<S, T> { return slot.load(); }
+
+int main() {
+  mut int64_t value = 5;
+  Slot<int64_t> slot{&value};
+  int64_t direct = slot.load();
+  return int32_t(direct + fetch<Slot<int64_t>, int64_t>(slot));
+}

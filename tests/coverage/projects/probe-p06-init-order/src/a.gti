@@ -1,0 +1,3 @@
+#include "log.gti"
+
+int a_value = trace::record(1);

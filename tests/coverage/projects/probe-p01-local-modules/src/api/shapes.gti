@@ -1,0 +1,36 @@
+export module shapes;
+import util;
+
+namespace geo::shapes {
+  export concept has_area<T> = requires(T& item) { { item.area() } -> int; };
+
+  // Private nominal type: reachable only through exported results.
+  struct Extent {
+    int w;
+    int h;
+    Extent(int a, int b) : w(a), h(b) {}
+    int area() { return w * h; }
+  };
+
+  // Private global initialized from a privately imported module.
+  int scale = util::factor();
+
+  export class Rect {
+    int width;
+    int height;
+
+  public:
+    Rect(int w, int h) : width(w), height(h) {}
+    int area() { return width * height * scale; }
+    Extent extent() { return Extent(width, height); }
+  };
+
+  export Extent make_extent(int w, int h) { return Extent(w, h); }
+
+  export int total_area<T>(T& a, T& b) requires has_area<T> {
+    return a.area() + b.area();
+  }
+
+  int hidden_bias() { return 100; }
+  export int biased(int value) { return value + hidden_bias(); }
+}

@@ -1,0 +1,54 @@
+export module main;
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+namespace plugins {
+  export interface Plugin {
+    int run(int input) mut;
+    std::string name();
+  };
+
+  export enum class LookupError { missing, empty };
+
+  export class Registry {
+    mut std::vector<std::unique_ptr<Plugin>> entries =
+        std::vector<std::unique_ptr<Plugin>>();
+    mut int runs = 0;
+
+  public:
+    Registry() {}
+    Registry(Registry& other) = delete;
+
+    void add(mut std::unique_ptr<Plugin> plugin) mut {
+      this.entries.push_back(std::move(plugin));
+    }
+
+    uint64_t size() { return this.entries.size(); }
+
+    expected<int, LookupError> run_named(std::string_view wanted, int input) mut {
+      if (this.entries.size() == uint64_t(0)) {
+        return unexpected(LookupError::empty);
+      }
+      for (mut uint64_t i = 0; i < this.entries.size(); i++) {
+        std::string current = this.entries[i]->name();
+        if (current == wanted) {
+          this.runs++;
+          return this.entries[i]->run(input);
+        }
+      }
+      return unexpected(LookupError::missing);
+    }
+
+    int run_all(int input) mut {
+      mut int value = input;
+      for (mut uint64_t i = 0; i < this.entries.size(); i++) {
+        value = this.entries[i]->run(value);
+      }
+      this.runs = this.runs + int(this.entries.size());
+      return value;
+    }
+
+    int total_runs() { return this.runs; }
+  };
+}

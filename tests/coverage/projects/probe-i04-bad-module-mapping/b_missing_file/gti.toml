@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "b_missing_file"
+version = "0.1.0"
+
+[modules]
+geo = "src/missing.gti"
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

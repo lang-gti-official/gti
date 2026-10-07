@@ -1,0 +1,92 @@
+// std::map<std::string, std::unique_ptr<Widget>> held in a class field:
+// insert of fresh owners, mutable access through at()->, read-only
+// traversal, extraction via std::exchange on a mapped value, erase, and
+// moving the whole registry.
+#include <std/map>
+#include <std/memory>
+#include <std/string>
+#include <std/utility>
+
+mut int g_released = 0;
+
+class Widget {
+  std::string label_;
+  mut int clicks_ = 0;
+
+public:
+  Widget(std::string_view label) : label_(std::string(label)) {}
+  ~Widget() { g_released += 1; }
+  void click() mut { this.clicks_ += 1; }
+  int clicks() { return this.clicks_; }
+  std::string_view label() { return this.label_.view(); }
+};
+
+class Registry {
+  mut std::map<std::string, std::unique_ptr<Widget>> widgets_{};
+
+public:
+  Registry() {}
+  bool add(std::string_view name) mut {
+    auto result = this.widgets_.insert(std::string(name),
+                                       std::make_unique<Widget>(name));
+    return result.second;
+  }
+  void click(std::string_view name, int times) mut {
+    std::string key = std::string(name);
+    for (mut int i = 0; i < times; i += 1) {
+      this.widgets_.at(key)->click();
+    }
+  }
+  int clicks(std::string_view name) {
+    std::string key = std::string(name);
+    if (!this.widgets_.contains(key)) { return -1; }
+    return this.widgets_.at(key)->clicks();
+  }
+  int total() {
+    mut int sum = 0;
+    for (auto& entry : this.widgets_) {
+      // Workaround: `entry.second->clicks()` ICEs (see red/c16.gti).
+      std::unique_ptr<Widget>& owner = entry.second;
+      sum += owner->clicks();
+    }
+    return sum;
+  }
+  std::size_t size() { return this.widgets_.size(); }
+  std::unique_ptr<Widget> detach(std::string_view name) mut {
+    std::string key = std::string(name);
+    std::unique_ptr<Widget> empty = nullptr;
+    std::unique_ptr<Widget> owner = std::exchange(this.widgets_.at(key),
+                                                  std::move(empty));
+    [[discard]] this.widgets_.erase(key);
+    return owner;
+  }
+};
+
+int main() {
+  mut Registry registry{};
+  if (!registry.add("ok") || !registry.add("cancel") || !registry.add("help")) {
+    return 1;
+  }
+  if (registry.add("ok")) { return 2; }
+  // The duplicate insert's fresh owner is released when the insert fails.
+  if (g_released != 1) { return 3; }
+  registry.click("ok", 3);
+  registry.click("help", 2);
+  if (registry.total() != 5 || registry.clicks("ok") != 3) { return 4; }
+
+  mut Registry moved = std::move(registry);
+  std::unique_ptr<Widget> help = moved.detach("help");
+  if (moved.size() != std::size_t(2) || moved.clicks("help") != -1) { return 5; }
+  if (!help || help->clicks() != 2 || help->label() != "help") { return 6; }
+  if (g_released != 1) { return 7; }
+  if (moved.total() != 3) { return 8; }
+  {
+    Registry last = std::move(moved);
+    if (last.size() != std::size_t(2)) { return 9; }
+  }
+  // Both remaining widgets were released with the map.
+  if (g_released != 3) { return 10; }
+  std::println(help->label());
+  std::println("v02 ok");
+  return 0;
+}

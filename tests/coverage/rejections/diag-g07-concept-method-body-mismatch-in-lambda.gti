@@ -1,0 +1,15 @@
+concept scorer<T> = requires(T& s) { { s.score() } -> int; };
+
+int total<scorer T>(T& item) {
+  auto doubled = [](int v) -> int { return v * 2; };
+  return doubled(item.score(), 1); //!ERR
+}
+
+struct Item {
+  int score() { return 3; }
+};
+
+int main() {
+  Item i{};
+  return total(i) - 6;
+}

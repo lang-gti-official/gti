@@ -1,0 +1,8 @@
+int value() { return 1; }
+#else //!ERR
+int other() { return 2; }
+#endif //!ERR
+
+int main() {
+  return value() - 1;
+}

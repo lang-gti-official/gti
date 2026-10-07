@@ -1,5 +1,311 @@
 {
   "programs": {
+    "c114_memory_storage_relocate_ring": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "relocation ring ok: 4\n"
+        }
+      ]
+    },
+    "c115_memory_relocate_state_failures": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
+        },
+        {
+          "args": [
+            "a"
+          ],
+          "exit": 70,
+          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stdout": "source 1\nsource 0\nouter guard\n"
+        },
+        {
+          "args": [
+            "a",
+            "b"
+          ],
+          "exit": 70,
+          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
+        }
+      ]
+    },
+    "c116_memory_slot_state_failures": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "<std/memory>:268: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stdout": "construct 0\ndrop 0\n"
+        },
+        {
+          "args": [
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "<std/memory>:268: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stdout": "construct 0\ndrop 0\n"
+        },
+        {
+          "args": [
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "<std/memory>:425: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
+        },
+        {
+          "args": [
+            "x",
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "<std/memory>:275: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
+        }
+      ]
+    },
+    "c117_memory_custom_bump_resource": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "bump resource ok\n"
+        }
+      ]
+    },
+    "c118_memory_resource_growth_panic": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "<std/resource_vector>:87: runtime error\\[GTI-R0017\\]: panic: \"resource_vector\\ could\\ not\\ grow\"\\n",
+          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 1\ndrop 100\ndrop 200\n"
+        }
+      ]
+    },
+    "c119_memory_unsafe_generic_cursor": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "unsafe cursor ok\n"
+        }
+      ]
+    },
+    "c120_memory_ftw_callback_opaque": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "ftw callback ok\n"
+        }
+      ]
+    },
+    "c121_memory_callback_failure_boundary": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "c121_memory_callback_failure_boundary\\.gti:35: runtime error\\[GTI-R0001\\]: integer_overflow in multiplication\\n",
+          "stdout": "walking\ncallback local dropped\ncallback local dropped\ncallback local dropped\n"
+        },
+        {
+          "args": [
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c121_memory_callback_failure_boundary\\.gti:38: runtime error\\[GTI-R0017\\]: panic: \"visit\\ 3\\ failed\"\\n",
+          "stdout": "walking\ncallback local dropped\ncallback local dropped\ncallback local dropped\n"
+        }
+      ]
+    },
+    "c122_memory_checked_ops_in_unsafe": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:42: runtime error\\[GTI-R0001\\]: integer_overflow in multiplication\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:43: runtime error\\[GTI-R0006\\]: numeric_conversion_out_of_range in numeric_cast\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:48: runtime error\\[GTI-R0007\\]: index_out_of_bounds in fixed_array\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x",
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:50: runtime error\\[GTI-R0005\\]: shift_count_out_of_range in left_shift\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x",
+            "x",
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:51: runtime error\\[GTI-R0002\\]: division_by_zero in integer_division\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x",
+            "x",
+            "x",
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:52: runtime error\\[GTI-R0003\\]: modulo_by_zero in integer_modulo\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:53: runtime error\\[GTI-R0001\\]: integer_overflow in negation\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:58: runtime error\\[GTI-R0007\\]: index_out_of_bounds in fixed_array\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        }
+      ]
+    },
+    "c123_memory_expected_wrong_state_alloc": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "c123_memory_expected_wrong_state_alloc\\.gti:35: runtime error\\[GTI-R0009\\]: invalid_expected_access in value_on_error\\n",
+          "stdout": "item 4\nitem 3\nitem 2\nitem 1\n"
+        },
+        {
+          "args": [
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c123_memory_expected_wrong_state_alloc\\.gti:39: runtime error\\[GTI-R0009\\]: invalid_expected_access in error_on_value\\n",
+          "stdout": "item 4\nitem 3\nitem 2\nitem 1\n"
+        }
+      ]
+    },
+    "c124_memory_recoverable_allocation_matrix": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "recoverable allocation ok\n"
+        }
+      ]
+    },
+    "c125_memory_storage_destructor_failures": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "c125_memory_storage_destructor_failures\\.gti:23:\\ runtime\\ error\\[GTI\\-R0014\\]:\\ failure_during_cleanup;\\ primary\\ \\[GTI\\-R0001\\]\\ at\\ c125_memory_storage_destructor_failures\\.gti:41;\\ secondary\\ \\[GTI\\-R0017\\]\\ message=\"fragile\\ 2\\ failed\"\\\n",
+          "stdout": "drop 3\n"
+        },
+        {
+          "args": [
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c125_memory_storage_destructor_failures\\.gti:23: runtime error\\[GTI-R0017\\]: panic: \"fragile\\ 2\\ failed\"\\n",
+          "stdout": "drop 3\ndrop 1\ndrop 9\n"
+        },
+        {
+          "args": [
+            "x",
+            "y"
+          ],
+          "exit": 70,
+          "stderr": "c125_memory_storage_destructor_failures\\.gti:23:\\ runtime\\ error\\[GTI\\-R0014\\]:\\ failure_during_cleanup;\\ primary\\ \\[GTI\\-R0017\\]\\ at\\ c125_memory_storage_destructor_failures\\.gti:23\\ message=\"fragile\\ 2\\ failed\";\\ secondary\\ \\[GTI\\-R0017\\]\\ message=\"fragile\\ 2\\ failed\"\\\n",
+          "stdout": "drop 7\ndrop 3\n"
+        }
+      ]
+    },
+    "c126_memory_simd_in_typed_storage": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "simd storage ok\n"
+        }
+      ]
+    },
+    "c127_memory_native_records_dir_handle": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "native records and handles ok\n"
+        }
+      ]
+    },
+    "c128_memory_empty_owner_resource_cleanup": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "<std/memory>:161: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+        },
+        {
+          "args": [
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "<std/memory>:169: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+        }
+      ]
+    },
+    "c129_memory_witness_borrow_storage": {
+      "cases": [
+        {
+          "exit": 0,
+          "stderr": "",
+          "stdout": "witness borrow ok\n"
+        }
+      ]
+    },
     "c52_higher_order_lambdas": {
       "code": "GTI-S2015",
       "finding": "F14",
@@ -32,9 +338,1301 @@
       "finding": "A04",
       "issue": 56,
       "outcome": "wrong-result"
+    },
+    "probe-i01-import-cycle": {
+      "steps": [
+        {
+          "command": [
+            "check",
+            "named"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-I0001\\]"
+        },
+        {
+          "command": [
+            "check",
+            "selfimport"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-I0001\\]"
+        }
+      ]
+    },
+    "probe-i02-hidden-names": {
+      "steps": [
+        {
+          "command": [
+            "check",
+            "leaked_alias"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check",
+            "include_bypass"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check",
+            "private_overload"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-S2005\\]"
+        },
+        {
+          "command": [
+            "check",
+            "transitive_dependency_module"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check",
+            "private_function"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-S2024\\]"
+        },
+        {
+          "command": [
+            "check",
+            "private_type"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-S2024\\]"
+        },
+        {
+          "command": [
+            "check",
+            "private_import"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-S2024\\]"
+        }
+      ]
+    },
+    "probe-i03-transitive-includes": {
+      "steps": [
+        {
+          "command": [
+            "check",
+            "transitive_package_decl"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-S2024\\]"
+        },
+        {
+          "command": [
+            "check",
+            "undeclared_alias"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0010\\]"
+        },
+        {
+          "command": [
+            "check",
+            "quoted_escape"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0010\\]"
+        },
+        {
+          "command": [
+            "check",
+            "local_transitive"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-S2024\\]"
+        },
+        {
+          "command": [
+            "check",
+            "transitive_type"
+          ],
+          "cwd": "app",
+          "exit": 65,
+          "pattern": "error\\[GTI-S2024\\]"
+        }
+      ]
+    },
+    "probe-i04-bad-module-mapping": {
+      "steps": [
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "a_name_mismatch",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "b_missing_file",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1103\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "c_reserved_name",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1005\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "d_legacy_unit",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "e_not_gti",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1103\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "f_duplicate_file",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1005\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "g_escape",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1104\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "h_same_name_two_files",
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "i_case_collision",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1005\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "j_dotted_name",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1005\\]"
+        }
+      ]
+    },
+    "probe-i05-duplicate-symbols": {
+      "steps": [
+        {
+          "command": [
+            "check",
+            "dup_function"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2011\\]"
+        },
+        {
+          "command": [
+            "check",
+            "dup_private_type"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2006\\]"
+        },
+        {
+          "command": [
+            "check",
+            "main_in_include"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2025\\]"
+        },
+        {
+          "command": [
+            "check",
+            "dup_global"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2006\\]"
+        },
+        {
+          "command": [
+            "check",
+            "dup_class"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2006\\]"
+        },
+        {
+          "command": [
+            "check",
+            "hidden_dup"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2011\\]"
+        }
+      ]
+    },
+    "probe-i06-init-order": {
+      "steps": [
+        {
+          "command": [
+            "check",
+            "same_unit"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2068\\]"
+        },
+        {
+          "command": [
+            "check",
+            "generic_cross_unit"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2068\\]"
+        },
+        {
+          "command": [
+            "check",
+            "static_field_forward"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2068\\]"
+        },
+        {
+          "command": [
+            "check",
+            "module_forward"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2068\\]"
+        },
+        {
+          "command": [
+            "check",
+            "interface_dispatch"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2068\\]"
+        }
+      ]
+    },
+    "probe-i07-config-errors": {
+      "steps": [
+        {
+          "command": [
+            "check",
+            "shared_flags"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check",
+            "include_in_conditional"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-I0004\\]"
+        },
+        {
+          "command": [
+            "check",
+            "import_in_conditional"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-I0012\\]"
+        },
+        {
+          "command": [
+            "check",
+            "error_directive"
+          ],
+          "exit": 65,
+          "pattern": "error\\[GTI-S2047\\]"
+        },
+        {
+          "command": [
+            "check"
+          ],
+          "cwd": "badmanifest",
+          "exit": 65,
+          "pattern": "error\\[GTI-B1005\\]"
+        }
+      ]
+    },
+    "probe-p01-local-modules": {
+      "steps": [
+        {
+          "command": [
+            "check"
+          ],
+          "exit": 0
+        },
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "p01 local modules ok"
+        },
+        {
+          "command": [
+            "run",
+            "--release"
+          ],
+          "exit": 0,
+          "pattern": "p01 local modules ok"
+        }
+      ]
+    },
+    "probe-p02-path-deps": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "p02 path dependencies ok"
+        },
+        {
+          "command": [
+            "test"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "1 passed"
+        }
+      ]
+    },
+    "probe-p03-dep-modules": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "p03 dependency modules ok"
+        },
+        {
+          "command": [
+            "run",
+            "--release"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "p03 dependency modules ok"
+        }
+      ]
+    },
+    "probe-p04-defines": {
+      "steps": [
+        {
+          "command": [
+            "run",
+            "--",
+            "ACDL"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "^ACDL"
+        },
+        {
+          "command": [
+            "run",
+            "-D",
+            "FEATURE_B",
+            "--",
+            "ABCDL"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "^ABCDL"
+        },
+        {
+          "command": [
+            "run",
+            "-D",
+            "VERBOSE",
+            "-D",
+            "FEATURE_B",
+            "--",
+            "ABCDL"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "^ABCDL"
+        },
+        {
+          "command": [
+            "run",
+            "--",
+            "ACDL"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "^ACDL"
+        }
+      ]
+    },
+    "probe-p05-targets": {
+      "steps": [
+        {
+          "command": [
+            "test"
+          ],
+          "exit": 3,
+          "pattern": "2 passed, 3 failed"
+        },
+        {
+          "command": [
+            "test",
+            "t_gamma"
+          ],
+          "exit": 70,
+          "pattern": "GTI-R0007"
+        },
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 65,
+          "pattern": "GTI-B1201"
+        },
+        {
+          "command": [
+            "run",
+            "cli",
+            "--",
+            "ab",
+            "cde",
+            ""
+          ],
+          "exit": 0,
+          "pattern": "cli items"
+        },
+        {
+          "command": [
+            "run",
+            "t_beta"
+          ],
+          "exit": 64,
+          "pattern": "use gti test t_beta"
+        },
+        {
+          "command": [
+            "build",
+            "--all",
+            "--jobs",
+            "3"
+          ],
+          "exit": 0,
+          "pattern": "Built 7 targets"
+        },
+        {
+          "command": [
+            "check",
+            "t_beta"
+          ],
+          "exit": 0
+        }
+      ]
+    },
+    "probe-p05b-test-build-failure": {
+      "steps": [
+        {
+          "command": [
+            "test"
+          ],
+          "exit": 65,
+          "pattern": "GTI-S2001"
+        }
+      ]
+    },
+    "probe-p06-init-order": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "sequence"
+        },
+        {
+          "command": [
+            "run",
+            "--release"
+          ],
+          "exit": 0,
+          "pattern": "sequence"
+        },
+        {
+          "command": [
+            "test"
+          ],
+          "exit": 0,
+          "pattern": "1 passed"
+        }
+      ]
+    },
+    "probe-p07-module-init-args": {
+      "steps": [
+        {
+          "command": [
+            "run",
+            "--",
+            "",
+            "two words",
+            "--",
+            "-DX",
+            "--release"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "p07 module init"
+        }
+      ]
+    },
+    "probe-p08-workspace": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "suite ok"
+        },
+        {
+          "command": [
+            "run",
+            "--package",
+            "tool"
+          ],
+          "exit": 0,
+          "pattern": "tool ok"
+        },
+        {
+          "command": [
+            "test",
+            "--package",
+            "tool"
+          ],
+          "exit": 0,
+          "pattern": "1 passed"
+        },
+        {
+          "command": [
+            "check",
+            "--package",
+            "core"
+          ],
+          "exit": 65,
+          "pattern": "GTI-B1201"
+        },
+        {
+          "command": [
+            "run",
+            "suite",
+            "--release"
+          ],
+          "cwd": "packages/tool",
+          "exit": 0,
+          "pattern": "tool ok"
+        }
+      ]
+    },
+    "probe-p09-namespaces": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "p09 namespaces ok"
+        }
+      ]
+    },
+    "probe-p10-module-surface": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "p10 module surface ok"
+        },
+        {
+          "command": [
+            "test"
+          ],
+          "exit": 0,
+          "pattern": "1 passed"
+        }
+      ]
+    },
+    "probe-p11-module-config": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "p11 module configuration ok"
+        },
+        {
+          "command": [
+            "run",
+            "-D",
+            "EXTRA"
+          ],
+          "exit": 0,
+          "pattern": "(EXTRA)"
+        }
+      ]
+    },
+    "probe-p12-exported-state": {
+      "steps": [
+        {
+          "command": [
+            "test",
+            "--release"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "1 passed"
+        }
+      ]
+    },
+    "probe-p14-init-failure": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "main reached"
+        },
+        {
+          "command": [
+            "test",
+            "-D",
+            "OVERFLOW_AT_STARTUP"
+          ],
+          "cwd": "app",
+          "exit": 70,
+          "pattern": "GTI-R0001"
+        }
+      ]
+    },
+    "probe-p15-private-defaults": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "p15 private defaults ok"
+        }
+      ]
+    },
+    "probe-p16-module-diamond": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "p16 module diamond ok"
+        }
+      ]
+    },
+    "probe-p17-internal-linkage": {
+      "steps": [
+        {
+          "command": [
+            "run"
+          ],
+          "exit": 0,
+          "pattern": "p17 internal linkage ok"
+        }
+      ]
+    },
+    "probe-p18-plugin-registry": {
+      "steps": [
+        {
+          "command": [
+            "run",
+            "--release"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "p18 plugin registry ok"
+        },
+        {
+          "command": [
+            "test"
+          ],
+          "cwd": "app",
+          "exit": 0,
+          "pattern": "1 passed"
+        }
+      ]
     }
   },
-  "rejections": {},
+  "rejections": {
+    "cls-i01-missing-override": {
+      "code": "GTI-S2042",
+      "outcome": "rejected"
+    },
+    "cls-i02-nonexhaustive-payload-switch": {
+      "code": "GTI-S2067",
+      "outcome": "rejected"
+    },
+    "cls-i03-ambiguous-operator": {
+      "code": "GTI-S2022",
+      "outcome": "rejected"
+    },
+    "cls-i04a-designated-order": {
+      "code": "GTI-S2091",
+      "outcome": "rejected"
+    },
+    "cls-i04b-designated-unknown-and-dup": {
+      "code": "GTI-S2091",
+      "outcome": "rejected"
+    },
+    "cls-i04c-designated-missing-required": {
+      "code": "GTI-S2091",
+      "outcome": "rejected"
+    },
+    "cls-i04d-designated-on-class-with-ctor": {
+      "code": "GTI-S2091",
+      "outcome": "rejected"
+    },
+    "cls-i05-override-receiver-mismatch": {
+      "code": "GTI-S2042",
+      "outcome": "rejected"
+    },
+    "cls-i06-abstract-construct": {
+      "code": "GTI-S2044",
+      "outcome": "rejected"
+    },
+    "cls-i07-slicing": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "cls-i08-compound-operator-returns-value": {
+      "code": "GTI-S2022",
+      "outcome": "rejected"
+    },
+    "cls-i09-namespace-alias-path": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "cls-i10-duplicate-payload-case": {
+      "code": "GTI-S2067",
+      "outcome": "rejected"
+    },
+    "cls-i11-payload-value-binding-moveonly": {
+      "code": "GTI-S2067",
+      "outcome": "rejected"
+    },
+    "cls-i12-static-member-object-access": {
+      "code": "GTI-S2039",
+      "outcome": "rejected"
+    },
+    "diag-c01-else-without-if": {
+      "code": "GTI-I0002",
+      "outcome": "rejected"
+    },
+    "diag-c02-unterminated-if": {
+      "code": "GTI-I0003",
+      "outcome": "rejected"
+    },
+    "diag-c03-ifdef-without-name": {
+      "code": "GTI-L0012",
+      "outcome": "rejected"
+    },
+    "diag-c04-include-inside-conditional": {
+      "code": "GTI-I0004",
+      "outcome": "rejected"
+    },
+    "diag-c05-syntax-error-in-inactive-branch": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-c06-type-error-after-long-inactive-branch": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "diag-c08-elif-after-else": {
+      "code": "GTI-I0002",
+      "outcome": "rejected"
+    },
+    "diag-c09-error-directive-selected": {
+      "code": "GTI-S2047",
+      "outcome": "rejected"
+    },
+    "diag-c10-unknown-directive": {
+      "code": "GTI-L0003",
+      "outcome": "rejected"
+    },
+    "diag-c11-conditional-inside-class-unbalanced": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-g01-nested-generic-lambda-instantiation": {
+      "code": "GTI-S2026",
+      "outcome": "rejected"
+    },
+    "diag-g03-lambda-copy-capture-move-only": {
+      "code": "GTI-S2027",
+      "outcome": "rejected"
+    },
+    "diag-g05-constexpr-infinite-recursion": {
+      "code": "GTI-S2057",
+      "outcome": "rejected"
+    },
+    "diag-g06-generic-static-assert-on-instance": {
+      "code": "GTI-S2079",
+      "outcome": "rejected"
+    },
+    "diag-g07-concept-method-body-mismatch-in-lambda": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "diag-l01-unterminated-string": {
+      "code": "GTI-L0004",
+      "outcome": "rejected"
+    },
+    "diag-l02-unterminated-block-comment": {
+      "code": "GTI-L0011",
+      "outcome": "rejected"
+    },
+    "diag-l03-bad-hex-literal": {
+      "code": "GTI-L0007",
+      "outcome": "rejected"
+    },
+    "diag-l04-bad-binary-literal": {
+      "code": "GTI-L0007",
+      "outcome": "rejected"
+    },
+    "diag-l05-trailing-dot-float": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-l06-exponent-float": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-l07-float-overflow": {
+      "code": "GTI-L0006",
+      "outcome": "rejected"
+    },
+    "diag-l08-integer-overflow": {
+      "code": "GTI-L0007",
+      "outcome": "rejected"
+    },
+    "diag-l09-stray-characters": {
+      "code": "GTI-L0002",
+      "outcome": "rejected"
+    },
+    "diag-l10-non-ascii-identifier": {
+      "code": "GTI-L0015",
+      "outcome": "rejected"
+    },
+    "diag-l11-bad-char-literals": {
+      "code": "GTI-L0010",
+      "outcome": "rejected"
+    },
+    "diag-l12-lone-carriage-return": {
+      "code": "GTI-L0014",
+      "outcome": "rejected"
+    },
+    "diag-l13-invalid-utf8": {
+      "code": "GTI-L0013",
+      "outcome": "rejected"
+    },
+    "diag-l14-bom-in-middle": {
+      "code": "GTI-L0015",
+      "outcome": "rejected"
+    },
+    "diag-l15-reserved-identifiers": {
+      "code": "GTI-L0008",
+      "outcome": "rejected"
+    },
+    "diag-l16-at-sign": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-l17-cpp-keyword-identifier": {
+      "code": "GTI-P0002",
+      "outcome": "rejected"
+    },
+    "diag-l18-backtick": {
+      "code": "GTI-L0002",
+      "outcome": "rejected"
+    },
+    "diag-p01-missing-semicolon-recovery": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p02-missing-close-brace-eof": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p03-malformed-params": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p04-two-errors-recovery": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p05-class-missing-semicolon": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p06-unclosed-generic-params": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p07-else-without-if": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p08-if-without-parens": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p09-misplaced-attributes": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p10-unknown-attribute": {
+      "code": "GTI-P0001",
+      "finding": "A07",
+      "issue": 58,
+      "outcome": "rejected"
+    },
+    "diag-p11-unclosed-attribute": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p12-error-then-much-valid-code": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p13-brace-init-after-equals": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p14-namespace-unclosed-then-eof": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-p15-two-syntax-errors-recovery": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-s01-return-type-mismatch": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "diag-s03-wrong-arity": {
+      "code": "GTI-S2005",
+      "outcome": "rejected"
+    },
+    "diag-s04-access-violation": {
+      "code": "GTI-S2007",
+      "outcome": "rejected"
+    },
+    "diag-s05-mutability-misuse": {
+      "code": "GTI-S2002",
+      "outcome": "rejected"
+    },
+    "diag-s06-constexpr-misuse": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-s06b-assign-constexpr-global": {
+      "code": "GTI-S2002",
+      "outcome": "rejected"
+    },
+    "diag-s07-use-after-move": {
+      "code": "GTI-S2018",
+      "outcome": "rejected"
+    },
+    "diag-s08-conditional-and-loop-move": {
+      "code": "GTI-S2018",
+      "outcome": "rejected"
+    },
+    "diag-s09-dangling-reference": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "diag-s10-borrow-conflict": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "diag-s11-concept-not-satisfied": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "diag-s13-generic-body-error": {
+      "code": "GTI-S2000",
+      "outcome": "rejected"
+    },
+    "diag-s14-generic-class-instantiation-error": {
+      "code": "GTI-S2004",
+      "outcome": "rejected"
+    },
+    "diag-s15-lambda-body-error": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "diag-s16-lambda-capture-and-arity": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-s16b-lambda-arity-and-capture-mutation": {
+      "code": "GTI-S2005",
+      "outcome": "rejected"
+    },
+    "diag-s17-lambda-into-generic-mismatch": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "diag-s18-unsafe-operations-outside-unsafe": {
+      "code": "GTI-S2055",
+      "outcome": "rejected"
+    },
+    "diag-s19-unsafe-function-call": {
+      "code": "GTI-S2055",
+      "outcome": "rejected"
+    },
+    "diag-s20-extern-c-declarations": {
+      "code": "GTI-P0001",
+      "outcome": "rejected"
+    },
+    "diag-s20b-extern-c-param-and-return-types": {
+      "code": "GTI-S2011",
+      "outcome": "rejected"
+    },
+    "diag-s22-extern-c-pointer-call-outside-unsafe": {
+      "code": "GTI-S2055",
+      "outcome": "rejected"
+    },
+    "diag-s23-switch-issues": {
+      "code": "GTI-S2037",
+      "outcome": "rejected"
+    },
+    "diag-s24-missing-return": {
+      "code": "GTI-S2031",
+      "outcome": "rejected"
+    },
+    "diag-s25-literal-range-and-narrowing": {
+      "code": "GTI-S2003",
+      "outcome": "rejected"
+    },
+    "diag-s27-interface-incomplete": {
+      "code": "GTI-S2044",
+      "outcome": "rejected"
+    },
+    "diag-s28-duplicate-definitions": {
+      "code": "GTI-S2011",
+      "outcome": "rejected"
+    },
+    "diag-s29-propagation-misuse": {
+      "code": "GTI-S2086",
+      "outcome": "rejected"
+    },
+    "diag-s30-recursive-value-type": {
+      "code": "GTI-S2082",
+      "outcome": "rejected"
+    },
+    "diag-s31-constexpr-and-static-assert": {
+      "code": "GTI-S2079",
+      "outcome": "rejected"
+    },
+    "diag-s32-discarded-result": {
+      "code": "GTI-S2009",
+      "outcome": "rejected"
+    },
+    "diag-s33-main-only-in-namespace": {
+      "code": "GTI-S2094",
+      "outcome": "rejected"
+    },
+    "diag-s35-move-capture-then-use": {
+      "code": "GTI-S2018",
+      "outcome": "rejected"
+    },
+    "diag-s36-class-concept-not-satisfied": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "diag-s37-ternary-and-condition-types": {
+      "code": "GTI-S2050",
+      "outcome": "rejected"
+    },
+    "diag-s38-virtual-and-operator-misuse": {
+      "code": "GTI-S2022",
+      "outcome": "rejected"
+    },
+    "gen-i01-unsatisfied-member-concept": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "gen-i02-runtime-value-in-constant-context": {
+      "code": "GTI-S2057",
+      "outcome": "rejected"
+    },
+    "gen-i03-specialization-conflicts": {
+      "code": "GTI-S2078",
+      "outcome": "rejected"
+    },
+    "gen-i04-dependent-assert-and-eval-failures": {
+      "code": "GTI-S2057",
+      "outcome": "rejected"
+    },
+    "gen-i05-dependent-static-assert-instances": {
+      "code": "GTI-S2079",
+      "outcome": "rejected"
+    },
+    "gen-i06-disjunction-and-overload-misuse": {
+      "code": "GTI-S2011",
+      "outcome": "rejected"
+    },
+    "gen-i07-contextual-literal-out-of-range": {
+      "code": "GTI-S2004",
+      "outcome": "rejected"
+    },
+    "gen-i08-branch-dependent-use-after-move": {
+      "code": "GTI-S2018",
+      "outcome": "rejected"
+    },
+    "mem-i01-lambda-in-unsafe-deref": {
+      "code": "GTI-S2055",
+      "outcome": "rejected"
+    },
+    "mem-i02-unsafe-generic-member-call": {
+      "code": "GTI-S2055",
+      "outcome": "rejected"
+    },
+    "mem-i04-opaque-pointer-arithmetic": {
+      "code": "GTI-S2065",
+      "outcome": "rejected"
+    },
+    "mem-i05-relocate-self-alias": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "mem-i06-resource-reset-while-bound": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "mem-i07-immovable-relocate": {
+      "code": "GTI-S2029",
+      "outcome": "rejected"
+    },
+    "own-x01-use-after-conditional-push": {
+      "code": "GTI-S2018",
+      "outcome": "rejected"
+    },
+    "own-x02-view-escapes-local-owner": {
+      "code": "GTI-S2045",
+      "outcome": "rejected"
+    },
+    "own-x03-span-then-push-back": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "own-x04-optional-ref-then-reset": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "own-x05-borrowed-expected-from-local": {
+      "code": "GTI-S2045",
+      "outcome": "rejected"
+    },
+    "own-x06-consumed-builder-twice": {
+      "code": "GTI-S2018",
+      "outcome": "rejected"
+    },
+    "own-x07-service-later-argument-reads-owner": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "own-x08-moved-while-view-live": {
+      "code": "GTI-S2017",
+      "outcome": "rejected"
+    },
+    "own-x09-read-after-break-move": {
+      "code": "GTI-S2018",
+      "outcome": "rejected"
+    },
+    "own-x10-borrowed-expected-value-or": {
+      "code": "GTI-S2045",
+      "outcome": "rejected"
+    },
+    "own-x11-borrowed-expected-field": {
+      "code": "GTI-S2045",
+      "outcome": "rejected"
+    },
+    "own-x12-view-in-vector": {
+      "code": "GTI-S2045",
+      "outcome": "rejected"
+    },
+    "own-x13-optional-of-view-param": {
+      "code": "GTI-S2045",
+      "outcome": "rejected"
+    },
+    "own-x14-shared-ptr-mutation": {
+      "code": "GTI-S2000",
+      "outcome": "rejected"
+    }
+  },
   "reproducers": {
     "a01-call-result-into-field": {
       "finding": "A01",

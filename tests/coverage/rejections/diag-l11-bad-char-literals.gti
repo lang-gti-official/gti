@@ -1,0 +1,6 @@
+int main() {
+  char a = 'ab'; //!ERR
+  char b = '\q'; //!ERR
+  char c = ''; //!ERR
+  return 0;
+}

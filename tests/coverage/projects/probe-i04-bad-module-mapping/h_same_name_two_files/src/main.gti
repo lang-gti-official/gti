@@ -1,0 +1,3 @@
+import geo;
+import "geo_copy.gti";
+int main() { return area() + volume() - 12; }

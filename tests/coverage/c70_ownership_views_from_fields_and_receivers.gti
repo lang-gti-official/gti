@@ -1,0 +1,89 @@
+// std::string_view borrowed from string fields through receivers, through
+// a vector of move-only records, relayed by free functions and by-value view
+// parameters, used across a loop, and released before owner mutation.
+#include <std/string>
+#include <std/vector>
+
+class Record {
+  std::string key_;
+  mut std::string value_;
+
+public:
+  Record(std::string_view key, std::string_view value)
+      : key_(std::string(key)), value_(std::string(value)) {}
+  std::string_view key() { return this.key_.view(); }
+  std::string_view value() { return value_.view(); }
+  void set(std::string_view value) mut { this.value_ = std::string(value); }
+  void append(std::string_view suffix) mut { this.value_.append(suffix); }
+};
+
+std::string_view key_of(Record& record) { return record.key(); }
+std::string_view pass(std::string_view text) { return text; }
+
+std::size_t count_char(std::string_view text, char wanted) {
+  mut std::size_t seen = std::size_t(0);
+  for (mut std::size_t i = std::size_t(0); i < text.size(); i += std::size_t(1)) {
+    if (text[i] == wanted) { seen += std::size_t(1); }
+  }
+  return seen;
+}
+
+class Store {
+  mut std::vector<Record> records_{};
+
+public:
+  Store() {}
+  void add(std::string_view key, std::string_view value) mut {
+    this.records_.push_back(Record(key, value));
+  }
+  std::vector<Record>& records() { return this.records_; }
+  // `return this.records_[index].value();` is rejected with GTI-S2045
+  // although the equivalent T& relay is accepted (see red/f1.gti).
+  Record& record(std::size_t index) { return this.records_[index]; }
+  mut Record& at(std::size_t index) mut { return this.records_[index]; }
+};
+
+int main() {
+  mut Store store{};
+  store.add("alpha", "a-b-c");
+  store.add("beta", "bb");
+  store.add("gamma", "g-g");
+
+  mut std::size_t dashes = std::size_t(0);
+  mut std::string keys = std::string("");
+  for (auto& record : store.records()) {
+    std::string_view key = record.key();
+    std::string_view relayed = key_of(record);
+    std::string_view twice = pass(pass(relayed));
+    if (key != twice) { return 1; }
+    dashes += count_char(pass(record.value()), '-');
+    keys.append(key);
+    keys.append(",");
+  }
+  if (dashes != std::size_t(3)) { return 2; }
+  if (keys != "alpha,beta,gamma,") { return 3; }
+
+  std::string_view middle = store.record(std::size_t(1)).value();
+  std::string_view copy = middle;
+  if (copy != "bb" || count_char(middle, 'b') != std::size_t(2)) { return 4; }
+
+  // The last uses of middle/copy are above; the owner can now change.
+  store.at(std::size_t(1)).set("replaced");
+  store.at(std::size_t(2)).append("!");
+  std::string_view changed = store.record(std::size_t(1)).value();
+  std::string_view tail = store.record(std::size_t(2)).value();
+  if (changed != "replaced" || tail != "g-g!") { return 5; }
+
+  // A view of a local owner used only within its scope.
+  {
+    mut std::string scratch = std::string("x");
+    for (mut int i = 0; i < 3; i += 1) {
+      scratch.append("y");
+      std::string_view now = scratch.view();
+      if (count_char(now, 'y') != std::size_t(i + 1)) { return 6; }
+    }
+  }
+  std::println(keys);
+  std::println("v04 ok");
+  return 0;
+}

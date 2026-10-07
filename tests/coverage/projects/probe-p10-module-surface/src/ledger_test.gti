@@ -1,0 +1,6 @@
+import ledger;
+
+int main() {
+  fin::events::Event closed = fin::events::Event::closed(3);
+  return fin::events::value_of(closed) == -1 ? 0 : 1;
+}

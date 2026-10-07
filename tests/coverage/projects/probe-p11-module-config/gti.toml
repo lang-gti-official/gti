@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "p11-module-config"
+version = "0.1.0"
+
+[build]
+defines = ["FAST"]
+
+[modules]
+backend = "src/backend.gti"
+frontend = "src/frontend.gti"
+
+[targets.p11]
+kind = "executable"
+root = "src/main.gti"

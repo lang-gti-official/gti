@@ -1,0 +1,29 @@
+export module main;
+#include <std/vector>
+
+namespace core {
+  export interface Scorer {
+    int score(int value);
+  };
+
+  export class Doubler : public Scorer {
+  public:
+    Doubler() {}
+    int score(int value) override { return value * 2; }
+  };
+
+  export int apply_all(Scorer& scorer, std::vector<int>& values) {
+    mut int total = 0;
+    for (int value : values) {
+      total = total + scorer.score(value);
+    }
+    return total;
+  }
+
+  export T pick<T>(bool first, T a, T b) {
+    if (first) {
+      return a;
+    }
+    return b;
+  }
+}

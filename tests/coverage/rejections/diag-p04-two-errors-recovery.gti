@@ -1,0 +1,13 @@
+int first() {
+  int a = (1 + 2; //!ERR
+  return a;
+}
+
+int second() {
+  int b = 4 +* 2; //!ERR
+  return b;
+}
+
+int main() {
+  return first() + second();
+}

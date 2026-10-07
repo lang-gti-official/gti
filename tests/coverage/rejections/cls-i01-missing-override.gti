@@ -1,0 +1,14 @@
+// INVALID: implementation of an interface method without `override`.
+interface Shape {
+  int32_t area();
+};
+class Square : public Shape {
+  int32_t side;
+public:
+  Square(int32_t side) : side(side) {}
+  int32_t area() { return this.side * this.side; }
+};
+int main() {
+  Square s = Square(2);
+  return s.area() - 4;
+}

@@ -1,0 +1,15 @@
+// INVALID: the owner of a live string_view is moved into a vector while the
+// view is still used afterwards in a loop.
+#include <std/string>
+#include <std/vector>
+
+int main() {
+  mut std::vector<std::string> sink{};
+  std::string owner = std::string("abc");
+  std::string_view view = owner.view();
+  sink.push_back(std::move(owner));
+  for (mut std::size_t i = std::size_t(0); i < view.size(); i += std::size_t(1)) {
+    std::println(view);
+  }
+  return 0;
+}

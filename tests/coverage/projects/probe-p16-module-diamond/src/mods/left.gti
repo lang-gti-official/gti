@@ -1,0 +1,8 @@
+export module left;
+export import core;
+#include "../trace.gti"
+
+namespace left {
+  int left_step = trace::record(2);
+  export core::Pair make() { return core::Pair(left_step, core::core_value()); }
+}

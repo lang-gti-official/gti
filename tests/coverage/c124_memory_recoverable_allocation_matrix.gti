@@ -1,0 +1,86 @@
+// Valid: the recoverable allocation channel never raises a defined failure.
+// try_storage / try_make_arena / try_make_pool report invalid alignment, size
+// overflow and exhaustion as expected errors; zero-capacity storage needs no
+// host allocation and supports zero-count relocation; requested over-alignment
+// and layout queries are consistent; full arena/pool are recoverable too.
+#include <std/memory>
+#include <std/string>
+
+struct Wide { mut int64_t a = 0; mut int64_t b = 0; mut int64_t c = 0; };
+
+int32_t classify(std::alloc_errc error) {
+  switch (error) {
+  case std::alloc_errc::invalid_alignment: return 1;
+  case std::alloc_errc::size_overflow: return 2;
+  case std::alloc_errc::resource_exhausted: return 3;
+  case std::alloc_errc::invalid_region: return 4;
+  case std::alloc_errc::invalid_state: return 5;
+  }
+  return 0;
+}
+
+int main() {
+  std::allocator heap{};
+  std::layout wide = std::layout_of<Wide>();
+  if (wide.bytes != std::size_t(24) || wide.alignment != std::size_t(8)) { return 1; }
+  std::layout text = std::layout_of<std::string>();
+  if (text.bytes == std::size_t(0) || text.alignment == std::size_t(0)) { return 2; }
+
+  auto zero_align = heap.try_storage<Wide>(std::size_t(4), std::alignment(std::size_t(0)));
+  auto odd_align = heap.try_storage<Wide>(std::size_t(4), std::alignment(std::size_t(24)));
+  if (zero_align || classify(zero_align.error()) != 1) { return 3; }
+  if (odd_align || classify(odd_align.error()) != 1) { return 4; }
+
+  // 2^62 elements of 24 bytes overflow the byte extent.
+  auto overflow = heap.try_storage<Wide>(std::size_t(4611686018427387904));
+  if (overflow || classify(overflow.error()) != 2) { return 5; }
+  auto arena_overflow = std::try_make_arena<Wide>(std::size_t(4611686018427387904));
+  if (arena_overflow || classify(arena_overflow.error()) != 2) { return 6; }
+  auto pool_overflow = std::try_make_pool<std::string>(std::size_t(18446744073709551615));
+  if (pool_overflow || classify(pool_overflow.error()) != 2) { return 7; }
+
+  // Representable but far beyond any host: exhaustion, still recoverable.
+  auto huge = heap.try_storage<uint8_t>(std::size_t(9223372036854775807));
+  if (huge || (classify(huge.error()) != 3 && classify(huge.error()) != 2)) { return 8; }
+
+  // Zero capacity succeeds and relocates zero elements.
+  mut auto empty_a = heap.try_storage<std::string>(std::size_t(0));
+  mut auto empty_b = heap.try_storage<std::string>(std::size_t(0));
+  if (!empty_a || !empty_b) { return 9; }
+  mut std::storage<std::string> a = std::move(empty_a).value();
+  mut std::storage<std::string> b = std::move(empty_b).value();
+  a.relocate_to(b, std::size_t(0));
+  if (a.capacity() != std::size_t(0) || b.capacity() != std::size_t(0)) { return 10; }
+  a.release();
+  b.clear();
+
+  // Over-aligned storage stays usable.
+  mut auto aligned = heap.try_storage<Wide>(std::size_t(3), std::alignment(std::size_t(4096)));
+  if (!aligned) { return 11; }
+  mut std::storage<Wide> page = std::move(aligned).value();
+  Wide seed{.a = 1, .b = 2, .c = 3};
+  page.construct(std::size_t(2), seed);
+  mut Wide& w = page.get_mut(std::size_t(2));
+  w.c = w.a + w.b + w.c;
+  if (page.get(std::size_t(2)).c != 6 || page.initialized(std::size_t(0))) { return 12; }
+
+  // Full arena and pool are recoverable outcomes, and reuse works.
+  mut auto made_arena = std::try_make_arena<std::string>(std::size_t(1));
+  mut auto made_pool = std::try_make_pool<std::string>(std::size_t(1));
+  if (!made_arena || !made_pool) { return 13; }
+  mut std::arena<std::string> arena = std::move(made_arena).value();
+  mut std::pool<std::string> pool = std::move(made_pool).value();
+  if (!arena.try_insert(std::string("first"))) { return 14; }
+  auto arena_full = arena.try_insert(std::string("second"));
+  if (arena_full || arena_full.error() != std::arena_errc::full) { return 15; }
+  arena.reset();
+  if (!arena.empty() || !arena.try_insert(std::string("again"))) { return 16; }
+  auto slot = pool.try_insert(std::string("p"));
+  if (!slot) { return 17; }
+  auto pool_full = pool.try_insert(std::string("q"));
+  if (pool_full || pool_full.error() != std::pool_errc::full) { return 18; }
+  pool.erase(slot.value());
+  if (!pool.empty() || pool.contains(std::size_t(0)) || pool.contains(std::size_t(7))) { return 19; }
+  std::println("recoverable allocation ok");
+  return 0;
+}
