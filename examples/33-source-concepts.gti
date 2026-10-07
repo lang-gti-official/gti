@@ -21,7 +21,23 @@ public:
   ~Session() { final_sample = this.source.read(); }
 };
 
+// All guaranteed trailing-clause facts are available when admitting a
+// dependent compound argument; their source order does not define the proof.
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+int read_box<T>(Box<T>& box)
+  requires boxed_int<Box<T>> && std::copyable<T> {
+  return box.get();
+}
+
 int main() {
+  Box<int> box{7};
+  if (read_box(box) != 7) { return 3; }
   Meter meter{};
   { Session<Meter> session{meter}; if (session.read() != 7) { return 1; } }
   if (final_sample != 7) { return 2; }

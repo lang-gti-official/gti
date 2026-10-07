@@ -5103,10 +5103,12 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       if (member != owner.members.end() &&
           typeTraits(member->second.symbol.type).containsBorrowedState &&
           !storedReferencePath(SemanticType::classType(owner.id))) {
-        report(field.declaration->name(),
-               "A class or struct may contain only one stored-reference "
-               "dependency, through direct or nested nominal fields.",
-               "GTI-S2045");
+        report(
+            field.declaration->name(),
+            "Borrowed field state must use checked stored-reference paths "
+            "through ordinary nominal fields; fallible and other non-nominal "
+            "carriers cannot be stored as fields.",
+            "GTI-S2045");
       }
     }
     if (!owner.storedReference) {

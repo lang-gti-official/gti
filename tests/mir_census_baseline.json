@@ -38,7 +38,7 @@
     "124-nested-raw-pointers.gti": 29,
     "129-generic-payload-enums.gti": 369,
     "13-ownership.gti": 46,
-    "14-operators.gti": 38,
+    "14-operators.gti": 44,
     "15-variadic-generics.gti": 36,
     "16-move-generics.gti": 41,
     "17-standard-array.gti": 33,
@@ -57,7 +57,7 @@
     "30-callable-forwarding.gti": 27,
     "31-exact-constraints.gti": 37,
     "32-structured-bindings.gti": 26,
-    "33-source-concepts.gti": 32,
+    "33-source-concepts.gti": 37,
     "34-do-while.gti": 23,
     "35-conditional-expressions.gti": 40,
     "36-c-abi-sockets.gti": 25,
@@ -104,7 +104,7 @@
     "77-callable-concepts.gti": 99,
     "78-owning-payload-enums.gti": 30,
     "79-class-scoped-type-aliases.gti": 30,
-    "80-function-items.gti": 98,
+    "80-function-items.gti": 100,
     "83-complete-ranges.gti": 119,
     "84-optional-values.gti": 49,
     "85-payload-enum-fields.gti": 33,
@@ -123,5 +123,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16583
+  "total": 16596
 }

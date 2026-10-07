@@ -265,6 +265,12 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
       arguments.size() != analysis.deferred.size()) {
     return false;
   }
+  if (std::none_of(arguments.begin(), arguments.end(),
+                   [&](const ExprPtr &argument) {
+                     return isContextualNativeFunctionArgument(argument);
+                   })) {
+    return true;
+  }
 
   GenericSubstitution baseSubstitution;
   std::size_t explicitType = 0;
@@ -276,6 +282,15 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         baseSubstitution.values.emplace(
             parameter.id, explicitValueArguments[explicitValue++]);
       }
+    } else if (parameter.pack && explicitType < explicitTypeArguments.size()) {
+      std::vector<SemanticType> elements(
+          explicitTypeArguments.begin() +
+              static_cast<std::ptrdiff_t>(explicitType),
+          explicitTypeArguments.end());
+      baseSubstitution.types.emplace(
+          parameter.id,
+          SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+      explicitType = explicitTypeArguments.size();
     } else if (explicitType < explicitTypeArguments.size()) {
       baseSubstitution.types.emplace(parameter.id,
                                      explicitTypeArguments[explicitType++]);
@@ -354,7 +369,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
   };
 
   for (std::size_t index = 0;
-       index < analysis.types.size() && index < target.parameterTypes.size();
+       index < analysis.types.size() && index < fixedParameterCount(target);
        ++index) {
     if (isContextualNativeFunctionArgument(arguments[index])) {
       continue;
@@ -362,6 +377,26 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
     if (!inferOuter(inferOuter, target.parameterTypes[index],
                     analysis.types[index], baseSubstitution)) {
       return false;
+    }
+  }
+  if (target.parameterPack) {
+    const GenericParameterInfo *pack = packGenericParameter(target);
+    const std::size_t fixed = fixedParameterCount(target);
+    if (pack != nullptr && !baseSubstitution.types.contains(pack->id)) {
+      if (analysis.types.size() < fixed) {
+        return false;
+      }
+      std::vector<SemanticType> elements;
+      for (std::size_t index = fixed; index < analysis.types.size(); ++index) {
+        SemanticType::appendExpandedArgument(elements, analysis.types[index]);
+      }
+      baseSubstitution.types.emplace(
+          pack->id,
+          elements.size() == 1 &&
+                  elements.front().kind == SemanticType::TypePack &&
+                  !elements.front().concretePack
+              ? elements.front()
+              : SemanticType::concreteTypePack(pack->id, std::move(elements)));
     }
   }
 
@@ -473,25 +508,49 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
                contract->signatures) {
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
                                              signature.capability) ||
-                signature.parameterTypes.size() !=
-                    candidate.parameterTypes.size() ||
                 !exactMatch(exactMatch, signature.returnType,
                             candidate.returnType, substitution)) {
               matchesContract = false;
               break;
             }
+            std::vector<SemanticType> substitutedArguments;
+            for (const SemanticType &parameter : signature.parameterTypes) {
+              substitutedArguments.push_back(
+                  substituteType(parameter, substitution));
+            }
+            const auto concreteArguments =
+                signature.source == nullptr
+                    ? std::nullopt
+                    : concreteCallArguments(substitutedArguments,
+                                            signature.source->arguments());
+            if (!concreteArguments && signature.source != nullptr &&
+                std::any_of(substitutedArguments.begin(),
+                            substitutedArguments.end(),
+                            [](const SemanticType &argument) {
+                              return argument.kind == SemanticType::TypePack &&
+                                     !argument.concretePack;
+                            })) {
+              // An open forwarding pack cannot select among overloads by
+              // arity. Only a unique eligible item can survive this primary
+              // check; its concrete invocation is revalidated per instance,
+              // exactly as when the item is first bound to an auto local.
+              continue;
+            }
+            if (!concreteArguments ||
+                concreteArguments->size() != candidate.parameterTypes.size()) {
+              matchesContract = false;
+              break;
+            }
             for (std::size_t parameter = 0;
-                 parameter < signature.parameterTypes.size(); ++parameter) {
-              const SemanticType argument = substituteType(
-                  signature.parameterTypes[parameter], substitution);
-              const ExprPtr *expression =
-                  signature.source != nullptr &&
-                          parameter < signature.source->arguments().size()
-                      ? &signature.source->arguments()[parameter]
-                      : nullptr;
-              if (expression == nullptr ||
-                  !callArgumentMatches(candidate.parameterTypes[parameter],
-                                       argument, *expression)) {
+                 parameter < concreteArguments->size(); ++parameter) {
+              const auto &argument = (*concreteArguments)[parameter];
+              if (!(argument.forwardedPackElement
+                        ? forwardedPackArgumentMatches(
+                              candidate.parameterTypes[parameter],
+                              argument.type)
+                        : callArgumentMatches(
+                              candidate.parameterTypes[parameter],
+                              argument.type, *argument.expression))) {
                 matchesContract = false;
                 break;
               }
@@ -604,11 +663,16 @@ auto SemanticVisitor::Impl::analyzeContextualCallArguments(
   bool deferred = false;
   for (const ExprPtr &argument : arguments) {
     deferred = deferred || isContextualArrayArgument(argument) ||
-               isContextualNativeFunctionArgument(argument) ||
                isContextualCallableResultArgument(argument);
-    result.deferred.emplace_back(deferred);
-    result.types.emplace_back(deferred ? SemanticType::Unknown
-                                       : analyze(argument));
+    // A namespace function name has no evaluation effects. Its selection may
+    // wait for the exact signature without postponing later ordinary arguments
+    // whose types are needed to deduce a pack. Effectful contextual producers
+    // still defer their entire suffix; HIR/MIR retain source evaluation order.
+    const bool argumentDeferred =
+        deferred || isContextualNativeFunctionArgument(argument);
+    result.deferred.emplace_back(argumentDeferred);
+    result.types.emplace_back(argumentDeferred ? SemanticType::Unknown
+                                               : analyze(argument));
   }
   return result;
 }
@@ -850,6 +914,15 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
   const std::string argumentLabel = callable == "Function"
                                         ? "Argument "
                                         : std::string(callable) + " argument ";
+  if (parameter.kind == SemanticType::NativeFunction &&
+      isContextualNativeFunctionArgument(expression)) {
+    if (const auto symbol = resolveExpressionSymbol(expression);
+        symbol && symbol->type == SemanticType::Function) {
+      (void)analyzeNativeFunctionItem(*expression, *symbol, parameter,
+                                      expressionToken(expression));
+      return;
+    }
+  }
   if (parameter.kind == SemanticType::Reference &&
       parameter.arguments.size() == 1 && parameter.arguments[0] == argument &&
       expression) {
@@ -995,11 +1068,32 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
               "exact compatible pointer, with only T* to const T* "
               "qualification permitted.");
   } else if (parameter.kind != SemanticType::Reference) {
+    bool hasView = false;
+    if (const auto *owner = classInfo(argument)) {
+      if (const auto member = owner->members.find("view");
+          member != owner->members.end() &&
+          member->second.access == AccessModifier::Public) {
+        const Symbol concrete =
+            substituteSymbol(member->second.symbol, argument);
+        hasView =
+            concrete.overloads.size() == 1 &&
+            concrete.overloads.front().returnType == parameter &&
+            concrete.overloads.front().parameterTypes.empty() &&
+            concrete.overloads.front().record().genericParameters.empty() &&
+            concrete.overloads.front().requirements.empty() &&
+            !concrete.overloads.front().staticMember &&
+            !concrete.overloads.front().record().requiresUnsafe &&
+            concrete.overloads.front().receiverMutability ==
+                ReceiverMutability::ReadOnly;
+      }
+    }
     diagnostic.hints.emplace_back(
-        "Calls require exact argument types; use an explicit "
-        "conversion such as '" +
-        typeSpelling(parameter) +
-        "(value)' when the conversion is intentional.");
+        hasView
+            ? "Pass 'value.view()' to obtain the exact parameter type; keep "
+              "the "
+              "source value alive while the view is used."
+            : "Calls require exact argument types; pass the required type or "
+              "use a supported explicit conversion when intentional.");
   }
   diagnostics.emplace_back(std::move(diagnostic));
 }
@@ -1287,12 +1381,24 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   const SemanticType constructedType = selectedClass;
   if (typeTraits(constructedType).containsBorrowedState &&
       storedReferencePaths(constructedType).empty()) {
-    report(paren,
-           "A borrowed aggregate must contain checked stored-reference "
-           "paths through ordinary nominal fields and cannot declare a "
-           "custom destructor.",
-           "GTI-S2045");
-    currentType = constructedType;
+    const bool fieldAlreadyRejected = std::any_of(
+        owner.fields.begin(), owner.fields.end(), [&](const FieldInfo &field) {
+          return field.declaration != nullptr &&
+                 std::any_of(diagnostics.begin(), diagnostics.end(),
+                             [&](const Diagnostic &diagnostic) {
+                               return diagnostic.code == "GTI-S2045" &&
+                                      diagnostic.primary ==
+                                          tokenSpan(field.declaration->name());
+                             });
+        });
+    if (!fieldAlreadyRejected) {
+      report(paren,
+             "A borrowed aggregate must contain checked stored-reference "
+             "paths through ordinary nominal fields and cannot declare a "
+             "custom destructor.",
+             "GTI-S2045");
+    }
+    currentType = SemanticType::Unknown;
     return;
   }
   if (!isCompilerTrustedRequester(paren) &&
@@ -6063,6 +6169,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
 
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   currentNamespace = scope;
+  std::vector<const TypeRef *> argumentsToValidate;
   for (std::size_t applicationIndex = 0;
        applicationIndex < clause->requirements().size(); ++applicationIndex) {
     const ConceptApplication &application =
@@ -6076,8 +6183,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
                                             .expressionApplication =
                                                 applicationIndex};
       for (const auto &argument : application.arguments) {
-        validateType(argument);
-        recordTypeUse(argument);
+        argumentsToValidate.push_back(&argument);
         requirement.arguments.push_back(typeOf(argument, scope));
       }
       result.push_back(std::move(requirement));
@@ -6153,7 +6259,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
         valid = false;
         continue;
       }
-      validateType(argument);
+      argumentsToValidate.push_back(&argument);
       const SemanticType type = typeOf(argument, scope);
       if (type == SemanticType::Unknown) {
         requirement.arguments.emplace_back(type);
@@ -6161,12 +6267,28 @@ auto SemanticVisitor::Impl::resolveRequirements(
         continue;
       }
       requirement.arguments.emplace_back(type);
-      recordTypeUse(argument);
     }
     if (valid) {
       result.emplace_back(std::move(requirement));
     }
   }
+  // Type formation above establishes the complete clause's identities without
+  // demanding a compound argument's constraints before their proof exists.
+  // Validation consumes the ordinary guaranteed-fact scope: conjunction adds
+  // facts, while disjunction retains only facts common to every alternative.
+  requirementScopes.push_back(result);
+  // Only a dependent application is an assumption for admission. A closed
+  // application may make the function nonviable, but cannot assert a false
+  // fact into existence while forming another closed argument's type.
+  std::erase_if(requirementScopes.back(), [](const auto &requirement) {
+    return std::none_of(requirement.arguments.begin(),
+                        requirement.arguments.end(), containsOpenTypeParameter);
+  });
+  for (const TypeRef *argument : argumentsToValidate) {
+    validateType(*argument);
+    recordTypeUse(*argument);
+  }
+  requirementScopes.pop_back();
   currentNamespace = enclosingNamespace;
   return result;
 }

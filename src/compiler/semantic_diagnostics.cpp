@@ -97,7 +97,11 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
 }
 
 void SemanticDiagnosticReporter::reportConstraintFailure(
-    const Token &site, const SemanticConstraintFailure &failure) {
+    const Token &site, const SemanticConstraintFailure &failure,
+    const std::function<std::string(const SemanticType &)> &spelling) {
+  const auto typeSpelling = [&](const SemanticType &type) {
+    return spelling ? spelling(type) : this->typeSpelling(type);
+  };
   const auto applicationSpelling = [&](const SemanticConstraintContext &item) {
     std::string spelling = item.name + "<";
     for (std::size_t index = 0; index < item.arguments.size(); ++index) {
