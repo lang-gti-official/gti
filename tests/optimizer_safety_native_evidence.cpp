@@ -789,9 +789,29 @@ int main(int argc, char **argv) {
       "&::gti_internal::backend::prefix_storage_read_mut_unchecked(";
   constexpr std::string_view publicPrefixBoundsCall =
       "::gti_internal::backend::mir_checked_index_bounds_v1(";
-  constexpr std::string_view checkedCompoundMultiply =
-      " = ::gti_internal::backend::mir_checked_compound_multiply_v1(";
-  constexpr std::string_view dischargedCompoundMultiply = ") *= ";
+  // Compound assignments now stage their read, arithmetic and write as
+  // separate MIR operations. Observe the checked scalar multiply and its
+  // discharged expression, not the retired fused compound-assignment spelling.
+  constexpr std::string_view checkedMultiply =
+      " = ::gti_internal::backend::mir_checked_multiply_v1<std::int32_t>(";
+  constexpr std::string_view dischargedMultiply = " * __gti_mir_v_";
+  const auto multiplyCounts = [&](std::string_view needle) {
+    return " (O0=" + std::to_string(occurrences(o0.cpp, needle)) +
+           ", O2=" + std::to_string(occurrences(o2.cpp, needle)) +
+           ", O3=" + std::to_string(occurrences(o3.cpp, needle)) + ")";
+  };
+  expect(occurrences(o2.cpp, checkedMultiply) <
+                 occurrences(o0.cpp, checkedMultiply) &&
+             occurrences(o2.cpp, checkedMultiply) ==
+                 occurrences(o3.cpp, checkedMultiply),
+         "proved staged multiplication must remove native checked calls" +
+             multiplyCounts(checkedMultiply));
+  expect(occurrences(o2.cpp, dischargedMultiply) >
+                 occurrences(o0.cpp, dischargedMultiply) &&
+             occurrences(o2.cpp, dischargedMultiply) ==
+                 occurrences(o3.cpp, dischargedMultiply),
+         "proved staged multiplication must emit native scalar multiplication" +
+             multiplyCounts(dischargedMultiply));
   expect(occurrences(o2.cpp, checkedArrayCall) <
                  occurrences(o0.cpp, checkedArrayCall) &&
              occurrences(o2.cpp, checkedAddCall) <
@@ -811,10 +831,6 @@ int main(int argc, char **argv) {
              (occurrences(o2.cpp, uncheckedPrefixStorageCall) > 0 ||
               occurrences(o2.cpp, uncheckedPrefixStorageMutCall) > 0) &&
              occurrences(o2.cpp, publicPrefixBoundsCall) > 0 &&
-             occurrences(o2.cpp, checkedCompoundMultiply) <
-                 occurrences(o0.cpp, checkedCompoundMultiply) &&
-             occurrences(o2.cpp, dischargedCompoundMultiply) >
-                 occurrences(o0.cpp, dischargedCompoundMultiply) &&
              occurrences(o2.cpp, checkedArrayCall) ==
                  occurrences(o3.cpp, checkedArrayCall) &&
              occurrences(o2.cpp, checkedAddCall) ==
@@ -834,11 +850,7 @@ int main(int argc, char **argv) {
              occurrences(o2.cpp, uncheckedPrefixStorageMutCall) ==
                  occurrences(o3.cpp, uncheckedPrefixStorageMutCall) &&
              occurrences(o2.cpp, publicPrefixBoundsCall) ==
-                 occurrences(o3.cpp, publicPrefixBoundsCall) &&
-             occurrences(o2.cpp, checkedCompoundMultiply) ==
-                 occurrences(o3.cpp, checkedCompoundMultiply) &&
-             occurrences(o2.cpp, dischargedCompoundMultiply) ==
-                 occurrences(o3.cpp, dischargedCompoundMultiply),
+                 occurrences(o3.cpp, publicPrefixBoundsCall),
          "native -O0 source should expose removed safe calls while preserving "
          "the checked near-miss calls");
 

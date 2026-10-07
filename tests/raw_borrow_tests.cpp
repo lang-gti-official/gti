@@ -49,10 +49,14 @@ void negative(const std::string &name, const std::string &source,
 void auditNegative(const std::string &name, const std::string &source,
                    const std::string &fragment) {
   const auto result = analyze(source, lang::RawPointerAuditMode::Strict);
+  const auto entry =
+      std::filesystem::path(__FILE__).parent_path().parent_path() /
+      "raw-borrow-test.gti";
   const bool matched = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
         return (d.code == "GTI-S2101" || d.code == "GTI-S2102" ||
                 d.code == "GTI-S2103") &&
+               d.primary.source == entry.string() &&
                d.severity == lang::DiagnosticSeverity::Error &&
                d.message.find(fragment) != std::string::npos;
       });
@@ -61,10 +65,78 @@ void auditNegative(const std::string &name, const std::string &source,
   expect(!result.canGenerateCode() && matched, name);
 }
 lang::FrontendResult auditAnalyze(const std::string &source) {
-  return analyze(source, lang::RawPointerAuditMode::Strict);
+  // Positive fixtures prove application provenance, not complete optional
+  // analysis of every included generic library body. Keep dependency findings
+  // visible, require mandatory acceptance, and reject any finding at the
+  // application source. Negative cases independently require Strict promotion
+  // at that same source rather than accidentally matching a dependency error.
+  auto result = analyze(source, lang::RawPointerAuditMode::Warn);
+  const auto entry =
+      std::filesystem::path(__FILE__).parent_path().parent_path() /
+      "raw-borrow-test.gti";
+  const bool sourceFinding = std::any_of(
+      result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
+        return d.primary.source == entry.string() &&
+               (d.code == "GTI-S2101" || d.code == "GTI-S2102" ||
+                d.code == "GTI-S2103");
+      });
+  if (sourceFinding)
+    show(result);
+  expect(!sourceFinding,
+         "positive raw-audit fixture has no application finding");
+  return result;
+}
+void auditDependencySeverity() {
+  const std::string source =
+      "#include <std/memory>\nint main() { return 0; }\n";
+  const auto warned = analyze(source, lang::RawPointerAuditMode::Warn);
+  const auto strict = analyze(source, lang::RawPointerAuditMode::Strict);
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() /
+      "stdlib/std/memory.gti";
+  std::size_t dependencyFindings = 0;
+  for (const auto &diagnostic : warned.diagnostics) {
+    if (diagnostic.primary.source != library.string() ||
+        (diagnostic.code != "GTI-S2102" && diagnostic.code != "GTI-S2103"))
+      continue;
+    ++dependencyFindings;
+    expect(
+        diagnostic.severity == lang::DiagnosticSeverity::Warning &&
+            std::any_of(strict.diagnostics.begin(), strict.diagnostics.end(),
+                        [&](const auto &promoted) {
+                          return promoted.primary == diagnostic.primary &&
+                                 promoted.code == diagnostic.code &&
+                                 promoted.message == diagnostic.message &&
+                                 promoted.severity ==
+                                     lang::DiagnosticSeverity::Error;
+                        }),
+        "Strict promotes the exact included-library finding without hiding it");
+  }
+  expect(dependencyFindings != 0 && warned.canGenerateCode() &&
+             !strict.canGenerateCode(),
+         "bounded source-storage provenance remains advisory in Warn and an "
+         "error in Strict");
 }
 void auditOutputParity() {
   const std::pair<std::string, std::string> cases[] = {
+      {"raw field lookup does not register later methods", R"(
+struct Slot {
+  mut const int* pointer = nullptr;
+  const int* take() mut {
+    const int* previous = this.pointer;
+    this.clear();
+    return previous;
+  }
+  void clear() mut { this.pointer = nullptr; }
+};
+int main() {
+  int owner = 7;
+  mut Slot slot{};
+  slot.pointer = &owner;
+  const int* value = slot.take();
+  unsafe { return *value - 7; }
+}
+)"},
       {"nested constructor fields declared after the caller", R"(
 int main() {
   int live = 7;
@@ -970,6 +1042,7 @@ int main() {
 
 int main() {
   auditOutputParity();
+  auditDependencySeverity();
   canonicalConstructorFields();
   rawInvocationBoundaries();
   nestedQuerySymbols();

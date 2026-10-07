@@ -912,7 +912,7 @@
       "mode": "run",
       "source": "tests/fixtures/resource_constructor_rollback.gti",
       "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
+      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n900\n901\n", "stderr": ""}
     },
     {
       "id": "resource-container-usage",
@@ -947,7 +947,7 @@
       "mode": "run",
       "source": "tests/fixtures/resource_vector_constructor_rollback.gti",
       "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
+      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n900\n901\n", "stderr": ""}
     },
     {
       "id": "restoring-exchange-example",

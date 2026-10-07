@@ -7357,7 +7357,11 @@ auto SemanticVisitor::Impl::rawPointerTypesAt(
       }
     } else if (const auto *owner = classInfo(current)) {
       for (const auto &[_, member] : owner->members)
-        if (toolingSymbolFor(member.symbol) == projection.field)
+        // This is a lookup of an already-identified field, not symbol
+        // discovery. Registering every member here gives optional auditing
+        // authority over later method/local SymbolIds and mandatory MIR.
+        if (member.symbol.bindingKind == SemanticBindingKind::Field &&
+            symbolForDeclaration(member.symbol.declaration) == projection.field)
           self(self, substituteSymbol(member.symbol, current).type, index + 1);
       for (const auto &base : owner->bases)
         if (!base.interface)

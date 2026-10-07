@@ -1929,7 +1929,7 @@
     "a39-ctor-address-of-struct-field": {
       "finding": "A39",
       "issue": 82,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a40-c-abi-record-pointer-array-field": {
       "finding": "A40",
@@ -1973,7 +1973,7 @@
     },
     "a44-raw-audit-duplicate-warning": {
       "at_most": {
-        "warning[GTI-S2102]": 1
+        "a44-raw-audit-duplicate-warning.gti:15:42: warning[GTI-S2102]": 1
       },
       "flags": [
         "--raw-pointer-audit=warn"
