@@ -89,16 +89,56 @@ int main() {
         "generated defaults retain a complete concrete initializer schedule");
     std::vector<lang::SymbolId> published;
     for (const auto &block : constructor.body.blocks)
-      for (const auto &instruction : block.instructions) {
-        if (instruction.kind != lang::MirInstructionKind::Initialize ||
-            !instruction.destination)
+      for (std::size_t position = 0; position < block.instructions.size();
+           ++position) {
+        const auto &instruction = block.instructions[position];
+        if (instruction.kind == lang::MirInstructionKind::Initialize &&
+            instruction.destination) {
+          const auto *place =
+              constructor.body.findPlace(*instruction.destination);
+          if (place != nullptr && place->root == lang::MirPlaceRootKind::This &&
+              place->projections.size() == 1 &&
+              place->projections.front().kind == lang::MirProjectionKind::Field)
+            published.push_back(place->projections.front().field);
           continue;
-        const auto *place =
-            constructor.body.findPlace(*instruction.destination);
-        if (place != nullptr && place->root == lang::MirPlaceRootKind::This &&
-            place->projections.size() == 1 &&
-            place->projections.front().kind == lang::MirProjectionKind::Field)
-          published.push_back(place->projections.front().field);
+        }
+        // A passive payload default publishes through its selected initializer
+        // result, not a separate Initialize/place. Pin the typed root and exact
+        // adjacent full-expression endpoint that authorize that publication.
+        if (instruction.operation != lang::MirOperation::PayloadConstruct ||
+            !instruction.result)
+          continue;
+        const auto *value = constructor.body.findValue(*instruction.result);
+        for (std::size_t ordinal = 0; ordinal < constructor.initializers.size();
+             ++ordinal) {
+          const auto &initializer = constructor.initializers[ordinal];
+          if (initializer.kind !=
+                  lang::ConstructorInitializerTargetKind::Field ||
+              initializer.arguments !=
+                  std::vector<lang::HirValueId>{instruction.hirValue} ||
+              initializer.targetType != instruction.info.type)
+            continue;
+          const auto full = std::find_if(
+              constructor.body.fullExpressions.begin(),
+              constructor.body.fullExpressions.end(),
+              [&](const auto &candidate) {
+                return candidate.constructorInitializer == ordinal + 1 &&
+                       candidate.roots == initializer.arguments;
+              });
+          const bool exactPublication =
+              value != nullptr && value->definition == instruction.id &&
+              value->info == instruction.info &&
+              full != constructor.body.fullExpressions.end() &&
+              position + 1 < block.instructions.size() &&
+              block.instructions[position + 1].kind ==
+                  lang::MirInstructionKind::Lifecycle &&
+              block.instructions[position + 1].fullExpressionEnd == full->id;
+          expect(exactPublication,
+                 "passive payload publication retains its selected typed "
+                 "initializer and full-expression endpoint");
+          if (exactPublication)
+            published.push_back(initializer.field);
+        }
       }
     std::vector<lang::SymbolId> expectedFields;
     for (const auto &field : owner->declaredFields)
@@ -260,6 +300,23 @@ int main() {
   expect(removedPublication &&
              !lang::verifyMirProgram(missingPublication).valid(),
          "selected constructor field publication must retain its initializer "
+         "identity");
+
+  lang::MirProgram missingPayloadEndpoint = frontend.mir;
+  bool removedEndpoint = false;
+  for (const auto &constructor :
+       missingPayloadEndpoint.constructorInstances()) {
+    if (constructor.owner != payloadOwner->id)
+      continue;
+    auto &changed = const_cast<lang::MirConstructorInstance &>(constructor);
+    if (!changed.body.fullExpressions.empty()) {
+      changed.body.fullExpressions.front().constructorInitializer = 0;
+      removedEndpoint = true;
+    }
+  }
+  expect(removedEndpoint &&
+             !lang::verifyMirProgram(missingPayloadEndpoint).valid(),
+         "passive payload publication must retain its initializer endpoint "
          "identity");
 
   lang::MirProgram wrongOrder = frontend.mir;
