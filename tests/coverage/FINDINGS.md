@@ -684,6 +684,11 @@ Corpus program: `c55_iterator_utilities`.
 
 ## F17 — Diagnostic with an empty name and an out-of-source span
 
+**Resolved in focused optimized checks.** Unnamed formal source anchors use
+the written type, and lifetime diagnostics identify the one-based parameter
+index. The original remains correctly rejected with GTI-S2045 and a real
+related source span.
+
 `reproducers/f17-unnamed-parameter-bad-span.gti`
 
 Unnamed parameters are legal GTI — `int32_t ignore_arg(int32_t) { return 7; }`
@@ -917,6 +922,11 @@ so there may be two defects here.
 
 ## S04 — ICE: any bodyless declaration with an unnamed parameter
 
+**Resolved in focused optimized checks.** Unnamed formals receive distinct,
+source-anchored generated semantic binding identities. Public AST and
+Lowered names remain empty; no source name occurrences are fabricated. The
+original interface declaration now reaches verified executable publication.
+
 `reproducers/s04-bodyless-decl-unnamed-param.gti`
 
 ```gti
@@ -958,6 +968,10 @@ guarantee the emitter can spell what it accepts, or decline with `GTI-B0001`.
 Here it did neither.
 
 ## S06 — A primary diagnostic with no location at all
+
+**Resolved in focused optimized checks.** Constexpr eligibility diagnostics
+use the unnamed formal's written type as their source anchor. The original
+still reports GTI-S2057, now with an in-source primary span.
 
 `reproducers/s06-constexpr-unnamed-param-no-span.gti`
 

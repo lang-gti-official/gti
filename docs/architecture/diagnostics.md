@@ -415,6 +415,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   C++ diagnostic is not a substitute for a language diagnostic.
 - Point the primary span at the token/range the user can act on. Use related
   diagnostics for conflicting declarations, includes, or instantiation sites.
+- An unnamed formal uses its written type token as the diagnostic/source
+  anchor. Related lifetime messages identify it by its one-based parameter
+  index, not an empty or generated name. Its physical semantic binding is
+  generated and source-anchored, while AST/Lowered public names remain empty;
+  it contributes no name occurrence to editor lookup, rename, or completion.
 - When a pre-analysis compiler configuration has no source token, anchor it at
   byte zero of the selected entry unit and put the actionable configuration
   change in a hint. `GTI-S2062` uses this form for an unsupported selected
