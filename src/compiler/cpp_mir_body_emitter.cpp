@@ -34232,88 +34232,6 @@ private:
         output << ')';
       }
     };
-    // Contextual &handle arguments name internal integer-address storage, not
-    // native T* storage. Stage exactly those slots at the foreign boundary;
-    // never reinterpret a raw_address<T> object as a T* object. Preserve
-    // repeated arguments' alias identity by sharing their native slot.
-    std::vector<const MirPlace *> nativeOutSlots;
-    std::vector<std::optional<std::size_t>> nativeOutArguments(
-        instruction.operands.size());
-    const auto *nativeTarget =
-        instruction.functionTarget
-            ? program.findFunctionInstance(*instruction.functionTarget)
-            : nullptr;
-    if (nativeTarget && nativeTarget->linkage == LanguageLinkage::C) {
-      for (std::size_t index = 0; index < instruction.operands.size();
-           ++index) {
-        MirOperand operand = instruction.operands[index];
-        if (operand.type.kind != SemanticType::RawPointer ||
-            operand.type.arguments.size() != 1 ||
-            operand.type.arguments.front().kind != SemanticType::RawPointer)
-          continue;
-        const MirPlace *slot = nullptr;
-        std::unordered_set<MirValueId> visited;
-        while (operand.kind == MirOperandKind::Value &&
-               visited.insert(operand.value).second) {
-          const MirValue *value = facts.body.findValue(operand.value);
-          const MirInstruction *producer =
-              value ? findInstruction(facts.body, value->definition) : nullptr;
-          if (!producer || producer->operands.size() != 1)
-            break;
-          if (producer->kind == MirInstructionKind::Compute &&
-              producer->operation == MirOperation::AddressOf &&
-              producer->operands.front().kind == MirOperandKind::Address) {
-            slot = facts.body.findPlace(producer->operands.front().place);
-            break;
-          }
-          if (producer->kind != MirInstructionKind::CallInput &&
-              !(producer->kind == MirInstructionKind::Compute &&
-                producer->operation == MirOperation::Identity))
-            break;
-          operand = producer->operands.front();
-        }
-        if (!slot || slot->type.kind != SemanticType::RawPointer)
-          continue;
-        // A foreign record's actual native pointer field needs no staging:
-        // passing its real address also preserves aliasing with record args.
-        bool nativeStorage = false;
-        for (auto projection = slot->projections.rbegin();
-             projection != slot->projections.rend(); ++projection) {
-          if (projection->kind == MirProjectionKind::RawDereference ||
-              projection->kind == MirProjectionKind::RawIndex) {
-            nativeStorage = true;
-            break;
-          }
-          if (projection->kind != MirProjectionKind::Field)
-            continue;
-          for (const auto &owner : program.classInstances())
-            if (owner.cAbiRecord &&
-                std::any_of(owner.declaredFields.begin(),
-                            owner.declaredFields.end(), [&](const auto &field) {
-                              return field.symbol == projection->field;
-                            }))
-              nativeStorage = true;
-          break;
-        }
-        if (nativeStorage)
-          continue;
-        const auto sameSlot = [&](const MirPlace *other) {
-          if (slot->key && other->key)
-            return *slot->key == *other->key;
-          return slot->root == other->root && slot->binding == other->binding &&
-                 slot->symbol == other->symbol && slot->value == other->value &&
-                 slot->loan == other->loan && slot->capture == other->capture &&
-                 slot->temporary == other->temporary &&
-                 slot->projections == other->projections;
-        };
-        const auto found = std::find_if(nativeOutSlots.begin(),
-                                        nativeOutSlots.end(), sameSlot);
-        nativeOutArguments[index] =
-            static_cast<std::size_t>(found - nativeOutSlots.begin());
-        if (found == nativeOutSlots.end())
-          nativeOutSlots.push_back(slot);
-      }
-    }
     const auto emitCallOperands = [&](const MirFunctionInstance *target,
                                       bool cBoundary, bool transformed) {
       bool emitted = false;
@@ -34323,12 +34241,6 @@ private:
           output << ", ";
         }
         const MirOperand &operand = instruction.operands[index];
-        if (cBoundary && nativeOutArguments[index]) {
-          output << "&__gti_native_out_" << instruction.id << '_'
-                 << *nativeOutArguments[index];
-          emitted = true;
-          continue;
-        }
         const bool transformedCallable =
             transformed && target != nullptr &&
             std::any_of(target->callableParameters.begin(),
@@ -36979,20 +36891,6 @@ private:
       emitReceiverExpression();
       output << '.';
     }
-    if (!nativeOutSlots.empty()) {
-      output << "([&]() { ";
-      for (std::size_t index = 0; index < nativeOutSlots.size(); ++index) {
-        output << "decltype(::gti_internal::backend::native_pointer_value(";
-        emitStoragePlaceValue(facts, *nativeOutSlots[index]);
-        output << ")) __gti_native_out_" << instruction.id << '_' << index
-               << "{}; ::gti_internal::backend::raw_pointer_slot_copy("
-               << "__gti_native_out_" << instruction.id << '_' << index << ", ";
-        emitStoragePlaceValue(facts, *nativeOutSlots[index]);
-        output << "); ";
-      }
-      if (instruction.info.type != SemanticType::Void)
-        output << "auto __gti_native_result = ";
-    }
     const std::string calleeSpelling = selectedBodySpelling();
     output << (instruction.dispatch == CallDispatch::Virtual
                    ? unqualifiedBodySpelling(calleeSpelling)
@@ -37008,18 +36906,6 @@ private:
     // marshals views and expands an exact trailing concrete GTI pack.
     (void)emitCallOperands(target, cBoundary, false);
     output << ')';
-    if (!nativeOutSlots.empty()) {
-      output << "; ";
-      for (std::size_t index = 0; index < nativeOutSlots.size(); ++index) {
-        output << "::gti_internal::backend::raw_pointer_slot_copy(";
-        emitStoragePlaceValue(facts, *nativeOutSlots[index]);
-        output << ", __gti_native_out_" << instruction.id << '_' << index
-               << "); ";
-      }
-      if (instruction.info.type != SemanticType::Void)
-        output << "return __gti_native_result; ";
-      output << "}())";
-    }
     if (pairedResultLoan != nullptr) {
       output << ')';
     }

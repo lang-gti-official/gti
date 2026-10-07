@@ -283,9 +283,10 @@ int main() {
            "opaque-handle out-parameter ABI");
     expect(cpp.find("native_pointer_value(") != std::string::npos &&
                cpp.find("raw_pointer_slot_copy(") != std::string::npos &&
-               cpp.find("&__gti_native_out_") != std::string::npos,
-           "opaque out arguments stage native pointer storage rather than "
-           "reinterpreting internal address carriers");
+               cpp.find("native_slot_address()") != std::string::npos &&
+               cpp.find("__gti_native_out_") == std::string::npos,
+           "opaque out arguments address real pointer slots without "
+           "contextual staging or carrier reinterpretation");
   } else {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -297,9 +298,8 @@ int main() {
 void ordinary(NativeDatabase** out_database) {}
 int main() { return 0; }
 )");
-  expect(!ordinary.canGenerateCode() && hasCode(ordinary, "GTI-S2074"),
-         "ordinary GTI functions should not acquire nested-pointer "
-         "parameters");
+  expect(ordinary.canGenerateCode(),
+         "ordinary GTI functions should use the same nested-pointer types");
 
   const lang::FrontendResult nonOpaque = analyze("non-opaque-out.gti", R"(
 [[c_abi]] struct NativeValue { mut int32_t value; };
@@ -311,10 +311,9 @@ extern "C" {
 }
 int main() { return 0; }
 )");
-  expect(!nonOpaque.canGenerateCode() && hasCode(nonOpaque, "GTI-S2054"),
-         "the C boundary should reject scalar, by-value-record, and const "
-         "opaque-handle nested pointers rather than generalizing the "
-         "out-parameter exception");
+  expect(nonOpaque.canGenerateCode(),
+         "the C boundary should admit scalar, record and qualified opaque "
+         "nested pointers through the general recursive type family");
 
   const lang::FrontendResult retained = analyze("retained-handle-out.gti", R"(
 [[c_opaque]] struct NativeDatabase;
@@ -325,9 +324,8 @@ int main() {
   return 0;
 }
 )");
-  expect(!retained.canGenerateCode() && hasCode(retained, "GTI-S2056"),
-         "an opaque-handle pointer-to-pointer should exist only as the direct "
-         "contextual C call argument");
+  expect(retained.canGenerateCode(),
+         "a pointer-slot address should be an ordinary storable raw value");
 
   const lang::FrontendResult immutable = analyze("immutable-handle-out.gti", R"(
 [[c_opaque]] struct NativeDatabase;
@@ -337,7 +335,7 @@ int main() {
   unsafe { return database_open(&database); }
 }
 )");
-  expect(!immutable.canGenerateCode() && hasCode(immutable, "GTI-S2056"),
+  expect(!immutable.canGenerateCode() && hasCode(immutable, "GTI-S2003"),
          "an opaque-handle out argument should require a mutable pointer "
          "binding");
 }
@@ -470,8 +468,8 @@ int main() { return 0; }
 extern "C" { NativeHandle** native_handles(int32_t* count); }
 int main() { return 0; }
 )");
-  expect(!unannotated.canGenerateCode() && hasCode(unannotated, "GTI-S2074"),
-         "two-level pointer returns should require the c_array boundary");
+  expect(unannotated.canGenerateCode(),
+         "nested pointer returns should not require unrelated count metadata");
 
   const lang::FrontendResult ordinaryPositions =
       analyze("c-array-ordinary-nested.gti", R"(
@@ -482,15 +480,8 @@ int main() {
   return 0;
 }
 )");
-  const std::size_t nestedDiagnostics = static_cast<std::size_t>(
-      std::count_if(ordinaryPositions.diagnostics.begin(),
-                    ordinaryPositions.diagnostics.end(),
-                    [](const lang::Diagnostic &diagnostic) {
-                      return diagnostic.code == "GTI-S2074";
-                    }));
-  expect(!ordinaryPositions.canGenerateCode() && nestedDiagnostics == 3,
-         "two-level pointers should remain rejected for fields, parameters, "
-         "and locals");
+  expect(ordinaryPositions.canGenerateCode(),
+         "nested pointers should compose in fields, parameters and locals");
 
   const lang::FrontendResult readOnlyCount =
       analyze("c-array-const-count.gti", R"(
@@ -509,10 +500,8 @@ extern "C" {
 }
 int main() { return 0; }
 )");
-  expect(!nestedCString.canGenerateCode() &&
-             hasCode(nestedCString, "GTI-S2073"),
-         "c_array should use c_string* for const char** rather than admitting "
-         "a third physical pointer level");
+  expect(nestedCString.canGenerateCode(),
+         "a third physical pointer level should use the recursive ABI rule");
 }
 
 } // namespace

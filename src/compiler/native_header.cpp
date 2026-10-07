@@ -402,9 +402,15 @@ private:
       if (type.arguments.size() != 1) {
         break;
       }
-      return std::string(type.pointerAccess == AccessMode::ReadOnly ? "const "
-                                                                    : "") +
-             cppType(type.arguments.front()) + "*";
+      const SemanticType &pointee = type.arguments.front();
+      std::string spelling = cppType(pointee);
+      if (type.pointerAccess == AccessMode::ReadOnly)
+        spelling = pointee.kind == SemanticType::RawPointer ||
+                           pointee.kind == SemanticType::CString ||
+                           pointee.kind == SemanticType::NativeFunction
+                       ? spelling + " const"
+                       : "const " + spelling;
+      return spelling + "*";
     }
     default:
       break;
@@ -459,9 +465,15 @@ private:
       if (type.arguments.size() != 1) {
         break;
       }
-      return std::string(type.pointerAccess == AccessMode::ReadOnly ? "const "
-                                                                    : "") +
-             cType(type.arguments.front()) + "*";
+      const SemanticType &pointee = type.arguments.front();
+      std::string spelling = cType(pointee);
+      if (type.pointerAccess == AccessMode::ReadOnly)
+        spelling = pointee.kind == SemanticType::RawPointer ||
+                           pointee.kind == SemanticType::CString ||
+                           pointee.kind == SemanticType::NativeFunction
+                       ? spelling + " const"
+                       : "const " + spelling;
+      return spelling + "*";
     }
     default:
       break;

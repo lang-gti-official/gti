@@ -510,6 +510,21 @@
         "thread_task_adapter": 2
       }
     },
+    "124-nested-raw-pointers.gti": {
+      "declarations": 142,
+      "bodies": 29,
+      "generated_items": 1,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
+      }
+    },
     "13-ownership.gti": {
       "declarations": 303,
       "bodies": 46,
@@ -1787,8 +1802,8 @@
     }
   },
   "totals": {
-    "declarations": 51497,
-    "bodies": 16108,
-    "generated_items": 3380
+    "declarations": 51639,
+    "bodies": 16137,
+    "generated_items": 3381
   }
 }

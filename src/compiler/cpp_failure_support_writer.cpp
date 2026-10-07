@@ -742,10 +742,11 @@ mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
   return mir_failure_success_v1;
 }
 
-template <typename T, std::size_t N>
+template <typename Array>
 inline mir_failure_status_v1
-mir_restoring_indexed_swap_v1(std::array<T, N> &storage,
+mir_restoring_indexed_swap_v1(Array &storage,
                               std::uint64_t left, std::uint64_t right) {
+  constexpr std::size_t N = fixed_array_extent<Array>::value;
   if (left >= N || right >= N)
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};

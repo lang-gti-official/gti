@@ -596,11 +596,17 @@ std::string cppNativeTypeSpelling(const LoweredProgram &program,
                                   const SemanticType &type) {
   if (type.kind == SemanticType::RawPointer) {
     std::string result =
-        type.pointerAccess == AccessMode::ReadOnly ? "const " : "";
-    result +=
         type.arguments.empty()
             ? "void"
             : cppNativeTypeSpelling(program, standard, type.arguments.front());
+    if (type.pointerAccess == AccessMode::ReadOnly) {
+      const bool pointerObject =
+          !type.arguments.empty() &&
+          (type.arguments.front().kind == SemanticType::RawPointer ||
+           type.arguments.front().kind == SemanticType::CString ||
+           type.arguments.front().kind == SemanticType::NativeFunction);
+      result = pointerObject ? result + " const" : "const " + result;
+    }
     return result + '*';
   }
   if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
@@ -758,16 +764,22 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     return "std::nullptr_t";
   case SemanticType::RawPointer: {
     std::string result = "::gti_internal::backend::raw_address<";
+    const bool qualifiedPointerObject =
+        type.pointerAccess == AccessMode::ReadOnly && !type.arguments.empty() &&
+        (type.arguments.front().kind == SemanticType::RawPointer ||
+         type.arguments.front().kind == SemanticType::CString);
     if (type.pointerAccess == AccessMode::ReadOnly) {
-      result += "const ";
+      result += qualifiedPointerObject ? "std::add_const_t<" : "const ";
     }
-    // The admitted second pointer level is a native array/out-parameter
-    // boundary, never an array of GTI carrier objects.
+    // A nested pointer names a native pointer slot, not another address
+    // carrier object. Qualify that pointer object at this exact layer.
     result +=
         type.arguments.empty() ? "void"
         : type.arguments.front().kind == SemanticType::RawPointer
             ? cppNativeTypeSpelling(program, standard, type.arguments.front())
             : spell(type.arguments.front());
+    if (qualifiedPointerObject)
+      result += '>';
     result += '>';
     return result;
   }
@@ -812,8 +824,23 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
                      std::to_string(type.functionId) + ">"
                : "void";
   case SemanticType::Array: {
-    std::string result = "std::array<";
-    result += type.arguments.empty() ? "void" : spell(type.arguments.front());
+    const bool pointerElements =
+        type.arguments.size() == 1 &&
+        type.arguments.front().kind == SemanticType::RawPointer &&
+        type.arguments.front().arguments.size() == 1;
+    std::string result = pointerElements
+                             ? "::gti_internal::backend::raw_pointer_array<"
+                             : "std::array<";
+    if (pointerElements) {
+      const SemanticType &pointer = type.arguments.front();
+      const std::string pointee =
+          cppNativeTypeSpelling(program, standard, pointer.arguments.front());
+      result += pointer.pointerAccess == AccessMode::ReadOnly
+                    ? "std::add_const_t<" + pointee + ">"
+                    : pointee;
+    } else {
+      result += type.arguments.empty() ? "void" : spell(type.arguments.front());
+    }
     result += ", ";
     if (type.arrayLengthParameterId != 0) {
       const LoweredGenericParameter *parameter =
