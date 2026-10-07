@@ -7322,6 +7322,34 @@ consumer, and release refreshes remain outstanding for the full campaign.
   policies and metadata-only parameters; no storage or borrow permission is
   relaxed. All six focused gates then pass (110.63 seconds), including every
   one of the 232 native enum configurations and 19 source rejections.
+  Reconciliation with canonical `00cc2c09` and published allocator
+  `9d3c993a` completes the optimized all-target build. An independent
+  integration review preserves identical scoped semantics for both enum
+  spellings and exact concrete identities throughout storage, capabilities,
+  relocation and emission. A test-only preflight lookup is corrected to use
+  the complete enum type. The refreshed enum matrix passes all 232 native
+  configurations and 19 source rejections; declaration, backend, integral
+  enum and LSP gates also pass. All 76 Tree-sitter cases, 191 shipped sources
+  and 486 formatted C/C++ files pass. A fresh isolated installed stage passes
+  all 12 SDK consumers, LSP and project-CLI checks, and example 129 runs at
+  C++23/O3 with library overrides unset. The general preflight gate exposes
+  six constructor/subscript representation assertions requiring review, and
+  installed CLI acceptance exposes an empty-owner constructor specialization
+  ordering failure. These failures remain visible. The two original goals
+  will be delivered together through PR94 only after shared full-suite,
+  corpus/census and installed acceptance; PR110 stays published until remote
+  integration and absence of residual work are confirmed.
+  The six preflight assertions are subsequently updated to the existing typed
+  schedules rather than restoring superseded emission routes: declaration
+  defaults execute in selected constructors without duplicate native field
+  initialization; exact generated construction retains its prepared slot;
+  subscripts evaluate once and use loan-rooted load/arithmetic/assign with
+  checked reference publication and overflow routing. Missing required target
+  representation and erased arithmetic failure-edge mutations remain rejected.
+  The complete optimized preflight gate passes (6.65 seconds). No executable
+  semantics change in this test-maintenance checkpoint. Shared release
+  validation and the empty-owner native ordering correction remain with the
+  combined release owner.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
