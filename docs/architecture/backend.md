@@ -801,6 +801,13 @@ lifetime root rather than interpreting the lifetime root as another invocation.
 Consuming method field aliases use the shared `receiverAllowsMutation` rule,
 so moving a `mut` field does not accidentally become a native const-copy.
 Public wrapper identity plays no part in either representation decision.
+An unfused copyable lambda `Load` consumed by return materializes its SSA copy
+at that exact verified instruction. It is not erased as an invocation-receiver
+alias: the later return publishes the retained value instead of reading an
+undeclared SSA name or re-reading its source place. Generic relay signatures
+remain deduced native representations of the exact semantic lambda type;
+copyable returns remain copies and noncopyable returns retain their movement
+and environment-drop contracts.
 The same proof admits an owned lambda Move with one direct invocation receiver
 use and one exact lifetime root. Its slot uses the existing concrete closure
 representation, whether produced locally or received as a concrete generic
