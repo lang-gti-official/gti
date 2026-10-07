@@ -14084,6 +14084,22 @@ generatedSpecialMemberConstruction(const MirProgram &program,
       construct.lifecycle.back() ==
           MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
                             .target = constructedDrop->id};
+  // MIR records a generated move's consumption of its staged input as one
+  // leading TransferOut of that input's value obligation. On the cleanup-free
+  // chain the input is never materialized: the construction spells std::move
+  // over the source binding, so the transfer retires no native shell, exactly
+  // like the moved-from Drop that older schedules recorded separately.
+  const MirDropObligation *chainInputDrop =
+      moved && stagedMoveDrop == nullptr
+          ? uniqueValueLifetimeDrop(body, operand.value, classType)
+          : nullptr;
+  const bool chainTransfer =
+      chainInputDrop != nullptr && !construct.lifecycle.empty() &&
+      construct.lifecycle.front() ==
+          MirLifecycleEvent{.kind = MirLifecycleEventKind::TransferOut,
+                            .source = chainInputDrop->id};
+  const std::size_t activationEvents =
+      construct.lifecycle.size() - (chainTransfer ? 1 : 0);
 
   // A receiver temporary is constructed at this MIR instruction, not fused
   // with a later lexical Initialize. Its exact slot and full-expression drop
@@ -14138,7 +14154,9 @@ generatedSpecialMemberConstruction(const MirProgram &program,
       // Retiring the consumed stored loan is provenance-only. It can sit
       // between this failure-free construction and its publication only for
       // the exact source carrier and an unchanged complete dependency set.
-      if (!retiresSource || !construct.loan ||
+      // Either transfer form qualifies: the staged slot's native shell or the
+      // cleanup-free chain's moved binding consumed by std::move.
+      if (!(retiresSource || chainTransfer) || !construct.loan ||
           index + 2 >= block.instructions.size() ||
           block.instructions[index + 2].id != initialize->id)
         continue;
@@ -14200,13 +14218,12 @@ generatedSpecialMemberConstruction(const MirProgram &program,
   }
   const MirLifecycleEvent &activation = initialize->lifecycle.front();
   const bool directActivation =
-      resultDrop == nullptr && construct.lifecycle.empty() &&
+      resultDrop == nullptr && activationEvents == 0 &&
       activation.kind == MirLifecycleEventKind::Initialize &&
       activation.source == 0 && activation.target == bindingDrop->id &&
       !activation.conditional && !activation.failureCleanup;
   const bool reparentedActivation =
-      resultDrop != nullptr &&
-      (construct.lifecycle.size() == 1 || retiresSource) &&
+      resultDrop != nullptr && (activationEvents == 1 || retiresSource) &&
       construct.lifecycle.back().kind == MirLifecycleEventKind::Initialize &&
       construct.lifecycle.back().source == 0 &&
       construct.lifecycle.back().target == resultDrop->id &&

@@ -156,11 +156,15 @@ int main() {
          "generated lifecycle code must not move or assign through referents");
   expect(contains("BoundMove &operator=(BoundMove &&) = delete;"),
          "reference-carrying assignment must remain deleted in native code");
+  // The moved binding feeds the generated construction directly, so the
+  // backend spells std::move over its slot. The generated move disarms that
+  // shell's active drop state and its ordinary scope drop retires it; no
+  // separately staged shell exists, so no extra retirement may be invented.
   const std::string retirement = "GTI MIR generated-move source transfer";
-  expect(contains(retirement) && artifact.contents.find(retirement) ==
-                                     artifact.contents.rfind(retirement),
-         "the native moved-from SSA shell must retire exactly once after "
-         "publication, without inventing another GTI cleanup");
+  expect(contains(".construct(std::move(__gti_mir_p_3.get()));") &&
+             !contains(retirement),
+         "the cleanup-free generated move must consume its moved binding "
+         "without inventing another native retirement");
 }
 
 void testPassiveRecordComposition() {
