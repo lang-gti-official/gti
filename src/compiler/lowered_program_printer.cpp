@@ -136,7 +136,9 @@ void printGeneratedIdentity(std::ostream &output,
 
 class DeclarationPayloadPrinter final {
 public:
-  explicit DeclarationPayloadPrinter(std::ostream &output) : output(output) {}
+  explicit DeclarationPayloadPrinter(std::ostream &output,
+                                     bool *valueExpressions = nullptr)
+      : output(output), valueExpressions(valueExpressions) {}
 
   void print(const LoweredDeclarationPayload &payload) {
     std::visit([this](const auto &value) { printValue(value); }, payload);
@@ -193,7 +195,26 @@ private:
 
   void compileTimeValue(const CompileTimeValue &value) {
     output << '{' << number(value.kind) << ':' << value.value << ':'
-           << value.parameterId << '}';
+           << value.parameterId;
+    if (value.expression) {
+      if (valueExpressions != nullptr)
+        *valueExpressions = true;
+      const auto print = [&](const auto &self,
+                             const GenericValueExpression &expression) -> void {
+        output << "expr(" << number(expression.kind) << ':' << expression.value
+               << ':' << expression.parameterId << ':'
+               << (expression.kind == GenericValueExpression::Binary
+                       ? number(expression.token.kind)
+                       : 0);
+        if (expression.left)
+          self(self, *expression.left);
+        if (expression.right)
+          self(self, *expression.right);
+        output << ')';
+      };
+      print(print, *value.expression);
+    }
+    output << '}';
   }
 
   void type(const SemanticType &value) {
@@ -785,14 +806,14 @@ private:
   }
 
   std::ostream &output;
+  bool *valueExpressions = nullptr;
 };
 
 } // namespace
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << (program.embeddingPlan() ? "lowered-program-v12\n"
-                                     : "lowered-program-v11\n");
+  bool valueExpressions = false;
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -810,15 +831,16 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
              << " function=" << std::quoted(selected.qualifiedName)
              << " declaration=" << selected.declaration
              << " instance=" << selected.function << " return=";
-      DeclarationPayloadPrinter(output).semanticType(selected.returnType);
+      DeclarationPayloadPrinter(output, &valueExpressions)
+          .semanticType(selected.returnType);
       output << " parameters=[";
       for (std::size_t index = 0; index < selected.parameterTypes.size();
            ++index) {
         if (index != 0) {
           output << ',';
         }
-        DeclarationPayloadPrinter(output).semanticType(
-            selected.parameterTypes[index]);
+        DeclarationPayloadPrinter(output, &valueExpressions)
+            .semanticType(selected.parameterTypes[index]);
       }
       output << "] request=" << std::quoted(selected.requestSource.source)
              << ':' << selected.requestSource.start << ':'
@@ -896,11 +918,12 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
       printGeneratedIdentity(output, required);
     }
     output << " payload=";
-    DeclarationPayloadPrinter(output).print(declaration.payload);
+    DeclarationPayloadPrinter(output, &valueExpressions)
+        .print(declaration.payload);
     output << '\n';
   }
 
-  DeclarationPayloadPrinter values(output);
+  DeclarationPayloadPrinter values(output, &valueExpressions);
   output << "symbols " << program.symbols().size() << '\n';
   for (const LoweredSymbol &symbol : program.symbols()) {
     output << "symbol " << symbol.id
@@ -1113,7 +1136,10 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   }
 
   output << "mir\n" << MirPrinter().print(program.mir());
-  return output.str();
+  const char *schema = valueExpressions          ? "lowered-program-v14\n"
+                       : program.embeddingPlan() ? "lowered-program-v12\n"
+                                                 : "lowered-program-v11\n";
+  return schema + output.str();
 }
 
 } // namespace lang

@@ -1696,10 +1696,9 @@
       "outcome": "ice"
     },
     "a03-generic-call-in-global-initializer": {
-      "code": "GTI-S2068",
       "finding": "A03",
       "issue": 55,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a05-string-view-help-suggests-invalid-form": {
       "code": "GTI-S2003",
@@ -1829,10 +1828,9 @@
       "outcome": "bad-diagnostic"
     },
     "a23-recursive-value-generic-layout": {
-      "code": "GTI-S2082",
       "finding": "A23",
       "issue": 67,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a24-unreachable-warning-per-instance": {
       "finding": "A24",

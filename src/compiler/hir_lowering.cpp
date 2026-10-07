@@ -262,23 +262,11 @@ private:
       argument = substitute(argument, substitution);
     }
     for (CompileTimeValue &argument : result.valueArguments) {
-      if (argument.kind != CompileTimeValue::Parameter) {
-        continue;
-      }
-      const auto found = substitution.values.find(argument.parameterId);
-      if (found != substitution.values.end()) {
-        argument = found->second;
-      }
+      argument = substituteCompileTimeValue(argument, substitution.values);
     }
     const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
       for (CompileTimeValue &argument : values) {
-        if (argument.kind != CompileTimeValue::Parameter) {
-          continue;
-        }
-        const auto found = substitution.values.find(argument.parameterId);
-        if (found != substitution.values.end()) {
-          argument = found->second;
-        }
+        argument = substituteCompileTimeValue(argument, substitution.values);
       }
     };
     substituteValues(result.lambdaEnclosingClassValues);
@@ -791,7 +779,7 @@ private:
         (type.kind != SemanticType::TypePack || type.concretePack) &&
         type.arrayLengthParameterId == 0;
     for (const CompileTimeValue &value : type.valueArguments) {
-      concrete = concrete && value.kind != CompileTimeValue::Parameter;
+      concrete = concrete && value.kind == CompileTimeValue::UInt64;
     }
     for (const SemanticType &argument : type.arguments) {
       // Do not short-circuit discovery of a concrete sibling or nested type.
@@ -1352,12 +1340,20 @@ private:
                                 snapshot.instantiationSite);
       model = &analysis.model;
     }
+    if (const auto *concreteLifecycle =
+            model->findClassLifecycle(*declaration->declaration)) {
+      auto &instance = output.program.classes[index];
+      instance.defaultConstructor = concreteLifecycle->defaultConstructor;
+      instance.copyConstructor = concreteLifecycle->copyConstructor;
+      instance.moveConstructor = concreteLifecycle->moveConstructor;
+      instance.copyAssignment = concreteLifecycle->copyAssignment;
+      instance.moveAssignment = concreteLifecycle->moveAssignment;
+    }
     std::vector<HirClassField> fields;
     HirBody fieldInitializers;
     fields.reserve(declaration->fields.size());
     for (const ClassFieldTypeInfo &field : declaration->fields) {
-      const SemanticType type = substitute(field.type, substitution);
-      (void)enqueueClass(type);
+      SemanticType type = substitute(field.type, substitution);
       BindingInfo info{.type = type,
                        .access = field.declaration != nullptr &&
                                          field.declaration->isMutable()
@@ -1369,8 +1365,12 @@ private:
                 model->findBinding(*field.declaration)) {
           info.symbol = recorded->symbol;
           info.constant = recorded->constant;
+          info.type = recorded->type;
+          info.traits = recorded->traits;
+          type = recorded->type;
         }
       }
+      (void)enqueueClass(type);
       const HirBindingId binding =
           field.declaration == nullptr
               ? 0
@@ -1378,9 +1378,10 @@ private:
       const std::optional<HirValueId> initializer =
           field.declaration == nullptr
               ? std::nullopt
-              : lowerExpression(field.declaration->initializer(), *model,
-                                snapshot.typeArguments, snapshot.valueArguments,
-                                fieldInitializers);
+              : lowerExpression(
+                    model->resolvedFieldInitializer(*field.declaration), *model,
+                    snapshot.typeArguments, snapshot.valueArguments,
+                    fieldInitializers);
       if (field.declaration != nullptr) {
         HirStatement statement{.kind = HirStatementKind::Variable,
                                .source = field.declaration,
@@ -2016,7 +2017,8 @@ private:
       // than a concrete constructor MIR body. Keep that route intact until
       // generated construction has its own selected initialization body.
       if (owner.defaultConstructor == SpecialMemberStatus::Generated ||
-          field.declaration == nullptr || !field.declaration->initializer() ||
+          field.declaration == nullptr ||
+          !fieldModel->resolvedFieldInitializer(*field.declaration) ||
           std::any_of(initializers.begin(), initializers.end(),
                       [&](const HirConstructorInitializer &initializer) {
                         return initializer.kind ==
@@ -2024,9 +2026,9 @@ private:
                                initializer.field == field.info.symbol;
                       }))
         continue;
-      const auto value =
-          lowerExpression(field.declaration->initializer(), *fieldModel,
-                          classArguments, classValueArguments, body);
+      const auto value = lowerExpression(
+          fieldModel->resolvedFieldInitializer(*field.declaration), *fieldModel,
+          classArguments, classValueArguments, body);
       if (!value) {
         lifecycleValid = false;
         continue;

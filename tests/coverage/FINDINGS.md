@@ -92,7 +92,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256; A13: nondeterministic `--emit-mir` |
 | Compiler hang or silent failure | A06 and A57 resolved; A41 now reports a located internal failure but its forwarding defect remains unresolved |
 | ICE or invalid generated C++ on valid code | A01, A14–A17, A26–A32, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
-| Valid code rejected | A03, A18, A19, A23, A34, A36 |
+| Valid code rejected | A18, A19, A34, A36; A03 resolved, A23 original reproducer passing with shared nominal-field failure cleanup prerequisite still under integration |
 | Specification gap | A04: a dependency's own `[build] defines` is ignored |
 | Diagnostic quality | A05, A07–A12, A20–A22, A24, A33, A35, A43, A44, A53, A60, A61 |
 
@@ -100,7 +100,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | --- | --- | --- | --- |
 | A01 | [#53](https://git.internal.howetotech.dev/gti-lang/gti/issues/53) C++ backend ICE assigning a class value into a class-typed field | ice | `reproducers/a01-call-result-into-field`<br>`reproducers/a01-class-value-into-field`<br>`reproducers/a01-field-assign-from-call-result-method` |
 | A02 | [#54](https://git.internal.howetotech.dev/gti-lang/gti/issues/54) hosted entry maps results outside 0..255 to failure status 1 after cleanup | fixed; passing regression | `projects/a02-test-status-truncation` |
-| A03 | [#55](https://git.internal.howetotech.dev/gti-lang/gti/issues/55) Program-wide initializer proof rejects any generic call (GTI-S2068) | rejected | `reproducers/a03-generic-call-in-global-initializer` |
+| A03 | [#55](https://git.internal.howetotech.dev/gti-lang/gti/issues/55) Closed generic initializer effects are analyzed with exact selected instance arguments; real later accesses and unknown effects remain rejected | pass | `reproducers/a03-generic-call-in-global-initializer`, `generic_initialization` |
 | A04 | [#56](https://git.internal.howetotech.dev/gti-lang/gti/issues/56) dependency defines participate in the selected program's shared configuration | fixed; passing regression | `projects/a04-dependency-defines` |
 | A05 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a05-string-view-help-suggests-invalid-form` |
 | A06 | [#57](https://git.internal.howetotech.dev/gti-lang/gti/issues/57) Resolved: unbounded polymorphic recursion is resource-bounded | rejected (GTI-S2105) | `reproducers/a06-polymorphic-recursion-hang` |
@@ -120,7 +120,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A20 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a20-unnecessary-mut-per-instance` |
 | A21 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a21-value-argument-resolved-as-type` |
 | A22 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a22-spurious-s2068-after-constexpr-failure` |
-| A23 | [#67](https://git.internal.howetotech.dev/gti-lang/gti/issues/67) Finite value-generic recursion ended by a specialization is rejected as self-containing | rejected | `reproducers/a23-recursive-value-generic-layout` |
+| A23 | [#67](https://git.internal.howetotech.dev/gti-lang/gti/issues/67) Finite value-generic layout and checked omitted nominal-field construction now pass the original; general generated-default failure rollback is a shared lifecycle prerequisite pending integration | pass (original), prerequisite pending | `reproducers/a23-recursive-value-generic-layout`, `generic_layout`, `generic_instance_runtime` |
 | A24 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a24-unreachable-warning-per-instance` |
 | A25 | [#70](https://git.internal.howetotech.dev/gti-lang/gti/issues/70) Miscompile: returning a local reference through expected<T&, E> yields the parameter, not the referent | ice, runtime | `reproducers/a25-expected-ref-relay-wrong-referent`<br>`reproducers/a25-ref-return-from-expected-value` |
 | A26 | [#71](https://git.internal.howetotech.dev/gti-lang/gti/issues/71) MIR ICE: overloaded dereference store whose right side reads the same owner | ice | `reproducers/a26-overloaded-deref-store-reads-owner` |

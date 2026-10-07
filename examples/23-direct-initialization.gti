@@ -24,17 +24,41 @@ public:
   }
 };
 
+struct Indicator {
+  int level = 9;
+};
+
+struct Panel {
+  // This selects real construction, not an empty or nullable state.
+  Indicator indicator;
+};
+
+namespace layers {
+  struct Layer<uint64_t N> {
+    Layer<N - 1> inner;
+    int value = 1;
+  };
+}
+
+// Exact concrete identities make this nested by-value layout finite.
+struct layers::Layer<0> {
+  int value = 100;
+};
+
 int main() {
   Reading<int> fixed{1};
   mut Reading<int> changing{2};
   changing.set(3);
   IntReading aliased{4};
   Dashboard dashboard{};
+  Panel panel{};
+  layers::Layer<2> nested{};
 
   // `auto` remains the alternative when the constructor states the type.
   auto inferred = Reading<int>(5);
 
-  if (fixed.get() == 1 && changing.get() == 3 and aliased.get() == 4 and dashboard.value() == 7 and inferred.get() == 5) {
+  if (fixed.get() == 1 && changing.get() == 3 and aliased.get() == 4 and dashboard.value() == 7 and inferred.get() == 5
+      && panel.indicator.level == 9 && nested.inner.inner.value == 100) {
     return 0;
   }
   return 1;

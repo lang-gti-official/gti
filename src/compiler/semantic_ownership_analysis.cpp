@@ -74,8 +74,22 @@ auto SemanticVisitor::Impl::nonDecreasingNominalRecurrence(
   for (auto cursor = active.rbegin(); cursor != active.rend(); ++cursor) {
     if (cursor->kind != SemanticType::Class)
       continue;
-    if (cursor->classId == type.classId)
+    if (cursor->classId == type.classId) {
+      const bool concreteValues =
+          !type.valueArguments.empty() &&
+          std::all_of(type.valueArguments.begin(), type.valueArguments.end(),
+                      [](const auto &value) {
+                        return value.kind == CompileTimeValue::UInt64;
+                      }) &&
+          std::all_of(cursor->valueArguments.begin(),
+                      cursor->valueArguments.end(), [](const auto &value) {
+                        return value.kind == CompileTimeValue::UInt64;
+                      });
+      if (concreteValues && active.size() < 64 &&
+          semanticTypeComplexity(type) <= semanticTypeComplexity(*cursor))
+        return false;
       return semanticTypeComplexity(type) >= semanticTypeComplexity(*cursor);
+    }
     if (const ClassInfo *owner = classInfo(*cursor);
         owner != nullptr && owner->genericParameters.empty())
       return false;

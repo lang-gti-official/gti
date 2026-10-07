@@ -884,11 +884,22 @@ does not suppress otherwise valid generated lifecycle operations.
 
 The exact declaration `Type() = default;` explicitly selects the generated
 zero-argument construction operation. It is valid only when every field has a
-declaration initializer and the state-bearing base has an accessible
+declaration initializer or is a nominal class/struct field whose exact type has
+an accessible zero-argument construction operation, and the state-bearing base has an accessible
 zero-argument constructor, which are the same conditions used when the
 declaration is omitted. It introduces no executable body, initializer list,
 generic parameters, or requirements. Its source access is the written member
 access. Ordinary-constructor `= delete` is not implemented.
+
+An omitted nominal field is default-constructed in declaration order, unless
+an explicit constructor initializer overrides it. This is a selected GTI
+construction operation, not implicit zeroing or a nullable empty state. Scalar,
+array, reference, raw-pointer, and native-function fields retain their existing
+explicit-initialization rules. Generic availability is checked again after
+substitution: `Layer<N - 1>` is a distinct concrete field type from `Layer<N>`,
+and a finite chain may end at an exact specialization. Exact cycles remain
+invalid; concrete layout/lifecycle exploration has a deterministic depth budget
+and reports `GTI-S2105` at the source when exhausted.
 
 A class or struct may declare at most one public exact copy policy
 `Type(Type&) = default|delete;` and one public exact move policy

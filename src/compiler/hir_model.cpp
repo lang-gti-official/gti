@@ -37,7 +37,7 @@ materializableProgramConstant(const std::optional<ConstantValue> &constant) {
 }
 
 [[nodiscard]] bool containsUnresolvedGeneric(const CompileTimeValue &value) {
-  return value.kind == CompileTimeValue::Parameter;
+  return value.kind != CompileTimeValue::UInt64;
 }
 
 [[nodiscard]] bool containsUnresolvedGeneric(const SemanticType &type) {
