@@ -308,6 +308,10 @@ physical storage of a carrier. They check exact dependencies through copied
 passive views, moved cleanup owners, nested field construction, calls and
 returns. Corruption tests independently reject forged field/owner mappings,
 missing retention, premature loan endpoints and incorrect rollback transfers.
+The Phase 2 audit adds by-value owner movement through repeated locals and
+exclusive branches, with an unrelated source-defined guard as the general
+language control. Mutation tests erase formal provenance and transfer evidence
+or attach an unrelated same-typed parameter; these must remain rejected.
 The complete ownership partition remains an adjacent gate: iterator and
 fallible-reference results must not accidentally borrow the wrapper's storage.
 
@@ -338,7 +342,12 @@ across growth, destruction independent of region release and relocation between
 distinct resource instances. The vector rollback fixture checks that a failing
 `try_emplace_back` constructor keeps its original failure, and the counting
 adapter checks that a failed push consumes its argument without disturbing the
-container. `allocator_raw_audit_independence` compiles the allocator programs
+container. The owner-movement fixture checks repeated by-value transfers and
+branch-local cleanup, including destructor failure and explicit release:
+each element is destroyed once, then its region is released before its provider.
+The resource LSP gate also rejects a missing unsafe-required provider member
+without incorrectly advising the author to make that operation safe.
+`allocator_raw_audit_independence` compiles the allocator programs
 with raw-pointer auditing off and in warn mode and requires identical C++.
 
 Completion record: on macOS arm64 with the optimized Release compiler, LLVM
@@ -351,6 +360,16 @@ cases, highlight/locals/rainbow checks, 183 shipped sources and pinned
 regeneration pass, as do formatting of all 453 first-party C/C++ sources and
 deterministic API documentation generation. Linux and Windows execution and
 bundled-LLVM release packaging are not claimed.
+
+Independent Phase 2 audit completion: the repaired by-value/branch-local owner
+flow and unsafe-requirement advice pass another complete 460-test run with the
+optimized Release compiler on macOS arm64. This includes nine allocator runtime
+fixtures across the eight native configurations, the unrelated guard controls,
+forged-MIR negatives, borrowed-expected propagation and both corpus endpoints.
+The isolated installed SDK passes all eleven consumers; the new owner-movement
+fixture also passes with installed CLI defaults at C++20/O0, C++23/O3 and under
+ASan/UBSan. All 453 first-party C/C++ files pass formatting. These are local
+macOS results, not additional Linux/Windows or bundled-LLVM packaging evidence.
 
 ## Source package registry bootstrap
 
@@ -3633,6 +3652,12 @@ an unobserved cleanup error. Structural C++ backend tests, MIR verifier mutation
 tests, focused compile/run fixtures, and sanitizer/platform coverage remain
 necessary. Fixtures outside `examples/` deliberately supplement the corpus
 without changing its census.
+
+The Phase 2 audit extends example 118 with one by-value guard consumer that
+moves its parameter through two local bindings. The reviewed inventory adds
+exactly one declaration and one body to that example; generated-item counts
+are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
+observations.
 
 ## Development And Completion Cadence
 

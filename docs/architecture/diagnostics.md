@@ -825,7 +825,12 @@ insufficient.
 Exact read-member requirements also use `GTI-S2029`. Named concepts retain
 their declared name; a direct requirement names the missing member and relates
 its written receiver/result signature rather than inventing a concept name.
-The hint requires a public, safe, read-only member with the exact owned result.
+The hint preserves the requirement's receiver and unsafe-call contract. An
+ordinary requirement asks for a safe member; an `unsafe { ... }` requirement
+permits either a safe or unsafe member and does not suggest hiding an unsafe
+operation behind a safe wrapper. Its related signature retains the explicit
+unsafe context. Generic calls still need that context, independently of which
+concrete implementation satisfies the requirement.
 Semantic viability preserves the outer-to-inner concrete concept applications
 and the read-member failure. The read-member selection routine supplies the
 reason (missing member, invalid shape, ambiguity, access, unsafe access,

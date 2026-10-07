@@ -7286,6 +7286,7 @@ private:
     const MirOperand condition = conditionOperand(plan.operand);
     const std::vector<Scope> evaluatedScopes = scopes;
     const std::vector<TemporaryDrop> evaluatedTemporaryDrops = temporaryDrops;
+    const auto evaluatedBindingLoans = bindingLoans;
     const MirBlockId successBlock = appendBlock();
     const MirBlockId errorBlock = appendBlock();
     terminate({.kind = MirTerminatorKind::Branch,
@@ -7312,6 +7313,9 @@ private:
     current = successBlock;
     scopes = evaluatedScopes;
     temporaryDrops = evaluatedTemporaryDrops;
+    // Cleanup on the propagated-error path must not retire the success path's
+    // carrier-to-owner mapping, just as it must not retire its scope loans.
+    bindingLoans = evaluatedBindingLoans;
     if (value.info.type == SemanticType::Void) {
       emitValue(plan.successExtraction);
       endAddedLoans(evaluatedScopes);
@@ -8748,11 +8752,23 @@ private:
       output.loans[lowered - 1].entry = true;
       recordLoanIdentity(lowered, loan);
       const MirPlace *place = output.findPlace(sourcePlace);
+      if (loan.lifecycleBound && place &&
+          place->root == MirPlaceRootKind::Binding &&
+          place->projections.empty() && place->initiallyAvailable &&
+          place->type.kind == SemanticType::Class) {
+        // Semantic carrier membership describes the completed flow and may
+        // already omit a moved formal. MIR entry provenance must still name
+        // the formal that supplied the initial ownership obligation.
+        auto &carriers = output.loans[lowered - 1].carriers;
+        if (std::find(carriers.begin(), carriers.end(), place->binding) ==
+            carriers.end())
+          carriers.push_back(place->binding);
+      }
       if (place && place->projections.size() == 1 &&
           place->projections.front().kind == MirProjectionKind::PackElement) {
         packEntryLoans.emplace(sourcePlace, lowered);
       } else {
-        for (const HirBindingId carrier : loan.carriers) {
+        for (const HirBindingId carrier : output.loans[lowered - 1].carriers) {
           bindingLoans.insert_or_assign(carrier, lowered);
         }
       }
@@ -8838,6 +8854,12 @@ private:
           {.id = id, .obligations = std::move(cleanup)});
       (void)appendInstruction(
           {.kind = MirInstructionKind::Lifecycle, .cleanupBoundaryEnd = id});
+    }
+    // A local may own an entry loan originally registered in an outer scope.
+    // Its cleanup ends that loan on this path; popping only the local scope
+    // would leave a stale outer entry and emit another EndBorrow at the join.
+    for (const MirLoanId loan : endedLoans) {
+      removeLoanFromState(loan, scopes, bindingLoans);
     }
   }
 
@@ -9308,7 +9330,14 @@ private:
           statement.value ? movedBorrowCarrierBinding(*statement.value) : 0;
       if (retained != nullptr && retained->lifecycleBound && transferred != 0 &&
           transferred != *statement.binding) {
-        std::erase(output.loans[retainedLoan - 1].carriers, transferred);
+        // An entry loan's formal is its immutable provenance anchor, even
+        // after the owned value moves into a local. Preserve that identity;
+        // bindingLoans and lifecycle transfers track current availability.
+        const auto *origin = output.findPlace(retained->source);
+        if (!retained->entry || origin == nullptr ||
+            origin->root != MirPlaceRootKind::Binding ||
+            origin->binding != transferred)
+          std::erase(output.loans[retainedLoan - 1].carriers, transferred);
         if (const auto sourceLoan = bindingLoans.find(transferred);
             sourceLoan != bindingLoans.end() &&
             sourceLoan->second == retainedLoan) {
