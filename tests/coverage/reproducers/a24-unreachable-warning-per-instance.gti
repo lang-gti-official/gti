@@ -1,0 +1,11 @@
+// A24: an unreachable-statement warning is decided from a single generic instance.
+int32_t adjust<uint64_t Mode>(int32_t value) {
+  if constexpr (Mode == 0) {
+    return value;
+  }
+  return value + 1;
+}
+
+int main() {
+  return adjust<0>(1) + adjust<1>(1) == 3 ? 0 : 1;
+}

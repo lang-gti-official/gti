@@ -1,0 +1,14 @@
+// A20: GTI-S2096 'never used mutably' is wrong; its quick fix breaks the build.
+void bump<T>(mut int32_t& total, T& value) { total++; }
+
+int32_t count_all<Args...>(Args... args) {
+  mut int32_t total = 0;
+  (bump(total, args), ...);
+  return total;
+}
+
+int main() {
+  int32_t n = count_all(1, true, 2.5d);
+  std::println(n);
+  return n == 3 ? 0 : 1;
+}

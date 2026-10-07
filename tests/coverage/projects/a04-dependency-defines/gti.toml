@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "a04-dependency-defines"
+version = "0.1.0"
+
+[dependencies]
+flagged = { path = "flagged" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"
