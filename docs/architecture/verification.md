@@ -3843,6 +3843,26 @@ forgeries independently in MIR and C++ admission, while
 tests populated nested storage and unrelated user-defined accessors across
 all eight native modes.
 
+### Operator-place composition focused gates
+
+`operator_place_composition_pipeline` covers exact projection-call preservation,
+nested unretained receiver reservations, checked scalar/class reference
+publication, genuine read-only and retained-loan rejections, malformed MIR,
+O0/O1/O3 optimization and production C++20/C++23 body admission.
+`operator_place_composition_runtime` runs A26/A27/both A46 originals, an unrelated
+user-defined Cell/Row/Grid trace and unique-owner/optional clients through the
+eight-mode native matrix (48 cases). `operator_place_failure_runtime` checks 12
+unchanged target-before-RHS and callee/caller cleanup observations at the native
+endpoints; an indexed reference failure must report R0007/70, not terminal abort.
+`operator_place_composition_lsp` checks semantic-error publication, symbol queries
+and recovery. These are focused gates, not the full campaign acceptance run.
+
+Example14 explicitly demonstrates the repaired forms. Its reviewed inventory
+adds seven declarations and six bodies (field initializer, static field
+initializer, constructor and three accessors for Handles); generated items
+are unchanged. Only that example's entries and derived totals are updated;
+full corpus/census acceptance remains the combined campaign's responsibility.
+
 ### Generic contract and advisory regression gates
 
 `testDependentRequiresArgumentAdmission` in the declarations partition checks

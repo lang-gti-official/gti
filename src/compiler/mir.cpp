@@ -2124,6 +2124,39 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     }
   }
   const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+  for (const auto &loan : body.loans) {
+    if (!loan.twoPhase)
+      continue;
+    const auto origin =
+        canonicalPlace(body, loan.source, bindingLoans, inactive);
+    if (origin.ambiguous || origin.root == MirPlaceRootKind::Symbol ||
+        origin.root == MirPlaceRootKind::Temporary ||
+        origin.root == MirPlaceRootKind::Value)
+      return failure(body, owner,
+                     "two-phase loan must retain one stable non-global origin "
+                     "through its receiver ancestry");
+  }
+  // A nested store has one terminal reservation, but its already-evaluated
+  // transient accessors also protect the receiver chain. Treat that exact
+  // unretained ancestry as part of the reservation, never a lexical borrow.
+  // No extra activation or executable accessor is manufactured for a parent.
+  const auto reservationAncestors = [&](const MirLoan &reservation) {
+    std::vector<MirLoanId> result;
+    MirLoanId parent = reservation.parent;
+    while (parent != 0) {
+      const auto &candidate = body.loans[parent - 1];
+      if (candidate.kind != MirLoanKind::CallResult || candidate.twoPhase ||
+          candidate.access != AccessMode::Mutable || candidate.entry ||
+          candidate.escapes || candidate.semanticLoan != 0 ||
+          !candidate.carriers.empty() || candidate.lifecycleBound ||
+          candidate.storedDependency != 0 ||
+          !candidate.additionalDependencies.empty())
+        break;
+      result.push_back(parent);
+      parent = candidate.parent;
+    }
+    return result;
+  };
   for (const MirLoan &loan : body.loans) {
     if (loan.parent == 0) {
       continue;
@@ -2869,6 +2902,26 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           if (before == MirLoanFlowState::Inactive && conditional)
             continue;
           if (reserved) {
+            const auto ancestors = reservationAncestors(record);
+            if (!ancestors.empty()) {
+              for (const auto ancestor : ancestors)
+                if (active[ancestor - 1] != MirLoanFlowState::Reserved)
+                  return failure(body, owner,
+                                 "nested reservation loses its reserved "
+                                 "receiver ancestry",
+                                 block.id, instruction.id);
+              // An unactivated failure rolls back to the ordinary exclusive
+              // accessor chain before that chain's child-first cleanup.
+              for (std::size_t index = 0; index < ancestors.size(); ++index)
+                active[ancestors[index] - 1] =
+                    index == 0 ? MirLoanFlowState::Active
+                               : MirLoanFlowState::Suspended;
+              const auto outer = body.loans[ancestors.back() - 1].parent;
+              if (outer != 0 &&
+                  body.loans[outer - 1].access == AccessMode::Mutable)
+                active[outer - 1] = MirLoanFlowState::Suspended;
+              continue;
+            }
             if (active[parent - 1] != MirLoanFlowState::Active) {
               return failure(body, owner,
                              "ending two-phase reservation " +
@@ -2950,7 +3003,17 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                          block.id, instruction.id);
         }
         const MirLoanId parent = reserved.parent;
-        if (parent != 0 && active[parent - 1] != MirLoanFlowState::Active) {
+        const auto ancestors = reservationAncestors(reserved);
+        const MirLoanId outer = ancestors.empty()
+                                    ? parent
+                                    : body.loans[ancestors.back() - 1].parent;
+        if ((!ancestors.empty() &&
+             std::any_of(ancestors.begin(), ancestors.end(),
+                         [&](MirLoanId ancestor) {
+                           return active[ancestor - 1] !=
+                                  MirLoanFlowState::Reserved;
+                         })) ||
+            (outer != 0 && active[outer - 1] != MirLoanFlowState::Active)) {
           return failure(body, owner,
                          "two-phase loan " + std::to_string(loan) +
                              " cannot activate while its parent loan is not "
@@ -2986,10 +3049,10 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                            block.id, instruction.id);
           }
         }
-        if (parent != 0 &&
-            body.loans[parent - 1].access == AccessMode::Mutable) {
-          active[parent - 1] = MirLoanFlowState::Suspended;
-        }
+        for (const auto ancestor : ancestors)
+          active[ancestor - 1] = MirLoanFlowState::Suspended;
+        if (outer != 0 && body.loans[outer - 1].access == AccessMode::Mutable)
+          active[outer - 1] = MirLoanFlowState::Suspended;
         active[loan - 1] = MirLoanFlowState::Active;
         activatedForCommit = loan;
         continue;
@@ -3528,7 +3591,6 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 other.access == AccessMode::ReadOnly;
             const bool compatibleReservationRead =
                 body.loans[loan - 1].access == AccessMode::ReadOnly &&
-                other.twoPhase &&
                 active[other.id - 1] == MirLoanFlowState::Reserved;
             if (canonicalPlacesOverlap(childPlace, otherPlace) &&
                 !compatibleReadOnlyDependency && !compatibleReservationRead) {
@@ -3549,6 +3611,48 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
           active[loan - 1] = body.loans[loan - 1].twoPhase
                                  ? MirLoanFlowState::Reserved
                                  : MirLoanFlowState::Active;
+          if (body.loans[loan - 1].twoPhase) {
+            const auto ancestors = reservationAncestors(body.loans[loan - 1]);
+            MirLoanId child = loan;
+            for (std::size_t index = 0; index < ancestors.size(); ++index) {
+              const auto ancestor = ancestors[index];
+              const auto expected = index == 0 ? MirLoanFlowState::Active
+                                               : MirLoanFlowState::Suspended;
+              if (active[ancestor - 1] != expected ||
+                  std::any_of(children[ancestor - 1].begin(),
+                              children[ancestor - 1].end(),
+                              [&](MirLoanId sibling) {
+                                return sibling != child &&
+                                       active[sibling - 1] !=
+                                           MirLoanFlowState::Inactive;
+                              }))
+                return failure(body, owner,
+                               "nested reservation requires one exact "
+                               "unretained receiver chain",
+                               block.id, instruction.id);
+              active[ancestor - 1] = MirLoanFlowState::Reserved;
+              child = ancestor;
+            }
+            if (!ancestors.empty()) {
+              const auto outer = body.loans[ancestors.back() - 1].parent;
+              if (outer != 0 &&
+                  body.loans[outer - 1].access == AccessMode::Mutable) {
+                if (active[outer - 1] != MirLoanFlowState::Suspended ||
+                    std::any_of(children[outer - 1].begin(),
+                                children[outer - 1].end(),
+                                [&](MirLoanId sibling) {
+                                  return sibling != ancestors.back() &&
+                                         active[sibling - 1] !=
+                                             MirLoanFlowState::Inactive;
+                                }))
+                  return failure(body, owner,
+                                 "nested reservation cannot reactivate a "
+                                 "parent with another live child",
+                                 block.id, instruction.id);
+                active[outer - 1] = MirLoanFlowState::Active;
+              }
+            }
+          }
           continue;
         }
         if (active[loan - 1] != MirLoanFlowState::Inactive) {
@@ -5550,6 +5654,26 @@ mirStorageConstructForPreflight(const MirBody &body,
 
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
                                    MirFailureControlFlowPosition position) {
+  // Forming a checked reference evaluates its indexed place without loading
+  // the referent. Failure must propagate before any reference is published;
+  // it is not a terminal containment boundary merely because it is a Borrow.
+  if (instruction.kind == MirInstructionKind::Borrow && instruction.loan &&
+      instruction.operands.size() == 1 && instruction.lifecycle.empty() &&
+      !instruction.result && !instruction.destination &&
+      (instruction.operands.front().kind == MirOperandKind::BorrowRead ||
+       instruction.operands.front().kind == MirOperandKind::BorrowWrite) &&
+      instruction.info.category == ValueCategory::Place &&
+      instruction.definedFailure.propagation == FailurePropagationKind::None &&
+      !instruction.definedFailure.localOrigins.empty() &&
+      std::all_of(instruction.definedFailure.localOrigins.begin(),
+                  instruction.definedFailure.localOrigins.end(),
+                  [](const DefinedFailureOrigin &origin) {
+                    return origin.outcomes ==
+                           std::vector<DefinedFailureOutcome>{
+                               {DefinedFailureCode::IndexOutOfBounds,
+                                DefinedFailureDetail::FixedArray}};
+                  }))
+    return true;
   if (instruction.kind == MirInstructionKind::StorageConstructPreflight)
     return true;
   if (instruction.kind == MirInstructionKind::CleanupBeforeAssign)
