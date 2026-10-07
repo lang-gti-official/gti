@@ -1,5 +1,28 @@
 # Compiler Verification
 
+## Native function-pointer invocation
+
+The C-08A candidate uses an optimized Release/Ninja compiler on macOS arm64,
+AppleClang and LLVM 22.1.8. `native_callback_pipeline` checks semantic selection,
+HIR/MIR, generic specialization, exact call signatures, conservative foreign
+effects, ten forged MIR variants, compiler-owned hover/signature/definition
+queries, and existing callback formatting/thread-entry boundaries.
+
+`native_indirect_runtime` independently compiles a C17 fixture and executes
+local, field and returned callbacks, nested factory results, nullable transport,
+callee-before-argument mutation, raw-address writeback, counted text, passive
+record arguments/results, fixed and trailing-pack generic forwarding, and a
+GTI counted-text adapter. C++20/C++23 O0/O1/O3 plus O1 ASan/UBSan all pass with
+elision disabled. The failure fixture verifies target cleanup followed by the
+existing terminating callback firewall, without running caller cleanup.
+Example 122 passes the same matrix. Its reviewed inventory adds 29 MIR bodies
+and 105 LoweredProgram declarations, 29 bodies and three generated items.
+
+Foreign variables and broader foreign-thread entry are not introduced. This is
+local candidate evidence, not Linux/Windows execution, installed-consumer
+validation or proof of the separately coordinated native-scalar/nested-pointer
+composition.
+
 ## Optional raw audit and combined reconciliation
 
 The 2026-10-06 candidate separates mandatory language checking from optional
