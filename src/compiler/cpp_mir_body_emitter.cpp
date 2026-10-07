@@ -26850,6 +26850,7 @@ public:
   [[nodiscard]] std::string emit(const ScalarBodyFacts &facts,
                                  std::string_view familyLabel) {
     currentBody = &facts.body;
+    currentFacts = &facts;
     const auto *sourceFunction = facts.kind == MirBodyKind::Function
                                      ? program.findFunctionInstance(facts.id)
                                      : nullptr;
@@ -29226,6 +29227,25 @@ private:
           output << "(*__gti_mir_p_" << carrier->id << ')';
           return;
         }
+      }
+      if (place != nullptr && currentFacts != nullptr &&
+          place->type == operand.type &&
+          place->type.kind == SemanticType::Enum &&
+          !place->projections.empty() &&
+          (place->root == MirPlaceRootKind::Binding ||
+           place->root == MirPlaceRootKind::This) &&
+          std::all_of(place->projections.begin(), place->projections.end(),
+                      [](const MirPlaceProjection &projection) {
+                        return projection.kind == MirProjectionKind::Field ||
+                               projection.kind ==
+                                   MirProjectionKind::Dereference;
+                      })) {
+        // Admission has already proved this exact enum-typed field place.
+        // Its discriminant and payload reads must use the same owner-slot
+        // and resolved field-chain spelling as all other checked place uses,
+        // rather than inventing a standalone enum SSA copy or local.
+        emitStoragePlaceValue(*currentFacts, *place);
+        return;
       }
       if (place != nullptr && ((place->root == MirPlaceRootKind::Binding &&
                                 place->projections.empty()) ||
@@ -39161,6 +39181,7 @@ private:
   std::span<const LoweredBody> debugBodies;
   std::string_view currentFamilyLabel;
   const MirBody *currentBody = nullptr;
+  const ScalarBodyFacts *currentFacts = nullptr;
   // Exact immutable-body queries only; reset for each emission and never
   // shared across MIR revisions, representation snapshots, or body copies.
   mutable std::vector<std::optional<bool>> lifetimeSlotCache;

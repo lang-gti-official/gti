@@ -321,5 +321,48 @@ int main() {
     for (const auto &diagnostic : rawPointee.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  for (const std::string declaration :
+       {"enum Shape { rect(int width), owned(Res resource) };",
+        "enum ShapeFamily<T> { rect(int width), owned(T resource) }; "
+        "using Shape = ShapeFamily<Res>;"}) {
+    const auto field =
+        lang::Frontend().analyze("owning-enum-field-switch.gti", std::string(R"(
+class Res {
+public:
+  Res() {}
+  ~Res() {}
+  int id() { return 7; }
+};
+)") + declaration + R"(
+class Slot {
+public:
+  Shape shape;
+  Slot(Shape shape) : shape(std::move(shape)) {}
+};
+int main() {
+  Slot slot = Slot(Shape::rect(3));
+  switch (slot.shape) {
+    case Shape::rect(width): return width - 3;
+    case Shape::owned(auto& resource): return resource.id();
+  }
+}
+)",
+                                 {library / "prelude.gti"}, {}, {library});
+    expect(field.canGenerateCode(),
+           "generic and nongeneric owning enum fields retain verified MIR");
+    if (!field.canGenerateCode()) {
+      for (const auto &diagnostic : field.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      expect(!gti_test::emitCpp(field, standard).contents.empty(),
+             "owning enum field discriminants and payload reads use exact "
+             "checked place emission");
+    }
+  }
   return failures == 0 ? 0 : 1;
 }
