@@ -1223,6 +1223,8 @@ types, then validates the written arguments within that same clause's ordinary
 guaranteed-fact scope. This makes conjunction order irrelevant without assuming
 facts from only one disjunction alternative. Invalid and unknown arguments
 still receive ordinary type diagnostics; concrete admission is rechecked.
+Only dependent applications supply provisional admission facts; a closed
+clause assertion cannot replace a closed argument's actual capabilities.
 During symbolic body analysis, a
 requirement scope contributes unary facts to ordinary constrained operations
 and supplies synthetic exact operator or callable candidates for the bounded
