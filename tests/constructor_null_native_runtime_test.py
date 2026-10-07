@@ -28,6 +28,10 @@ if __name__ == "__main__":
         "nullable_example": root.parent / "examples/13-ownership.gti",
         "sentinel_example": root.parent / "examples/83-complete-ranges.gti",
         "native_identity": root / "fixtures/native_declaration_identity.gti",
+        "grouped_value": root / "fixtures/grouped_value_publication.gti",
+        "grouped_cleanup": root / "fixtures/grouped_return_cleanup.gti",
+        "grouped_original": root / "coverage/reproducers/s01-parenthesized-constructor.gti",
+        "grouped_example": root.parent / "examples/23-direct-initialization.gti",
     }
     with tempfile.TemporaryDirectory(prefix="gti-native-identity-") as temporary:
         directory = Path(temporary)
@@ -60,4 +64,12 @@ if __name__ == "__main__":
         main(names=tuple(sources), fixture_paths=sources,
              native_inputs_by_name={"native_identity": [str(native)]},
              cases={"native_qsort": [((), (0, "1\n", ""))],
+                    "grouped_original": [((), (0, "4\n", ""))],
+                    "grouped_value": [((), (0, "1234", ""))],
+                    "grouped_cleanup": [
+                        ((), (0, "1\n2\n4\n3\n", "")),
+                        (("fail",), (70, "1\n2\n3\n",
+                         "grouped_return_cleanup.gti:22: runtime error[GTI-R0002]: division_by_zero in integer_division\n")),
+                        (("fail", "payload"), (70, "1\n2\n3\n",
+                         "grouped_return_cleanup.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at grouped_return_cleanup.gti:22; secondary [GTI-R0002]\n"))],
                     "nullable_example": [((), (0, "ownership worked\nwidget dropped\n", ""))]})

@@ -2010,9 +2010,9 @@ C-linkage declarations use the deterministic private C++ spelling
 The declaration writer retains the exact native signature and binds that
 private identifier through an object-format link label. Darwin labels include
 the ABI's leading underscore; GNU-compatible ELF/COFF labels retain the symbol
-directly. Native MSVC uses a COFF alternative-name directive. Typed MIR calls,
-indirect-function values and hosted C-thread boundaries consume the same sealed
-private declaration identity. Runtime definitions, native bridge headers and
+directly. Native MSVC uses a COFF alternative-name directive. Typed MIR calls
+and hosted C-thread boundaries consume the same sealed private declaration
+identity. Runtime definitions, native bridge headers and
 embedding export symbols are not renamed. This is representation isolation,
 not a libc-name exception or a type conversion.
 

@@ -491,7 +491,7 @@ verification.
 | F14 | Reproduces; nested generic callable-result arguments need coherent exact signature inference, not a brace diagnostic or guessed result type. |
 | F16 | Resolved in focused native checks: exact copyable-value sentinel comparisons and distances compose with range-for and algorithms; reference sentinels remain supported. |
 | F17 | Resolved in focused source checks: unnamed lifetime sources use their real type span and a one-based parameter index. |
-| S01 | Reproduces; grouped class construction is outside the current production representation proof. |
+| S01 | Resolved in focused checks: grouping forwards the exact producer value and original temporary/cleanup identity in HIR/MIR; passive and owning constructions reach verified publication. |
 | S02 | Reproduces; class-valued conditional publication is outside the current production representation proof. |
 | S04 | Resolved in focused frontend/backend checks: unnamed formals retain distinct generated physical symbols without adding public/source names. |
 | S06 | Resolved in focused source checks: constexpr eligibility still rejects the raw-pointer formal, anchored at its written type token. |
@@ -841,6 +841,13 @@ The defects below were found with combination matrices
 (`matrices/`), the sanitizer harnesses, and structural stress inputs.
 
 ## S01 — ICE: parenthesizing a constructor call or operator result
+
+**Resolved in focused optimized checks.** HIR/MIR now forward transparent
+by-value grouping to the exact producer and its original temporary/cleanup
+identity. The original passive construction, owned binding/argument/return,
+temporary receiver, grouped closure and failure during unpublished-return
+cleanup have focused controls. Forged cleanup/producer identities remain
+rejected by the existing MIR verifier.
 
 `reproducers/s01-parenthesized-constructor.gti`
 

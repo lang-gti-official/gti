@@ -1,5 +1,6 @@
 #include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <iostream>
@@ -224,5 +225,77 @@ int main() { return 0; }
              originDiagnostic->related.front().span.end >
                  originDiagnostic->related.front().span.start,
          "borrow origin diagnostic needs the unnamed formal's real type span");
+
+  auto grouped = analyze(R"gti(
+class Owned {
+  int32_t value;
+public:
+  Owned(int32_t value) : value(value) {}
+  Owned(Owned& other) = delete;
+  Owned(Owned&& other) = default;
+  ~Owned() {}
+  int32_t read() { return this.value; }
+};
+Owned make() { return (((Owned(1)))); }
+int main() { Owned value = ((make())); return value.read() - 1; }
+)gti");
+  expect(grouped.canGenerateCode(),
+         "grouping must retain the selected owned producer and cleanup");
+  if (grouped.canGenerateCode()) {
+    int wrappers = 0;
+    for (const auto &function : grouped.hir.functionInstances()) {
+      for (const auto &value : function.body.values) {
+        if (value.kind != lang::HirValueKind::Grouping ||
+            value.info.category != lang::ValueCategory::Value)
+          continue;
+        ++wrappers;
+        const auto *input = function.body.findValue(value.operands.front());
+        expect(input != nullptr && input->dropObligation == value.dropObligation,
+               "a grouping wrapper must share the producer's obligation");
+        const auto *mir = grouped.mir.findFunctionInstance(function.id);
+        expect(mir != nullptr &&
+                   std::none_of(mir->body.values.begin(), mir->body.values.end(),
+                                [&](const auto &row) {
+                                  return row.sourceValue == value.id;
+                                }),
+               "parentheses must not materialize a second runtime value");
+      }
+    }
+    expect(wrappers == 5, "all written owned wrappers need transparent evidence");
+    expect(!gti_test::emitCpp(grouped).contents.empty(),
+           "transparent ownership must reach production emission");
+    bool mutated = false;
+    for (const auto &function : grouped.mir.functionInstances()) {
+      auto body = function.body;
+      for (auto &block : body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Lifecycle ||
+              instruction.lifecycle.empty() ||
+              instruction.lifecycle.front().kind !=
+                  lang::MirLifecycleEventKind::TransferOut)
+            continue;
+          instruction.hirValue += 10000;
+          expect(!lang::verifyMirBody(body, function.id).valid(),
+                 "a forged wrapper/producer cleanup identity must be rejected");
+          mutated = true;
+          break;
+        }
+        if (mutated)
+          break;
+      }
+      if (mutated)
+        break;
+    }
+    expect(mutated, "owned return must retain a verifiable transfer identity");
+  }
+  rejected(R"gti(
+class Owned {
+public:
+  Owned() {}
+  Owned(Owned& other) = delete;
+  Owned(Owned&& other) = default;
+};
+int main() { Owned original{}; Owned copied = (original); return 0; }
+)gti", "GTI-S2003");
   return failures ? 1 : 0;
 }

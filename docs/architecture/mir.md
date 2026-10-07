@@ -2557,6 +2557,16 @@ forms, result and target places, operators, and branches. Program
 initialization already has a dedicated plan, per-block
 `ProgramInitializationStepId`, production body route, and hosted containment
 adapter.
+Transparent by-value grouping retains its source/full-expression anchor in
+HIR but forwards the exact typed producer value into MIR, rather than emitting
+a second `Compute Identity` class object. HIR wrappers share the producer's
+temporary obligation; borrowed-temporary requirements propagate to that
+producer. Call-input, native storage-place, return-transfer and unpublished-
+result cleanup identities use the same canonical producer. Grouping therefore
+adds no implicit copy, move, default construction or cleanup state. Checked
+place grouping keeps the existing place/loan path. Verifier source/producer
+and lifecycle checks remain exact; no backend source traversal or lifetime
+waiver is used.
 The verifier must reject use before materialization, duplicate target
 evaluation, invocation before parameter setup, cleanup-state mismatch at an
 edge, and a boundary with a live untransferred obligation. A structural edit

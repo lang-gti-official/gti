@@ -2607,7 +2607,41 @@ private:
         }
       }
     }
+    // Parentheses do not materialize another object. Propagate a temporary
+    // borrow requirement to its actual producer before assigning identities.
+    for (const HirValue &value : body.values) {
+      if (value.kind != HirValueKind::Grouping || value.operands.size() != 1)
+        continue;
+      const bool borrowed = temporaryBorrowValues.contains(value.id);
+      const bool moved = borrowedMoveValues.contains(value.id);
+      if (!borrowed && !moved)
+        continue;
+      const HirValue *input = &value;
+      std::unordered_set<HirValueId> visited;
+      while (input != nullptr && input->kind == HirValueKind::Grouping &&
+             input->operands.size() == 1 && visited.insert(input->id).second) {
+        input = body.findValue(input->operands.front());
+        if (input != nullptr) {
+          if (borrowed)
+            temporaryBorrowValues.insert(input->id);
+          if (moved)
+            borrowedMoveValues.insert(input->id);
+        }
+      }
+    }
     for (HirValue &value : body.values) {
+      if (value.kind == HirValueKind::Grouping && value.operands.size() == 1 &&
+          value.info.category == ValueCategory::Value) {
+        const HirValue *input = body.findValue(value.operands.front());
+        if (input != nullptr && input->info.type == value.info.type &&
+            input->info.category == value.info.category &&
+            input->info.access == value.info.access &&
+            input->info.traits == value.info.traits &&
+            input->fullExpression == value.fullExpression) {
+          value.dropObligation = input->dropObligation;
+          continue;
+        }
+      }
       if (value.fullExpression == 0 ||
           (!materializesDropValue(value, body) &&
            !temporaryBorrowValues.contains(value.id) &&

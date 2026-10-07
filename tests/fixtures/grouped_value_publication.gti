@@ -1,0 +1,36 @@
+class Passive {
+  int32_t value;
+public:
+  Passive(int32_t value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+class Record {
+  int32_t value;
+public:
+  Record(int32_t value) : value(value) {}
+  Record(Record& other) = delete;
+  Record(Record&& other) = default;
+  ~Record() { std::print(this.value); }
+  int32_t read() { return this.value; }
+};
+Record make(int32_t value) { return ((Record(value))); }
+int32_t take(Record value) { return value.read(); }
+int32_t inspect(Record& value) { return value.read(); }
+
+int main() {
+  Passive passive = (((Passive(7))));
+  if (passive.read() != 7) { return 1; }
+  {
+    Record first = ((Record(1)));
+    if (inspect((first)) != 1) { return 2; }
+  }
+  if (take(((Record(2)))) != 2) { return 3; }
+  {
+    Record returned = (make(3));
+    if (returned.read() != 3) { return 4; }
+  }
+  if (((Record(4))).read() != 4) { return 5; }
+  auto lambda = ((([]() -> int32_t { return 7; })));
+  if (lambda() != 7) { return 6; }
+  return 0;
+}

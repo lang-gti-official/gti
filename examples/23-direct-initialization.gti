@@ -58,8 +58,10 @@ int main() {
 
   // `auto` remains the alternative when the constructor states the type.
   auto inferred = Reading<int>(5);
+  // Parentheses do not create a second object or insert a copy/move.
+  Reading<int> grouped = ((Reading<int>(6)));
 
-  if (fixed.get() == 1 && changing.get() == 3 and aliased.get() == 4 and dashboard.value() == 1 and inferred.get() == 5 and defaults.reading.value == 7 and settings.reading.value == 7) {
+  if (fixed.get() == 1 && changing.get() == 3 and aliased.get() == 4 and dashboard.value() == 1 and inferred.get() == 5 and grouped.get() == 6 and defaults.reading.value == 7 and settings.reading.value == 7) {
     return 0;
   }
   return 1;

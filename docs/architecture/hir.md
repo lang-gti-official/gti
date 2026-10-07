@@ -688,6 +688,13 @@ read/move/reinitialization facts. Dynamic-index precision and general lifetime
 epochs remain future proof work; they are separate from the explicit
 normal-exit temporary/drop obligations.
 
+By-value grouping is transparent object identity: an exact wrapper with the
+same type, category, access, traits and full-expression retains its producer's
+temporary obligation. A temporary-borrow requirement on that wrapper is also
+assigned to the producer. The source wrapper remains available for spans and
+expression-boundary provenance; MIR consumes one value/cleanup identity,
+not an additional copy, move, or materialized object.
+
 HIR retains syntax provenance needed for diagnostics, lowering, and
 optimization-coherence checks. `HirProgram::sourceValueIds` may map one source
 expression to several concrete generic values; a source-level optimization

@@ -2545,6 +2545,7 @@ private:
   }
 
   void emitTemporaryTransfer(HirValueId value, HirStatementId statement = 0) {
+    value = canonicalGroupingValue(value);
     MirInstruction transfer{.kind = MirInstructionKind::Lifecycle,
                             .hirValue = value,
                             .hirStatement = statement};
@@ -2561,10 +2562,43 @@ private:
     return id;
   }
 
+  [[nodiscard]] const HirValue *
+  transparentGroupingOperand(const HirValue &value) const {
+    if (value.kind != HirValueKind::Grouping || value.operands.size() != 1 ||
+        value.info.category != ValueCategory::Value ||
+        !value.definedFailure.empty())
+      return nullptr;
+    const HirValue *input = findValue(value.operands.front());
+    return input != nullptr && input->info.type == value.info.type &&
+                   input->info.category == value.info.category &&
+                   input->info.access == value.info.access &&
+                   input->info.traits == value.info.traits &&
+                   input->fullExpression == value.fullExpression &&
+                   input->dropObligation == value.dropObligation
+               ? input
+               : nullptr;
+  }
+
+  [[nodiscard]] HirValueId canonicalGroupingValue(HirValueId id) const {
+    const HirValue *value = findValue(id);
+    while (value != nullptr) {
+      const HirValue *input = transparentGroupingOperand(*value);
+      if (input == nullptr)
+        break;
+      value = input;
+    }
+    return value == nullptr ? id : value->id;
+  }
+
   [[nodiscard]] MirValueId mirValueFor(const HirValue &value) {
     if (const auto found = loweredValues.find(value.id);
         found != loweredValues.end()) {
       return found->second;
+    }
+    if (const HirValue *input = transparentGroupingOperand(value)) {
+      const MirValueId id = mirValueFor(*input);
+      loweredValues.emplace(value.id, id);
+      return id;
     }
     const MirValueId id = appendValue(value.id, value.info);
     loweredValues.emplace(value.id, id);
@@ -2983,6 +3017,8 @@ private:
   }
 
   [[nodiscard]] MirPlaceId valueRootPlace(const HirValue &value) {
+    if (const HirValue *input = transparentGroupingOperand(value))
+      return valueRootPlace(*input);
     return appendPlace({.root = MirPlaceRootKind::Value,
                         .value = mirValueFor(value),
                         .type = value.info.type,
@@ -3844,8 +3880,12 @@ private:
     const MirDropObligationId obligation = dropObligationForValue(id);
     if (obligation != 0) {
       const MirDropObligation *drop = output.findDropObligation(obligation);
+      const HirValue *producer = temporary;
+      while (const HirValue *input = transparentGroupingOperand(*producer))
+        producer = input;
       if (drop == nullptr || !temporaryIsActive(obligation) ||
-          drop->kind != MirDropObligationKind::Value || drop->value != id) {
+          drop->kind != MirDropObligationKind::Value ||
+          drop->value != producer->id) {
         valid = false;
         return {};
       }
@@ -4709,6 +4749,7 @@ private:
                    MirCallInputRole role, std::size_t index, MirOperand operand,
                    bool stageOwningParameter, bool defaultArgument = false,
                    MirDropObligationId movedBindingDrop = 0) {
+    sourceValue = canonicalGroupingValue(sourceValue);
     ExpressionInfo info{.type = type,
                         .category = ValueCategory::Value,
                         .access = AccessMode::ReadOnly,
@@ -7816,6 +7857,23 @@ private:
       }
     }
 
+    if (const HirValue *input = transparentGroupingOperand(*value)) {
+      // The source wrapper retains its HIR span/full-expression anchor, but
+      // runtime value and temporary ownership are the producer's identities.
+      emitValue(input->id);
+      if (!terminated()) {
+        loweredValues.insert_or_assign(value->id, mirValueFor(*input));
+        if (const auto place = valuePlaces.find(input->id);
+            place != valuePlaces.end())
+          valuePlaces.insert_or_assign(value->id, place->second);
+        if (const auto loan = valueLoans.find(input->id);
+            loan != valueLoans.end())
+          valueLoans.insert_or_assign(value->id, loan->second);
+      }
+      emittedValues.insert(value->id);
+      return;
+    }
+
     if (value->kind == HirValueKind::ExpectedPropagation) {
       emitExpectedPropagation(*value);
       return;
@@ -10558,6 +10616,7 @@ private:
 
   void prepareReturnOwnership(HirValueId value, const MirOperand &result,
                               HirStatementId statement = 0) {
+    value = canonicalGroupingValue(value);
     const MirDropObligationId sourceDrop = dropObligationForValue(value);
     const bool fallibleReturnCleanup =
         std::any_of(temporaryDrops.begin(), temporaryDrops.end(),
@@ -10602,6 +10661,7 @@ private:
   }
 
   void publishReturnOwnership(HirValueId value, HirStatementId statement = 0) {
+    value = canonicalGroupingValue(value);
     if (pendingReturnDrop != 0) {
       (void)appendInstruction(
           {.kind = MirInstructionKind::Lifecycle,
