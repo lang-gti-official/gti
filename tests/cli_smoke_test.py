@@ -29,6 +29,36 @@ def run(arguments, expected=0, cwd=None, input_text=None):
     return result
 
 
+def producer_report_alias_path(gti_executable, root):
+    # macOS may identify a launched executable through another hardlink to its
+    # inode. Keep that alias inside a complete scratch prefix so @loader_path
+    # still sees the packaged runtime. The real prefix remains read-only.
+    prefix = root / "producer-prefix"
+    binary_directory = prefix / "bin"
+    binary_directory.mkdir(parents=True)
+    original_prefix = gti_executable.parent.parent
+    for name in ("lib", "lib64", "share", "include"):
+        original = original_prefix / name
+        if original.is_dir():
+            destination = prefix / name
+            try:
+                destination.symlink_to(original, target_is_directory=True)
+            except OSError:
+                # Creating symlinks may require privileges on Windows.
+                shutil.copytree(original, destination)
+    for original in gti_executable.parent.iterdir():
+        if original.is_file() and (
+            original.suffix.lower() in (".dll", ".dylib")
+            or original.name.endswith(".so") or ".so." in original.name
+        ):
+            destination = binary_directory / original.name
+            try:
+                destination.symlink_to(original)
+            except OSError:
+                shutil.copy2(original, destination)
+    return binary_directory / "producer-report-hardlink"
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: cli_smoke_test.py /path/to/gti")
@@ -203,7 +233,7 @@ def main():
         )
         assert "must use different output paths" in report_output_collision.stderr
 
-        producer_report_alias = root / "producer-report-hardlink"
+        producer_report_alias = producer_report_alias_path(gti_executable, root)
         try:
             os.link(gti_executable, producer_report_alias)
         except OSError:
@@ -222,6 +252,9 @@ def main():
             )
             assert "must not overwrite" in producer_alias_collision.stderr
             assert producer_report_alias.samefile(gti_executable)
+            assert hashlib.sha256(gti_executable.read_bytes()).hexdigest() == (
+                producer_file["sha256"]
+            )
 
         hardlink_output = root / "hardlink-output-program"
         hardlink_output.write_text("preserved output\n", encoding="utf-8")

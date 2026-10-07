@@ -3148,6 +3148,7 @@ upstream code.
 | `driver_pipeline` / `driver_library_boundary` | fail-closed target/runtime analysis configuration, requests, artifacts, resources, native tools, driver archive |
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
+| `cli_hardlink_fixture` | scratch-prefix context and copy fallback for the same-inode executable/report overwrite probe |
 | `lsp_protocol` / `atomic_lsp` / `mutex_lsp` | document lifecycle, diagnostics, positions, semantic features, edits, bounded-depth analysis/completion worker survival, default-project-profile and standalone-startup concurrency analysis, public thread/atomic/mutex/I/O hover, definition, completion, and tokens, plus private capability filtering |
 | `lsp_project_facts` | driver-owned default-profile/package-graph parity for analysis and completion; path-dependency diagnostics, hover, definition, semantic tokens, and member completion; authoritative dirty dependency overlays; read-only locked-Git failure publication; manifest/lock watcher coverage; and standalone compatibility |
 | `frontend_cache_invalidation` | cached/uncached semantic and diagnostic equivalence, immutable AST hover, root/dependency/unrelated invalidation, dirty-overlay/disk transitions, configuration identity, stale source generations, and entry/estimated-byte LRU bounds |
@@ -3166,6 +3167,16 @@ CTest boundary. A hung source is therefore identified only as an aggregate
 timeout rather than by a calibrated worker deadline. This residual
 observability risk avoids replacing the corrected topology with an
 unsubstantiated per-example timing gate.
+
+The CLI producer/report collision probe puts its executable hardlink inside an
+isolated mirrored prefix. Loader-relative library directories, installed source
+and header directories, and adjacent shared libraries remain available through
+links or copies; the original installation is not rewritten. This preserves the
+same-inode overwrite rejection (status 64) even when macOS identifies the
+executable through its new hardlink. It does not require loader-environment
+overrides or treat loader failure as a successful overwrite-protection check.
+`cli_hardlink_fixture` independently checks prefix context, unprivileged copy
+fallback, build-tree layout, and unchanged compiler bytes.
 
 For resource-limited local project checks, run
 `python3 tests/project_cli_smoke_test.py <gti> --jobs 1`. The default remains four
