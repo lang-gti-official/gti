@@ -4,9 +4,11 @@ Status: Current implementation.
 
 ## Generic payload enum signatures
 
-Enum registration inventories ordinary generic parameter identities before
-resolving defaults and payloads. Demand-resolved defaults detect cycles and
-avoid declaration-order-dependent acceptance. A concrete enum type retains its
+Nominal registration inventories class and enum identities and their ordinary
+generic binders before resolving defaults and payloads. Demand-resolved class
+and enum defaults share recursion detection and avoid declaration-order-dependent
+type acceptance. Value defaults retain the existing earlier-visible constant
+rule. A concrete enum type retains its
 primary identity and complete canonical arguments; existing substitution
 produces its exact alternative types. Payload admissibility is revalidated
 through aliases after field facts are available. Ownership, cleanup and
@@ -18,6 +20,13 @@ these rows through the existing substitution service; compiler-owned hover and
 completion therefore use the same signatures without implementing generic
 substitution in tooling. Replacing a primary descriptor invalidates its earlier
 signature rows so pre-payload registration cannot leave stale field metadata.
+Request reset clears those rows with the rest of the snapshot-owned catalog.
+
+By-value layout traversal distinguishes exact class and enum instances, so
+repeated use of a generic primary cannot hide a cycle through different
+arguments. Growing class recurrence uses the existing structural nominal-growth
+guard; finite decreasing nesting remains traversable. Owning-indirection
+metadata is not a by-value containment edge.
 
 ## Native C scalar target facts
 
@@ -363,7 +372,8 @@ already permitted construction, not source overload availability.
 on declaration-wide registration. It currently:
 
 1. registers namespaces, aliases, namespace/class type aliases, enums,
-   concepts, and primary classes;
+   concepts, and primary class/enum generic binders, then resolves nominal
+   defaults against the complete primary identity inventory;
 2. resolves concepts and aliases after primary class identities exist, then
    registers canonical exact class specializations before resolving
    inheritance;

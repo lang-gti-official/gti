@@ -2355,7 +2355,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       std::vector<GenericParameterInfo> genericParameters =
           classDecl->genericArgumentPatterns().empty()
               ? makeGenericParameters(classDecl->genericParameters(),
-                                      classDecl->name(), scope, true)
+                                      classDecl->name(), scope, true, false)
               : makeClassPatternParameters(*classDecl, scope);
       for (std::size_t index = 0; index < genericParameters.size(); ++index) {
         if (genericParameters[index].pack &&
@@ -2520,6 +2520,51 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       scope.pop_back();
     }
   }
+}
+
+auto SemanticVisitor::Impl::resolveClassGenericDefaults(ClassId id) -> void {
+  if (id == 0 || id > classes.size())
+    return;
+  auto &info = classInfo(id);
+  if (info.defaultsState == ClassInfo::DefaultsState::Resolved ||
+      info.defaultsState == ClassInfo::DefaultsState::Invalid)
+    return;
+  if (info.defaultsState == ClassInfo::DefaultsState::Resolving) {
+    report(info.name, "Generic class defaults form a recursive dependency.",
+           "GTI-S2023");
+    info.defaultsState = ClassInfo::DefaultsState::Invalid;
+    return;
+  }
+  if (!info.declaration || info.genericParameters.empty() ||
+      !info.declaration->genericArgumentPatterns().empty()) {
+    info.defaultsState = ClassInfo::DefaultsState::Resolved;
+    return;
+  }
+  info.defaultsState = ClassInfo::DefaultsState::Resolving;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingSource = currentSourceUnit;
+  auto enclosingTypes = std::move(typeParameterScopes);
+  auto enclosingValues = std::move(valueParameterScopes);
+  auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingRequirements = std::move(requirementScopes);
+  typeParameterScopes.clear();
+  valueParameterScopes.clear();
+  typePackScopes.clear();
+  requirementScopes.clear();
+  currentNamespace = info.namespaceScope;
+  currentSourceUnit = info.sourceUnit;
+  const auto before = diagnostics.size();
+  resolveGenericParameterDefaults(info.declaration->genericParameters(),
+                                  info.genericParameters, info.namespaceScope);
+  info.defaultsState = diagnostics.size() == before
+                           ? ClassInfo::DefaultsState::Resolved
+                           : ClassInfo::DefaultsState::Invalid;
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingSource;
+  typeParameterScopes = std::move(enclosingTypes);
+  valueParameterScopes = std::move(enclosingValues);
+  typePackScopes = std::move(enclosingPacks);
+  requirementScopes = std::move(enclosingRequirements);
 }
 
 auto SemanticVisitor::Impl::canonicalExactSpecializationType(
@@ -3211,30 +3256,37 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
 
 auto SemanticVisitor::Impl::byValueTypeReachesClass(
     const SemanticType &type, ClassId target,
-    std::unordered_set<ClassId> &visiting,
-    std::unordered_set<EnumId> &visitingEnums) const -> bool {
+    std::vector<SemanticType> &visiting,
+    std::vector<SemanticType> &visitingEnums) const -> bool {
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
     return byValueTypeReachesClass(type.arguments.front(), target, visiting,
                                    visitingEnums);
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
-    if (!visitingEnums.insert(type.enumId).second) {
+    if (std::find(visitingEnums.begin(), visitingEnums.end(), type) !=
+        visitingEnums.end()) {
       return false;
     }
+    visitingEnums.push_back(type);
     bool reaches = false;
     const auto concrete = enumTypeFor(type);
     if (!concrete) {
-      visitingEnums.erase(type.enumId);
+      visitingEnums.pop_back();
       return false;
     }
     for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
-        reaches = reaches || byValueTypeReachesClass(payload, target, visiting,
-                                                     visitingEnums);
+        // Direct payload sums are outside the admitted field family. Do not
+        // expand an already-invalid symbolic sum recurrence here. Every
+        // admitted enum recursion crosses a class, whose existing nominal
+        // traversal guard bounds structurally growing instances.
+        if (payloadTypeAllowed(payload, type.enumId))
+          reaches = reaches || byValueTypeReachesClass(payload, target,
+                                                       visiting, visitingEnums);
       }
     }
-    visitingEnums.erase(type.enumId);
+    visitingEnums.pop_back();
     return reaches;
   }
   if (type.kind != SemanticType::Class || type.classId == 0 ||
@@ -3244,9 +3296,10 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
   if (type.classId == target) {
     return true;
   }
-  if (!visiting.insert(type.classId).second) {
+  if (nonDecreasingNominalRecurrence(type, visiting)) {
     return false;
   }
+  visiting.push_back(type);
 
   const ClassInfo &nested = classInfo(type.classId);
   const GenericSubstitution substitution = classSubstitution(type);
@@ -3261,12 +3314,12 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     const SemanticType fieldType =
         substituteType(member->second.symbol.type, substitution);
     if (byValueTypeReachesClass(fieldType, target, visiting, visitingEnums)) {
-      visiting.erase(type.classId);
+      visiting.pop_back();
       return true;
     }
   }
 
-  visiting.erase(type.classId);
+  visiting.pop_back();
   return false;
 }
 
@@ -3306,8 +3359,8 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
       }
       const SemanticType fieldType =
           substituteType(member->second.symbol.type, substitution);
-      std::unordered_set<ClassId> visiting;
-      std::unordered_set<EnumId> visitingEnums;
+      std::vector<SemanticType> visiting;
+      std::vector<SemanticType> visitingEnums;
       if (!byValueTypeReachesClass(fieldType, owner.id, visiting,
                                    visitingEnums)) {
         continue;

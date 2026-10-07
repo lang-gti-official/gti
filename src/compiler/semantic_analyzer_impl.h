@@ -955,6 +955,7 @@ private:
   };
 
   struct ClassInfo {
+    enum class DefaultsState { Unresolved, Resolving, Resolved, Invalid };
     ClassId id = 0;
     SourceUnitId sourceUnit = 0;
     const ClassDecl *declaration = nullptr;
@@ -969,6 +970,7 @@ private:
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
+    DefaultsState defaultsState = DefaultsState::Unresolved;
     std::vector<SemanticType> genericArgumentPatterns;
     bool argumentPatternsResolving = false;
     bool argumentPatternsResolved = false;
@@ -2955,6 +2957,7 @@ private:
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope);
+  void resolveClassGenericDefaults(ClassId id);
 
   [[nodiscard]] std::vector<GenericParameterInfo>
   makeClassPatternParameters(const ClassDecl &declaration,
@@ -3012,8 +3015,8 @@ private:
 
   [[nodiscard]] bool
   byValueTypeReachesClass(const SemanticType &type, ClassId target,
-                          std::unordered_set<ClassId> &visiting,
-                          std::unordered_set<EnumId> &visitingEnums) const;
+                          std::vector<SemanticType> &visiting,
+                          std::vector<SemanticType> &visitingEnums) const;
 
   void validateOrdinaryClassLayouts();
 

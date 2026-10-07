@@ -1014,6 +1014,8 @@ auto SemanticVisitor::Impl::resolveClassArguments(
     return result;
   }
 
+  if (arguments.size() < classInfo(classId).genericParameters.size())
+    resolveClassGenericDefaults(classId);
   const ClassInfo &owner = classInfo(classId);
   if (!owner.declaration->genericArgumentPatterns().empty()) {
     resolveClassArgumentPatterns(classId);
@@ -3384,7 +3386,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (const auto id = resolveEnumPath(type.name, currentNamespace)) {
     if (*id == 0 || *id > enums.size())
       return;
-    resolveEnumGenericDefaults(*id);
+    if (type.arguments.size() < enums[*id - 1].genericParameters.size())
+      resolveEnumGenericDefaults(*id);
     const auto &owner = enums[*id - 1];
     const auto resolved = resolveNominalArguments(
         owner.genericParameters, owner.name, type.arguments, type.name.last(),
@@ -3451,6 +3454,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     diagnostics.back().missingIncludeName = type.name.last().lexeme;
     return;
   }
+  if (type.arguments.size() < classInfo(*classId).genericParameters.size())
+    resolveClassGenericDefaults(*classId);
   const ClassInfo &declaration = classInfo(*classId);
   if (!declaration.declaration->genericArgumentPatterns().empty() ||
       (!declaration.genericParameters.empty() &&
@@ -4881,8 +4886,10 @@ auto SemanticVisitor::Impl::genericDefaultConstant(
     }
     for (auto candidate = found->second.rbegin();
          candidate != found->second.rend(); ++candidate) {
-      if (candidate->sourceUnit == currentSourceUnit ||
+      if ((candidate->sourceUnit == currentSourceUnit &&
+           candidate->declaration.position < name.position) ||
           (!candidate->internalLinkage &&
+           candidate->sourceUnit != currentSourceUnit &&
            declarationVisible(candidate->sourceUnit, candidate->declaration))) {
         return *candidate;
       }

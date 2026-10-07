@@ -481,6 +481,15 @@ parent without gaining mutable access; parent activity, CFG containment,
 non-escape and child-before-parent endpoints remain mandatory and independently
 verified.
 
+Canonical storage identity preserves the concrete executable place and its
+field projections through address-preserving place-valued SSA operations.
+This is distinct from a lifetime dependency origin, which may deliberately
+refer to an enclosing owner. A call's receiver is not automatically its result
+storage. Traversal is bounded by the place/value/loan graph it follows;
+cyclic forged forwarding remains ambiguous and is rejected. Exact enum
+relocation traversal similarly distinguishes concrete instances rather than
+treating every occurrence of a generic primary as the same recursive type.
+
 Canonical checked-place forwarding does not cross `RawDereference` or
 `RawIndex`. Such projections designate pointee storage, not the storage holding
 the pointer; a read-only carrier shell therefore does not make the raw pointee

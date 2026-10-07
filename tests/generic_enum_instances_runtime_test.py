@@ -243,6 +243,68 @@ int main() {
   }
 }
 """, 0, ""),
+        "finite-distinct-enum-nesting-layout": ("""
+enum Event<T> { item(T value) };
+struct Leaf { int32_t value; };
+struct B { Event<Leaf> value; };
+struct A { Event<B> value; };
+int main() { return 0; }
+""", 0, ""),
+        "finite-distinct-enum-nesting-lifecycle": (OWNING + """
+class Inner {
+public:
+  Event<Resource> data;
+  Inner(Event<Resource> data) : data(std::move(data)) {}
+  Inner(Inner&& other) = default;
+};
+class Outer {
+public:
+  Event<Inner> data;
+  Outer(Event<Inner> data) : data(std::move(data)) {}
+  Outer(Outer&& other) = default;
+};
+void exercise() {
+  Outer owner = Outer(Event<Inner>::item(Inner(Event<Resource>::item(Resource(7)))));
+  switch (owner.data) {
+    case Event<Inner>::idle: std::println(99); break;
+    case Event<Inner>::item(auto& inner):
+      switch (inner.data) {
+        case Event<Resource>::idle: std::println(99); break;
+        case Event<Resource>::item(auto& resource):
+          if (resource.id() != 7) { std::println(99); }
+          break;
+      }
+      break;
+  }
+}
+int main() { exercise(); return drops == 1 ? 0 : 1; }
+""", 0, "7\n"),
+        "same-typed-payload-sibling-fields": ("""
+enum Event<T> { item(T value) };
+class Inner {
+public:
+  Event<int32_t> data;
+  Inner(Event<int32_t> data) : data(data) {}
+};
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+int main() {
+  Inner left = Inner(Event<int32_t>::item(1));
+  Inner right = Inner(Event<int32_t>::item(2));
+  Pair<Inner> pair = Pair<Inner>::items(left, right);
+  switch (pair) {
+    case Pair<Inner>::items(auto& first, second):
+      switch (first.data) {
+        case Event<int32_t>::item(auto& value):
+          if (value != 1) { return 1; }
+          break;
+      }
+      switch (second.data) {
+        case Event<int32_t>::item(value): return value - 2;
+      }
+    case Pair<Inner>::other: return 3;
+  }
+}
+""", 0, ""),
         "receiver-pattern-loans": ("""
 #include <std/vector>
 enum Buffer<std::move_constructible T> { data(std::vector<T> values) };
