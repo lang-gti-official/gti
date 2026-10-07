@@ -1968,11 +1968,15 @@ int main() {
          "a concrete override call should retain its exact target, virtual "
          "dispatch, and concrete dispatch owner in semantics");
 
+  const lang::HirClassInstance *entityHir = nullptr;
   const lang::HirClassInstance *spriteHir = nullptr;
   const lang::HirFunctionInstance *invokeHir = nullptr;
   const lang::HirFunctionInstance *invokeDirectHir = nullptr;
   const lang::HirFunctionInstance *boxReadHir = nullptr;
   for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == entity) {
+      entityHir = &instance;
+    }
     if (instance.source == sprite) {
       spriteHir = &instance;
     }
@@ -2071,6 +2075,61 @@ int main() {
          "MIR should preserve the exact concrete target, virtual owner, and "
          "contract identity without devirtualizing the call");
 
+  const lang::MirConstructorInstance *spriteConstructor = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (spriteMir != nullptr && constructor.owner == spriteMir->id) {
+      expect(spriteConstructor == nullptr,
+             "Sprite should have exactly one selected constructor");
+      spriteConstructor = &constructor;
+    }
+  }
+  const lang::MirConstructorInitializer *baseInitializer =
+      spriteConstructor != nullptr &&
+              spriteConstructor->initializers.size() == 1
+          ? &spriteConstructor->initializers.front()
+          : nullptr;
+  const lang::MirConstructorInstance *entityConstructor =
+      baseInitializer != nullptr && baseInitializer->constructorTarget
+          ? frontend.mir.findConstructorInstance(
+                *baseInitializer->constructorTarget)
+          : nullptr;
+  expect(
+      baseInitializer != nullptr && entityConstructor != nullptr &&
+          entityHir != nullptr &&
+          baseInitializer->kind ==
+              lang::ConstructorInitializerTargetKind::Base &&
+          baseInitializer->base == entityHir->id &&
+          baseInitializer->targetType == entityHir->type &&
+          entityConstructor->owner == entityHir->id &&
+          baseInitializer->explicitArgumentCount == 1 &&
+          entityConstructor->parameterTypes ==
+              spriteConstructor->parameterTypes,
+      "Sprite should retain the exact selected Entity constructor and scalar "
+      "base argument signature");
+  std::size_t baseStages = 0;
+  if (spriteConstructor != nullptr && entityConstructor != nullptr) {
+    for (const auto &block : spriteConstructor->body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::InitializeBase)
+          continue;
+        ++baseStages;
+        expect(instruction.constructorInitializer == 1 &&
+                   instruction.constructorTarget == entityConstructor->id &&
+                   instruction.parameterTypes ==
+                       entityConstructor->parameterTypes &&
+                   instruction.operands.size() == 1 &&
+                   instruction.definedFailure.propagation ==
+                       lang::FailurePropagationKind::Constructor &&
+                   block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id,
+               "the selected base stage should preserve constructor failure "
+               "propagation through an explicit MIR invoke");
+      }
+    }
+  }
+  expect(baseStages == 1,
+         "Sprite should initialize its Entity base exactly once");
+
   const lang::BackendArtifact generatedArtifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
                         lang::OptimizationPipeline().run(
@@ -2079,6 +2138,21 @@ int main() {
   constexpr std::string_view nameIdDefinition =
       "std::int32_t Sprite::name_id() const {";
   const std::size_t firstNameIdDefinition = generated.find(nameIdDefinition);
+  // The verified base stage now uses the status-result constructor overload,
+  // not a plain C++ base call. Derive both tags from selected MIR identities.
+  const std::string selectedBaseDefinition =
+      spriteConstructor != nullptr && entityConstructor != nullptr
+          ? "Sprite::Sprite(::gti_internal::backend::mir_failure_constructor_"
+            "tag_v1<" +
+                std::to_string(spriteConstructor->id) +
+                ">, std::int32_t __gti_mir_arg_0, bool "
+                "*__gti_mir_constructor_success, ::gti_failure_record_v2 "
+                "*__gti_mir_failure_record) : ::__gti_program::Entity("
+                "::gti_internal::backend::mir_failure_constructor_tag_v1<" +
+                std::to_string(entityConstructor->id) +
+                ">{}, __gti_mir_arg_0, __gti_mir_constructor_success, "
+                "__gti_mir_failure_record)"
+          : std::string{};
   expect(
       generated.find(
           "class Sprite : public ::__gti_program::Entity, public "
@@ -2095,9 +2169,8 @@ int main() {
               std::string::npos &&
           generated.find("explicit Sprite(const std::int32_t id);") !=
               std::string::npos &&
-          generated.find("Sprite::Sprite(std::int32_t __gti_mir_arg_0) : "
-                         "::__gti_program::Entity(__gti_mir_arg_0)") !=
-              std::string::npos &&
+          !selectedBaseDefinition.empty() &&
+          generated.find(selectedBaseDefinition) != std::string::npos &&
           generated.find("virtual bool read__gti_mir_failure(") !=
               std::string::npos &&
           generated.find("read__gti_mir_failure(std::int32_t "

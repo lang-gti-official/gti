@@ -55,5 +55,13 @@ int main(int argc, std::vector<std::string> argv) {
     [[discard]] work.emplace(Resource(7), Resource(8), std::string("work"));
     if (!work.front().ready()) { return 4; }
   }
+  {
+    // Keep distinct recursive node owners alive in the same artifact. Each
+    // generated default needs its own selected status-constructor declaration
+    // even when the C++ representation shares one native primary template.
+    mut std::list<int> numbers{};
+    [[discard]] numbers.emplace_back(42);
+    if (numbers.front() != 42) { return 5; }
+  }
   return 0;
 }
