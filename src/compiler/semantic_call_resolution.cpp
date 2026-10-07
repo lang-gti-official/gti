@@ -80,16 +80,6 @@ auto SemanticVisitor::Impl::validateStorageValueConstruction(
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
-auto SemanticVisitor::Impl::reportStorageArity(const Call &expr,
-                                               IntrinsicKind intrinsic,
-                                               std::size_t expected) -> void {
-  report(expr.paren(),
-         storageIntrinsicName(intrinsic) + " expects " +
-             std::to_string(expected) + " argument" +
-             (expected == 1 ? "." : "s."),
-         "GTI-S2019");
-}
-
 auto SemanticVisitor::Impl::uniqueOwnerIntrinsicName(IntrinsicKind intrinsic)
     -> std::string {
   switch (intrinsic) {
@@ -107,38 +97,6 @@ auto SemanticVisitor::Impl::uniqueOwnerIntrinsicName(IntrinsicKind intrinsic)
     return "unique_owner_upcast";
   default:
     return "unique-owner operation";
-  }
-}
-
-auto SemanticVisitor::Impl::storageIntrinsicName(IntrinsicKind intrinsic)
-    -> std::string {
-  switch (intrinsic) {
-  case IntrinsicKind::AllocateStorage:
-    return "allocate_storage";
-  case IntrinsicKind::StorageTryAllocate:
-    return "storage_try_allocate";
-  case IntrinsicKind::StorageTryAdopt:
-    return "storage_try_adopt";
-  case IntrinsicKind::StorageCapacity:
-    return "storage_capacity";
-  case IntrinsicKind::StorageInitialized:
-    return "storage_initialized";
-  case IntrinsicKind::StorageConstruct:
-    return "storage_construct";
-  case IntrinsicKind::StorageRead:
-    return "storage_read";
-  case IntrinsicKind::StorageReadMut:
-    return "storage_read_mut";
-  case IntrinsicKind::StorageDestroy:
-    return "storage_destroy";
-  case IntrinsicKind::StorageRelocate:
-    return "storage_relocate";
-  case IntrinsicKind::StorageShiftRight:
-    return "storage_shift_right";
-  case IntrinsicKind::StorageShiftLeft:
-    return "storage_shift_left";
-  default:
-    return "storage operation";
   }
 }
 

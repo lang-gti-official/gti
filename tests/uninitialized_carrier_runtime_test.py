@@ -10,6 +10,6 @@ if __name__ == "__main__":
         "inline_owner_example": [((), (0, "42\nrelocated\n43\n", ""))],
         "inline_pool_example": [((), (0, "1\n2\n4\n", ""))],
     }, fixture_paths={
-        "inline_owner_example": root / "examples/122-manual-object-lifetimes.gti",
+        "inline_owner_example": root / "examples/125-manual-object-lifetimes.gti",
         "inline_pool_example": root / "examples/128-inline-object-pool.gti",
     })

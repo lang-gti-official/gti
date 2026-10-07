@@ -1,0 +1,116 @@
+#include <std/resource>
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+
+// Public API intersection before/after source sparse-storage migration.
+// Counter instrumentation allocates no memory and is single-threaded.
+mut uint64_t allocations = 0;
+mut uint64_t releases = 0;
+mut uint64_t destroyed = 0;
+mut uint64_t destructor_sum = 0;
+
+[[no_transfer, no_share]] class CountingResource {
+public:
+  CountingResource() {}
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    std::process_resource process{};
+    unsafe {
+      auto result = process.allocate(request);
+      if (result) { allocations++; }
+      return std::move(result);
+    }
+  }
+  unsafe void release(std::raw_allocation allocation) {
+    std::process_resource process{};
+    unsafe { process.release(allocation); }
+    releases++;
+  }
+};
+
+class Item {
+  mut uint64_t value;
+public:
+  Item(uint64_t value) : value(value) {}
+  uint64_t read() { return this.value; }
+  void update(uint64_t amount) mut { this.value += amount; }
+  ~Item() { destroyed++; destructor_sum += this.value; }
+};
+
+uint64_t exercise(mut std::storage<Item>& slots, uint64_t seed) {
+  for (mut std::size_t index = 0; index < std::size_t(128); index++) {
+    slots.emplace(index, seed + uint64_t(index));
+  }
+  for (mut std::size_t index = 0; index < std::size_t(128); index += std::size_t(2)) {
+    slots.destroy(index);
+    slots.emplace(index, seed + uint64_t(index) + uint64_t(3));
+  }
+  mut uint64_t sum = 0;
+  for (mut std::size_t index = 0; index < std::size_t(128); index++) {
+    slots.get_mut(index).update(uint64_t(1));
+    sum += slots.get(index).read();
+  }
+  return sum;
+}
+
+uint64_t exercise(mut std::resource_storage<Item, CountingResource>& slots, uint64_t seed) {
+  for (mut std::size_t index = 0; index < std::size_t(128); index++) {
+    slots.emplace(index, seed + uint64_t(index));
+  }
+  for (mut std::size_t index = 0; index < std::size_t(128); index += std::size_t(2)) {
+    slots.destroy(index);
+    slots.emplace(index, seed + uint64_t(index) + uint64_t(3));
+  }
+  mut uint64_t sum = 0;
+  for (mut std::size_t index = 0; index < std::size_t(128); index++) {
+    slots.get_mut(index).update(uint64_t(1));
+    sum += slots.get(index).read();
+  }
+  return sum;
+}
+
+uint64_t process_work() {
+  std::allocator allocator{};
+  mut uint64_t result = 0;
+  for (mut uint64_t round = 0; round < uint64_t(25000); round++) {
+    mut auto slots = allocator.try_storage<Item>(std::size_t(128)).expect("allocate");
+    result += exercise(slots, round % uint64_t(97));
+    slots.clear();
+    slots.release();
+  }
+  return result;
+}
+
+uint64_t resource_work(std::resource_ref<CountingResource> resource) {
+  mut uint64_t result = 0;
+  for (mut uint64_t round = 0; round < uint64_t(25000); round++) {
+    mut std::resource_storage<Item, CountingResource> slots{resource};
+    slots.try_allocate(std::size_t(128)).expect("allocate");
+    result += exercise(slots, round % uint64_t(97));
+    slots.try_reserve_prefix(std::size_t(256), std::size_t(128)).expect("grow");
+    // Read relocated contents; both address ranges must preserve complete state.
+    for (mut std::size_t index = 0; index < std::size_t(128); index++) {
+      result += slots.get(index).read();
+    }
+    slots.release();
+  }
+  return result;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut uint64_t result = 0;
+  if (argc == 1) {
+    result = process_work();
+  } else {
+    CountingResource provider{};
+    unsafe { result = resource_work(std::bind_resource(provider)); }
+  }
+  // First three lines are the complete scalar/destructor state. Last two are
+  // provider policy observations and intentionally differ across migration.
+  std::println(result);
+  std::println(destroyed);
+  std::println(destructor_sum);
+  std::println(allocations);
+  std::println(releases);
+  return 0;
+}

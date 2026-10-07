@@ -2111,7 +2111,6 @@ def main():
         ]["emitted"]
         assert set(report["safetyOperations"]["families"]) == {
             "bounds",
-            "storage-state",
             "arithmetic-overflow",
             "arithmetic-domain",
         }
@@ -3564,14 +3563,14 @@ def main():
         private_capability.write_text(
             "namespace gti_internal { class forged {}; }\n"
             "namespace internals = gti_internal;\n"
-            "using hidden = gti_internal::storage<int>;\n"
+            "using hidden = gti_internal::prefix_storage<int>;\n"
             "int main() { return 0; }\n",
             encoding="utf-8",
         )
         rejected_private = run([gti, str(private_capability), "--emit-cpp"], 65)
         assert rejected_private.stderr.count("error[GTI-S2058]") == 3
         assert "Compiler-private name 'gti_internal'" in rejected_private.stderr
-        assert "Compiler-private name 'gti_internal::storage'" in (
+        assert "Compiler-private name 'gti_internal::prefix_storage'" in (
             rejected_private.stderr
         )
         assert "Unknown namespace" not in rejected_private.stderr

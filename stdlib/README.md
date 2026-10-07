@@ -390,41 +390,38 @@ without allocating or changing the shared count, preserves the same control
 block for concrete and base aliases, and permits final checked cleanup through
 either static view.
 
-Container implementations may use the reserved
-`gti_internal::storage<T>` compiler facility documented in
-[`docs/language/ownership-and-lifetimes.md`](../docs/language/ownership-and-lifetimes.md).
-It owns partially initialized capacity and supports
-checked variadic in-place construction, receiver-tied read-only and mutable
-borrows, destruction, movable-element relocation, and checked within-storage
-slot shifts without making raw pointers or manual deallocation part of the
-public language. Storage element types containing borrowed state are rejected.
-Its allocation extent and slot-live bitmap remain private representation state;
-narrow observers exist for the ordinary `<std/memory>` wrapper and expose no
-address or bitmap mutation. Containers keep logical size and growth policy as
-ordinary private GTI fields.
-One read-only `storage<T>&` may be retained by a validated stored-reference
-carrier declared in an implicit or imported standard-library unit. This narrow
-capability supports source-defined iterators; it does not permit application
-storage references, writable stored borrows, raw addresses, or storage escape.
-Container classes may provide exact-match constructor overloads; their
-default/copy/move/assignment/destruction policy is derived by the compiler from
-field lifecycle metadata. A public `~Type()` may drain live elements before
-storage teardown. Declared cleanup makes the wrapper noncopyable and uses
-compiler-generated active-state moves, preventing moved-from containers from
-running the cleanup body twice.
+Sparse owners and application-defined containers use public
+`std::uninitialized<T>`, `construct_at`, `destroy_at` and `relocate_at`,
+documented in [raw pointers](../docs/language/raw-pointers.md).
+The source-defined `std::storage<T>` implementation owns object and metadata
+regions through two separate leases from the same resource. Source GTI owns
+live-slot bytes, bounds/state checks, reverse drain guards, relocation loops
+and failure-atomic publication. The compiler owns layout, typed lifecycle,
+checked loans and exact failure cleanup—not a sparse bitmap or container name.
+The former private sparse-storage capability and native helpers are retired;
+prefix and optional storage remain separate current capabilities.
+
+The safe storage interface rejects borrowed-state elements and returns
+receiver-tied references. General stored-reference rules permit unrelated
+application wrappers and iterators to borrow the public owner without exposing
+its addresses or slot-state mutation. Container lifecycle is derived from
+ordinary field metadata; declared cleanup and generated active-state moves
+prevent moved-from owners from running cleanup twice.
 
 Application code may import `<std/memory>` for the direct public
 `std::allocator`, `std::storage<T>`, `std::alignment`, `std::alloc_errc`,
 `std::arena<T>`, and `std::pool<T>` surface. Allocation returns `expected`, and
 the move-only storage owner provides checked capacity, initialization,
 construct-by-value placement, access, destruction, and reverse clear operations
-for `std::movable T` without borrowed state. `try_make_arena` and
+for complete object types without borrowed state. Final-address `emplace`
+supports immovable payloads; transferring payload values still requires their
+movement capabilities. `try_make_arena` and
 `try_make_pool` build fixed-capacity move-only policies over that owner. Arenas
 insert monotonically and reset as one operation; pools reuse the lowest empty
 position after checked erase. Their `size_t` positions are not
 generation-bearing handles. Successful zero capacity is well-defined.
-Arbitrary in-slot constructor forwarding is deferred until it has an explicit
-MIR failure boundary.
+Variadic emplacement selects an exact constructor and uses the general MIR
+final-address construction and failure boundary.
 The public types are ordinary GTI wrappers: neither compiler nor backend
 recognizes their names, and no raw address or manual deallocation is exposed.
 
@@ -445,8 +442,8 @@ GTI can express a source-defined conditional special-member assignment body.
 
 Intrinsic behavior is restricted to exact compiler-trusted declaration
 identities. Shared prefix-storage, text, and core constraints remain
-prelude-owned. Unique-owner and sparse-storage identities belong to
-`<std/memory>`; managed-thread and defined-integer identities belong to the
+prelude-owned. Unique-owner, uninitialized-storage and object-lifetime identities
+belong to `<std/memory>`; managed-thread and defined-integer identities belong to the
 exact installed `<std/thread>` and `<std/numeric>` units. Atomic, iterator, and
 callable constraints likewise live in their canonical units, so none of these
 module inventories are present when the module is not imported. The root

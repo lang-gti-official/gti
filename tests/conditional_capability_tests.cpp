@@ -1,6 +1,7 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
+#include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
@@ -57,6 +58,11 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(good.canGenerateCode(),
          "conditional capabilities instantiate and compose");
+  const auto serialized = lang::MirPrinter().print(good.mir);
+  expect(serialized.find('\0') == std::string::npos &&
+             serialized.find("transfer-policy=0") != std::string::npos &&
+             serialized.find("share-policy=0") != std::string::npos,
+         "conditional policy enum identities serialize as text, not bytes");
   bool concreteInt = false;
   for (const auto &instance : good.hir.classInstances()) {
     if (instance.source && instance.source->name().lexeme == "Reviewed" &&

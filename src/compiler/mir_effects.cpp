@@ -172,62 +172,6 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // UniqueOwnerUpcast
     MirEffectTraits{
         .readsPlace = true, .writesPlace = true, .movesValue = true},
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .allocates = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .initializesValue = true},
-    // StorageTryAllocate reports every request failure as a status. The
-    // destination changes only after a complete allocation succeeds.
-    MirEffectTraits{.writesPlace = true,
-                    .writesUnknownMemory = true,
-                    .allocates = true,
-                    .invokesRuntime = true,
-                    .initializesValue = true},
-    // StorageCapacity observes allocation metadata without failure.
-    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
-    // StorageInitialized observes one bitmap entry without failure. The
-    // public wrapper owns its separate logical bounds check.
-    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .initializesValue = true,
-                    .invokesUserCode = true},
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .startsLoan = true},
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .startsLoan = true},
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .dropsValue = true,
-                    .invokesUserCode = true},
-    // StorageRelocate
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .invokesUserCode = true},
-    // StorageShiftRight
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .invokesUserCode = true},
-    // StorageShiftLeft
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .invokesUserCode = true},
     harmless(), // IntegerWrappingAdd
     harmless(), // IntegerWrappingSubtract
     harmless(), // IntegerWrappingMultiply
@@ -441,14 +385,6 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .speculatable = true,
                     .removableWhenUnused = true,
                     .reorderable = true}, // ObjectAlignment
-    // Adoption retains an externally supplied region and allocates only slot
-    // metadata. Failure is a status, with no published destination change.
-    MirEffectTraits{.writesPlace = true,
-                    .readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .allocates = true,
-                    .invokesRuntime = true,
-                    .initializesValue = true}, // StorageTryAdopt
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .mayTrap = true,
@@ -613,17 +549,6 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "unique-owner-is-null",
     "unique-owner-swap",
     "unique-owner-upcast",
-    "allocate-storage",
-    "storage-try-allocate",
-    "storage-capacity",
-    "storage-initialized",
-    "storage-construct",
-    "storage-read",
-    "storage-read-mut",
-    "storage-destroy",
-    "storage-relocate",
-    "storage-shift-right",
-    "storage-shift-left",
     "integer-wrapping-add",
     "integer-wrapping-subtract",
     "integer-wrapping-multiply",
@@ -705,7 +630,6 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "raw-pointer-conversion",
     "object-size",
     "object-alignment",
-    "storage-try-adopt",
     "object-destroy",
     "object-construct",
     "object-relocate",
@@ -1092,8 +1016,7 @@ struct ExactTargets {
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
              (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
-              instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-              instruction.intrinsic == IntrinsicKind::StorageConstruct) &&
+              instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
              instruction.constructorTarget &&
              (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
               instruction.storagePreflight != 0)) {
@@ -1439,7 +1362,6 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       return result;
     }
     if ((selected.kind == SemanticType::UniqueOwner ||
-         selected.kind == SemanticType::Storage ||
          selected.kind == SemanticType::PrefixStorage) &&
         selected.arguments.size() == 1) {
       const auto &value = selected.arguments.front();
@@ -1454,8 +1376,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
            program.findPayloadEnum(value.enumId) == nullptr)) {
         return MirDropType{.type = selected, .requiresActiveCleanup = true};
       }
-      if (selected.kind == SemanticType::Storage ||
-          selected.kind == SemanticType::PrefixStorage) {
+      if (selected.kind == SemanticType::PrefixStorage) {
         auto element = self(self, value);
         if (!element)
           return std::nullopt;

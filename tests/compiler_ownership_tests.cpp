@@ -14,6 +14,20 @@ lang::FrontendResult analyzeWithMemory(std::string_view name,
                                   {}, {standardLibraryRoot()});
 }
 
+lang::FrontendResult analyzeSourceStorageFixture(std::string_view name,
+                                                 std::string source) {
+  // This helper is ordinary application policy: allocation failure is explicit,
+  // and the tests exercise the public source-defined storage class.
+  source.insert(0, R"(
+std::storage<T> fixture_storage<T>(uint64_t count) requires std::storage_element<T> {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<T>(count);
+  return std::move(allocated).expect("test storage allocation");
+}
+)");
+  return analyzeWithMemory(name, std::move(source));
+}
+
 void testOwnershipSemanticFoundation() {
   const lang::SemanticType reference = lang::SemanticType::referenceTo(
       lang::SemanticType::Int32, lang::AccessMode::Mutable);
@@ -22,7 +36,7 @@ void testOwnershipSemanticFoundation() {
   const lang::SemanticType shared =
       lang::SemanticType::sharedPointerTo(lang::SemanticType::Int32);
   const lang::SemanticType storage =
-      lang::SemanticType::storageOf(lang::SemanticType::Int32);
+      lang::SemanticType::prefixStorageOf(lang::SemanticType::Int32);
   const lang::SemanticTypeTraits referenceTraits =
       lang::semanticTraits(reference);
   const lang::SemanticTypeTraits uniqueTraits = lang::semanticTraits(unique);
@@ -44,7 +58,7 @@ void testOwnershipSemanticFoundation() {
   expect(storageTraits.ownership == lang::OwnershipKind::Unique &&
              storageTraits.drop == lang::DropKind::Lexical &&
              !storageTraits.copyable && storageTraits.movable,
-         "compiler-private storage should be a move-only lexical owner");
+         "compiler-private prefix storage should be a move-only lexical owner");
 
   lang::FrontendResult frontend =
       lang::Frontend().analyze("ownership-foundation.gti", R"(
@@ -1304,7 +1318,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v78\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v79\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3497,7 +3511,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v92 ") &&
+  expect(mirDump.starts_with("mir-v93 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -3726,30 +3740,30 @@ int main() {
         "representation and select the exact verified-MIR capability family");
   }
 
-  const lang::FrontendResult sparseMisuse =
-      analyzeTrustedMemoryFixture("prefix-storage-sparse-misuse.gti", R"(
+  const lang::FrontendResult optionalMisuse =
+      analyzeTrustedMemoryFixture("prefix-storage-optional-misuse.gti", R"(
 int main() {
   mut gti_internal::prefix_storage<int> values =
       gti_internal::allocate_prefix_storage<int>(uint64_t(1));
-  return int(gti_internal::storage_read(values, uint64_t(0)));
+  return int(gti_internal::optional_storage_read(values));
 }
 )");
-  expect(!sparseMisuse.canGenerateCode() &&
-             hasDiagnosticCode(sparseMisuse.diagnostics, "GTI-S2019"),
-         "sparse storage operations must reject prefix storage arguments: "
+  expect(!optionalMisuse.canGenerateCode() &&
+             hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-S2019"),
+         "optional storage operations must reject prefix storage arguments: "
          "the two capabilities stay distinct");
 
   const lang::FrontendResult prefixMisuse =
       analyzeTrustedMemoryFixture("prefix-storage-prefix-misuse.gti", R"(
 int main() {
-  mut gti_internal::storage<int> values =
-      gti_internal::allocate_storage<int>(uint64_t(1));
+  mut gti_internal::unique_owner<int> values =
+      gti_internal::allocate_unique_owner<int>(1);
   return int(gti_internal::prefix_storage_read(values, uint64_t(0)));
 }
 )");
   expect(!prefixMisuse.canGenerateCode() &&
              hasDiagnosticCode(prefixMisuse.diagnostics, "GTI-S2019"),
-         "prefix storage operations must reject sparse storage arguments: "
+         "prefix storage operations must reject unique-owner arguments: "
          "the two capabilities stay distinct");
 }
 
@@ -3767,18 +3781,18 @@ public:
 };
 
 class Buffer<T> {
-  mut gti_internal::storage<T> data;
+  mut gti_internal::prefix_storage<T> data;
 
 public:
   Buffer(uint64_t capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)) {}
+      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
 
   void push(T value) mut {
-    gti_internal::storage_construct(this.data, uint64_t(0), value);
+    gti_internal::prefix_storage_append(this.data, value);
   }
 
   T& at(uint64_t index) {
-    return gti_internal::storage_read(this.data, index);
+    return gti_internal::prefix_storage_read(this.data, index);
   }
 };
 
@@ -3847,7 +3861,7 @@ int main() {
           artifact.contents.find("*__gti_mir_out_result = __gti_mir_loan_2;") !=
               std::string::npos &&
           artifact.contents.find(
-              "::gti_internal::backend::mir_storage_read_v1(") !=
+              "::gti_internal::backend::mir_prefix_read_v1(") !=
               std::string::npos,
       "receiver-tied borrows should lower through exact const loan carriers "
       "and publish the returned loan without copying its referent");
@@ -3855,18 +3869,18 @@ int main() {
   const lang::FrontendResult nested =
       analyzeTrustedMemoryFixture("nested-receiver-reference.gti", R"(
 class ElementBuffer {
-  mut gti_internal::storage<int> data;
+  mut gti_internal::prefix_storage<int> data;
 
 public:
   ElementBuffer()
-      : data(gti_internal::allocate_storage<int>(uint64_t(1))) {}
+      : data(gti_internal::allocate_prefix_storage<int>(uint64_t(1))) {}
 
   void set(int value) mut {
-    gti_internal::storage_construct(this.data, uint64_t(0), value);
+    gti_internal::prefix_storage_append(this.data, value);
   }
 
   int& at() {
-    return gti_internal::storage_read(this.data, uint64_t(0));
+    return gti_internal::prefix_storage_read(this.data, uint64_t(0));
   }
 };
 
@@ -4018,23 +4032,23 @@ int main() {
   const lang::FrontendResult invalidated =
       analyzeTrustedMemoryFixture("invalidated-reference.gti", R"(
 class Buffer<T> {
-  mut gti_internal::storage<T> data;
+  mut gti_internal::prefix_storage<T> data;
 
 public:
   Buffer(uint64_t capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)) {}
+      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
 
   T& at(uint64_t index) {
-    return gti_internal::storage_read(this.data, index);
+    return gti_internal::prefix_storage_read(this.data, index);
   }
 
   void clear(uint64_t index) mut {
-    gti_internal::storage_destroy(this.data, index);
+    gti_internal::prefix_storage_pop(this.data);
   }
 
   int invalidate_receiver(uint64_t index) mut {
-    int& value = gti_internal::storage_read(this.data, index);
-    gti_internal::storage_destroy(this.data, index);
+    int& value = gti_internal::prefix_storage_read(this.data, index);
+    gti_internal::prefix_storage_pop(this.data);
     return value;
   }
 };
@@ -4050,7 +4064,7 @@ int main() {
   expect(!invalidated.canGenerateCode(),
          "move-only receivers must remain stable while borrowed");
   expect(hasDiagnostic(invalidated.diagnostics,
-                       "storage_destroy cannot mutate storage") &&
+                       "prefix_storage_pop cannot mutate storage") &&
              hasDiagnostic(invalidated.diagnostics,
                            "Cannot move storage while an overlapping borrow") &&
              hasDiagnostic(invalidated.diagnostics,
@@ -5874,9 +5888,9 @@ int main() {
   const lang::FrontendResult applicationStorageBorrow =
       lang::Frontend().analyze("application-storage-borrow.gti", R"(
 class StorageBorrow<T> {
-  gti_internal::storage<T>& data;
+  gti_internal::prefix_storage<T>& data;
 public:
-  StorageBorrow(gti_internal::storage<T>& source) : data(source) {}
+  StorageBorrow(gti_internal::prefix_storage<T>& source) : data(source) {}
 };
 int main() { return 0; }
 )");
@@ -10827,41 +10841,38 @@ int main() {
          "call overload resolution");
 }
 
-void testCompilerPrivateStorage() {
+void testSourceDefinedStorage() {
   const std::string source = R"(
-class Buffer<std::movable T> {
-  mut gti_internal::storage<T> data;
+concept buffer_element<T> =
+    std::storage_element<T> && std::movable<T> && std::relocatable<T>;
+class Buffer<buffer_element T> {
+  mut std::storage<T> data;
   mut uint64_t count = 0;
   mut uint64_t reserved = 0;
 
 public:
   Buffer(uint64_t capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)), reserved(capacity) {}
+      : data(fixture_storage<T>(capacity)), reserved(capacity) {}
 
-  uint64_t capacity() {
-    return this.reserved;
-  }
+  uint64_t capacity() { return this.reserved; }
 
   void push(T value) mut {
-    gti_internal::storage_construct(this.data, this.count, value);
+    this.data.construct(this.count, std::move(value));
     this.count++;
   }
 
-  T& at(uint64_t index) {
-    return gti_internal::storage_read(this.data, index);
-  }
+  T& at(uint64_t index) { return this.data.get(index); }
 
   void grow(uint64_t capacity) mut {
-    mut gti_internal::storage<T> replacement =
-        gti_internal::allocate_storage<T>(capacity);
-    gti_internal::storage_relocate(this.data, replacement, this.count);
+    mut std::storage<T> replacement = fixture_storage<T>(capacity);
+    this.data.relocate_to(replacement, this.count);
     this.data = std::move(replacement);
     this.reserved = capacity;
   }
 
   void pop() mut {
     this.count--;
-    gti_internal::storage_destroy(this.data, this.count);
+    this.data.destroy(this.count);
   }
 };
 
@@ -10882,16 +10893,16 @@ int main() {
 )";
 
   lang::FrontendResult frontend =
-      analyzeTrustedMemoryFixture("internal-storage.gti", source);
+      analyzeSourceStorageFixture("source-storage.gti", source);
   if (!frontend.canGenerateCode()) {
-    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
-      std::cerr << "Unexpected internal-storage diagnostic: "
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
+      std::cerr << "Unexpected source-storage diagnostic: "
                 << diagnostic.message << '\n';
-    }
   }
-  expect(frontend.canGenerateCode(),
-         "compiler-private storage should support vector-style growth and "
-         "element lifetime operations");
+  expect(frontend.canGenerateCode(), "source-defined storage supports growth, "
+                                     "element lifetimes and receiver borrows");
+  if (!frontend.canGenerateCode())
+    return;
 
   const lang::ClassDecl *buffer = findTopLevelClass(frontend.program, "Buffer");
   const auto *field = buffer == nullptr
@@ -10901,150 +10912,116 @@ int main() {
   const lang::BindingInfo *binding =
       field == nullptr ? nullptr : frontend.semantics.findBinding(*field);
   expect(binding != nullptr &&
-             binding->type.kind == lang::SemanticType::Storage &&
-             binding->traits.ownership == lang::OwnershipKind::Unique &&
-             !binding->traits.copyable && binding->traits.movable,
-         "storage fields should retain move-only ownership metadata");
+             binding->type.kind == lang::SemanticType::Class &&
+             binding->traits.ownership == lang::OwnershipKind::Value &&
+             binding->traits.drop == lang::DropKind::Lexical &&
+             !binding->traits.copyable && binding->traits.movable &&
+             !binding->traits.containsBorrowedState,
+         "source storage is a noncopyable, movable lexical value, not a "
+         "compiler-private unique-owner kind");
 
+  bool construct = false, destroy = false, relocate = false;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        construct |=
+            instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
+        destroy |= instruction.intrinsic == lang::IntrinsicKind::ObjectDestroy;
+        relocate |=
+            instruction.intrinsic == lang::IntrinsicKind::ObjectRelocate;
+      }
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(concreteBackendSymbols(artifact.contents, "__gti_type_", "Buffer")
+  expect(construct && destroy && relocate &&
+             lang::verifyMirProgram(frontend.mir).valid() &&
+             concreteBackendSymbols(artifact.contents, "__gti_type_", "Buffer")
                      .size() == 2 &&
-             artifact.contents.find(
-                 "::gti_internal::backend::storage<std::int32_t> data;") !=
+             concreteBackendSymbols(artifact.contents, "__gti_type_", "storage")
+                     .size() >= 2 &&
+             artifact.contents.find("construct_representation_at(") !=
                  std::string::npos &&
-             artifact.contents.find(
-                 "::gti_internal::backend::storage<char8_t> data;") !=
+             artifact.contents.find("::gti_internal::backend::storage<") ==
                  std::string::npos &&
-             artifact.contents.find(
-                 "::gti_internal::backend::mir_allocate_storage_v1<"
-                 "std::int32_t>(") != std::string::npos &&
-             artifact.contents.find(
-                 "::gti_internal::backend::mir_storage_construct_v1(") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "::gti_internal::backend::mir_storage_relocate_v1<true>(") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "::gti_internal::backend::mir_storage_destroy_v1(") !=
+             artifact.contents.find("mir_storage_") == std::string::npos &&
+             artifact.contents.find("mir_allocate_storage_v1") ==
                  std::string::npos,
-         "the C++ backend should lower private storage through its exact "
-         "verified-MIR RAII capability family");
+         "source storage lowers ordinary classes and general object lifetimes, "
+         "never the retired sparse backend");
 
   const lang::FrontendResult invalid =
-      analyzeTrustedMemoryFixture("invalid-internal-storage.gti", R"(
-gti_internal::storage<int> global =
-    gti_internal::allocate_storage<int>(uint64_t(1));
-
+      analyzeSourceStorageFixture("invalid-source-storage.gti", R"(
 int main() {
-  mut gti_internal::storage<int> values =
-      gti_internal::allocate_storage<int>(uint64_t(2));
-  gti_internal::storage_construct(values, 0, 1);
-  gti_internal::storage_construct(values, uint64_t(0), true);
-  gti_internal::storage<int> copied = values;
-  gti_internal::storage<int> moved = std::move(values);
-  return gti_internal::storage_read(values, uint64_t(0));
+  mut std::storage<int> values = fixture_storage<int>(uint64_t(2));
+  values.construct(true, 1);
+  values.construct(uint64_t(0), true);
+  std::storage<int> copied = values;
+  std::storage<int> moved = std::move(values);
+  return values.get(uint64_t(0));
 }
 )");
-  expect(!invalid.canGenerateCode(),
-         "storage misuse should be rejected before backend generation");
-  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2019") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "only be used as a local binding or class field") &&
-             hasDiagnostic(invalid.diagnostics, "requires a uint64_t") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Storage construction of 'int32_t'") &&
+  expect(!invalid.canGenerateCode() &&
              hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
-             hasDiagnostic(invalid.diagnostics, "has already been moved"),
-         "storage diagnostics should cover placement, exact types, copying, "
-         "and use after move");
+             hasDiagnostic(invalid.diagnostics, "has already been moved") &&
+             hasDiagnostic(invalid.diagnostics, "bool"),
+         "public storage rejects wrong index/element types, copies and reuse "
+         "after movement");
 
-  const lang::FrontendResult hiddenStoragePolicy =
-      analyzeTrustedMemoryFixture("hidden-storage-policy.gti", R"(
-int main() {
-  mut gti_internal::storage<int> values =
-      gti_internal::allocate_storage<int>(uint64_t(2));
-  uint64_t capacity = gti_internal::storage_capacity(values);
-  return int(capacity);
-}
+  // Placement restrictions belong to the surviving private capability, not the
+  // ordinary public class. Keep that separate private-boundary regression.
+  const auto invalidPrivatePlacement =
+      analyzeTrustedMemoryFixture("invalid-prefix-storage-placement.gti", R"(
+gti_internal::prefix_storage<int> global =
+    gti_internal::allocate_prefix_storage<int>(uint64_t(1));
+int main() { return 0; }
 )");
-  const lang::OptimizationResult hiddenOptimizations =
-      lang::OptimizationPipeline().run(hiddenStoragePolicy.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact hiddenArtifact =
-      gti_test::emitCpp(hiddenStoragePolicy, hiddenStoragePolicy.mir,
-                        hiddenStoragePolicy.mir, hiddenOptimizations);
-  expect(hiddenStoragePolicy.canGenerateCode() &&
-             hiddenArtifact.contents.find(
-                 "::gti_internal::backend::storage_capacity(") !=
-                 std::string::npos,
-         "trusted storage policy should observe allocation extent without "
-         "exposing a raw address or deallocation capability");
+  expect(!invalidPrivatePlacement.canGenerateCode() &&
+             hasDiagnostic(invalidPrivatePlacement.diagnostics,
+                           "only be used as a local binding or class field"),
+         "compiler-private prefix storage remains limited to local or field "
+         "owners");
 
   const lang::FrontendResult recoverableStorage =
-      analyzeTrustedMemoryFixture("recoverable-storage-policy.gti", R"(
+      analyzeWithMemory("recoverable-source-storage.gti", R"(
 int main() {
-  mut gti_internal::storage<int> values =
-      gti_internal::allocate_storage<int>(uint64_t(0));
-  int32_t status = gti_internal::storage_try_allocate(
-      values, uint64_t(2), uint64_t(64));
-  if (status != 0 || gti_internal::storage_capacity(values) != uint64_t(2) ||
-      gti_internal::storage_initialized(values, uint64_t(1))) {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<int>(uint64_t(2), std::alignment(uint64_t(64)));
+  if (!allocated) { return 3; }
+  mut auto values = std::move(allocated).value();
+  if (values.capacity() != uint64_t(2) || values.initialized(uint64_t(1))) {
     return 1;
   }
-  gti_internal::storage_construct(values, uint64_t(1), 42);
-  if (!gti_internal::storage_initialized(values, uint64_t(1))) {
+  values.construct(uint64_t(1), 42);
+  if (!values.initialized(uint64_t(1)) || values.initialized(uint64_t(0))) {
     return 2;
   }
-  return gti_internal::storage_read(values, uint64_t(1)) - 42;
+  return values.get(uint64_t(1)) - 42;
 }
 )");
   std::array<bool, 3> hirOperations{};
+  std::array<bool, 3> mirOperations{};
   for (const lang::HirFunctionInstance &function :
        recoverableStorage.hir.functionInstances()) {
-    for (const lang::HirValue &value : function.body.values) {
-      switch (value.intrinsic) {
-      case lang::IntrinsicKind::StorageTryAllocate:
-        hirOperations[0] =
-            hirOperations[0] || value.info.type == lang::SemanticType::Int32;
-        break;
-      case lang::IntrinsicKind::StorageCapacity:
-        hirOperations[1] =
-            hirOperations[1] || value.info.type == lang::SemanticType::UInt64;
-        break;
-      case lang::IntrinsicKind::StorageInitialized:
-        hirOperations[2] =
-            hirOperations[2] || value.info.type == lang::SemanticType::Bool;
-        break;
-      default:
-        break;
-      }
-    }
-  }
-  std::array<bool, 3> mirOperations{};
-  for (const lang::MirFunctionInstance &function :
-       recoverableStorage.mir.functionInstances()) {
-    for (const lang::MirBlock &block : function.body.blocks) {
-      for (const lang::MirInstruction &instruction : block.instructions) {
-        switch (instruction.intrinsic) {
-        case lang::IntrinsicKind::StorageTryAllocate:
-          mirOperations[0] = mirOperations[0] ||
-                             instruction.info.type == lang::SemanticType::Int32;
-          break;
-        case lang::IntrinsicKind::StorageCapacity:
-          mirOperations[1] =
-              instruction.info.type == lang::SemanticType::UInt64;
-          break;
-        case lang::IntrinsicKind::StorageInitialized:
-          mirOperations[2] = instruction.info.type == lang::SemanticType::Bool;
-          break;
-        default:
-          break;
-        }
-      }
+    if (function.source == nullptr)
+      continue;
+    const auto &name = function.source->name().lexeme;
+    const auto *mir = recoverableStorage.mir.findFunctionInstance(function.id);
+    std::optional<std::size_t> index;
+    if (name == "try_storage" &&
+        function.returnType.kind == lang::SemanticType::Expected)
+      index = 0;
+    else if (name == "capacity" &&
+             function.returnType == lang::SemanticType::UInt64)
+      index = 1;
+    else if (name == "initialized" &&
+             function.returnType == lang::SemanticType::Bool)
+      index = 2;
+    if (index) {
+      hirOperations[*index] = true;
+      mirOperations[*index] =
+          mir != nullptr && mir->returnType == function.returnType;
     }
   }
   const lang::OptimizationResult recoverableOptimizations =
@@ -11060,48 +11037,44 @@ int main() {
              std::all_of(mirOperations.begin(), mirOperations.end(),
                          [](bool found) { return found; }) &&
              recoverableArtifact.contents.find(
-                 "::gti_internal::backend::storage_try_allocate(") !=
+                 "construct_representation_at(") != std::string::npos &&
+             recoverableArtifact.contents.find("storage_try_allocate(") ==
                  std::string::npos &&
-             recoverableArtifact.contents.find(
-                 "::gti_internal::backend::storage_initialized(") !=
+             recoverableArtifact.contents.find("storage_initialized(") ==
                  std::string::npos,
-         "recoverable allocation and allocation-state observers should retain "
-         "their exact identity and result types through HIR, MIR, and backend "
-         "selection");
+         "recoverable allocation and sparse-state observers retain ordinary "
+         "source identities and typed results through HIR/MIR");
 
   const lang::FrontendResult invalidRecoverableStorage =
-      analyzeTrustedMemoryFixture("invalid-recoverable-storage.gti", R"(
+      analyzeSourceStorageFixture("invalid-recoverable-source-storage.gti", R"(
 int main() {
-  gti_internal::storage<int> fixed =
-      gti_internal::allocate_storage<int>(uint64_t(0));
-  int32_t immutable = gti_internal::storage_try_allocate(
-      fixed, uint64_t(1), uint64_t(0));
-  mut gti_internal::storage<int> values =
-      gti_internal::allocate_storage<int>(uint64_t(0));
-  int32_t wrong_count = gti_internal::storage_try_allocate(
-      values, true, uint64_t(0));
-  int32_t missing_alignment =
-      gti_internal::storage_try_allocate(values, uint64_t(1));
-  uint64_t extra_capacity =
-      gti_internal::storage_capacity(values, uint64_t(0));
-  bool wrong_index = gti_internal::storage_initialized(values, true);
-  return immutable + wrong_count + missing_alignment + int(extra_capacity) +
-         int(wrong_index);
+  std::allocator allocator{};
+  auto fixed = fixture_storage<int>(uint64_t(1));
+  fixed.construct(uint64_t(0), 1);
+  auto wrong_count = allocator.try_storage<int>(true);
+  auto extra_alignment = allocator.try_storage<int>(uint64_t(1), std::alignment(uint64_t(8)), true);
+  mut auto values = fixture_storage<int>(uint64_t(1));
+  uint64_t extra_capacity = values.capacity(uint64_t(0));
+  bool wrong_index = values.initialized(true);
+  return 0;
 }
 )");
   expect(!invalidRecoverableStorage.canGenerateCode() &&
              hasDiagnostic(invalidRecoverableStorage.diagnostics,
-                           "storage_try_allocate requires mutable storage") &&
+                           "Mutable method requires a mutable receiver") &&
              hasDiagnostic(invalidRecoverableStorage.diagnostics,
-                           "storage_try_allocate requires a uint64_t") &&
+                           "No overload of 'try_storage' exactly matches "
+                           "argument types (bool)") &&
              hasDiagnostic(invalidRecoverableStorage.diagnostics,
-                           "storage_try_allocate expects 3 arguments") &&
+                           "No overload of 'try_storage' exactly matches "
+                           "argument types (uint64_t, std::alignment, bool)") &&
              hasDiagnostic(invalidRecoverableStorage.diagnostics,
-                           "storage_capacity expects 1 argument") &&
+                           "Function expects 0 arguments but received 1") &&
              hasDiagnostic(invalidRecoverableStorage.diagnostics,
-                           "storage_initialized requires a uint64_t"),
-         "recoverable storage intrinsics should diagnose exact arity, scalar "
-         "types, and mutable destination access");
+                           "Argument 1 has type 'bool' but the parameter "
+                           "requires 'uint64_t'"),
+         "ordinary method diagnostics preserve mutable access, scalar types "
+         "and arity checks");
 
   const lang::FrontendResult publicStorage = lang::Frontend().analyze(
       "public-storage.gti", R"(
@@ -11315,9 +11288,156 @@ int main() {
       "receiver-tied element borrow remains live");
 }
 
+void testFixedArrayPackForwarding() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/storage_fixed_array_emplacement.gti";
+  std::ifstream input(fixture);
+  const std::string source((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+  expect(!source.empty(), "fixed-array forwarding regression must load");
+  const auto frontend =
+      analyzeWithMemory("fixed-array-pack-forwarding.gti", source);
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "fixed-array arguments pass through ordinary forwarding, storage and "
+         "vector emplacement");
+  if (!frontend.canGenerateCode())
+    return;
+
+  const auto array = lang::SemanticType::arrayOf(lang::SemanticType::Int32, 3);
+  const auto item =
+      std::find_if(frontend.hir.classInstances().begin(),
+                   frontend.hir.classInstances().end(),
+                   [](const lang::HirClassInstance &instance) {
+                     return instance.source != nullptr &&
+                            instance.source->name().lexeme == "Item";
+                   });
+  expect(item != frontend.hir.classInstances().end(),
+         "passive class-array forwarding must retain its exact element type");
+  if (item == frontend.hir.classInstances().end())
+    return;
+  const auto itemArray = lang::SemanticType::arrayOf(item->type, 2);
+  bool expandedArray = false;
+  bool expandedClassArray = false;
+  bool sourceHelper = false;
+  for (const auto &function : frontend.hir.functionInstances()) {
+    sourceHelper |= function.source != nullptr &&
+                    function.source->name().lexeme == "forward_construct";
+    for (const auto &value : function.body.values)
+      for (const auto &element : value.packExpansionElements)
+        if (element.type == array || element.type == itemArray) {
+          expandedArray |= element.type == array;
+          expandedClassArray |= element.type == itemArray;
+          expect(element.kind == lang::HirCallInputKind::Value &&
+                     element.traits.copyable &&
+                     !element.traits.containsBorrowedState,
+                 "HIR records an exact passive array snapshot, not pointer "
+                 "decay or a loan");
+        }
+  }
+  bool rawConstruction = false, prefixConstruction = false, mixedPrefix = false;
+  bool stagedClassArray = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hirFunction = frontend.hir.findFunctionInstance(function.id);
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            (instruction.info.type == array ||
+             instruction.info.type == itemArray)) {
+          expect(instruction.callInputKind == lang::HirCallInputKind::Value &&
+                     !instruction.preparedParameterDrop &&
+                     instruction.lifecycle.empty(),
+                 "MIR array staging preserves value copying without an owner "
+                 "handoff");
+          stagedClassArray |= instruction.info.type == itemArray;
+          mixedPrefix |=
+              hirFunction != nullptr && hirFunction->source != nullptr &&
+              hirFunction->source->name().lexeme == "forward_with_fixed";
+        }
+        if (instruction.constructorTarget &&
+            instruction.parameterTypes.size() == 2 &&
+            instruction.parameterTypes[1] == array) {
+          rawConstruction |=
+              instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
+          prefixConstruction |=
+              instruction.intrinsic == lang::IntrinsicKind::PrefixStorageAppend;
+        }
+      }
+  }
+  expect(sourceHelper && expandedArray && expandedClassArray &&
+             stagedClassArray && mixedPrefix && rawConstruction &&
+             prefixConstruction && lang::verifyMirProgram(frontend.mir).valid(),
+         "the exact array survives both constructor families and fixed-prefix "
+         "pack calls");
+  const auto artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
+                        lang::OptimizationPipeline().run(
+                            frontend.hir, lang::OptimizationLevel::O0));
+  expect(artifact.contents.find("class ArrayHolder {") != std::string::npos &&
+             artifact.contents.find("construct_representation_at(") !=
+                 std::string::npos &&
+             artifact.contents.find("forward_pack_argument(args)...") ==
+                 std::string::npos,
+         "array forwarding is emitted from concrete verified stages");
+
+  const std::string prefix = R"(
+class Holder {
+  int32_t values[3];
+public:
+  Holder(int32_t initial[3]) : values(initial) {}
+};
+T forward_construct<T, Args...>(Args... args) { return T(args...); }
+)";
+  const auto wrongExtent =
+      analyzeWithMemory("array-pack-wrong-extent.gti", prefix + R"(
+int main() {
+  int32_t seed[2] = {1, 2};
+  Holder result = forward_construct<Holder>(seed);
+  return 0;
+}
+)");
+  const auto wrongElement =
+      analyzeWithMemory("array-pack-wrong-element.gti", prefix + R"(
+int main() {
+  bool seed[3] = {true, false, true};
+  Holder result = forward_construct<Holder>(seed);
+  return 0;
+}
+)");
+  expect(!wrongExtent.canGenerateCode() &&
+             hasDiagnostic(wrongExtent.diagnostics,
+                           "No constructor of 'Holder' exactly matches") &&
+             !wrongElement.canGenerateCode() &&
+             hasDiagnostic(wrongElement.diagnostics,
+                           "No constructor of 'Holder' exactly matches"),
+         "pack forwarding retains exact array extents and element types");
+  const auto borrowed =
+      analyzeWithMemory("array-pack-borrowed-elements.gti", R"(
+class BorrowCarrier {
+  int32_t& source;
+public:
+  BorrowCarrier(int32_t& source) : source(source) {}
+};
+int32_t consume<Args...>(Args... args) { return 0; }
+int main() {
+  int32_t source = 1;
+  BorrowCarrier values[1] = {BorrowCarrier(source)};
+  return consume(values);
+}
+)");
+  expect(
+      !borrowed.canGenerateCode() &&
+          hasDiagnosticCode(borrowed.diagnostics, "GTI-S2045") &&
+          hasDiagnostic(borrowed.diagnostics,
+                        "Borrowed state cannot be nested"),
+      "passive array forwarding does not erase element lifetime dependencies");
+}
+
 void testVariadicStorageConstructionAndVector() {
   const lang::FrontendResult frontend =
-      analyzeTrustedMemoryFixture("variadic-storage-construction.gti", R"(
+      analyzeSourceStorageFixture("variadic-storage-construction.gti", R"(
 #include <std/memory>
 
 class DefaultValue {
@@ -11356,19 +11476,19 @@ public:
   }
 };
 
-class EmplacingBuffer<std::movable T> {
-  mut gti_internal::storage<T> data;
+class EmplacingBuffer<std::storage_element T> {
+  mut std::storage<T> data;
   mut uint64_t count = 0;
 
 public:
   EmplacingBuffer(uint64_t capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)) {}
+      : data(fixture_storage<T>(capacity)) {}
 
   mut T& emplace<Args...>(Args... args) mut {
     uint64_t index = this.count;
-    gti_internal::storage_construct(this.data, index, args...);
+    this.data.emplace(index, args...);
     this.count++;
-    return gti_internal::storage_read_mut(this.data, index);
+    return this.data.get_mut(index);
   }
 };
 
@@ -11385,19 +11505,19 @@ int main() {
   MoveOnlyValue& placed = owned.emplace(std::move(pending));
   int32_t moved_value = placed.read();
 
-  mut gti_internal::storage<DefaultValue> defaults =
-      gti_internal::allocate_storage<DefaultValue>(uint64_t(1));
-  gti_internal::storage_construct(defaults, uint64_t(0));
+  mut std::storage<DefaultValue> defaults =
+      fixture_storage<DefaultValue>(uint64_t(1));
+  defaults.emplace(uint64_t(0));
   int32_t default_value =
-      gti_internal::storage_read(defaults, uint64_t(0)).value();
+      defaults.get(uint64_t(0)).value();
 
-  mut gti_internal::storage<int32_t> numbers =
-      gti_internal::allocate_storage<int32_t>(uint64_t(2));
-  gti_internal::storage_construct(numbers, uint64_t(0));
-  gti_internal::storage_construct(numbers, uint64_t(1), 5);
+  mut std::storage<int32_t> numbers =
+      fixture_storage<int32_t>(uint64_t(2));
+  numbers.emplace(uint64_t(0));
+  numbers.emplace(uint64_t(1), 5);
   if (observed == 7 and moved_value == 23 and default_value == 17 and
-      gti_internal::storage_read(numbers, uint64_t(0)) == 0 and
-      gti_internal::storage_read(numbers, uint64_t(1)) == 5) {
+      numbers.get(uint64_t(0)) == 0 and
+      numbers.get(uint64_t(1)) == 5) {
     return 0;
   }
   return 1;
@@ -11410,14 +11530,16 @@ int main() {
     }
   }
   expect(frontend.canGenerateCode(),
-         "storage_construct should support default construction, exact "
+         "source storage emplace should support default construction, exact "
          "primitive values, and concrete variadic constructor arguments");
+  if (!frontend.canGenerateCode())
+    return;
 
   bool foundVariadicHirConstruction = false;
   for (const lang::HirFunctionInstance &function :
        frontend.hir.functionInstances()) {
     for (const lang::HirValue &value : function.body.values) {
-      if (value.intrinsic != lang::IntrinsicKind::StorageConstruct ||
+      if (value.intrinsic != lang::IntrinsicKind::ObjectConstruct ||
           !value.constructorTarget) {
         continue;
       }
@@ -11428,17 +11550,17 @@ int main() {
           constructor->parameterTypes.size() == 2 &&
           constructor->parameterTypes[0] == lang::SemanticType::Int32 &&
           constructor->parameterTypes[1] == lang::SemanticType::Bool &&
-          value.parameterTypes.size() == 4 &&
-          value.parameterTypes[1] == lang::SemanticType::UInt64 &&
-          value.parameterTypes[2] == lang::SemanticType::Int32 &&
-          value.parameterTypes[3] == lang::SemanticType::Bool) {
+          value.parameterTypes.size() == 3 &&
+          value.parameterTypes[0].kind == lang::SemanticType::RawPointer &&
+          value.parameterTypes[1] == lang::SemanticType::Int32 &&
+          value.parameterTypes[2] == lang::SemanticType::Bool) {
         foundVariadicHirConstruction = true;
       }
     }
   }
   expect(foundVariadicHirConstruction,
          "HIR should retain the exact multi-argument constructor target on "
-         "the concrete storage_construct pack expansion");
+         "the general object_construct pack expansion beneath source emplace");
 
   bool foundVariadicMirConstruction = false;
   for (const lang::MirFunctionInstance &function :
@@ -11446,7 +11568,7 @@ int main() {
     for (const lang::MirBlock &block : function.body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Call ||
-            instruction.intrinsic != lang::IntrinsicKind::StorageConstruct ||
+            instruction.intrinsic != lang::IntrinsicKind::ObjectConstruct ||
             !instruction.constructorTarget) {
           continue;
         }
@@ -11454,8 +11576,8 @@ int main() {
             frontend.hir.findConstructorInstance(
                 *instruction.constructorTarget);
         bool exactInputs = instruction.callSite != 0 &&
-                           instruction.operands.size() == 4 &&
-                           instruction.parameterTypes.size() == 4;
+                           instruction.operands.size() == 3 &&
+                           instruction.parameterTypes.size() == 3;
         for (std::size_t index = 0;
              exactInputs && index < instruction.operands.size(); ++index) {
           const lang::MirOperand &operand = instruction.operands[index];
@@ -11488,8 +11610,10 @@ int main() {
         if (constructor != nullptr && constructor->source != nullptr &&
             constructor->source->name().lexeme == "Pair" &&
             constructor->parameterTypes.size() == 2 && exactInputs &&
-            instruction.parameterTypes[2] == lang::SemanticType::Int32 &&
-            instruction.parameterTypes[3] == lang::SemanticType::Bool) {
+            instruction.parameterTypes[0].kind ==
+                lang::SemanticType::RawPointer &&
+            instruction.parameterTypes[1] == lang::SemanticType::Int32 &&
+            instruction.parameterTypes[2] == lang::SemanticType::Bool) {
           foundVariadicMirConstruction = true;
         }
       }
@@ -11510,12 +11634,15 @@ int main() {
                   .size() == 2 &&
           artifact.contents.find("class Pair {") != std::string::npos &&
           concreteBackendSymbols(artifact.contents, "__gti_member_", "emplace")
-                  .size() == 2 &&
+                  .size() >= 2 &&
           artifact.contents.find("_emplace__gti_mir_failure(") !=
               std::string::npos &&
-          artifact.contents.find(
-              "mir_storage_construct_v1(__gti_mir_p_6, __gti_mir_v_4, "
-              "__gti_mir_v_6, __gti_mir_v_8)") != std::string::npos &&
+          artifact.contents.find("construct_representation_at(") !=
+              std::string::npos &&
+          artifact.contents.find("mir_storage_construct_v1") ==
+              std::string::npos &&
+          artifact.contents.find("::gti_internal::backend::storage<") ==
+              std::string::npos &&
           artifact.contents.find("forward_pack_argument(args)...") ==
               std::string::npos,
       "the backend should pass each staged concrete pack input directly to "
@@ -11619,9 +11746,9 @@ int main() {
       gti_test::emitCpp(vectorFrontend, vectorFrontend.mir, vectorFrontend.mir,
                         lang::OptimizationPipeline().run(
                             vectorFrontend.hir, lang::OptimizationLevel::O0));
-  expect(vectorArtifact.contents.find("storage_shift_right") !=
+  expect(vectorArtifact.contents.find("mir_prefix_insert_v1") !=
                  std::string::npos &&
-             vectorArtifact.contents.find("storage_shift_left") !=
+             vectorArtifact.contents.find("mir_prefix_erase_v1") !=
                  std::string::npos,
          "the backend should lower vector shifts through private checked "
          "storage helpers rather than public vector recognition");
@@ -11699,7 +11826,7 @@ int main() {
          "range mutation diagnostics should report each identical borrow "
          "origin span and message only once");
 
-  const lang::FrontendResult invalidConstruction = analyzeTrustedMemoryFixture(
+  const lang::FrontendResult invalidConstruction = analyzeSourceStorageFixture(
       "invalid-variadic-storage-construction.gti", R"(
 class Pair {
 public:
@@ -11710,14 +11837,14 @@ class Secret {
   Secret(int32_t value) {}
 };
 
-class Slot<T> {
-  mut gti_internal::storage<T> data;
+class Slot<std::storage_element T> {
+  mut std::storage<T> data;
 
 public:
-  Slot() : data(gti_internal::allocate_storage<T>(uint64_t(1))) {}
+  Slot() : data(fixture_storage<T>(uint64_t(1))) {}
 
   void emplace<Args...>(Args... args) mut {
-    gti_internal::storage_construct(this.data, uint64_t(0), args...);
+    this.data.emplace(uint64_t(0), args...);
   }
 };
 
@@ -11760,7 +11887,7 @@ int main() {
          "mismatch, and constructor access with each instantiation site");
 
   const lang::FrontendResult borrowedStorage =
-      analyzeTrustedMemoryFixture("borrowed-state-storage.gti", R"(
+      analyzeSourceStorageFixture("borrowed-state-storage.gti", R"(
 class BorrowCarrier {
   int32_t& value;
 
@@ -11770,20 +11897,18 @@ public:
 
 int main() {
   int32_t source = 1;
-  mut gti_internal::storage<BorrowCarrier> forbidden =
-      gti_internal::allocate_storage<BorrowCarrier>(uint64_t(1));
+  mut std::storage<BorrowCarrier> forbidden =
+      fixture_storage<BorrowCarrier>(uint64_t(1));
   return source;
 }
 )");
-  expect(!borrowedStorage.canGenerateCode() &&
-             hasDiagnostic(borrowedStorage.diagnostics,
-                           "storage cannot contain a value that retains "
-                           "borrowed state"),
-         "direct compiler-private storage types should reject elements that "
-         "retain borrowed state");
+  expect(
+      !borrowedStorage.canGenerateCode() &&
+          hasDiagnostic(borrowedStorage.diagnostics, "std::storage_element"),
+      "source storage constraints reject elements that retain borrowed state");
 
   const lang::FrontendResult nonmovableRelocation =
-      analyzeTrustedMemoryFixture("nonmovable-storage-relocation.gti", R"(
+      analyzeSourceStorageFixture("nonmovable-storage-relocation.gti", R"(
 class Stationary {
   int32_t value = 0;
 
@@ -11792,34 +11917,30 @@ public:
 };
 
 int main() {
-  mut gti_internal::storage<Stationary> source =
-      gti_internal::allocate_storage<Stationary>(uint64_t(1));
-  mut gti_internal::storage<Stationary> destination =
-      gti_internal::allocate_storage<Stationary>(uint64_t(1));
-  gti_internal::storage_construct(source, uint64_t(0));
-  gti_internal::storage_relocate(source, destination, uint64_t(1));
+  mut std::storage<Stationary> source =
+      fixture_storage<Stationary>(uint64_t(1));
+  mut std::storage<Stationary> destination =
+      fixture_storage<Stationary>(uint64_t(1));
+  source.emplace(uint64_t(0));
+  source.relocate_to(destination, uint64_t(1));
   return 0;
 }
 )");
-  expect(
-      !nonmovableRelocation.canGenerateCode() &&
-          hasDiagnostic(nonmovableRelocation.diagnostics,
-                        "storage_relocate requires a movable element type") &&
-          hasDiagnostic(nonmovableRelocation.diagnostics,
-                        "does not guarantee move construction"),
-      "storage relocation should reject an element with deleted move "
-      "construction before backend generation");
+  expect(!nonmovableRelocation.canGenerateCode() &&
+             hasDiagnostic(nonmovableRelocation.diagnostics, "std::movable"),
+         "storage relocation should reject an element with deleted move "
+         "construction before backend generation");
 }
 
 void testAggregateOwnershipTraits() {
   const std::string source = R"(
 class Buffer<T> {
-  mut gti_internal::storage<T> data;
+  mut gti_internal::prefix_storage<T> data;
   uint64_t reserved;
 
 public:
   Buffer(uint64_t capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)), reserved(capacity) {}
+      : data(gti_internal::allocate_prefix_storage<T>(capacity)), reserved(capacity) {}
 
   uint64_t capacity() {
     return this.reserved;
@@ -11972,7 +12093,7 @@ int main() {
           artifact.contents.find(
               "scalar-cfg-constructor-failure-v1 constructor-instance 2") !=
               std::string::npos &&
-          artifact.contents.find("mir_allocate_storage_v1<std::int32_t>") !=
+          artifact.contents.find("mir_prefix_allocate_v1<std::int32_t>") !=
               std::string::npos &&
           artifact.contents.find("__gti_entry__gti_mir_failure(") !=
               std::string::npos &&
@@ -11993,10 +12114,10 @@ int main() {
   const lang::FrontendResult invalid =
       analyzeTrustedMemoryFixture("invalid-aggregate-ownership.gti", R"(
 class Buffer {
-  mut gti_internal::storage<int> data;
+  mut gti_internal::prefix_storage<int> data;
 
 public:
-  Buffer() : data(gti_internal::allocate_storage<int>(uint64_t(1))) {}
+  Buffer() : data(gti_internal::allocate_prefix_storage<int>(uint64_t(1))) {}
 };
 
 class NestedBuffer {
@@ -12233,22 +12354,22 @@ public:
 void testDestructorsAndActiveDropState() {
   const std::string source = R"(
 class CleanupBuffer<T> {
-  mut gti_internal::storage<T> data;
+  mut gti_internal::prefix_storage<T> data;
   mut uint64_t count = 0;
 
 public:
   CleanupBuffer(uint64_t capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)) {}
+      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
 
   ~CleanupBuffer() {
     while (this.count > 0) {
       this.count--;
-      gti_internal::storage_destroy(this.data, this.count);
+      gti_internal::prefix_storage_pop(this.data);
     }
   }
 
   void push(T value) mut {
-    gti_internal::storage_construct(this.data, this.count, value);
+    gti_internal::prefix_storage_append(this.data, value);
     this.count++;
   }
 };
@@ -12354,7 +12475,7 @@ int main() {
               "GTI verified-MIR body: scalar-cfg-destructor-failure-v1") !=
               std::string::npos &&
           artifact.contents.find(
-              "::gti_internal::backend::mir_storage_destroy_v1") !=
+              "::gti_internal::backend::mir_prefix_pop_v1") !=
               std::string::npos,
       "the backend should lower declared cleanup through an active drop state "
       "and generated safe moves");
@@ -17121,7 +17242,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v92 ") &&
+             mirDump.starts_with("mir-v93 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -20417,7 +20538,8 @@ constexpr NamedTest kTests[] = {
     {"testUniqueOwnershipAndAllocation", testUniqueOwnershipAndAllocation},
     {"testUniqueOwnerSwap", testUniqueOwnerSwap},
     {"testPolymorphicUniqueOwnerUpcast", testPolymorphicUniqueOwnerUpcast},
-    {"testCompilerPrivateStorage", testCompilerPrivateStorage},
+    {"testSourceDefinedStorage", testSourceDefinedStorage},
+    {"testFixedArrayPackForwarding", testFixedArrayPackForwarding},
     {"testVariadicStorageConstructionAndVector",
      testVariadicStorageConstructionAndVector},
     {"testAggregateOwnershipTraits", testAggregateOwnershipTraits},

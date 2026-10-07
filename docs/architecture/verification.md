@@ -18,10 +18,25 @@ configurations for success, later-field failure, reverse rollback, cleanup
 failure and secondary failure. Detached backend admission rejects 32 malformed
 constructor schedules; lifetime verification rejects 118 malformed schedules.
 The inline-owner/two-slot-pool matrix and source sparse-policy matrix pass all
-eight configurations. These are focused candidate results, not completion:
-retiring legacy sparse support, reconciling current main and census inventories,
-full production/tooling and installed-consumer checks remain required. No active
-user toolchain was installed, and native Windows/Linux execution is not claimed.
+eight configurations. Following retirement of the legacy sparse type,
+intrinsics, backend helpers and optimizer slot-state pass, the source sparse,
+structural-relocation and final-address runtime matrices pass again.
+`allocator_storage_runtime` passes (127.43 seconds), and
+`optimizer_safety_native_evidence` passes (23.67 seconds). The latter retains
+exactly two existing vector overflow proofs in its independent positive case
+and explicitly verifies the conservative allocator-first context boundary and
+O0/O2/O3 behavior rather than attributing private slot proofs to source storage.
+
+The fixed-array emplacement regression covers ordinary generic forwarding,
+mixed fixed/variadic parameters, sparse storage and vector construction in all
+eight native configurations. Raw construction's reference staging has three
+independent malformed-MIR/backend rejection cases; conditional capability
+serialization rejects embedded NUL bytes. The object-lifetime, conditional
+capability, prefix-constructor, storage-adoption and structural-relocation
+contracts pass together. These are focused candidate results, not completion:
+reconciling current main and census inventories, full production/tooling and
+installed-consumer checks remain required. No active user toolchain was
+installed, and native Windows/Linux execution is not claimed.
 
 ## Source-defined process byte provider (S-ALLOC-07 checkpoint)
 

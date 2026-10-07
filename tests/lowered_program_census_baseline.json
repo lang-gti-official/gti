@@ -495,7 +495,7 @@
         "thread_task_adapter": 75
       }
     },
-    "122-manual-object-lifetimes.gti": {
+    "125-manual-object-lifetimes.gti": {
       "declarations": 1065,
       "bodies": 495,
       "generated_items": 87,

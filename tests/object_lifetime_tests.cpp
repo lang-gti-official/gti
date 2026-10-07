@@ -1,3 +1,5 @@
+#include "../src/compiler/cpp_mir_body_emitter.h"
+#include "../src/compiler/cpp_mir_representation_snapshot.h"
 #include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
@@ -198,15 +200,16 @@ int main() {
 class Stationary {
   int value;
 public:
-  Stationary(int divisor) : value(7 / divisor) {}
+  Stationary(int& divisor) : value(7 / divisor) {}
   Stationary(Stationary& other) = delete;
   Stationary(Stationary&& other) = delete;
 };
 int main() {
   Stationary* object = nullptr;
   int* scalar = nullptr;
+  int divisor = 2;
   unsafe {
-    std::construct_at(object, 2);
+    std::construct_at(object, divisor);
     std::construct_at(scalar, 9);
     std::destroy_at(object);
     std::destroy_at(scalar);
@@ -217,7 +220,8 @@ int main() {
   if (!construction.canGenerateCode())
     diagnostics(construction);
   expect(construction.canGenerateCode(),
-         "raw construction admits immovable final-address values and scalars");
+         "raw construction admits immovable final-address values, borrowed "
+         "constructor inputs, and scalars");
   if (construction.canGenerateCode()) {
     std::size_t constructions = 0;
     for (const auto &function : construction.mir.functionInstances())
@@ -237,15 +241,17 @@ int main() {
           }
     expect(constructions == 2, "concrete raw construction census");
     for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      try {
-        const auto cpp = gti_test::emitCppText(construction, standard,
-                                               lang::TargetInfo::host(),
-                                               lang::OptimizationLevel::O0);
-        expect(cpp.find("__gti_mir_construct_success_") != std::string::npos,
-               "constructor failure uses verified status edge");
-      } catch (const std::exception &error) {
-        std::cerr << error.what() << '\n';
-        expect(false, "raw construction emits through verified MIR");
+      for (auto level :
+           {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+        try {
+          const auto cpp = gti_test::emitCppText(
+              construction, standard, lang::TargetInfo::host(), level);
+          expect(cpp.find("__gti_mir_construct_success_") != std::string::npos,
+                 "constructor failure uses verified status edge");
+        } catch (const std::exception &error) {
+          std::cerr << error.what() << '\n';
+          expect(false, "raw construction emits through verified MIR");
+        }
       }
     }
     for (int mutation = 0; mutation != 5; ++mutation)
@@ -272,6 +278,56 @@ int main() {
           },
           "forged construction authority rejected",
           lang::IntrinsicKind::ObjectConstruct);
+
+    const auto lowered = gti_test::lowerProgram(construction, construction.mir,
+                                                construction.mir);
+    const lang::CppMirBodyEmissionMap map{lang::buildCppMirBodyEmissionMapRows(
+        lowered, lang::CppStandard::Cpp23)};
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto mir = construction.mir;
+      bool changed = false;
+      lang::MirBodyAddress address;
+      for (auto &function :
+           const_cast<std::vector<lang::MirFunctionInstance> &>(
+               mir.functionInstances())) {
+        for (auto &block : function.body.blocks) {
+          for (auto &call : block.instructions) {
+            if (changed ||
+                call.intrinsic != lang::IntrinsicKind::ObjectConstruct ||
+                call.operands.size() != 2 ||
+                call.parameterTypes.back().kind !=
+                    lang::SemanticType::Reference)
+              continue;
+            const auto *value =
+                function.body.findValue(call.operands.back().value);
+            if (value == nullptr)
+              continue;
+            for (auto &inputBlock : function.body.blocks) {
+              for (auto &input : inputBlock.instructions) {
+                if (input.id != value->definition)
+                  continue;
+                if (mutation == 0)
+                  ++input.callSite;
+                else if (mutation == 1)
+                  input.callInputIndex = 0;
+                else
+                  input.callInputKind = lang::HirCallInputKind::Value;
+                changed = true;
+                address = {.kind = lang::MirBodyKind::Function,
+                           .owner = function.id};
+              }
+            }
+          }
+        }
+      }
+      expect(changed && !lang::verifyMirProgram(mir).valid(),
+             "raw constructor reference input retains exact staged call "
+             "authority");
+      expect(changed &&
+                 !lang::CppMirBodyEmitter(mir, map).supportsFailureBodyText(
+                     address),
+             "detached backend rejects forged constructor reference staging");
+    }
   }
   const auto transfers = analyze(R"(
 #include <std/memory>

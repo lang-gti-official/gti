@@ -24,8 +24,8 @@ Compiler-capability types and operations bind by an exact selected declaration
 identity, never by qualified spelling or a public wrapper name. Shared prefix
 storage, text, and core constraint identities live in the trusted prelude.
 Module-specific identities live only in their exact trusted source units:
-unique ownership and sparse storage in `<std/memory>`, managed threads in
-`<std/thread>`, checked one-slot storage in `<std/optional>`, atomics in
+unique ownership and general object-lifetime operations in `<std/memory>`,
+managed threads in `<std/thread>`, checked one-slot storage in `<std/optional>`, atomics in
 `<std/atomic>`, mutexes in `<std/mutex>`, defined integer arithmetic in
 `<std/numeric>`, iterators in `<std/iterator>`, and callable relations in
 `<std/functional>`. Unrelated programs therefore do not carry those private
@@ -752,7 +752,11 @@ Both allocator operations return
 host allocation. An explicit alignment must be a nonzero power of two, and the
 effective alignment is never weaker than `alignof(T)`. Allocation is
 failure-atomic and the resulting storage owner, rather than the allocator,
-carries release authority. Typed allocation derives size and alignment from
+carries release authority. Nonempty storage acquires two separate regions from
+the same process provider: object bytes followed by one live-state byte per slot.
+Second-region failure rolls back the first; zero capacity acquires neither.
+Element cleanup precedes metadata release and then object-region release.
+Typed allocation derives size and alignment from
 the concrete `T`, including owning classes, without requiring application-supplied
 byte sizes. Custom-resource requests can separately use `std::layout_of<T>()`;
 neither operation exposes a stable C ABI.
@@ -834,7 +838,7 @@ object region, with separately leased metadata. `try_allocate` is recoverable;
 `emplace` constructs directly at the final
 address, `get`/`get_mut` borrow initialized elements, and `destroy` ends one
 element lifetime without returning the region. `clear` destroys live elements;
-`release` destroys them and returns the original descriptor to the original
+`release` destroys them and returns both original descriptors to the original
 resource. Moving the owner transfers this release obligation without moving
 elements, so deleted element movement is compatible with fixed-address storage.
 `relocate_to` and `try_reserve_prefix` instead require movable, structurally

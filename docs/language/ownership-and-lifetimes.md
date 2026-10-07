@@ -88,24 +88,24 @@ rationale in
    needed by native wrappers and low-level code without making private
    `gti_internal` capabilities public.
 
-The implemented public allocation surface is typed and owner-returning. It
-deliberately stops before source-level raw allocation/deallocation functions or
-C++-style `new` and `delete`. Any future untyped or manual-lifetime surface must
-define its own provenance, aliasing, initialization, failure, and diagnostic
-contracts before it becomes public.
+The safe allocation surface is typed and owner-returning. The separate public
+unsafe resource-binding and manual-lifetime surfaces define explicit validity,
+aliasing, initialization and matching-release obligations; they do not weaken
+checked references. C++-style `new` and `delete` are not GTI syntax. See
+[raw pointers](raw-pointers.md) for these public unsafe contracts.
 
 Intrinsic capabilities are ordinary bodyless functions declared either in the
 implicit prelude when shared across modules or in the one canonical
-standard-library unit that owns them. Unique ownership and sparse storage live
-in `<std/memory>`; prefix storage and the public logical-bounds check remain
+standard-library unit that owns them. Unique ownership and object-lifetime
+operations live in `<std/memory>`; prefix storage and the public logical-bounds check remain
 shared prelude facilities. Semantic registration marks only those exact
 trusted declarations, and a call receives intrinsic behavior from its selected
 `FunctionId`. Reusing the same spelling in application source creates an
 ordinary function and grants no compiler behavior. No source attribute,
 keyword, or public wrapper name selects an intrinsic.
 
-The private owner, storage, prefix-storage, and text-view types have ordinary
-nominal declarations in those same owning units. Their selected `ClassId`
+The private owner, uninitialized-storage, prefix-storage, and text-view types
+have ordinary nominal declarations in those same owning units. Their selected `ClassId`
 receives a compiler-capability kind only for the exact trusted declaration.
 Application source cannot enter or alias `gti_internal`; doing so is
 `GTI-S2058`, and a same-spelled application declaration never acquires the
@@ -342,7 +342,7 @@ receiver, so it cannot be retained from a temporary receiver:
 
 ```gti
 T& at(std::size_t index) {
-  return gti_internal::storage_read(this.data, index);
+  return this.data.get(index);
 }
 ```
 
@@ -838,8 +838,8 @@ cleanup-bound carrier. These are GTI lifetime rules;
 the emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
-to retain one read-only checked-storage reference, currently
-`gti_internal::storage<T>&` or `gti_internal::prefix_storage<T>&`. A
+to retain one read-only checked prefix-storage reference,
+`gti_internal::prefix_storage<T>&`. A
 compiler-generated mutable range iterator may instead carry one exact writable
 checked-storage dependency from `begin_mut()` until range cleanup. These
 exceptions apply only to the carrier field and its exact binding constructor
@@ -1513,7 +1513,8 @@ replacement authorization, user relocation hook, or pinned/self-referential
 object facility in this slice. Unsafe code retaining a raw address must still
 obey its existing lifetime contract.
 
-Vector/string growth uses the same private relocation mechanism. Passive
+Vector/string growth retains its prefix capability over the same structural
+relocation eligibility. Sparse source loops invoke general `relocate_at`. Passive
 eligible elements can move in bulk; resource-owning elements retain the
 generated transfer and exactly-once cleanup path.
 
@@ -1578,9 +1579,13 @@ nonzero power-of-two minimum. The effective alignment is at least
 
 Zero elements is a successful allocation with capacity zero and no host
 allocation. Failure is atomic: no storage owner or initialized slot is
-published until every private resource has succeeded.
+published until both source-owned resource acquisitions have succeeded. A
+nonempty request acquires object bytes first, then one metadata byte per slot
+from the same process provider. Failure of metadata acquisition or validation
+returns every acquired descriptor before reporting the error.
 
-`std::storage<T>` is a move-only lexical owner of one typed allocation origin.
+`std::storage<T>` is a move-only lexical owner of a typed object region and its
+separately leased metadata region.
 It retains capacity, alignment, slot-live state, and release authority as one
 capability. It cannot be forged, copied or converted to an address. `release()`
 performs early owning cleanup without detaching an unmanaged allocation.
@@ -1593,7 +1598,7 @@ Each in-bounds slot is either uninitialized or holds exactly one live
 `get`/`get_mut` return checked receiver-tied references, `destroy` ends one
 slot lifetime, and `clear` ends all live slot lifetimes in reverse index order.
 Owner destruction clears any remaining slots in the same order and then
-releases the allocation.
+releases metadata followed by object bytes.
 
 A returned reference prevents storage mutation, movement, or destruction for
 as long as the ordinary borrow analysis considers it live. Reconstructing an
@@ -1715,127 +1720,49 @@ traits, and each constructed element owns one corresponding drop. This is
 sufficient underlying storage for fixed-size aggregates and a future
 `std::array` alias.
 
-A GTI implementation of `std::vector<T>` needs capacity containing partially
-constructed elements. Smart pointers alone cannot safely represent that
-storage, and a fixed array cannot represent it because all of its elements are
-always initialized. `<std/memory>` therefore declares this compiler-private
-storage surface:
+Partially initialized capacity requires a distinction between bytes and live
+objects. Public `std::uninitialized<T>`, `construct_at`, `destroy_at` and
+`relocate_at` provide that general boundary; their unsafe obligations are
+specified in [raw pointers](raw-pointers.md). An application-defined owner may
+use the same operations as the standard library, while checked references use
+an explicit owner witness rather than acquiring permission from raw addresses.
 
-```gti
-gti_internal::storage<T>
-gti_internal::allocate_storage<T>(uint64_t capacity)
-gti_internal::storage_try_allocate(storage, uint64_t capacity,
-                                   uint64_t minimum_alignment)
-gti_internal::storage_capacity(storage)
-gti_internal::storage_initialized(storage, uint64_t index)
-gti_internal::storage_construct(storage, uint64_t index, arguments...)
-gti_internal::storage_read(storage, uint64_t index)
-gti_internal::storage_read_mut(storage, uint64_t index)
-gti_internal::storage_destroy(storage, uint64_t index)
-gti_internal::storage_relocate(source, destination, uint64_t count)
-gti_internal::storage_shift_right(storage, uint64_t first, uint64_t last)
-gti_internal::storage_shift_left(storage, uint64_t first, uint64_t last)
-```
+`std::storage<T>` is now ordinary source policy over those facilities. Its two
+leases own the object region and one metadata byte per slot from the same
+provider. Source code validates descriptors, initializes metadata, checks
+bounds and live state, performs final-address construction, and implements
+relocation and shifts. It publishes a live slot only after successful
+construction and retires the flag before destruction. A source cleanup guard
+continues reverse traversal after a first destructor failure, preserving its
+record; a second failure follows the existing terminal double-failure contract.
+Metadata is released after all element cleanup, then object bytes are released.
 
-`storage<T>` is an aligned, move-only lexical owner. It tracks which slots
-contain live values, destroys those values in reverse slot order at scope exit,
-and then releases the allocation. Construction, destruction, and relocation
-require mutable storage. Index failures use `GTI-R0007`; duplicate,
-uninitialized, relocation-capacity, and relocation-state failures use `GTI-R0010`.
-Infallible allocation failure uses `GTI-R0011`. Each follows the common
-cleanup, containment, and reporting contract rather than exposing a
-compiler-private C++ helper message. `storage_try_allocate` is the narrow
-exception: it publishes into a fresh empty private owner only after complete
-success and returns a private integer status so the ordinary public wrapper can
-map invalid alignment, arithmetic overflow, and resource exhaustion into
-`std::alloc_errc`.
+The previous compiler-private `gti_internal::storage<T>` type and its
+allocation/adoption/access/lifecycle intrinsics are retired. No native sparse
+bitmap or specialized sparse drop loop remains. General typed operations still
+carry exact semantic constructor selection, MIR cleanup recipes and unsafe
+authority. Removing the sparse engine does not turn raw validity into a runtime
+proof or remove checked owner loans.
 
-The allocation extent and initialized-slot map remain private safety
-bookkeeping. The total `storage_capacity` and `storage_initialized` observers
-exist only so `std::storage<T>` can provide checked public queries; they expose
-neither an address nor mutation of the bookkeeping. A container still records
-its own logical size and growth policy rather than treating allocation extent
-as element count.
-The shift operations move an initialized half-open slot range through one
-verified empty slot. They expose no container size or insertion policy;
-source-defined containers use them to preserve partial-initialization state
-while implementing indexed insertion and erasure.
+Variadic construction retains GTI's existing bounds: final packs are immutable
+by-value values, not C++ forwarding references. Copyable arguments may be copied
+into a wrapper pack; a pack containing a move-only argument is one owned unit
+consumed by its first whole-pack expansion. Sparse source policy checks the slot
+before handing prepared arguments to the general final-address constructor.
 
-The element type must not contain borrowed state. An owner cannot safely keep a
-partially initialized element whose stored reference lifetime is independent of
-the storage owner, so semantics rejects that storage type before lowering.
+Semantic visibility remains identity- and source-role-based. Applications
+cannot name the private `gti_internal` namespace or recover private
+capabilities through public signatures. This does not prevent ordinary
+application owners from using the public lifetime and checked-reference APIs.
 
-`storage_construct(storage, index, arguments...)` constructs the element
-directly in the selected empty slot. For a class or struct, semantics expands a
-concrete final pack and selects one exact accessible constructor, including an
-empty pack for default construction. Primitive construction accepts either no
-argument for value initialization or one exact value; it does not add an
-implicit conversion path. HIR and MIR retain both the storage-call operands and
-the selected nested constructor identity, so the backend does not choose the
-constructor and GTI does not first materialize a temporary `T` merely to move it
-into storage.
-
-This is bounded in-place construction, not C++ perfect forwarding. GTI's final
-parameter packs are immutable by-value values and there are no forwarding
-references or reference collapsing. A copyable constructor argument may be
-copied as it enters a wrapper's pack. A pack containing a move-only argument is
-one owned unit, is consumed by its first whole-pack expansion, and cannot be
-expanded again.
-
-`storage_read` returns a checked read-only borrow tied to its storage argument;
-it does not copy the element. This lets a nominal container expose `T&` access
-even when `T` is move-only while preventing the borrow from outliving the
-container.
-
-`storage_read_mut` requires mutable storage and returns a checked writable
-borrow tied to that storage. The same conservative loan tracking prevents
-relocation, destruction, or ownership transfer while the borrow may remain
-live. Public containers expose this capability only through mutable receiver
-operations such as `operator[]`.
-
-`storage_relocate` requires a movable element type, move-constructs the leading
-live elements into empty destination slots, and destroys the source elements.
-This gives a container a single operation whose semantics can later lower to
-explicit MIR move and drop instructions. It remains intrinsic only because GTI
-cannot yet move a value out of a partially initialized place. Once
-partial-place movement and precise loans can express that loop safely,
-relocation can move into ordinary library code.
-
-This facility belongs under the reserved `gti_internal` namespace and is
-available only to trusted compiler and standard-library code. Applications use
-the public `std::storage<T>` owner instead. Neither layer exposes an address,
-raw-data escape, or independent deallocation operation.
-The existence of general raw-pointer syntax does not grant access to private
-storage representation or initialized-slot bookkeeping. Merely adding an
-intrinsic does not make it public or stable.
-
-Semantic visibility is identity- and source-role-based. Application
-declarations, references, or namespace aliases involving root
-`gti_internal` are rejected with `GTI-S2058`, and declarations whose exposed
-type contains a private capability are withheld from application lookup and
-tooling. Public library signatures therefore cannot be used to recover these
-types indirectly.
-
-Within a trusted standard-library source unit, a validated stored-reference
-class may retain one read-only `storage<T>&`. Its constructor and lifetime are
-checked by the ordinary stored-borrow rules, and returning it from a container
-method ties the result to that container. This is a borrow of the owner
-capability, not a pointer or a query into storage bookkeeping.
-
-The C++ backend represents storage with a private RAII helper built from aligned
-allocation and explicit construction/destruction. This remains a backend
-choice. A future LLVM backend can lower the same checked operations to MIR plus
-narrow aligned allocation/deallocation runtime calls.
-
-The prelude also declares `gti_internal::prefix_storage<T>` for containers whose
-live elements must always occupy the half-open prefix `[0, length)`. Its narrow
-operations allocate capacity, append or pop the final live element, read within
-the prefix, relocate the complete prefix, and insert or erase while preserving
-that invariant atomically. Unlike sparse `storage<T>`, it cannot expose or
-create an arbitrary initialized-slot pattern. Both capabilities are move-only,
-reject borrowed-state elements, expose no raw address or manual deallocation,
-and keep container policy such as public size, growth, and invalidation in
-ordinary GTI source.
+The separate `gti_internal::prefix_storage<T>` capability remains declared by
+the prelude for containers whose live elements always form `[0, length)`.
+Its allocate, append, pop, read, complete-prefix relocate, insert and erase
+operations preserve that invariant. It does not represent arbitrary live-slot
+patterns. This move-only capability rejects borrowed-state elements and exposes
+no raw address or independent deallocation. Public size, growth and invalidation
+policy remain ordinary source-defined class state. Its retained capability is
+not an alternative sparse implementation.
 
 ## Source-Defined Vector
 

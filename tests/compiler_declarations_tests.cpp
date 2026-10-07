@@ -345,9 +345,9 @@ int main() {
 
 int main() {
   mut std::string text = std::string("abc");
-  mut gti_internal::storage<std::string_view> stored =
-      gti_internal::allocate_storage<std::string_view>(uint64_t(1));
-  gti_internal::storage_construct(stored, uint64_t(0), text.view());
+  mut gti_internal::prefix_storage<std::string_view> stored =
+      gti_internal::allocate_prefix_storage<std::string_view>(uint64_t(1));
+  gti_internal::prefix_storage_append(stored, text.view());
   return 0;
 }
 )",

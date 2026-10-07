@@ -3954,9 +3954,15 @@ The source sparse/resource-owner integration now passes the focused resource
 contract and native allocator matrix, including same-resource metadata failure
 rollback. General multiple borrowed-field constructor admission has independent
 malformed-MIR coverage and an unrelated runtime fixture. Example 128 adds a
-fixed-address inline application pool. This is an intermediate checkpoint:
-legacy sparse compiler/backend retirement, current-main reconciliation and the
-remaining broad acceptance gates below are still outstanding.
+fixed-address inline application pool. The legacy sparse semantic type,
+intrinsics, C++ helpers and optimizer initialized-set model have now been
+removed from the candidate; source slot checks remain conservative barriers.
+General raw construction also consumes exact staged reference inputs, and
+passive fixed-array arguments preserve their exact value type through generic
+emplacement. Focused runtime matrices pass, including the allocator and
+fixed-array regression. This remains an intermediate checkpoint: current-main
+reconciliation, census inventories and the broad acceptance gates below are
+still outstanding.
 
 The baseline is `52f27033`; the initial audit checkpoint did not implement the
 public manual-lifetime APIs below. Phase 2's accepted borrowing,
@@ -4048,7 +4054,7 @@ The next checkpoint adds the layout-only inline carrier and raw destructive
 relocation. Focused carrier and owning-relocation runtime matrices pass all
 eight standard/optimization/no-elide/sanitizer modes. Static tests reject
 immovable carrier movement, incompatible access and forged capability/lifetime
-facts. Example 122 demonstrates the public inline owner with a source-written
+facts. Example 125 demonstrates the public inline owner with a source-written
 empty constructor, checked references and owning relocation. The latter exposed
 two overly restrictive backend checks: direct field construction required move
 assignment, and the passive field-initializer proof excluded the layout-only

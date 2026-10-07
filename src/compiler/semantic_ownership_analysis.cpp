@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <stdexcept>
+
 namespace lang {
 namespace {
 void preserveStorageConstructorParameters(
@@ -130,7 +132,6 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   switch (type.kind) {
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     return true;
   case SemanticType::Array:
@@ -340,7 +341,6 @@ auto SemanticVisitor::Impl::typeCapabilities(
   }
   case SemanticType::Array:
   case SemanticType::UniqueOwner:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     if (type.arguments.size() == 1) {
       return typeCapabilities(type.arguments.front(), visiting);
@@ -1713,7 +1713,6 @@ auto SemanticVisitor::Impl::isBorrowedCarrierReference(
 auto SemanticVisitor::Impl::isDirectOwnerType(const SemanticType &type)
     -> bool {
   return type.kind == SemanticType::UniqueOwner ||
-         type.kind == SemanticType::Storage ||
          type.kind == SemanticType::PrefixStorage;
 }
 
@@ -1947,42 +1946,6 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "shared_owner_upcast") {
       return IntrinsicKind::SharedOwnerUpcast;
-    }
-    if (name == "allocate_storage") {
-      return IntrinsicKind::AllocateStorage;
-    }
-    if (name == "storage_try_allocate") {
-      return IntrinsicKind::StorageTryAllocate;
-    }
-    if (name == "storage_try_adopt") {
-      return IntrinsicKind::StorageTryAdopt;
-    }
-    if (name == "storage_capacity") {
-      return IntrinsicKind::StorageCapacity;
-    }
-    if (name == "storage_initialized") {
-      return IntrinsicKind::StorageInitialized;
-    }
-    if (name == "storage_construct") {
-      return IntrinsicKind::StorageConstruct;
-    }
-    if (name == "storage_read") {
-      return IntrinsicKind::StorageRead;
-    }
-    if (name == "storage_read_mut") {
-      return IntrinsicKind::StorageReadMut;
-    }
-    if (name == "storage_destroy") {
-      return IntrinsicKind::StorageDestroy;
-    }
-    if (name == "storage_relocate") {
-      return IntrinsicKind::StorageRelocate;
-    }
-    if (name == "storage_shift_right") {
-      return IntrinsicKind::StorageShiftRight;
-    }
-    if (name == "storage_shift_left") {
-      return IntrinsicKind::StorageShiftLeft;
     }
     return IntrinsicKind::None;
   }
@@ -7149,13 +7112,11 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
-  if (intrinsic != IntrinsicKind::Move) {
-    analyzeStorageIntrinsicCall(expr, intrinsic);
-    bindIntrinsicCallDeclaration(expr, declaration);
+  if (intrinsic == IntrinsicKind::Move) {
+    analyzeMoveCall(expr, &declaration);
     return;
   }
-
-  analyzeMoveCall(expr, &declaration);
+  throw std::logic_error("unhandled compiler intrinsic in semantic analysis");
 }
 
 auto SemanticVisitor::Impl::analyzeMoveCall(
@@ -8535,278 +8496,6 @@ auto SemanticVisitor::Impl::analyzeStorageBoundsCheckCall(const Call &expr)
                              .intrinsic = IntrinsicKind::StorageBoundsCheck});
 }
 
-auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
-                                                        IntrinsicKind intrinsic)
-    -> void {
-  std::vector<SemanticType> argumentTypes;
-  argumentTypes.reserve(expr.arguments().size());
-  for (const ExprPtr &argument : expr.arguments()) {
-    argumentTypes.emplace_back(analyze(argument));
-  }
-
-  if (intrinsic == IntrinsicKind::AllocateStorage) {
-    analyzeStorageAllocation(expr, argumentTypes);
-    return;
-  }
-
-  for (const TypeRef &argument : expr.typeArguments()) {
-    validateType(argument);
-  }
-  if (!expr.typeArguments().empty()) {
-    report(expr.paren(),
-           "Storage operations infer their element type from the storage "
-           "argument and do not take explicit type arguments.",
-           "GTI-S2019");
-  }
-
-  if (intrinsic == IntrinsicKind::StorageConstruct) {
-    if (expr.arguments().size() < 2) {
-      report(expr.paren(),
-             "storage_construct expects mutable storage, a uint64_t "
-             "index, and zero or more constructor arguments.",
-             "GTI-S2019");
-    }
-  } else {
-    const std::size_t expectedArguments = [&] {
-      switch (intrinsic) {
-      case IntrinsicKind::StorageCapacity:
-        return std::size_t{1};
-      case IntrinsicKind::StorageTryAdopt:
-        return std::size_t{5};
-      case IntrinsicKind::StorageTryAllocate:
-      case IntrinsicKind::StorageRelocate:
-      case IntrinsicKind::StorageShiftRight:
-      case IntrinsicKind::StorageShiftLeft:
-        return std::size_t{3};
-      default:
-        return std::size_t{2};
-      }
-    }();
-    if (expr.arguments().size() != expectedArguments) {
-      reportStorageArity(expr, intrinsic, expectedArguments);
-    }
-  }
-
-  if (argumentTypes.empty() ||
-      argumentTypes.front().kind != SemanticType::Storage ||
-      argumentTypes.front().arguments.size() != 1) {
-    if (!argumentTypes.empty() &&
-        argumentTypes.front() != SemanticType::Unknown) {
-      report(expressionToken(expr.arguments().front()),
-             storageIntrinsicName(intrinsic) +
-                 " requires gti_internal::storage<T> as its first argument.",
-             "GTI-S2019");
-    }
-    currentType = SemanticType::Unknown;
-    return;
-  }
-
-  const SemanticType storageType = argumentTypes.front();
-  const SemanticType elementType = storageType.arguments.front();
-  const bool mutatesFirst = intrinsic == IntrinsicKind::StorageTryAllocate ||
-                            intrinsic == IntrinsicKind::StorageTryAdopt ||
-                            intrinsic == IntrinsicKind::StorageConstruct ||
-                            intrinsic == IntrinsicKind::StorageReadMut ||
-                            intrinsic == IntrinsicKind::StorageDestroy ||
-                            intrinsic == IntrinsicKind::StorageRelocate ||
-                            intrinsic == IntrinsicKind::StorageShiftRight ||
-                            intrinsic == IntrinsicKind::StorageShiftLeft;
-  if (mutatesFirst) {
-    requireMutableStorage(expr.arguments().front(),
-                          storageIntrinsicName(intrinsic));
-  }
-
-  if (intrinsic == IntrinsicKind::StorageTryAdopt) {
-    requireUnsafe(expr, UnsafeOperationKind::StorageAdoption, expr.paren(),
-                  "Adopting externally owned raw storage");
-    if (argumentTypes.size() >= 2 &&
-        argumentTypes[1] != SemanticType::Unknown &&
-        argumentTypes[1] != SemanticType::rawPointerTo(SemanticType::Void)) {
-      report(expressionToken(expr.arguments()[1]),
-             "storage_try_adopt requires a writable void* region address.",
-             "GTI-S2019");
-    }
-    for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
-      requireStorageIndex(expr.arguments()[index], argumentTypes[index],
-                          intrinsic);
-    }
-    currentType = SemanticType::Int32;
-  } else if (intrinsic == IntrinsicKind::StorageTryAllocate) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    if (argumentTypes.size() >= 3) {
-      requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
-    }
-    currentType = SemanticType::Int32;
-  } else if (intrinsic == IntrinsicKind::StorageCapacity) {
-    currentType = SemanticType::UInt64;
-  } else if (intrinsic == IntrinsicKind::StorageInitialized) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    currentType = SemanticType::Bool;
-  } else if (intrinsic == IntrinsicKind::StorageConstruct) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    if (elementType.kind == SemanticType::StringView ||
-        elementType.kind == SemanticType::CString) {
-      for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
-        if (isOwnerDependentTextExpression(expr.arguments()[index])) {
-          reportOwnerDependentTextStorage(expr.arguments()[index],
-                                          "nested in dynamic storage");
-        }
-      }
-    }
-    if (argumentTypes.size() >= 2) {
-      std::vector<AnalyzedCallArgument> constructorArguments;
-      bool concreteArguments = true;
-      for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
-        if (!appendConcreteCallArgument(argumentTypes[index],
-                                        expr.arguments()[index],
-                                        constructorArguments)) {
-          concreteArguments = false;
-          break;
-        }
-      }
-      if (concreteArguments) {
-        if (elementType.kind == SemanticType::Class) {
-          analyzeConstructorCallArguments(
-              expr, elementType.classId, elementType.arguments,
-              elementType.valueArguments, constructorArguments, expr.paren());
-        } else if (elementType != SemanticType::Unknown &&
-                   elementType.kind != SemanticType::TypeParameter) {
-          validateStorageValueConstruction(expr, elementType,
-                                           constructorArguments);
-        }
-      }
-    }
-    currentType = SemanticType::Void;
-  } else if (intrinsic == IntrinsicKind::StorageRead ||
-             intrinsic == IntrinsicKind::StorageReadMut) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    currentType = elementType;
-  } else if (intrinsic == IntrinsicKind::StorageDestroy) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    currentType = SemanticType::Void;
-  } else if (intrinsic == IntrinsicKind::StorageRelocate) {
-    if (!satisfiesConstraint(elementType,
-                             constraintBit(GenericConstraintKind::Movable))) {
-      report(expr.paren(),
-             "storage_relocate requires a movable element type, but '" +
-                 typeSpelling(elementType) +
-                 "' does not guarantee move construction.",
-             "GTI-S2019");
-    }
-    if (argumentTypes.size() >= 2 &&
-        argumentTypes[1] != SemanticType::Unknown) {
-      if (argumentTypes[1] != storageType) {
-        report(expressionToken(expr.arguments()[1]),
-               "storage_relocate requires source and destination storage to "
-               "have the same element type.",
-               "GTI-S2019");
-      } else {
-        requireMutableStorage(expr.arguments()[1], "storage_relocate");
-      }
-    }
-    if (argumentTypes.size() >= 3) {
-      requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
-    }
-    currentType = SemanticType::Void;
-  } else {
-    if (!satisfiesConstraint(elementType,
-                             constraintBit(GenericConstraintKind::Movable))) {
-      report(expr.paren(),
-             storageIntrinsicName(intrinsic) +
-                 " requires a movable element type, but '" +
-                 typeSpelling(elementType) +
-                 "' does not guarantee move construction.",
-             "GTI-S2019");
-    }
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    if (argumentTypes.size() >= 3) {
-      requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
-    }
-    currentType = SemanticType::Void;
-  }
-
-  const bool borrowsStorage = intrinsic == IntrinsicKind::StorageRead ||
-                              intrinsic == IntrinsicKind::StorageReadMut;
-  if (intrinsic == IntrinsicKind::StorageConstruct) {
-    preserveStorageConstructorParameters(semanticModel, expr, 2, argumentTypes);
-  }
-  semanticModel.record(
-      expr,
-      ResolvedCallInfo{
-          .returnType =
-              borrowsStorage
-                  ? SemanticType::referenceTo(
-                        elementType, intrinsic == IntrinsicKind::StorageReadMut
-                                         ? AccessMode::Mutable
-                                         : AccessMode::ReadOnly)
-                  : currentType,
-          .parameterTypes = std::move(argumentTypes),
-          .typeArguments = {elementType},
-          .intrinsic = intrinsic,
-          .borrowOrigin = borrowsStorage ? BorrowOriginKind::Argument
-                                         : BorrowOriginKind::None,
-          .borrowArgument = 0,
-          .borrowAccess = intrinsic == IntrinsicKind::StorageReadMut
-                              ? AccessMode::Mutable
-                              : AccessMode::ReadOnly});
-}
-
-auto SemanticVisitor::Impl::analyzeStorageAllocation(
-    const Call &expr, const std::vector<SemanticType> &argumentTypes) -> void {
-  if (expr.typeArguments().size() != 1) {
-    for (const TypeRef &argument : expr.typeArguments()) {
-      validateType(argument);
-    }
-    report(expr.paren(),
-           "gti_internal::allocate_storage<T> requires exactly one element "
-           "type.",
-           "GTI-S2019");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-
-  const TypeRef &elementRef = expr.typeArguments().front();
-  validateType(elementRef);
-  validateReferencePlacement(elementRef, false, "storage element type");
-  const SemanticType elementType = typeOf(elementRef);
-  if (!isStorageElementType(elementType)) {
-    report(elementRef.name.last(),
-           "Compiler-private storage requires a concrete value element type.",
-           "GTI-S2019");
-  } else if (elementType.kind != SemanticType::TypeParameter &&
-             typeTraits(elementType).containsBorrowedState) {
-    report(elementRef.name.last(),
-           "Compiler-private storage cannot contain a value that retains "
-           "borrowed state until general owner dependencies are available.",
-           "GTI-S2019");
-  }
-  if (argumentTypes.size() != 1) {
-    reportStorageArity(expr, IntrinsicKind::AllocateStorage, 1);
-  } else {
-    requireStorageIndex(expr.arguments().front(), argumentTypes.front(),
-                        IntrinsicKind::AllocateStorage);
-  }
-
-  currentType = SemanticType::storageOf(elementType);
-  semanticModel.record(
-      expr, ResolvedCallInfo{.returnType = currentType,
-                             .parameterTypes = argumentTypes,
-                             .typeArguments = {elementType},
-                             .intrinsic = IntrinsicKind::AllocateStorage});
-}
-
 auto SemanticVisitor::Impl::isAllocatedScalarType(
     const SemanticType &type) const -> bool {
   return isNumeric(type) || type == SemanticType::Bool ||
@@ -8826,7 +8515,6 @@ auto SemanticVisitor::Impl::isStorageElementType(const SemanticType &type)
   case SemanticType::Reference:
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
   case SemanticType::TypeName:
   case SemanticType::Function:
@@ -8855,18 +8543,6 @@ auto SemanticVisitor::Impl::requireMutableStorage(const ExprPtr &argument,
       std::string(operation) +
           " cannot mutate storage while an overlapping borrow may still "
           "be live.");
-}
-
-auto SemanticVisitor::Impl::requireStorageIndex(const ExprPtr &argument,
-                                                const SemanticType &type,
-                                                IntrinsicKind intrinsic)
-    -> void {
-  if (type != SemanticType::Unknown && type != SemanticType::UInt64) {
-    report(expressionToken(argument),
-           storageIntrinsicName(intrinsic) +
-               " requires a uint64_t index or count.",
-           "GTI-S2019");
-  }
 }
 
 } // namespace lang

@@ -518,7 +518,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         parameter.type.kind == SemanticType::UniqueOwner ||
-        parameter.type.kind == SemanticType::Storage ||
         parameter.type.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
@@ -558,7 +557,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         projectedType.kind == SemanticType::UniqueOwner ||
-        projectedType.kind == SemanticType::Storage ||
         projectedType.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
@@ -4250,7 +4248,6 @@ public:
       case SemanticType::Reference:
       case SemanticType::UniqueOwner:
       case SemanticType::SharedPointer:
-      case SemanticType::Storage:
       case SemanticType::PrefixStorage:
         return;
       case SemanticType::Class: {

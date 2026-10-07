@@ -4,7 +4,6 @@
 namespace gti_internal {
 class unique_owner<T> {};
 class shared_owner<T> {};
-class storage<T> {};
 // Layout-only capability: no engagement bit and no automatic payload drop.
 class uninitialized_storage<T> {};
 
@@ -35,26 +34,6 @@ bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
 void unique_owner_swap<T>(mut gti_internal::unique_owner<T>& left,
                           mut gti_internal::unique_owner<T>& right);
 gti_internal::unique_owner<Base> unique_owner_upcast<Base, Derived>(gti_internal::unique_owner<Derived> owner);
-
-gti_internal::storage<T> allocate_storage<T>(uint64_t count);
-int32_t storage_try_allocate<T>(mut gti_internal::storage<T>& destination,
-                                uint64_t count,
-                                uint64_t minimum_alignment);
-// Does not own or release the external region; the source-defined lease must
-// outlive this storage and release the region after all elements are destroyed.
-int32_t storage_try_adopt<T>(mut gti_internal::storage<T>& destination,
-                            void* address, uint64_t count, uint64_t extent,
-                            uint64_t alignment);
-uint64_t storage_capacity<T>(gti_internal::storage<T>& storage);
-bool storage_initialized<T>(gti_internal::storage<T>& storage,
-                            uint64_t index);
-void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage, uint64_t index, Args... args);
-T & storage_read<T>(gti_internal::storage<T>& storage, uint64_t index);
-mut T & storage_read_mut<T>(mut gti_internal::storage<T>& storage, uint64_t index);
-void storage_destroy<T>(mut gti_internal::storage<T>& storage, uint64_t index);
-void storage_relocate<T>(mut gti_internal::storage<T>& source, mut gti_internal::storage<T>& destination, uint64_t count);
-void storage_shift_right<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last);
-void storage_shift_left<T>(mut gti_internal::storage<T>& storage, uint64_t first, uint64_t last);
 
 /// Seals adoption of freshly allocated, wholly uninitialized typed storage.
 ///

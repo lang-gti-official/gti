@@ -317,7 +317,6 @@ struct SemanticType {
     Reference,
     UniqueOwner,
     SharedPointer,
-    Storage,
     TypeParameter,
     TypePack,
     TypeName,
@@ -575,10 +574,6 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType sharedPointerTo(SemanticType pointee) {
     return SemanticType(SharedPointer, {std::move(pointee)});
-  }
-
-  [[nodiscard]] static SemanticType storageOf(SemanticType element) {
-    return SemanticType(Storage, {std::move(element)});
   }
 
   [[nodiscard]] static SemanticType prefixStorageOf(SemanticType element) {
