@@ -4149,8 +4149,9 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       source == nullptr ? nullptr : findInstruction(body, source->definition);
   const bool functionCallProducer =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      producer->functionTarget && !producer->constructorTarget &&
-      !producer->lambdaTarget && !producer->bodyTarget &&
+      (producer->functionTarget || producer->nativeCalleeType) &&
+      !producer->constructorTarget && !producer->lambdaTarget &&
+      !producer->bodyTarget &&
       // A resolved nominal operator() is an ordinary function-target call.
       // Its receiver capability is checked by call admission; it does not
       // change the exact result-slot/consumer proof below.
@@ -22112,22 +22113,27 @@ passiveCAbiCallAssignmentResult(const MirProgram &program, const MirBody &body,
       call != nullptr && call->functionTarget
           ? program.findFunctionInstance(*call->functionTarget)
           : nullptr;
+  const bool native =
+      call != nullptr && isMirNativeIndirectCall(program, body, *call);
   if (value == nullptr ||
       passiveCAbiRecordInstance(program, value->info.type) == nullptr ||
       value->info.traits.drop != DropKind::Trivial ||
       value->info.traits.containsBorrowedState || call == nullptr ||
       call->kind != MirInstructionKind::Call || !call->result ||
-      *call->result != valueId || call->destination || call->receiver ||
-      call->constructorTarget || call->lambdaTarget || call->bodyTarget ||
-      call->callableInvocation || call->intrinsic != IntrinsicKind::None ||
+      *call->result != valueId || call->destination ||
+      (call->receiver && !native) || call->constructorTarget ||
+      call->lambdaTarget || call->bodyTarget ||
+      (call->callableInvocation && !native) ||
+      call->intrinsic != IntrinsicKind::None ||
       !call->localFailureSites.empty() ||
       !call->definedFailure.localOrigins.empty() ||
       call->definedFailure.propagation != FailurePropagationKind::None ||
-      target == nullptr || target->returnType != value->info.type ||
-      !((target->linkage == LanguageLinkage::C) ||
-        (target->linkage == LanguageLinkage::Gti &&
-         target->definitionKind == MirDefinitionKind::Source &&
-         !target->mayRaiseDefinedFailure))) {
+      (!native &&
+       (target == nullptr || target->returnType != value->info.type ||
+        !((target->linkage == LanguageLinkage::C) ||
+          (target->linkage == LanguageLinkage::Gti &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           !target->mayRaiseDefinedFailure))))) {
     return {};
   }
 

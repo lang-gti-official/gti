@@ -66,6 +66,11 @@ int main() {
     PointTransform transform = obtain_point_transform();
     Point point = transform(obtain_point());
     if (point.x != 5 || point.y != 8) { return 10; }
+    Point nested = transform(transform(obtain_point()));
+    if (nested.x != 7 || nested.y != 16) { return 14; }
+    mut Point reassigned = obtain_point();
+    reassigned = transform(reassigned);
+    if (reassigned.x != 5 || reassigned.y != 8) { return 15; }
     ViewLength length = obtain_view_length();
     if (length("hello") != 5) { return 11; }
     ViewLength adapted = gti_view_length;
