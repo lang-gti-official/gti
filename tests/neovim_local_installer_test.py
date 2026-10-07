@@ -52,8 +52,32 @@ def main():
         cache.write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={installer.ROOT}\n"
                          "CMAKE_GENERATOR:INTERNAL=Unix Makefiles\n"
                          "CMAKE_BUILD_TYPE:STRING=Release\nGTI_BUILD_LSP:BOOL=ON\n")
-        assert installer.configure_command(build, None) is None
+        refresh = installer.configure_command(build, None)
+        assert "-G" not in refresh and "cmake" == refresh[0]
+        llvm = root / "llvm/lib/cmake/llvm"
+        llvm.mkdir(parents=True)
+        (llvm / "LLVMConfig.cmake").write_text("")
+        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "22.1.8")')
+        assert installer.supported_llvm(llvm)
+        with cache.open("a") as output:
+            output.write(f"LLVM_DIR:PATH={llvm}\n")
         rejected(lambda: installer.configure_command(build, root / "other-llvm"))
+        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "23.1.2")')
+        assert not installer.supported_llvm(llvm)
+        assert "-G" not in installer.configure_command(build, root / "other-llvm")
+        retained = root / "Cellar/llvm/22.1.8/lib/cmake/llvm"
+        retained.mkdir(parents=True)
+        (retained / "LLVMConfig.cmake").write_text("")
+        (retained / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "22.1.8")')
+        def brew(arguments, **kwargs):
+            if arguments == ["brew", "--prefix", "llvm"]:
+                return mock.Mock(returncode=0, stdout=str(root / "llvm"))
+            if arguments == ["brew", "--cellar", "llvm"]:
+                return mock.Mock(returncode=0, stdout=str(root / "Cellar/llvm"))
+            return mock.Mock(returncode=1, stdout="")
+        with mock.patch.object(installer.shutil, "which", return_value="brew"), \
+                mock.patch.object(installer.subprocess, "run", side_effect=brew):
+            assert installer.discover_llvm() == retained.resolve()
         cache.write_text("CMAKE_HOME_DIRECTORY:INTERNAL=/different/source\n")
         rejected(lambda: installer.configure_command(build, None))
     print("Local Neovim configuration and build safety passed")

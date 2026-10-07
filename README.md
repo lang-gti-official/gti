@@ -461,7 +461,8 @@ python3 scripts/install_neovim_local.py --replace-config
 
 Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
 (including libclang), and the Xcode command-line tools. It discovers Homebrew
-LLVM or accepts `--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
+LLVM 18–22 (skipping unsupported newer versions and checking retained Homebrew
+versions) or accepts `--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
 automatically. Builds use all detected CPUs at normal priority by default
 (`--jobs N` to limit parallelism).
 
@@ -476,8 +477,13 @@ your configuration must already import that plugins directory.
 
 Restart Neovim, run `:Lazy sync`, open a `.gti` file, and check `:GTIInfo`.
 Re-run the script after pulling changes. This system-LLVM build uses the same
-editor layout but is local to this Mac, not a portable official release. Keep
-its Homebrew LLVM installed. `--build-dir` may reuse a Release/LSP-enabled build
+editor layout but is not an official release. Installation bundles matching
+non-Apple runtime libraries, their licenses, and loader-relative references,
+so the installed compiler and LSP survive Homebrew upgrades or cleanup. The
+toolchain can be relocated on a compatible Mac with the same architecture and
+macOS requirements; this does not create a universal binary or change its
+deployment target. Keep supported LLVM installed to rebuild and use the system-
+LLVM developer SDK. `--build-dir` may reuse a Release/LSP-enabled build
 from this checkout without switching its CMake generator.
 
 See the [LSP architecture](docs/architecture/lsp.md) for the implemented

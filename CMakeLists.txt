@@ -763,6 +763,32 @@ if(TARGET gti_lsp)
           COMPONENT gti_toolchain)
 endif()
 
+if(APPLE)
+  foreach(installed_executable IN ITEMS gti gti_lsp)
+    if(TARGET "${installed_executable}")
+      target_link_options("${installed_executable}" PRIVATE
+                          "LINKER:-headerpad_max_install_names")
+    endif()
+  endforeach()
+  if(GTI_BUNDLE_LLVM)
+    target_link_options(libclang PRIVATE "LINKER:-headerpad_max_install_names")
+  endif()
+  # Homebrew opt paths can move to a different ABI between build and install.
+  # Use the selected libclang target, resolve its transitive runtime closure,
+  # rewrite only staged copies, and sign them before archiving/activation.
+  install(CODE "
+    execute_process(
+      COMMAND \"${Python3_EXECUTABLE}\"
+              \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle_macos_runtime.py\"
+              --stage \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\"
+              --library \"$<TARGET_FILE:libclang>\"
+      RESULT_VARIABLE gti_bundle_result)
+    if(NOT gti_bundle_result EQUAL 0)
+      message(FATAL_ERROR \"Failed to bundle macOS toolchain runtime dependencies\")
+    endif()
+  " COMPONENT gti_toolchain)
+endif()
+
 # BUILD_TESTING and the optimized compiler policy are established above.
 if(GTI_BUILD_FUZZERS)
   add_subdirectory("fuzz")
