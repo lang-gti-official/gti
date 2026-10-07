@@ -721,6 +721,11 @@ process open until elapsed progress arrives, then releases a deliberate native
 failure and verifies live row cleanup and unchanged stdout. It explicitly
 proves the output was visible before the native process exited.
 
+The native-detail assertion accepts the intended elapsed-time suffix and
+rejects explicit backend/tool labels. Pure positive and negative cases keep
+this distinction deterministic: a slow build's `(1.46s)` must not be mistaken
+for the retired `(c++)` label, while labels such as `cpp` or `clang++` still fail.
+
 The existing colour parity and exact parallel replay tests use
 `--progress=never` when comparing byte-identical text; the progress-specific
 gate separately tests colours and live terminal presentation. The installed
@@ -3717,6 +3722,90 @@ are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
 
 ## Development And Completion Cadence
+
+### Bounded case workers and development selections
+
+The standard-library surface harness and all clients of the shared callable
+runtime matrix support bounded case workers. `GTI_TEST_CASE_JOBS` is a CMake
+cache setting (default `2`), not a compiler or installed CLI option. CTest
+reserves that many `PROCESSORS` for each participating suite and supplies the
+matching environment value. Increase the outer CTest budget independently;
+do not give each test the entire host's CPU count. Existing suite names,
+timeouts, fixture sets, optimization/standard/elision/sanitizer modes, expected
+diagnostics and native observations are unchanged. Full CI and release commands
+continue to run every registered test without filtering.
+
+Compound suites also carry a conservative CTest `COST` hint based on their
+unchanged suite timeout, with a minimum of one. This is an
+ordering hint, not a measured duration: fresh trees otherwise assign unknown
+tests zero cost and can keep filling slots with smaller one-worker tests while
+large matrices wait for a sufficient reservation. CTest schedules higher-cost
+work first. Actual test timings remain visible; the hint does not raise a
+timeout, change worker accounting, or remove any check.
+
+For the callable matrix, only compilation runs concurrently. Native executions
+remain on the parent thread in the original mode/fixture/argument order, with
+the same working directory and input. This preserves fixtures that reuse files
+between modes. Each standard-library case already owns an isolated working
+directory; its complete sequence of compilations and observations can run in
+parallel with other cases. Workers do not cache passing results or artifacts.
+Every planned case is submitted once, observed once, and any compile, timeout,
+execution, or observation failure fails the suite. An empty or duplicate plan
+is rejected. Case-level progress and a complete-count/timing summary identify
+long work inside a suite instead of hiding it behind one CTest entry.
+
+Standalone harnesses retain serial defaults and accept `--jobs N`; existing
+`--fixture`/`--mode` development filters remain partial evidence. `--jobs 1`
+provides the serial reference without changing the assertion matrix. The
+`test_case_jobs` gate checks exact serial/parallel compile arguments, all eight
+modes, sanitizer environment, stdin, native execution ordering and the whole
+surface manifest, plus injected compile/output/timeout/observation failures.
+`test_throughput_registration` independently finds every shared-harness client,
+checks registration and worker/processor pairing, and rejects omitted,
+disabled or forged registrations. It queries a scratch copy of registration
+files so nested CTest discovery cannot truncate the active suite's log.
+Discovery restores build-relative default working directories and preserves
+explicit ones, so repeated inventories describe the same execution context.
+
+All registered tests automatically carry `coverage-full`. A deliberately
+partial group of in-process compiler/IR/model contracts carries
+`feedback-fast`; `lsp`, `end-to-end`, and `bounded-case-workers` are additional
+selection labels. Labels do not disable tests or change default execution.
+
+```sh
+ctest --test-dir build --parallel 4 --output-on-failure -L feedback-fast
+ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full
+python3 tests/owning_function_runtime_test.py build/gti --jobs 1
+```
+
+On a 12-core host with sufficient memory, a larger accounted allocation can
+shorten long-suite tails while still letting three four-worker suites share
+the machine. Reconfigure the same Ninja tree rather than launching multiple
+uncoordinated CTest runs:
+
+```sh
+cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
+cmake --build build --parallel 12
+ctest --test-dir build --parallel 12 --output-on-failure
+```
+
+The per-suite default remains two for smaller hosts. Higher values are a
+resource choice, not permission to change timeouts or assert fewer outcomes.
+If other builds share the host, reduce the outer budget or rerun a timed-out
+gate unchanged under a controlled load; never convert the failure to a pass.
+
+Local samples on 2026-10-07 use one Release compiler binary with AppleClang 21
+and system LLVM 22.1.8 on a 12-core/32-GiB macOS arm64 host. The unchanged
+eight-mode contextual-numeric suite took 10.78 seconds serially and 5.37 seconds
+with two workers. All 143 standard-library cases took 926.46 seconds serially
+and 649.47 seconds with two workers (about 30% less wall time), with identical
+completed-case censuses and no removed configurations or observations. These
+are single-run samples, not CI thresholds or a claim that whole-release time
+halves; the parallel stdlib sample also shared the host with another build.
+
+Fast feedback is not a complete feature/release claim. The full completion,
+installed-consumer, platform, sanitizer and packaging obligations below remain
+in force. This scheduling change does not replace them with a smaller suite.
 
 `source_debug_info` exercises opt-in statement mappings, escaped paths,
 multi-line expansion resets, C++20/C++23 emission, native execution, project

@@ -7,6 +7,8 @@ import pathlib
 import subprocess
 import tempfile
 
+from case_jobs import configured_jobs, positive_jobs, run_cases
+
 
 def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
          fixture_paths=None):
@@ -26,6 +28,8 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                         help="Run only this fixture; repeat to select several. Default: all fixtures.")
     parser.add_argument("--mode", action="append", choices=[mode[0] for mode in modes],
                         help="Run only this native mode; repeat to select several. Default: all modes.")
+    parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs(),
+                        help="Concurrent compilations; executions stay ordered. Default: serial outside CTest.")
     arguments = parser.parse_args()
     compiler = arguments.compiler.resolve()
     if arguments.fixture:
@@ -35,25 +39,36 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-lambda-pack-") as temporary:
-        for label, flags, native in modes:
-            for name in names:
-                source = (fixture_paths or {}).get(name, fixtures / f"{name}.gti")
-                binary = pathlib.Path(temporary) / f"{name}-{label}"
-                command = [str(compiler), str(source), *flags, "-o", str(binary)]
-                if execution_profile is not None:
-                    command += ["--execution-profile", execution_profile]
-                if native:
-                    command += ["--", *native]
-                built = subprocess.run(command, capture_output=True, text=True,
-                                       timeout=120, env=environment)
-                assert built.returncode == 0, (name, label, built.stdout, built.stderr)
-                runs = (cases or {}).get(name, [((), (0, "", ""))])
-                for arguments, expected in runs:
-                    run = subprocess.run([str(binary), *arguments], capture_output=True, text=True,
-                                         timeout=30, env=environment,
-                                         input=(stdin_by_name or {}).get(name))
-                    assert (run.returncode, run.stdout, run.stderr) == expected, (name, label, run)
-            print(f"callable runtime ({', '.join(names)}): {label} passed", flush=True)
+        def compile_fixture(case):
+            name, label, flags, native = case
+            source = (fixture_paths or {}).get(name, fixtures / f"{name}.gti")
+            binary = pathlib.Path(temporary) / f"{name}-{label}"
+            command = [str(compiler), str(source), *flags, "-o", str(binary)]
+            if execution_profile is not None:
+                command += ["--execution-profile", execution_profile]
+            if native:
+                command += ["--", *native]
+            built = subprocess.run(command, capture_output=True, text=True,
+                                   timeout=120, env=environment)
+            if built.returncode != 0:
+                raise AssertionError((name, label, built.stdout, built.stderr))
+            return name, label, binary
+
+        def execute_fixture(compiled):
+            name, label, binary = compiled
+            runs = (cases or {}).get(name, [((), (0, "", ""))])
+            if not runs:
+                raise ValueError(f"{name} has no execution observations")
+            for arguments, expected in runs:
+                result = subprocess.run([str(binary), *arguments], capture_output=True, text=True,
+                                        timeout=30, env=environment,
+                                        input=(stdin_by_name or {}).get(name))
+                if (result.returncode, result.stdout, result.stderr) != expected:
+                    raise AssertionError((name, label, result))
+
+        plan = [(f"{name}/{label}", (name, label, flags, native))
+                for label, flags, native in modes for name in names]
+        run_cases(plan, compile_fixture, arguments.jobs, execute_fixture)
 
 
 if __name__ == "__main__":

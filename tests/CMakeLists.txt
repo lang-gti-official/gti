@@ -1887,14 +1887,16 @@ if(Python3_Interpreter_FOUND)
         "${PROJECT_SOURCE_DIR}/tests/composable_io_runtime_test.py"
         "$<TARGET_FILE:gti>")
     set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 600)
-    add_test(NAME extensible_formatting_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_lsp_test.py"
-        "$<TARGET_FILE:gti_lsp>")
-    add_test(NAME integral_enum_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/integral_enum_lsp_test.py"
-        "$<TARGET_FILE:gti_lsp>")
+    if(TARGET gti_lsp)
+      add_test(NAME extensible_formatting_lsp
+        COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_lsp_test.py"
+          "$<TARGET_FILE:gti_lsp>")
+      add_test(NAME integral_enum_lsp
+        COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/integral_enum_lsp_test.py"
+          "$<TARGET_FILE:gti_lsp>")
+    endif()
     add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"
@@ -3049,6 +3051,8 @@ if(Python3_Interpreter_FOUND)
     )
   endif()
 endif()
+
+include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
 
 # Release binaries intentionally contain no source-tree resource fallback.
 # Every build-tree test runs before staging, including newly registered CLI/LSP
