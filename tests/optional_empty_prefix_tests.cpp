@@ -147,9 +147,12 @@ void checkActiveStorage() {
               empty->body.blocks.front().terminator.kind =
                   lang::MirTerminatorKind::Unreachable;
             else if (mutation == 4)
-              empty->body.blocks.front().terminator.value = 1;
+              empty->body.blocks.front().terminator.value =
+                  lang::MirOperand{.kind = lang::MirOperandKind::Value,
+                                   .value = 1,
+                                   .type = lang::SemanticType::Int32};
             else
-              empty->borrowOrigin = lang::BorrowOriginKind::Parameter;
+              empty->borrowOrigin = lang::BorrowOriginKind::Receiver;
             expect(
                 !lang::cppMirFailureConstructorEmptyStateEligible(
                     malformed, constructor.owner) &&
