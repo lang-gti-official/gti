@@ -10,10 +10,11 @@ namespace lang {
 namespace {
 
 [[nodiscard]] bool isMirFixedWidthIntegerType(const SemanticType &type) {
-  return type == SemanticType::Int8 || type == SemanticType::Int16 ||
-         type == SemanticType::Int32 || type == SemanticType::Int64 ||
-         type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
-         type == SemanticType::UInt32 || type == SemanticType::UInt64;
+  return type.kind == SemanticType::Int8 || type.kind == SemanticType::Int16 ||
+         type.kind == SemanticType::Int32 || type.kind == SemanticType::Int64 ||
+         type.kind == SemanticType::UInt8 ||
+         type.kind == SemanticType::UInt16 ||
+         type.kind == SemanticType::UInt32 || type.kind == SemanticType::UInt64;
 }
 
 [[nodiscard]] std::optional<SemanticType>

@@ -1538,17 +1538,19 @@ private:
       pointeeConst = previous();
     }
     TypeRef type = parseBaseType();
-    if (match({TokenKind::STAR})) {
-      type.pointer = previous();
-      if (match({TokenKind::STAR})) {
-        type.outerPointer = previous();
+    while (match({TokenKind::STAR})) {
+      checkNestingDepth(previous(), type.pointers.size());
+      type.pointers.push_back(
+          {.star = previous(), .pointeeConst = std::move(pointeeConst)});
+      pointeeConst.reset();
+      if (match({TokenKind::CONST})) {
+        pointeeConst = previous();
       }
     }
-    type.pointeeConst = std::move(pointeeConst);
-    if (type.pointeeConst && !type.pointer) {
-      throw error(*type.pointeeConst,
+    if (pointeeConst) {
+      throw error(*pointeeConst,
                   "'const' is currently supported only as a raw-pointer "
-                  "pointee qualifier, as in 'const T*'.");
+                  "pointee qualifier, as in 'const T*' or 'T* const*'.");
     }
     parseArrayTypeSuffix(type);
     if (match({TokenKind::AMPERSAND})) {
@@ -1704,7 +1706,7 @@ private:
     if (argument.name.segments.size() == 1 &&
         argument.name.last().kind == TokenKind::IDENTIFIER &&
         argument.arguments.empty() && argument.arrayExtents.empty() &&
-        !argument.pointer && !argument.reference) {
+        argument.pointers.empty() && !argument.reference) {
       argument.genericArgumentSyntax =
           GenericArgumentSyntax::UnresolvedIdentifier;
     }
@@ -3252,9 +3254,9 @@ private:
 
   [[nodiscard]] std::optional<std::size_t>
   arrayTypeEnd(std::size_t offset) const {
-    if (peekAt(offset).kind == TokenKind::STAR) {
+    while (peekAt(offset).kind == TokenKind::STAR) {
       ++offset;
-      if (peekAt(offset).kind == TokenKind::STAR) {
+      if (peekAt(offset).kind == TokenKind::CONST) {
         ++offset;
       }
     }
@@ -3420,8 +3422,8 @@ private:
     return ParseError{};
   }
 
-  [[nodiscard]] NestingGuard enterNesting(const Token &token) {
-    if (nestingDepth >= maximumNestingDepth) {
+  void checkNestingDepth(const Token &token, std::size_t additionalDepth = 0) {
+    if (nestingDepth + additionalDepth >= maximumNestingDepth) {
       missingTokenError = false;
       Diagnostic diagnostic =
           makeDiagnostic("GTI-P0005", DiagnosticPhase::Parsing, token,
@@ -3432,6 +3434,10 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
       throw ParseError{};
     }
+  }
+
+  [[nodiscard]] NestingGuard enterNesting(const Token &token) {
+    checkNestingDepth(token);
     return NestingGuard(nestingDepth);
   }
 

@@ -688,24 +688,34 @@ private:
 
   // -- Types ----------------------------------------------------------------
 
-  [[nodiscard]] NativeTypeId makeInteger(std::uint32_t bits, bool isSigned) {
+  [[nodiscard]] NativeTypeId makeInteger(std::uint32_t bits, bool isSigned,
+                                         NativeCScalarKind identity) {
     NativeType type;
     type.kind = NativeTypeKind::Integer;
     type.bitWidth = bits;
     type.isSigned = isSigned;
+    type.scalarIdentity = identity;
     return result_.model.addType(std::move(type));
   }
 
-  [[nodiscard]] NativeTypeId makeFloating(std::uint32_t bits) {
+  [[nodiscard]] NativeTypeId makeFloating(std::uint32_t bits,
+                                          NativeCScalarKind identity) {
     NativeType type;
     type.kind = NativeTypeKind::Floating;
     type.bitWidth = bits;
+    type.scalarIdentity = identity;
     return result_.model.addType(std::move(type));
   }
 
   [[nodiscard]] NativeTypeId makeSimple(NativeTypeKind kind) {
     NativeType type;
     type.kind = kind;
+    if (kind == NativeTypeKind::Bool) {
+      type.scalarIdentity = NativeCScalarKind::Bool;
+    }
+    if (kind == NativeTypeKind::Char) {
+      type.scalarIdentity = NativeCScalarKind::Char;
+    }
     return result_.model.addType(std::move(type));
   }
 
@@ -751,27 +761,36 @@ private:
       return makeSimple(NativeTypeKind::Bool);
     case CXType_Char_S:
     case CXType_Char_U:
-      // Plain `char` stays distinct from the sized integers: the GTI ABI
-      // admits `const char*` as c_string but bare `char` is not a scalar.
+      // Keep C's distinct plain-char identity, including in scalar positions.
       return makeSimple(NativeTypeKind::Char);
     case CXType_SChar:
-      return makeInteger(8, true);
+      return makeInteger(8, true, NativeCScalarKind::SignedChar);
     case CXType_UChar:
-      return makeInteger(8, false);
+      return makeInteger(8, false, NativeCScalarKind::UnsignedChar);
     case CXType_Short:
+      return makeInteger(bitWidthOf(type), true, NativeCScalarKind::Short);
     case CXType_Int:
+      return makeInteger(bitWidthOf(type), true, NativeCScalarKind::Int);
     case CXType_Long:
+      return makeInteger(bitWidthOf(type), true, NativeCScalarKind::Long);
     case CXType_LongLong:
-      return makeInteger(bitWidthOf(type), true);
+      return makeInteger(bitWidthOf(type), true, NativeCScalarKind::LongLong);
     case CXType_UShort:
+      return makeInteger(bitWidthOf(type), false,
+                         NativeCScalarKind::UnsignedShort);
     case CXType_UInt:
+      return makeInteger(bitWidthOf(type), false,
+                         NativeCScalarKind::UnsignedInt);
     case CXType_ULong:
+      return makeInteger(bitWidthOf(type), false,
+                         NativeCScalarKind::UnsignedLong);
     case CXType_ULongLong:
-      return makeInteger(bitWidthOf(type), false);
+      return makeInteger(bitWidthOf(type), false,
+                         NativeCScalarKind::UnsignedLongLong);
     case CXType_Float:
-      return makeFloating(32);
+      return makeFloating(32, NativeCScalarKind::Float);
     case CXType_Double:
-      return makeFloating(64);
+      return makeFloating(64, NativeCScalarKind::Double);
     case CXType_LongDouble:
       return makeUnsupported(owned(clang_getTypeSpelling(type)),
                              "'long double' has no fixed-width GTI scalar");

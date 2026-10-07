@@ -16,6 +16,11 @@ static Point transform_point(Point value) {
 static int32_t view_length(gti_c_string_view value) {
   return (int32_t)value.length;
 }
+static long long native_scalars(long value, char code, _Bool flag) {
+  return (long long)value + code + flag;
+}
+static void write_slot(int32_t **slot, int32_t *value) { *slot = value; }
+static int32_t read_slot(int32_t *const *slot) { return **slot; }
 
 Binary obtain_binary(void) {
   trace = trace * 10 + 1;
@@ -32,6 +37,9 @@ Point obtain_point(void) {
 }
 PointTransform obtain_point_transform(void) { return transform_point; }
 ViewLength obtain_view_length(void) { return view_length; }
+NativeScalars obtain_native_scalars(void) { return native_scalars; }
+SlotWriter obtain_slot_writer(void) { return write_slot; }
+SlotReader obtain_slot_reader(void) { return read_slot; }
 int32_t next_argument(int32_t digit) {
   trace = trace * 10 + digit;
   return digit;

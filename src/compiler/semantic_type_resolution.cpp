@@ -337,7 +337,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         return false;
       }
     }
-    if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
+    if (pattern.kind != argument.kind ||
+        pattern.nativeCScalar != argument.nativeCScalar ||
+        pattern.classId != argument.classId ||
         pattern.enumId != argument.enumId ||
         pattern.arguments.size() != argument.arguments.size()) {
       return true;
@@ -379,8 +381,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         pattern.kind == SemanticType::Array &&
         pattern.arrayLengthParameterId != 0 &&
         isTargetValueParameter(pattern.arrayLengthParameterId);
-    if (pattern.kind != actual.kind || pattern.classId != actual.classId ||
-        pattern.enumId != actual.enumId ||
+    if (pattern.kind != actual.kind ||
+        pattern.nativeCScalar != actual.nativeCScalar ||
+        pattern.classId != actual.classId || pattern.enumId != actual.enumId ||
         pattern.genericParameterId != actual.genericParameterId ||
         pattern.functionId != actual.functionId ||
         pattern.lambdaId != actual.lambdaId ||
@@ -549,18 +552,6 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
   return valid;
 }
 
-auto SemanticVisitor::Impl::isContextualNativeOutPointerArgument(
-    const ExprPtr &expression) const -> bool {
-  const auto *address =
-      expression == nullptr ? nullptr : exprAs<Unary>(expression.get());
-  if (address == nullptr || address->oper().kind != TokenKind::AMPERSAND) {
-    return false;
-  }
-  const std::optional<Symbol> symbol =
-      resolveExpressionSymbol(address->right());
-  return symbol && symbol->type.kind == SemanticType::RawPointer;
-}
-
 auto SemanticVisitor::Impl::isContextualCallableResultArgument(
     const ExprPtr &expression) const -> bool {
   const Call *call = directCall(expression);
@@ -614,7 +605,6 @@ auto SemanticVisitor::Impl::analyzeContextualCallArguments(
   for (const ExprPtr &argument : arguments) {
     deferred = deferred || isContextualArrayArgument(argument) ||
                isContextualNativeFunctionArgument(argument) ||
-               isContextualNativeOutPointerArgument(argument) ||
                isContextualCallableResultArgument(argument);
     result.deferred.emplace_back(deferred);
     result.types.emplace_back(deferred ? SemanticType::Unknown
@@ -653,14 +643,6 @@ auto SemanticVisitor::Impl::contextualCallArgumentPotentiallyMatches(
     const std::optional<Symbol> symbol = resolveExpressionSymbol(expression);
     return symbol &&
            matchingNativeFunctionCandidates(*symbol, parameter).size() == 1;
-  }
-  if (isContextualNativeOutPointerArgument(expression)) {
-    const auto *address = exprAs<Unary>(expression.get());
-    const std::optional<Symbol> symbol =
-        address == nullptr ? std::nullopt
-                           : resolveExpressionSymbol(address->right());
-    return symbol && symbol->type.kind == SemanticType::RawPointer &&
-           isCAbiOpaqueHandleOutPointer(parameter);
   }
   return true;
 }
@@ -704,12 +686,6 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
         continue;
       }
       analysis.types[index] = analyzeInitializer(arguments[index], parameter);
-    } else if (isContextualNativeOutPointerArgument(arguments[index])) {
-      const std::optional<SemanticType> enclosingType =
-          contextualNativeOutPointerType;
-      contextualNativeOutPointerType = parameter;
-      analysis.types[index] = analyze(arguments[index]);
-      contextualNativeOutPointerType = enclosingType;
     } else {
       analysis.types[index] =
           analyzeExpectedCallableResult(arguments[index], parameter);
@@ -2643,8 +2619,8 @@ auto SemanticVisitor::Impl::genericValueArgument(const TypeRef &argument) const
                                           : std::nullopt;
   }
   if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
-      argument.pointer || argument.outerPointer ||
-      !argument.arrayExtents.empty() || argument.reference) {
+      !argument.pointers.empty() || !argument.arrayExtents.empty() ||
+      argument.reference) {
     return std::nullopt;
   }
   const Token &token = argument.name.last();
@@ -2900,7 +2876,6 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
 }
 
 auto SemanticVisitor::Impl::validateType(const TypeRef &type,
-                                         bool allowNativeCOuterPointer,
                                          bool allowNativeFunctionType) -> void {
   const std::size_t diagnosticStart = diagnostics.size();
   if (type.name.last().completion) {
@@ -2913,8 +2888,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   }
   if (type.packExpansion &&
       (!allowPackTypeReference || !isActiveTypePack(type) ||
-       !type.arguments.empty() || type.pointer || type.outerPointer ||
-       type.reference || !type.arrayExtents.empty() || type.pointeeConst)) {
+       !type.arguments.empty() || !type.pointers.empty() || type.reference ||
+       !type.arrayExtents.empty())) {
     report(*type.packExpansion,
            "A type-list expansion must name one bare type pack in the final "
            "signature parameter or class type-pack argument position.",
@@ -2928,8 +2903,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "GTI-S2093");
       return;
     }
-    if (type.pointer || type.outerPointer || type.reference ||
-        !type.arrayExtents.empty() || type.pointeeConst) {
+    if (!type.pointers.empty() || type.reference ||
+        !type.arrayExtents.empty()) {
       report(type.name.last(),
              "A function signature has no object storage; use it as an "
              "alias target or a generic type argument.",
@@ -2994,8 +2969,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       report(location, "Malformed native function type.", "GTI-S2076");
       return;
     }
-    if (type.pointeeConst || type.pointer || type.outerPointer ||
-        !type.arrayExtents.empty() || type.reference) {
+    if (!type.pointers.empty() || !type.arrayExtents.empty() ||
+        type.reference) {
       report(location,
              "A native function type cannot carry pointer, array, "
              "reference, or const suffixes; the type already represents "
@@ -3013,17 +2988,18 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       report(type.arguments.back().name.last(),
              "A native function return must be void, a fixed-width C ABI "
              "value, c_string, a passive [[c_abi]] record, or one raw "
-             "pointer to an admitted C ABI pointee.",
+             "recursive pointer to an admitted C ABI pointee.",
              "GTI-S2076");
     }
     const auto parameters = resolved.nativeFunctionParameterTypes();
     for (std::size_t index = 0; index < parameters.size(); ++index) {
       if (!nativeFunctionBoundaryTypeAllowed(parameters[index], false)) {
-        report(type.arguments[index].name.last(),
-               "A native function parameter must be an immutable "
-               "fixed-width C ABI value, c_string, a passive [[c_abi]] "
-               "record, or one raw pointer to an admitted C ABI pointee.",
-               "GTI-S2076");
+        report(
+            type.arguments[index].name.last(),
+            "A native function parameter must be an immutable "
+            "fixed-width C ABI value, c_string, a passive [[c_abi]] "
+            "record, or a recursive raw pointer to an admitted C ABI pointee.",
+            "GTI-S2076");
       }
     }
     return;
@@ -3048,34 +3024,23 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   recordTypeUse(type);
   if (baseTypeOf(type, currentNamespace).kind ==
           SemanticType::FunctionSignature &&
-      (type.pointer || type.outerPointer || type.reference ||
-       !type.arrayExtents.empty() || type.pointeeConst)) {
+      (!type.pointers.empty() || type.reference ||
+       !type.arrayExtents.empty())) {
     report(type.name.last(),
            "A function signature has no object storage; pointers, references, "
            "and arrays of signatures are not supported.",
            "GTI-S2093");
   }
-  if (type.pointeeConst && !type.pointer) {
-    report(*type.pointeeConst,
-           "'const' is currently supported only as a raw-pointer pointee "
-           "qualifier, as in 'const T*'.",
-           "GTI-S2056");
-  }
-  if (type.pointer) {
+  if (!type.pointers.empty()) {
     const SemanticType pointee = baseTypeOf(type, currentNamespace);
     if (type.name.last().kind == TokenKind::AUTO ||
         pointee == SemanticType::NullPtr ||
         pointee.kind == SemanticType::TypeName ||
         pointee.kind == SemanticType::Function ||
-        pointee.kind == SemanticType::NativeFunction ||
         pointee.kind == SemanticType::TypePack ||
-        pointee.kind == SemanticType::RawPointer ||
         pointee.kind == SemanticType::Array) {
-      report(*type.pointer,
-             pointee.kind == SemanticType::RawPointer
-                 ? "Pointer-to-pointer types are not supported in the "
-                   "initial raw-pointer model."
-             : pointee.kind == SemanticType::Array
+      report(type.pointers.front().star,
+             pointee.kind == SemanticType::Array
                  ? "Pointer-to-array types are not supported in the "
                    "initial raw-pointer model."
                  : "A raw pointer requires a concrete object type or void "
@@ -3083,14 +3048,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "GTI-S2056");
     }
   }
-  if (type.outerPointer && !allowNativeCOuterPointer) {
-    report(*type.outerPointer,
-           "A two-level pointer is available only as an opaque C handle "
-           "out parameter or on a [[c_array(count)]] extern \"C\" return "
-           "type.",
-           "GTI-S2074");
-  }
-  if (!type.pointer) {
+  if (type.pointers.empty()) {
     const SemanticType direct = baseTypeOf(type, currentNamespace);
     if (direct.kind == SemanticType::Class && direct.classId != 0 &&
         direct.classId <= classes.size() &&
@@ -3098,8 +3056,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2065", DiagnosticPhase::Semantics, type.name.last(),
           "Opaque C handle type '" + typeSpelling(direct) +
-              "' is incomplete and may be used only behind one raw "
-              "pointer.");
+              "' is incomplete and may be used only behind raw "
+              "pointers.");
       const ClassInfo &owner = classInfo(direct.classId);
       if (owner.cOpaqueAttribute) {
         diagnostic.related.push_back(
@@ -3267,6 +3225,14 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     return;
   }
+  if (compilerCapability == CompilerCapabilityTypeKind::NativeCScalar) {
+    if (!type.arguments.empty()) {
+      report(type.name.last(),
+             "A native C scalar type does not take generic arguments.",
+             "GTI-S2054");
+    }
+    return;
+  }
   if (compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
     if (type.arguments.size() > 1) {
       report(type.name.last(),
@@ -3358,7 +3324,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     return;
   }
-  if (!type.arrayExtents.empty() && !type.pointer &&
+  if (!type.arrayExtents.empty() && type.pointers.empty() &&
       baseTypeOf(type, currentNamespace) == SemanticType::Void) {
     // A pointer declarator makes the element `void*`, a sized pointer
     // scalar; only a bare `void` element has no object representation.
@@ -3622,7 +3588,7 @@ auto SemanticVisitor::Impl::containsReference(const TypeRef &type) const
 }
 
 auto SemanticVisitor::Impl::containsRawPointer(const TypeRef &type) -> bool {
-  if (type.pointer) {
+  if (!type.pointers.empty()) {
     return true;
   }
   return std::any_of(
@@ -4930,8 +4896,8 @@ auto SemanticVisitor::Impl::evaluateGenericDefaultConstantInitializer(
   }
   if (const auto *conversion = exprAs<Conversion>(&expression)) {
     const TypeRef &target = conversion->targetType();
-    if (target.name.last().kind != TokenKind::UINT64 || target.pointer ||
-        target.outerPointer || target.reference ||
+    if (target.name.last().kind != TokenKind::UINT64 ||
+        !target.pointers.empty() || target.reference ||
         !target.arrayExtents.empty() || !target.arguments.empty()) {
       return std::nullopt;
     }
@@ -4967,9 +4933,8 @@ auto SemanticVisitor::Impl::recordGenericDefaultConstant(
   const TypeRef &type = declaration.type();
   if (!declaration.isConstexpr() || declaration.isMutable() ||
       declaration.initializer() == nullptr ||
-      type.name.last().kind != TokenKind::UINT64 || type.pointer ||
-      type.outerPointer || type.reference || !type.arrayExtents.empty() ||
-      !type.arguments.empty()) {
+      type.name.last().kind != TokenKind::UINT64 || !type.pointers.empty() ||
+      type.reference || !type.arrayExtents.empty() || !type.arguments.empty()) {
     return;
   }
   const std::optional<std::uint64_t> value =
@@ -5986,7 +5951,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
       const std::optional<SemanticType> parameter =
           resolveTypeParameter(argument.name);
       const bool plainParameter = parameter && argument.arguments.empty() &&
-                                  !argument.pointer && !argument.outerPointer &&
+                                  argument.pointers.empty() &&
                                   !argument.reference &&
                                   argument.arrayExtents.empty();
       if (plainParameter && isActiveTypePack(argument)) {
@@ -6066,7 +6031,6 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   contextualInitializerExpression = nullptr;
   contextualOperatorIntegerType.reset();
   contextualCallableResult.reset();
-  contextualNativeOutPointerType.reset();
   currentReceiverMutability = ReceiverMutability::ReadOnly;
   suppressedProjectedPlaceReads.clear();
   constructorDepth = 0;
@@ -6723,6 +6687,7 @@ auto SemanticVisitor::Impl::validateRuntimeBinding(const FunctionDecl &function)
 
 auto SemanticVisitor::Impl::isCAbiScalar(const SemanticType &type) -> bool {
   switch (type.kind) {
+  case SemanticType::Bool:
   case SemanticType::Int8:
   case SemanticType::Int16:
   case SemanticType::Int32:
@@ -6760,24 +6725,7 @@ auto SemanticVisitor::Impl::isCOpaqueHandleType(const SemanticType &type) const
 auto SemanticVisitor::Impl::isCAbiRawPointer(const SemanticType &type) const
     -> bool {
   return type.kind == SemanticType::RawPointer && type.arguments.size() == 1 &&
-         (type.arguments.front() == SemanticType::Void ||
-          isCAbiScalar(type.arguments.front()) ||
-          type.arguments.front() == SemanticType::CString ||
-          isCAbiRecordType(type.arguments.front()) ||
-          isCOpaqueHandleType(type.arguments.front()));
-}
-
-auto SemanticVisitor::Impl::isCAbiOpaqueHandleOutPointer(
-    const SemanticType &type) const -> bool {
-  if (type.kind != SemanticType::RawPointer ||
-      type.pointerAccess != AccessMode::Mutable || type.arguments.size() != 1) {
-    return false;
-  }
-  const SemanticType &inner = type.arguments.front();
-  return inner.kind == SemanticType::RawPointer &&
-         inner.pointerAccess == AccessMode::Mutable &&
-         inner.arguments.size() == 1 &&
-         isCOpaqueHandleType(inner.arguments.front());
+         cAbiPointerPointeeAllowed(type.arguments.front());
 }
 
 auto SemanticVisitor::Impl::nativeFunctionBoundaryTypeAllowed(
@@ -6785,8 +6733,10 @@ auto SemanticVisitor::Impl::nativeFunctionBoundaryTypeAllowed(
   if (returnPosition && type == SemanticType::Void) {
     return true;
   }
-  if (isCAbiScalar(type) || type == SemanticType::CString ||
-      type == SemanticType::StringView) {
+  if (type == SemanticType::StringView) {
+    return !returnPosition;
+  }
+  if (isCAbiScalar(type) || type == SemanticType::CString) {
     return true;
   }
   if (type.kind == SemanticType::NativeFunction) {
@@ -6804,17 +6754,7 @@ auto SemanticVisitor::Impl::nativeFunctionBoundaryTypeAllowed(
                        });
   }
   if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) {
-    const SemanticType &pointee = type.arguments.front();
-    if (pointee == SemanticType::Void || isCAbiScalar(pointee) ||
-        pointee == SemanticType::CString) {
-      return true;
-    }
-    if (pointee.kind != SemanticType::Class || pointee.classId == 0 ||
-        pointee.classId > classes.size()) {
-      return false;
-    }
-    const ClassInfo &owner = classInfo(pointee.classId);
-    return owner.cAbiRecord || owner.cOpaqueHandle;
+    return cAbiPointerPointeeAllowed(type.arguments.front());
   }
   return type.kind == SemanticType::Class && type.classId != 0 &&
          type.classId <= classes.size() && classInfo(type.classId).cAbiRecord;
@@ -6836,21 +6776,6 @@ auto SemanticVisitor::Impl::isCAbiNativeFunction(const SemanticType &type) const
                      });
 }
 
-auto SemanticVisitor::Impl::isCAbiArrayReturnPointer(
-    const SemanticType &type) const -> bool {
-  if (isCAbiRawPointer(type)) {
-    return true;
-  }
-  if (type.kind != SemanticType::RawPointer || type.arguments.size() != 1) {
-    return false;
-  }
-  const SemanticType &inner = type.arguments.front();
-  return inner.kind == SemanticType::RawPointer &&
-         inner.arguments.size() == 1 &&
-         inner.arguments.front() != SemanticType::CString &&
-         isCAbiRawPointer(inner);
-}
-
 auto SemanticVisitor::Impl::validateNativeCArrayAttribute(
     const FunctionDecl &function, const SemanticType &returnType) -> void {
   if (!function.nativeCArray()) {
@@ -6865,10 +6790,10 @@ auto SemanticVisitor::Impl::validateNativeCArrayAttribute(
          "[[c_array(count)]] is valid only on an extern \"C\" function "
          "declaration.");
   }
-  if (!isCAbiArrayReturnPointer(returnType)) {
+  if (!isCAbiRawPointer(returnType)) {
     fail(attribute.attribute,
          "[[c_array(count)]] requires a returned C ABI pointer or the "
-         "bounded two-level pointer form.");
+         "admitted recursive raw-pointer type.");
   }
 
   const FunctionInfo *info = semanticModel.findFunction(function);
@@ -6885,7 +6810,7 @@ auto SemanticVisitor::Impl::validateNativeCArrayAttribute(
   const bool validCount =
       count.mutability == Mutability::Immutable && !count.pack &&
       !count.type.reference && count.type.arrayExtents.empty() &&
-      !count.type.outerPointer && countType.kind == SemanticType::RawPointer &&
+      countType.kind == SemanticType::RawPointer &&
       countType.pointerAccess == AccessMode::Mutable &&
       countType.arguments.size() == 1 && isInteger(countType.arguments.front());
   if (!validCount) {
@@ -6978,12 +6903,12 @@ auto SemanticVisitor::Impl::validateExternCFunction(
       function.returnType().reference ||
       (returnType != SemanticType::Void &&
        returnType != SemanticType::CString && !isCAbiScalar(returnType) &&
-       !isCAbiRawPointer(returnType) && !isCAbiArrayReturnPointer(returnType) &&
-       !isCAbiRecordType(returnType) && !isCAbiNativeFunction(returnType))) {
+       !isCAbiRawPointer(returnType) && !isCAbiRecordType(returnType) &&
+       !isCAbiNativeFunction(returnType))) {
     fail(function.returnType().name.last(),
          "extern \"C\" return types are limited to void, fixed-width "
          "integer or float scalars, c_string, valid [[c_abi]] records, and "
-         "one-level raw pointers to those types, opaque C handles, void, "
+         "recursive raw pointers to those types, opaque C handles, void, "
          "or an exact named native function type.");
   }
 
@@ -6998,9 +6923,7 @@ auto SemanticVisitor::Impl::validateExternCFunction(
         (!isCAbiScalar(parameterType) &&
          parameterType != SemanticType::StringView &&
          parameterType != SemanticType::CString &&
-         !isCAbiRawPointer(parameterType) &&
-         !isCAbiOpaqueHandleOutPointer(parameterType) &&
-         !isCAbiRecordType(parameterType) &&
+         !isCAbiRawPointer(parameterType) && !isCAbiRecordType(parameterType) &&
          !isCAbiNativeFunction(parameterType))) {
       const Token &location = parameter.name.lexeme.empty()
                                   ? parameter.type.name.last()
@@ -7009,8 +6932,8 @@ auto SemanticVisitor::Impl::validateExternCFunction(
            "extern \"C\" parameters are limited to immutable by-value "
            "fixed-width scalars, valid [[c_abi]] records, std::string_view "
            "counted buffers, c_string NUL-terminated pointers, and "
-           "one-level raw pointers to those record or scalar types, opaque "
-           "C handles, void, exact opaque-handle out pointers, or exact "
+           "recursive raw pointers to those record or scalar types, opaque "
+           "C handles, void, or exact "
            "named native function types.");
     }
   }
