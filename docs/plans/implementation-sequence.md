@@ -7043,8 +7043,12 @@ consumer, and release refreshes remain outstanding for the full campaign.
   fresh class constructors with enum arguments inside one alternative call
   exceed the current fused emission staging proof
   ([#122](https://git.internal.howetotech.dev/gti-lang/gti/issues/122)).
-  Preconstructing those class inputs is supported. Combined corpus/full-suite
-  validation and upstream release integration remain delivery gates. This
+  Preconstructing those class inputs is supported. The expanded 28-fixture
+  native matrix passes all 224 configurations and the 19 source-rejection
+  cases. All 24 broader focused gates pass, with two test-maintenance retries;
+  both complete MIR/Lowered corpus censuses and 12 isolated installed-library
+  consumers also pass. Combined full-suite/coverage-corpus validation and
+  upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
   amendment makes `class` optional with identical scoped semantics for both
   declaration forms.
