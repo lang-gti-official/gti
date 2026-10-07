@@ -1779,9 +1779,7 @@
       "outcome": "ice"
     },
     "a15-dependent-if-constexpr-local": {
-      "finding": "A15",
-      "issue": 61,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a16-relay-copyable-lambda": {
       "finding": "A16",

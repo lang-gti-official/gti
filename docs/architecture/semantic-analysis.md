@@ -875,7 +875,13 @@ base facts through the fallback, loan tables deliberately restart rather
 than fall back, and record mutators copy a base record into the delta before
 updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
-unchanged from the previous whole-model-copy design.
+unchanged for inherited declarations. New declarations found only in a selected
+dependent branch receive IDs above a request-wide symbol identity ceiling. The
+ceiling advances in sequential analysis order and resets with the request; it
+is not restored with body-local counters. Thus distinct concrete-only locals
+cannot collide even when instances have identical source names or different
+types. These delta symbol records remain concrete and are handed to HIR without
+mutating the immutable primary snapshot. Discarded arms are still unanalyzed.
 
 A complete-range requirement is checked symbolically before its concrete
 iterator and sentinel types exist. The primary analysis therefore uses private

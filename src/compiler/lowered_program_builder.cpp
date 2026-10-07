@@ -1187,8 +1187,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     }
   }
 
-  lowered.symbols_.reserve(semantics.database().symbols().size());
-  for (const SymbolRecord &symbol : semantics.database().symbols()) {
+  lowered.symbols_.reserve(semantics.database().symbols().size() +
+                           hir.instanceSymbols().size());
+  const auto retainSymbol = [&](const SymbolRecord &symbol) {
     lowered.symbols_.push_back(
         {.id = symbol.id,
          .kind = symbol.kind,
@@ -1208,6 +1209,12 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .generated = symbol.generated,
          .compilerPrivate = symbol.compilerPrivate,
          .instanceDependentType = symbol.instanceDependentType});
+  };
+  for (const SymbolRecord &symbol : semantics.database().symbols()) {
+    retainSymbol(symbol);
+  }
+  for (const SymbolRecord &symbol : hir.instanceSymbols()) {
+    retainSymbol(symbol);
   }
 
   lowered.classInstances_.reserve(hir.classInstances().size());

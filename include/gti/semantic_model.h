@@ -1310,6 +1310,9 @@ class SemanticDatabase {
 public:
   [[nodiscard]] const std::vector<SymbolRecord> &symbols() const;
 
+  // Identity ceiling, including the reserved prefix of an instance delta.
+  [[nodiscard]] SymbolId symbolIdentityCeiling() const;
+
   [[nodiscard]] const SymbolRecord *findSymbol(SymbolId id) const;
 
   [[nodiscard]] std::vector<const SemanticOccurrence *>
@@ -1357,7 +1360,8 @@ private:
   // Turns this database into an instance-analysis delta over baseDatabase:
   // lookups fall back to the base, and new symbol identities continue after
   // the base's so instance records never collide with base SymbolIds.
-  void beginInstanceDelta(const SemanticDatabase &baseDatabase);
+  void beginInstanceDelta(const SemanticDatabase &baseDatabase,
+                          SymbolId reservedIdentityCeiling);
 
   void rebase(const SemanticDatabase *baseDatabase);
 
@@ -1791,7 +1795,8 @@ private:
   // program's model. Loan tables deliberately do not fall back - instance
   // analysis restarts loan identities, mirroring the clearLoans() semantics
   // the previous whole-model copy relied on.
-  void beginInstanceDelta(const SemanticModel &baseModel);
+  void beginInstanceDelta(const SemanticModel &baseModel,
+                          SymbolId reservedIdentityCeiling = 0);
 
   // Re-points an instance delta at a relocated base (the analyzer restores
   // its model after each instance analysis; the delta must follow it).
