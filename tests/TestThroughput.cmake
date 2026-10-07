@@ -30,7 +30,8 @@ if(Python3_Interpreter_FOUND)
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
     programmable_allocators_runtime raw_owner_witness_runtime raw_pointer_conversion_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
-    retained_owner_member_pack_runtime shared_ownership_runtime shared_ownership_threads
+    retained_owner_member_pack_runtime shared_accessor_range_runtime
+    shared_ownership_runtime shared_ownership_threads
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
     stdlib_surface
