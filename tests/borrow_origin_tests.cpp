@@ -118,10 +118,71 @@ expected<Item&, errc> relay(Item& item) {
            "invalid source is rejected before MIR/backend generation");
   }
 }
+
+void checkOwnedFieldPlaces() {
+  const auto root = std::filesystem::path(__FILE__).parent_path();
+  for (const auto &relative :
+       {"coverage/reproducers/a58-ref-to-owner-field-pointee-via-local-ref.gti",
+        "coverage/reproducers/a58-map-unique-ptr-value-deref.gti",
+        "fixtures/borrow_owner_alias_field.gti"}) {
+    const auto path = root / relative;
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(),
+           "owning field pointee through a reference");
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "owned field borrow verifies");
+    try {
+      expect(!gti_test::emitCpp(frontend).contents.empty(),
+             "owned field borrow emits");
+    } catch (const std::logic_error &error) {
+      expect(false, error.what());
+    }
+    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    std::size_t checked = 0;
+    for (const auto &function : frontend.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Initialize ||
+              instruction.operands.size() != 1)
+            continue;
+          const auto &operand = instruction.operands.front();
+          const auto *address = function.body.findPlace(operand.place);
+          const auto *owner = function.body.findLoan(operand.loan);
+          if (operand.kind != lang::MirOperandKind::Loan || !address ||
+              !owner || address->root != lang::MirPlaceRootKind::Loan ||
+              address->loan == owner->id)
+            continue;
+          ++checked;
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &candidate : changedBlock.instructions)
+              if (candidate.id == instruction.id)
+                candidate.operands.front().place = owner->source;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "borrow initializer cannot substitute owner for referent");
+          expect(!lang::CppMirBodyEmitter(malformed, rows)
+                      .supportsFailureBodyText(
+                          {lang::MirBodyKind::Function, function.id}),
+                 "representation independently rejects the wrong address");
+        }
+    expect(checked != 0,
+           "owned field fixture retains a distinct accessor address");
+  }
+}
 } // namespace
 
 int main() {
   checkReferents();
   checkInvalidEscapes();
+  checkOwnedFieldPlaces();
   return failures == 0 ? 0 : 1;
 }
