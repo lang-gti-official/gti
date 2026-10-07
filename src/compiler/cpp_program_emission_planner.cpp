@@ -7411,7 +7411,14 @@ public:
       if (index != 0) {
         output << ", ";
       }
-      output << "__gti_callback_arg_" << index;
+      if (adapter.type.nativeFunctionParameterTypes()[index].kind ==
+          SemanticType::StringView) {
+        output << "std::string_view(__gti_callback_arg_" << index
+               << ".data, static_cast<std::size_t>(__gti_callback_arg_" << index
+               << ".length))";
+      } else {
+        output << "__gti_callback_arg_" << index;
+      }
     }
   }
 
