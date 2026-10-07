@@ -92,6 +92,37 @@ def cache_values(build):
                 if (match := re.match(r"([^/#][^:]*):[^=]+=(.*)", line)))
 
 
+def supported_llvm(directory):
+    version_file = directory / "LLVMConfigVersion.cmake"
+    if not (directory / "LLVMConfig.cmake").is_file() or not version_file.is_file():
+        return False
+    version = re.search(r'set\(PACKAGE_VERSION\s+"(\d+)\.', version_file.read_text())
+    return version is not None and 18 <= int(version.group(1)) <= 22
+
+
+def discover_llvm():
+    if not shutil.which("brew"):
+        return None
+    for formula in ("llvm", "llvm@22", "llvm@21", "llvm@20", "llvm@19", "llvm@18"):
+        result = subprocess.run(["brew", "--prefix", formula], capture_output=True, text=True)
+        if result.returncode != 0:
+            continue
+        prefix = pathlib.Path(result.stdout.strip())
+        candidate = prefix / "lib/cmake/llvm"
+        if supported_llvm(candidate):
+            return candidate.resolve()
+        # Homebrew can retain a supported version after upgrading the opt alias.
+        # Ask brew for its Cellar rather than assuming Apple Silicon's prefix.
+        cellar = subprocess.run(["brew", "--cellar", formula], capture_output=True, text=True)
+        if cellar.returncode == 0 and cellar.stdout.strip():
+            candidates = sorted(pathlib.Path(cellar.stdout.strip()).glob("*/lib/cmake/llvm"),
+                                reverse=True)
+            for candidate in candidates:
+                if supported_llvm(candidate):
+                    return candidate.resolve()
+    return None
+
+
 def configure_command(build, llvm_dir):
     values = cache_values(build)
     if values is not None:
@@ -100,16 +131,21 @@ def configure_command(build, llvm_dir):
         if values.get("CMAKE_BUILD_TYPE") != "Release" or values.get("GTI_BUILD_LSP") != "ON":
             raise ValueError("existing build must be Release with GTI_BUILD_LSP=ON; "
                              "use a fresh --build-dir")
-        if llvm_dir and pathlib.Path(values.get("LLVM_DIR", "")).resolve() != llvm_dir:
+        cached_llvm = pathlib.Path(values.get("LLVM_DIR", "")).resolve()
+        if llvm_dir and cached_llvm != llvm_dir and supported_llvm(cached_llvm):
             raise ValueError("--llvm-dir conflicts with the existing build cache")
-        # Never switch a pre-existing Makefiles/IDE build to Ninja.
-        return None
-    command = ["cmake", "-S", ROOT, "-B", build, "-G", "Ninja",
-               "-DCMAKE_BUILD_TYPE=Release", "-DGTI_BUILD_LSP=ON",
-               "-DBUILD_TESTING=OFF", "-DGTI_RELEASE_BUILD=OFF",
-               "-DGTI_BUNDLE_LLVM=OFF"]
+        # Refresh install rules after updates, without switching the generator.
+        command = ["cmake", "-S", ROOT, "-B", build]
+    else:
+        command = ["cmake", "-S", ROOT, "-B", build, "-G", "Ninja",
+                   "-DCMAKE_BUILD_TYPE=Release", "-DGTI_BUILD_LSP=ON",
+                   "-DBUILD_TESTING=OFF", "-DGTI_RELEASE_BUILD=OFF",
+                   "-DGTI_BUNDLE_LLVM=OFF"]
     if llvm_dir:
         command.append(f"-DLLVM_DIR={llvm_dir}")
+        clang_dir = llvm_dir.parent / "clang"
+        if (clang_dir / "ClangConfig.cmake").is_file():
+            command.append(f"-DClang_DIR={clang_dir}")
     return command
 
 
@@ -153,21 +189,20 @@ def main():
     llvm_dir = args.llvm_dir or os.environ.get("LLVM_DIR")
     if llvm_dir:
         llvm_dir = pathlib.Path(llvm_dir).expanduser().resolve()
-        if not (llvm_dir / "LLVMConfig.cmake").is_file():
-            parser.error("--llvm-dir/LLVM_DIR must contain LLVMConfig.cmake")
-    elif cache_values(build) is None and shutil.which("brew"):
-        for formula in ("llvm", "llvm@22", "llvm@21", "llvm@20", "llvm@19", "llvm@18"):
-            result = subprocess.run(["brew", "--prefix", formula], capture_output=True, text=True)
-            candidate = pathlib.Path(result.stdout.strip()) / "lib/cmake/llvm"
-            if result.returncode == 0 and (candidate / "LLVMConfig.cmake").is_file():
-                llvm_dir = candidate.resolve()
-                break
+        if not supported_llvm(llvm_dir):
+            parser.error("--llvm-dir/LLVM_DIR must select supported LLVM 18 through 22")
+    elif (values := cache_values(build)) is None or not supported_llvm(
+            pathlib.Path(values.get("LLVM_DIR", ""))):
+        llvm_dir = discover_llvm()
+        if llvm_dir is None:
+            parser.error("no supported LLVM 18 through 22 found; install a supported "
+                         "LLVM (including libclang), then pass --llvm-dir")
     configure = configure_command(build, llvm_dir)
-    if configure and not shutil.which("ninja"):
+    if "-G" in configure and not shutil.which("ninja"):
         parser.error("Ninja is required for a fresh build")
     print(f"Build: {build}\nToolchain: {ROOT / 'toolchain'}\nLazy config: {configuration}")
     print(f"Parallel build jobs: {args.jobs}")
-    print("This is a local system-LLVM install, not a portable published release.")
+    print("macOS runtime libraries will be bundled; build prerequisites remain external.")
     if args.dry_run:
         return
     if configure:
