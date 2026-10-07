@@ -1738,7 +1738,8 @@ verification checks its scalar pointee, zero/one exact initializer, result,
 absence of constructor dispatch, and failure metadata. Named native callback
 values are passive ordered by-value inputs, including expanded packs; an
 ordinary callback parameter may also receive the already-admitted null value.
-This does not admit callback invocation or foreign-thread entry.
+Native invocation uses the separate exact-signature call contract below; null
+transport does not make invocation safe or admit foreign-thread entry.
 
 Class unique allocation with a selected ordinary constructor evaluates and
 prepares arguments first, then issues `AllocateObject`. Its local allocation
@@ -2494,6 +2495,20 @@ the verified target invocation, retaining the existing terminating failure
 firewall. Callback thunk text
 and calling-convention spelling remain backend representation choices; MIR
 owns the executable target and containment decision.
+
+An indirect native `Call` instead carries `nativeCalleeType` and a staged
+receiver value. It has no function, lambda, constructor, body, or adapter
+target. `isMirNativeIndirectCall` checks the exact admitted signature, result,
+argument roles/types, receiver `CallInput`, lexical `ForeignPointerCall`, and
+absence of a GTI failure channel. The ordinary ordered-input verifier checks
+callee-before-arguments scheduling and single invocation, while generic
+callable verification retains the concrete parameter boundary. Empty concrete
+semantic failure facts shadow deferred generic facts rather than falling back
+to an inapplicable callable failure channel. Foreign effects remain
+conservative: no GTI body-effect summary is inferred from an arbitrary address.
+Production emission reads this verified signature and staged value, reusing
+the ordinary native ABI operand bridge; it does not resolve a source name or
+consult AST/HIR to discover a target.
 
 MIR v57 retains `CThreadRuntimeOperation` on exact private native declarations.
 Create/join stay ordinary native `Call` instructions with explicit

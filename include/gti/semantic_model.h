@@ -934,6 +934,10 @@ enum class CallReceiverMode {
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
+  // A native indirect target is a value with this exact C signature, never
+  // a selected GTI function or a callback-adapter declaration.
+  std::optional<SemanticType> nativeCalleeType;
+  std::optional<CallableBoundary> callableBoundary;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<const Expr *> defaultArguments;

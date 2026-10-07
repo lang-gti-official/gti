@@ -495,6 +495,21 @@
         "thread_task_adapter": 75
       }
     },
+    "122-native-function-invocation.gti": {
+      "declarations": 105,
+      "bodies": 29,
+      "generated_items": 3,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 2,
+        "concrete_instance_adapter": 0,
+        "thread_task_adapter": 0
+      }
+    },
     "13-ownership.gti": {
       "declarations": 266,
       "bodies": 46,
@@ -1772,8 +1787,8 @@
     }
   },
   "totals": {
-    "declarations": 46992,
-    "bodies": 16077,
-    "generated_items": 3377
+    "declarations": 47097,
+    "bodies": 16106,
+    "generated_items": 3380
   }
 }

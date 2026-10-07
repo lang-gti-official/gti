@@ -1884,6 +1884,9 @@ private:
   void analyzeLambdaCall(const Call &call, const SemanticType &calleeType,
                          const std::vector<SemanticType> &argumentTypes);
 
+  void
+  analyzeNativeIndirectCall(const Call &call, const SemanticType &calleeType,
+                            const std::vector<SemanticType> &argumentTypes);
   void analyzeFunctionItemCall(const Call &call, const SemanticType &calleeType,
                                const std::vector<SemanticType> &argumentTypes);
 
