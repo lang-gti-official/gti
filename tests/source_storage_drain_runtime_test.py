@@ -24,7 +24,10 @@ if __name__ == "__main__":
     main(names=("source_storage_drain",), cases={"source_storage_drain": [
         ((), (0, "3\n103\n2\n102\n1\n101\n800\n", "")),
         (("fail",), (70, "3\n103\n800\n2\n102\n1\n101\n", failure(destructor))),
-        (("fail", "twice"), (70, "3\n103\n800\n2\n102\n", double)),
+        # The first failure drains its member (103). The second is an
+        # emergency: stop before that destructor's member (102) or any
+        # remaining slot cleanup, preserving both exact failure records.
+        (("fail", "twice"), (70, "3\n103\n800\n2\n", double)),
         (("body", "failure", "only"),
          (70, "800\n3\n103\n2\n102\n1\n101\n", failure(body))),
     ]})
