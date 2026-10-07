@@ -1,0 +1,59 @@
+#include <std/string>
+#include <std/vector>
+#include <std/list>
+#include <std/deque>
+#include <std/queue>
+
+class Resource {
+  int id;
+public:
+  Resource(int id) : id(id) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.id); }
+};
+
+class Work {
+  Resource first;
+  Resource second;
+  std::string label;
+public:
+  Work(Resource first, Resource second, std::string label)
+      : first(std::move(first)), second(std::move(second)), label(std::move(label)) {}
+  Work(Work& other) = delete;
+  Work(Work&& other) = default;
+  bool ready() { return this.label == "work"; }
+};
+
+struct Envelope<T> {
+  mut T value;
+  Envelope<Args...>(int divisor, Args... args) : value(T(args...)) {
+    int checked = 12 / divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  Envelope<Work> owned = Envelope<Work>(argc == 1 ? 1 : 0,
+      Resource(1), Resource(2), std::string("work"));
+  if (!owned.value.ready()) { return 1; }
+  {
+    mut std::list<Work> work{};
+    [[discard]] work.emplace_back(Resource(3), Resource(4), std::string("work"));
+    [[discard]] work.emplace_front(Resource(13), Resource(14), std::string("work"));
+    if (!work.front().ready()) { return 2; }
+  }
+  {
+    mut std::deque<Work> work{};
+    [[discard]] work.emplace_front(Resource(5), Resource(6), std::string("work"));
+    [[discard]] work.emplace_back(Resource(15), Resource(16), std::string("work"));
+    [[discard]] work.emplace(std::size_t(1), Resource(17), Resource(18), std::string("work"));
+    if (!work.front().ready()) { return 3; }
+  }
+  {
+    mut std::queue<Work> work{};
+    [[discard]] work.emplace(Resource(7), Resource(8), std::string("work"));
+    if (!work.front().ready()) { return 4; }
+  }
+  return 0;
+}

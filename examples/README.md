@@ -133,7 +133,7 @@ is a teaching helper, not a production server.
 | `86-owning-callbacks.gti` | retained lambda callbacks, `std::function`, cloning/replacement, mutable state, move-only captures, and one-shot invocation |
 | `87-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 | `88-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
-| `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, and owning work queues/history/sets |
+| `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `90-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
 | `91-json-documents.gti` | parsing, typed access, missing versus null, builders, array traversal, and deep cloning |
 | `92-json-codecs.gti` | exact codec specialization, owned application values, arrays, and JSON Pointer errors |

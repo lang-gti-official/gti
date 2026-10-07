@@ -47,6 +47,14 @@ add_test(NAME loop_break_reinitialization_runtime
                  "${PROJECT_SOURCE_DIR}/tests/loop_break_reinitialization_runtime_test.py"
                  "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
 set_tests_properties(loop_break_reinitialization_runtime PROPERTIES TIMEOUT 300)
+add_executable(gti_constructor_pack_field_tests constructor_pack_field_tests.cpp)
+target_link_libraries(gti_constructor_pack_field_tests PRIVATE gti_cpp_backend)
+add_test(NAME constructor_pack_field COMMAND gti_constructor_pack_field_tests)
+add_test(NAME constructor_pack_field_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/constructor_pack_field_runtime_test.py"
+                 "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+set_tests_properties(constructor_pack_field_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
