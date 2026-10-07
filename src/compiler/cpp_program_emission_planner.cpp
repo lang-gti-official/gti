@@ -3370,7 +3370,7 @@ public:
       output << (status == SpecialMemberStatus::Generated ? " = default;\n"
                                                           : " = delete;\n");
     };
-    const MirConstructorInstance *generatedConstructor = nullptr;
+    std::vector<const MirConstructorInstance *> generatedConstructors;
     for (const LoweredConstructorInstance &candidate :
          loweredProgram.constructorInstances()) {
       const MirClassInstance *owner = mir.findClassInstance(candidate.owner);
@@ -3378,26 +3378,38 @@ public:
           owner->declaration == declaration.id &&
           (concreteInstance != nullptr
                ? owner->id == concreteInstance->id
-               : owner->type.arguments.empty() &&
-                     owner->type.valueArguments.empty())) {
-        if (generatedConstructor != nullptr)
+               : !loweredClassUsesDirectRepresentation(*owner))) {
+        if (concreteInstance != nullptr && !generatedConstructors.empty())
           throw std::logic_error(
               "generated constructor needs one exact concrete owner");
-        generatedConstructor = mir.findConstructorInstance(candidate.id);
+        const auto *generated = mir.findConstructorInstance(candidate.id);
+        if (generated == nullptr)
+          throw std::logic_error("generated constructor lost its MIR body");
+        generatedConstructors.push_back(generated);
       }
     }
-    if (generatedConstructor != nullptr) {
-      const auto &plan =
-          generalMirBodyPlan({.kind = MirBodyKind::Constructor,
-                              .owner = generatedConstructor->id});
-      if (plan.supportsPlainText()) {
+    if (!generatedConstructors.empty()) {
+      // A native primary template can serve several concrete MIR owners.
+      // Declare its ordinary default once and each exact status overload;
+      // the out-of-line specializations remain the executable authority.
+      if (std::any_of(
+              generatedConstructors.begin(), generatedConstructors.end(),
+              [&](const auto *constructor) {
+                return generalMirBodyPlan({.kind = MirBodyKind::Constructor,
+                                           .owner = constructor->id})
+                    .supportsPlainText();
+              })) {
         writeIndent();
         output << classRow.name << "();\n";
       }
-      if (plan.supportsFailureText()) {
+      for (const auto *constructor : generatedConstructors) {
+        if (!generalMirBodyPlan(
+                 {.kind = MirBodyKind::Constructor, .owner = constructor->id})
+                 .supportsFailureText())
+          continue;
         writeIndent();
         output << classRow.name << '(';
-        emitLoweredConstructorParameters(*generatedConstructor, true);
+        emitLoweredConstructorParameters(*constructor, true);
         output << ");\n";
       }
     } else if (declaration.defaultConstructor !=

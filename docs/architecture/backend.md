@@ -548,6 +548,14 @@ construction retain CallInput activation, consuming handoff and failure cleanup.
 These are representation proofs over resolved MIR, not source-AST replay or
 standard-library type exceptions.
 
+Generated declaration-field schedules retain selected concrete constructor
+bodies and the verified `generatedDefaultRequiresSchedule` obligation. A native
+primary template may represent several such concrete owners: it declares its
+ordinary default constructor once and a distinct status overload for each
+selected MIR constructor. Out-of-line specializations execute those bodies;
+an inline native default or `noexcept` body must not replace them. Direct
+concrete representations retain their single exact-owner declaration.
+
 The passive default-body proof recurses through resolved, zero-argument generated
 class defaults with cycle detection. It does not admit source calls, selected
 user constructors, borrowed state, active cleanup, failure edges, or union/base
@@ -1235,7 +1243,7 @@ construction and its publication when the old and new loans have identical
 sources, access, ancestry and dependency sets.
 
 A generated default constructor of a non-generic class with no declared
-instance fields or destructor has a selected HIR constructor instance when
+instance fields has a selected HIR constructor instance when
 its state-bearing non-generic base has an exact zero-parameter source
 constructor. Semantics records that base declaration identity; HIR discovers
 the base even when no expression constructs it directly. The generated
@@ -1252,10 +1260,12 @@ The C++ plan emits this body's admitted status constructor instead of a native
 `= default` operation that would call a missing ordinary base entry. Trivial
 and cleanup-owning bases use the same `InitializeBase` publication contract;
 the rollback record retains the base's exact cleanup requirement. No terminal
-adapter or native exception supplies the failure path. Derived instance fields,
-source destructors, generic owners/bases, constructor default arguments and
+adapter or native exception supplies the failure path. A source destructor
+does not prevent this base-only generated schedule. Derived instance fields,
+generic owners/bases, constructor default arguments and
 generated-base chains remain outside this generated-body slice and retain
-their existing structural construction representation.
+their existing structural construction representation or the separately
+verified declaration-field schedule described above.
 
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
