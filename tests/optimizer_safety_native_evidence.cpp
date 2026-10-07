@@ -227,12 +227,13 @@ int32_t fixed_success() {
 }
 
 int32_t storage_success() {
-  mut gti_internal::storage<Tracker> values =
-      gti_internal::allocate_storage<Tracker>(uint64_t(1));
-  gti_internal::storage_construct(values, uint64_t(0), int32_t(7));
-  int32_t observed =
-      gti_internal::storage_read(values, uint64_t(0)).get();
-  gti_internal::storage_destroy(values, uint64_t(0));
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<Tracker>(std::size_t(1));
+  if (!allocated) { return -1; }
+  mut auto values = std::move(allocated).value();
+  values.emplace(std::size_t(0), int32_t(7));
+  int32_t observed = values.get(std::size_t(0)).get();
+  values.destroy(std::size_t(0));
   return observed;
 }
 
@@ -283,9 +284,11 @@ int32_t closed_vector_success() {
 
 int32_t storage_constructor_barrier() {
   if (constructed_value < 10) {
-    mut gti_internal::storage<MutatesOnConstruct> values =
-        gti_internal::allocate_storage<MutatesOnConstruct>(uint64_t(1));
-    gti_internal::storage_construct(values, uint64_t(0));
+    std::allocator allocator{};
+    auto allocated = allocator.try_storage<MutatesOnConstruct>(std::size_t(1));
+    if (!allocated) { return 1; }
+    mut auto values = std::move(allocated).value();
+    values.emplace(std::size_t(0));
     return constructed_value + 1;
   }
   return 0;
@@ -297,11 +300,13 @@ int32_t bounds_failure(uint64_t index) {
 }
 
 int32_t storage_failure() {
-  mut gti_internal::storage<int32_t> values =
-      gti_internal::allocate_storage<int32_t>(uint64_t(1));
-  gti_internal::storage_construct(values, uint64_t(0), int32_t(9));
-  gti_internal::storage_destroy(values, uint64_t(0));
-  return gti_internal::storage_read(values, uint64_t(0));
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return -1; }
+  mut auto values = std::move(allocated).value();
+  values.construct(std::size_t(0), int32_t(9));
+  values.destroy(std::size_t(0));
+  return values.get(std::size_t(0));
 }
 
 int32_t overflow_failure(int32_t value) {
@@ -347,13 +352,13 @@ int main(int argc, std::vector<std::string> argv) {
     return vector_failure(int32_t(2));
   }
   if (fixed_success() != 10) { return 1; }
+  if (closed_vector_success() != -4) { return 8; }
   if (storage_success() != 7) { return 2; }
   if (destroyed != 7) { return 3; }
   if (arithmetic_success(4) != 5) { return 4; }
   if (remainder_success(int32_t(-2147483647 - 1)) != 0) { return 5; }
   if (remainder_assign_success(int32_t(-2147483647 - 1)) != 0) { return 6; }
   if (fixed_write_success(511) != 256) { return 7; }
-  if (closed_vector_success() != -4) { return 8; }
   return 0;
 }
 )";
@@ -546,6 +551,99 @@ void testClosedCallNearMisses() {
          "budget and retain their checked arithmetic");
 }
 
+void testClosedCallAfterSourceAllocation(
+    const std::string &compiler, const std::filesystem::path &directory) {
+  // The positive fixture exercises the existing prefix-storage proof before
+  // source allocation. A required incomplete closed-call summary can prevent
+  // discovery of later contexts, even for an independent vector workload.
+  // Keep this program-order boundary explicit rather than claiming that source
+  // storage retains the removed private sparse-state analysis.
+  constexpr std::string_view vectorCheck =
+      "  if (closed_vector_success() != -4) { return 8; }\n";
+  constexpr std::string_view storageCheck =
+      "  if (destroyed != 7) { return 3; }\n";
+  std::string allocatorFirst(source);
+  const std::size_t vectorPosition = allocatorFirst.find(vectorCheck);
+  expect(vectorPosition != std::string::npos,
+         "source-allocation variant must retain the exact vector control");
+  if (vectorPosition == std::string::npos) {
+    return;
+  }
+  allocatorFirst.erase(vectorPosition, vectorCheck.size());
+  const std::size_t storagePosition = allocatorFirst.find(storageCheck);
+  expect(storagePosition != std::string::npos,
+         "source-allocation variant must retain exact cleanup observation");
+  if (storagePosition == std::string::npos) {
+    return;
+  }
+  allocatorFirst.insert(storagePosition + storageCheck.size(), vectorCheck);
+
+  const lang::FrontendResult frontend = analyzeTrusted(allocatorFirst);
+  expect(frontend.canGenerateCode(),
+         "source-allocation context barrier should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::HirFunctionInstance *scale =
+      findFunction(frontend, "closed_vector_scale");
+  expect(scale != nullptr,
+         "source-allocation context barrier must retain vector scale");
+  if (scale == nullptr) {
+    return;
+  }
+
+  RunResult baseline;
+  for (const lang::OptimizationLevel level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+        lang::OptimizationLevel::O3}) {
+    const std::string label =
+        level == lang::OptimizationLevel::O0   ? "allocator-first-o0"
+        : level == lang::OptimizationLevel::O2 ? "allocator-first-o2"
+                                               : "allocator-first-o3";
+    const EmittedProgram program =
+        emitProgram(frontend, level, directory, label);
+    expect(
+        functionDischarges(frontend, program.optimized, "closed_vector_scale",
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
+        "an undiscovered post-allocation context must not authorize vector "
+        "arithmetic discharges");
+    if (level != lang::OptimizationLevel::O0) {
+      bool retainedRemark = false;
+      for (const lang::OptimizationPassReport &pass :
+           program.optimized.report.passes) {
+        retainedRemark |= std::any_of(
+            pass.remarks.begin(), pass.remarks.end(),
+            [&](const lang::OptimizationRemark &remark) {
+              return remark.kind == lang::OptimizationRemarkKind::Missed &&
+                     remark.body.kind == lang::MirBodyKind::Function &&
+                     remark.body.owner == scale->id &&
+                     remark.pass == "discharge-arithmetic-overflow-checks" &&
+                     remark.message ==
+                         "check retained: canonical MIR facts do not prove "
+                         "arithmetic-overflow safety";
+            });
+      }
+      expect(retainedRemark,
+             "the conservative context boundary must report its retained "
+             "arithmetic check");
+    }
+    const std::filesystem::path binary =
+        build(compiler, program.artifact, directory, label);
+    const RunResult actual = run(binary, directory, label, "");
+    if (level == lang::OptimizationLevel::O0) {
+      baseline = actual;
+      expect(actual.built && actual.exitStatus == 0,
+             "allocator-first O0 must preserve result and exact cleanup");
+    } else {
+      expect(actual.built && actual.exitStatus == baseline.exitStatus &&
+                 actual.stdoutText == baseline.stdoutText &&
+                 actual.stderrText == baseline.stderrText,
+             "allocator-first O2/O3 must preserve O0 behavior despite the "
+             "conservative closed-call context boundary");
+    }
+  }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -558,6 +656,7 @@ int main(int argc, char **argv) {
 
   testClosedCallNearMisses();
   testBoundedLogicalSizeEmission(compiler, directory);
+  testClosedCallAfterSourceAllocation(compiler, directory);
 
   const lang::FrontendResult frontend = analyzeTrusted(source);
   if (!frontend.canGenerateCode()) {
@@ -596,9 +695,6 @@ int main(int argc, char **argv) {
                " discharge(s), found " + std::to_string(actual));
   };
   expectDischarges("fixed_success", lang::MirSafetyCheckFamily::Bounds, 1);
-  expectDischarges("storage_success", lang::MirSafetyCheckFamily::Bounds, 1);
-  expectDischarges("storage_success", lang::MirSafetyCheckFamily::StorageState,
-                   1);
   expectDischarges("arithmetic_success",
                    lang::MirSafetyCheckFamily::ArithmeticOverflow, 1);
   expectDischarges("remainder_success",
@@ -613,8 +709,6 @@ int main(int argc, char **argv) {
   expect(
       functionDischarges(frontend, o2.optimized, "bounds_failure",
                          lang::MirSafetyCheckFamily::Bounds) == 0 &&
-          functionDischarges(frontend, o2.optimized, "storage_failure",
-                             lang::MirSafetyCheckFamily::StorageState) == 0 &&
           functionDischarges(frontend, o2.optimized, "overflow_failure",
                              lang::MirSafetyCheckFamily::ArithmeticOverflow) ==
               0 &&
@@ -626,6 +720,55 @@ int main(int argc, char **argv) {
       "runtime-failing near misses and storage lifecycle mutation barriers "
       "must retain their exact checks");
 
+  const auto retainedSourcePolicyChecks = [](const lang::MirProgram &program) {
+    std::size_t count = 0;
+    for (const lang::MirBodyAddress address :
+         lang::enumerateMirBodyAddresses(program)) {
+      const lang::MirBody *body = lang::findMirBody(program, address);
+      if (body == nullptr) {
+        continue;
+      }
+      for (const lang::MirBlock &block : body->blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          const auto failure =
+              lang::intrinsicBooleanFailureOutcome(instruction.intrinsic);
+          if (!failure ||
+              failure->code != lang::DefinedFailureCode::InvalidStorageState) {
+            continue;
+          }
+          ++count;
+          expect(
+              !instruction.tombstone && instruction.safetyDischarges.empty() &&
+                  std::any_of(instruction.definedFailure.localOrigins.begin(),
+                              instruction.definedFailure.localOrigins.end(),
+                              [&](const lang::DefinedFailureOrigin &origin) {
+                                return std::find(origin.outcomes.begin(),
+                                                 origin.outcomes.end(),
+                                                 *failure) !=
+                                       origin.outcomes.end();
+                              }),
+              "source slot-policy checks must retain their exact outcome; "
+              "a removed private initialized-set model is not proof");
+        }
+      }
+    }
+    return count;
+  };
+  const std::size_t policyChecks = retainedSourcePolicyChecks(frontend.mir);
+  expect(policyChecks > 0 &&
+             retainedSourcePolicyChecks(o0.optimized.mir) == policyChecks &&
+             retainedSourcePolicyChecks(o2.optimized.mir) == policyChecks &&
+             retainedSourcePolicyChecks(o3.optimized.mir) == policyChecks,
+         "source-defined storage must preserve policy checks at every level");
+  for (const EmittedProgram &program : programs) {
+    expect(std::none_of(program.optimized.report.passes.begin(),
+                        program.optimized.report.passes.end(),
+                        [](const lang::OptimizationPassReport &pass) {
+                          return pass.name == "discharge-storage-state-checks";
+                        }),
+           "source-defined storage must not retain a private sparse-slot pass");
+  }
+
   constexpr std::string_view checkedArrayCall =
       " = ::gti_internal::backend::mir_checked_array_read_v1(";
   constexpr std::string_view checkedAddCall =
@@ -636,10 +779,6 @@ int main(int argc, char **argv) {
       "::gti_internal::backend::mir_checked_remainder_v1";
   constexpr std::string_view nonzeroRemainderCall =
       "::gti_internal::backend::mir_nonzero_remainder_v1";
-  constexpr std::string_view checkedStorageCall =
-      " = ::gti_internal::backend::mir_storage_read_v1(";
-  constexpr std::string_view uncheckedStorageCall =
-      "&::gti_internal::backend::storage_read_unchecked(";
   constexpr std::string_view checkedPrefixStorageCall =
       " = ::gti_internal::backend::mir_prefix_read_v1(";
   constexpr std::string_view uncheckedPrefixStorageCall =
@@ -663,10 +802,6 @@ int main(int argc, char **argv) {
                  occurrences(o0.cpp, checkedRemainderCall) &&
              occurrences(o0.cpp, nonzeroRemainderCall) == 0 &&
              occurrences(o2.cpp, nonzeroRemainderCall) > 0 &&
-             occurrences(o2.cpp, checkedStorageCall) <
-                 occurrences(o0.cpp, checkedStorageCall) &&
-             occurrences(o0.cpp, uncheckedStorageCall) == 0 &&
-             occurrences(o2.cpp, uncheckedStorageCall) > 0 &&
              (occurrences(o2.cpp, checkedPrefixStorageCall) <
                   occurrences(o0.cpp, checkedPrefixStorageCall) ||
               occurrences(o2.cpp, checkedPrefixStorageMutCall) <
@@ -690,8 +825,6 @@ int main(int argc, char **argv) {
                  occurrences(o3.cpp, checkedRemainderCall) &&
              occurrences(o2.cpp, nonzeroRemainderCall) ==
                  occurrences(o3.cpp, nonzeroRemainderCall) &&
-             occurrences(o2.cpp, uncheckedStorageCall) ==
-                 occurrences(o3.cpp, uncheckedStorageCall) &&
              occurrences(o2.cpp, checkedPrefixStorageCall) ==
                  occurrences(o3.cpp, checkedPrefixStorageCall) &&
              occurrences(o2.cpp, uncheckedPrefixStorageCall) ==

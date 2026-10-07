@@ -27,7 +27,7 @@ enum class UnsafeOperationKind {
   PointerArithmetic,
   ForeignPointerCall,
   DeclaredUnsafeCall,
-  StorageAdoption,
+  ObjectLifetime,
 };
 
 struct SemanticLoanEndpoint {
@@ -268,17 +268,6 @@ enum class IntrinsicKind {
   UniqueOwnerIsNull,
   UniqueOwnerSwap,
   UniqueOwnerUpcast,
-  AllocateStorage,
-  StorageTryAllocate,
-  StorageCapacity,
-  StorageInitialized,
-  StorageConstruct,
-  StorageRead,
-  StorageReadMut,
-  StorageDestroy,
-  StorageRelocate,
-  StorageShiftRight,
-  StorageShiftLeft,
   IntegerWrappingAdd,
   IntegerWrappingSubtract,
   IntegerWrappingMultiply,
@@ -362,9 +351,49 @@ enum class IntrinsicKind {
   RawPointerConversion,
   ObjectSize,
   ObjectAlignment,
-  StorageTryAdopt,
+  ObjectDestroy,
+  ObjectConstruct,
+  ObjectRelocate,
+  RequireVacantStorage,
+  RequireLiveStorage,
+  RequireRelocationCapacity,
+  RequireRelocationSource,
+  RequireRelocationDestination,
   Count,
 };
+
+// These checks consume a source-computed condition, not a storage object.
+// The declaration-bound intrinsic selects the failure family; neither MIR
+// nor a backend needs to inspect a container or rediscover its slot policy.
+[[nodiscard]] inline std::optional<DefinedFailureOutcome>
+intrinsicBooleanFailureOutcome(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::RequireKey:
+    return DefinedFailureOutcome{DefinedFailureCode::KeyNotFound,
+                                 DefinedFailureDetail::KeyLookup};
+  case IntrinsicKind::RequireContainerArgument:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidContainerArgument,
+                                 DefinedFailureDetail::ContainerArgument};
+  case IntrinsicKind::RequireVacantStorage:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::DuplicateConstruction};
+  case IntrinsicKind::RequireLiveStorage:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::UninitializedAccess};
+  case IntrinsicKind::RequireRelocationCapacity:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::RelocationCapacity};
+  case IntrinsicKind::RequireRelocationSource:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::InvalidRelocationSource};
+  case IntrinsicKind::RequireRelocationDestination:
+    return DefinedFailureOutcome{
+        DefinedFailureCode::InvalidStorageState,
+        DefinedFailureDetail::OccupiedRelocationDestination};
+  default:
+    return std::nullopt;
+  }
+}
 
 [[nodiscard]] constexpr bool simdIntrinsic(IntrinsicKind intrinsic) {
   return intrinsic >= IntrinsicKind::SimdAdd &&
@@ -403,7 +432,6 @@ integerArithmeticIntrinsic(IntrinsicKind intrinsic);
 enum class CompilerCapabilityTypeKind {
   None,
   UniqueOwner,
-  Storage,
   TextView,
   CString,
   PrefixStorage,
@@ -413,6 +441,7 @@ enum class CompilerCapabilityTypeKind {
   MutexStorage,
   MutexLockToken,
   SharedOwner,
+  UninitializedStorage,
   NativeCScalar,
 };
 
@@ -751,6 +780,8 @@ struct ClassTypeInfo {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
+  std::optional<SemanticType> transferCondition;
+  std::optional<SemanticType> shareCondition;
   bool compilerPrivate = false;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
@@ -887,8 +918,12 @@ struct ClassLifecycleInfo {
   std::optional<DestructorInfo> declaredDestructor;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
   // Exact source base selected by the bounded generated-constructor schedule.
-  // Zero retains the existing structural declaration-initializer route.
+  // Zero means this base-only family is not selected; field-default schedules
+  // are selected independently below.
   ConstructorId generatedDefaultBaseConstructor = 0;
+  // Declaration defaults execute in one selected constructor body, so failure
+  // can roll back earlier completed fields before leaving construction.
+  bool generatedDefaultFieldInitializers = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;

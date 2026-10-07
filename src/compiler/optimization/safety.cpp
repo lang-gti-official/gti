@@ -52,7 +52,6 @@ struct StorageFact {
   std::optional<IntegerFact> elements;
   IntegerFieldFacts elementIntegers;
   bool elementsUnknown = false;
-  std::set<std::uint64_t> initialized;
   Evidence evidence;
 
   friend bool operator==(const StorageFact &, const StorageFact &) = default;
@@ -1704,8 +1703,7 @@ stableStorageOriginForOperand(const AbstractState &state,
   if (type->kind == SemanticType::Reference && type->arguments.size() == 1) {
     type = &type->arguments.front();
   }
-  if (type->kind != SemanticType::Storage &&
-      type->kind != SemanticType::PrefixStorage) {
+  if (type->kind != SemanticType::PrefixStorage) {
     return std::nullopt;
   }
   if (const std::optional<MirPlaceId> tracked =
@@ -1852,8 +1850,7 @@ closedCallTarget(const MirProgram &program, const MirInstruction &instruction) {
                           operand.type.kind == SemanticType::UniqueOwner ||
                           operand.type.kind == SemanticType::SharedPointer ||
                           operand.type.kind == SemanticType::Expected ||
-                          operand.type.kind == SemanticType::PrefixStorage ||
-                          operand.type.kind == SemanticType::Storage;
+                          operand.type.kind == SemanticType::PrefixStorage;
   return owningType &&
          (input->callInputKind == HirCallInputKind::CopyValue ||
           input->callInputKind == HirCallInputKind::MoveValue ||
@@ -2336,8 +2333,7 @@ void applyInstruction(const MirBody &body,
       if (storage != state.storages.end()) {
         state.storageValues[*instruction.result] = storage->second;
       }
-      if (source.type.kind == SemanticType::Storage ||
-          source.type.kind == SemanticType::PrefixStorage) {
+      if (source.type.kind == SemanticType::PrefixStorage) {
         state.storageOrigins[*instruction.result] = sourcePlace;
       }
       const MirPlaceId objectRoot = aggregateRoot(body, aliases, source.place);
@@ -2497,8 +2493,7 @@ void applyInstruction(const MirBody &body,
       state.storages[destination] = std::move(stored);
     } else if (const MirPlace *place = body.findPlace(destination);
                place != nullptr &&
-               (place->type.kind == SemanticType::Storage ||
-                place->type.kind == SemanticType::PrefixStorage)) {
+               place->type.kind == SemanticType::PrefixStorage) {
       state.storages.erase(destination);
     }
     if (sourceObject) {
@@ -2541,21 +2536,6 @@ void applyInstruction(const MirBody &body,
       // A default Initialize with no value operands still writes its exact
       // destination, but does not itself introduce unknown execution effects.
       killUnknownMemory(state);
-    }
-    return;
-  }
-
-  if (instruction.intrinsic == IntrinsicKind::AllocateStorage &&
-      instruction.result && !instruction.operands.empty()) {
-    const std::optional<IntegerFact> capacity =
-        integerForOperand(body, state, instruction.operands.front());
-    if (capacity) {
-      Evidence evidence = capacity->evidence;
-      add(evidence, block.id);
-      addInstruction(evidence, instruction.id);
-      addValue(evidence, *instruction.result);
-      state.storageValues[*instruction.result] = {
-          .capacity = *capacity, .evidence = std::move(evidence)};
     }
     return;
   }
@@ -2796,70 +2776,12 @@ void applyInstruction(const MirBody &body,
     }
   }
 
-  const bool storageOperation =
-      instruction.intrinsic == IntrinsicKind::StorageConstruct ||
-      instruction.intrinsic == IntrinsicKind::StorageRead ||
-      instruction.intrinsic == IntrinsicKind::StorageReadMut ||
-      instruction.intrinsic == IntrinsicKind::StorageDestroy;
-  if (storageOperation && instruction.operands.size() >= 2) {
-    const std::optional<MirPlaceId> origin =
-        storageOriginForOperand(state, aliases, instruction.operands[0]);
-    const std::optional<IntegerFact> index =
-        integerForOperand(body, state, instruction.operands[1]);
-    std::optional<StorageFact> updated;
-    std::vector<MirValueId> originValues;
-    if (origin) {
-      for (const auto &[value, place] : state.storageOrigins) {
-        if (place == *origin) {
-          originValues.push_back(value);
-        }
-      }
-    }
-    if (origin && index) {
-      auto storage = state.storages.find(*origin);
-      const std::optional<std::uint64_t> exact = nonnegativeSingleton(*index);
-      if (storage != state.storages.end() && exact &&
-          within(*index, storage->second.capacity)) {
-        if (instruction.intrinsic == IntrinsicKind::StorageConstruct) {
-          storage->second.initialized.insert(*exact);
-          add(storage->second.evidence, block.id);
-          addInstruction(storage->second.evidence, instruction.id);
-          addValue(storage->second.evidence, instruction.operands[1].value);
-        } else if (instruction.intrinsic == IntrinsicKind::StorageDestroy) {
-          storage->second.initialized.erase(*exact);
-          add(storage->second.evidence, block.id);
-          addInstruction(storage->second.evidence, instruction.id);
-        }
-        updated = storage->second;
-      } else if (storage != state.storages.end() &&
-                 (instruction.intrinsic == IntrinsicKind::StorageConstruct ||
-                  instruction.intrinsic == IntrinsicKind::StorageDestroy)) {
-        updated = storage->second;
-        updated->initialized.clear();
-      }
-    }
-    if (instruction.intrinsic == IntrinsicKind::StorageConstruct ||
-        instruction.intrinsic == IntrinsicKind::StorageDestroy) {
-      // User lifecycle code may mutate any other reachable place. The first
-      // storage operand remains uniquely borrowed for the intrinsic, so only
-      // its post-success capacity/state fact survives that barrier.
-      killUnknownMemory(state);
-      if (origin && updated) {
-        state.storages[*origin] = std::move(*updated);
-        for (const MirValueId value : originValues) {
-          state.storageOrigins[value] = *origin;
-        }
-      }
-    }
-    return;
-  }
-
   if (applyClosedCall(body, aliases, block, instruction, state, closedCalls,
                       address)) {
     return;
   }
 
-  // Calls outside the admitted private-storage vocabulary may mutate any
+  // Calls outside the admitted prefix-storage vocabulary may mutate any
   // reachable place through a reference or opaque host boundary. Value facts
   // remain valid because MIR values are immutable.
   unknownEffectBarrier();
@@ -2986,12 +2908,6 @@ void joinStorageFact(StorageFact &target, const StorageFact &incoming,
       joinIntegers(target.elementIntegers, incoming.elementIntegers, widen);
     }
   }
-  std::set<std::uint64_t> intersection;
-  std::set_intersection(target.initialized.begin(), target.initialized.end(),
-                        incoming.initialized.begin(),
-                        incoming.initialized.end(),
-                        std::inserter(intersection, intersection.end()));
-  target.initialized = std::move(intersection);
   target.evidence = merged(target.evidence, incoming.evidence);
 }
 
@@ -3325,7 +3241,6 @@ loadedPlace(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   case SemanticType::RawPointer:
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
   case SemanticType::Class:
     return true;
@@ -4061,32 +3976,23 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
         }
       }
 
-      const bool sparseStorageRead =
-          instruction.kind == MirInstructionKind::Call &&
-          (instruction.intrinsic == IntrinsicKind::StorageRead ||
-           instruction.intrinsic == IntrinsicKind::StorageReadMut) &&
-          instruction.operands.size() >= 2;
       const bool prefixStorageRead =
           instruction.kind == MirInstructionKind::Call &&
           (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
            instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
           instruction.operands.size() >= 2;
-      if (sparseStorageRead || prefixStorageRead) {
+      if (prefixStorageRead) {
         const std::optional<StorageFact> storage =
             storageForOperand(state, aliases, instruction.operands[0]);
-        const std::optional<MirPlaceId> origin =
-            prefixStorageRead
-                ? stableStorageOriginForOperand(state, aliases,
-                                                instruction.operands[0])
-                : storageOriginForOperand(state, aliases,
-                                          instruction.operands[0]);
+        const std::optional<MirPlaceId> origin = stableStorageOriginForOperand(
+            state, aliases, instruction.operands[0]);
         const std::optional<IntegerFact> index =
             integerForOperand(body, state, instruction.operands[1]);
         std::optional<Evidence> boundsEvidence;
-        if (prefixStorageRead && storage && index && storage->length &&
+        if (storage && index && storage->length &&
             within(*index, *storage->length)) {
           boundsEvidence = merged(storage->evidence, index->evidence);
-        } else if (prefixStorageRead && origin) {
+        } else if (origin) {
           const std::optional<ScalarOrigin> scalar =
               scalarOriginForOperand(state, aliases, instruction.operands[1]);
           if (scalar) {
@@ -4096,9 +4002,6 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
               boundsEvidence = checked->second;
             }
           }
-        } else if (sparseStorageRead && storage && index &&
-                   within(*index, storage->capacity)) {
-          boundsEvidence = merged(storage->evidence, index->evidence);
         }
         if (boundsEvidence) {
           Evidence evidence = std::move(*boundsEvidence);
@@ -4109,17 +4012,7 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
                       MirSafetyCheckFamily::Bounds,
                       {.code = DefinedFailureCode::IndexOutOfBounds,
                        .detail = DefinedFailureDetail::PrivateStorage},
-                      evidence);
-          const std::optional<std::uint64_t> exact =
-              index ? nonnegativeSingleton(*index) : std::nullopt;
-          if (sparseStorageRead && storage && exact &&
-              storage->initialized.contains(*exact)) {
-            appendProof(analysis, address, block, instruction,
-                        MirSafetyCheckFamily::StorageState,
-                        {.code = DefinedFailureCode::InvalidStorageState,
-                         .detail = DefinedFailureDetail::UninitializedAccess},
-                        std::move(evidence));
-          }
+                      std::move(evidence));
         }
       }
       applyInstruction(body, aliases, block, instruction, state, nullptr,

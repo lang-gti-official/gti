@@ -78,8 +78,6 @@ public:
       return unaryType("gti_internal::unique_owner", type);
     case SemanticType::SharedPointer:
       return unaryType("std::shared_ptr", type);
-    case SemanticType::Storage:
-      return unaryType("gti_internal::storage", type);
     case SemanticType::PrefixStorage:
       return unaryType("gti_internal::prefix_storage", type);
     case SemanticType::TypeParameter:

@@ -646,6 +646,8 @@ private:
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
             .sharePolicy = info->sharePolicy,
+            .transferCondition = info->transferCondition,
+            .shareCondition = info->shareCondition,
             .cAbiLayout = lowerCAbiLayout(*info, semantics_),
             .unionLayout = lowerUnionLayout(*info, semantics_),
             .compilerCapability = info->compilerCapability,
@@ -664,6 +666,9 @@ private:
         if (const ClassLifecycleInfo *lifecycle =
                 semantics_.findClassLifecycle(*declaration)) {
           payload.defaultConstructor = lifecycle->defaultConstructor;
+          payload.generatedDefaultRequiresSchedule =
+              lifecycle->generatedDefaultFieldInitializers ||
+              lifecycle->generatedDefaultBaseConstructor != 0;
           payload.copyConstructor = lifecycle->copyConstructor;
           payload.moveConstructor = lifecycle->moveConstructor;
           payload.copyAssignment = lifecycle->copyAssignment;
@@ -940,6 +945,8 @@ private:
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.type != lowered.type || source.kind != lowered.kind ||
         source.traits != lowered.traits ||
+        source.generatedDefaultRequiresSchedule !=
+            lowered.generatedDefaultRequiresSchedule ||
         source.cOpaqueHandle != lowered.cOpaqueHandle ||
         source.fieldInitializers.placeDomain !=
             lowered.fieldInitializers.placeDomain ||
@@ -1002,15 +1009,14 @@ private:
         (source.source != nullptr || source.declaration != 0 ||
          !source.parameterTypes.empty() || owner == nullptr ||
          owner->defaultConstructor != SpecialMemberStatus::Generated ||
-         !owner->fields.empty() || owner->destructor ||
-         source.initializers.size() != 1 ||
-         source.initializers.front().kind !=
-             ConstructorInitializerTargetKind::Base ||
+         !source.parameterBindings.empty() || !source.body.roots.empty() ||
+         !source.body.statements.empty() ||
          lowered.definitionKind != MirDefinitionKind::Source))
       return reject("generated constructor instance " +
                     std::to_string(index + 1) +
                     " has an invalid structural schedule");
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.generatedDefault != lowered.generatedDefault ||
         source.constexprConstructor != lowered.constexprConstructor ||
         source.constexprConstructor !=
             (source.source != nullptr && source.source->isConstexpr()) ||

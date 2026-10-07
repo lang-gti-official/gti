@@ -3169,15 +3169,13 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Compiler-private unique owners can only be local bindings, "
            "function values, or class fields.",
            "GTI-S2018");
-  } else if ((declaredType.kind == SemanticType::Storage ||
-              declaredType.kind == SemanticType::PrefixStorage) &&
+  } else if (declaredType.kind == SemanticType::PrefixStorage &&
              globalStorage) {
     report(stmt.name(),
            "Compiler-private storage can only be used as a local binding or "
            "class field.",
            "GTI-S2019");
-  } else if ((declaredType.kind == SemanticType::Storage ||
-              declaredType.kind == SemanticType::PrefixStorage) &&
+  } else if (declaredType.kind == SemanticType::PrefixStorage &&
              functionDepth > 0 && !stmt.initializer()) {
     report(stmt.name(),
            "Compiler-private storage bindings require an allocation "

@@ -18,8 +18,12 @@ int main() {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind == lang::MirInstructionKind::Construct &&
-            !instruction.constructorTarget && instruction.operands.empty() &&
+            instruction.constructorTarget && instruction.operands.empty() &&
             instruction.result) {
+          const auto *target = frontend.mir.findConstructorInstance(
+              *instruction.constructorTarget);
+          const auto *owner =
+              target ? frontend.mir.findClassInstance(target->owner) : nullptr;
           const auto stage = std::find_if(
               block.instructions.begin(), block.instructions.end(),
               [&](const auto &candidate) {
@@ -31,6 +35,12 @@ int main() {
               });
           if (stage != block.instructions.end()) {
             ++defaultStages;
+            expect(target && target->generatedDefault && owner &&
+                       owner->type == instruction.info.type &&
+                       target->parameterTypes.empty() &&
+                       stage->operands.front().type == owner->type,
+                   "the omitted default stages the exact generated concrete "
+                   "zero-argument constructor result");
             for (int mutation = 0; mutation != 2; ++mutation) {
               auto malformed = frontend.mir;
               auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -84,47 +94,91 @@ int main() {
          "omitted brace default uses exactly one prepared argument stage");
   std::size_t nestedDefaults = 0;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *consumer = frontend.mir.findClassInstance(constructor.owner);
+    const auto *consumerInfo =
+        consumer ? frontend.semantics.findClassType(consumer->declaration)
+                 : nullptr;
+    if (!consumerInfo || !consumerInfo->declaration ||
+        consumerInfo->declaration->name().lexeme != "NestedDefault")
+      continue;
     for (const auto &block : constructor.body.blocks) {
       for (const auto &producer : block.instructions) {
         if (producer.kind != lang::MirInstructionKind::Construct ||
-            producer.constructorTarget || producer.operands.size() != 0 ||
+            !producer.constructorTarget || !producer.operands.empty() ||
             producer.info.type.kind != lang::SemanticType::Class)
           continue;
-        const auto owner = std::find_if(
-            frontend.mir.classInstances().begin(),
-            frontend.mir.classInstances().end(), [&](const auto &candidate) {
-              return candidate.type == producer.info.type;
-            });
-        if (owner == frontend.mir.classInstances().end() ||
-            owner->declaredFields.size() != 2)
-          continue;
         ++nestedDefaults;
+        const auto *selected =
+            frontend.mir.findConstructorInstance(*producer.constructorTarget);
+        const auto *owner =
+            selected ? frontend.mir.findClassInstance(selected->owner)
+                     : nullptr;
+        const bool exactSchedule =
+            selected && selected->generatedDefault &&
+            selected->parameterTypes.empty() && owner &&
+            owner->type == producer.info.type &&
+            owner->declaredFields.size() == 2 &&
+            selected->initializers.size() == 2 &&
+            std::equal(selected->initializers.begin(),
+                       selected->initializers.end(),
+                       owner->declaredFields.begin(),
+                       [](const auto &initializer, const auto &field) {
+                         return initializer.field == field.symbol &&
+                                initializer.targetType == field.type &&
+                                initializer.arguments.size() == 1;
+                       });
+        expect(exactSchedule,
+               "the nested declaration default selects its exact generated "
+               "two-field schedule in declaration order");
+        if (!exactSchedule)
+          continue;
         const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
                                            constructor.id};
         expect(lang::CppMirBodyEmitter(frontend.mir, rows)
                    .supportsFailureBodyText(address),
                "nested generated defaults admit their exact constructor "
                "publication");
+        const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+            frontend.mir, constructor);
+        const auto text =
+            lang::CppMirBodyEmitter(frontend.mir, rows)
+                .emitFailureBodyText(address, "nested-default", 1);
+        expect(bindings.size() == 1 && constructor.initializers.size() == 1 &&
+                   bindings.front().field ==
+                       constructor.initializers.front().field &&
+                   bindings.front().fieldType == owner->type &&
+                   bindings.front().constructor == selected->id &&
+                   bindings.front().constructInstruction == producer.id &&
+                   text.emitted() &&
+                   text.text.find("constructed field initializer publishes in "
+                                  "the member initializer list") !=
+                       std::string::npos,
+               "the exact nested field and generated target publish through "
+               "the verified constructor binding rather than SSA defaulting");
         for (int mutation = 0; mutation != 2; ++mutation) {
           auto malformed = frontend.mir;
-          auto *changed = const_cast<lang::MirClassInstance *>(
-              malformed.findClassInstance(owner->id));
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(selected->id));
           bool changedProducer = false;
-          for (auto &nestedBlock : changed->fieldInitializers.blocks)
+          for (auto &nestedBlock : changed->body.blocks)
             for (auto &nested : nestedBlock.instructions) {
               if (changedProducer ||
-                  (nested.kind != lang::MirInstructionKind::Call &&
-                   nested.kind != lang::MirInstructionKind::Construct))
+                  nested.kind != lang::MirInstructionKind::Construct ||
+                  !nested.constructorTarget)
                 continue;
               changedProducer = true;
-              if (mutation == 0)
+              if (mutation == 0) {
                 nested.info.type =
                     owner->type; // a recursive default-body cycle
-              else
+                nested.constructorTarget = selected->id;
+              } else {
                 nested.functionTarget = 999999; // not a generated default
+              }
             }
-          expect(changedProducer && !lang::CppMirBodyEmitter(malformed, rows)
-                                         .supportsFailureBodyText(address),
+          expect(changedProducer &&
+                     (!lang::verifyMirProgram(malformed).valid() ||
+                      !lang::CppMirBodyEmitter(malformed, rows)
+                           .supportsFailureBodyText(address)),
                  "nested default proof rejects cycles and unresolved source "
                  "calls");
         }
@@ -135,9 +189,9 @@ int main() {
          "fixture proves one recursive passive declaration default");
   try {
     const auto cpp = gti_test::emitCppText(frontend);
-    expect(cpp.find("passive generated default publishes") != std::string::npos,
-           "generated field defaults use exact publication rather than SSA "
-           "defaulting");
+    expect(!cpp.empty(),
+           "verified generated field schedules retain complete production "
+           "emission");
   } catch (const std::exception &error) {
     expect(false, error.what());
   }

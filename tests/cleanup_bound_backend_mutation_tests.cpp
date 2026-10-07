@@ -224,10 +224,254 @@ int main() { Resource first{}; Resource second{}; Reversed value{first, second, 
       },
       "constructed prefix cannot hoist before earlier fallible work");
 }
+
+void constructedFieldSequence() {
+  const std::string source = R"gti(
+class Handle {
+  Resource& resource;
+public:
+  Handle(Resource& resource) : resource(resource) {}
+  Resource& read() { return this.resource; }
+};
+class SequenceGuard {
+  Handle handle;
+public:
+  SequenceGuard(Handle handle) : handle(handle) {}
+  ~SequenceGuard() { observed += this.handle.read().value; }
+};
+class SequenceOwner {
+  SequenceGuard first;
+  SequenceGuard second;
+  SequenceGuard third;
+public:
+  SequenceOwner(Handle handle, int divisor)
+      : first(SequenceGuard(handle)), second(SequenceGuard(handle)),
+        third(SequenceGuard(handle)) { int checked = 1 / divisor; }
+};
+int main() { Resource resource{}; SequenceOwner owner{Handle(resource), 1}; return 0; }
+)gti";
+  const auto control = analyze(source);
+  expect(control.canGenerateCode(), "borrowed-field sequence control compiles");
+  if (!control.canGenerateCode()) {
+    for (const auto &diagnostic : control.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(control.mir).valid(),
+         "borrowed-field sequence control verifies");
+  lang::HirConstructorInstanceId selected = 0;
+  for (const auto &constructor : control.mir.constructorInstances())
+    if (constructor.parameterTypes.size() == 2 &&
+        constructor.initializers.size() == 3)
+      selected = constructor.id;
+  const auto *constructor = control.mir.findConstructorInstance(selected);
+  expect(constructor != nullptr, "borrowed-field sequence target found");
+  if (!constructor)
+    return;
+  const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
+      control.mir, *constructor);
+  expect(bindings.size() == 3,
+         "three independent borrowed children have native sequence bindings");
+  if (bindings.size() != 3) {
+    if (std::getenv("GTI_TEST_DUMP_MIR") != nullptr)
+      std::cerr << lang::MirPrinter().print(constructor->body);
+    return;
+  }
+  expect(!gti_test::emitCppText(control).empty(),
+         "independent borrowed-field sequence emits");
+
+  const auto childFailure = [](auto &target,
+                               const auto &binding) -> lang::MirBlock * {
+    for (auto &block : target.body.blocks)
+      if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+          block.terminator.invokeInstruction == binding.constructInstruction)
+        return target.body.findBlock(block.terminator.elseTarget);
+    return nullptr;
+  };
+  const auto rollbackDrops = [&](auto &target, const auto &binding) {
+    std::vector<lang::MirInstruction *> drops;
+    auto *block = childFailure(target, binding);
+    // The positive control has an acyclic success chain of cleanup Invokes.
+    for (std::size_t count = 0; block && count < target.body.blocks.size();
+         ++count) {
+      for (auto &item : block->instructions) {
+        const auto *drop =
+            item.lifecycle.size() == 1
+                ? target.body.findDropObligation(item.lifecycle.front().source)
+                : nullptr;
+        if (item.kind == lang::MirInstructionKind::Drop && drop &&
+            drop->kind == lang::MirDropObligationKind::ConstructionRollback)
+          drops.push_back(&item);
+      }
+      if (block->terminator.kind != lang::MirTerminatorKind::Invoke)
+        break;
+      block = target.body.findBlock(block->terminator.target);
+    }
+    return drops;
+  };
+  const auto reject = [&](const auto &mutate, std::string_view name) {
+    auto program = control.mir;
+    auto &changed = const_cast<lang::MirConstructorInstance &>(
+        *program.findConstructorInstance(selected));
+    const bool applied = mutate(changed);
+    expect(applied, "borrowed-field sequence mutation applied");
+    if (!applied)
+      return;
+    // Both boundaries remain mandatory: deliberately malformed MIR must fail
+    // normal verification, and the detached representation shape must also
+    // refuse it rather than relying on emission to repair the schedule.
+    expect(!lang::verifyMirProgram(program).valid(), name);
+    expect(lang::cppMirConstructedFieldInitializerBindings(program, changed)
+               .empty(),
+           name);
+    ++mutations;
+  };
+  reject(
+      [&](auto &target) {
+        auto drops = rollbackDrops(target, bindings[2]);
+        if (drops.size() != 2)
+          return false;
+        std::swap(drops[0]->destination, drops[1]->destination);
+        std::swap(drops[0]->lifecycle, drops[1]->lifecycle);
+        return true;
+      },
+      "borrowed-field rollback cannot reverse prior field obligations");
+  reject(
+      [&](auto &target) {
+        auto drops = rollbackDrops(target, bindings[2]);
+        if (drops.size() != 2)
+          return false;
+        drops[1]->destination = drops[0]->destination;
+        drops[1]->lifecycle = drops[0]->lifecycle;
+        return true;
+      },
+      "borrowed-field rollback cannot drop one prior field twice");
+  reject(
+      [&](auto &target) {
+        auto *failure = childFailure(target, bindings[1]);
+        const auto *construct =
+            instruction(target.body, bindings[1].constructInstruction);
+        if (!failure || !construct || !construct->loan)
+          return false;
+        const auto end = std::find_if(
+            failure->instructions.begin(), failure->instructions.end(),
+            [&](const auto &item) {
+              return item.kind == lang::MirInstructionKind::EndBorrow &&
+                     item.loan == construct->loan;
+            });
+        if (end == failure->instructions.end())
+          return false;
+        failure->instructions.erase(end);
+        return true;
+      },
+      "borrowed-field failure cannot lose the failed child's dependency end");
+  reject(
+      [&](auto &target) {
+        auto *block = childFailure(target, bindings[1]);
+        const auto *value = target.body.findValue(bindings[0].constructedValue);
+        const auto published =
+            std::find_if(target.body.loans.begin(), target.body.loans.end(),
+                         [&](const auto &loan) {
+                           return value &&
+                                  loan.storedField == bindings[0].field &&
+                                  loan.producedBy == value->sourceValue;
+                         });
+        if (published == target.body.loans.end())
+          return false;
+        for (std::size_t count = 0; block && count < target.body.blocks.size();
+             ++count) {
+          const auto end = std::find_if(
+              block->instructions.begin(), block->instructions.end(),
+              [&](const auto &item) {
+                return item.kind == lang::MirInstructionKind::EndBorrow &&
+                       item.loan == published->id;
+              });
+          if (end != block->instructions.end()) {
+            block->instructions.erase(end);
+            return true;
+          }
+          if (block->terminator.kind != lang::MirTerminatorKind::Invoke)
+            break;
+          block = target.body.findBlock(block->terminator.target);
+        }
+        return false;
+      },
+      "borrowed-field failure cannot retain a cleaned prior field dependency");
+  reject(
+      [&](auto &target) {
+        auto *block = childFailure(target, bindings[1]);
+        if (!block || block->terminator.kind != lang::MirTerminatorKind::Invoke)
+          return false;
+        auto *secondary = target.body.findBlock(block->terminator.elseTarget);
+        if (!secondary)
+          return false;
+        secondary->terminator.failureRecord = block->activeFailure;
+        return true;
+      },
+      "borrowed-field double failure cannot report the primary as secondary");
+  reject(
+      [&](auto &target) {
+        auto *block = childFailure(target, bindings[1]);
+        if (!block || block->terminator.kind != lang::MirTerminatorKind::Invoke)
+          return false;
+        auto *secondary = target.body.findBlock(block->terminator.elseTarget);
+        if (!secondary || block->instructions.empty())
+          return false;
+        secondary->instructions.push_back(block->instructions.back());
+        return true;
+      },
+      "borrowed-field double-failure exit cannot execute another drop");
+  reject(
+      [&](auto &target) {
+        for (auto &block : target.body.blocks) {
+          const auto stage = std::find_if(
+              block.instructions.begin(), block.instructions.end(),
+              [&](const auto &item) {
+                return item.id == bindings[1].argumentInstructions.front();
+              });
+          if (stage != block.instructions.end()) {
+            const auto extra = *stage;
+            block.instructions.insert(stage, extra);
+            return true;
+          }
+        }
+        return false;
+      },
+      "borrowed-field sequence cannot hide executable work before staging");
+
+  // A valid source program, not corrupted metadata: actual checked work in a
+  // child must not be mistaken for the passive bookkeeping of this slice.
+  auto fallibleSource = source;
+  const std::string nonfailing =
+      "SequenceGuard(Handle handle) : handle(handle) {}";
+  const auto position = fallibleSource.find(nonfailing);
+  expect(position != std::string::npos, "fallible child source location found");
+  if (position != std::string::npos) {
+    fallibleSource.replace(position, nonfailing.size(),
+                           "SequenceGuard(Handle handle) : handle(handle) { "
+                           "int checked = 1 / observed; }");
+    const auto fallible = analyze(fallibleSource);
+    expect(fallible.canGenerateCode() &&
+               lang::verifyMirProgram(fallible.mir).valid(),
+           "genuinely fallible borrowed child remains valid source/MIR");
+    bool checked = false;
+    for (const auto &target : fallible.mir.constructorInstances())
+      if (target.parameterTypes.size() == 2 &&
+          target.initializers.size() == 3) {
+        expect(lang::cppMirConstructedFieldInitializerBindings(fallible.mir,
+                                                               target)
+                   .empty(),
+               "genuinely fallible child is outside non-failing sequence gate");
+        checked = true;
+      }
+    expect(checked, "genuinely fallible sequence target found");
+  }
+}
 } // namespace
 
 int main() {
   constructedFieldPrefix();
+  constructedFieldSequence();
   auto control = analyze(R"gti(
 class Box {
   Guard item;

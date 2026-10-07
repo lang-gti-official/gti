@@ -1,0 +1,52 @@
+#include <std/string>
+#include <std/vector>
+
+struct Resource {
+  int id;
+  int cleanupDivisor;
+  Resource(int id, int cleanupDivisor = 1)
+      : id(id), cleanupDivisor(cleanupDivisor) {}
+  ~Resource() { std::println(100 + this.id); }
+};
+
+// This passive shared handle and its cleanup-bearing owner are unrelated to
+// allocation/storage. Each child constructor is independently non-failing.
+class Handle {
+  Resource& resource;
+public:
+  Handle(Resource& resource) : resource(resource) {}
+  Resource& read() { return this.resource; }
+};
+class Guard {
+  Handle handle;
+public:
+  Guard(Handle handle) : handle(handle) {}
+  ~Guard() {
+    std::println(this.handle.read().id);
+    int cleanup = 1 / this.handle.read().cleanupDivisor;
+  }
+};
+
+class Later {
+  int value = 0;
+public:
+  Later() {}
+  Later(int divisor) : value(1 / divisor) {}
+  ~Later() { std::println(30); }
+};
+class Owner {
+  Guard first;
+  Guard second;
+  Later later;
+public:
+  Owner(Handle first, Handle second, int divisor)
+      : first(Guard(first)), second(Guard(second)), later(Later(divisor)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource first{10};
+  Resource second{20, argc < 3 ? 1 : 0};
+  Owner owner{Handle(first), Handle(second), argc == 1 || argc == 4 ? 1 : 0};
+  std::println(77);
+  return 0;
+}

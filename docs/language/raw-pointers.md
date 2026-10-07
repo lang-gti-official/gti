@@ -95,6 +95,77 @@ Path joins, weak writes, loops and call summaries retain uncertainty even when
 only one known origin remains. An unknown alternative is not evidence that
 the known alternative must be the actual address.
 
+## Explicit object construction and lifetime end
+
+`std::uninitialized<T>` supplies inline storage with `T`'s size and alignment,
+without initially constructing a `T`. Its `data()` overloads return `const T*`
+through a read-only receiver and `T*` through a mutable receiver. Forming an
+address does not make a payload live or create a checked loan. Destruction of
+the carrier never invokes the payload destructor; a manual owner must retire
+each live payload explicitly before releasing its storage.
+
+The carrier contains no engagement flag. Ordinary movement is permitted only
+when `T` is structurally bitwise-relocatable; copying additionally requires
+copyable `T`. Those operations transfer representation bytes without reading
+them as an initialized value. Other carriers are fixed-address even when
+empty. In particular, an owning string payload uses explicit relocation between
+two fixed carriers, not ordinary movement of the carrier. Checked borrowed
+state cannot be hidden in the manual carrier. Thread transfer/sharing
+capabilities remain constrained by the payload, not by the apparent byte-only
+representation.
+
+`<std/memory>` provides `unsafe T* std::construct_at<T, Args...>(T* address,
+Args... args)` for complete, layout-queryable object types. The pointer supplies
+the final address; ordinary GTI constructor selection and argument preparation
+apply, including construction of immovable types. The returned pointer is the
+same address, not a checked reference or a new allocation. Discarding it is
+permitted. Constructor failure retains its original failure identity and
+cleans prepared arguments and completed subobjects; it does not publish a live
+complete object.
+
+The unsafe caller guarantees sufficient writable, correctly aligned storage,
+vacancy and nonconflicting access for construction. No allocation or live-slot
+bitmap is hidden in this operation. Raw construction of a type containing
+checked borrowed state is currently rejected: an untracked destination address
+cannot establish that state's checked owner and escape boundary. This is a
+structural restriction, not recognition of particular container or view names.
+
+`<std/memory>` provides `unsafe void std::destroy_at<T>(T* address)` for
+complete, layout-queryable object types admitted by the pointer surface.
+It runs the selected GTI destructor and field cleanup and ends that object's
+lifetime without releasing its storage. It does not require copying or moving
+`T`, so an immovable object may be destroyed at its final address.
+
+The unsafe caller must supply a live, correctly aligned, writable complete
+object with exclusive access, retire its cleanup obligation exactly once, and
+keep the backing bytes available throughout cleanup. Neither `nullptr` nor an
+uninitialized address satisfies that contract. Destruction does not cancel an
+unrelated automatic owner's cleanup obligation: manually destroying an ordinary
+local and then allowing its automatic cleanup is not a valid substitute for
+manual storage. Read-only and incomplete pointees are rejected statically.
+
+The operation uses the same verified cleanup recipe and original failure record
+as ordinary GTI destruction. A failing destructor does not make the object live
+again or authorize a retry; remaining cleanup follows GTI's existing failure
+and secondary-failure rules. There is no hidden slot map, deallocation, C++
+exception, or raw-validity check. Safe containers must maintain their own live
+state and retire it before beginning destruction.
+
+`unsafe void std::relocate_at<T>(T* destination, T* source)` transfers a live
+object into distinct vacant storage using the existing `relocatable<T>`
+contract. Both regions must be sufficiently large, writable, aligned and
+nonoverlapping, with exclusive access. It ends the source object's lifetime
+without running its GTI destructor and leaves the destination as the sole live
+owner. It neither allocates nor releases bytes. Structural eligibility excludes
+immovable values and checked borrowed state; eligible generated relocation
+cannot raise a defined failure or invoke a user-defined move hook. Unlike
+ordinary move construction, the raw source is retired rather than left as an
+object whose moved-from lifetime the caller must subsequently end.
+
+[`125-manual-object-lifetimes.gti`](../../examples/125-manual-object-lifetimes.gti)
+demonstrates a source-defined fixed-address owner, checked access to an
+immovable payload, slot reuse and explicit owning relocation.
+
 ## Optional raw-pointer audit
 
 When enabled, the compiler preserves known local address origins through
@@ -399,8 +470,12 @@ These are safe inert address operations, not accesses. They establish no
 initialization, alignment, lifetime, ownership or write permission and create
 no checked loan. Existing origin records survive erasure and restoration,
 including expired/replaced origins and known pointee-type contradictions.
-Known contradictory restoration is an optional audit finding; the conversion
-alone still grants no access permission. Actual dereference and checked
+Known contradictory restoration is an optional audit finding, including when
+the restored pointer is returned through an ordinary generic source helper.
+Warn retains that finding without changing code generation or acceptance;
+Strict promotes it. This bounded audit may retain a byte-pointer origin from
+allocator address arithmetic without proving a later object-lifetime change.
+The conversion alone still grants no access permission. Actual dereference and checked
 owner-witness borrowing retain their own obligations. Pointer conversions do not extend constant evaluation or
 promise stable object layout. Example 113 demonstrates an unrelated user type.
 
@@ -441,7 +516,7 @@ reusable checked shared borrow, not ownership of the provider. The unsafe
 obligation applies to every later allocation through that binding or any copy:
 successful nonempty regions must be writable, sufficiently large and aligned,
 disjoint from all outstanding allocations, and free of preexisting object
-lifetimes that adoption would overwrite. The provider must keep each region
+lifetimes that construction would overwrite. The provider must keep each region
 and its descriptor valid until matching release, and release exactly that
 region without accessing already-destroyed elements. Independent raw aliases,
 resets, reentrant calls or concurrent use must preserve these promises too.
@@ -452,17 +527,25 @@ address/extent/alignment/identity metadata: copying it creates neither a loan
 nor another right to release the region. Direct provider calls remain unsafe.
 
 The compiler checks the ordinary provider borrow and cleanup/transfer schedule.
-The private typed-storage adoption operation additionally checks its empty
-destination, count arithmetic, reported extent, non-null address for nonempty
-storage and numeric alignment. These checks cannot prove actual allocation
-extent, address provenance, non-overlap, writability or synchronization. A
-malformed provider is already outside the binding contract even when one
-contradiction is detected dynamically; an error return is not a general
+Source-defined sparse storage checks count arithmetic, reported extent,
+non-null addresses for nonempty regions, and numeric alignment before using
+the regions. Its slot engine tracks initialization and performs construction,
+destruction and eligible relocation through general object-lifetime operations;
+there is no private sparse-storage adoption capability. These checks cannot
+prove actual allocation extent, address provenance, non-overlap, writability or
+synchronization. A malformed provider is already outside the binding contract
+even when one contradiction is detected dynamically; an error return is not a general
 containment guarantee for arbitrary unsafe code.
 
-The source lease is declared before typed storage so reverse field cleanup
-destroys live elements before returning the region. This is ordinary checked
-lifecycle composition, not recognition of a public standard-library name.
+For nonempty sparse storage, an object-region lease is acquired first and a
+separate live-slot metadata lease is acquired from the same resource. A failed
+metadata request releases the object region; zero capacity acquires neither.
+Both leases are declared before the source slot engine, so reverse field
+cleanup destroys live elements before releasing metadata and then object
+bytes. The source cleanup guard continues reverse element cleanup after the
+first destructor failure under the existing double-failure contract. This is
+ordinary checked lifecycle composition, not recognition of a public
+standard-library name.
 See [custom resources](standard-library.md#custom-resource-protocol)
 for typed storage, growable containers and the example arena's bookkeeping/thread
 limits. Empty typed owners conservatively retain their provider borrow until

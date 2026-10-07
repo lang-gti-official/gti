@@ -892,6 +892,16 @@
             "named": true
           }
         ]
+      },
+      "capability_parameter": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
       }
     }
   },

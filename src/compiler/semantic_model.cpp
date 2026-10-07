@@ -554,7 +554,6 @@ SemanticModel::compilerCapabilityType(const TypeRef &type) const {
 SemanticModel::isCompilerPrivateType(const SemanticType &type) const {
   switch (type.kind) {
   case SemanticType::UniqueOwner:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     return true;
   case SemanticType::Class: {
@@ -2536,7 +2535,6 @@ semanticFloatFormat(const SemanticType &type) {
       traits.shareCapable = false;
     }
     return traits;
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;

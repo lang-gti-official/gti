@@ -36,6 +36,47 @@ def main():
         checked = subprocess.run([compiler, "check", "--progress=never", "--color=never"],
                                  cwd=root, capture_output=True, text=True, timeout=90)
         assert checked.returncode == 65 and "GTI-S2106" in checked.stderr, checked
+        mapper = """namespace traits {
+class Mapper<T> {
+public:
+  int decode(T& input);
+  int inspect();
+};
+}
+int decode<T>(T& input) {
+  traits::Mapper<T> mapping{};
+  return mapping.decode(input);
+}
+int inspect<T>() {
+  traits::Mapper<T> mapping{};
+  return mapping.inspect();
+}
+"""
+        specialization = """class traits::Mapper<int> {
+public:
+  int decode(int& input) { return input; }
+  int inspect() { return 3; }
+};
+"""
+        invocation = "int main() { int input = 7; return decode<int>(input) + inspect<int>() - 10; }\n"
+        unused_mapper = mapper + "int main() { return 0; }\n"
+        selected_mapper = mapper + specialization + invocation
+        for name, text in (("unused-mapper", unused_mapper),
+                           ("specialized-mapper", selected_mapper)):
+            path.write_text(text)
+            checked = subprocess.run(
+                [compiler, "check", "--progress=never", "--color=never"],
+                cwd=root, capture_output=True, text=True, timeout=90)
+            assert checked.returncode == 0, (name, checked)
+            executable = root / name
+            built = subprocess.run(
+                [compiler, str(path), "--progress=never", "--color=never",
+                 "-o", str(executable)], capture_output=True, text=True, timeout=90)
+            assert built.returncode == 0, (name, built)
+            ran = subprocess.run([str(executable)], capture_output=True,
+                                 text=True, timeout=10)
+            assert ran.returncode == 0, (name, ran)
+        path.write_text(source)
         session = LspSession(lsp)
         try:
             session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -62,6 +103,20 @@ def main():
                           "params": {"textDocument": {"uri": uri, "version": 2},
                                      "contentChanges": [{"text": fixed}]}})
             assert not diagnostics_for(session, uri, 2)
+            for version, text, expected_errors in (
+                    (3, unused_mapper, 0),
+                    (4, selected_mapper, 0),
+                    (5, mapper + invocation, 2),
+                    (6, selected_mapper, 0)):
+                session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                              "params": {"textDocument": {"uri": uri, "version": version},
+                                         "contentChanges": [{"text": text}]}})
+                diagnostics = diagnostics_for(session, uri, version)
+                missing = [item for item in diagnostics if item.get("code") == "GTI-S2106"]
+                assert len(missing) == expected_errors, (version, diagnostics)
+                assert not any(item.get("code") == "GTI-B0001" for item in diagnostics), diagnostics
+                if not expected_errors:
+                    assert not diagnostics, (version, diagnostics)
         finally:
             session.close()
 

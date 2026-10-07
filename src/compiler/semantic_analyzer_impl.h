@@ -999,6 +999,8 @@ private:
         ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferPolicySource;
     std::optional<Token> sharePolicySource;
+    std::optional<SemanticType> transferCondition;
+    std::optional<SemanticType> shareCondition;
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
@@ -1018,6 +1020,8 @@ private:
     ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferSource;
     std::optional<Token> shareSource;
+    std::optional<SemanticType> transferCondition;
+    std::optional<SemanticType> shareCondition;
     bool cAbiRecord = false;
     std::optional<Token> cAbiSource;
     bool cOpaqueHandle = false;
@@ -1831,32 +1835,18 @@ private:
   // result; the only effect is the defined index_out_of_bounds failure.
   void analyzeStorageBoundsCheckCall(const Call &expr);
 
-  void analyzeStorageIntrinsicCall(const Call &expr, IntrinsicKind intrinsic);
-
-  void analyzeStorageAllocation(const Call &expr,
-                                const std::vector<SemanticType> &argumentTypes);
-
   [[nodiscard]] static bool isStorageElementType(const SemanticType &type);
   [[nodiscard]] bool isAllocatedScalarType(const SemanticType &type) const;
 
   void requireMutableStorage(const ExprPtr &argument,
                              std::string_view operation);
 
-  void requireStorageIndex(const ExprPtr &argument, const SemanticType &type,
-                           IntrinsicKind intrinsic);
-
   void validateStorageValueConstruction(
       const Call &expr, const SemanticType &elementType,
       const std::vector<AnalyzedCallArgument> &arguments);
 
-  void reportStorageArity(const Call &expr, IntrinsicKind intrinsic,
-                          std::size_t expected);
-
   [[nodiscard]] static std::string
   uniqueOwnerIntrinsicName(IntrinsicKind intrinsic);
-
-  [[nodiscard]] static std::string
-  storageIntrinsicName(IntrinsicKind intrinsic);
 
   [[nodiscard]] std::optional<ResolvedTypeAlias>
   typeAliasForCallee(const ExprPtr &callee) const;
@@ -2506,8 +2496,6 @@ private:
 
   [[nodiscard]] bool isGtiInternalUniqueOwner(const TypeRef &type) const;
 
-  [[nodiscard]] bool isGtiInternalStorage(const TypeRef &type) const;
-
   [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const;
 
   [[nodiscard]] bool containsReference(const TypeRef &type) const;
@@ -2952,8 +2940,9 @@ private:
   void validateConcreteEnumPayloads(const SemanticType &type,
                                     const Token &site);
 
-  [[nodiscard]] CapabilityPolicyRegistration
-  registerClassAttributes(const ClassDecl &declaration);
+  [[nodiscard]] CapabilityPolicyRegistration registerClassAttributes(
+      const ClassDecl &declaration,
+      const std::vector<GenericParameterInfo> &parameters = {});
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope);

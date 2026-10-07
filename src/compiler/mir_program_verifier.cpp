@@ -741,10 +741,54 @@ storagePayloadTraits(const MirProgram &program, const SemanticType &type,
   return traits;
 }
 
+// Nominal capability facts come from concrete MIR classes/enums. Only genuine
+// builtin aggregate components are combined here; raw pointees are not owned
+// components, and generic arguments alone do not describe class storage.
+[[nodiscard]] std::optional<ConcurrencyCapabilities>
+conditionalCapabilities(const MirProgram &program, const SemanticType &type,
+                        std::size_t depth = 0) {
+  if (depth > 256 || type.kind == SemanticType::Unknown ||
+      type.kind == SemanticType::TypeParameter ||
+      type.kind == SemanticType::TypePack)
+    return std::nullopt;
+  if (type.kind == SemanticType::Array ||
+      type.kind == SemanticType::UniqueOwner ||
+      type.kind == SemanticType::PrefixStorage ||
+      type.kind == SemanticType::Expected ||
+      type.kind == SemanticType::Unexpected) {
+    if (type.arguments.empty())
+      return std::nullopt;
+    ConcurrencyCapabilities result{.transferCapable = true,
+                                   .shareCapable = true};
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      if (type.kind == SemanticType::Expected && index == 0 &&
+          type.arguments[index] == SemanticType::Void)
+        continue;
+      const auto child =
+          conditionalCapabilities(program, type.arguments[index], depth + 1);
+      if (!child)
+        return std::nullopt;
+      result.transferCapable &= child->transferCapable;
+      result.shareCapable &= child->shareCapable;
+    }
+    return result;
+  }
+  if (type.kind == SemanticType::Enum) {
+    if (const auto *enumeration = program.findPayloadEnum(type.enumId))
+      return ConcurrencyCapabilities{
+          .transferCapable = enumeration->traits.transferCapable,
+          .shareCapable = enumeration->traits.shareCapable};
+  }
+  const auto traits = concretePackElementTraits(program, type);
+  if (!traits)
+    return std::nullopt;
+  return ConcurrencyCapabilities{.transferCapable = traits->transferCapable,
+                                 .shareCapable = traits->shareCapable};
+}
+
 [[nodiscard]] bool storageOwnershipTypeValid(const MirProgram &program,
                                              const SemanticType &type) {
-  if (type.kind == SemanticType::Storage ||
-      type.kind == SemanticType::PrefixStorage) {
+  if (type.kind == SemanticType::PrefixStorage) {
     const auto traits =
         type.arguments.size() == 1
             ? storagePayloadTraits(program, type.arguments.front())
@@ -2287,7 +2331,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       std::optional<MirDropType> elementCleanup;
       const bool removal =
           instruction.kind == MirInstructionKind::Call &&
-          (instruction.intrinsic == IntrinsicKind::StorageDestroy ||
+          (instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
            instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
            instruction.intrinsic == IntrinsicKind::PrefixStorageErase ||
            instruction.intrinsic == IntrinsicKind::OptionalStorageReset);
@@ -2299,8 +2343,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                 ? parameter.arguments.front()
                 : parameter;
         const auto expectedKind =
-            instruction.intrinsic == IntrinsicKind::StorageDestroy
-                ? SemanticType::Storage
+            instruction.intrinsic == IntrinsicKind::ObjectDestroy
+                ? SemanticType::RawPointer
                 : SemanticType::PrefixStorage;
         const bool optionalStorage =
             instruction.intrinsic == IntrinsicKind::OptionalStorageReset &&
@@ -2589,21 +2633,57 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         }
       }
       const MirConstructorInstance *constructorTarget = nullptr;
-      const bool sparseConstruction =
-          instruction.intrinsic == IntrinsicKind::StorageConstruct;
-      const std::size_t storageArgumentCount = sparseConstruction ? 2 : 1;
-      if (instruction.kind == MirInstructionKind::Call &&
-          (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-           sparseConstruction) &&
+      if (!instruction.constructorTarget && !instruction.functionTarget &&
+          (instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::Construct) &&
+          instruction.intrinsic == IntrinsicKind::None &&
+          instruction.constructorKind == ConstructorKind::Ordinary &&
+          instruction.info.type.kind == SemanticType::Class &&
+          instruction.parameterTypes.empty() && instruction.operands.empty()) {
+        const auto constructed = std::find_if(
+            program.classInstances().begin(), program.classInstances().end(),
+            [&](const MirClassInstance &candidate) {
+              return candidate.type == instruction.info.type;
+            });
+        if (constructed != program.classInstances().end() &&
+            constructed->generatedDefaultRequiresSchedule)
+          return verificationFailure(
+              body, owner,
+              "generated construction is missing its selected schedule",
+              block.id, instruction.id);
+      }
+      std::optional<std::size_t> inPlaceArgumentOffset;
+      SemanticType::Kind inPlaceStorageKind = SemanticType::Unknown;
+      if (instruction.kind == MirInstructionKind::Call) {
+        switch (instruction.intrinsic) {
+        case IntrinsicKind::ObjectConstruct:
+          inPlaceArgumentOffset = 1;
+          inPlaceStorageKind = SemanticType::RawPointer;
+          break;
+        case IntrinsicKind::PrefixStorageAppend:
+          inPlaceArgumentOffset = 1;
+          inPlaceStorageKind = SemanticType::PrefixStorage;
+          break;
+        case IntrinsicKind::PrefixStorageInsert:
+          inPlaceArgumentOffset = 2;
+          inPlaceStorageKind = SemanticType::PrefixStorage;
+          break;
+        case IntrinsicKind::OptionalStorageConstruct:
+          inPlaceArgumentOffset = 1;
+          inPlaceStorageKind = SemanticType::Class;
+          break;
+        default:
+          break;
+        }
+      }
+      const bool rawConstruction =
+          instruction.intrinsic == IntrinsicKind::ObjectConstruct;
+      const std::size_t storageArgumentCount =
+          inPlaceArgumentOffset.value_or(0);
+      if (inPlaceArgumentOffset &&
           instruction.parameterTypes.size() >= storageArgumentCount &&
           instruction.operands.size() == instruction.parameterTypes.size() &&
-          (instruction.storagePreflight != 0 ||
-           std::all_of(
-               instruction.parameterTypes.begin() + storageArgumentCount,
-               instruction.parameterTypes.end(), isPassiveScalarValueType)) &&
-          instruction.parameterTypes.front().kind ==
-              (sparseConstruction ? SemanticType::Storage
-                                  : SemanticType::PrefixStorage) &&
+          instruction.parameterTypes.front().kind == inPlaceStorageKind &&
           instruction.parameterTypes.front().arguments.size() == 1 &&
           !instruction.constructorTarget) {
         const auto &element =
@@ -2613,10 +2693,33 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             [&](const MirClassInstance &candidate) {
               return candidate.type == element;
             });
-        if (elementOwner != program.classInstances().end() &&
+        const bool generatedRawTransfer =
+            rawConstruction && elementOwner != program.classInstances().end() &&
+            instruction.parameterTypes.size() == 2 &&
+            instruction.parameterTypes[1] == element &&
+            ((instruction.constructorKind == ConstructorKind::Move &&
+              elementOwner->traits.movable) ||
+             (instruction.constructorKind == ConstructorKind::Copy &&
+              elementOwner->traits.copyable));
+        const bool exactDefault =
+            instruction.parameterTypes.size() == storageArgumentCount &&
+            instruction.constructorKind == ConstructorKind::Ordinary;
+        const bool requiredOrdinaryTarget =
+            (rawConstruction ||
+             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
+            (rawConstruction || instruction.storagePreflight != 0 ||
+             std::all_of(
+                 instruction.parameterTypes.begin() + storageArgumentCount,
+                 instruction.parameterTypes.end(), isPassiveScalarValueType)) &&
             (instruction.parameterTypes.size() != storageArgumentCount ||
-             elementOwner->defaultConstructor ==
-                 SpecialMemberStatus::Declared)) {
+             (elementOwner != program.classInstances().end() &&
+              elementOwner->defaultConstructor ==
+                  SpecialMemberStatus::Declared));
+        if (elementOwner != program.classInstances().end() &&
+            !generatedRawTransfer &&
+            (requiredOrdinaryTarget ||
+             (exactDefault &&
+              elementOwner->generatedDefaultRequiresSchedule))) {
           return verificationFailure(body, owner,
                                      "prefix construction is missing "
                                      "its exact constructor target",
@@ -2632,30 +2735,6 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
               "construct borrow contract references an invalid "
               "constructor target",
               block.id, instruction.id);
-        }
-        std::optional<std::size_t> inPlaceArgumentOffset;
-        SemanticType::Kind inPlaceStorageKind = SemanticType::Unknown;
-        if (instruction.kind == MirInstructionKind::Call) {
-          switch (instruction.intrinsic) {
-          case IntrinsicKind::StorageConstruct:
-            inPlaceArgumentOffset = 2;
-            inPlaceStorageKind = SemanticType::Storage;
-            break;
-          case IntrinsicKind::PrefixStorageAppend:
-            inPlaceArgumentOffset = 1;
-            inPlaceStorageKind = SemanticType::PrefixStorage;
-            break;
-          case IntrinsicKind::PrefixStorageInsert:
-            inPlaceArgumentOffset = 2;
-            inPlaceStorageKind = SemanticType::PrefixStorage;
-            break;
-          case IntrinsicKind::OptionalStorageConstruct:
-            inPlaceArgumentOffset = 1;
-            inPlaceStorageKind = SemanticType::Class;
-            break;
-          default:
-            break;
-          }
         }
         if (inPlaceArgumentOffset) {
           const MirClassInstance *constructorOwner =
@@ -2687,6 +2766,36 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                 block.id, instruction.id);
           }
         }
+        const auto *constructorOwner =
+            program.findClassInstance(constructorTarget->owner);
+        if (instruction.kind == MirInstructionKind::Construct &&
+            (constructorOwner == nullptr ||
+             constructorOwner->type != instruction.info.type)) {
+          return verificationFailure(
+              body, owner,
+              "construction result type differs from its exact constructor "
+              "owner",
+              block.id, instruction.id);
+        }
+        const bool ordinaryDefault =
+            instruction.intrinsic == IntrinsicKind::None &&
+            !instruction.functionTarget && instruction.parameterTypes.empty() &&
+            instruction.operands.empty();
+        const bool inPlaceDefault =
+            inPlaceArgumentOffset &&
+            instruction.parameterTypes.size() == *inPlaceArgumentOffset &&
+            instruction.operands.size() == instruction.parameterTypes.size();
+        if (constructorOwner != nullptr &&
+            constructorOwner->generatedDefaultRequiresSchedule &&
+            instruction.constructorKind == ConstructorKind::Ordinary &&
+            (ordinaryDefault || inPlaceDefault) &&
+            !constructorTarget->generatedDefault) {
+          return verificationFailure(
+              body, owner,
+              "default construction does not select its required generated "
+              "schedule",
+              block.id, instruction.id);
+        }
         if (instruction.kind == MirInstructionKind::Construct &&
             (instruction.borrowOrigin != constructorTarget->borrowOrigin ||
              instruction.borrowArgument != constructorTarget->borrowParameter ||
@@ -2713,8 +2822,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                 ? FailurePropagationKind::Constructor
                 : FailurePropagationKind::None;
         if (instruction.kind == MirInstructionKind::Call &&
-            (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-             sparseConstruction) &&
+            (rawConstruction ||
+             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
             !instruction.parameterTypes.empty() &&
             instruction.constructorKind == ConstructorKind::Ordinary &&
             (instruction.operands.size() != instruction.parameterTypes.size() ||
@@ -2724,9 +2833,11 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          constructorTarget->parameterTypes.end(),
                          instruction.parameterTypes.begin() +
                              storageArgumentCount) ||
-             instruction.storagePreflight == 0 ||
-             mirStorageConstructForPreflight(
-                 body, instruction.storagePreflight) != &instruction ||
+             (rawConstruction ? instruction.storagePreflight != 0
+                              : instruction.storagePreflight == 0 ||
+                                    mirStorageConstructForPreflight(
+                                        body, instruction.storagePreflight) !=
+                                        &instruction) ||
              instruction.definedFailure.propagation != expectedPropagation)) {
           return verificationFailure(
               body, owner,
@@ -2988,7 +3099,15 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           receiverLoans->second.size() == 1 &&
           body.findLoan(receiverLoans->second.front())->kind ==
               MirLoanKind::Local &&
-          body.findLoan(receiverLoans->second.front())->storedDependency == 0;
+          (body.findLoan(receiverLoans->second.front())->storedDependency ==
+               0 ||
+           std::any_of(body.rangeIterations.begin(), body.rangeIterations.end(),
+                       [&](const MirRangeIteration &range) {
+                         const auto *iterator = body.findPlace(range.iterator);
+                         return iterator != nullptr &&
+                                iterator->root == MirPlaceRootKind::Binding &&
+                                iterator->binding == receiverPlace->binding;
+                       }));
       const bool receiverStorageResult =
           !opaqueRangeCarrier && instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None && target != nullptr &&
@@ -3241,31 +3360,29 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                   body, owner,
                   "stored field mapping has no exact formal origin", block.id,
                   instruction.id);
-            auto sources = dependencySources(
-                dependencySources, instruction.operands[origin->parameter]);
-            const auto &suffix = origin->sourceFields;
             const auto &mapping = instruction.borrowFields[mapped.size()];
             if (mapping != *origin)
               return verificationFailure(body, owner,
                                          "constructor field contract disagrees "
                                          "with its initializer publication",
                                          block.id, instruction.id);
-            auto selected = sources.begin();
-            if (!suffix.empty())
-              selected = std::find_if(
-                  sources.begin(), sources.end(), [&](const auto &candidate) {
-                    return candidate.designatedFields == suffix;
-                  });
-            if (selected == sources.end() && sources.size() == 1 &&
-                sources.front().designatedFields.empty())
-              selected = sources.begin();
-            if (selected == sources.end() ||
-                (suffix.empty() && sources.size() != 1))
+            // The field resolver above already proved this input's selected
+            // external source, including compact single-path entry carriers.
+            // Re-projecting the formal's shell here would fabricate a runtime
+            // field place instead of preserving that opaque entry identity.
+            // The independent constructor proof still binds every mapping to
+            // its exact initializer and result layout.
+            if (mapped.size() >= mappedCallSources.size() ||
+                mappedCallSources[mapped.size()].source == 0 ||
+                mappedCallSources[mapped.size()].designatedFields !=
+                    path.fields ||
+                mappedCallSources[mapped.size()].access !=
+                    path.reference.referenceAccess)
               return verificationFailure(
                   body, owner,
                   "stored field mapping loses a nested formal path", block.id,
                   instruction.id);
-            mapped.push_back({.source = selected->source,
+            mapped.push_back({.source = mappedCallSources[mapped.size()].source,
                               .designatedFields = path.fields,
                               .access = path.reference.referenceAccess});
           }
@@ -5213,7 +5330,6 @@ verifyMirPayloadEnums(const MirProgram &program) {
     switch (type.kind) {
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
-    case SemanticType::Storage:
     case SemanticType::PrefixStorage:
       return true;
     case SemanticType::Array:
@@ -8771,8 +8887,9 @@ exactOptionalStorageIntrinsicContract(const MirProgram &program,
            noLoanResult() && noFailure();
   case IntrinsicKind::OptionalStorageReset:
     // Removal uses the same independently verified element cleanup recipe as
-    // sparse/prefix storage. It has no local failure: any failure retains the
-    // original destructor's identity and propagates through this call.
+    // raw objects and prefix storage. It has no local failure: any failure
+    // retains the original destructor's identity and propagates through this
+    // call.
     return instruction.lifecycle.empty() && instruction.operands.size() == 1 &&
            !instruction.constructorTarget &&
            exactResult(SemanticType::Void, ValueCategory::Value,
@@ -10106,16 +10223,23 @@ verifyMirProgramContracts(const MirProgram &program) {
         const bool layoutIntrinsic =
             instruction.intrinsic == IntrinsicKind::ObjectSize ||
             instruction.intrinsic == IntrinsicKind::ObjectAlignment;
-        if ((instruction.intrinsic == IntrinsicKind::StorageTryAdopt ||
+        if ((instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
+             instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
+             instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
              instruction.unsafeOperation ==
-                 UnsafeOperationKind::StorageAdoption) &&
-            !mir_detail::storageAdoptionDestination(body, instruction)) {
+                 UnsafeOperationKind::ObjectLifetime) &&
+            !(instruction.intrinsic == IntrinsicKind::ObjectRelocate
+                  ? mir_detail::objectRelocate(program, instruction)
+              : instruction.intrinsic == IntrinsicKind::ObjectConstruct
+                  ? mir_detail::objectConstruct(program, instruction)
+                  : mir_detail::objectDestroy(program, instruction))) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,
                .instruction = instruction.id,
-               .message = "storage adoption loses its unsafe permission, exact "
-                          "mutable destination, writable address or extent"});
+               .message =
+                   "object lifetime operation loses its unsafe permission or "
+                   "exact writable complete-object pointer"});
         }
         if ((layoutIntrinsic &&
              !mir_detail::objectLayoutQuery(program, instruction)) ||
@@ -10603,7 +10727,6 @@ verifyMirProgramContracts(const MirProgram &program) {
     switch (type.kind) {
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
-    case SemanticType::Storage:
     case SemanticType::PrefixStorage:
       return true;
     case SemanticType::Array:
@@ -10706,6 +10829,49 @@ verifyMirProgramContracts(const MirProgram &program) {
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];
+    if (instance.generatedDefaultRequiresSchedule &&
+        instance.defaultConstructor != SpecialMemberStatus::Generated) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "generated-default schedule obligation requires an "
+                      "available generated constructor"});
+    }
+    for (const bool transfer : {true, false}) {
+      const auto policy =
+          transfer ? instance.transferPolicy : instance.sharePolicy;
+      const auto &condition =
+          transfer ? instance.transferCondition : instance.shareCondition;
+      bool exact = (policy == ConcurrencyCapabilityPolicy::UnsafeConditional) ==
+                   condition.has_value();
+      switch (policy) {
+      case ConcurrencyCapabilityPolicy::Structural:
+      case ConcurrencyCapabilityPolicy::Denied:
+      case ConcurrencyCapabilityPolicy::Required:
+      case ConcurrencyCapabilityPolicy::UnsafeAsserted:
+      case ConcurrencyCapabilityPolicy::UnsafeConditional:
+        break;
+      default:
+        exact = false;
+        break;
+      }
+      if (condition) {
+        const auto required = conditionalCapabilities(program, *condition);
+        exact =
+            exact && required && instance.kind != ClassKind::Interface &&
+            instance.compilerCapability == CompilerCapabilityTypeKind::None &&
+            (transfer
+                 ? instance.traits.transferCapable == required->transferCapable
+                 : instance.traits.shareCapable == required->shareCapable);
+      }
+      if (!exact) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "class conditional unsafe capability contradicts its "
+                        "concrete condition"});
+      }
+    }
     if (instance.id != index + 1 || instance.sourceUnit == 0 ||
         instance.declaration == 0 ||
         instance.type.kind != SemanticType::Class ||
@@ -10802,6 +10968,62 @@ verifyMirProgramContracts(const MirProgram &program) {
              .message = "compiler-owned mutex capability class does not "
                         "retain its exact passive native-storage shape"});
       }
+    }
+    if (instance.compilerCapability ==
+        CompilerCapabilityTypeKind::UninitializedStorage) {
+      const auto payload =
+          instance.type.arguments.size() == 1
+              ? storagePayloadTraits(program, instance.type.arguments.front())
+              : std::nullopt;
+      const bool movable =
+          payload &&
+          mirTypeRelocationKind(program, instance.type.arguments.front()) ==
+              RelocationKind::Bitwise;
+      const bool copyable = movable && payload->copyable;
+      const auto status = [](bool available) {
+        return available ? SpecialMemberStatus::Generated
+                         : SpecialMemberStatus::Deleted;
+      };
+      const bool exact =
+          payload &&
+          mir_detail::completeObjectType(program,
+                                         instance.type.arguments.front()) &&
+          !payload->containsBorrowedState &&
+          instance.kind == ClassKind::Class &&
+          instance.type.kind == SemanticType::Class &&
+          instance.type.classId == instance.declaration &&
+          instance.traits.ownership == OwnershipKind::Value &&
+          instance.traits.drop == DropKind::Trivial &&
+          instance.traits.copyable == copyable &&
+          instance.traits.movable == movable &&
+          instance.traits.copyAssignable == copyable &&
+          instance.traits.moveAssignable == movable &&
+          instance.traits.transferCapable == payload->transferCapable &&
+          instance.traits.shareCapable == payload->shareCapable &&
+          instance.traits.relocation == (movable
+                                             ? RelocationKind::Bitwise
+                                             : RelocationKind::Unavailable) &&
+          !instance.traits.containsBorrowedState && instance.bases.empty() &&
+          instance.structuralBases.empty() && instance.declaredFields.empty() &&
+          instance.fields.empty() && instance.fieldDropOrder.empty() &&
+          !instance.destructor && !instance.requiresActiveCleanup &&
+          !instance.requiresActiveDropState &&
+          !instance.lifecycleBoundBorrowCarrier && !instance.abstract &&
+          !instance.polymorphic && !instance.cAbiRecord &&
+          !instance.cAbiLayout && !instance.cOpaqueHandle &&
+          !instance.unionLayout &&
+          instance.defaultConstructor == SpecialMemberStatus::Generated &&
+          instance.copyConstructor == status(copyable) &&
+          instance.moveConstructor == status(movable) &&
+          instance.copyAssignment == status(copyable) &&
+          instance.moveAssignment == status(movable) &&
+          instance.destructorStatus == SpecialMemberStatus::Generated;
+      if (!exact)
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "uninitialized storage lost its exact layout-only "
+                        "lifetime contract"});
     }
     if (instance.compilerCapability ==
         CompilerCapabilityTypeKind::OptionalStorage) {
@@ -11724,6 +11946,83 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
     const MirClassInstance *constructorOwner =
         program.findClassInstance(instance.owner);
+    if (instance.generatedDefault) {
+      bool exact = constructorOwner != nullptr &&
+                   constructorOwner->generatedDefaultRequiresSchedule &&
+                   constructorOwner->defaultConstructor ==
+                       SpecialMemberStatus::Generated &&
+                   instance.definitionKind == MirDefinitionKind::Source &&
+                   instance.parameterTypes.empty() &&
+                   instance.parameterBindings.empty() &&
+                   instance.typeArguments.empty() &&
+                   instance.valueArguments.empty() &&
+                   !instance.constexprConstructor;
+      const HirBaseInstance *expectedBase = nullptr;
+      if (constructorOwner != nullptr) {
+        const auto base = std::find_if(
+            constructorOwner->bases.begin(), constructorOwner->bases.end(),
+            [](const auto &candidate) { return !candidate.interface; });
+        if (base != constructorOwner->bases.end())
+          expectedBase = &*base;
+      }
+      std::size_t fieldIndex = 0;
+      std::size_t baseCount = 0;
+      for (const auto &initializer : instance.initializers) {
+        if (initializer.kind == ConstructorInitializerTargetKind::Base) {
+          ++baseCount;
+          const auto *baseOwner =
+              expectedBase != nullptr
+                  ? program.findClassInstance(expectedBase->instance)
+                  : nullptr;
+          const auto *target = initializer.constructorTarget
+                                   ? program.findConstructorInstance(
+                                         *initializer.constructorTarget)
+                                   : nullptr;
+          exact &=
+              fieldIndex == 0 && baseCount == 1 && expectedBase != nullptr &&
+              baseOwner != nullptr &&
+              initializer.base == expectedBase->instance &&
+              initializer.targetType == expectedBase->type &&
+              initializer.field == 0 && !initializer.storesReference &&
+              !initializer.ownedParameter &&
+              initializer.explicitArgumentCount == 0 &&
+              initializer.generatedDefault == (baseOwner->defaultConstructor ==
+                                               SpecialMemberStatus::Generated);
+          if (target != nullptr)
+            exact &= expectedBase != nullptr &&
+                     target->owner == expectedBase->instance &&
+                     target->definitionKind == MirDefinitionKind::Source &&
+                     target->generatedDefault == initializer.generatedDefault;
+          else
+            exact &= !initializer.constructorTarget &&
+                     initializer.generatedDefault &&
+                     initializer.arguments.empty() && baseOwner != nullptr &&
+                     !baseOwner->generatedDefaultRequiresSchedule;
+          continue;
+        }
+        exact &= constructorOwner != nullptr &&
+                 fieldIndex < constructorOwner->declaredFields.size() &&
+                 initializer.field ==
+                     constructorOwner->declaredFields[fieldIndex].symbol &&
+                 initializer.targetType ==
+                     constructorOwner->declaredFields[fieldIndex].type &&
+                 initializer.arguments.size() == 1 &&
+                 initializer.explicitArgumentCount == 1 &&
+                 !initializer.storesReference &&
+                 !initializer.generatedDefault && !initializer.ownedParameter &&
+                 !initializer.constructorTarget;
+        ++fieldIndex;
+      }
+      exact &= constructorOwner != nullptr &&
+               fieldIndex == constructorOwner->declaredFields.size() &&
+               baseCount == (expectedBase != nullptr ? 1U : 0U);
+      if (!exact)
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::Constructor,
+             .owner = instance.id,
+             .message = "generated constructor lost its exact default "
+                        "initialization schedule"});
+    }
     bool exactDefaultFieldRollbackEntry = constructorOwner != nullptr;
     std::unordered_map<SymbolId, const MirDropObligation *>
         defaultFieldRollbackSources;
@@ -11759,6 +12058,26 @@ verifyMirProgramContracts(const MirProgram &program) {
     std::size_t previousFieldOrder = 0;
     bool exactSelectedFieldOrder = true;
     for (const MirConstructorInitializer &initializer : instance.initializers) {
+      if (initializer.kind == ConstructorInitializerTargetKind::Base &&
+          initializer.base && initializer.arguments.empty() &&
+          initializer.explicitArgumentCount == 0) {
+        const auto *base = program.findClassInstance(*initializer.base);
+        const auto *target = initializer.constructorTarget
+                                 ? program.findConstructorInstance(
+                                       *initializer.constructorTarget)
+                                 : nullptr;
+        if (base != nullptr && base->generatedDefaultRequiresSchedule &&
+            (!initializer.generatedDefault || target == nullptr ||
+             target->owner != base->id || !target->generatedDefault ||
+             !target->parameterTypes.empty() ||
+             initializer.targetType != base->type)) {
+          result.errors.push_back(
+              {.bodyKind = MirBodyKind::Constructor,
+               .owner = instance.id,
+               .message = "generated base initialization is missing its "
+                          "required exact schedule"});
+        }
+      }
       if (initializer.kind == ConstructorInitializerTargetKind::Field &&
           initializer.field != 0) {
         if (!explicitlyInitializedFields.insert(initializer.field).second)
@@ -11872,6 +12191,10 @@ verifyMirProgramContracts(const MirProgram &program) {
       case SemanticType::RawPointer:
         return true;
       case SemanticType::Array: {
+        const auto traits = concretePackElementTraits(program, type);
+        return traits && !traits->containsBorrowedState;
+      }
+      case SemanticType::Expected: {
         const auto traits = concretePackElementTraits(program, type);
         return traits && !traits->containsBorrowedState;
       }
@@ -12013,8 +12336,10 @@ verifyMirProgramContracts(const MirProgram &program) {
             sourceValue->sourceValue == initializer.arguments.front() &&
             sourceValue->info.type == instruction.operands.front().type &&
             (instruction.operands.front().type == initializer.targetType ||
-             (initializer.targetType.kind == SemanticType::RawPointer &&
-              instruction.operands.front().type == SemanticType::NullPtr)) &&
+             isImplicitScalarInitializationConversion(
+                 initializer.targetType, instruction.operands.front().type) ||
+             isImplicitExpectedInitializationConversion(
+                 initializer.targetType, instruction.operands.front().type)) &&
             instruction.info.type == initializer.targetType &&
             destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
@@ -12071,7 +12396,8 @@ verifyMirProgramContracts(const MirProgram &program) {
           cleanupFreeInitializerType(initializer.targetType) &&
           (field->dropKind == DropKind::Trivial ||
            initializer.targetType.kind == SemanticType::Class ||
-           initializer.targetType.kind == SemanticType::Array) &&
+           initializer.targetType.kind == SemanticType::Array ||
+           initializer.targetType.kind == SemanticType::Expected) &&
           !field->requiresActiveCleanup;
       // A lexical field completed from one owning argument may publish an
       // explicit rollback-armed stage; whether it does depends on the

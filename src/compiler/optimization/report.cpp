@@ -75,8 +75,6 @@ namespace {
     return "scalar-promotion";
   case MirTransformProofKind::BoundsRange:
     return "bounds-range";
-  case MirTransformProofKind::StorageInitialization:
-    return "storage-initialization";
   case MirTransformProofKind::ArithmeticRange:
     return "arithmetic-range";
   case MirTransformProofKind::ExactReceiver:

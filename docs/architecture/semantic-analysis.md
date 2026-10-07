@@ -379,9 +379,13 @@ constructor selected for the bounded executable generated-default family:
 nongeneric owners/bases, no derived instance fields or destructor, and an
 exact zero-parameter source base constructor. Construction carries ordinary
 constructor-failure propagation; HIR consumes this identity rather than
-reselecting a constructor. A zero identity retains the existing generated
-declaration schedule for other shapes. This fact changes representation of an
-already permitted construction, not source overload availability.
+reselecting a constructor. Independently, `generatedDefaultFieldInitializers`
+selects a concrete generated constructor schedule when the ordinary structural
+default is already available and all instance fields have declaration
+initializers. Those defaults carry constructor failure propagation even without
+a source constructor declaration. HIR preserves each exact initializer and MIR
+owns partial-object rollback. These facts change representation of already
+permitted construction, not source overload availability or omitted-field policy.
 
 ## Analysis Order
 

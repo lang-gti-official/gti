@@ -1,0 +1,36 @@
+#include <std/memory>
+
+// A source destructor conservatively denies automatic thread capabilities.
+// This wrapper's audit is small: cleanup only resets its exclusive owner,
+// and observation exposes a read-only, owner-tied reference. Its payload must
+// still support the corresponding capability; the assertion cannot grant it.
+[[unsafe_transfer(T), unsafe_share(T)]]
+class ReviewedOwner<T> {
+  mut std::unique_ptr<T> value;
+public:
+  ReviewedOwner(std::unique_ptr<T> initial) : value(std::move(initial)) {}
+  T& read() { return *this.value; }
+  ~ReviewedOwner() { this.value.reset(); }
+};
+
+void accept_transfer<std::transferable T>(T value) {}
+void accept_shared_access<std::shareable T>(T& value) {}
+
+[[no_transfer, no_share]] struct ThreadAffine {
+  int id = 7;
+};
+
+int main() {
+  ReviewedOwner<int> owner{std::make_unique<int>(42)};
+  accept_shared_access(owner);
+  if (owner.read() != 42) { return 1; }
+  accept_transfer(std::move(owner));
+
+  // A non-capable payload is still a valid local owner. Only operations
+  // requiring the denied capabilities fail; construction itself is permitted.
+  ReviewedOwner<ThreadAffine> local{std::make_unique<ThreadAffine>()};
+  if (local.read().id != 7) { return 2; }
+  // accept_shared_access(local);             // rejected: not shareable
+  // accept_transfer(std::move(local));        // rejected: not transferable
+  return 0;
+}

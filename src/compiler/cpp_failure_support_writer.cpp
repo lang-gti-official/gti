@@ -277,6 +277,14 @@ private:
 
 } // namespace
 
+std::string_view cppFailureCodeAbiConstant(DefinedFailureCode code) {
+  return FailureArtifactDescriptorWriter::failureCodeAbiConstant(code);
+}
+
+std::string_view cppFailureDetailAbiConstant(DefinedFailureDetail detail) {
+  return FailureArtifactDescriptorWriter::failureDetailAbiConstant(detail);
+}
+
 void writeCppFailureArtifactDescriptor(std::ostream &output,
                                        const FailureMetadata &metadata) {
   FailureArtifactDescriptorWriter(output).write(metadata);
@@ -628,128 +636,15 @@ mir_allocate_unique_scalar_v1(std::unique_ptr<T> *result, Args... args) noexcept
   return mir_failure_success_v1;
 }
 
-// The defined-failure storage families: allocation uses the capability's
-// no-throw primitive so the status exactly reflects exhaustion instead of
-// escaping through the compatibility abort path.
-template <typename T>
-inline mir_failure_status_v1
-mir_allocate_storage_v1(std::uint64_t count,
-                        ::gti_internal::backend::storage<T> *result) noexcept {
-  if (::gti_internal::backend::storage<T>::try_allocate(count, 0, result) != 0) {
-    return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
-            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
-  }
-  return mir_failure_success_v1;
-}
-
-template <typename T, typename... Args>
-inline mir_failure_status_v1
-mir_storage_construct_v1(::gti_internal::backend::storage<T> &storage,
-                         std::uint64_t index, Args &&...args) {
-  if (index >= storage.capacity()) {
-    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
-            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
-  }
-  if (storage.initialized(index)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_DUPLICATE_CONSTRUCTION_V1};
-  }
-  if (!storage.try_construct(index, std::forward<Args>(args)...)) {
-    return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
-            GTI_FAILURE_DETAIL_ELEMENT_CONSTRUCTION_V1};
-  }
-  return mir_failure_success_v1;
-}
-
-template <typename T>
-inline mir_failure_status_v1 mir_storage_preflight_v1(
-    const ::gti_internal::backend::storage<T> &storage, std::uint64_t index) {
-  if (index >= storage.capacity()) {
-    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
-            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
-  }
-  if (storage.initialized(index)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_DUPLICATE_CONSTRUCTION_V1};
-  }
-  return mir_failure_success_v1;
-}
-
-template <typename T, typename Constructor>
-inline mir_failure_status_v1 mir_storage_construct_with_v1(
-    ::gti_internal::backend::storage<T> &storage, std::uint64_t index,
-    ::gti_failure_record_v2 *record, Constructor construct) {
-  if (!storage.construct_with_constructor(index, construct)) {
-    return {record->code, record->detail, true};
-  }
-  return mir_failure_success_v1;
-}
-
-template <typename T>
-inline mir_failure_status_v1
-mir_storage_read_v1(const ::gti_internal::backend::storage<T> &storage,
-                    std::uint64_t index, const T **result) noexcept {
-  if (index >= storage.capacity()) {
-    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
-            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
-  }
-  if (!storage.initialized(index)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
-  }
-  *result = &storage.read(index);
-  return mir_failure_success_v1;
-}
-
-template <typename T>
-inline mir_failure_status_v1
-mir_storage_read_mut_v1(::gti_internal::backend::storage<T> &storage,
-                        std::uint64_t index, T **result) noexcept {
-  if (index >= storage.capacity()) {
-    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
-            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
-  }
-  if (!storage.initialized(index)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
-  }
-  *result = &storage.read_mut(index);
-  return mir_failure_success_v1;
-}
-
-template <typename T>
-inline mir_failure_status_v1
-mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
-                       std::uint64_t index) {
-  if (index >= storage.capacity()) {
-    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
-            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
-  }
-  if (!storage.initialized(index)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
-  }
-  storage.destroy(index);
-  return mir_failure_success_v1;
-}
-
+// Raw lifetime operations deliberately have no slot map or allocation policy.
+// GTI's verified recipe consumes payload cleanup first; the native destructor
+// then retires the already-disarmed representation, never the backing bytes.
 template <typename T, typename Cleanup>
-inline mir_failure_status_v1
-mir_storage_destroy_v1(::gti_internal::backend::storage<T> &storage,
-                       std::uint64_t index, ::gti_failure_record_v2 *record,
-                       Cleanup cleanup) {
-  if (index >= storage.capacity()) {
-    return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
-            GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
-  }
-  if (!storage.initialized(index)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_UNINITIALIZED_ACCESS_V1};
-  }
-  if (!storage.destroy_with_failure(index, record, cleanup)) {
-    return {record->code, record->detail, true};
-  }
-  return mir_failure_success_v1;
+inline bool mir_object_destroy_v1(T *address, ::gti_failure_record_v2 *record,
+                                  Cleanup cleanup) {
+  const bool success = cleanup(*address, record, false);
+  std::destroy_at(address);
+  return success;
 }
 
 template <typename Array>
@@ -772,73 +667,6 @@ mir_restoring_indexed_swap_v1(prefix_storage<T> &storage,
     return {GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1,
             GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
   if (left != right) mir_restoring_swap_v1(storage.read_mut(left), storage.read_mut(right));
-  return mir_failure_success_v1;
-}
-
-template <bool Bitwise = false, typename T>
-inline mir_failure_status_v1
-mir_storage_relocate_v1(::gti_internal::backend::storage<T> &source,
-                        ::gti_internal::backend::storage<T> &destination,
-                        std::uint64_t count) {
-  if (count > source.capacity() || count > destination.capacity()) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
-  }
-  for (std::uint64_t index = 0; index < count; ++index) {
-    if (!source.initialized(index)) {
-      return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-              GTI_FAILURE_DETAIL_INVALID_RELOCATION_SOURCE_V1};
-    }
-    if (destination.initialized(index)) {
-      return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-              GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1};
-    }
-  }
-  source.template relocate_to<Bitwise>(destination, count);
-  return mir_failure_success_v1;
-}
-
-template <typename T>
-inline mir_failure_status_v1
-mir_storage_shift_right_v1(::gti_internal::backend::storage<T> &storage,
-                           std::uint64_t first, std::uint64_t last) {
-  if (first > last || last >= storage.capacity()) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
-  }
-  if (storage.initialized(last)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1};
-  }
-  for (std::uint64_t index = first; index < last; ++index) {
-    if (!storage.initialized(index)) {
-      return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-              GTI_FAILURE_DETAIL_INVALID_RELOCATION_SOURCE_V1};
-    }
-  }
-  storage.shift_right(first, last);
-  return mir_failure_success_v1;
-}
-
-template <typename T>
-inline mir_failure_status_v1
-mir_storage_shift_left_v1(::gti_internal::backend::storage<T> &storage,
-                          std::uint64_t first, std::uint64_t last) {
-  if (first >= last || last > storage.capacity()) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_RELOCATION_CAPACITY_V1};
-  }
-  if (storage.initialized(first)) {
-    return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-            GTI_FAILURE_DETAIL_OCCUPIED_RELOCATION_DESTINATION_V1};
-  }
-  for (std::uint64_t index = first + 1; index < last; ++index) {
-    if (!storage.initialized(index)) {
-      return {GTI_FAILURE_CODE_INVALID_STORAGE_STATE_V1,
-              GTI_FAILURE_DETAIL_INVALID_RELOCATION_SOURCE_V1};
-    }
-  }
-  storage.shift_left(first, last);
   return mir_failure_success_v1;
 }
 

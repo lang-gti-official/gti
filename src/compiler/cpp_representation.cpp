@@ -435,9 +435,6 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
   case SemanticType::UniqueOwner:
     appendIdentityText(output, "unique-owner");
     return appendArguments();
-  case SemanticType::Storage:
-    appendIdentityText(output, "storage");
-    return appendArguments();
   case SemanticType::PrefixStorage:
     appendIdentityText(output, "prefix-storage");
     return appendArguments();
@@ -648,7 +645,6 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
       return nativeField;
     if (current.kind == SemanticType::Reference ||
         current.kind == SemanticType::UniqueOwner ||
-        current.kind == SemanticType::Storage ||
         current.kind == SemanticType::PrefixStorage ||
         current.kind == SemanticType::NativeFunction)
       return false;
@@ -889,6 +885,30 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
              spell(type.arguments.front()) + ">";
     }
     if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::UninitializedStorage) {
+      if (type.arguments.size() != 1)
+        return "void";
+      // A retained source template has no concrete lifecycle instance yet.
+      // Match semantic generic staging rather than emitting an invalid void
+      // field. These native operations grant no GTI permission: concrete
+      // reanalysis and MIR verification establish carrier copy/move bounds
+      // before any executable instance exists. Concrete spellings below use
+      // those exact verified traits, never native C++ type traits.
+      if (type.arguments.front().kind == SemanticType::TypeParameter)
+        return "::gti_internal::backend::uninitialized_storage<" +
+               spell(type.arguments.front()) + ", true, true>";
+      const auto instance =
+          std::find_if(program.mir().classInstances().begin(),
+                       program.mir().classInstances().end(),
+                       [&](const auto &item) { return item.type == type; });
+      if (instance == program.mir().classInstances().end())
+        return "void";
+      return "::gti_internal::backend::uninitialized_storage<" +
+             spell(type.arguments.front()) + ", " +
+             (instance->traits.copyable ? "true" : "false") + ", " +
+             (instance->traits.movable ? "true" : "false") + ">";
+    }
+    if (classInfo->compilerCapability ==
             CompilerCapabilityTypeKind::MutexStorage ||
         classInfo->compilerCapability ==
             CompilerCapabilityTypeKind::MutexLockToken) {
@@ -982,14 +1002,6 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   }
   case SemanticType::PrefixStorage: {
     std::string result = "::gti_internal::backend::prefix_storage<";
-    if (!type.arguments.empty()) {
-      result += spell(type.arguments.front());
-    }
-    result += '>';
-    return result;
-  }
-  case SemanticType::Storage: {
-    std::string result = "::gti_internal::backend::storage<";
     if (!type.arguments.empty()) {
       result += spell(type.arguments.front());
     }

@@ -1,0 +1,53 @@
+// Issue 84: exact fixed-array values retain their type through forwarding packs.
+#include <std/memory>
+#include <std/vector>
+
+class ArrayHolder {
+  int32_t values[3];
+public:
+  ArrayHolder(int32_t initial[3]) : values(initial) {}
+  int32_t sum() { return this.values[0] + this.values[1] + this.values[2]; }
+};
+
+// Copyable, non-borrowing elements are admitted structurally, not only scalars.
+struct Item { int32_t value = 7; };
+struct ItemArrayHolder {
+  Item values[2];
+  ItemArrayHolder(Item initial[2]) : values(initial) {}
+};
+
+// Unrelated source forwarding must obey the same rule as container emplace.
+T forward_construct<T, Args...>(Args... args) {
+  return T(args...);
+}
+
+int32_t sum_with_tail<Args...>(int32_t values[3], Args... rest) {
+  return values[0] + values[1] + values[2];
+}
+int32_t forward_with_fixed<Args...>(int32_t values[3], Args... rest) {
+  return sum_with_tail(values, rest...);
+}
+
+int main() {
+  int32_t seed[3] = {1, 2, 3};
+  ArrayHolder direct{seed};
+  ArrayHolder forwarded = forward_construct<ArrayHolder>(seed);
+  if (direct.sum() != 6 || forwarded.sum() != 6) { return 1; }
+  if (forward_with_fixed(seed, 4) != 6) { return 4; }
+
+  Item item_seed[2] = {};
+  ItemArrayHolder item_result = forward_construct<ItemArrayHolder>(item_seed);
+  if (item_result.values[0].value != 7 ||
+      item_result.values[1].value != 7) { return 5; }
+
+  std::allocator heap{};
+  auto made = heap.try_storage<ArrayHolder>(std::size_t(1));
+  if (!made) { return 2; }
+  mut auto slots = std::move(made).value();
+  [[discard]] slots.emplace(std::size_t(0), seed);
+  if (slots.get(std::size_t(0)).sum() != 6) { return 3; }
+
+  mut std::vector<ArrayHolder> items{};
+  [[discard]] items.emplace_back(seed);
+  return items[std::size_t(0)].sum() - 6;
+}

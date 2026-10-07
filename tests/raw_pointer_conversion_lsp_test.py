@@ -6,6 +6,53 @@ import sys
 import tempfile
 
 from lsp_smoke_test import LspSession, lsp_position
+from lsp_project_facts_test import open_document, diagnostics_for
+
+
+def source_result_policy(lsp, path):
+    source = """using Address = void*;
+using Bytes = uint8_t*;
+using Pointer = int*;
+Address byte_transport(Address address) {
+  Bytes bytes = Bytes(address);
+  return Address(bytes);
+}
+Target restore<Target>(Address address) { return Target(address); }
+int main() {
+  Address address = byte_transport(nullptr);
+  /*😀*/ Pointer result = restore<Pointer>(address);
+  return result == nullptr ? 0 : 1;
+}
+"""
+    path.write_text(source)
+    for mode, severity in (("off", None), ("warn", 2), ("strict", 1)):
+        session = LspSession(lsp, [f"--raw-pointer-audit={mode}"])
+        try:
+            session.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": True}}}}})
+            assert "error" not in session.receive_until(lambda message: message.get("id") == 1)
+            session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+            uri = open_document(session, path, source)
+            diagnostics = diagnostics_for(session, uri, 1)
+            findings = [d for d in diagnostics
+                        if d.get("code") == "GTI-S2102"
+                        and "Raw pointer result may contradict" in d["message"]]
+            if severity is None:
+                assert not findings, diagnostics
+            else:
+                assert findings and all(d["severity"] == severity for d in findings), diagnostics
+                closing = source.index("(address)", source.index("restore<Pointer>")) + len("(address")
+                assert findings[0]["range"]["start"] == lsp_position(source, closing), findings
+                assert findings[0].get("relatedInformation"), findings
+            if mode != "strict":
+                assert not [d for d in diagnostics if d.get("severity") == 1], diagnostics
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": 2},
+                "contentChanges": [{"text": "int main() { return 0; }\n"}]}})
+            repaired = diagnostics_for(session, uri, 2)
+            assert not [d for d in repaired if d.get("code", "").startswith("GTI-S210")], repaired
+        finally:
+            session.close()
 
 def main():
     repository = pathlib.Path(__file__).resolve().parent.parent
@@ -58,6 +105,7 @@ unsafe { return *restored - 42; } }
             assert not published(5)
         finally:
             session.close()
+        source_result_policy(sys.argv[1], pathlib.Path(directory) / "result.gti")
     print("pointer conversion LSP diagnostics, alias identity and recovery passed")
 
 if __name__ == "__main__":
