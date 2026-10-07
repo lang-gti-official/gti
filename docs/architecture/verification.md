@@ -87,9 +87,24 @@ also passes (104.85 seconds), including distinct recursive node owners sharing
 a native primary template, after retaining every selected generated default's
 status declaration. Test-only maintenance preserves actual generated schedules
 instead of expecting inline native defaults or same-block base completion.
-The declaration-field failure matrix now reaches an outstanding Expected
-constructor-field publication gap; its earlier base-construction blocker is
-resolved. This checkpoint is still partially verified, not final acceptance.
+The subsequent Expected constructor-field publication fix passes the complete
+24-scenario declaration-field failure matrix in eight modes (30.57 seconds),
+including reverse rollback, allocation failure and secondary cleanup failure.
+`expected_constructor_field` rejects 23 malformed field-publication schedules
+and two nonraising constructor target/activation mutations. Its strict emitted
+field count exposed a local-slot writer incorrectly intercepting an owning
+error field; the exact field route now handles it without relaxing the test.
+The four-fixture `expected_passive_publication_runtime` matrix passes all eight
+modes (25.68 seconds), including generated and explicit payload constructors,
+both alternatives, no premature destruction and exactly-once cleanup. The full
+lifecycle emitter suite passes again against this backend (41.87 seconds). These
+focused results still precede the latest canonical/enum reconciliation and
+final campaign validation; they do not establish full acceptance.
+The updated inheritance test separately passes exact selected base-target,
+single-stage Invoke and status-constructor representation checks. The broader
+declarations run still reports two obsolete generated-default spelling
+assertions already under maintenance in the parallel enum reconciliation;
+that aggregate is not counted as passing at this checkpoint.
 
 ## Source-defined process byte provider (S-ALLOC-07 checkpoint)
 
@@ -617,8 +632,10 @@ elements in growable or relocating paths. `resource_protocol_lsp` checks the
 same unsafe-call and borrow-conflict diagnostics, navigation to the library
 declarations and member completion through the language server.
 `resource_memory_runtime` independently checks the process-memory
-size/alignment/status boundary. `storage_adoption_contract` and runtime object-layout
-gates own the compiler-private placement contract and its malformed-MIR cases.
+size/alignment/status boundary. `storage_adoption_contract` checks public
+source-defined ownership and that retired private storage names have no magic
+meaning. General object-lifetime contracts and runtime object-layout gates own
+typed placement and its malformed-MIR cases.
 
 `cleanup_bound_borrow`, `cleanup_bound_borrow_mutations`, and
 `cleanup_bound_backend_mutations` distinguish external referents from the

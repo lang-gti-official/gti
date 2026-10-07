@@ -556,6 +556,22 @@ selected MIR constructor. Out-of-line specializations execute those bodies;
 an inline native default or `noexcept` body must not replace them. Direct
 concrete representations retain their single exact-owner declaration.
 
+Constructor fields of `Expected<T, E>` can publish a separately produced
+success value, owned unexpected value, or passive scalar alternative into a
+proved private empty representation. Admission binds the exact declared field,
+selected initializer, source HIR root, full-expression boundary, unique
+consumer, and adjacent producer or Invoke-success edge. Owning input transfer
+and construction-rollback activation must match the verified MIR obligations;
+this path cannot replace a live field or invent a local-binding lifetime.
+An exact nonraising zero-argument source constructor still executes at its
+`Construct` instruction in the originating lexical context. Publication moves
+the completed payload into the field, retires only its moved-from native shell,
+and leaves semantic cleanup to MIR. The local Expected join writer explicitly
+excludes these proved field publications, since an actual field is not a
+temporary lifetime slot. Missing or mismatched targets, activation, source
+boundaries, or transfer events reject admission rather than selecting a native
+fallback.
+
 The passive default-body proof recurses through resolved, zero-argument generated
 class defaults with cycle detection. It does not admit source calls, selected
 user constructors, borrowed state, active cleanup, failure edges, or union/base

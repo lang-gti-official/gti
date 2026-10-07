@@ -11,7 +11,7 @@ if __name__ == "__main__":
     generated_failure = (f"{generated.name}:{failure_line}: runtime error[GTI-R0002]: "
                          "division_by_zero in integer_division\n")
     main(names=("expected_passive_publication", "expected_passive_publication_failure",
-                "expected_generated_passive_construction"),
+                "expected_generated_passive_construction", "expected_constructor_fields"),
          cases={"expected_passive_publication_failure": [
              (arguments, (70, "caller cleaned\n",
                           f"expected_passive_publication_failure.gti:{line}: "
