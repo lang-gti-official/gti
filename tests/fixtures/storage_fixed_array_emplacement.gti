@@ -29,7 +29,7 @@ int32_t forward_with_fixed<Args...>(int32_t values[3], Args... rest) {
 }
 
 int main() {
-  int32_t seed[3] = {1, 2, 3};
+  mut int32_t seed[3] = {1, 2, 3};
   ArrayHolder direct{seed};
   ArrayHolder forwarded = forward_construct<ArrayHolder>(seed);
   if (direct.sum() != 6 || forwarded.sum() != 6) { return 1; }
@@ -49,5 +49,9 @@ int main() {
 
   mut std::vector<ArrayHolder> items{};
   [[discard]] items.emplace_back(seed);
+  // By-value forwarding copies the array; no container retains its address.
+  seed[0] = 99;
+  if (direct.sum() != 6 || forwarded.sum() != 6 ||
+      slots.get(std::size_t(0)).sum() != 6) { return 6; }
   return items[std::size_t(0)].sum() - 6;
 }

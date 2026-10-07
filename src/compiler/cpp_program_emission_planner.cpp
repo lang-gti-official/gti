@@ -4637,6 +4637,8 @@ public:
       emitLoweredMemberSpecializationDeclarations(
           firstDeferredMember, lastDeferredMember, firstDeferredLifecycleClass,
           lastDeferredLifecycleClass);
+      if (node.concrete == nullptr)
+        emitLoweredGeneratedConstructorSpecializationDeclarations(row);
     };
     for (std::size_t index = 0; index < classes.size(); ++index) {
       emitClass(index);
@@ -5446,6 +5448,46 @@ public:
       output << '\n';
     }
     loweredDeferredStaticFields.clear();
+  }
+
+  void emitLoweredGeneratedConstructorSpecializationDeclarations(
+      const LoweredDeclaration &owner) {
+    const auto *declaration =
+        std::get_if<LoweredClassDeclaration>(&owner.payload);
+    if (declaration == nullptr || !loweredOwnerIsGeneric(owner))
+      return;
+    for (const LoweredConstructorInstance &candidate :
+         loweredProgram.constructorInstances()) {
+      if (candidate.declaration != 0)
+        continue;
+      const MirClassInstance *instance = mir.findClassInstance(candidate.owner);
+      if (instance == nullptr || instance->declaration != declaration->id ||
+          loweredClassUsesDirectRepresentation(*instance))
+        continue;
+      const MirConstructorInstance *constructor =
+          mir.findConstructorInstance(candidate.id);
+      if (constructor == nullptr)
+        throw std::logic_error(
+            "generated constructor declaration lost its MIR body");
+      // Generated constructors have no source declaration row, so the ordinary
+      // deferred-member pass cannot declare these specializations. Match every
+      // emitted definition's exact signature before any body can instantiate
+      // the retained primary; declaration order does not select GTI behavior.
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(owner.namespaceScope);
+      const auto &plan = generalMirBodyPlan(
+          {.kind = MirBodyKind::Constructor, .owner = constructor->id});
+      for (const bool failure : {false, true}) {
+        if (!(failure ? plan.supportsFailureText() : plan.supportsPlainText()))
+          continue;
+        writeIndent();
+        output << "template <> " << loweredConcreteClassName(instance->id)
+               << "::" << owner.name << '(';
+        emitLoweredConstructorParameters(*constructor, failure);
+        output << ");\n";
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+    }
   }
 
   void emitLoweredMemberSpecializationDeclarations(

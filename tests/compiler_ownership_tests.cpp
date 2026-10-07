@@ -18378,8 +18378,7 @@ int main() { return 0; }
          "a free fallible borrow should require one unambiguous owner "
          "parameter");
 
-  const lang::FrontendResult forbiddenStorage =
-      analyzeTrustedPreludeFixture("fallible-borrow-storage.gti", R"(
+  const std::string forbiddenStorageSource = R"(
 enum class lookup_errc { missing };
 expected<int&, lookup_errc> global_result;
 class Holder { expected<int&, lookup_errc> result; };
@@ -18391,18 +18390,33 @@ int main() {
   };
   return 0;
 }
-)");
-  expect(!forbiddenStorage.canGenerateCode() &&
-             hasDiagnostic(forbiddenStorage.diagnostics,
-                           "cannot have global or static storage duration") &&
-             hasDiagnostic(forbiddenStorage.diagnostics,
-                           "through direct or nested nominal fields") &&
-             hasDiagnostic(forbiddenStorage.diagnostics,
-                           "Function parameters cannot nest borrowed state") &&
-             hasDiagnostic(forbiddenStorage.diagnostics,
-                           "Lambda return types cannot carry borrowed state"),
-         "fallible borrows should remain local return values rather than "
-         "escaping through fields, globals, parameters, or lambdas");
+)";
+  const lang::FrontendResult forbiddenStorage = analyzeTrustedPreludeFixture(
+      "fallible-borrow-storage.gti", forbiddenStorageSource);
+  constexpr std::string_view forbiddenStorageFile =
+      "gti-trusted-fallible-borrow-storage.gti";
+  expect(
+      !forbiddenStorage.canGenerateCode() &&
+          hasDiagnosticAt(forbiddenStorage.diagnostics, "GTI-S2045",
+                          forbiddenStorageFile,
+                          forbiddenStorageSource.find("global_result"),
+                          "cannot have global or static storage duration") &&
+          hasDiagnosticAt(forbiddenStorage.diagnostics, "GTI-S2045",
+                          forbiddenStorageFile,
+                          forbiddenStorageSource.find("result; }"),
+                          "fallible and other non-nominal carriers cannot be "
+                          "stored as fields") &&
+          hasDiagnosticAt(forbiddenStorage.diagnostics, "GTI-S2045",
+                          forbiddenStorageFile,
+                          forbiddenStorageSource.find("result) {}"),
+                          "Function parameters cannot nest borrowed state") &&
+          hasDiagnosticAt(
+              forbiddenStorage.diagnostics, "GTI-S2027", forbiddenStorageFile,
+              forbiddenStorageSource.find(
+                  "expected<int&", forbiddenStorageSource.find("auto lambda")),
+              "Lambda return types cannot carry borrowed state"),
+      "fallible borrows should remain local return values rather than "
+      "escaping through fields, globals, parameters, or lambdas");
 
   const std::string unsupportedSource = R"(
 enum class lookup_errc { missing };

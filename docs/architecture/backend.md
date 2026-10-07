@@ -2004,6 +2004,14 @@ destructor failure entries in its own deferred concrete row; the primary's
 lifecycle pass leaves that instance alone and emits explicit specializations
 only for instances that remain specializations of the primary.
 
+Generated constructors have no source member declaration row. For a retained
+native primary, their exact ordinary and status-form specialization declarations
+are nevertheless emitted alongside source-member specializations, after the
+concrete field dependencies are complete and before executable consumers.
+The declarations and later definitions use the same verified constructor
+instance and admitted signature; native implicit instantiation cannot select a
+different body or precede the explicit specialization.
+
 C++ type syntax, include selection, helper names, failure ABI syntax, and
 representation choices remain inside the C++ backend. C++ source fragments do
 not belong in `LoweredProgram`.

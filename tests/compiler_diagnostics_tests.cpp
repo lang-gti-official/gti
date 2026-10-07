@@ -2775,13 +2775,28 @@ int main() { Number value{}; return consume(value); }
 }
 
 void testRawAuditDiagnosticPublication() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto fixture =
+      root / "tests/coverage/reproducers/a44-raw-audit-duplicate-warning.gti";
+  const auto atSource = [](const lang::FrontendResult &analysis,
+                           std::string_view source) {
+    std::vector<const lang::Diagnostic *> found;
+    for (const auto &diagnostic : analysis.diagnostics)
+      if (diagnostic.primary.source == source)
+        found.push_back(&diagnostic);
+    return found;
+  };
   const auto result = analyzeDiagnosticFixture(
       "a44-raw-audit-duplicate-warning", lang::RawPointerAuditMode::Warn);
-  expect(result.canGenerateCode() && result.diagnostics.size() == 1 &&
-             result.diagnostics.front().code == "GTI-S2102" &&
-             result.diagnostics.front().severity ==
-                 lang::DiagnosticSeverity::Warning &&
-             result.diagnostics.front().related.size() == 1,
+  // Included generic library bodies can independently report optional audit
+  // limitations. Count this access's reports by exact source identity instead
+  // of making deduplication depend on unrelated library implementations.
+  const auto warnings = atSource(result, fixture.string());
+  expect(result.canGenerateCode() && warnings.size() == 1 &&
+             warnings.front()->code == "GTI-S2102" &&
+             warnings.front()->severity == lang::DiagnosticSeverity::Warning &&
+             warnings.front()->related.size() == 1 &&
+             warnings.front()->related.front().span.source == fixture.string(),
          "direct and checked-owner audit observations publish one lifetime "
          "warning");
   const auto off = analyzeDiagnosticFixture("a44-raw-audit-duplicate-warning");
@@ -2789,14 +2804,19 @@ void testRawAuditDiagnosticPublication() {
          "audit warning publication does not alter off-mode semantics");
   const auto strict = analyzeDiagnosticFixture(
       "a44-raw-audit-duplicate-warning", lang::RawPointerAuditMode::Strict);
-  expect(!strict.canGenerateCode() && strict.diagnostics.size() == 1 &&
-             strict.diagnostics.front().severity ==
-                 lang::DiagnosticSeverity::Error,
+  const auto errors = atSource(strict, fixture.string());
+  expect(!strict.canGenerateCode() && errors.size() == 1 &&
+             warnings.size() == 1 && errors.front()->code == "GTI-S2102" &&
+             errors.front()->severity == lang::DiagnosticSeverity::Error &&
+             errors.front()->primary == warnings.front()->primary,
          "strict mode still promotes the one audit warning to an error");
-  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  std::ifstream input(
-      root / "tests/coverage/reproducers/a44-raw-audit-duplicate-warning.gti");
+  std::ifstream input(fixture);
   std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto access = source.find("std::assume_ref(first, c)") +
+                      std::string_view("std::assume_ref(first, c)").size() - 1;
+  expect(warnings.size() == 1 && warnings.front()->primary.start == access &&
+             warnings.front()->primary.end == access + 1,
+         "the deduplicated audit warning identifies the exact unsafe access");
   const auto point = source.find("return r - 2;");
   expect(point != std::string::npos,
          "audit fixture retains its second-access insertion point");
@@ -2806,12 +2826,16 @@ void testRawAuditDiagnosticPublication() {
         "int32_t& second = std::assume_ref(first, c); return r + second - 4;");
     lang::FrontendOptions options;
     options.rawPointerAudit = lang::RawPointerAuditMode::Warn;
+    const auto distinctPath = root / "distinct-audit-accesses.gti";
     const auto distinct = lang::Frontend(options).analyze(
-        "distinct-audit-accesses.gti", source, {root / "stdlib/prelude.gti"},
-        {}, {root / "stdlib"});
+        distinctPath, source, {root / "stdlib/prelude.gti"}, {},
+        {root / "stdlib"});
+    const auto accesses = atSource(distinct, distinctPath.string());
     expect(
-        distinct.canGenerateCode() && distinct.diagnostics.size() == 2 &&
-            distinct.diagnostics[0].primary != distinct.diagnostics[1].primary,
+        distinct.canGenerateCode() && accesses.size() == 2 &&
+            accesses[0]->code == "GTI-S2102" &&
+            accesses[1]->code == "GTI-S2102" &&
+            accesses[0]->primary != accesses[1]->primary,
         "identical origins at distinct unsafe accesses keep separate warnings");
   }
 }
