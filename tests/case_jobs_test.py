@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import case_jobs
 import lambda_pack_invocation_runtime_test as matrix
+import stdlib_surface_test as surface
 
 
 class CaseJobsTests(unittest.TestCase):
@@ -87,6 +88,23 @@ class CaseJobsTests(unittest.TestCase):
         self.assertEqual(visits, [("work", 0), ("observe", None),
                                   ("work", 1), ("observe", None)])
 
+    def test_compile_and_execution_share_the_worker_budget(self):
+        lock = threading.Lock()
+        active = peak = 0
+
+        def busy(value):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.005)
+            with lock:
+                active -= 1
+            return value
+
+        self.run_cases([(str(i), i) for i in range(20)], busy, 2, busy)
+        self.assertLessEqual(peak, 2)
+
     def matrix_calls(self, jobs, corrupt=None):
         builds, executions = [], []
         lock = threading.Lock()
@@ -107,12 +125,13 @@ class CaseJobsTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "bad" if corrupt == "run" else "ok", "")
 
         arguments = ["matrix", "fake-gti", "--jobs", str(jobs)]
-        cases = {"fixture": [((), (0, "ok", "")), (("fail",), (0, "ok", ""))]}
+        cases = {name: [((), (0, "ok", "")), (("fail",), (0, "ok", ""))]
+                 for name in ("fixture", "other")}
         with patch.object(sys, "argv", arguments), patch.object(subprocess, "run", process), \
                 patch.dict(os.environ, {"GTI_TEST_CASE_JOBS": "1"}), \
                 contextlib.redirect_stdout(io.StringIO()):
-            matrix.main(names=("fixture",), cases=cases, execution_profile="concurrent",
-                        stdin_by_name={"fixture": "bytes"})
+            matrix.main(names=("fixture", "other"), cases=cases, execution_profile="concurrent",
+                        stdin_by_name={"fixture": "bytes", "other": "bytes"})
         return sorted(builds), executions
 
     def test_exact_matrix_and_native_observations_preserved(self):
@@ -120,8 +139,8 @@ class CaseJobsTests(unittest.TestCase):
         parallel, parallel_runs = self.matrix_calls(2)
         self.assertEqual(serial, parallel)
         self.assertEqual(serial_runs, parallel_runs)
-        self.assertEqual(len(serial), 8)
-        self.assertEqual(len(serial_runs), 16)
+        self.assertEqual(len(serial), 16)
+        self.assertEqual(len(serial_runs), 32)
         self.assertTrue(any("-fno-elide-constructors" in row[0] for row in serial))
         self.assertTrue(any("-fsanitize=address,undefined" in row[0] for row in serial))
         self.assertTrue(all(row[2] == "bytes" for row in serial_runs))
@@ -131,6 +150,31 @@ class CaseJobsTests(unittest.TestCase):
         for corrupt in ("build", "run"):
             with self.assertRaises(RuntimeError):
                 self.matrix_calls(2, corrupt)
+
+    def surface_cases(self, jobs, corrupt=False):
+        repository = pathlib.Path(__file__).resolve().parent.parent
+        manifest = surface.load_manifest(repository / "tests/stdlib_surface_manifest.json")
+        records = []
+        lock = threading.Lock()
+
+        def execute(case, *args):
+            with lock:
+                records.append(case)
+            if corrupt and case["id"] == manifest["cases"][-1]["id"]:
+                raise AssertionError("late surface failure")
+
+        arguments = ["surface", "fake-gti", "clang++", "runtime.a", str(repository),
+                     "--jobs", str(jobs)]
+        with patch.object(sys, "argv", arguments), patch.object(surface, "run_case", execute), \
+                patch.dict(os.environ, {"GTI_TEST_CASE_JOBS": "1"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(surface.main(), 0)
+        return sorted(records, key=lambda case: case["id"])
+
+    def test_surface_full_manifest_preserved(self):
+        self.assertEqual(self.surface_cases(1), self.surface_cases(2))
+        with self.assertRaises(RuntimeError):
+            self.surface_cases(2, corrupt=True)
 
 
 if __name__ == "__main__":

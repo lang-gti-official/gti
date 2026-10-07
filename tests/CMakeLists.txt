@@ -3018,6 +3018,8 @@ if(Python3_Interpreter_FOUND)
   endif()
 endif()
 
+include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
+
 # Release binaries intentionally contain no source-tree resource fallback.
 # Every build-tree test runs before staging, including newly registered CLI/LSP
 # tests. Derive the inventory instead of maintaining an incomplete name list.

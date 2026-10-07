@@ -1,6 +1,7 @@
 """Bounded workers with ordered observation and an exact, nonempty case census."""
 
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import re
 import time
@@ -51,11 +52,33 @@ def run_cases(cases, work, jobs=1, observe=None):
     if jobs == 1:
         for key, value in cases:
             complete(key, lambda: work(value))
-    else:
+    elif observe is None:
         with ThreadPoolExecutor(max_workers=min(jobs, len(cases))) as executor:
-            futures = [executor.submit(work, value) for _, value in cases]
-            for (key, _), future in zip(cases, futures):
+            futures = {executor.submit(work, value): key for key, value in cases}
+            for future in as_completed(futures):
+                complete(futures[future], future.result)
+        by_key = dict(results)
+        results = [(key, by_key[key]) for key in keys if key in by_key]
+    else:
+        # Do not queue the next compile until its predecessor is observed.
+        # When observing a completed compile, at most jobs-1 compiles remain
+        # in flight: native execution never adds an unaccounted extra worker.
+        with ThreadPoolExecutor(max_workers=min(jobs, len(cases))) as executor:
+            remaining = iter(cases)
+            pending = deque()
+
+            def submit_next():
+                case = next(remaining, None)
+                if case is not None:
+                    key, value = case
+                    pending.append((key, executor.submit(work, value)))
+
+            for _ in range(min(jobs, len(cases))):
+                submit_next()
+            while pending:
+                key, future = pending.popleft()
                 complete(key, future.result)
+                submit_next()
     if failures:
         raise RuntimeError("case failures:\n" + "\n".join(failures))
     if [key for key, _ in results] != keys:
