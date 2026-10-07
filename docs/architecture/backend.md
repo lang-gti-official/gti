@@ -639,6 +639,9 @@ another thread. Runtime-site records may legitimately retain a null descriptor.
 During managed task cleanup, an emergency may complete the already stored primary
 only when both that complete v2 record and its descriptor exactly match; replacing
 the primary or extending an existing two-record envelope remains terminal.
+Publishing that cleanup-kind outcome clears the inactive ordinary payload; the
+exact primary lives only in the emergency envelope. Join-result validation
+continues to reject contradictory active and inactive payloads.
 
 A moved class return is constructed at its MIR `Move`, before the cleanup
 continuation, but is not published until Return. The Move must dominate the

@@ -326,6 +326,9 @@ void clear_managed_failure_handoff() noexcept {
       std::terminate();
     }
     state->cleanupFailure = failure;
+    // Cleanup kind owns only the emergency envelope. Retire the ordinary
+    // payload when its exact primary is promoted into that envelope.
+    state->failure = {};
     state->primaryArtifact = primaryArtifact;
     state->secondaryArtifact = secondaryArtifact;
     state->failureKind = GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;
@@ -418,6 +421,7 @@ bool record_managed_task_cleanup_emergency(
     std::terminate();
   }
   state->cleanupFailure = *failure;
+  state->failure = {};
   state->primaryArtifact = primaryArtifact;
   state->secondaryArtifact = secondaryArtifact;
   state->failureKind = GTI_THREAD_WORKER_FAILURE_CLEANUP_V1;

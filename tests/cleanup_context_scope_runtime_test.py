@@ -89,6 +89,7 @@ def main():
                 result = run([binary])
                 assert not result.stdout and not result.stderr, result
     run([thread_probe, "valid"])
+    run([thread_probe, "stored"])
     for mutation in ("code", "site", "message", "descriptor", "third", "body"):
         result = subprocess.run([thread_probe, mutation], capture_output=True,
                                 text=True, timeout=30)
