@@ -2124,6 +2124,18 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     }
   }
   const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+  for (const auto &loan : body.loans) {
+    if (!loan.twoPhase)
+      continue;
+    const auto origin =
+        canonicalPlace(body, loan.source, bindingLoans, inactive);
+    if (origin.ambiguous || origin.root == MirPlaceRootKind::Symbol ||
+        origin.root == MirPlaceRootKind::Temporary ||
+        origin.root == MirPlaceRootKind::Value)
+      return failure(body, owner,
+                     "two-phase loan must retain one stable non-global origin "
+                     "through its receiver ancestry");
+  }
   // A nested store has one terminal reservation, but its already-evaluated
   // transient accessors also protect the receiver chain. Treat that exact
   // unretained ancestry as part of the reservation, never a lexical borrow.
@@ -5510,6 +5522,26 @@ mirStorageConstructForPreflight(const MirBody &body,
 
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
                                    MirFailureControlFlowPosition position) {
+  // Forming a checked reference evaluates its indexed place without loading
+  // the referent. Failure must propagate before any reference is published;
+  // it is not a terminal containment boundary merely because it is a Borrow.
+  if (instruction.kind == MirInstructionKind::Borrow && instruction.loan &&
+      instruction.operands.size() == 1 && instruction.lifecycle.empty() &&
+      !instruction.result && !instruction.destination &&
+      (instruction.operands.front().kind == MirOperandKind::BorrowRead ||
+       instruction.operands.front().kind == MirOperandKind::BorrowWrite) &&
+      instruction.info.category == ValueCategory::Place &&
+      instruction.definedFailure.propagation == FailurePropagationKind::None &&
+      !instruction.definedFailure.localOrigins.empty() &&
+      std::all_of(instruction.definedFailure.localOrigins.begin(),
+                  instruction.definedFailure.localOrigins.end(),
+                  [](const DefinedFailureOrigin &origin) {
+                    return origin.outcomes ==
+                           std::vector<DefinedFailureOutcome>{
+                               {DefinedFailureCode::IndexOutOfBounds,
+                                DefinedFailureDetail::FixedArray}};
+                  }))
+    return true;
   if (instruction.kind == MirInstructionKind::StorageConstructPreflight)
     return true;
   if (instruction.kind == MirInstructionKind::CleanupBeforeAssign)

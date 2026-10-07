@@ -1,11 +1,17 @@
 #include <std/string>
 #include <std/vector>
 class Guard { public: Guard() {} ~Guard() { std::println("guard"); } };
+class AccessGuard {
+public:
+  AccessGuard() {}
+  ~AccessGuard() { std::println("access guard"); }
+};
 class Row {
   mut int32_t cells[2] = {1, 1};
 public:
   Row() {}
   mut int32_t& operator[](std::size_t i) mut {
+    AccessGuard guard{};
     std::println("cell");
     return this.cells[i];
   }

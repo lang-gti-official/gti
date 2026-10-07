@@ -18,9 +18,9 @@ def main():
                                        capture_output=True, text=True, timeout=120)
                 assert built.returncode == 0, (standard, level, built.stdout, built.stderr)
                 for arguments, output, code in (
-                    ((), "row\ncell\nrhs\nguard\n", "GTI-R0002"),
-                    (("x",), "row\ncell\nguard\n", "GTI-R0007"),
-                    (("x", "x"), "row\ncell\nrhs\nguard\n", "GTI-R0002"),
+                    ((), "row\ncell\naccess guard\nrhs\nguard\n", "GTI-R0002"),
+                    (("x",), "row\ncell\naccess guard\nguard\n", "GTI-R0007"),
+                    (("x", "x"), "row\ncell\naccess guard\nrhs\nguard\n", "GTI-R0002"),
                 ):
                     result = subprocess.run([str(binary), *arguments], capture_output=True,
                                             text=True, timeout=30)

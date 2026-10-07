@@ -75,6 +75,57 @@ void checkMutations(const lang::FrontendResult &frontend) {
          "accessor results");
 }
 
+void checkCheckedReferenceFailures(const lang::FrontendResult &frontend) {
+  bool scalar = false;
+  bool nominal = false;
+  std::size_t count = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Borrow ||
+            instruction.localFailureSites.empty())
+          continue;
+        ++count;
+        scalar = scalar || instruction.info.type == lang::SemanticType::Int32;
+        nominal =
+            nominal || instruction.info.type.kind == lang::SemanticType::Class;
+        expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id,
+               "checked reference formation owns its exact Invoke before "
+               "publication");
+        for (int mutation = 0; mutation < 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = &const_cast<lang::MirFunctionInstance *>(
+                            malformed.findFunctionInstance(function.id))
+                            ->body;
+          auto *producer = body->findBlock(block.id);
+          if (mutation == 0) {
+            const auto success = producer->terminator.target;
+            producer->terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                    .target = success};
+          } else if (mutation == 1) {
+            producer->instructions.back().definedFailure.localOrigins.clear();
+          } else {
+            auto *failure = body->findBlock(producer->terminator.elseTarget);
+            std::erase_if(failure->instructions, [&](const auto &cleanup) {
+              return cleanup.kind == lang::MirInstructionKind::EndBorrow &&
+                     cleanup.loan == instruction.loan;
+            });
+          }
+          lang::rebuildMirReachability(*body);
+          (void)lang::rebuildMirValueUses(*body);
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "checked reference rejects lost routing, origin or "
+                 "failed-publication retirement");
+        }
+      }
+    }
+  }
+  expect(count >= 3 && scalar && nominal,
+         "ordinary scalar and class reference results share checked-place "
+         "failure authority");
+}
+
 void checkNegative(std::string declarations, std::string body) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto result = lang::Frontend().analyze(
@@ -114,6 +165,7 @@ int main() {
   if (!frontend.canGenerateCode())
     return 1;
   checkMutations(frontend);
+  checkCheckedReferenceFailures(frontend);
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
                      lang::OptimizationLevel::O3}) {
     const auto optimized =
@@ -145,6 +197,23 @@ int main() {
     }
   }
   const auto declarations = source.substr(0, source.find("int main()"));
+  const auto global = analyzeWithStandardLibrary(
+      "global-operator-place.gti",
+      declarations + "mut Grid global{}; int main(){"
+                     "global[std::size_t(0)][std::size_t(0)] = 2; return 0; }");
+  expect(global.canGenerateCode(),
+         "nested global target retains its ordinary exclusive schedule");
+  std::size_t globalConsumers = 0;
+  for (const auto &function : global.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    ++globalConsumers;
+    expect(std::none_of(function.body.loans.begin(), function.body.loans.end(),
+                        [](const auto &loan) { return loan.twoPhase; }),
+           "a loan-rooted intermediate must not disguise a global as a local "
+           "reservation");
+  }
+  expect(globalConsumers == 1, "global control checks exactly its entry body");
   checkNegative(declarations, "Cell cell{}; *cell = 2; return 0;");
   checkNegative(
       declarations,
