@@ -44,6 +44,16 @@ if(Python3_Interpreter_FOUND)
       "GTI_TEST_CASE_JOBS=${GTI_TEST_CASE_JOBS}")
     set_tests_properties("${suite}" PROPERTIES PROCESSORS "${GTI_TEST_CASE_JOBS}")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "bounded-case-workers")
+    # Fresh CTest trees give unknown tests zero cost. Without a hint, one-slot
+    # tests can keep filling the budget while compound suites wait for enough
+    # slots, pushing the largest matrices into the tail. Use the unchanged
+    # suite timeout as a conservative ordering hint, not a measured duration.
+    get_test_property("${suite}" TIMEOUT gti_case_timeout)
+    if(gti_case_timeout GREATER 1)
+      set_tests_properties("${suite}" PROPERTIES COST "${gti_case_timeout}")
+    else()
+      set_tests_properties("${suite}" PROPERTIES COST 1)
+    endif()
   endforeach()
   add_test(NAME test_case_jobs
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/case_jobs_test.py")
