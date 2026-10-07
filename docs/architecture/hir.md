@@ -20,6 +20,12 @@ access to that accessor's private storage.
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
 `SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
 Concrete generic validity is obtained through semantic instance reanalysis.
+Every reanalyzed body has its own loan-number domain, including a range whose
+types do not depend on generic parameters. Plan verification retains exact
+non-dependent range types and selected protocol operations, compares loan
+relationships across primary/instance domains, and independently checks the
+actual body-local loans, access modes, source bindings and carriers. Numeric
+loan equality with an unrelated primary analysis is not a provenance proof.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
