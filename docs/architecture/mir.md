@@ -2098,6 +2098,8 @@ SSA and place dependencies, including scalar joins and their controlling
 conditions, using existing MIR effects to allow only harmless preparation before
 the base. Selected generated base constructors retain their exact executable
 target; targetless native defaults cannot satisfy a required generated schedule.
+Every selected base initializer's generated-default flag must match the selected
+constructor, including when the derived constructor is explicitly declared.
 Base-argument cleanup and borrow eligibility use concrete class and enum traits.
 Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
