@@ -3661,6 +3661,55 @@ observations.
 
 ## Development And Completion Cadence
 
+### Bounded case workers and development selections
+
+The standard-library surface harness and all clients of the shared callable
+runtime matrix support bounded case workers. `GTI_TEST_CASE_JOBS` is a CMake
+cache setting (default `2`), not a compiler or installed CLI option. CTest
+reserves that many `PROCESSORS` for each participating suite and supplies the
+matching environment value. Increase the outer CTest budget independently;
+do not give each test the entire host's CPU count. Existing suite names,
+timeouts, fixture sets, optimization/standard/elision/sanitizer modes, expected
+diagnostics and native observations are unchanged. Full CI and release commands
+continue to run every registered test without filtering.
+
+For the callable matrix, only compilation runs concurrently. Native executions
+remain on the parent thread in the original mode/fixture/argument order, with
+the same working directory and input. This preserves fixtures that reuse files
+between modes. Each standard-library case already owns an isolated working
+directory; its complete sequence of compilations and observations can run in
+parallel with other cases. Workers do not cache passing results or artifacts.
+Every planned case is submitted once, observed once, and any compile, timeout,
+execution, or observation failure fails the suite. An empty or duplicate plan
+is rejected. Case-level progress and a complete-count/timing summary identify
+long work inside a suite instead of hiding it behind one CTest entry.
+
+Standalone harnesses retain serial defaults and accept `--jobs N`; existing
+`--fixture`/`--mode` development filters remain partial evidence. `--jobs 1`
+provides the serial reference without changing the assertion matrix. The
+`test_case_jobs` gate checks exact serial/parallel compile arguments, all eight
+modes, sanitizer environment, stdin, native execution ordering and the whole
+surface manifest, plus injected compile/output/timeout/observation failures.
+`test_throughput_registration` independently finds every shared-harness client,
+checks registration and worker/processor pairing, and rejects omitted,
+disabled or forged registrations. It queries a scratch copy of registration
+files so nested CTest discovery cannot truncate the active suite's log.
+
+All registered tests automatically carry `coverage-full`. A deliberately
+partial group of in-process compiler/IR/model contracts carries
+`feedback-fast`; `lsp`, `end-to-end`, and `bounded-case-workers` are additional
+selection labels. Labels do not disable tests or change default execution.
+
+```sh
+ctest --test-dir build --parallel 4 --output-on-failure -L feedback-fast
+ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full
+python3 tests/owning_function_runtime_test.py build/gti --jobs 1
+```
+
+Fast feedback is not a complete feature/release claim. The full completion,
+installed-consumer, platform, sanitizer and packaging obligations below remain
+in force. This scheduling change does not replace them with a smaller suite.
+
 `source_debug_info` exercises opt-in statement mappings, escaped paths,
 multi-line expansion resets, C++20/C++23 emission, native execution, project
 profile/CLI overrides, cache bypass, report policy, and Darwin bundle ownership
