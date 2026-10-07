@@ -1,5 +1,25 @@
 # Compiler Verification
 
+## Class field value publication and declaration defaults
+
+The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
+the focused repair gates for issues #53, #60 and #91. Five original reproducers,
+two stronger fixtures and example 23 pass C++20/C++23 at O0/O1/O3 with native
+elision disabled (48 executions). Both stronger fixtures pass ASan/UBSan. They
+cover binding/receiver and nested field copies, explicit moves, fresh
+constructors, call results, generated declaration/default-list field
+construction, omitted designated brace defaults, and owning field replacement
+through existing cleanup protocols. Four semantic negatives retain immutable
+field, moved-source, owning-copy and unknown-designator rejection.
+
+`class_field_values` checks forged field identities/types and the omitted-default
+construction kind/CallInput activation, plus cycles and unresolved calls in
+recursive passive default bodies; `class_field_value_runtime` owns the
+native matrix. Existing `field_array_empty_state` remains passing. Example 23
+adds nine MIR bodies and twelve declarations, with generated items unchanged.
+This is focused candidate evidence; combined full-suite, installed-toolchain,
+Linux and Windows verification remains with the campaign coordinator.
+
 ## Typed passive fixed-array construction
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
