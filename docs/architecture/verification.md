@@ -14,8 +14,23 @@ repeated aliases, native pointer arrays and callbacks with C scalar arguments.
 The nested-pointer LSP gate checks per-layer qualifier hover, native call
 navigation, unsaved invalid-to-valid recovery, UTF-16 diagnostic locations,
 formatted-source reanalysis and idempotence. Tree-sitter passes all 73 corpus
-cases. These focused results are not broad-suite or cross-platform execution
-evidence; reconciliation and the broader release gates remain required.
+cases, highlight/locals/rainbow queries and all 186 shipped sources.
+
+All 85 selected compiler, backend, MIR, optimizer, native ABI, pointer and
+corpus gates are accounted for as passing. The first run passed 82; the three
+remaining gates passed after correcting test-only bookkeeping: example 124
+has 29 unique bodies, a helper-local constant is not a template default, and
+the function-item identity decoder must consume the added native-scalar field.
+Production compiler sources were unchanged between that run and the reruns.
+The complete CLI, project workflow and LSP protocol gates also pass after
+updating importer-spelling expectations and replacing obsolete bool-rejection
+fixtures with the still-rejected GTI `char`. Formatting checks all 457
+first-party C/C++ files. This is selected local evidence, not a full registered
+suite, Linux/Windows execution or active installed-toolchain validation.
+
+The unrelated existing passive native-record forwarding/discard failure is
+tracked in [issue 105](https://git.internal.howetotech.dev/gti-lang/gti/issues/105);
+it reproduces on the independent 0.380.0 callback release too.
 
 ## Native function-pointer invocation
 
@@ -37,9 +52,9 @@ and 142 LoweredProgram declarations, 29 bodies and three generated items after
 the native-scalar prelude reconciliation.
 
 Foreign variables and broader foreign-thread entry are not introduced. This is
-local candidate evidence, not Linux/Windows execution, installed-consumer
-validation or proof of the separately coordinated native-scalar/nested-pointer
-composition.
+local candidate evidence, not Linux/Windows execution or installed-consumer
+validation. The native-scalar/nested-pointer composition is covered by the
+combined evidence above.
 
 ## Optional raw audit and combined reconciliation
 
