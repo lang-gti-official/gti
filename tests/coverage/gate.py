@@ -47,6 +47,7 @@ COMPILE_SECONDS = 180
 RUN_SECONDS = 60
 CODE = re.compile(r"(?:error|warning)\[(GTI-[A-Z][0-9]{4})\]")
 UNLOCATED = re.compile(r"^<source>:", re.MULTILINE)
+BACKEND_LOG = re.compile(r"backend diagnostics saved at (\S+)")
 
 
 def classify(gti: Path, source: Path, output: Path, expected_exit: int) -> tuple[str, str]:
@@ -76,6 +77,10 @@ def classify(gti: Path, source: Path, output: Path, expected_exit: int) -> tuple
         return "crash", f"compiler signal {-compiled.returncode}"
     if "GTI-B0001" in codes:
         return "ice", " ".join(codes)
+    # The driver saves native compiler/linker output to a file and names it.
+    saved = BACKEND_LOG.search(text)
+    if saved and Path(saved.group(1)).is_file():
+        text += Path(saved.group(1)).read_text(encoding="utf-8", errors="replace")
     if "Undefined symbols" in text or "undefined reference" in text:
         return "link", ""
     if "native C++ compiler" in text or "backend failed" in text:

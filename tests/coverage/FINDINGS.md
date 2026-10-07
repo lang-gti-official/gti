@@ -6,14 +6,23 @@ much of the language has never been put through the pipeline together. It is
 not a demonstration set; `examples/` owns that role. Programs here are chosen
 for combinatorial reach, not readability.
 
-Run it with:
+The CTest gate `language_coverage_corpus` runs every corpus program, every
+reproducer, and every must-reject program in `rejections/`:
 
-    tests/coverage/run_coverage.sh build/gti
+    python3 tests/coverage/gate.py build/gti <output-dir>
 
-Outcomes are classified as pass, ICE (`GTI-B0001`), link failure (the GTI
-front end accepts the program and the C++ linker then reports an undefined
-generated symbol), silent failure (non-zero exit with no diagnostic), or
-rejection.
+`gate.py` classifies each outcome as pass, runtime failure, ICE (`GTI-B0001`),
+backend failure (generated C++ does not compile), link failure (the native
+linker reports an undefined generated symbol), silent failure (non-zero exit
+with no diagnostic), hang, crash, bad location (a diagnostic at the synthetic
+`<source>` location), or located rejection. `expectations.json` states the
+expected outcome. Corpus programs must pass unless listed. A listed entry with
+a `finding` (and, where one exists, an `issue`) is a known defect: it records
+the outcome the defect produces today, and the gate fails when that outcome
+changes. A failing test therefore stays in place without turning the gate red,
+and a fix cannot go unrecorded: update this file, the expectation and the issue
+together. `run_coverage.sh build/gti` remains available for a quick sweep of
+the corpus programs alone that does not consult the expectations.
 
 ## Audit result
 
@@ -24,10 +33,9 @@ failures**; after integrating F1–F6 fixes, that fixed regression tranche is
 **30 pass, 0 ICE, 0 silent failures, and 0 rejections** and is registered as
 `language_coverage_fixed_corpus`.
 
-The later c32–c66 programs deliberately preserve unresolved F7–F16 findings
-and therefore remain part of the manual complete-corpus audit rather than a
-green CTest expectation. Four further defects (F17–F20) came from sanitizer,
-malformed-input, and resource-stress runs rather than from the sweep.
+The later c32–c66 programs preserved the then-unresolved F7–F16 findings. Four
+further defects (F17–F20) came from sanitizer, malformed-input, and
+resource-stress runs rather than from the sweep.
 
 A second script, `scaffold_probe.sh`, probes stdlib operations the surface
 manifest marks as unimplemented and records how each one actually fails
@@ -36,8 +44,22 @@ manifest marks as unimplemented and records how each one actually fails
 explains how to run them safely.
 
 Every historical finding below remains reproduced by a self-contained program
-in `reproducers/`. F1–F6 now compile and run; F7–F20 remain audit findings and
-are not frozen as passing behavior.
+in `reproducers/`, and every reproducer is gated by `expectations.json`.
+
+### Re-audit at 0.379.2
+
+An optimized 0.379.2 build compiles and runs **63 of 65** corpus programs; only
+`c52_higher_order_lambdas` (F14) and `c55_iterator_utilities` (F16) are still
+rejected. Before this re-audit only c01–c30 were gated, so 33 passing programs
+had no regression protection.
+
+| Status at 0.379.2 | Findings |
+| --- | --- |
+| Resolved, now gated as passing | F8, F9, F11, F12, F13, F15 (its `(a + b).value()` form), S03, S05, S07, S10, S11 |
+| Improved | S08: the 40-link chain compiles in about 1.2s (was 6.5s) |
+| Still reproduced, gated as known | F10, F14, F16, F17, S01, S02, S04, S06, S09, S12, S15 |
+| Still reproduced, new reproducers | F7 ([#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51)): the original `std::optional` reproducer passes because `optional` gained bodies, but declaration-only `std::weak_ptr` members and any user-declared GTI function without a body still fail at the native link |
+| Not gated (resource or tooling inputs) | F18, F19, F20, S13, S14 |
 
 | Finding | Resolution |
 | --- | --- |
