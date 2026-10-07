@@ -125,7 +125,9 @@ int main() {
           generated.find("static_cast<std::uint8_t>(4)") != std::string::npos &&
           generated.find("program-initialization-v1 module-instance 0") !=
               std::string::npos &&
-          generated.find("mir_checked_negate_v1<std::int32_t>") !=
+          generated.find("static_cast<std::int8_t>(-127 - 1)") !=
+              std::string::npos &&
+          generated.find("static_cast<std::int16_t>(-32767 - 1)") !=
               std::string::npos &&
           generated.find("static_cast<std::int64_t>("
                          "-9223372036854775807 - 1)") != std::string::npos &&
