@@ -1,2 +1,0 @@
-// Sparse storage policy now resides with its directly visible memory declarations.
-#include <std/memory>

@@ -291,33 +291,36 @@ void testSparseFinalAddressConstructor() {
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &call : block.instructions) {
-        if (call.intrinsic != lang::IntrinsicKind::StorageConstruct ||
-            call.storagePreflight == 0)
+        if (call.intrinsic != lang::IntrinsicKind::ObjectConstruct ||
+            !call.constructorTarget || call.lifecycle.empty() ||
+            call.definedFailure.propagation !=
+                lang::FailurePropagationKind::Constructor)
           continue;
         ++checked;
         const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                            .owner = function.id};
-        const auto *check = instruction(function.body, call.storagePreflight);
-        expect(check && check->operands.size() == 2 &&
-                   check->operands[1] == call.operands[1] &&
-                   lang::mirStorageConstructForPreflight(function.body,
-                                                         check->id) == &call,
-               "sparse preflight protects the exact allocation and index");
+        expect(call.storagePreflight == 0 &&
+                   call.unsafeOperation ==
+                       lang::UnsafeOperationKind::ObjectLifetime &&
+                   !call.parameterTypes.empty() &&
+                   call.parameterTypes.front().kind ==
+                       lang::SemanticType::RawPointer,
+               "source sparse policy uses general typed construction without "
+               "private container preflight authority");
         const auto emitted = lang::CppMirBodyEmitter(frontend.mir, map)
                                  .emitFailureBodyText(address, "sparse", 1);
         expect(emitted.emitted() &&
-                   emitted.text.find("mir_storage_preflight_v1(") !=
+                   emitted.text.find("mir_storage_preflight_v1(") ==
                        std::string::npos &&
-                   emitted.text.find("mir_storage_construct_with_v1(") !=
+                   emitted.text.find("mir_storage_construct_with_v1(") ==
                        std::string::npos,
-               "sparse construction uses MIR preflight and source failure "
-               "propagation");
+               "sparse construction emits general lifetime operations without "
+               "retired private helpers");
         const auto reject = [&](const auto &mutate, std::string_view message) {
           auto forged = frontend.mir;
           auto *body = lang::findMirBody(forged, address);
           auto *changed = instruction(*body, call.id);
-          auto *preflight = instruction(*body, call.storagePreflight);
-          mutate(*changed, *preflight);
+          mutate(*changed);
           expect(lang::rebuildMirValueUses(*body),
                  "sparse mutation rebuilds use index");
           expect(!lang::verifyMirProgram(forged).valid(), message);
@@ -326,17 +329,19 @@ void testSparseFinalAddressConstructor() {
                  "sparse backend admission independently rejects the forged "
                  "contract");
         };
-        reject([](auto &call, auto &) { call.storagePreflight = 0; },
-               "sparse constructor cannot erase its preflight");
-        reject([](auto &call,
-                  auto &check) { check.operands[1] = call.operands.back(); },
-               "sparse constructor cannot check another slot index");
-        reject([](auto &call, auto &) { call.constructorTarget.reset(); },
+        reject([](auto &call) { call.storagePreflight = call.id; },
+               "raw construction cannot invent container preflight authority");
+        reject(
+            [](auto &call) {
+              call.unsafeOperation = lang::UnsafeOperationKind::None;
+            },
+            "raw construction cannot erase its explicit unsafe authority");
+        reject([](auto &call) { call.constructorTarget.reset(); },
                "sparse constructor cannot erase its source target");
-        reject([](auto &call, auto &) { call.lifecycle.clear(); },
+        reject([](auto &call) { call.lifecycle.clear(); },
                "sparse constructor must transfer prepared owners exactly once");
         reject(
-            [](auto &call, auto &) {
+            [](auto &call) {
               call.definedFailure.propagation =
                   lang::FailurePropagationKind::None;
             },

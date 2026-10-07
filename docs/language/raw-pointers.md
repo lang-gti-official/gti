@@ -151,7 +151,7 @@ cannot raise a defined failure or invoke a user-defined move hook. Unlike
 ordinary move construction, the raw source is retired rather than left as an
 object whose moved-from lifetime the caller must subsequently end.
 
-[`122-manual-object-lifetimes.gti`](../../examples/122-manual-object-lifetimes.gti)
+[`125-manual-object-lifetimes.gti`](../../examples/125-manual-object-lifetimes.gti)
 demonstrates a source-defined fixed-address owner, checked access to an
 immovable payload, slot reuse and explicit owning relocation.
 
@@ -501,7 +501,7 @@ reusable checked shared borrow, not ownership of the provider. The unsafe
 obligation applies to every later allocation through that binding or any copy:
 successful nonempty regions must be writable, sufficiently large and aligned,
 disjoint from all outstanding allocations, and free of preexisting object
-lifetimes that adoption would overwrite. The provider must keep each region
+lifetimes that construction would overwrite. The provider must keep each region
 and its descriptor valid until matching release, and release exactly that
 region without accessing already-destroyed elements. Independent raw aliases,
 resets, reentrant calls or concurrent use must preserve these promises too.
@@ -512,17 +512,25 @@ address/extent/alignment/identity metadata: copying it creates neither a loan
 nor another right to release the region. Direct provider calls remain unsafe.
 
 The compiler checks the ordinary provider borrow and cleanup/transfer schedule.
-The private typed-storage adoption operation additionally checks its empty
-destination, count arithmetic, reported extent, non-null address for nonempty
-storage and numeric alignment. These checks cannot prove actual allocation
-extent, address provenance, non-overlap, writability or synchronization. A
-malformed provider is already outside the binding contract even when one
-contradiction is detected dynamically; an error return is not a general
+Source-defined sparse storage checks count arithmetic, reported extent,
+non-null addresses for nonempty regions, and numeric alignment before using
+the regions. Its slot engine tracks initialization and performs construction,
+destruction and eligible relocation through general object-lifetime operations;
+there is no private sparse-storage adoption capability. These checks cannot
+prove actual allocation extent, address provenance, non-overlap, writability or
+synchronization. A malformed provider is already outside the binding contract
+even when one contradiction is detected dynamically; an error return is not a general
 containment guarantee for arbitrary unsafe code.
 
-The source lease is declared before typed storage so reverse field cleanup
-destroys live elements before returning the region. This is ordinary checked
-lifecycle composition, not recognition of a public standard-library name.
+For nonempty sparse storage, an object-region lease is acquired first and a
+separate live-slot metadata lease is acquired from the same resource. A failed
+metadata request releases the object region; zero capacity acquires neither.
+Both leases are declared before the source slot engine, so reverse field
+cleanup destroys live elements before releasing metadata and then object
+bytes. The source cleanup guard continues reverse element cleanup after the
+first destructor failure under the existing double-failure contract. This is
+ordinary checked lifecycle composition, not recognition of a public
+standard-library name.
 See [custom resources](standard-library.md#custom-resource-protocol)
 for typed storage, growable containers and the example arena's bookkeeping/thread
 limits. Empty typed owners conservatively retain their provider borrow until

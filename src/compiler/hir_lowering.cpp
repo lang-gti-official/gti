@@ -3081,6 +3081,21 @@ private:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
       return true;
+    case SemanticType::Array: {
+      // A concrete, cleanup-free array is an ordinary by-value snapshot, not
+      // a decayed pointer or a borrowed pack element. Owning/borrow-carrying
+      // arrays still require their explicit lifetime transport representation.
+      const SemanticType *leaf = &type;
+      while (leaf->kind == SemanticType::Array) {
+        if (leaf->arguments.size() != 1 || leaf->arrayLength == 0 ||
+            leaf->arrayLengthParameterId != 0)
+          return false;
+        leaf = &leaf->arguments.front();
+      }
+      const auto traits = instanceProvider->traitsFor(type);
+      return traits.copyable && !traits.containsBorrowedState &&
+             !instanceProvider->requiresActiveCleanupFor(type);
+    }
     case SemanticType::NativeFunction:
       // A named native callback value is a passive pointer, not a confined
       // GTI callable. Packs retain its exact native signature by value.
@@ -5127,7 +5142,6 @@ private:
       value.designatedConstruction = !construction->designatedArguments.empty();
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
-          value.intrinsic == IntrinsicKind::StorageConstruct ||
           value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
           value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
@@ -5382,8 +5396,7 @@ private:
       }
     }
     if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
-         value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-         value.intrinsic == IntrinsicKind::StorageConstruct) &&
+         value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
         ((value.constructorTarget &&
           value.constructorKind == ConstructorKind::Ordinary) ||
          (!value.constructorTarget &&

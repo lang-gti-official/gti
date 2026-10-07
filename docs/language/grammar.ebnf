@@ -971,25 +971,15 @@ expected-type          = "expected" "<" type "," type ">" ;
    globals, references over arrays, and references to raw pointers remain
    unsupported.
 
-   `gti_internal::storage<T>` parses through `user-type` but has
-   compiler-defined semantics. It is a reserved move-only owner for standard
-   library containers. Its allocate, capacity, construct, borrowed read,
-   destroy, and relocate operations are ordinary qualified-call syntax
-   recognized and checked as compiler intrinsics. A class or struct containing
-   storage, directly or through another field, is also move-only after generic
-   type substitution. Storage rejects element types containing borrowed state.
-   Construction accepts a final variadic argument sequence, selects one exact
-   accessible element constructor after concrete pack expansion, and constructs
-   directly in an empty slot. Primitive elements accept zero arguments for
-   value initialization or one exact value. Relocation requires a movable
-   element type. These operations expose no raw address or independent
-   deallocation operation.
+   Public sparse storage uses ordinary class, generic, call and unsafe-block
+   syntax over the general typed object-lifetime operations. The former private
+   sparse-storage type and operation family have no compiler syntax or identity.
 
-   `gti_internal::prefix_storage<T>` is the corresponding reserved move-only
+   `gti_internal::prefix_storage<T>` is a separate reserved move-only
    capability for one contiguous live prefix. Its allocate, append, pop,
    borrowed read, complete-prefix relocate, insert, and erase operations
    preserve that prefix invariant. It cannot create an arbitrary live-slot
-   pattern. Like sparse storage, it rejects borrowed-state elements and exposes
+   pattern. It rejects borrowed-state elements and exposes
    no raw address or independent deallocation operation. Public size, capacity,
    growth, and invalidation policy remain ordinary source-defined class state.
 *)

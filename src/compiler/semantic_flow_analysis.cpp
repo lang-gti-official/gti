@@ -353,7 +353,6 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
     }
     finish();
     return;
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     // Compiler-private raw storage cleanup cannot execute a GTI body.
     finish();
@@ -1794,28 +1793,6 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::EmptyOwnerAccess,
                             uniqueOwnerAccessDetail());
           break;
-        case IntrinsicKind::AllocateStorage:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
-                            DefinedFailureDetail::PrivateStorage);
-          break;
-        case IntrinsicKind::StorageConstruct:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
-                            DefinedFailureDetail::PrivateStorage);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::DuplicateConstruction);
-          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
-                            DefinedFailureDetail::ElementConstruction);
-          if (const auto *construction = semanticModel.findConstruction(expr);
-              construction != nullptr &&
-              construction->kind == ConstructorKind::Ordinary &&
-              construction->constructor != 0 &&
-              construction->constructedType.kind == SemanticType::Class &&
-              !construction->generatedDefault) {
-            operation.propagation = FailurePropagationKind::Constructor;
-          }
-          break;
         case IntrinsicKind::ObjectConstruct:
           // Raw validity is the unsafe caller's obligation. Only the selected
           // GTI constructor may fail; there is no allocation or slot preflight.
@@ -1824,15 +1801,6 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
               construction->kind == ConstructorKind::Ordinary &&
               construction->constructor != 0 && !construction->generatedDefault)
             operation.propagation = FailurePropagationKind::Constructor;
-          break;
-        case IntrinsicKind::StorageRead:
-        case IntrinsicKind::StorageReadMut:
-        case IntrinsicKind::StorageDestroy:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
-                            DefinedFailureDetail::PrivateStorage);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::UninitializedAccess);
           break;
         case IntrinsicKind::AllocatePrefixStorage:
           anchor(token);
@@ -1903,10 +1871,6 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::EmptyOwnerAccess,
                             DefinedFailureDetail::MemberAccess);
           break;
-        case IntrinsicKind::StorageTryAllocate:
-        case IntrinsicKind::StorageTryAdopt:
-        case IntrinsicKind::StorageCapacity:
-        case IntrinsicKind::StorageInitialized:
         case IntrinsicKind::PrefixStorageLength:
         case IntrinsicKind::PrefixStorageTextView:
         case IntrinsicKind::PrefixStorageCString:
@@ -1976,18 +1940,6 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, outcome.code, outcome.detail);
           break;
         }
-        case IntrinsicKind::StorageRelocate:
-        case IntrinsicKind::StorageShiftRight:
-        case IntrinsicKind::StorageShiftLeft:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::RelocationCapacity);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::InvalidRelocationSource);
-          addFailureOutcome(
-              operation, DefinedFailureCode::InvalidStorageState,
-              DefinedFailureDetail::OccupiedRelocationDestination);
-          break;
         case IntrinsicKind::ExactTypeParameterConstruction:
         case IntrinsicKind::RawPointerConversion:
         case IntrinsicKind::DefaultTypeParameterConstruction:
@@ -2691,10 +2643,8 @@ auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
          (isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
           owner.storedReference->type.kind == SemanticType::Reference &&
           !owner.storedReference->type.arguments.empty() &&
-          (owner.storedReference->type.arguments.front().kind ==
-               SemanticType::Storage ||
-           owner.storedReference->type.arguments.front().kind ==
-               SemanticType::PrefixStorage));
+          owner.storedReference->type.arguments.front().kind ==
+              SemanticType::PrefixStorage);
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryMutexGuardCarrier(
@@ -8539,8 +8489,6 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   case IntrinsicKind::UniqueOwnerBorrow:
   case IntrinsicKind::UniqueOwnerBorrowMut:
   case IntrinsicKind::SharedOwnerBorrow:
-  case IntrinsicKind::StorageRead:
-  case IntrinsicKind::StorageReadMut:
   case IntrinsicKind::PrefixStorageRead:
   case IntrinsicKind::PrefixStorageReadMut:
   case IntrinsicKind::OptionalStorageRead:
@@ -8616,7 +8564,6 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
     // compiler-owned resource mutation can replace objects or backing storage.
     if (!key.valid() ||
         (type.kind != SemanticType::Class && type.kind != SemanticType::Array &&
-         type.kind != SemanticType::Storage &&
          type.kind != SemanticType::PrefixStorage &&
          type.kind != SemanticType::UniqueOwner &&
          type.kind != SemanticType::SharedPointer))
@@ -10648,11 +10595,6 @@ auto SemanticVisitor::Impl::baseTypeOf(
     return type.arguments.size() == 1 ? SemanticType::uniqueOwnerOf(typeOf(
                                             type.arguments[0], fromScope))
                                       : SemanticType::Unknown;
-  }
-  if (compilerCapability == CompilerCapabilityTypeKind::Storage) {
-    return type.arguments.size() == 1
-               ? SemanticType::storageOf(typeOf(type.arguments[0], fromScope))
-               : SemanticType::Unknown;
   }
   if (compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
     return type.arguments.size() == 1 ? SemanticType::prefixStorageOf(typeOf(

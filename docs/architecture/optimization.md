@@ -41,7 +41,7 @@ The audit boundary is:
 | CFG, dominance, loops, bodies | Explicit body inventory and terminator routing include normal, invoke, and terminal failure edges. Vocabulary preflight rejects unknown kinds before a default arm can mistake them for exits. |
 | Use-def and operands | Stable value IDs and the existing canonical use rebuild include receiver, instruction, terminator, and edge arguments. Copy/move/address/loan operands retain their effects and cannot become generic scalar substitutes. |
 | Places, alias, escape, ranges | Structural roots/projections and verified exact call escape facts govern memory reasoning. Unknown projections/roots produce `may-alias`, even across apparently different roots; raw and unresolved indirect memory remains conservative. |
-| Failure, cleanup, ownership | Exact outcomes and schedules survive every edit. Only the implemented bounds, storage-state, overflow, and remainder-domain proofs discharge checks; other failure families remain checked and are reported. |
+| Failure, cleanup, ownership | Exact outcomes and schedules survive every edit. Only the implemented bounds, overflow, and remainder-domain proofs discharge checks; other failure families remain checked and are reported. |
 | Analysis preservation | Every current cache has an explicit invalidation owner. Local safety-cache preservation is independent of preserving the closed-call cache; dropping closed-call facts also invalidates all dependent body proofs. |
 | Editor, identity repair, evidence | Existing typed edits repair derived identity/use/CFG facts, verify atomically, and replay from canonical source MIR. Transform/proof enum growth also requires explicit coverage. |
 | Lowered program and backends | Body verification includes vocabulary admission, so independent replay and the existing lowered-program seal reject unclassified MIR before backend consumption. No backend semantics or new input path is introduced. |
@@ -120,9 +120,8 @@ and cleanup:
 1. `sparse-conditional-constants`;
 2. `exact-receiver-dispatch`;
 3. `discharge-bounds-checks`;
-4. `discharge-storage-state-checks`;
-5. `discharge-arithmetic-overflow-checks`; and
-6. `discharge-arithmetic-domain-checks`.
+4. `discharge-arithmetic-overflow-checks`; and
+5. `discharge-arithmetic-domain-checks`.
 
 Both levels currently derive the same GTI proofs. They still select their
 corresponding native optimization levels. `-O0` and `-O1` do not attach safety
@@ -212,7 +211,11 @@ synchronization.
 body-local abstract interpreter that propagates checked fixed-width integer
 intervals through CFG edges, refines those intervals from branch predicates,
 tracks fixed-array extents and one scalar element envelope per non-escaping
-fixed-array root, and tracks exact initialized slots in private sparse storage.
+fixed-array root, and tracks the supported private prefix-storage facts.
+Sparse live-slot bookkeeping is now ordinary source code: the retired private
+storage initialized-set lattice and `StorageState` discharge proof do not apply
+to it. General raw lifetime calls and unsupported source state checks remain
+conservative barriers; no automatic sparse-state optimization is claimed.
 It is a client of the shared deterministic monotone forward-dataflow solver;
 its typed lattice, join, and bounded widening remain safety-analysis policy.
 Unknown or opaque calls, raw/unsafe memory effects, escaping roots, aliasing
@@ -272,9 +275,6 @@ The admitted operations are deliberately narrow:
   exactly match an earlier successful logical-size check derived from that
   same storage's length, with no intervening storage mutation, index write,
   aliasing write, opaque call, or control-flow path lacking the check;
-- private sparse-storage reads and mutable reads whose exact index is both in
-  capacity and definitely initialized by a successful construct not invalidated
-  by a destroy or mutation barrier; and
 - checked integer add, subtract, multiply, and unary negate whose complete
   operand intervals prove the result remains in the declared GTI domain; and
 - public logical-size checks whose integer intervals prove
@@ -307,6 +307,15 @@ still clears mutable facts for every later instruction. Recursive SCCs, native
 or virtual calls, owning-argument transfers, synchronization, raw/unsafe
 memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
+
+Context discovery is also bounded by complete summaries: an earlier
+source-allocation or raw object-lifetime call can prevent completion of a
+required closed-call summary, leaving later call contexts on that path
+undiscovered even when their local work is independent. Proofs established
+before the barrier remain valid. The current missed-optimization remark for
+this case is the generic `check retained: canonical MIR facts do not prove
+arithmetic-overflow safety`; it does not yet distinguish an allocator barrier
+from other missing contextual facts.
 
 At a complete closed-call boundary, a scalar or object result summary is not
 proof that other caller storage was unchanged. Mutable reference/pointer

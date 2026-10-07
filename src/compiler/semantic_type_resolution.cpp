@@ -971,8 +971,7 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
         " would copy a move-only value; use std::move(owner) to ";
     if (typeTraits(parameter).ownership == OwnershipKind::Unique) {
       copyDescription = " would copy a unique owner; use std::move(owner) to ";
-    } else if (parameter.kind == SemanticType::Storage ||
-               parameter.kind == SemanticType::PrefixStorage) {
+    } else if (parameter.kind == SemanticType::PrefixStorage) {
       copyDescription = " would copy compiler-private storage; use "
                         "std::move(owner) to ";
     }
@@ -3178,12 +3177,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     return;
   }
-  if (compilerCapability == CompilerCapabilityTypeKind::Storage ||
-      compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
-    const std::string name =
-        compilerCapability == CompilerCapabilityTypeKind::Storage
-            ? "gti_internal::storage"
-            : "gti_internal::prefix_storage";
+  if (compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
+    const std::string name = "gti_internal::prefix_storage";
     if (type.arguments.size() != 1) {
       report(type.name.last(), name + "<T> requires exactly one element type.",
              "GTI-S2019");
@@ -3612,11 +3607,6 @@ auto SemanticVisitor::Impl::isGtiInternalUniqueOwner(const TypeRef &type) const
          CompilerCapabilityTypeKind::UniqueOwner;
 }
 
-auto SemanticVisitor::Impl::isGtiInternalStorage(const TypeRef &type) const
-    -> bool {
-  return compilerCapabilityType(type) == CompilerCapabilityTypeKind::Storage;
-}
-
 auto SemanticVisitor::Impl::isGtiInternalTextView(const TypeRef &type) const
     -> bool {
   return compilerCapabilityType(type) == CompilerCapabilityTypeKind::TextView;
@@ -3763,8 +3753,7 @@ auto SemanticVisitor::Impl::validateReferenceReferent(
   }
   const bool permittedStorageBorrow =
       allowDefaultLibraryStorageReference &&
-      (referencedType.kind == SemanticType::Storage ||
-       referencedType.kind == SemanticType::PrefixStorage);
+      referencedType.kind == SemanticType::PrefixStorage;
   if (isDirectOwnerType(referencedType) && !permittedStorageBorrow) {
     const bool unique = referencedType.kind == SemanticType::UniqueOwner;
     report(site,

@@ -886,9 +886,6 @@ safetyFamily(DefinedFailureOutcome outcome) {
   if (outcome.code == DefinedFailureCode::IndexOutOfBounds) {
     return MirSafetyCheckFamily::Bounds;
   }
-  if (outcome.code == DefinedFailureCode::InvalidStorageState) {
-    return MirSafetyCheckFamily::StorageState;
-  }
   if (outcome.code == DefinedFailureCode::IntegerOverflow) {
     return MirSafetyCheckFamily::ArithmeticOverflow;
   }
@@ -1354,8 +1351,6 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
     SparseConditionalConstantPass sparseConstants;
     ExactReceiverPass exactReceivers;
     SafetyCheckEliminationPass boundsChecks(MirSafetyCheckFamily::Bounds);
-    SafetyCheckEliminationPass storageChecks(
-        MirSafetyCheckFamily::StorageState);
     SafetyCheckEliminationPass overflowChecks(
         MirSafetyCheckFamily::ArithmeticOverflow);
     SafetyCheckEliminationPass domainChecks(
@@ -1366,8 +1361,8 @@ OptimizedProgram OptimizationPipeline::run(OptimizationRequest request) const {
         ((request.level == OptimizationLevel::O2 ||
           request.level == OptimizationLevel::O3) &&
          (!execute(sparseConstants) || !execute(exactReceivers) ||
-          !execute(boundsChecks) || !execute(storageChecks) ||
-          !execute(overflowChecks) || !execute(domainChecks))) ||
+          !execute(boundsChecks) || !execute(overflowChecks) ||
+          !execute(domainChecks))) ||
         !execute(unreachableCleanup) || !execute(deadComputations)) {
       return result;
     }

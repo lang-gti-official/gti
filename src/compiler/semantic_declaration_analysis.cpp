@@ -2311,8 +2311,6 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           compilerCapability = CompilerCapabilityTypeKind::UniqueOwner;
         } else if (classDecl->name().lexeme == "shared_owner") {
           compilerCapability = CompilerCapabilityTypeKind::SharedOwner;
-        } else if (classDecl->name().lexeme == "storage") {
-          compilerCapability = CompilerCapabilityTypeKind::Storage;
         } else if (classDecl->name().lexeme == "uninitialized_storage") {
           compilerCapability = CompilerCapabilityTypeKind::UninitializedStorage;
         }
@@ -5506,8 +5504,6 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerBorrow:
         case IntrinsicKind::UniqueOwnerBorrowMut:
-        case IntrinsicKind::StorageRead:
-        case IntrinsicKind::StorageReadMut:
         case IntrinsicKind::PrefixStorageRead:
         case IntrinsicKind::PrefixStorageReadMut:
         case IntrinsicKind::OptionalStorageRead:

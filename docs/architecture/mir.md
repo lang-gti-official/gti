@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v92`, `mir-body-v78`).
+instruction, body, and caller-assignment facts (`mir-v93`, `mir-body-v79`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,7 +236,11 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v92`/`mir-body-v78`.
+The deterministic serialization is currently `mir-v93`/`mir-body-v79`, with
+`lowered-program-v13` declaration metadata. This revision retires sparse
+capability/intrinsic and initialized-slot proof identities and preserves
+deterministic per-function NUL-result policy. Older version descriptions below
+record their original additions, not an alternative current schema.
 
 Concrete class rows retain transfer/share policy and any substituted unsafe
 capability condition. The verifier checks that a conditional policy retains
@@ -244,7 +248,7 @@ its condition and that its result agrees with the payload's concrete MIR
 capabilities; nominal facts remain frontend-owned, while real builtin aggregate
 components compose those facts. Removing the condition or changing the derived
 capability is invalid MIR. The declaration catalog preserves the generic
-condition in `lowered-program-v12`, and optimization replay includes these facts.
+condition in `lowered-program-v13`, and optimization replay includes these facts.
 Field-aware borrowed-return and construction contracts serialize each result
 field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
@@ -371,11 +375,12 @@ verification compares the semantic fact against exact generated movement,
 concrete bases, fields, borrowed state, and cleanup; interface bases contribute
 dispatch requirements, not stored value state. Passive primitive kinds are
 explicitly admitted; an unknown or newly added type kind is unavailable until
-classified, including when nested inside a fixed array. Production
-sparse/prefix-storage relocation selects its bulk candidate only from this
-verified proof. Existing intrinsic identities retain exclusive accesses,
-liveness/capacity failure sites, and source/destination lifetime behavior;
-there is no backend-only relocation operation. C++ representation traits may
+classified, including when nested inside a fixed array. General typed and
+prefix-storage relocation select their bulk candidate only from this verified
+proof. Prefix intrinsics retain their checked liveness/capacity protocol;
+general raw relocation instead requires explicit unsafe validity. Both preserve
+source/destination lifetime behavior. There is no backend-only relocation
+operation. C++ representation traits may
 decline the bytewise candidate, never grant language eligibility.
 
 Restoring exchange and swap are separate sealed call intrinsics, bound to
@@ -621,13 +626,14 @@ owning constructor followed immediately by publication of its initialized
 value obligation, retaining the same field rollback for later failures. Neither
 case invents a cleanup obligation for a cleanup-free result.
 
-Prefix append and sparse storage retain an exact selected source constructor for final-slot
+Prefix append retains an exact selected source constructor for final-slot
 construction, including its reference/value parameter roles after concrete pack
-expansion. All arguments are staged before `StorageConstructPreflight`, which reads
-the staged storage (and exact sparse index) and owns only the capacity or
-bounds/duplicate-slot failures. Prepared owning arguments
-remain active on that failure edge. The unique success continuation begins with
-the paired construction, transfers prepared parameters once into the constructor, and
+expansion. All arguments are staged before `StorageConstructPreflight`, which
+reads the single staged prefix-storage operand and owns its capacity failure.
+The retired sparse variant's index and duplicate-slot preflight are not accepted.
+Prepared owning arguments remain active on that failure edge. The unique success
+continuation begins with the paired construction, transfers prepared parameters
+once into the constructor, and
 publishes the slot as live only after construction succeeds. This applies even
 when the constructor itself is proved failure-free.
 
@@ -678,8 +684,8 @@ store them until its contract can distinguish static text from an owner loan.
 Empty optional text storage remains permitted.
 
 Reset of the same inline capability uses the shared element-removal cleanup
-recipe also used by sparse and prefix storage. MIR independently derives the
-payload recipe and its destructor failure effect. Fallible reset has an Invoke
+recipe also used by general raw destruction and prefix storage. MIR independently
+derives the payload recipe and its destructor failure effect. Fallible reset has an Invoke
 edge, with no new local failure site: the payload destructor's original record
 propagates through caller cleanup. The representation retires engagement
 before running that recipe and ends the disarmed native shell afterward;
@@ -702,19 +708,21 @@ failure changes no live state and retains the erase site's ordinary diagnostic.
 The collection matrix covers first/middle/last removal, append after success,
 direct leaves, owning aggregates, nested collections, and inherited elements.
 
-Program v62/body v54 carry an exact `elementCleanup` recipe on private
+Historically, program v62/body v54 added an exact `elementCleanup` recipe on private
 `StorageDestroy` and `PrefixStoragePop` calls when the element belongs to the
 represented cleanup family. Lowering derives it from the concrete operand;
 the MIR verifier independently rederives and compares the entire recipe and
 its destructor propagation. These calls retain both their local bounds/state
 outcomes and source-destructor effects. Proving a local check safe does not
 prove element cleanup safe. Effect composition includes every source destructor
-in the recipe, and unrelated instructions cannot carry a recipe.
+in the recipe, and unrelated instructions cannot carry a recipe. The sparse
+`StorageDestroy` operation is now retired: source sparse policy invokes general
+`ObjectDestroy` below, while prefix removal retains this recipe contract.
 
 `ObjectConstruct` records unsafe final-address construction with the exact
 selected constructor, concrete input types, prepared-parameter handoffs and
 constructor-failure edge. It reuses the ordinary constructor body and rollback
-schedule. Unlike sparse/prefix construction it has no container preflight:
+schedule. Unlike prefix construction it has no container preflight:
 alignment, extent and vacancy belong to the unsafe caller. The verifier rejects
 forged storage preflights, borrowed destination authority and mismatched
 constructor/failure metadata. Scalar construction and generated transfer retain
@@ -759,7 +767,8 @@ argument checks do. These calls have no storage inspection or lifecycle side
 effects. They remain trapping optimization barriers without a supported
 discharge proof, and forged outcome families are rejected independently.
 
-Explicit removal retires the sparse live bit or prefix length before cleanup,
+Explicit removal retires the sparse live byte in source, or prefix length in
+the retained prefix capability, before cleanup,
 ends the disarmed element representation once, and returns to the same MIR
 `Invoke` failure edge. The backend-private checked status distinguishes local
 errors, which create a record at the removal site, from propagated destructor
@@ -768,21 +777,18 @@ cleanup drains the remaining live elements. Source-defined vector/storage
 `clear()` loops use these same operations. The v63 extension supplies the
 arbitrary-index prefix erase hole/shift protocol for the represented family.
 
-`StorageTryAdopt` is a declaration-bound, status-returning call with the
-mandatory `StorageAdoption` unsafe marker. It requires an exact mutable private
-storage destination, writable erased address, count, byte extent and alignment.
-The shared verification query is consumed independently by whole-program MIR
-verification and backend admission. Adoption is an optimizer barrier: it may
-allocate bookkeeping and publishes storage authority, even if its returned
-status is discarded. It has no defined-failure edge and must not inherit
-constructor or destructor effects. Full-expression markers cannot claim this
-unsafe operation. The adopted slots use the existing preflight, initialization
-map, element-drop recipes and checked loans. Releasing this private storage
-releases its bitmap but never the external region; an enclosing source-defined
-lease owns that separate release after element cleanup.
+The former `StorageTryAdopt`/`StorageAdoption` capability and its private
+sparse destination type are retired. Descriptor validation, two-region lease
+publication and metadata initialization are ordinary source operations.
+The unsafe binding contract establishes provider obligations; general
+`ObjectLifetime` calls establish typed construction, relocation and destruction.
+No MIR instruction adopts a sparse bitmap or implicitly allocates bookkeeping.
 
-Program v61/body v53 extend the cleanup tree with one unprojected element
-recipe for owning storage and prefix storage. A collection drop walks live
+Historically, program v61/body v53 extended the cleanup tree with one unprojected
+element recipe for owning storage and prefix storage. The sparse recipe and
+native live-slot walker are now replaced by ordinary source reverse traversal
+and general `ObjectDestroy`; the remaining paragraph records the original
+protocol and its retained prefix implementation. A collection drop walks live
 elements in reverse index order (skipping uninitialized sparse slots), runs
 the exact child recipe, ends the element representation lifetime, and finally
 releases the allocation. The live bit/prefix length is retired before entering
@@ -891,11 +897,13 @@ Program v45 adds concrete fixed-array drop schedules: every array drop retains
 its ordered extents, exact leaf type, and leaf class instance when applicable.
 This lets verification and backends consume reverse element cleanup without
 recovering array lifecycle meaning from a source type or target spelling.
-Program v44/body v42 add exact proof-carrying safety discharges to instructions
-and transformation records. A discharge names one bounds, storage-state, or
+Program v44/body v42 added exact proof-carrying safety discharges to instructions
+and transformation records. At that stage a discharge named bounds, storage-state, or
 arithmetic-overflow family plus the exact local defined-failure origin and
 outcome; records retain all related MIR block, instruction, value, and place
-identities used by independent replay. Program v42 adds complete verified
+identities used by independent replay. The storage-state family and its
+initialized-slot proof are retired with the sparse engine; current supported
+families are documented in [optimization](optimization.md). Program v42 adds complete verified
 effect summaries for functions,
 constructors, destructors, and lambdas. Program v43/body v41 add scalar block
 parameters, edge arguments, optimizer instruction tombstones, and edge-value

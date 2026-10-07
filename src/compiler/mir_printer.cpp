@@ -16,7 +16,8 @@ namespace lang {
 namespace {
 
 template <typename Enum> [[nodiscard]] constexpr auto number(Enum value) {
-  return static_cast<std::underlying_type_t<Enum>>(value);
+  // Byte-backed enum identities must serialize as numbers, never characters.
+  return +static_cast<std::underlying_type_t<Enum>>(value);
 }
 
 [[nodiscard]] constexpr std::string_view
@@ -263,7 +264,7 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v92 valid=" << program.valid() << '\n';
+    output << "mir-v93 valid=" << program.valid() << '\n';
     for (const MirNativeCallbackAdapter &adapter :
          program.nativeCallbackAdapters()) {
       output << "native-callback @" << adapter.id
@@ -734,7 +735,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v78\n";
+    output << "mir-body-v79\n";
     body(value, 0);
     return output.str();
   }

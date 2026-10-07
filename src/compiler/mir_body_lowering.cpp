@@ -834,7 +834,6 @@ private:
       return result;
     }
     if ((type.kind == SemanticType::UniqueOwner ||
-         type.kind == SemanticType::Storage ||
          type.kind == SemanticType::PrefixStorage) &&
         type.arguments.size() == 1) {
       const auto &value = type.arguments.front();
@@ -853,8 +852,7 @@ private:
                }))) {
         return MirDropType{.type = type, .requiresActiveCleanup = true};
       }
-      if (type.kind == SemanticType::Storage ||
-          type.kind == SemanticType::PrefixStorage) {
+      if (type.kind == SemanticType::PrefixStorage) {
         auto element = uniqueCleanupType(value, visiting);
         if (!element)
           return std::nullopt;
@@ -2238,11 +2236,10 @@ private:
     }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
-        // Region adoption is one explicit call, not an assertion by its
-        // surrounding full-expression/lifecycle bookkeeping markers.
+        // Object lifetime manipulation is one explicit call, not an assertion
+        // by its surrounding full-expression/lifecycle bookkeeping markers.
         if (source->unsafeOperation != UnsafeOperationKind::None &&
-            ((source->unsafeOperation != UnsafeOperationKind::StorageAdoption &&
-              source->unsafeOperation != UnsafeOperationKind::ObjectLifetime) ||
+            (source->unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
              instruction.kind == MirInstructionKind::Call)) {
           instruction.unsafeOperation = source->unsafeOperation;
         }
@@ -4966,8 +4963,7 @@ private:
                                 : FailurePropagationKind::DirectCall;
     }
     if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
-         value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-         value.intrinsic == IntrinsicKind::StorageConstruct) &&
+         value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
         failure.propagation == FailurePropagationKind::Constructor &&
         value.constructorTarget) {
       // Semantics selected this constructor protocol from its exact signature.
@@ -5181,13 +5177,10 @@ private:
         const auto enclosingFailure = beginPreparedArgumentFailure(
             argument.value, argument.kind, argument.parameterType);
         MirOperand sourceArgument =
-            (value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-             value.intrinsic == IntrinsicKind::StorageConstruct) &&
+            value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
                     argument.parameterIndex == 0 &&
                     argument.kind == HirCallInputKind::MutableBorrow &&
-                    (argument.parameterType.kind ==
-                         SemanticType::PrefixStorage ||
-                     argument.parameterType.kind == SemanticType::Storage)
+                    argument.parameterType.kind == SemanticType::PrefixStorage
                 ? receiverOperand(argument.value, AccessMode::Mutable)
             : argument.kind == HirCallInputKind::ReadTemporaryBorrow
                 ? temporaryBorrowOperand(argument.value, AccessMode::ReadOnly,
@@ -5250,6 +5243,24 @@ private:
           return parameter.hasFunctionItemShape()
                      ? std::optional{HirCallInputKind::Value}
                      : std::nullopt;
+        case SemanticType::Array: {
+          const SemanticType *leaf = &parameter;
+          while (leaf->kind == SemanticType::Array) {
+            if (leaf->arguments.size() != 1 || leaf->arrayLength == 0 ||
+                leaf->arrayLengthParameterId != 0)
+              return std::nullopt;
+            leaf = &leaf->arguments.front();
+          }
+          // Match HIR's passive by-value array plan. The semantic traits and
+          // concrete leaf lifecycle remain authoritative; no array decay or
+          // borrowed/owning element transfer is synthesized here.
+          const auto cleanup = preparedParameterDropType(*leaf);
+          if (input.info.type != parameter || !input.info.traits.copyable ||
+              input.info.traits.containsBorrowedState ||
+              (cleanup && cleanup->requiresActiveCleanup))
+            return std::nullopt;
+          return HirCallInputKind::Value;
+        }
         case SemanticType::Class:
           if (input.info.category == ValueCategory::Place &&
               input.info.traits.copyable) {
@@ -5294,12 +5305,10 @@ private:
           const bool mutableStorageInput =
               index == 0 && input->info.category == ValueCategory::Place &&
               input->info.type == parameter &&
-              (value.intrinsic == IntrinsicKind::StorageConstruct ||
-               value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+              (value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
                value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
                value.intrinsic == IntrinsicKind::OptionalStorageConstruct) &&
-              (parameter.kind == SemanticType::Storage ||
-               parameter.kind == SemanticType::PrefixStorage ||
+              (parameter.kind == SemanticType::PrefixStorage ||
                parameter.kind == SemanticType::Class);
           const std::optional<HirCallInputKind> kind =
               mutableStorageInput
@@ -5815,8 +5824,7 @@ private:
         scopes.back().loans.push_back(loan);
       }
     }
-    if ((value.intrinsic == IntrinsicKind::StorageDestroy ||
-         value.intrinsic == IntrinsicKind::ObjectDestroy ||
+    if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
          value.intrinsic == IntrinsicKind::PrefixStoragePop ||
          value.intrinsic == IntrinsicKind::PrefixStorageErase ||
          value.intrinsic == IntrinsicKind::OptionalStorageReset) &&
@@ -5861,14 +5869,12 @@ private:
       call.definedFailure.propagation = normalizedConstructorPropagation(
           FailurePropagationKind::Constructor, value.constructorTarget);
     }
-    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-         value.intrinsic == IntrinsicKind::StorageConstruct) &&
+    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
         value.definedFailure.propagation ==
             FailurePropagationKind::Constructor &&
         value.constructorTarget &&
         value.constructorKind == ConstructorKind::Ordinary) {
-      const std::size_t preflightOperands =
-          value.intrinsic == IntrinsicKind::StorageConstruct ? 2 : 1;
+      const std::size_t preflightOperands = 1;
       if (call.operands.size() < preflightOperands || call.callSite == 0) {
         valid = false;
         return;
@@ -5877,17 +5883,9 @@ private:
       for (auto &origin : call.definedFailure.localOrigins) {
         DefinedFailureOrigin check = origin;
         const auto isPreflightOutcome = [](DefinedFailureOutcome outcome) {
-          return outcome ==
-                     DefinedFailureOutcome{
-                         DefinedFailureCode::InvalidStorageState,
-                         DefinedFailureDetail::RelocationCapacity} ||
-                 outcome ==
-                     DefinedFailureOutcome{
-                         DefinedFailureCode::IndexOutOfBounds,
-                         DefinedFailureDetail::PrivateStorage} ||
-                 outcome == DefinedFailureOutcome{
+          return outcome == DefinedFailureOutcome{
                                 DefinedFailureCode::InvalidStorageState,
-                                DefinedFailureDetail::DuplicateConstruction};
+                                DefinedFailureDetail::RelocationCapacity};
         };
         std::erase_if(check.outcomes, [&](DefinedFailureOutcome outcome) {
           return !isPreflightOutcome(outcome);

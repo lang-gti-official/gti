@@ -97,7 +97,6 @@ enum class MirTransformProofKind {
   DeadUnusedComputation,
   ScalarPromotion,
   BoundsRange,
-  StorageInitialization,
   ArithmeticRange,
   ExactReceiver,
   Count,
@@ -105,7 +104,6 @@ enum class MirTransformProofKind {
 
 enum class MirSafetyCheckFamily : std::uint8_t {
   Bounds,
-  StorageState,
   ArithmeticOverflow,
   ArithmeticDomain,
   Count,
@@ -116,8 +114,6 @@ mirSafetyCheckFamilyName(MirSafetyCheckFamily family) {
   switch (family) {
   case MirSafetyCheckFamily::Bounds:
     return "bounds";
-  case MirSafetyCheckFamily::StorageState:
-    return "storage-state";
   case MirSafetyCheckFamily::ArithmeticOverflow:
     return "arithmetic-overflow";
   case MirSafetyCheckFamily::ArithmeticDomain:

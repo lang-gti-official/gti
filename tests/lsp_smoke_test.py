@@ -3762,8 +3762,8 @@ def test_compiler_private_tooling_boundary(executable, root):
         "  int allocator_completion_probe = std::al;\n"
         "  int arena_completion_probe = std::ar;\n"
         "  int pool_completion_probe = std::po;\n"
-        "  int direct_probe = gti_internal::allocate_storage;\n"
-        "  int alias_probe = hidden::allocate_storage;\n"
+        "  int direct_probe = gti_internal::allocate_prefix_storage;\n"
+        "  int alias_probe = hidden::allocate_prefix_storage;\n"
         "  int private_completion_probe = gti_internal::sto;\n"
         "  return moved;\n"
         "}\n"
@@ -3843,8 +3843,8 @@ def test_compiler_private_tooling_boundary(executable, root):
         )
         for offset, private_name in (
             (alias_target, "gti_internal"),
-            (direct_root, "gti_internal::allocate_storage"),
-            (alias_use, "hidden::allocate_storage"),
+            (direct_root, "gti_internal::allocate_prefix_storage"),
+            (alias_use, "hidden::allocate_prefix_storage"),
             (private_completion_root, "gti_internal::sto"),
         ):
             position = lsp_position(source, offset)
@@ -3856,8 +3856,8 @@ def test_compiler_private_tooling_boundary(executable, root):
                 "application source."
             ), diagnostic
 
-        direct_leaf = source.index("allocate_storage", direct_root)
-        alias_leaf = source.index("allocate_storage", direct_leaf + 1)
+        direct_leaf = source.index("allocate_prefix_storage", direct_root)
+        alias_leaf = source.index("allocate_prefix_storage", direct_leaf + 1)
 
         def semantic_request(request_id, method, offset, request_uri=uri,
                              request_source=source):
