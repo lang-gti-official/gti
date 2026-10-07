@@ -7058,6 +7058,16 @@ consumer, and release refreshes remain outstanding for the full campaign.
   pre-enum 0.382.1 compiler under native closed-program compilation; their
   expected passing outcomes remain unchanged; the reduction is recorded on
   [the definition-check issue](https://git.internal.howetotech.dev/gti-lang/gti/issues/51#issuecomment-458).
+  Reconciliation with canonical PRs 116 and 115 preserves passive native
+  call-result and class-field publication. The optimized overlap gates pass
+  14/14 and then 10/10 on the resulting main-based tree, including the full
+  224-configuration enum matrix, both corpus censuses and the upstream
+  publication regressions. These are focused integration checks, not a full
+  release-suite claim. The allocator campaign owns the symbolic-primary
+  definition-check repair; its published checkpoint is not yet integrated here.
+  A non-mutating preview identifies the two emitter resolutions: retain the
+  passive-default assignment proof together with the stricter ordinary
+  construction guard, and consistently use the passive-default helper.
   Combined full-suite/coverage-corpus
   validation and upstream release integration remain delivery gates. This
   campaign is not an `expected` implementation. The owner's spelling
