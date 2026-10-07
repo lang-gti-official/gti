@@ -237,8 +237,11 @@ class/specialization registration; primitive constraints needed during class
 registration resolve lazily. No formatter or stream spelling selects a rule.
 
 Generic body analysis uses only signatures guaranteed by its requirements,
-checking argument and receiver access. Concrete instance analysis selects the
-ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
+checking argument and receiver access plus the retained unsafe-call obligation.
+Safe structural facts imply the weaker unsafe capability; the reverse does not
+hold. The existing conjunction/alternative fact calculation preserves that
+direction, including forwarded requirements. Concrete instance analysis selects
+the ordinary method and publishes the normal HIR/MIR call. Comma-pack fold targets
 may carry requirements: each concrete element passes ordinary instantiation and
 constraint checking before a resolved fold can enter HIR. Signature requirements
 do not create a second executable call path or bypass actual borrow checking.
@@ -1123,12 +1126,14 @@ applies. Source concept composition remaps both forms through each concept
 application; public concept names never become semantic enum cases.
 
 Source member requirements add one general `ReadMember` relationship carrying
-the member name and receiver/result type arguments. Both direct boolean queries
-and named concept leaves use the same semantic signature check. Composition
+the member name, receiver/result/parameter types, receiver access, and explicit
+unsafe-call permission. Both direct boolean queries and named concept leaves use
+the same semantic signature check. Composition
 remaps the arguments and preserves the name; disjunction must not merge facts
-for different methods. Symbolic bodies can call a guaranteed exact nullary
-read-only member, but concrete instance analysis must resolve the real method
-before HIR. Query results become ordinary boolean HIR/MIR literals, never
+for different methods or erase an unsafe obligation. Symbolic bodies can call a
+guaranteed exact member under its receiver and safety contract, but concrete
+instance analysis must resolve the real method before HIR. Query results become
+ordinary boolean HIR/MIR literals, never
 synthetic runtime calls. Neither the constant evaluator nor the backend decides
 whether a type supports cloning. `std::clone` and vector element duplication
 remain ordinary source-defined generic bodies and verified-MIR calls.
@@ -1146,6 +1151,16 @@ capability; iterator-aware predicate and operation relations derive the exact
 checked-dereference referent privately. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
+
+Unary structural annotations on class generic parameters reuse those same
+applications. The parameter's resolved `conceptId` remains the concrete
+class-argument admission contract; each symbolic type-parameter scope also
+publishes its application in the ordinary requirement-scope stack. Constructors,
+methods, field initializers and destructors therefore see the same guaranteed
+member facts and unsafe-call obligations as a trailing clause. The paired type
+scope owns the application's endpoint, including isolated instance analysis.
+Concrete parameters do not receive assumed applications: type resolution checks
+their actual member signatures before HIR can select an instance.
 
 Call or construction viability substitutes concrete type arguments into the same records and
 checks both unary and structural facts. Concrete generic reanalysis then
@@ -1277,8 +1292,43 @@ origins. Selected reference accessors do not inherit an unrelated first field's
 permission. Concrete generic reanalysis substitutes these same facts.
 Lifecycle traits reject copying any exclusive path, and transfer preserves all
 parents until the final child/carrier endpoint. Custom destruction,
-globals/captures, dependency reseating, dynamic origins and ambiguous return
-provenance remain outside this bounded graph.
+when present, extends the dependency endpoint through cleanup; it does not
+change the origin or access mode. Globals/captures, dependency reseating,
+dynamic origins and ambiguous return provenance remain outside this bounded
+graph.
+
+A reference returned from an ordinary receiver's owned field or owned storage
+protects the receiver's physical storage separately from its external stored
+dependencies. Exact stored-reference-field returns instead preserve the
+selected external referent. Field-origin summaries distinguish these cases,
+including single-path carriers; a type merely containing borrowed state is
+not permission to replace its shell origin with its resource dependency.
+An exact field-origin path can extend beneath a stored external reference.
+An unambiguous nonvirtual accessor relay composes that path, and independent
+body analysis checks its actual return. Composition respects the callee's
+checked contract: an accessor into receiver-owned storage exposes the receiver
+as owner, not an implementation-private field or allocation path. The same
+physical-storage classification governs mutable reference initialization;
+a read-only external dependency does not make a separately owned field
+read-only. Returning through a reference alias
+uses the selected stored dependency, not the alias's separate physical-shell
+loan. A projected referent retains its exact suffix instead of becoming an
+alias of the whole external owner. Dynamic, ambiguous and recursive declaration
+provenance remain conservative.
+Synthesized range dereference retains the selected physical range-storage loan
+before composing field mappings. Its transitive resource dependency remains
+separate; borrowing an element cannot be substituted with borrowing the resource
+that supplied the container's allocation.
+Moving a cleanup-bound carrier updates flow availability and transfers the
+active loan, but retains the declaration's historical loan identity so earlier
+reference uses still lower against the original shell and dependency.
+
+A direct by-value return of a nested copyable shared view records the exact
+receiver field prefix and the result-relative reference path. Copying that
+view creates independent shell storage while retaining its external referent.
+This is distinct from returning a reference to the field, which also protects
+the enclosing shell. Concrete field identities, not public type names, select
+the rule.
 
 Addressable namespace bindings and non-generic static data members use the
 same symbol-rooted place whether their source spelling is qualified or

@@ -6,6 +6,11 @@ class unique_owner<T> {};
 class shared_owner<T> {};
 class storage<T> {};
 
+@compiler_constraint("object_layout") concept object_layout_capability<T>;
+
+uint64_t object_size<T>();
+uint64_t object_alignment<T>();
+
 gti_internal::shared_owner<T> shared_owner_empty<T>();
 gti_internal::shared_owner<T> shared_owner_from_unique<T>(gti_internal::unique_owner<T> owner);
 gti_internal::shared_owner<T> shared_owner_clone<T>(gti_internal::shared_owner<T>& owner);
@@ -29,6 +34,11 @@ gti_internal::storage<T> allocate_storage<T>(uint64_t count);
 int32_t storage_try_allocate<T>(mut gti_internal::storage<T>& destination,
                                 uint64_t count,
                                 uint64_t minimum_alignment);
+// Does not own or release the external region; the source-defined lease must
+// outlive this storage and release the region after all elements are destroyed.
+int32_t storage_try_adopt<T>(mut gti_internal::storage<T>& destination,
+                            void* address, uint64_t count, uint64_t extent,
+                            uint64_t alignment);
 uint64_t storage_capacity<T>(gti_internal::storage<T>& storage);
 bool storage_initialized<T>(gti_internal::storage<T>& storage,
                             uint64_t index);
@@ -51,6 +61,24 @@ enum class empty_storage_adoption {
 }
 
 namespace std {
+/// Complete object types supported by the runtime representation query.
+concept layout_queryable<T> = gti_internal::object_layout_capability<T>;
+
+/// Runtime layout of the compiler-selected GTI object representation.
+/// This is neither a stable foreign ABI nor a compile-time layout promise.
+struct layout {
+  size_t bytes;
+  size_t alignment;
+  layout(size_t bytes, size_t alignment) : bytes(bytes), alignment(alignment) {}
+};
+
+/// Queries a complete object type without constructing or moving an object.
+layout layout_of<T>() requires std::layout_queryable<T> {
+  layout result{gti_internal::object_size<T>(),
+                gti_internal::object_alignment<T>()};
+  return result;
+}
+
 namespace detail {
 Target convert_address<Target, T>(T* address) {
   return Target(address);
@@ -168,6 +196,8 @@ enum class alloc_errc {
   invalid_alignment,
   size_overflow,
   resource_exhausted,
+  invalid_region,
+  invalid_state,
 };
 
 /// A requested minimum byte alignment for typed storage.
@@ -188,13 +218,14 @@ public:
 
 /// A move-only owner of partially initialized typed storage.
 ///
-/// `T` must satisfy `std::movable` and must not contain borrowed state.
+/// `T` must not contain borrowed state. Final-address emplacement supports
+/// immovable objects; moving this owner never moves its elements.
 /// Each slot is independently uninitialized or contains one live `T`.
 /// Construction, access, and destruction are checked. Destruction of the
 /// owner drops every remaining live slot once in reverse slot order and then
 /// releases the allocation. `release()` performs that cleanup early and
 /// leaves an empty owner; it never detaches an unmanaged allocation address.
-class storage<std::movable T> {
+class storage<T> {
   mut gti_internal::storage<T> data;
 
 public:
@@ -224,7 +255,7 @@ public:
   /// any failure in that construction follows ordinary MIR cleanup without
   /// publishing a new slot lifetime. Duplicate construction is a defined
   /// runtime failure.
-  void construct(size_t index, T value) mut {
+  void construct(size_t index, T value) mut requires std::movable<T> {
     gti_internal::index_bounds_check(index, this.capacity());
     gti_internal::storage_construct(this.data, index, std::move(value));
   }
@@ -250,7 +281,7 @@ public:
   /// Outstanding element loans forbid this exclusive operation. Replacement
   /// of an already-live destination is deliberately not supported.
   void relocate_to(mut storage<T>& destination, size_t count) mut
-      requires std::relocatable<T> {
+      requires std::movable<T> && std::relocatable<T> {
     gti_internal::storage_relocate(this.data, destination.data, count);
   }
 
@@ -296,7 +327,7 @@ public:
 /// the allocator value is destroyed.
 class allocator {
   expected<storage<T>, alloc_errc>
-  try_storage_impl<std::movable T>(size_t count,
+  try_storage_impl<T>(size_t count,
                                    uint64_t minimum_alignment) {
     mut gti_internal::storage<T> candidate =
         gti_internal::allocate_storage<T>(uint64_t(0));
@@ -320,13 +351,13 @@ public:
 
   /// Attempts to create naturally aligned typed storage.
   expected<storage<T>, alloc_errc>
-  try_storage<std::movable T>(size_t count) {
+  try_storage<T>(size_t count) {
     return this.try_storage_impl<T>(count, uint64_t(0));
   }
 
   /// Attempts to create typed storage with a minimum byte alignment.
   expected<storage<T>, alloc_errc>
-  try_storage<std::movable T>(size_t count, alignment requested) {
+  try_storage<T>(size_t count, alignment requested) {
     size_t bytes = requested.bytes();
     if (bytes == size_t(0) or
         (bytes & (bytes - size_t(1))) != size_t(0)) {

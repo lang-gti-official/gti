@@ -612,10 +612,15 @@ References to carriers retain a separate `HirLoan.storedDependency` edge to
 the semantic stored-owner loan. The physical reference's place/access and
 parent remain distinct from that inherited authority. Body extraction closes
 over both parent and dependency identities; receiver-only abstract entries are
-selected by their declaring function, while function/lambda reference entries
-are selected through their concrete formal bindings. Lifetime endpoints sort
+selected by their declaring function or source destructor, while function/lambda
+reference entries are selected through their concrete formal bindings. Lifetime endpoints sort
 both edge kinds child-first. HIR preserves these facts for independent MIR
 verification rather than deriving them from a carrier's backend layout.
+
+A source destructor receives the same caller-owned reference-field entry as an
+ordinary method. Its declaration identity selects the body; its concrete class
+and mutable receiver provide the physical place. This entry does not acquire
+another cleanup obligation for the object being destroyed.
 
 For shared multi-path carriers, `HirLoan.additionalDependencies` preserves
 every semantic owner place or opaque parameter field path in the same concrete

@@ -1895,6 +1895,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::MemberAccess);
           break;
         case IntrinsicKind::StorageTryAllocate:
+        case IntrinsicKind::StorageTryAdopt:
         case IntrinsicKind::StorageCapacity:
         case IntrinsicKind::StorageInitialized:
         case IntrinsicKind::PrefixStorageLength:
@@ -1984,6 +1985,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::RestoringExchange:
         case IntrinsicKind::RestoringSwap:
         case IntrinsicKind::EnumUnderlyingValue:
+        case IntrinsicKind::ObjectSize:
+        case IntrinsicKind::ObjectAlignment:
         case IntrinsicKind::RawBorrow:
         case IntrinsicKind::RawBorrowMut:
         case IntrinsicKind::UniqueOwnerUpcast:
@@ -6730,6 +6733,11 @@ auto SemanticVisitor::Impl::endScope() -> void {
   }
   std::unordered_set<SymbolId> expired;
   for (auto &[_, symbol] : scopes.back()) {
+    if (symbol.valueState == ValueState::Available) {
+      const auto *loan = semanticModel.findLoan(symbol.retainedLoan);
+      if (loan != nullptr && loan->lifecycleBound)
+        recordSemanticLoanUse(toolingSymbolFor(symbol));
+    }
     if (symbol.valueState == ValueState::Available)
       applyRawCleanupWrites(symbol.type, tokenSpan(symbol.declaration),
                             symbol.rawPointerFields);
@@ -9286,6 +9294,8 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
     case IntrinsicKind::IntegerCheckedSubtract:
     case IntrinsicKind::IntegerCheckedMultiply:
     case IntrinsicKind::EnumUnderlyingValue:
+    case IntrinsicKind::ObjectSize:
+    case IntrinsicKind::ObjectAlignment:
       return;
     case IntrinsicKind::RestoringSwap:
     case IntrinsicKind::RestoringExchange:

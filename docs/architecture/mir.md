@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v88`, `mir-body-v75`).
+instruction, body, and caller-assignment facts (`mir-v90`, `mir-body-v76`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,7 +236,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v88`/`mir-body-v75`.
+The deterministic serialization is currently `mir-v90`/`mir-body-v76`.
 Field-aware borrowed-return and construction contracts serialize each result
 field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
@@ -256,6 +256,11 @@ dependency survives through full-expression destruction of owned fields.
 Independent verification rejects missing dependencies, changed permissions,
 forged shell authority and owner-loan retirement before cleanup. Shared-only
 and mixed carriers use one schedule rather than a separate passive exception.
+Borrowed-result operators keep their ordinary value receiver stage. When their
+result protects the receiver's own storage, lowering and independent verification
+select the exact producer-owned temporary and its full-expression drop, retaining
+the external stored dependency separately. An exact stored-field return instead
+selects that external referent; the two sources are not interchangeable.
 The prefix-construction capacity check and its exact append identity are
 serialized for deterministic evidence and independent replay.
 The new loan contract separates a physical carrier reference from its inherited
@@ -279,6 +284,45 @@ loan or the caller's cleanup ownership. In particular, borrowing a guard does
 not acquire its lock-release obligation. Local bindings of stored referents
 retain their concrete reference-field dereference; semantic overlap identities
 are not substituted for executable projection chains.
+Cleanup-bound nominal carriers are classified from concrete borrowed-state and
+active-cleanup facts, independently of the trusted mutex capability. Exact
+by-value entries own a binding drop; owning call/constructor publications own
+their result drop and subsequent typed transfers. Verification rejects missing
+lifecycle markers as well as invented ones. Ending such a loan requires the
+exact carrier drop, failed producer, consuming call, constructor-field
+publication or owned return transfer. Field publication must reparent the same
+SSA value into its exact construction-rollback obligation. Ordinary receiver
+and reference entries do not acquire this ownership.
+In particular, publishing a reference field to a cleanup-bound object retains
+its checked owner dependencies but does not transfer the object's destructor or
+create a construction-rollback obligation for the referent. Marking such a
+reference publication as lifecycle-bound is rejected independently.
+An explicit nested constructor may instead supply that completed SSA value.
+Its result loan retains every child field dependency through the successful
+value-to-field reparent, then publishes the field's escaping dependency and
+retires the consumed child loan. Constructor verification derives each outer
+field-to-formal origin recursively from the selected child `Construct` and its
+actual prepared operands; matching caller/callee field maps alone are not
+proof. Reordered and multi-owner inputs preserve their individual paths and
+permissions. The native backend erases this proven publication without
+changing the existing field construction or rollback schedule.
+An owned return may publish a distinct dependency before intervening fallible
+local cleanup. Its result must belong to the original carrier's exact typed
+drop-transfer chain. If that cleanup fails, the exported dependency remains
+live through destruction of the unpublished pending result; it cannot end
+merely because the return was abandoned. Independent verification checks the
+exact pending-result drop and rejects an early endpoint.
+Concrete HIR class instances also specialize generated copy/move member
+availability from semantic traits. MIR rejects a generated member whose
+concrete trait forbids it, including generic owners of reference-bearing fields;
+the backend does not decide whether a GTI assignment is legal.
+Semantic last-use analysis includes cleanup uses and retains ancestor loans.
+MIR normal and failure drains interleave carrier destruction with
+child-before-parent dependency retirement; a failed producer retires its
+provisional result dependency without inventing a successfully constructed
+object. Cleanup boundary verification accepts those dependency-end markers
+without changing the exact reverse-order drop sequence. Loan and lifecycle
+dataflow independently reject premature retirement or forged transfers.
 An owning field provably disjoint from all stored-reference paths is not an
 access through that external dependency; an ordinary physical receiver loan
 still protects its shell. An adapter may consequently own its buffer while
@@ -668,6 +712,19 @@ cleanup drains the remaining live elements. Source-defined vector/storage
 `clear()` loops use these same operations. The v63 extension supplies the
 arbitrary-index prefix erase hole/shift protocol for the represented family.
 
+`StorageTryAdopt` is a declaration-bound, status-returning call with the
+mandatory `StorageAdoption` unsafe marker. It requires an exact mutable private
+storage destination, writable erased address, count, byte extent and alignment.
+The shared verification query is consumed independently by whole-program MIR
+verification and backend admission. Adoption is an optimizer barrier: it may
+allocate bookkeeping and publishes storage authority, even if its returned
+status is discarded. It has no defined-failure edge and must not inherit
+constructor or destructor effects. Full-expression markers cannot claim this
+unsafe operation. The adopted slots use the existing preflight, initialization
+map, element-drop recipes and checked loans. Releasing this private storage
+releases its bitmap but never the external region; an enclosing source-defined
+lease owns that separate release after element cleanup.
+
 Program v61/body v53 extend the cleanup tree with one unprojected element
 recipe for owning storage and prefix storage. A collection drop walks live
 elements in reverse index order (skipping uninitialized sparse slots), runs
@@ -970,6 +1027,46 @@ For a cleanup-free, generated-copy read-only carrier parameter, native member
 initialization may copy that shell only when the copy binding also proves its
 exact entry-to-field `Stored` publication. The same proof admits the parameter's
 representation slot; it does not turn the by-value shell into the referent.
+
+A nested shared-view value return binds the actual `Load` operand's field
+prefix to the source entry dependency and publishes result-relative stored
+paths. The verifier checks the runtime load independently of the summary;
+changing only the summary, load prefix or result path cannot redirect a view.
+At a call on a nested member, lowering composes the receiver's exact field
+prefix with the callee's relative path before selecting a concrete stored
+dependency. Different same-typed referents therefore remain distinct.
+
+References to a carrier's owned scalar or owned allocation instead protect
+its physical shell as well as any external stored dependency. That dependency
+does not make an owned element survive moving, replacing or destroying its
+carrier. Conversely, copying an external shared view does not freeze ordinary
+disjoint shell fields. A cleanup-bound carrier may have received its dependency
+through an exact whole-value initialization or move chain; the shared verifier
+query proves that historical identity while the flow verifier still requires
+the currently active owner and valid loan state. This is not an exemption for
+use after movement or for ending a resource loan before cleanup.
+A newly constructed cleanup-bound owner can retain a copied passive view's
+shared dependency as a distinct child loan. Its cleanup obligation does not
+merge with that view's ordinary last-use endpoint. Mapped reference returns
+through carrier aliases select the exact active stored dependency as parent;
+the physical alias and the external referent are not interchangeable. Body
+verification checks the selected operand/dependency ancestry and access, while
+program verification independently substitutes its typed field path, including
+projections beneath the stored reference. Lowering preserves the typed path
+prefixes and publishes returned call-result loans before child-first retirement.
+Finishing a derived view does not retire an external-owner loan still retained
+by another live physical-shell alias. Child-first endpoint selection accounts
+for both parent reborrows and stored dependencies; independent verification
+rejects ending either kind of authority before its dependents.
+
+Targetless generated move construction preserves the source carrier's complete
+dependency set: origin places, permissions, ancestry and destination field
+paths. Its reference-shaped special-member formal does not describe an ordinary
+borrowing call. MIR explicitly transfers the already-moved SSA obligation into
+the new result. Retiring the original lifecycle-bound loan requires that exact
+source/result handoff and unchanged dependency set; a same-typed construction
+alone is insufficient. Native reference members preserve their bindings rather
+than moving the referents.
 
 The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or
@@ -1417,10 +1514,22 @@ argument count alongside all expanded inputs. The production C++ emitter
 therefore emits only verified MIR values and never emits a C++ default
 parameter expression.
 
-A valid HIR layout query lowers to an ordinary unsigned-64
-`MirOperation::Literal` containing the retained frontend value. MIR has no
-target-layout operation and therefore cannot reinterpret `sizeof` or
-`alignof`; the source HIR identity remains available as provenance.
+A valid HIR constant `sizeof`/`alignof` query lowers to an ordinary unsigned-64
+`MirOperation::Literal` containing the retained frontend value; its source HIR
+identity remains available as provenance. Runtime object representation queries
+are a separate contract: trusted declaration-bound `ObjectSize` and
+`ObjectAlignment` calls preserve one concrete `objectLayoutType` in HIR and MIR,
+with no runtime operands, parameter types, borrow origins or lifecycle events.
+Lowering retains otherwise-unused queried class instances. Program verification
+and backend admission share the exact complete-type/zero-input proof, rejecting
+query metadata on other instructions. These operations are pure, removable when
+unused, and target-dependent; scalar constant interpretation remains overdefined.
+The C++ representation snapshot retains the queried type, and emission uses that
+verified representation's native size/alignment. It does not reinterpret the
+constant-query rule, source AST, or public library names. The public descriptor
+and generic forwarding function remain ordinary source-defined GTI.
+The eligibility predicate is a trusted private structural-constraint identity;
+the ordinary public concept selects it through normal concept composition.
 
 Each HIR program-constant substitution lowers into an exact per-body
 `MirProgramConstantSubstitution` inventory row and a marked constant-producing
@@ -2152,6 +2261,16 @@ projection-free reference-typed formal place, matching source place, non-
 widened access, and an immediately following `EndBorrow` of the forwarded loan
 — and continues to reject every other parentless `Borrow` from a `Loan`
 operand. No body may record a loan that is at once `entry` and `Return`.
+
+A local read-only alias can retain that same parameter authority while its
+runtime address denotes an accessor's subobject rather than the parameter
+itself. Such a return also carries the exact dereferenced alias place in the
+`Loan` operand. Verification follows unique, dominating reference
+initializations back to the same parameter dereference or a verified
+call-result address, preserving type, access and stored dependencies throughout.
+Without an explicit runtime place, only the exact parameter referent type is
+valid. Carrier membership or a same-typed unrelated alias cannot substitute
+for this executable address evidence.
 
 `MirRangeIteration` owns the bounded range exceptions. It names the exact
 owner/range/iterator/sentinel bindings, strategy, access mode, parent range

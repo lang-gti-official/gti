@@ -8,7 +8,23 @@ T absolute<signed_value T>(T value) {
   return value;
 }
 
+// A unary structural annotation supplies exact operations throughout the
+// class, including its cleanup body. This is not an interface or inheritance.
+concept readable<T> = requires(T& source) { { source.read() } -> int; };
+struct Meter { int read() { return 7; } };
+mut int final_sample = 0;
+class Session<readable T> {
+  T& source;
+public:
+  Session(T& source) : source(source) {}
+  int read() { return this.source.read(); }
+  ~Session() { final_sample = this.source.read(); }
+};
+
 int main() {
+  Meter meter{};
+  { Session<Meter> session{meter}; if (session.read() != 7) { return 1; } }
+  if (final_sample != 7) { return 2; }
   if (absolute(-4) == 4) {
     return 0;
   }

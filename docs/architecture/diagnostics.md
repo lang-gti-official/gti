@@ -350,6 +350,22 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   scoped enums and valid passive unions, but not payload enums. Suppress this
   diagnostic when ordinary type resolution has already made the operand
   unknown.
+- `GTI-S2063` also owns a malformed private runtime object-layout query. Its
+  complete-object boundary includes ordinary owning and immovable classes but
+  excludes references, incomplete/opaque/abstract classes and direct runtime
+  carrier families outside the admitted slice. Point at the written query
+  type, preserve concrete generic-instantiation context, and explain the
+  structural boundary without suggesting a move, cast, or unsafe block.
+  Ordinary public calls reject unsupported types through the declaration-bound
+  `layout_queryable` concept and shared `GTI-S2029` requirement diagnostics,
+  anchored at the call site with the exact concrete requirement related, not
+  a private library body.
+- `GTI-S2017` rejects a child borrow escaping a local or by-value parameter's
+  cleanup-bound carrier, including through a passive intermediary. Name the
+  general lifetime/cleanup obligation, relate the owning carrier
+  declaration and suggest retaining that lifetime or returning an owned value.
+  A general cleanup-bound marker is not evidence of a mutex: reserve lock and
+  unlock wording for independently proven trusted mutex receivers.
 - `GTI-S2004` owns an integer literal operand whose signed mathematical value
   does not fit the concrete contextual operand type. Point at the numeric
   token, retain a negative sign in the message, and emit only the range
@@ -405,6 +421,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   returned expression, with a hint to return the object by value or choose
   longer-lived storage. It offers no ownership-changing fix-it. A by-value
   carrier parameter keeps its existing, more specific `GTI-S2085` rule below.
+  The same physical-origin check applies to inline fields returned by ordinary
+  operators and accessors, including through reference aliases and relay calls.
+  A temporary or local carrier's external owner does not extend that carrier's
+  storage lifetime. Exact stored-field mappings may instead return the external
+  referent. Ordinary member calls on ineligible temporary receivers retain
+  their earlier `GTI-S2081` diagnostic.
   Compiler and LSP tests cover the exact UTF-16 span and diagnostic clearing.
   For a later call argument that mutates an earlier operand's retained loan,
   point at the mutating argument's callable token, relate the earlier borrowing
@@ -445,6 +467,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+  A destructor's attempted receiver-field move uses the same code at the
+  field token and explains that field cleanup belongs to the enclosing object.
+  Explicit and implicit `this` paths share this rule; separately owned locals
+  remain movable. No fix-it changes cleanup ownership.
 - `GTI-S2003` retains an ordinary assignment mismatch when a move-only type
   cannot be copied through a dereference. Dereference writes use the same
   copy/move-assignment policy as binding, field, and subscript writes; point at

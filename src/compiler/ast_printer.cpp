@@ -131,6 +131,8 @@ void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
   for (std::size_t index = 0; index < expr.parameters().size(); ++index)
     result += " " + typeToString(expr.parameters()[index]) + " " +
               expr.bindings()[index].lexeme;
+  if (expr.unsafeKeyword())
+    result += " unsafe";
   result += " (" + expr.receiverUse().lexeme + "." + expr.member().lexeme;
   for (const auto &argument : expr.arguments())
     result += " " + argument.lexeme;

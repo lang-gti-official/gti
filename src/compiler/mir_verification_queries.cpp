@@ -5,6 +5,180 @@
 
 namespace lang::mir_detail {
 
+bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
+                               MirLoanId dependency, std::size_t depth) {
+  const auto *loan = body.findLoan(dependency);
+  if (depth > body.places.size() || loan == nullptr ||
+      loan->kind != MirLoanKind::Stored || !loan->lifecycleBound)
+    return false;
+  const MirInstruction *publication = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      const auto *place = instruction.destination
+                              ? body.findPlace(*instruction.destination)
+                              : nullptr;
+      if (instruction.kind != MirInstructionKind::Initialize ||
+          place == nullptr || place->root != MirPlaceRootKind::Binding ||
+          place->binding != binding || !place->projections.empty())
+        continue;
+      if (publication != nullptr)
+        return false;
+      publication = &instruction;
+    }
+  if (publication == nullptr || publication->operands.size() != 1 ||
+      publication->operands.front().kind != MirOperandKind::Value)
+    return false;
+  const auto *producer =
+      definitionFor(body, publication->operands.front().value);
+  const auto *destination = body.findPlace(*publication->destination);
+  if (producer == nullptr || destination == nullptr ||
+      producer->info.type != destination->type ||
+      !destination->traits.containsBorrowedState)
+    return false;
+  if (producer->loan == dependency)
+    return true;
+  if (producer->kind != MirInstructionKind::Move ||
+      producer->operands.size() != 1 ||
+      producer->operands.front().kind != MirOperandKind::Move)
+    return false;
+  const auto *previous = body.findPlace(producer->operands.front().place);
+  return previous != nullptr && previous->root == MirPlaceRootKind::Binding &&
+         previous->projections.empty() && previous->type == destination->type &&
+         bindingReceivedStoredLoan(body, previous->binding, dependency,
+                                   depth + 1);
+}
+
+const MirPlace *storageAdoptionDestination(const MirBody &body,
+                                           const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::StorageTryAdopt ||
+      !instruction.result || instruction.info.type != SemanticType::Int32 ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Int32) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.unsafeOperation != UnsafeOperationKind::StorageAdoption ||
+      instruction.operands.size() != 5 ||
+      instruction.parameterTypes.size() != 5)
+    return nullptr;
+  // Adoption only establishes slot bookkeeping for an unsafe external region.
+  // It cannot also claim an owner/loan transfer, failure, cleanup, or other
+  // invocation capability. Default comparison fails closed for new metadata.
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::StorageAdoption,
+                             .result = instruction.result,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::StorageTryAdopt,
+                             .info = instruction.info};
+  if (instruction != exact)
+    return nullptr;
+  const auto &storage = instruction.parameterTypes.front();
+  if (storage.kind != SemanticType::Storage || storage.arguments.size() != 1 ||
+      instruction.parameterTypes[1] !=
+          SemanticType::rawPointerTo(SemanticType::Void))
+    return nullptr;
+  for (std::size_t index = 0; index < 5; ++index) {
+    if (instruction.operands[index].kind != MirOperandKind::Value ||
+        instruction.operands[index].type != instruction.parameterTypes[index] ||
+        (index >= 2 &&
+         instruction.parameterTypes[index] != SemanticType::UInt64))
+      return nullptr;
+  }
+  const auto *stage = definitionFor(body, instruction.operands.front().value);
+  // Private storage uses a place-valued Load/Copy as its capability staging,
+  // not an owning copy. Ordinary call staging may instead use BorrowWrite.
+  // The source place's mutable access remains mandatory in both shapes.
+  if (!stage || stage->info.type != storage || stage->operands.size() != 1 ||
+      ((stage->kind != MirInstructionKind::Load ||
+        stage->info.category != ValueCategory::Place ||
+        stage->operands.front().kind != MirOperandKind::Copy) &&
+       (stage->kind != MirInstructionKind::CallInput ||
+        stage->operands.front().kind != MirOperandKind::BorrowWrite)))
+    return nullptr;
+  const auto *place = body.findPlace(stage->operands.front().place);
+  return place && place->type == storage && place->access == AccessMode::Mutable
+             ? place
+             : nullptr;
+}
+
+bool objectLayoutQuery(const MirProgram &program,
+                       const MirInstruction &instruction) {
+  if ((instruction.intrinsic != IntrinsicKind::ObjectSize &&
+       instruction.intrinsic != IntrinsicKind::ObjectAlignment) ||
+      !instruction.objectLayoutType ||
+      instruction.kind != MirInstructionKind::Call || !instruction.result ||
+      instruction.info.type != SemanticType::UInt64 ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::UInt64))
+    return false;
+  // All unlisted fields must remain neutral, including future ownership,
+  // failure and invocation metadata. Provenance IDs do not grant authority.
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .result = instruction.result,
+                             .intrinsic = instruction.intrinsic,
+                             .objectLayoutType = instruction.objectLayoutType,
+                             .info = instruction.info};
+  if (instruction != exact)
+    return false;
+  const auto eligible = [&](const auto &self, const SemanticType &type,
+                            std::size_t depth) -> bool {
+    if (depth > 128 || type.arrayLengthParameterId != 0)
+      return false;
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::Bool:
+    case SemanticType::Char:
+      return type == SemanticType(type.kind);
+    case SemanticType::RawPointer:
+      return type.arguments.size() == 1 &&
+             type.arguments.front().kind != SemanticType::RawPointer &&
+             type.arguments.front().kind != SemanticType::TypeParameter &&
+             type.arguments.front().kind != SemanticType::Unknown;
+    case SemanticType::Enum:
+      return program.findIntegralEnum(type.enumId) != nullptr;
+    case SemanticType::Array:
+      return type.arguments.size() == 1 && type.arrayLength > 0 &&
+             self(self, type.arguments.front(), depth + 1);
+    case SemanticType::Class: {
+      const MirClassInstance *owner = nullptr;
+      for (const MirClassInstance &candidate : program.classInstances()) {
+        if (candidate.type == type) {
+          if (owner != nullptr)
+            return false;
+          owner = &candidate;
+        }
+      }
+      return owner != nullptr && owner->kind != ClassKind::Interface &&
+             !owner->abstract && !owner->cOpaqueHandle &&
+             owner->compilerCapability == CompilerCapabilityTypeKind::None;
+    }
+    default:
+      return false;
+    }
+  };
+  return eligible(eligible, *instruction.objectLayoutType, 0);
+}
+
 bool rawPointerConversion(const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Compute ||
       instruction.operation != MirOperation::Convert ||

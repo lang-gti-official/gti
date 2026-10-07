@@ -436,8 +436,11 @@ int main() {
     expect(frontend.canGenerateCode(),
            std::string("borrowed-result operator keeps its original loan ") +
                "schedule in conditional expressions: " + expression);
-    if (!frontend.canGenerateCode())
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
       continue;
+    }
     bool foundValueReceiver = false;
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
@@ -511,6 +514,359 @@ int main() {
   expect(checked,
          "Slot regression exercises read retirement and reservation activation "
          "under the same mutable parent");
+}
+
+void checkTemporaryOperatorPhysicalStorage() {
+  const auto declarations = [](bool cleanup) {
+    return std::string(R"gti(
+class Cursor {
+  int& owner;
+  int inline_value = 7;
+public:
+  Cursor(int& source) : owner(source) {}
+  int& operator*() { return this.inline_value; }
+  int& ref() { return this.inline_value; }
+)gti") + (cleanup ? "  ~Cursor() {}\n" : "") +
+           R"gti(
+};
+Cursor cursor(int& source) { return Cursor(source); }
+)gti";
+  };
+  for (const bool cleanup : {false, true}) {
+    for (const auto *expression :
+         {"*cursor(owner) + *cursor(other) == 14",
+          "false || *cursor(owner) == 7", "true && *cursor(owner) == 7",
+          "true || *cursor(owner) == 7", "false && *cursor(owner) == 7",
+          "true ? *cursor(owner) == 7 : *cursor(other) == 7"}) {
+      const auto frontend = lang::Frontend().analyze(
+          "temporary-operator-physical-storage.gti",
+          declarations(cleanup) +
+              "int main() { int owner = 4; int other = 6; "
+              "return (" +
+              expression + ") ? 0 : 1; }");
+      expect(frontend.canGenerateCode(),
+             std::string(
+                 "temporary borrowed operator retains physical storage: ") +
+                 expression + (cleanup ? " (cleanup-bearing)" : " (passive)"));
+      if (!frontend.canGenerateCode()) {
+        for (const auto &diagnostic : frontend.diagnostics)
+          std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+        continue;
+      }
+      bool found = false;
+      bool checkedEndpoint = false;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        const auto &body = function.body;
+        for (const auto &loan : body.loans) {
+          if (loan.kind != lang::MirLoanKind::CallResult ||
+              loan.storedDependency == 0)
+            continue;
+          const auto *place = body.findPlace(loan.source);
+          const auto temporary =
+              place == nullptr
+                  ? lang::MirTemporaryCarrierDependency{}
+                  : lang::findMirTemporaryCarrierDependency(body, *place);
+          if (!temporary)
+            continue;
+          found = true;
+          expect(loan.parent == 0 &&
+                     loan.storedDependency == temporary.loan->id &&
+                     loan.source != temporary.loan->source &&
+                     temporary.drop->fullExpression != 0 &&
+                     temporary.loan->lifecycleBound == cleanup,
+                 "inline result protects the exact temporary and its separate "
+                 "external dependency");
+          for (int mutation = 0; mutation < 3; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *instance = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &changed = instance->body.loans[loan.id - 1];
+            if (mutation == 0)
+              changed.storedDependency = 0;
+            else if (mutation == 1)
+              changed.source = temporary.loan->source;
+            else
+              instance->body.dropObligations[temporary.drop->id - 1].value = 0;
+            expect(
+                !lang::verifyMirProgram(malformed).valid(),
+                "temporary inline result cannot erase its dependency or "
+                "producer drop identity, or substitute the external referent");
+          }
+          for (const auto &other : body.places) {
+            if (other.id == loan.source || other.type != place->type ||
+                !lang::findMirTemporaryCarrierDependency(body, other))
+              continue;
+            auto malformed = frontend.mir;
+            auto *instance = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            instance->body.loans[loan.id - 1].source = other.id;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "same-typed temporary cannot replace the selected receiver");
+          }
+          for (const auto &block : body.blocks) {
+            const auto end = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::EndBorrow &&
+                         instruction.loan == loan.id;
+                });
+            const auto drop = std::find_if(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind == lang::MirInstructionKind::Drop &&
+                         instruction.destination == temporary.drop->place;
+                });
+            if (end == block.instructions.end() ||
+                drop == block.instructions.end() || end >= drop)
+              continue;
+            auto malformed = frontend.mir;
+            auto *instance = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &instructions =
+                instance->body.blocks[block.id - 1].instructions;
+            const auto saved = *drop;
+            const auto endIndex =
+                static_cast<std::size_t>(end - block.instructions.begin());
+            instructions.erase(instructions.begin() +
+                               (drop - block.instructions.begin()));
+            instructions.insert(instructions.begin() + endIndex, saved);
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "temporary cannot be destroyed before its interior result "
+                   "loan ends on success or failure");
+            checkedEndpoint = true;
+          }
+        }
+      }
+      expect(found && checkedEndpoint,
+             "temporary operator regression covers physical result and cleanup "
+             "endpoints");
+    }
+  }
+  for (const auto *body :
+       {"int& bad(int& owner) { return *cursor(owner); }",
+        "int main() { int owner = 4; int& escaped = *cursor(owner); "
+        "return escaped; }"}) {
+    const auto program = declarations(false) + body;
+    const auto start = program.rfind("*cursor(owner)");
+    const auto frontend =
+        lang::Frontend().analyze("temporary-operator-escape.gti", program);
+    expect(!frontend.canGenerateCode() &&
+               std::any_of(
+                   frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                   [&](const auto &diagnostic) {
+                     return diagnostic.code == "GTI-S2017" &&
+                            diagnostic.phase ==
+                                lang::DiagnosticPhase::Semantics &&
+                            diagnostic.severity ==
+                                lang::DiagnosticSeverity::Error &&
+                            std::filesystem::path(diagnostic.primary.source)
+                                    .filename() ==
+                                "temporary-operator-escape.gti" &&
+                            diagnostic.primary.start == start &&
+                            diagnostic.primary.end == start + 1 &&
+                            diagnostic.message.find("temporary") !=
+                                std::string::npos &&
+                            diagnostic.fixes.empty();
+                   }) &&
+               std::none_of(frontend.diagnostics.begin(),
+                            frontend.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-B0001";
+                            }),
+           "temporary inline reference cannot escape its full expression");
+  }
+  for (const auto *body :
+       {"int& bad(int& owner) { return cursor(owner).ref(); }",
+        "int main() { int owner = 4; int& escaped = cursor(owner).ref(); "
+        "return escaped; }"}) {
+    const auto frontend = lang::Frontend().analyze(
+        "temporary-member-escape.gti", declarations(false) + body);
+    expect(!frontend.semanticValid &&
+               std::any_of(
+                   frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                   [](const auto &diagnostic) {
+                     return diagnostic.code == "GTI-S2081" &&
+                            diagnostic.phase ==
+                                lang::DiagnosticPhase::Semantics &&
+                            diagnostic.message.find("temporary receiver") !=
+                                std::string::npos;
+                   }) &&
+               std::none_of(frontend.diagnostics.begin(),
+                            frontend.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-B0001";
+                            }),
+           "ordinary temporary methods preserve their existing borrowed-result "
+           "rejection at both return and binding boundaries");
+  }
+  for (const auto *result : {"local.ref()", "*local"}) {
+    for (const unsigned int relay : {0U, 1U, 2U}) {
+      const std::string body =
+          "int& identity(int& source) { return source; } "
+          "int& bad(int& owner) { Cursor local = cursor(owner); " +
+          (relay == 1   ? "int& selected = " + std::string(result) +
+                              "; return selected; }"
+           : relay == 2 ? "return identity(" + std::string(result) + "); }"
+                        : "return " + std::string(result) + "; }");
+      const auto frontend = lang::Frontend().analyze(
+          "local-receiver-escape.gti", declarations(false) + body);
+      expect(!frontend.semanticValid &&
+                 std::any_of(frontend.diagnostics.begin(),
+                             frontend.diagnostics.end(),
+                             [](const auto &diagnostic) {
+                               return diagnostic.code == "GTI-S2017" &&
+                                      diagnostic.phase ==
+                                          lang::DiagnosticPhase::Semantics &&
+                                      diagnostic.message.find("local") !=
+                                          std::string::npos;
+                             }) &&
+                 std::none_of(frontend.diagnostics.begin(),
+                              frontend.diagnostics.end(),
+                              [](const auto &diagnostic) {
+                                return diagnostic.code == "GTI-B0001";
+                              }),
+             std::string(
+                 "a local carrier's external owner cannot authorize its ") +
+                 "inline " + (relay != 0 ? "relayed " : "") + result +
+                 " return");
+    }
+  }
+  const auto referenceReceiver = lang::Frontend().analyze(
+      "reference-receiver-return.gti", declarations(false) + R"gti(
+int& relay(Cursor& owner) { return owner.ref(); }
+int& dereference(Cursor& owner) { return *owner; }
+int& plain_alias(int& owner) { int& first = owner; int& second = first; return second; }
+int& alias_relay(Cursor& owner) {
+  int decoy = 11;
+  int& unrelated = decoy;
+  int observed = unrelated;
+  int& selected = owner.ref();
+  return selected;
+}
+int main() {
+  int owner = 3;
+  Cursor local = cursor(owner);
+  return relay(local) + dereference(local) + alias_relay(local) + plain_alias(owner) - 24;
+}
+)gti");
+  expect(
+      referenceReceiver.canGenerateCode(),
+      "physical storage supplied by a reference parameter remains returnable");
+  if (!referenceReceiver.canGenerateCode())
+    for (const auto &diagnostic : referenceReceiver.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  bool checkedAliasPublication = false;
+  if (referenceReceiver.canGenerateCode())
+    for (const auto &function : referenceReceiver.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (std::size_t index = 0; index < block.instructions.size();
+             ++index) {
+          const auto &publication = block.instructions[index];
+          const auto *published =
+              publication.loan ? function.body.findLoan(*publication.loan)
+                               : nullptr;
+          if (publication.kind != lang::MirInstructionKind::Borrow ||
+              published == nullptr ||
+              published->kind != lang::MirLoanKind::Return ||
+              publication.operands.size() != 1)
+            continue;
+          const auto &input = publication.operands.front();
+          const auto *retained = function.body.findLoan(input.loan);
+          const auto *runtime = function.body.findPlace(input.place);
+          if (retained == nullptr ||
+              retained->kind != lang::MirLoanKind::Parameter ||
+              retained->storedDependency == 0 || runtime == nullptr ||
+              runtime->root != lang::MirPlaceRootKind::Binding)
+            continue;
+          const auto unrelated = std::find_if(
+              function.body.places.begin(), function.body.places.end(),
+              [&](const auto &place) {
+                return place.root == lang::MirPlaceRootKind::Binding &&
+                       place.binding != runtime->binding &&
+                       place.type == runtime->type &&
+                       place.access == runtime->access &&
+                       place.projections == runtime->projections;
+              });
+          expect(unrelated != function.body.places.end(),
+                 "alias return mutation has an unrelated same-typed runtime "
+                 "address");
+          if (unrelated == function.body.places.end())
+            continue;
+          checkedAliasPublication = true;
+          for (int mutation = 0; mutation < 4; ++mutation) {
+            auto malformed = referenceReceiver.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            auto &operand = changed->body.blocks[block.id - 1]
+                                .instructions[index]
+                                .operands.front();
+            if (mutation == 0)
+              operand.place = 0;
+            else if (mutation == 1) {
+              operand.place = unrelated->id;
+              // Even forged carrier membership cannot replace executable
+              // initialization from the selected parameter authority.
+              changed->body.loans[retained->id - 1].carriers.push_back(
+                  unrelated->binding);
+            } else if (mutation == 2)
+              operand.loan = retained->storedDependency;
+            else
+              changed->body.loans[published->id - 1].storedDependency = 0;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "alias publication cannot erase its runtime "
+                   "address/dependency, "
+                   "substitute another address, or replace its physical "
+                   "authority");
+          }
+        }
+  expect(checkedAliasPublication,
+         "reference-parameter subobject relay preserves explicit runtime "
+         "address evidence");
+  const auto external =
+      lang::Frontend().analyze("temporary-external-operator-result.gti", R"gti(
+class Cursor {
+  int& owner;
+public:
+  Cursor(int& source) : owner(source) {}
+  int& operator*() { return this.owner; }
+};
+Cursor cursor(int& source) { return Cursor(source); }
+int& relay(int& owner) { return *cursor(owner); }
+int main() {
+  int owner = 7;
+  int& extracted = *cursor(owner);
+  return relay(extracted) - 7;
+}
+)gti");
+  expect(external.canGenerateCode(),
+         "an exact external-field operator result does not depend on the "
+         "temporary cursor's physical lifetime");
+  if (!external.canGenerateCode())
+    for (const auto &diagnostic : external.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  const auto fallible = lang::Frontend().analyze(
+      "temporary-fallible-borrow-extraction.gti", R"gti(
+#include <std/utility>
+enum class Error { absent };
+struct Owner { int value = 7; };
+expected<Owner&, Error> lookup(Owner& source) { return source; }
+Owner& relay(Owner& source) { return lookup(source).expect("owner required"); }
+int main() {
+  Owner owner{};
+  Owner& temporary = lookup(owner).expect("owner required");
+  auto pending = lookup(owner);
+  Owner& consumed = std::move(pending).expect("owner still required");
+  return temporary.value + consumed.value + relay(owner).value - 21;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(fallible.canGenerateCode(),
+         "compiler-owned fallible extraction preserves its external owner, "
+         "not the temporary expected carrier's shell");
+  if (!fallible.canGenerateCode())
+    for (const auto &diagnostic : fallible.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
 
 void checkConditionalParentReborrowMutation() {
@@ -646,6 +1002,7 @@ int main() {
   checkForbiddenResultMutation();
   checkLegacyBorrowedOperatorSchedules();
   checkReservedSiblingRetirement();
+  checkTemporaryOperatorPhysicalStorage();
   checkConditionalParentReborrowMutation();
   return failures == 0 ? 0 : 1;
 }

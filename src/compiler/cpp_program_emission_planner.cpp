@@ -3152,7 +3152,8 @@ public:
       const LoweredDeclaration &classRow,
       const LoweredClassDeclaration &declaration,
       const std::vector<const LoweredDeclaration *> &fields,
-      const std::set<std::string> &byteFields = {}) {
+      const std::set<std::string> &byteFields,
+      const std::set<std::string> &referenceFields) {
     writeIndent();
     output << classRow.name << '(' << classRow.name << " &&other) noexcept : ";
     bool separator = false;
@@ -3171,6 +3172,10 @@ public:
       output << field->name;
       if (byteFields.contains(field->name))
         output << "{}";
+      else if (referenceFields.contains(field->name))
+        // Move the binding, not the object it designates. std::move on a
+        // native reference member casts its referent to an rvalue instead.
+        output << "(other." << field->name << ')';
       else
         output << "(std::move(other." << field->name << "))";
       separator = true;
@@ -3262,6 +3267,7 @@ public:
     // Ordinary containing classes have their own fieldwise special members;
     // owning fields must never be copied wholesale merely for containing one.
     std::set<std::string> byteFields;
+    std::set<std::string> referenceFields;
     for (const auto *field : fields) {
       const auto &storage = std::get<LoweredStorageDeclaration>(field->payload);
       SemanticType type = storage.type;
@@ -3270,6 +3276,8 @@ public:
           if (concrete.symbol == storage.symbol)
             type = concrete.type;
       }
+      if (type.kind == SemanticType::Reference)
+        referenceFields.insert(field->name);
       SemanticType element = type;
       while (element.kind == SemanticType::Array &&
              element.arguments.size() == 1)
@@ -3422,7 +3430,8 @@ public:
     if ((declaration.requiresActiveDropState || incompletePointeeCarrier ||
          !byteFields.empty()) &&
         declaration.moveConstructor == SpecialMemberStatus::Generated) {
-      emitLoweredMoveConstructor(classRow, declaration, fields, byteFields);
+      emitLoweredMoveConstructor(classRow, declaration, fields, byteFields,
+                                 referenceFields);
     } else {
       writeIndent();
       output << classRow.name << '(' << classRow.name << " &&)";
@@ -6595,6 +6604,7 @@ public:
       const auto direct =
           loweredConcreteLifecycleInstances.find(classRow->name);
       bool emitted = false;
+      bool deferredToDirectClass = false;
       std::optional<std::pair<bool, std::string>> retainedBody;
       for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
         if (thunk.identity.kind != CppMirThunkKind::LifecycleCleanup) {
@@ -6607,6 +6617,14 @@ public:
         }
         if (direct != loweredConcreteLifecycleInstances.end() &&
             cleanup->classInstance != direct->second) {
+          continue;
+        }
+        // A directly represented instance is an ordinary concrete class, not
+        // a specialization of this primary. Its own deferred row defines its
+        // lifecycle members, matching the declarations emitted for it.
+        if (direct == loweredConcreteLifecycleInstances.end() &&
+            loweredClassUsesDirectRepresentation(cleanup->classInstance)) {
+          deferredToDirectClass = true;
           continue;
         }
         const MirDestructorInstance *destructor =
@@ -6748,9 +6766,10 @@ public:
         output << "}\n\n";
         emitted = true;
       }
-      if (!emitted && (direct != loweredConcreteLifecycleInstances.end() ||
-                       !loweredOwnerIsGeneric(*classRow) ||
-                       loweredClassHasConcreteInstance(classDeclaration->id))) {
+      if (!emitted && !deferredToDirectClass &&
+          (direct != loweredConcreteLifecycleInstances.end() ||
+           !loweredOwnerIsGeneric(*classRow) ||
+           loweredClassHasConcreteInstance(classDeclaration->id))) {
         throw std::logic_error(
             "lowered active-drop class has no lifecycle generated item");
       }
@@ -7654,6 +7673,7 @@ public:
       std::vector<bool> movedParameters;
       std::vector<CppMirConstructedFieldInitializerArgument>
           constructedArguments;
+      HirConstructorInstanceId statusConstructor = 0;
     };
     std::vector<InitializerBinding> initializers;
     initializers.reserve(baseBindings->size() + bindings->size() +
@@ -7681,7 +7701,10 @@ public:
                               .initializer = binding.initializer,
                               .field = binding.field,
                               .fieldType = binding.fieldType,
-                              .constructedArguments = binding.arguments});
+                              .constructedArguments = binding.arguments,
+                              .statusConstructor = binding.failureStatus
+                                                       ? binding.constructor
+                                                       : 0});
     }
     if (ownedBindings) {
       for (const CppMirOwnedParameterFieldBinding &binding : *ownedBindings) {
@@ -7814,9 +7837,16 @@ public:
         output << fieldName << '(';
         emitSemanticType(initializer.fieldType);
         output << '(';
+        if (initializer.statusConstructor != 0) {
+          if (!failureForm)
+            throw std::logic_error("raising native field requires status form");
+          output << cppMirFailureConstructorTagSpelling(
+                        initializer.statusConstructor)
+                 << "{}";
+        }
         for (std::size_t argument = 0;
              argument < initializer.constructedArguments.size(); ++argument) {
-          if (argument != 0) {
+          if (argument != 0 || initializer.statusConstructor != 0) {
             output << ", ";
           }
           const CppMirConstructedFieldInitializerArgument &source =
@@ -7837,6 +7867,8 @@ public:
             }
           }
         }
+        if (initializer.statusConstructor != 0)
+          output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
         output << "))";
         continue;
       }

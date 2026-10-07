@@ -117,6 +117,8 @@ auto SemanticVisitor::Impl::storageIntrinsicName(IntrinsicKind intrinsic)
     return "allocate_storage";
   case IntrinsicKind::StorageTryAllocate:
     return "storage_try_allocate";
+  case IntrinsicKind::StorageTryAdopt:
+    return "storage_try_adopt";
   case IntrinsicKind::StorageCapacity:
     return "storage_capacity";
   case IntrinsicKind::StorageInitialized:
@@ -1063,7 +1065,15 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
            .application = requirement.syntax,
            .memberName = requirement.syntax->memberRequirement->member().lexeme,
            .mutableReceiver = requirement.syntax->memberRequirement->receiver()
-                                  .referenceMutability.has_value()});
+                                  .referenceMutability.has_value(),
+           .requiresUnsafe =
+               requirement.syntax->memberRequirement->unsafeKeyword()
+                   .has_value()});
+      if (!result.back().requiresUnsafe) {
+        auto weaker = result.back();
+        weaker.requiresUnsafe = true;
+        result.emplace_back(std::move(weaker));
+      }
       return result;
     }
     if (requirement.conceptId == 0 || requirement.conceptId > concepts.size()) {
@@ -1074,11 +1084,12 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
         conceptSubstitution(conceptInfo, requirement.arguments);
     for (const RegisteredConcept::StructuralPattern &pattern :
          conceptInfo.structuralConstraints) {
-      ExpandedStructuralRequirement expanded{.kind = pattern.kind,
-                                             .application = requirement.syntax,
-                                             .memberName = pattern.memberName,
-                                             .mutableReceiver =
-                                                 pattern.mutableReceiver};
+      ExpandedStructuralRequirement expanded{
+          .kind = pattern.kind,
+          .application = requirement.syntax,
+          .memberName = pattern.memberName,
+          .mutableReceiver = pattern.mutableReceiver,
+          .requiresUnsafe = pattern.requiresUnsafe};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -1127,7 +1138,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
                                   const ExpandedStructuralRequirement &right) {
     return left.kind == right.kind && left.arguments == right.arguments &&
            left.memberName == right.memberName &&
-           left.mutableReceiver == right.mutableReceiver;
+           left.mutableReceiver == right.mutableReceiver &&
+           left.requiresUnsafe == right.requiresUnsafe;
   };
   std::function<std::vector<ExpandedStructuralRequirement>(std::size_t)>
       expandNode = [&](std::size_t nodeIndex) {
@@ -1378,7 +1390,15 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
                      leftRequirement->syntax->memberRequirement->member()
                              .lexeme ==
                          rightRequirement->syntax->memberRequirement->member()
-                             .lexeme)) &&
+                             .lexeme &&
+                     leftRequirement->syntax->memberRequirement->receiver()
+                             .referenceMutability.has_value() ==
+                         rightRequirement->syntax->memberRequirement->receiver()
+                             .referenceMutability.has_value() &&
+                     (leftRequirement->syntax->memberRequirement
+                          ->unsafeKeyword() ||
+                      !rightRequirement->syntax->memberRequirement
+                           ->unsafeKeyword()))) &&
                    leftRequirement->arguments == rightRequirement->arguments;
           }
           return sameExpression(left.left, right.left) &&
@@ -1435,7 +1455,9 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
             requirement.arguments[0], member.lexeme, requirement.arguments[1],
             &memberFailure, std::span(requirement.arguments).subspan(2),
             requirement.syntax->memberRequirement->receiver()
-                .referenceMutability.has_value())) {
+                .referenceMutability.has_value(),
+            requirement.syntax->memberRequirement->unsafeKeyword()
+                .has_value())) {
       return std::nullopt;
     }
     return ConstraintFailure{.parameter = member,
@@ -4524,8 +4546,8 @@ auto SemanticVisitor::Impl::symbolicReadMemberReturnType(
 auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     const SemanticType &receiver, std::string_view member,
     const SemanticType &result, SemanticMemberRequirementFailure *failure,
-    std::span<const SemanticType> parameters, bool mutableReceiver) const
-    -> bool {
+    std::span<const SemanticType> parameters, bool mutableReceiver,
+    bool requiresUnsafe) const -> bool {
   const auto reject = [&](MemberRequirementFailureKind kind,
                           const CallableCandidate *candidate = nullptr) {
     if (failure != nullptr) {
@@ -4547,6 +4569,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
       if (requirement.kind == StructuralConstraintKind::ReadMember &&
           requirement.memberName == member &&
           requirement.mutableReceiver == mutableReceiver &&
+          (requiresUnsafe || !requirement.requiresUnsafe) &&
           requirement.arguments.size() == parameters.size() + 2 &&
           requirement.arguments[0] == receiver &&
           requirement.arguments[1] == result &&
@@ -4564,13 +4587,14 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
                     return active.receiver == receiver &&
                            active.member == member && active.result == result &&
                            active.mutableReceiver == mutableReceiver &&
+                           active.requiresUnsafe == requiresUnsafe &&
                            std::ranges::equal(active.parameters, parameters);
                   }))
     return reject(MemberRequirementFailureKind::Recursive);
   activeMemberRequirements.push_back(
       {receiver, std::string(member), result,
        std::vector<SemanticType>(parameters.begin(), parameters.end()),
-       mutableReceiver});
+       mutableReceiver, requiresUnsafe});
   struct PopRequirement {
     std::vector<ActiveMemberRequirement> &stack;
     ~PopRequirement() { stack.pop_back(); }
@@ -4617,7 +4641,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     return reject(MemberRequirementFailureKind::Inaccessible, selected);
   if (selected->returnType != result)
     return reject(MemberRequirementFailureKind::Result, selected);
-  if (selected->declaration->unsafeKeyword())
+  if (selected->record().requiresUnsafe && !requiresUnsafe)
     return reject(MemberRequirementFailureKind::Unsafe, selected);
   if (selected->returnBorrowOrigin != BorrowOriginKind::None ||
       result.kind == SemanticType::Reference ||
@@ -5124,6 +5148,8 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            satisfiesAtomicConstraint(arguments[0],
                                      GenericConstraintKind::IntegralEnum) &&
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
+  case StructuralConstraintKind::ObjectLayout:
+    return arguments.size() == 1 && runtimeObjectLayoutType(arguments.front());
   case StructuralConstraintKind::ReadCallable:
     return unaryCallable(CallableInvocationCapability::Read);
   case StructuralConstraintKind::MutCallable:
@@ -5371,6 +5397,7 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       // size() is a generated member-call fact rather than an operator.
       break;
     case StructuralConstraintKind::EnumUnderlying:
+    case StructuralConstraintKind::ObjectLayout:
       // Enum representation classification grants no numeric operators.
       break;
 
@@ -6304,6 +6331,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
                      return containsCAbiRawPointer(parameter);
                    }));
   const bool missingUnsafe = pointerBearingCFunction && unsafeDepth == 0;
+  // Concrete generic reanalysis must replace the symbolic requirement's
+  // permitted unsafe effect when the selected implementation is actually safe.
+  // Instance models otherwise inherit the primary expression's unsafe marker.
+  semanticModel.recordUnsafeOperation(call, UnsafeOperationKind::None);
   if (function.record().requiresUnsafe) {
     const bool missing = unsafeDepth == 0;
     requireUnsafe(call, UnsafeOperationKind::DeclaredUnsafeCall, call.paren(),

@@ -2911,6 +2911,22 @@
           "members": [
             {
               "type": "FIELD",
+              "name": "unsafe",
+              "content": {
+                "type": "STRING",
+                "value": "unsafe"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
               "name": "virtual",
               "content": {
                 "type": "STRING",
@@ -7759,6 +7775,22 @@
         {
           "type": "STRING",
           "value": "{"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "unsafe",
+              "content": {
+                "type": "STRING",
+                "value": "unsafe"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "STRING",

@@ -757,8 +757,21 @@ Local copies made inside a borrowed receiver/reference body currently require
 the same complete carrier type as that entry; a differently typed nested field
 copy still needs per-copy dependency-path representation. Direct supported
 field access and reference-returning accessors do not require that copy.
+A direct by-value accessor may return a nested copyable shared view using its
+exact field-origin contract. Calling that accessor creates an independent
+view retaining the external resource, rather than a reference to the enclosing
+object's shell. It does not grant mutable access to the resource. An accessor
+returning a reference to an owned field or owned storage still protects the
+enclosing owner; an external resource remaining alive cannot make an element
+reference survive destruction or movement of its own storage owner.
+This also applies when a reference is returned through a local alias or an
+identity wrapper. A borrowed operator may expose a fresh temporary's inline
+storage for an immediate read within the full expression; that reference
+cannot be retained in a local or returned from the function. An exact
+stored-field result instead retains the external referent and does not borrow
+the temporary carrier's inline storage.
 
-Inherited borrowed state, arrays of borrowed carriers, user-defined destructors,
+Inherited borrowed state, arrays of borrowed carriers,
 global/static or captured borrowed storage, dependency-changing returns, and
 assignment that would replace a carrier's dependency remain rejected. Mutable
 dependencies are limited to an exact
@@ -766,9 +779,24 @@ stable local, parameter, receiver, or existing-loan origin. They do not admit
 raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
 or an independently escaping child reference.
 
-The compiler-trusted mutex guard retains its existing direct, destructor-bound
-dependency rule. Wrapping it in another carrier is not included: its lock
-obligation cannot be shortened to an ordinary carrier's last-use endpoint.
+An ordinary borrowed class may declare a destructor. A borrowed class with
+active cleanup (including cleanup inherited from owned fields) retains its
+dependencies until cleanup finishes, not just its last explicit read. Moving
+it transfers the cleanup obligation and the same dependency protection. It may
+be passed by value or moved into another direct field under the existing
+constructor origin contract. Failed construction rolls back initialized fields
+before releasing their dependencies. These rules do not grant mutable access
+through a shared reference, permit reseating reference fields, or make a
+resource thread-safe. Intermediate borrowed carrier shells and their external
+owners must also outlive that cleanup. Existing bounded structured last-use
+rules still apply; a narrower scope can make the complete dependency endpoint
+explicit. See [cleanup-bound guards](../../examples/118-cleanup-bound-guards.gti).
+
+The compiler-trusted mutex guard retains its separate direct exclusive-access
+capability. Wrapping it in another carrier remains outside the supported
+field-origin contract: its effective exclusive permission is stronger than its
+declared shared resource field. General cleanup retention does not manufacture
+or downgrade that synchronization authority.
 
 Retaining one of these values creates a semantic owner loan, so the owner
 cannot be moved, replaced, or used through a mutable method while that loan
@@ -780,7 +808,8 @@ alias. An exclusive carrier has only one transferable shell. HIR carries
 proven straight-line, nested-merge, and conditional branch-entry endpoints,
 along with bounded switch-exit and same-path immediate-break endpoints. MIR
 records every carrier on one loan and emits an explicit borrow ending only
-after the frontend-selected aggregate endpoint. These are GTI lifetime rules;
+after the frontend-selected aggregate endpoint, or after cleanup for a
+cleanup-bound carrier. These are GTI lifetime rules;
 the emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
@@ -956,6 +985,12 @@ Stored lambdas keep their exact closure identity and read-invocation policy;
 fixed arguments and expanded argument packs use the same retained checkpoint.
 Explicit extraction into a local remains an actual ownership transfer and
 retains that local's ordinary cleanup scope.
+
+A destructor does not acquire consuming-receiver permission. It may observe
+or mutate its available fields, but cannot move a receiver field into a local
+or invoke it through `std::move(this.field)`. Cleanup retains responsibility
+for those fields. Moving a separate local owned value inside the destructor
+remains an ordinary permitted ownership transfer.
 
 An explicitly moved lambda with owned captures uses the same full-expression
 lifetime. Its environment is moved before argument evaluation, read invocation
@@ -1522,9 +1557,13 @@ published until every private resource has succeeded.
 
 `std::storage<T>` is a move-only lexical owner of one typed allocation origin.
 It retains capacity, alignment, slot-live state, and release authority as one
-capability. It cannot be forged, copied, converted to an address, or manually
-released. Public `T` must satisfy `std::movable` and must not contain borrowed
-state. Each in-bounds slot is either uninitialized or holds exactly one live
+capability. It cannot be forged, copied or converted to an address. `release()`
+performs early owning cleanup without detaching an unmanaged allocation.
+Public `T` must not contain borrowed state. It need not be movable:
+final-address `emplace` supports immovable objects, and moving the allocation
+owner does not move its elements. `construct` requires a movable completed
+value, while `relocate_to` requires both movability and structural relocatability.
+Each in-bounds slot is either uninitialized or holds exactly one live
 `T`. `construct` consumes one completed `T` and begins a slot lifetime,
 `get`/`get_mut` return checked receiver-tied references, `destroy` ends one
 slot lifetime, and `clear` ends all live slot lifetimes in reverse index order.
@@ -1541,9 +1580,11 @@ Bounds, duplicate construction, uninitialized access, and uninitialized
 destruction are defined runtime failures rather than allocation errors. The
 public operation accepts an already constructed `T`; failure while constructing
 that argument therefore occurs before the slot operation and follows ordinary
-MIR cleanup without publishing a new slot lifetime. Arbitrary in-slot
-constructor argument forwarding remains deferred until it has an explicit MIR
-failure boundary. The complete rationale, provenance model, and
+MIR cleanup without publishing a new slot lifetime. `emplace` forwards its
+concrete argument pack into the final slot using the existing MIR constructor
+preflight and partial-construction failure boundary. Failure preserves its
+original identity and does not publish a live slot.
+The complete rationale, provenance model, and
 C++/Rust/Zig/Swift comparison are in
 [ADR 022](../decisions/022-safe-typed-allocation.md).
 
@@ -1585,6 +1626,48 @@ Only trusted standard-library factories can establish that the consumed
 storage is freshly allocated and wholly uninitialized; application code cannot
 forge the token or bypass the factories. The seal has no intrinsic behavior
 and does not make either public class compiler-recognized.
+
+## Programmable Resource Leases
+
+`<std/resource>` separates four lifetimes that a C++ allocator usually blurs:
+
+- **Keeping the resource alive.** `unsafe std::bind_resource(resource)` yields
+  a `resource_ref<R>`, an ordinary checked shared borrow of the provider. Every
+  owner built from it retains that borrow through its own cleanup, even when
+  empty, so the provider cannot be moved, destroyed, or reached through a
+  mutable method while any owner is live.
+- **Mutating bookkeeping.** The protocol's `allocate` and `release` take a
+  read-only receiver. A stateful provider mutates separately allocated
+  bookkeeping through its own raw pointers inside `unsafe`. This is a provider
+  obligation, not a new interior-mutability rule: ordinary fields of a shared
+  resource stay read-only and no checked reference into the bookkeeping exists.
+- **Owning a region.** Each `resource_storage<T,R>` holds a move-only lease
+  that owns exactly one region and its matching release authority. Many leases
+  from one resource coexist; none needs an exclusive borrow of the resource.
+  Moving an owner transfers its region and release obligation without moving
+  its elements.
+- **Borrowing objects in a region.** Element references and iterators borrow
+  the owning storage, not merely the resource. They block growth, release,
+  clearing and movement of that owner until their last use. Keeping the
+  resource alive alone never justifies resetting or reusing a live region.
+
+Who guarantees what:
+
+| Guarantee | Enforcement |
+| --- | --- |
+| Binding requires explicit `unsafe` and cannot outlive the resource | static |
+| Provider reset, move or mutable access while an owner is live | rejected statically (exclusive access against a live shared borrow) |
+| Element references and iterators versus growth, release, clear and owner movement | rejected statically |
+| Element type capabilities: relocation and growth need movable, relocatable elements; immovable elements use fixed-address storage | static |
+| Destruction before region release; exactly-once element cleanup; constructor rollback | verified MIR lifecycle and cleanup |
+| Count overflow, invalid alignment, region shape, slot bounds and initialization | dynamic checks, reported as `alloc_errc` or a runtime failure |
+| Provider returns writable, aligned, disjoint regions valid until matching release; truthful identity; release retires exactly that region; no independent raw reset, reentrancy or race invalidates a live region | unsafe obligation of the provider, accepted once at the binding |
+
+The optional raw-pointer audit may report findings inside a provider's
+implementation, but it never decides acceptance or code generation. The
+binding obligations are listed in full in
+[raw pointers](raw-pointers.md#explicit-resource-binding), and the library API
+in [the standard library](standard-library.md#custom-resource-protocol).
 
 ## Standard-Library Storage
 
@@ -1769,8 +1852,10 @@ its hidden loop owner. Reserve, push, clear, movement, and every other
 overlapping owner operation are rejected while the mutable range is active.
 This is conservative whole-owner invalidation exclusion, not a
 container-specific invalidation trait. Iterator categories, iterator-position
-insertion/erasure, allocator policy, and mutable or multi-owner spans remain
-future work. The bounded read-only single-owner span is described below.
+insertion/erasure, and mutable or multi-owner spans remain future work.
+`std::vector` itself always uses the process allocator; programmable placement
+is provided by the separate `resource_vector` described under
+[programmable resource leases](#programmable-resource-leases). The bounded read-only single-owner span is described below.
 
 ## Owning Text
 

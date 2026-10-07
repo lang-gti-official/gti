@@ -360,9 +360,10 @@ struct MirLoan {
   // metadata for a by-value carrier dependency and has no backend
   // representation.
   std::vector<SymbolId> designatedFields;
-  // True only for a stored exclusive dependency whose carrier destructor
-  // releases the protected resource. Cleanup must Drop that carrier before
-  // ending this loan on every normal and failure edge.
+  // An owned carrier needs this dependency until cleanup, including read-only
+  // dependencies used by source destructors. EndBorrow follows the exact Drop
+  // or verified ownership transfer on every normal and failure edge. This
+  // retention bit grants no mutable access or mutex-release authority.
   bool lifecycleBound = false;
   // A two-phase mutable call-result loan reserves one stable target place at
   // its producing call, but does not become exclusive until the unique
@@ -709,6 +710,9 @@ struct MirInstruction {
   std::optional<std::size_t> enumVariant;
   std::optional<std::size_t> payloadIndex;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  // Concrete queried representation; only ObjectSize/ObjectAlignment may
+  // carry this field. It is not a runtime argument or a borrow origin.
+  std::optional<SemanticType> objectLayoutType;
   bool neverReturns = false;
   bool tracksCaller = false;
   std::optional<CallerLocationOrigin> callerLocation;
@@ -1171,6 +1175,7 @@ struct MirClassInstance {
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;
+  bool mutexGuardBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirBaseInstance> structuralBases;

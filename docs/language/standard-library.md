@@ -710,29 +710,55 @@ The source is borrowed only during construction. Later mutations of either
 string do not affect the other, and the result may outlive its source. Indices
 count code units, not Unicode characters, and embedded zero bytes are copied.
 
-`<std/memory>` implements the first public typed allocation slice:
+`<std/memory>` exposes `std::layout_of<T>()`, returning an ordinary
+`std::layout` with `size_t bytes` and `size_t alignment` fields. These are the
+size and alignment of the compiler-selected runtime GTI object representation
+for the current target. The query does not create, copy, move, borrow or destroy
+an object, so owning and immovable user-defined classes are supported, including
+ordinary wrappers containing owning fields. Generic forwarding preserves the
+concrete queried type.
+
+The ordinary public concept `std::layout_queryable<T>` expresses eligibility.
+`layout_of<T>()` requires it, and a generic forwarding function uses the same
+constraint. Unsupported types are rejected at the call site, including in
+editor analysis, rather than only after the library body is instantiated.
+
+The current direct-query boundary admits primitive numeric/boolean/character
+types, raw pointers, integral enums, complete non-abstract classes, structs and
+passive unions, and positive concrete fixed arrays of admitted types. References,
+`void`, incomplete/opaque classes, interfaces, abstract classes, payload enums,
+direct `expected` types and compiler-private storage capabilities are excluded.
+Containing an owner field does not make an ordinary user class a private
+capability. This runtime descriptor is not a stable foreign ABI, an allocation,
+an initialization proof, or a new constant expression. The existing bounded
+`sizeof(T)` and `alignof(T)` constant-query rules are unchanged. See
+[runtime object layout](../../examples/119-runtime-object-layout.gti).
+
+`<std/memory>` also implements the first public typed allocation slice:
 
 - `std::allocator` is a stateless process allocator with
   `try_storage<T>(count)` and
   `try_storage<T>(count, std::alignment minimum)`;
 - `std::storage<T>` is a move-only owner of `capacity()` independently
-  initialized typed slots for `std::movable T` without borrowed state;
+  initialized typed slots for element types without borrowed state, including
+  immovable objects constructed directly with `emplace`;
 - `std::alignment` carries an explicit minimum byte alignment; and
 - `std::alloc_errc` distinguishes `invalid_alignment`, `size_overflow`, and
-  `resource_exhausted`.
+  `resource_exhausted`; the custom-resource slice additionally uses
+  `invalid_region` and `invalid_state`.
 
 Both allocator operations return
 `expected<std::storage<T>, std::alloc_errc>`. Zero capacity succeeds without a
 host allocation. An explicit alignment must be a nonzero power of two, and the
 effective alignment is never weaker than `alignof(T)`. Allocation is
 failure-atomic and the resulting storage owner, rather than the allocator,
-carries release authority. This typed request is also the ordinary-object
-layout interface: allocation derives size and alignment from the concrete `T`,
-including owning classes, without exposing its representation as a stable C
-ABI or requiring application-supplied byte sizes.
+carries release authority. Typed allocation derives size and alignment from
+the concrete `T`, including owning classes, without requiring application-supplied
+byte sizes. Custom-resource requests can separately use `std::layout_of<T>()`;
+neither operation exposes a stable C ABI.
 
 Each public storage slot is checked. `construct(index, value)` consumes one
-completed `T` and requires an uninitialized in-bounds slot; `get` and `get_mut`
+completed movable `T` and requires an uninitialized in-bounds slot; `get` and `get_mut`
 require a live slot and return references tied to the storage receiver;
 `destroy` requires a live slot; `initialized` reports checked slot state; and
 `clear` destroys all live slots in reverse index order. Owner destruction
@@ -763,7 +789,101 @@ See [structural relocation](ownership-and-lifetimes.md#structural-relocation).
 ADR 022 defines its provenance and comparison with other systems-language
 models.
 
-The same module implements two fixed-capacity policies over that owner:
+### Custom resource protocol
+
+`<std/resource>` provides source-defined programmable allocation and checked
+typed ownership. It is separate from the process-backed
+`std::allocator`/`std::storage<T>` API above; ordinary default allocation does
+not require a resource binding. Resource types are selected by generic type
+arguments, without runtime type erasure or allocator-propagation traits.
+
+`memory_resource<R>` requires read-only `allocate(layout)` and
+`release(raw_allocation)` calls under an explicit unsafe requirement.
+`raw_allocation` carries `address`, `bytes`, `alignment` and provider-defined
+`id`, but owns nothing. `unsafe bind_resource(R&)` establishes a reusable,
+sealed `resource_ref<R>`; constructing an empty `resource_storage<T,R>` from
+that checked binding is safe. Binding is the one-time programmer proof for
+all future calls through the binding and its copies, not a compiler proof of
+raw-region validity. See the full
+[unsafe binding obligations](raw-pointers.md#explicit-resource-binding).
+
+The resource owner derives element layout from `layout_of<T>()`, checks count
+multiplication and requested power-of-two alignment, and verifies the reported
+region before typed adoption. Requested over-alignment is retained across
+prefix growth. A fresh-only allocation attempt reports `invalid_state` for an
+occupied owner; provider errors are preserved, and malformed region metadata
+is not silently converted to exhaustion. Adoption allocates only a slot
+liveness bitmap. The typed storage never frees the external region: ordinary
+reverse field cleanup destroys elements first, then the resource lease returns
+the original descriptor. These checks do not establish provenance, actual
+extent, non-overlap, writability or race freedom.
+
+`resource_storage<T,R>` owns sparse element lifetimes in one provider-selected
+region. `try_allocate` is recoverable; `emplace` constructs directly at the final
+address, `get`/`get_mut` borrow initialized elements, and `destroy` ends one
+element lifetime without returning the region. `clear` destroys live elements;
+`release` destroys them and returns the original descriptor to the original
+resource. Moving the owner transfers this release obligation without moving
+elements, so deleted element movement is compatible with fixed-address storage.
+`relocate_to` and `try_reserve_prefix` instead require movable, structurally
+relocatable elements. The latter checks that exactly the claimed prefix is
+initialized and preserves the old allocation and elements on allocation failure.
+Constructor failure retains its original defined-failure identity and rollback;
+it is not converted into an allocation error.
+
+`<std/resource_vector>` supplies `resource_vector<T,R>`, a contiguous move-only
+container over that storage. It supports `size`, `capacity`, `empty`, indexed
+read-only/mutable access, `front`, `back`, read-only range iteration, `pop_back`,
+`clear` and `release`. `try_reserve`, `try_push_back` and `try_emplace_back`
+report allocation errors; their plain counterparts panic on allocation failure.
+An insertion argument is consumed even when growth fails, but existing elements
+remain unchanged. Growable elements must be movable, structurally relocatable
+and layout-queryable; use fixed-address storage for immovable types.
+
+Each owner retains a shared checked provider borrow through its cleanup, even
+when empty. Multiple owners may coexist. Safe provider reset requires exclusive
+access and cannot occur while those owners remain live. Element references and
+iterators additionally borrow the physical storage owner, preventing conflicting
+growth, release or movement until their last use. Moving an unborrowed owner
+preserves its binding; assignment between resource owners/containers is not
+supported. Explicit `relocate_to` may transfer elements between distinct
+resources of the same `R` type, but each region is still released through its
+own binding. There is no implicit rebinding, shared ownership or reference count.
+
+Resource owners compose like other borrowed carriers: a class may hold a
+`resource_vector` field constructed from a `resource_ref` parameter, and
+functions may fill a container through a `mut` reference. A free function
+cannot yet return a new owner built from a `resource_ref` parameter
+(`GTI-S2085`); that is the general rule for returning any borrowed carrier
+constructed from a by-value carrier parameter, not a resource-specific
+restriction. Construct the owner in the caller, or pass it by `mut` reference.
+
+`process_resource` is a source wrapper over a narrow aligned raw allocation
+runtime interface, with distinct invalid-alignment, size-overflow and
+resource-exhaustion results. Direct `allocate` and `release` remain unsafe;
+release requires a matching outstanding descriptor. There is no global
+resource-selection policy or public-name compiler special case.
+
+The unrelated `engine::Arena` in
+[`examples/allocator-support/arena.gti`](../../examples/allocator-support/arena.gti)
+is a single-threaded monotonic resource, not a heap-free arena implementation.
+It obtains one backing region and separately heap-allocates stable bookkeeping;
+typed adoption also needs its liveness bitmap. Suballocations use checked
+padding/extent arithmetic, remain disjoint while live, and are reclaimed for
+reuse only by reset after all releases. Its read-only methods mutate separately
+owned bookkeeping through reviewed unsafe pointers; read-only receiver access
+does not supply synchronization. Runnable
+[`examples/121-programmable-allocators.gti`](../../examples/121-programmable-allocators.gti)
+uses that arena for simultaneous string-vector and immovable-object allocations,
+including an unrelated application-defined `engine::Slots` container. Examples
+117–120 separately demonstrate unsafe member contracts, cleanup-bound guards,
+runtime object layout and final-address immovable storage. The acceptance gates
+and host/platform evidence are recorded in
+[verification](../architecture/verification.md#programmable-allocation-and-cleanup-bound-resource-leases).
+
+### Existing typed container policies
+
+`<std/memory>` implements two fixed-capacity policies over `std::storage<T>`:
 
 - `try_make_arena<T>(capacity)` returns
   `expected<arena<T>, alloc_errc>`. The move-only arena inserts monotonically,
@@ -1034,8 +1154,9 @@ The following component families remain planned or incomplete:
   atomics and fences, safe scoped condition variables, safe recursive mutexes,
   read/write mutexes, stop tokens, detached/scoped tasks, typed argument packs,
   and broader threading;
-- stateful allocator policy, allocator-aware growing containers,
-  generation-bearing pool handles, and heterogeneous arenas;
+- allocator-aware variants of containers other than `resource_vector`,
+  runtime-polymorphic or concurrent resources, returning resource owners from
+  factory functions, generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque
   handles, pointers, C strings, returned fixed arrays, and same-thread
   callbacks, including general pointer nesting and ownership transfer, array

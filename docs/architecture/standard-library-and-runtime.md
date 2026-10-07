@@ -262,11 +262,33 @@ The stateless allocator calls one recoverable private allocation operation; a
 successful storage owner carries allocation extent, alignment, per-slot live
 state, reverse cleanup, and release authority together. Allocation failure is
 returned as `expected`, while bounds and invalid slot-state operations use the
-normal defined-failure route. The public owner requires `std::movable T`
-without borrowed state. Construction consumes one completed `T`, so failure
-while creating the argument remains under ordinary MIR cleanup;
-arbitrary in-slot emplacement is intentionally not delegated to the private
-C++ representation. ADR 022 owns the public provenance and failure contract.
+normal defined-failure route. The public owner rejects borrowed element state
+but does not require element movement. `construct(index, value)` requires a
+movable element and consumes one completed `T`,
+so failure while creating the argument remains under ordinary MIR cleanup.
+`emplace<Args...>(index, args...)` also supports construction at the final slot
+address: semantics selects the constructor, HIR preserves its concrete
+parameters, and MIR schedules non-consuming slot preflight before parameter
+handoff. The slot becomes live only after that constructor succeeds; partial
+members are rolled back with the original constructor failure record. The
+backend implements this verified schedule rather than independently selecting
+a native constructor or cleanup policy. Immovable ordinary objects can use this
+path; storage handle movement does not relocate elements. Relocation separately
+requires the existing element capabilities. ADR 022 owns the public provenance
+and failure contract.
+
+The private `storage_try_adopt` capability accepts a writable external region,
+count, extent and alignment only inside an explicit unsafe block. Semantics
+records `StorageAdoption`; HIR/MIR preserve it, and verification rejects a
+missing marker or a forged destination/address/extent contract. The backend
+checks numeric extent and actual address alignment, allocates the existing slot
+bitmap, and publishes only on success. It never frees the external region.
+Source-defined resource leases must retain region release authority until the
+ordinary MIR element cleanup and bitmap destruction finish. This is not a
+second construction/destruction engine, nor proof of an allocator algorithm.
+The narrow `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` C ABI supplies
+nonthrowing aligned process allocation for those source-defined policies;
+zero bytes allocate nothing and invalid alignment is a recoverable status.
 
 `std::arena<T>`, `std::pool<T>`, `std::try_make_arena`, and
 `std::try_make_pool` are the first bounded allocation-policy clients. They are

@@ -1112,15 +1112,9 @@ auto SemanticVisitor::Impl::resolveClassArguments(
             type.kind == SemanticType::TypePack
                 ? SemanticType::typeParameter(type.genericParameterId)
                 : type;
-        if (const auto failed = firstUnsatisfiedConstraint(
-                constrained, parameter.constraints)) {
-          reportConstraintFailure(
-              argument.name.last(),
-              ConstraintFailure{.parameter = parameter.name,
-                                .argument = constrained,
-                                .constraints = parameter.constraints,
-                                .failed = *failed,
-                                .constraintName = parameter.constraintName});
+        if (const auto failure =
+                firstConstraintFailure({parameter}, {constrained})) {
+          reportConstraintFailure(argument.name.last(), *failure);
         }
       }
       result.types.insert(result.types.end(), expanded.begin(), expanded.end());
@@ -1199,15 +1193,8 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       validateReferencePlacement(argument, true, "generic type argument", false,
                                  false, true);
     }
-    if (const std::optional<GenericConstraintKind> failed =
-            firstUnsatisfiedConstraint(type, parameter.constraints)) {
-      reportConstraintFailure(
-          argument.name.last(),
-          ConstraintFailure{.parameter = parameter.name,
-                            .argument = type,
-                            .constraints = parameter.constraints,
-                            .failed = *failed,
-                            .constraintName = parameter.constraintName});
+    if (const auto failure = firstConstraintFailure({parameter}, {type})) {
+      reportConstraintFailure(argument.name.last(), *failure);
       result.valid = false;
     }
     substitution.types.emplace(parameter.id, type);
@@ -3557,15 +3544,12 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       validateReferencePlacement(argument, true, "generic type argument", false,
                                  false, true);
     }
-    if (const std::optional<GenericConstraintKind> failed =
-            firstUnsatisfiedConstraint(argumentType, parameter.constraints)) {
-      reportConstraintFailure(
-          argument.name.last(),
-          ConstraintFailure{.parameter = parameter.name,
-                            .argument = argumentType,
-                            .constraints = parameter.constraints,
-                            .failed = *failed,
-                            .constraintName = parameter.constraintName});
+    if (!(resolvingGenericTypeDefault &&
+          containsOpenTypeParameter(argumentType))) {
+      if (const auto failure =
+              firstConstraintFailure({parameter}, {argumentType})) {
+        reportConstraintFailure(argument.name.last(), *failure);
+      }
     }
   }
   for (std::size_t index = count; index < type.arguments.size(); ++index) {
@@ -3841,7 +3825,8 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
     const bool carrierShell =
         sourceLoan != nullptr &&
         sourceLoan->kind == SemanticLoanKind::StoredValue &&
-        typeTraits(referent).containsBorrowedState;
+        (typeTraits(referent).containsBorrowedState ||
+         receiverStorageBorrow(initializer));
     const AccessMode sourceAccess =
         source && source->dependency ? source->dependency->access
         : sourceLoan != nullptr      ? sourceLoan->access
@@ -3934,26 +3919,72 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
                              : resolve(source->carrier->name());
   const SemanticLoanInfo *loan =
       !source ? nullptr : semanticModel.findLoan(source->loan);
+  const auto *info = value ? semanticModel.findExpression(*value) : nullptr;
+  const Expr *returned = value.get();
+  while (const auto *group = exprAs<Grouping>(returned))
+    returned = group->expression().get();
+  const bool returnsCarrier = source && symbol != nullptr && loan != nullptr &&
+                              loan->lifecycleBound && info != nullptr &&
+                              info->type == symbol->type &&
+                              currentReturnType == symbol->type &&
+                              lifecycleBoundBorrowCarrierFor(info->type) &&
+                              (source->transfer || returned == source->carrier);
+  std::vector<SemanticLoanId> pending{loan == nullptr ? 0 : loan->id};
+  std::unordered_set<SemanticLoanId> visited;
+  while (!pending.empty()) {
+    const auto id = pending.back();
+    pending.pop_back();
+    if (id == 0 || !visited.insert(id).second)
+      continue;
+    const auto *retained = semanticModel.findLoan(id);
+    if (retained == nullptr)
+      continue;
+    // Publishing the complete value carries its own cleanup obligation (and
+    // remains subject to ordinary copy/move checks). It does not carry the
+    // obligations of separate local objects that the value merely references.
+    if (retained->lifecycleBound &&
+        !(returnsCarrier && retained->id == loan->id)) {
+      const Symbol *cleanupCarrier = nullptr;
+      for (const auto &scope : scopes)
+        for (const auto &[_, candidate] : scope)
+          if ((candidate.bindingKind == SemanticBindingKind::LocalVariable ||
+               candidate.bindingKind == SemanticBindingKind::Parameter) &&
+              candidate.type.kind != SemanticType::Reference &&
+              std::find(retained->carriers.begin(), retained->carriers.end(),
+                        toolingSymbolFor(candidate)) !=
+                  retained->carriers.end())
+            cleanupCarrier = &candidate;
+      if (cleanupCarrier != nullptr) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
+            "A borrow retained by a cleanup-bound carrier cannot escape "
+            "through " +
+                std::string(destination) + ".");
+        diagnostic.hints.emplace_back(
+            "Keep the borrow within the carrier's lifetime, or return an owned "
+            "value. The carrier's cleanup must complete before its scope "
+            "exits.");
+        diagnostic.related.push_back(
+            {tokenSpan(cleanupCarrier->declaration),
+             "The cleanup-bound carrier is declared here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        return true;
+      }
+    }
+    pending.push_back(retained->parent);
+    pending.push_back(retained->storedDependency);
+  }
+  if (returnsCarrier)
+    return false;
   if (symbol == nullptr ||
       symbol->bindingKind != SemanticBindingKind::LocalVariable ||
       loan == nullptr || (loan->parent == 0 && !loan->lifecycleBound)) {
     return false;
   }
-  if (loan->lifecycleBound) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
-        "A borrow protected by a local mutex guard cannot escape through " +
-            std::string(destination) + ".");
-    diagnostic.hints.emplace_back(
-        "Copy or move the protected value while the guard is live; the guard "
-        "must unlock before its scope exits.");
-    diagnostics.emplace_back(std::move(diagnostic));
-  } else {
-    report(expressionToken(value),
-           "A local child reborrow cannot escape through " +
-               std::string(destination) + ".",
-           "GTI-S2017");
-  }
+  report(expressionToken(value),
+         "A local child reborrow cannot escape through " +
+             std::string(destination) + ".",
+         "GTI-S2017");
   return true;
 }
 
@@ -4193,6 +4224,71 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       value == nullptr ? nullptr : semanticModel.findExpression(*value);
   if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
     return;
+  }
+  const ExprPtr *physicalOrigin = &value;
+  std::unordered_set<const Expr *> visitedOrigins;
+  while (physicalOrigin != nullptr && *physicalOrigin &&
+         !receiverStorageBorrow(*physicalOrigin)) {
+    if (!visitedOrigins.insert(physicalOrigin->get()).second) {
+      physicalOrigin = nullptr;
+      break;
+    }
+    if (const auto *group = exprAs<Grouping>(physicalOrigin->get())) {
+      physicalOrigin = &group->expression();
+    } else if (const auto *comma = exprAs<Binary>(physicalOrigin->get());
+               comma != nullptr && comma->oper().kind == TokenKind::COMMA) {
+      physicalOrigin = &comma->right();
+    } else {
+      physicalOrigin = storedBorrowSource(*physicalOrigin);
+    }
+  }
+  if (physicalOrigin != nullptr && *physicalOrigin) {
+    const bool stable = hasStableBorrowStorage(*physicalOrigin);
+    const ExprPtr *receiver = storedBorrowSource(*physicalOrigin);
+    const SemanticLoanPlace shell = receiver != nullptr
+                                        ? loanPlace(*receiver)
+                                        : SemanticLoanPlace{.receiver = true};
+    bool validShell =
+        stable && shell.receiver &&
+        function->returnBorrowOrigin == BorrowOriginKind::Receiver;
+    if (stable && function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+        function->declaration != nullptr &&
+        function->returnBorrowParameter < function->parameterTypes.size() &&
+        function->returnBorrowParameter <
+            function->declaration->parameters().size()) {
+      const auto index = function->returnBorrowParameter;
+      const auto *binding =
+          semanticModel.findBinding(function->declaration->parameters()[index]);
+      validShell =
+          binding != nullptr &&
+          function->parameterTypes[index].kind == SemanticType::Reference &&
+          !shell.receiver && shell.root == binding->symbol;
+    } else if (stable &&
+               function->returnBorrowOrigin == BorrowOriginKind::Global &&
+               function->returnBorrowPlace) {
+      validShell =
+          !shell.receiver && shell.root == function->returnBorrowPlace->root;
+    }
+    if (!validShell) {
+      // A named carrier is stable within this scope, but its long-lived
+      // external dependency cannot authorize returning its own local shell.
+      // Check physical storage before the ordinary external-owner relay.
+      Diagnostic diagnostic = makeDiagnostic(
+          std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+          "Returned " + std::string(description) +
+              (stable
+                   ? " refers to local or by-value receiver storage that does "
+                     "not outlive this call."
+                   : " refers to temporary receiver storage that is destroyed "
+                     "at the end of this full expression."));
+      diagnostic.hints.emplace_back(
+          "Return an owned value, or borrow from receiver storage that "
+          "outlives "
+          "the call. An external dependency does not extend the containing "
+          "receiver's lifetime.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
   }
   if (!function->returnBorrowFields.empty()) {
     auto actual =
@@ -4736,6 +4832,24 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return hasStableBorrowStorage(binary->right(), visiting);
   }
+  if (receiverStorageBorrow(expression)) {
+    const ExprPtr *receiver = storedBorrowSource(expression);
+    if (receiver == nullptr)
+      return currentClass.has_value(); // An implicit receiver is addressable.
+    const auto *info = semanticModel.findExpression(**receiver);
+    // A temporary can carry a long-lived external borrow without its own
+    // storage becoming long-lived. Compact ordinary receiver contracts
+    // protect that physical storage, not the carried external referent.
+    return info != nullptr && info->category == ValueCategory::Place &&
+           hasStableBorrowStorage(*receiver, visiting);
+  }
+  if (const auto *operation = semanticModel.findOperator(*expression);
+      operation != nullptr && !operation->borrowFields.empty()) {
+    const ExprPtr *source = operatorBorrowSource(expression, *operation);
+    // An exact stored-field mapping instead follows the external referent;
+    // extracting it does not depend on retaining a temporary cursor shell.
+    return source != nullptr && hasStableBorrowStorage(*source, visiting);
+  }
   if (const auto *index = exprAs<Index>(expression.get())) {
     return hasStableBorrowStorage(index->object(), visiting);
   }
@@ -5173,8 +5287,8 @@ auto SemanticVisitor::Impl::applyGenericDefaults(
 
 auto SemanticVisitor::Impl::makeGenericParameters(
     const std::vector<GenericParameter> &parameters,
-    const Token &declarationName, const std::vector<std::string> &fromScope)
-    -> std::vector<GenericParameterInfo> {
+    const Token &declarationName, const std::vector<std::string> &fromScope,
+    bool allowStructural) -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameterInfo> result;
   result.reserve(parameters.size());
   std::unordered_set<std::string> names;
@@ -5258,7 +5372,8 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                    "concepts.",
                    "GTI-S2029");
             constraints = constraintBit(GenericConstraintKind::Invalid);
-          } else if (conceptInfo.hasStructuralRequirements) {
+          } else if (conceptInfo.hasStructuralRequirements &&
+                     !allowStructural) {
             report(parameter.constraint->last(),
                    "Structural concepts must be written in a trailing "
                    "requires clause.",
@@ -5396,7 +5511,10 @@ auto SemanticVisitor::Impl::makeGenericParameters(
                  "and earlier generic parameters.",
                  "GTI-S2023");
         } else if (type != SemanticType::Unknown) {
-          if (const std::optional<GenericConstraintKind> failed =
+          // Structural member signatures are not complete while generic
+          // parameters are registered. Their exact concept application is
+          // checked by applyGenericDefaults when this default is selected.
+          if (const auto failed =
                   firstUnsatisfiedConstraint(type, found->constraints)) {
             reportConstraintFailure(
                 parameter.defaultType->name.last(),
@@ -5469,6 +5587,7 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
   auto &scope = typeParameterScopes.emplace_back();
   auto &values = valueParameterScopes.emplace_back();
   auto &packs = typePackScopes.emplace_back();
+  auto &requirements = requirementScopes.emplace_back();
   for (const GenericParameterInfo &parameter : parameters) {
     if (parameter.value) {
       const auto concrete = instanceValueSubstitution.find(parameter.id);
@@ -5483,6 +5602,17 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
                   concrete == instanceTypeSubstitution.end()
                       ? SemanticType::typeParameter(parameter.id)
                       : concrete->second);
+    // An inline class annotation carries the same concept application as a
+    // trailing requires clause. Make its guaranteed operations available to
+    // all class bodies, including constructors and destructors, without
+    // manufacturing proof for concrete arguments before their admission check.
+    if (concrete == instanceTypeSubstitution.end() &&
+        parameter.conceptId != 0 &&
+        !invalidConstraintSet(parameter.constraints)) {
+      requirements.push_back(
+          {.conceptId = parameter.conceptId,
+           .arguments = {SemanticType::typeParameter(parameter.id)}});
+    }
     if (parameter.pack) {
       packs.insert(parameter.id);
     }
@@ -5493,6 +5623,7 @@ auto SemanticVisitor::Impl::endTypeParameterScope() -> void {
   typeParameterScopes.pop_back();
   valueParameterScopes.pop_back();
   typePackScopes.pop_back();
+  requirementScopes.pop_back();
 }
 
 auto SemanticVisitor::Impl::beginRequirementScope(const FunctionInfo *function)

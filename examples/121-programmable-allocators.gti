@@ -1,0 +1,83 @@
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+#include <std/string>
+#include "allocator-support/arena.gti"
+
+namespace engine {
+// An unrelated, application-defined fixed-slot container. It uses only the
+// same public facilities as resource_vector, including for immovable objects.
+class Slots<std::layout_queryable T, std::memory_resource R> {
+  mut std::resource_storage<T, R> values;
+public:
+  Slots(std::resource_ref<R> resource, std::size_t capacity)
+      : values(std::resource_storage<T, R>(resource)) {
+    this.values.try_allocate(capacity, std::alignment(std::size_t(64)))
+        .expect("could not allocate engine slots");
+  }
+  void emplace<Args...>(std::size_t index, Args... args) mut {
+    this.values.emplace(index, args...);
+  }
+  T& get(std::size_t index) { return this.values.get(index); }
+  void destroy(std::size_t index) mut { this.values.destroy(index); }
+};
+
+class FixedObject {
+  std::string name;
+  int value;
+  mut const int* initial_address = nullptr;
+public:
+  FixedObject(std::string name, int value)
+      : name(std::move(name)), value(value) {
+    this.initial_address = &this.value;
+  }
+  FixedObject(FixedObject& other) = delete;
+  FixedObject(FixedObject&& other) = delete;
+  bool stable() { return this.initial_address == &this.value; }
+  std::string_view label() { return this.name.view(); }
+};
+}
+
+int use_arena(std::resource_ref<engine::Arena> resource) {
+  // Two independent owners coexist. Only the allocation handles move, never
+  // the FixedObject, and vector growth does not affect the fixed allocation.
+  mut engine::Slots<engine::FixedObject, engine::Arena> objects{resource, std::size_t(2)};
+  objects.emplace(std::size_t(1), std::string("stationary"), 42);
+  mut std::resource_vector<std::string, engine::Arena> names{resource};
+  names.emplace_back("one");
+  names.emplace_back("two");
+  names.emplace_back("three");
+  names.reserve(std::size_t(16));
+  if (resource.get().live_allocations() != std::size_t(2)) { return 1; }
+  if (!objects.get(std::size_t(1)).stable()) { return 2; }
+
+  auto moved = std::move(objects);
+  if (!moved.get(std::size_t(1)).stable() ||
+      moved.get(std::size_t(1)).label() != "stationary") { return 3; }
+  mut std::size_t total = 0;
+  for (auto& name : names) { total += name.size(); }
+  if (total != std::size_t(11)) { return 4; }
+  names.pop_back();
+  if (names.back().view() != "two") { return 5; }
+  // References into either owner prohibit its mutation/release until last use.
+  // resource.get().reset() is intentionally unavailable through this binding.
+  return 0;
+}
+
+int main() {
+  mut engine::Arena arena{std::size_t(8192), std::size_t(256)};
+  unsafe {
+    // The only unsafe caller step acknowledges the provider's contract.
+    // Arena supplies aligned, writable, disjoint regions until matching release;
+    // no independent raw reset or concurrent use may invalidate live regions.
+    // The complete container/storage workload above is ordinary safe code.
+    auto resource = std::bind_resource(arena);
+    int status = use_arena(resource);
+    if (status != 0) { return status; }
+  }
+  if (arena.live_allocations() != std::size_t(0) ||
+      arena.allocation_count() != arena.release_count() ||
+      arena.allocation_count() < uint64_t(3)) { return 6; }
+  arena.reset();
+  return arena.used_bytes() == std::size_t(0) ? 0 : 7;
+}

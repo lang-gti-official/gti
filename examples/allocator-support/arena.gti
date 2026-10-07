@@ -1,0 +1,110 @@
+#include <std/resource>
+#include <std/memory>
+#include <std/numeric>
+#include <std/panic>
+
+namespace engine {
+struct ArenaState {
+  mut std::size_t next = 0;
+  mut std::size_t live = 0;
+  mut uint64_t next_id = 1;
+  mut uint64_t allocations = 0;
+  mut uint64_t releases = 0;
+};
+
+// One backing region, monotonic suballocation, exclusive whole-arena reset.
+// This single-threaded example intentionally does not reuse individual holes.
+// Mutable bookkeeping has its own non-const allocation, never a const-cast of
+// the shared resource shell. No checked reference into that state escapes.
+[[no_transfer, no_share]] class Arena {
+  std::process_resource process{};
+  mut std::raw_allocation backing{nullptr, std::size_t(0), std::size_t(0), uint64_t(0)};
+  mut std::unique_ptr<ArenaState> state;
+  mut ArenaState* metadata = nullptr;
+public:
+  Arena(std::size_t bytes, std::size_t alignment)
+      : state(std::make_unique<ArenaState>()) {
+    unsafe {
+      this.backing = this.process.allocate(std::layout(bytes, alignment))
+          .expect("could not allocate the arena backing region");
+    }
+    this.metadata = &*this.state;
+  }
+  Arena(Arena& other) = delete;
+  // GTI's generated move transfers active cleanup, unlike a C++ fieldwise
+  // move whose source destructor would still release the backing allocation.
+  // Both pointed-to allocations stay at fixed addresses; checked bindings
+  // prevent moving this resource while any safe lease still retains it.
+  Arena(Arena&& other) = default;
+
+  unsafe expected<std::raw_allocation, std::alloc_errc>
+  allocate(std::layout request) {
+    std::size_t alignment = request.alignment;
+    if (alignment == std::size_t(0) ||
+        (alignment & (alignment - std::size_t(1))) != std::size_t(0) ||
+        alignment > this.backing.alignment) {
+      return unexpected(std::alloc_errc::invalid_alignment);
+    }
+    if (request.bytes == std::size_t(0)) {
+      return std::raw_allocation(nullptr, std::size_t(0), alignment, uint64_t(0));
+    }
+    unsafe {
+      // The backing base is aligned to at least alignment. Padding the offset
+      // therefore chooses an aligned address, without integer/address casts.
+      std::size_t remainder = this.metadata->next % alignment;
+      std::size_t padding = remainder == std::size_t(0)
+          ? std::size_t(0) : alignment - remainder;
+      auto rounded = std::checked_add(this.metadata->next, padding);
+      if (!rounded) { return unexpected(std::alloc_errc::size_overflow); }
+      auto end = std::checked_add(rounded.value(), request.bytes);
+      if (!end) { return unexpected(std::alloc_errc::size_overflow); }
+      if (end.value() > this.backing.bytes || this.metadata->next_id == std::MAX_UINT64) {
+        return unexpected(std::alloc_errc::resource_exhausted);
+      }
+      uint8_t* bytes = std::typed_address<uint8_t>(this.backing.address);
+      void* selected = std::erase_address(bytes + rounded.value());
+      uint64_t id = this.metadata->next_id;
+      this.metadata->next_id++;
+      this.metadata->next = end.value();
+      this.metadata->live++;
+      this.metadata->allocations++;
+      return std::raw_allocation(selected, request.bytes, alignment, id);
+    }
+  }
+
+  unsafe void release(std::raw_allocation allocation) {
+    if (allocation.address == nullptr) { return; }
+    unsafe {
+      // The bound resource contract requires an exact descriptor from this
+      // resource, exactly once. Releasing a hole never reuses another region.
+      if (allocation.id == uint64_t(0) || allocation.id >= this.metadata->next_id ||
+          this.metadata->live == std::size_t(0)) {
+        std::panic("invalid arena release");
+      }
+      this.metadata->live--;
+      this.metadata->releases++;
+    }
+  }
+
+  std::size_t live_allocations() { unsafe { return this.metadata->live; } }
+  std::size_t used_bytes() { unsafe { return this.metadata->next; } }
+  uint64_t allocation_count() { unsafe { return this.metadata->allocations; } }
+  uint64_t release_count() { unsafe { return this.metadata->releases; } }
+
+  void reset() mut {
+    // The checked exclusive receiver forbids this while any resource lease
+    // exists. The dynamic assertion also catches misuse through unsafe calls.
+    unsafe {
+      if (this.metadata->live != std::size_t(0)) { std::panic("arena reset with live regions"); }
+      this.metadata->next = std::size_t(0);
+    }
+  }
+
+  ~Arena() {
+    unsafe {
+      if (this.metadata->live != std::size_t(0)) { std::panic("arena destroyed with live regions"); }
+      this.process.release(this.backing);
+    }
+  }
+};
+}

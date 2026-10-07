@@ -684,14 +684,56 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
           const auto sourceRetirement = text.text.find(
               sourceSpelling + ".destroy(); // end transferred "
                                "payload-enum field representation");
-          expect(
-              text.emitted() && retirement != std::string::npos &&
-                  publication != std::string::npos &&
-                  retirement < publication &&
-                  sourceRetirement != std::string::npos &&
-                  publication < sourceRetirement,
-              "publication must replace the private empty enum shell by "
-              "construction and retire its transferred source representation");
+          if (moved) {
+            // An exact owned-parameter transfer now constructs the field in
+            // the native initializer list. Its MIR publication is erased,
+            // but the field's rollback obligation remains authoritative.
+            const auto bindings = lang::cppMirOwnedParameterFieldBindings(
+                frontend.mir, constructor);
+            const auto *binding = bindings && bindings->size() == 1
+                                      ? &bindings->front()
+                                      : nullptr;
+            expect(
+                binding != nullptr &&
+                    binding->moveInstruction == producer->id &&
+                    binding->movedValue == instruction.operands.front().value &&
+                    binding->initializeInstruction == instruction.id &&
+                    binding->valueDrop ==
+                        instruction.lifecycle.front().source &&
+                    binding->fieldDrop ==
+                        instruction.lifecycle.front().target &&
+                    field->projections.size() == 1 &&
+                    binding->field == field->projections.front().field,
+                "native enum publication must prove the exact parameter move, "
+                "field initialization, and rollback transfer");
+            expect(text.emitted() &&
+                       text.text.find(
+                           "// move " + std::to_string(*producer->result) +
+                           " publishes in the member initializer list") !=
+                           std::string::npos &&
+                       text.text.find(
+                           "// field initialization publishes in the "
+                           "member initializer list") != std::string::npos &&
+                       text.text.find("}(" + fieldSpelling +
+                                      "); // GTI MIR field rollback") !=
+                           std::string::npos &&
+                       retirement == std::string::npos &&
+                       publication == std::string::npos &&
+                       sourceRetirement == std::string::npos &&
+                       text.text.find(sourceSpelling + ".construct(") ==
+                           std::string::npos,
+                   "native enum publication must retain field rollback without "
+                   "constructing or retiring a duplicate value representation");
+          } else {
+            expect(text.emitted() && retirement != std::string::npos &&
+                       publication != std::string::npos &&
+                       retirement < publication &&
+                       sourceRetirement != std::string::npos &&
+                       publication < sourceRetirement,
+                   "publication must replace the private empty enum shell by "
+                   "construction and retire its transferred source "
+                   "representation");
+          }
         }
         for (int mutation = 0; mutation != (called ? 6 : 3); ++mutation) {
           auto malformed = frontend.mir;

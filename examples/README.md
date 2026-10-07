@@ -70,7 +70,7 @@ is a teaching helper, not a production server.
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 | `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
-| `33-source-concepts.gti` | namespace-scoped unary concepts composed from exact capabilities |
+| `33-source-concepts.gti` | unary capabilities and exact structural class contracts, including destructor bodies |
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
@@ -152,6 +152,11 @@ is a teaching helper, not a production server.
 | `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
 | `115-discardable-results.gti` | optional API results, explicit call-site discard, checked reference last use and storage insertion |
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
+| `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
+| `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, movement and explicit nested child construction |
+| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
+| `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
+| `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 
 ## Build and run
 
@@ -433,6 +438,24 @@ With the locally installed toolchain, run it from the repository root:
 traversal, replacement predicates, and filtered copying into an existing
 destination. Search cursors retain a checked borrow of their owner; mutating
 that owner while the cursor is still used is rejected.
+
+## Programmable allocators
+
+[`121-programmable-allocators.gti`](121-programmable-allocators.gti) includes
+[`allocator-support/arena.gti`](allocator-support/arena.gti), an engine-style
+monotonic arena that obtains one backing region and selects aligned subregions
+from it. `main` acknowledges the arena's provider contract once with
+`unsafe std::bind_resource(arena)`; everything after that is ordinary safe
+code. A growable `std::resource_vector` and an application-defined fixed-slot
+container holding immovable objects allocate from the same arena at the same
+time. Moving a container moves only its allocation handle, live element
+references block growth and release, and the arena cannot be reset or moved
+while any allocation from it remains live.
+
+```sh
+./build/gti examples/121-programmable-allocators.gti -o /tmp/gti-allocators
+/tmp/gti-allocators
+```
 
 ## Complete projects
 

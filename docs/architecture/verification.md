@@ -282,6 +282,76 @@ ASan/UBSan. A nontrivial copy-constructor control proves that byte construction
 does not bypass selected nontrivial behavior. These are helper-level tests,
 not evidence that every source call/container transport route is closed.
 
+## Programmable allocation and cleanup-bound resource leases
+
+Phase 2 (`S-ALLOC-05`) completed on 2026-10-07. The gates below are its
+acceptance evidence, and the completion record below states what passed.
+
+`resource_protocol_contract` covers the one-time unsafe binding, structural
+provider signatures, final-address immovable elements, owner movement,
+recoverable allocation, growth, and rejection of owner invalidation while an
+element reference or an explicitly retained iterator remains live. Negative
+controls cover safe resource reset (directly, beneath a live growable
+container, and through a shared binding), moving a bound provider, escaping a
+local provider, forged bindings, assignment between retained resources, element
+references against growth and mutable access, element escape, and immovable
+elements in growable or relocating paths. `resource_protocol_lsp` checks the
+same unsafe-call and borrow-conflict diagnostics, navigation to the library
+declarations and member completion through the language server.
+`resource_memory_runtime` independently checks the process-memory
+size/alignment/status boundary. `storage_adoption_contract` and runtime object-layout
+gates own the compiler-private placement contract and its malformed-MIR cases.
+
+`cleanup_bound_borrow`, `cleanup_bound_borrow_mutations`, and
+`cleanup_bound_backend_mutations` distinguish external referents from the
+physical storage of a carrier. They check exact dependencies through copied
+passive views, moved cleanup owners, nested field construction, calls and
+returns. Corruption tests independently reject forged field/owner mappings,
+missing retention, premature loan endpoints and incorrect rollback transfers.
+The complete ownership partition remains an adjacent gate: iterator and
+fallible-reference results must not accidentally borrow the wrapper's storage.
+
+`cleanup_bound_borrow_runtime` checks source-defined guards, raw bookkeeping,
+nested movement, reverse cleanup, failure during constructor/return cleanup,
+and double failure. The generic destructor-receiver fixture independently
+checks caller-owned entry dependencies and exact normal, primary-failure,
+destructor-failure and double-failure traces.
+`constructor_passive_field_rollback_runtime` covers passive
+field copies and assignments alongside active owners, exact status-call
+initialization, and copied formal parameters. Both use C++20/C++23 at O0/O1/O3,
+disabled elision and generated-program ASan/UBSan. Their focused successes do
+not replace the allocator-client matrix.
+
+`programmable_allocators_runtime` executes example 121 and its shared arena
+implementation, raw placement and movement controls, counting/failure injection,
+container growth, and owning/immovable constructor rollback. Its required
+observations include simultaneous disjoint allocations, alignment and exhaustion,
+unchanged elements after failed growth, stable object addresses, and exactly-once
+destruction before matching resource release. Region-contract controls check
+retained over-alignment and defensive descriptor rejection with exactly-once
+release; they do not dereference invalid memory or claim containment of an
+allocator that violates its unsafe obligations. The arena chooses its own
+subregions; a counting adapter alone is not acceptance. The client-usage
+fixture adds owners stored in classes, mutable container parameters, owning and
+unique elements, the process resource, recoverable exhaustion, counted cleanup
+across growth, destruction independent of region release and relocation between
+distinct resource instances. The vector rollback fixture checks that a failing
+`try_emplace_back` constructor keeps its original failure, and the counting
+adapter checks that a failed push consumes its argument without disturbing the
+container. `allocator_raw_audit_independence` compiles the allocator programs
+with raw-pointer auditing off and in warn mode and requires identical C++.
+
+Completion record: on macOS arm64 with the optimized Release compiler, LLVM
+22.1.8 and AppleClang, all 460 registered gates pass in one full run, including
+the eight-mode allocator matrix above. An isolated `gti_toolchain` install
+passes all eleven external SDK consumers, example 121 and the client fixture at
+C++20/O0 and C++23/O3 with `GTI_STDLIB_PATH` cleared, the resource LSP gate,
+and the raw-audit policy harness in `--installed` mode. Tree-sitter's 72 corpus
+cases, highlight/locals/rainbow checks, 183 shipped sources and pinned
+regeneration pass, as do formatting of all 453 first-party C/C++ sources and
+deterministic API documentation generation. Linux and Windows execution and
+bundled-LLVM release packaging are not claimed.
+
 ## Source package registry bootstrap
 
 ### Protected registry authentication

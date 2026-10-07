@@ -130,10 +130,12 @@ struct LoweredGenericParameter {
 struct LoweredConceptRequirement {
   ConceptId conceptId = 0;
   std::vector<SemanticType> arguments;
-  // For an unnamed structural leaf, arguments are receiver/result and the
-  // member is an exact safe read-only nullary operation established by
-  // semantics.
+  // For an unnamed structural leaf, arguments are receiver/result followed by
+  // exact parameter types. Semantics establishes receiver access and the
+  // caller's unsafe obligation; neither is inferred from a member spelling.
   std::string memberName;
+  bool mutableReceiver = false;
+  bool requiresUnsafe = false;
 
   friend bool operator==(const LoweredConceptRequirement &,
                          const LoweredConceptRequirement &) = default;
