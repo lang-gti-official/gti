@@ -2292,8 +2292,7 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
           instance->destructorStatus != SpecialMemberStatus::Generated ||
           instance->destructor || instance->requiresActiveDropState ||
           instance->abstract || instance->polymorphic ||
-          instance->unionLayout || !instance->bases.empty() ||
-          !instance->structuralBases.empty() ||
+          !instance->bases.empty() || !instance->structuralBases.empty() ||
           !visiting.insert(instance->id).second) {
         return false;
       }

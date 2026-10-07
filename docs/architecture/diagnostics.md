@@ -88,6 +88,14 @@ records. Concrete constructor-body errors remain independently published with
 their own instantiation sites; no message-based deduplication hides distinct
 diagnostics or notes.
 
+`GTI-S2105` reports deterministic concrete-instance discovery exhaustion (64
+new-instance levels or 16,384 distinct generic instances in one HIR request). It anchors
+the requesting source, relates the declaration and explains that runtime
+branches do not bound generic instantiation. There is no safe automatic edit.
+An invalid HIR result with no earlier error always produces a located
+`GTI-B0001`, including up to five plan-verifier details when available; the
+frontend cannot silently return a failed compilation.
+
 `WarningPolicy` is the immutable driver-boundary filter for compiler warning
 groups. Direct compilation accepts repeatable `-Wno-<group>` (or
 `--disable-warning <group>`) options, while a project profile declares

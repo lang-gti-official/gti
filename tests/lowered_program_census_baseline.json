@@ -451,8 +451,8 @@
       }
     },
     "12-fixed-arrays.gti": {
-      "declarations": 140,
-      "bodies": 28,
+      "declarations": 146,
+      "bodies": 33,
       "generated_items": 3,
       "generated_kinds": {
         "program_initialization": 0,
@@ -691,8 +691,8 @@
       }
     },
     "23-direct-initialization.gti": {
-      "declarations": 144,
-      "bodies": 31,
+      "declarations": 156,
+      "bodies": 40,
       "generated_items": 4,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1817,8 +1817,8 @@
     }
   },
   "totals": {
-    "declarations": 51781,
-    "bodies": 16166,
+    "declarations": 51799,
+    "bodies": 16180,
     "generated_items": 3384
   }
 }

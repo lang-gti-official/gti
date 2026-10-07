@@ -2486,6 +2486,55 @@ int main() {
          "before entering the success block");
 }
 
+void testCopyableLambdaReturnRetainsSsa() {
+  const auto frontend =
+      analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
+#include <std/utility>
+T relay<T>(T value) { return value; }
+int main() {
+  int offset = 1;
+  auto operation = [offset](int value) -> int { return value + offset; };
+  auto result = relay(std::move(operation));
+  return result(41) - 42;
+}
+)gti");
+  expect(frontend.canGenerateCode(), "copyable lambda return remains a copy");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto optimization = lang::OptimizationPipeline().run(
+      frontend.hir, lang::OptimizationLevel::O0);
+  const auto artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimization);
+  bool checked = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.returnType.kind != lang::SemanticType::Lambda)
+      continue;
+    const auto marker = "deduced-callable-failure-v1 function-instance " +
+                        std::to_string(function.id);
+    expect(artifact.contents.find(marker) != std::string::npos,
+           "verified copyable lambda relay has complete production text");
+    expect(artifact.contents.find("auto __gti_mir_v_1 = __gti_mir_p_1;") !=
+               std::string::npos,
+           "copy Load materializes the SSA value consumed by return");
+    checked = true;
+  }
+  expect(checked, "the relay retains its concrete lambda result identity");
+  auto malformed = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      malformed.functionInstances());
+  for (auto &function : functions) {
+    if (function.returnType.kind != lang::SemanticType::Lambda)
+      continue;
+    for (auto &block : function.body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Load)
+          instruction.operands.clear();
+    (void)lang::rebuildMirValueUses(function.body);
+  }
+  expect(!lang::verifyMirProgram(malformed).valid(),
+         "lambda result publication still rejects a missing source operand");
+}
+
 // Free-function instances with different cleanup shapes retain separate MIR
 // bodies. C++ destructibility must not select another instance's GTI execution.
 // (Regression: the combination ICEd with "lowered callable instances do not
@@ -2584,6 +2633,7 @@ constexpr NamedTest kTests[] = {
      testDeducedCallableTemplateEmission},
     {"testMixedCaptureDeducedCallableTemplateEmission",
      testMixedCaptureDeducedCallableTemplateEmission},
+    {"testCopyableLambdaReturnRetainsSsa", testCopyableLambdaReturnRetainsSsa},
     {"testForwardedConcretePackLayout", testForwardedConcretePackLayout},
     {"testRetainedReferenceAddressAndConcreteDefaultReturn",
      testRetainedReferenceAddressAndConcreteDefaultReturn},

@@ -183,6 +183,34 @@ owns source bounds checks, place identity and array initialization/cleanup.
 Checked references to raw pointers remain outside the current language slice;
 the backend must not alias a native `T*` slot as a `raw_address<T>&`.
 
+Failure-free passive C-compatible call results share one consumer proof for
+bare assignment, discard, and unchanged return. The exact record/type/signature
+must agree, no result cleanup obligation may be invented, and return permits
+only the existing passive cleanup tail. A return writes caller-provided result
+storage at its Call; discard still executes the foreign call. Assignment and
+discard use byte-preserving representation transfer rather than native
+memberwise pointer reads. Neither source default construction nor owning-result
+transport is inferred from this passive representation rule.
+
+Checked class-payload extraction can construct a function's exact return result
+at its existing MIR Call, without an intermediate object or a second source
+move. Cleanup-free moved/copy receivers share the inert-return-tail proof;
+owning receivers retain their real moved or fresh-call lifetime slot on both
+success and wrong-state edges. The owning return consumer requires the exact
+success activation, transfer-out, and, when cleanup can fail, unpublished
+return-result reparent/rollback schedule. A non-owning placement adapter reuses
+the checked extraction helper against caller storage; it supplies neither
+implicit construction nor native unwinding. The state check still precedes
+construction, and MIR alone decides whether to destroy or publish the result.
+
+Results from consuming source members use the ordinary owning-call result
+staging and replacement proof. The exact `Once` receiver must resolve to its
+selected consuming member and materialized receiver place. Receiver cleanup
+remains at the recorded full-expression/failure Drop; it is not an argument
+transfer at Call. Only a successful result activates the replacement stage, so
+receiver failure cannot overwrite the old destination, and failed replacement
+cleanup destroys the unpublished result without committing it.
+
 Pointer-bearing passive C-compatible records use byte-preserving construction
 and assignment internally. Verified source calls snapshot value arguments
 before passing them by internal reference; result publication uses a typed
@@ -502,6 +530,32 @@ source into its out result. Multiple uses, a mismatched operand/place type, or
 an absent copy-construction row reject body admission rather than selecting a
 native fallback.
 
+Passive generated-copy/move class assignments can publish into an exact field
+chain rooted in a binding or the receiver, as well as a bare binding. The
+emitter checks each concrete field identity and type, the final mutable field,
+generated special members, single consumer, instruction order, and absence of
+borrowed state or active cleanup. Copy loads, explicit moves, fresh constructors
+and transformed call results retain their distinct MIR ownership proofs; field
+assignment does not manufacture an intermediate owning lifetime. Index,
+reference, union and base projections do not enter this field-chain transport.
+
+A passive generated default used by a constructor field initializer preserves
+its verified declaration defaults at the adjacent publication instruction,
+using the existing private empty field shell and generated assignment protocol.
+Targetless `Construct` and `Call` default producers can also publish into the
+same exact prepared-parameter slot: omitted brace-default fields in designated
+construction retain CallInput activation, consuming handoff and failure cleanup.
+These are representation proofs over resolved MIR, not source-AST replay or
+standard-library type exceptions.
+
+The passive default-body proof recurses through resolved, zero-argument generated
+class defaults with cycle detection. It does not admit source calls, selected
+user constructors, borrowed state, active cleanup, failure edges, or union/base
+layouts. Thus a nested record's declaration defaults remain executable without
+turning arbitrary constructor bodies into supposedly passive native initializers.
+The same proof permits a targetless default producer in representation-only
+assignment-result storage; construction still happens at its MIR instruction.
+
 Source-constructor failure-tag calls placement-construct in the originating
 member's lexical context using global placement `new`. They do not delegate
 access checking to `std::construct_at`: that library template cannot call a
@@ -801,6 +855,13 @@ lifetime root rather than interpreting the lifetime root as another invocation.
 Consuming method field aliases use the shared `receiverAllowsMutation` rule,
 so moving a `mut` field does not accidentally become a native const-copy.
 Public wrapper identity plays no part in either representation decision.
+An unfused copyable lambda `Load` consumed by return materializes its SSA copy
+at that exact verified instruction. It is not erased as an invocation-receiver
+alias: the later return publishes the retained value instead of reading an
+undeclared SSA name or re-reading its source place. Generic relay signatures
+remain deduced native representations of the exact semantic lambda type;
+copyable returns remain copies and noncopyable returns retain their movement
+and environment-drop contracts.
 The same proof admits an owned lambda Move with one direct invocation receiver
 use and one exact lifetime root. Its slot uses the existing concrete closure
 representation, whether produced locally or received as a concrete generic

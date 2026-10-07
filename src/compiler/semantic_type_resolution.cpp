@@ -1609,6 +1609,19 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   std::vector<SemanticType> argumentTypes;
+  if (attemptedSpecial) {
+    // A generic converting constructor instantiated with its own owner type
+    // cannot hijack that owner's copy/move lifecycle operation. Preserve the
+    // selected (including deleted/private) lifecycle policy before ordinary
+    // by-value matching can outrank its reference-shaped formal.
+    std::erase_if(viable, [&](const ViableConstructor &candidate) {
+      return candidate.kind == ConstructorKind::Ordinary &&
+             candidate.constructor != nullptr &&
+             !candidate.constructor->genericParameters.empty() &&
+             !candidate.parameterTypes.empty() &&
+             candidate.parameterTypes.front() == constructedType;
+    });
+  }
   argumentTypes.reserve(arguments.size());
   for (const AnalyzedCallArgument &argument : arguments) {
     argumentTypes.emplace_back(argument.type);

@@ -1,5 +1,49 @@
 # Compiler Verification
 
+## Class field value publication and declaration defaults
+
+The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
+the focused repair gates for issues #53, #60 and #91. Five original reproducers,
+two stronger fixtures and example 23 pass C++20/C++23 at O0/O1/O3 with native
+elision disabled (48 executions). Both stronger fixtures pass ASan/UBSan. They
+cover binding/receiver and nested field copies, explicit moves, fresh
+constructors, call results, generated declaration/default-list field
+construction, omitted designated brace defaults, and owning field replacement
+through existing cleanup protocols. Four semantic negatives retain immutable
+field, moved-source, owning-copy and unknown-designator rejection.
+
+`class_field_values` checks forged field identities/types and the omitted-default
+construction kind/CallInput activation, plus cycles and unresolved calls in
+recursive passive default bodies; `class_field_value_runtime` owns the
+native matrix. Existing `field_array_empty_state` remains passing. Example 23
+adds nine MIR bodies and twelve declarations, with generated items unchanged.
+This is focused candidate evidence; combined full-suite, installed-toolchain,
+Linux and Windows verification remains with the campaign coordinator.
+
+## Typed passive fixed-array construction
+
+The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
+the focused repair gates for issues #63, #85 and #93. Six original coverage
+reproducers plus one stronger fixture pass all C++20/C++23 O0/O1/O3 modes
+(42 native executions), with native C17 record-return linkage and elision
+disabled. The stronger fixture also passes ASan/UBSan at O1, proves copying
+named records never invokes extra default constructors, and includes a record
+with no default constructor. Four source negatives preserve literal-range and
+unsafe union access checks. Four union movement mutations and ten aggregate
+shape mutations retain fail-closed MIR/emitter proofs. Existing owning field
+array empty-state verification remains passing.
+
+Example 12 now demonstrates narrow signed literals, named passive record
+copies, and zero-initialized union arrays while preserving its output. Its
+reviewed inventory grows by five MIR bodies and six declarations (two added
+types' field/static initializer pairs plus designated construction); generated
+items are unchanged. The six repaired coverage entries require actual native
+success, including an independent C17 fixture rather than emission-only proof.
+The fixture harness rejects path/symlink escapes and treats native compilation
+failure as infrastructure failure, never as an accepted GTI defect outcome.
+This is focused candidate evidence, not the combined campaign's full-suite,
+installed-toolchain, Linux or Windows verification.
+
 ## Reconciled dormant engine embedding foundation
 
 The PR #102 foundation is reconciled with the native scalar/nested-pointer
