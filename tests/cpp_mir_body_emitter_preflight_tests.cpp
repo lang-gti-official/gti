@@ -898,7 +898,7 @@ int main() { return 0; }
   const auto owningPayload = [&](const lang::SemanticType &type) {
     const lang::MirPayloadEnum *enumeration =
         type.kind == lang::SemanticType::Enum
-            ? frontend.mir.findPayloadEnum(type.enumId)
+            ? frontend.mir.findPayloadEnum(type)
             : nullptr;
     return enumeration != nullptr && enumeration->requiresActiveCleanup;
   };
