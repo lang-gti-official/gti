@@ -1,0 +1,78 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class DrainMember {
+  int id;
+public:
+  DrainMember(int id) : id(id) {}
+  ~DrainMember() { std::println(this.id + 100); }
+};
+
+class DrainElement {
+  DrainMember member;
+  int id;
+  int divisor;
+public:
+  DrainElement(int id, int divisor)
+      : member(DrainMember(id)), id(id), divisor(divisor) {}
+  DrainElement(DrainElement& other) = delete;
+  DrainElement(DrainElement&& other) = delete;
+  ~DrainElement() {
+    std::println(this.id);
+    int checked = 1 / this.divisor;
+  }
+};
+
+// This implementation guard never escapes drain(). The checked owner remains
+// alive until after the guard; only this call uses its raw alias. Advancing
+// the cursor before destruction consumes the current cleanup obligation even
+// if its destructor fails. The guard then resumes with the remaining slots.
+class DrainRemainder {
+  std::storage<DrainElement>* owner = nullptr;
+  mut std::size_t next;
+public:
+  DrainRemainder(std::storage<DrainElement>* owner, std::size_t count)
+      : owner(owner), next(count) {}
+  void finish() mut {
+    unsafe {
+      while (this.next > std::size_t(0)) {
+        this.next--;
+        if (this.owner->initialized(this.next)) {
+          this.owner->destroy(this.next);
+        }
+      }
+    }
+  }
+  ~DrainRemainder() {
+    // Distinguish source-guard draining from the outer storage's fallback.
+    std::println(800);
+    this.finish();
+  }
+};
+
+void drain(mut std::storage<DrainElement>& owner, bool fail_before) {
+  mut DrainRemainder pending{&owner, owner.capacity()};
+  if (fail_before) {
+    int divisor = 0;
+    int checked = 1 / divisor;
+  }
+  pending.finish();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<DrainElement>(std::size_t(3));
+  if (!allocated) { return 1; }
+  mut auto owner = std::move(allocated).value();
+  int first_divisor = argc == 2 || argc == 3 ? 0 : 1;
+  int second_divisor = argc == 3 ? 0 : 1;
+  owner.emplace(std::size_t(0), 1, 1);
+  owner.emplace(std::size_t(1), 2, second_divisor);
+  owner.emplace(std::size_t(2), 3, first_divisor);
+  drain(owner, argc > 3);
+  if (owner.initialized(std::size_t(0)) ||
+      owner.initialized(std::size_t(1)) ||
+      owner.initialized(std::size_t(2))) { return 2; }
+  return 0;
+}

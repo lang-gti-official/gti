@@ -268,6 +268,9 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME immovable_storage_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/immovable_storage_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(immovable_storage_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME source_storage_drain_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_storage_drain_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_storage_drain_runtime PROPERTIES TIMEOUT 240)
   add_test(NAME programmable_allocators_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)

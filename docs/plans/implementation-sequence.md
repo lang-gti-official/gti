@@ -3937,7 +3937,7 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-06: General Object Lifetimes And Source-Defined Storage
 
-- **State/role:** planned implementation campaign, following completed
+- **State/role:** implementation in progress, following completed
   `S-ALLOC-04/05`. This brief records the owner's accepted direction; the API
   spellings below are illustrative, not claims of implemented support.
 - **Outcome:** an application can implement inline typed storage and an
@@ -3947,6 +3947,69 @@ do not expose C++ object layout as GTI semantics.
 - **Handoff:** continue from the agent's existing memory/lifetime context.
   This is a generalization of the completed work, not a restart of Phase 2.
   Reconcile current source before using historical progress descriptions.
+
+#### Implementation Audit And Accepted Choices (2026-10-07)
+
+The baseline is `52f27033`; none of the proposed public manual-lifetime APIs
+below is implemented by this audit checkpoint. Phase 2's accepted borrowing,
+unsafe binding and failure contracts remain unchanged.
+
+The owner approved **two separate allocations from the same bound resource**:
+one object region and one live-slot metadata region. Zero capacity requests
+neither. Metadata allocation is source policy, with checked byte extent and
+alignment, and failure returns the object region through its original lease
+before reporting the error. Element cleanup precedes release of either region.
+The initial metadata layout is one byte per slot, matching the existing
+implementation's state granularity without importing its hidden process-heap
+allocation. Changing representation later must preserve the documented
+resource-request contract or be treated as an observable policy change.
+
+For carrier movement, the owner selected a Rust-inspired manual-storage model
+adapted to GTI and delegated exact bounds. The implementation direction is no
+automatic payload destruction and no hidden engagement flag. Ordinary carrier
+movement must preserve potentially uninitialized representation without reading
+it as a live `T`; initially it is available only for structurally bitwise-
+relocatable payloads. Copying additionally requires copyable `T`. Other
+carriers remain fixed-address, including when empty; an initialized movable
+payload can instead use explicit typed relocation. Deleted payload movement
+remains a hard exclusion. This is intentionally narrower than Rust's
+`MaybeUninit` movement: GTI's generated owning relocation is not a license to
+byte-copy its nontrivial backend representation. General owning relocation
+must execute verified lifecycle transfer. Do not add a runtime live flag or
+custom move body to make the raw carrier movable.
+
+Keep the public spelling C++-familiar: typed pointer access, `construct_at`,
+`destroy_at`, explicit `relocate_at`, and existing variadic constructor
+selection. The Rust comparison guides the separation of raw representation,
+live values and unsafe initialization assertions; it does not import Rust
+syntax or override GTI's existing ownership, access and cleanup semantics.
+Do not add C++ placement-new syntax, exceptions or user-defined move hooks
+where the existing GTI call and lifecycle machinery expresses the operation.
+
+The initial source inventory identifies these reuse/retirement boundaries:
+
+| Existing implementation | Campaign action |
+| --- | --- |
+| `semantic_ownership_analysis.cpp` constructor selection and `preserveStorageConstructorParameters`; HIR concrete call inputs | Reuse for raw-address final construction, preserving exact selected constructors and staged owning arguments. |
+| `mir_body_lowering.cpp` prepared-argument transfer, `StorageConstructPreflight`, `elementCleanup`, and failure edges; independent MIR verifier | Generalize typed lifecycle authority; sparse vacancy/bounds checks become source policy before handoff. Raw validity stays an unsafe obligation, not a runtime bitmap or mandatory audit proof. |
+| `cpp_support_preamble.cpp` sparse `storage<T>` capacity/live flags and `try_adopt` heap bitmap | Replace with GTI fields and the two source-owned resource leases. Retire sparse capability representation when parity gates pass. |
+| `StorageConstruct`, `StorageDestroy`, `StorageRelocate`, `StorageShiftRight/Left` and their sparse backend helpers | Replace with general typed lifetime operations plus source loops; remove the subsumed enum/dispatch/failure/representation paths rather than keeping aliases permanently. |
+| `StorageCapacity/Initialized/Read/ReadMut`, `StorageTryAdopt/TryAllocate`, `AllocateStorage` | Migrate observers, validation, allocation publication and checked access into source; use the existing owner-witness bridge for element loans. |
+| Prefix storage, optional storage, unique/shared owners | Preserve as separate current clients: initialized-prefix/NUL policy, active-alternative policy, and allocation/control-block ownership differ from sparse bookkeeping. They must share general lifecycle facts where applicable; wholesale public-policy migration is not claimed. |
+
+`source_storage_drain_runtime` establishes a prerequisite without changing the
+compiler: an ordinary GTI cleanup guard resumes reverse slot traversal after
+the first destructor failure, preserves its record, and stops according to the
+existing secondary-failure contract. It covers immovable owning elements,
+member cleanup, ordinary drain and entry during failure cleanup. The guard's
+marker distinguishes source traversal from the outer storage's fallback drop.
+The guard advances its cursor before attempting destruction; the migrated
+storage must likewise retire its live flag before `destroy_at`. This does not
+yet prove the new raw operation, source metadata allocation or sparse migration.
+All eight standard/optimization/no-elide/sanitizer modes pass on the optimized
+0.379.3 baseline compiler. Carrier movement, raw construction/destruction and
+relocation, metadata rollback, source migration, removal and full acceptance
+gates remain required work.
 
 #### Why This Campaign Exists
 
