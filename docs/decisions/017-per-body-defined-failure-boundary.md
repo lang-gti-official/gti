@@ -15,8 +15,8 @@ from MIR with a transformed private ABI — `bool f(args…, T
 *__gti_mir_out_result, ::gti_failure_record_v1 *__gti_mir_failure_record)`
 — but only for one closed, acyclic call graph rooted at the hosted entry,
 because every caller of a transformed body must use the transformed calling
-convention. That closure requirement is the single blocker for per-body
-migration of checked bodies.
+convention. Resolving that closure requirement was the prerequisite for per-body
+migration of checked bodies in this historical checkpoint.
 
 The two routes also disagree observably on the failure path today. A
 compatibility-emitted checked operation calls an inline helper

@@ -67,13 +67,17 @@ Produce an evidence-based ownership review, not another architecture reference.
   backend/tooling reuse?
 - Is any complexity speculative, premature, or inherited from C++/clang rather
   than a GTI problem?
+- Does a historical restriction or private implementation still fit GTI's
+  independent systems-language goal? Distinguish current support from future
+  policy, and justify source/compiler boundaries per invariant rather than by
+  existing C++ helpers. Turn missing capabilities into named prerequisite goals.
 
 ## Classification
 
 Classify findings as:
 
 - **fix now** — correctness, duplicated authority, broken ownership, or an
-  imminent feature blocker;
+  imminent prerequisite of a named user outcome;
 - **systems-ready** — a capability needed by the accepted systems-readiness
   workloads;
 - **prepare for** — preserve a seam/interface without implementing the future

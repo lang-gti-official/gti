@@ -161,11 +161,22 @@ that are prerequisites of lowering.
 
 ## Library And Runtime Choice
 
+Apply the independent systems-language direction in `AGENTS.md`. Reassess
+historical restrictions and private mechanisms against current capabilities;
+record revisions rather than treating an earlier bounded slice as a permanent
+language limit. Describe missing support as a goal with prerequisites and evidence.
+
 Prefer ordinary GTI in `stdlib/` for public policy. Add a compiler-private
 capability only for an invariant ordinary GTI cannot express safely, and bind
 it by trusted declaration identity. Use the bounded native/runtime boundary
 only for host operations. Never recognize a public standard-library wrapper by
 name in the compiler.
+
+Distinguish source policy, host byte/services acquisition, and compiler-owned
+layout/lifecycle/ownership facts. Existing C++ helpers are implementation choices,
+not evidence that an operation must stay private. Expose general public facilities
+where coherent while retaining necessary compiler support and explicit unsafe
+obligations; do not claim a source-defined replacement before it is implemented.
 
 ## Test And Finish
 

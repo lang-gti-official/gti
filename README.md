@@ -10,10 +10,17 @@
   <img src="assets/branding/gti-icon.png" alt="GTI language icon" width="160">
 </p>
 
-GTI is an experimental, statically typed language with C++-familiar syntax. It
-keeps explicit control, value semantics, deterministic cleanup, native code
-generation, and predictable performance while giving ownership, conversions,
-failure, and source visibility smaller rules.
+GTI is an independent, experimental, statically typed systems language with
+strong C++ syntax familiarity. It keeps explicit control, value semantics,
+deterministic cleanup, native code generation, and predictable performance while
+giving ownership, conversions,
+failure, and source visibility smaller rules. The goal is a fully usable systems
+language with excellent safety and a standard library expressed in ordinary GTI
+over general language facilities and necessary compiler/runtime mechanisms.
+
+GTI is not a C++ wrapper. Its syntax is intentionally familiar, but its ownership,
+lifetime, failure, and execution semantics are its own. C++ generation is the
+reference compiler's current implementation strategy, not the language contract.
 
 The released compiler checks a complete GTI source graph, builds typed HIR and
 MIR, lowers it through a C++ backend, and invokes a native C++ compiler:
