@@ -16,12 +16,32 @@ public:
 using IntReading = Reading < int >;
 
 class Dashboard {
-  Reading<int> initial{7};
+  mut Reading<int> initial{7};
 
 public:
   int value() {
     return this.initial.get();
   }
+
+  // Copyable class values can replace an initialized mutable field.
+  void replace(Reading<int> next) mut {
+    this.initial = next;
+  }
+};
+
+struct DefaultReading {
+  int value = 7;
+};
+
+class DefaultDashboard {
+public:
+  DefaultReading reading = DefaultReading();
+  DefaultDashboard() {}
+};
+
+struct Settings {
+  int port = 80;
+  DefaultReading reading{};
 };
 
 int main() {
@@ -29,12 +49,17 @@ int main() {
   mut Reading<int> changing{2};
   changing.set(3);
   IntReading aliased{4};
-  Dashboard dashboard{};
+  mut Dashboard dashboard{};
+  dashboard.replace(fixed);
+  // A generated default can initialize a field in a user constructor.
+  DefaultDashboard defaults = DefaultDashboard();
+  // Omitted designated fields retain their declaration's brace default.
+  Settings settings = {.port = 8080};
 
   // `auto` remains the alternative when the constructor states the type.
   auto inferred = Reading<int>(5);
 
-  if (fixed.get() == 1 && changing.get() == 3 and aliased.get() == 4 and dashboard.value() == 7 and inferred.get() == 5) {
+  if (fixed.get() == 1 && changing.get() == 3 and aliased.get() == 4 and dashboard.value() == 1 and inferred.get() == 5 and defaults.reading.value == 7 and settings.reading.value == 7) {
     return 0;
   }
   return 1;
