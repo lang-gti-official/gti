@@ -47,7 +47,7 @@
     "20-strings.gti": 347,
     "21-scoped-enums.gti": 24,
     "22-switch.gti": 24,
-    "23-direct-initialization.gti": 31,
+    "23-direct-initialization.gti": 40,
     "24-static.gti": 28,
     "25-polymorphic-ranges.gti": 41,
     "26-stored-references.gti": 36,
@@ -123,5 +123,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16533
+  "total": 16542
 }
