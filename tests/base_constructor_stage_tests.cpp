@@ -51,6 +51,14 @@ int main() {
              "generated base targets use the verified selected-stage bindings");
       ++selectedBases;
 
+      auto wrongKind = frontend.mir;
+      auto *wrongConstructor = const_cast<lang::MirConstructorInstance *>(
+          wrongKind.findConstructorInstance(constructor.id));
+      wrongConstructor->initializers[index].generatedDefault = false;
+      expect(!lang::verifyMirProgram(wrongKind).valid(),
+             "a selected generated base must retain its generated-default "
+             "initializer identity");
+
       auto malformed = frontend.mir;
       auto *changed = const_cast<lang::MirConstructorInstance *>(
           malformed.findConstructorInstance(constructor.id));

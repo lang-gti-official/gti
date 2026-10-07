@@ -596,6 +596,11 @@ private constructor even when the originating GTI member can. The selected
 MIR constructor, staged arguments, destination, success activation, and
 rollback remain unchanged; source visibility is never widened.
 
+Empty-field admission for a containing owner of the sealed optional slot retains
+the exact selected private constructor's instruction-free, nonborrowed void
+`Return` witness. A recursive fields-only aggregate proof cannot substitute the
+slot's shape for that witness after the selected constructor has been corrupted.
+
 A moved class return is constructed at its MIR `Move`, before the cleanup
 continuation, but is not published until Return. The Move must dominate the
 Return, and later uses of its source remain restricted to moved-from drops.
