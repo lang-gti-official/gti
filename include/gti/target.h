@@ -61,6 +61,37 @@ enum class TargetScalarKind : std::uint8_t {
 inline constexpr std::size_t targetScalarKindCount =
     static_cast<std::size_t>(TargetScalarKind::Count);
 
+// Native C declaration identity is independent of GTI's numeric value domain:
+// long and long long can have the same width without being the same C type.
+// Size/pointer typedefs retain their public spelling here; the target query
+// supplies the underlying declaration identity rather than guessing from width.
+enum class NativeCScalarKind : std::uint8_t {
+  None,
+  Bool,
+  Char,
+  SignedChar,
+  UnsignedChar,
+  Short,
+  UnsignedShort,
+  Int,
+  UnsignedInt,
+  Long,
+  UnsignedLong,
+  LongLong,
+  UnsignedLongLong,
+  Float,
+  Double,
+  Size,
+  Ptrdiff,
+  Intptr,
+  Uintptr,
+  Count,
+};
+
+[[nodiscard]] std::string_view nativeCScalarKindName(NativeCScalarKind kind);
+[[nodiscard]] std::optional<NativeCScalarKind>
+parseNativeCScalarKind(std::string_view name);
+
 [[nodiscard]] std::string_view targetScalarKindName(TargetScalarKind kind);
 
 struct TargetTypeLayout {
@@ -70,6 +101,15 @@ struct TargetTypeLayout {
 
   friend bool operator==(const TargetTypeLayout &,
                          const TargetTypeLayout &) = default;
+};
+
+struct TargetCScalarInfo {
+  NativeCScalarKind declarationKind = NativeCScalarKind::None;
+  TargetScalarKind valueKind = TargetScalarKind::Count;
+  TargetTypeLayout layout{};
+
+  friend bool operator==(const TargetCScalarInfo &,
+                         const TargetCScalarInfo &) = default;
 };
 
 // A backend-neutral, immutable description of the representation facts GTI
@@ -149,6 +189,18 @@ struct TargetInfo {
   [[nodiscard]] std::string_view value(TargetProperty property) const;
 
   [[nodiscard]] bool supported() const;
+
+  // C ABI facts for accepted targets only. This is not a query of the host
+  // compiler's sizeof/typedefs and must remain usable during cross analysis.
+  [[nodiscard]] std::optional<TargetCScalarInfo>
+  nativeCScalar(NativeCScalarKind kind) const;
+
+  // Native identity of the existing fixed-width C ABI scalar vocabulary.
+  // In particular, int64_t is long on Linux and long long on macOS/Windows.
+  // This permits canonical source aliases without collapsing distinct native
+  // families or inventing two source types with the same native identity.
+  [[nodiscard]] std::optional<NativeCScalarKind>
+  fixedCScalarIdentity(TargetScalarKind kind) const;
 
   [[nodiscard]] static TargetInfo host();
 };

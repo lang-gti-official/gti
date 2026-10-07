@@ -2,6 +2,29 @@
 
 Status: Current implementation.
 
+## Native C scalar target facts
+
+`NativeCScalarKind` identifies a C declaration family independently of numeric
+width. `TargetInfo::nativeCScalar` resolves that identity to a numeric value
+domain and layout for the selected target, not the host compiler. Accepted
+macOS/Linux targets use LP64; Windows uses LLP64. Pointer-sized typedefs resolve
+to their primitive C identity, and plain `char` retains its separate identity
+with target-specific signedness (unsigned on Linux arm64, signed on the other
+accepted profiles). `None`, invalid identities and unsupported targets have no
+native scalar facts. A consumer must not substitute an equal-width family.
+`fixedCScalarIdentity` records the underlying native primitive of the existing
+fixed-width C ABI vocabulary: `int64_t`/`uint64_t` use long families on Linux
+and long-long families on macOS/Windows. This is a declaration-identity fact,
+not an extra integer-width distinction; consumers can canonicalize genuine
+aliases without conflating different native primitives. GTI's `char` code unit
+does not acquire C `char` identity through this query.
+
+This target-data prerequisite does not yet expose `c_int`, `c_long`, or the
+other proposed scalar spellings to GTI source. Source resolution, exact type
+identity through HIR/MIR, native import/header/backend use and editor surfaces
+remain implementation work in the C interop campaign. Existing fixed-width
+GTI type behavior is unchanged.
+
 ## Optional function results
 
 Function result-discard policy belongs to the selected declaration. Callable
