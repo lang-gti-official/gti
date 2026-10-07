@@ -3496,6 +3496,19 @@ auto SemanticVisitor::Impl::recordBindingOccurrence(
   return symbol;
 }
 
+auto SemanticVisitor::Impl::recordParameterBinding(
+    const Parameter &parameter, const SemanticType &type) -> SymbolId {
+  Token binder = parameter.name;
+  if (binder.lexeme.empty()) {
+    binder = parameter.sourceAnchor();
+    binder.lexeme = "__gti_unnamed_parameter";
+    binder.generated = true;
+  }
+  return recordBindingOccurrence(
+      binder, type, parameter.mutability == Mutability::Mutable,
+      SemanticBindingKind::Parameter);
+}
+
 auto SemanticVisitor::Impl::genericParameterIndex(
     std::span<const GenericParameterInfo> parameters, GenericParameterId id)
     -> std::optional<std::size_t> {

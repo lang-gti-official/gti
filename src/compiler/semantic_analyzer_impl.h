@@ -3503,6 +3503,9 @@ private:
                                    bool internalLinkage = false,
                                    bool instanceDependentType = false);
 
+  SymbolId recordParameterBinding(const Parameter &parameter,
+                                  const SemanticType &type);
+
   [[nodiscard]] static std::optional<std::size_t>
   genericParameterIndex(std::span<const GenericParameterInfo> parameters,
                         GenericParameterId id);

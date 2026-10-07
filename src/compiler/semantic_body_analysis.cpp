@@ -758,8 +758,7 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
       const Parameter &parameter = constructor.declaration->parameters()[i];
       const SemanticType &type = constructor.parameterTypes[i];
       BindingInfo binding = bindingInfo(type, AccessMode::ReadOnly);
-      binding.symbol = recordBindingOccurrence(parameter.name, type, false,
-                                               SemanticBindingKind::Parameter);
+      binding.symbol = recordParameterBinding(parameter, type);
       semanticModel.record(parameter, std::move(binding));
     }
   }
@@ -915,15 +914,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
          constructorInfo->kind == ConstructorKind::Move);
     if (nestsBorrowedState(parameterType) && !trustedGuardSpecialMember &&
         !isBorrowedCarrierReference(parameterType)) {
-      report(parameter.name,
+      report(parameter.sourceAnchor(),
              "Constructor parameters cannot nest borrowed state in the "
              "current lifetime model.",
              "GTI-S2045");
     }
     const SymbolId parameterSymbol =
-        recordBindingOccurrence(parameter.name, parameterType,
-                                parameter.mutability == Mutability::Mutable,
-                                SemanticBindingKind::Parameter);
+        recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
@@ -1984,15 +1981,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         directOwningPayloadTransport);
     if (nestsBorrowedState(parameterType) &&
         !isBorrowedCarrierReference(parameterType)) {
-      report(parameter.name,
+      report(parameter.sourceAnchor(),
              "Function parameters cannot nest borrowed state in the "
              "current lifetime model.",
              "GTI-S2045");
     }
     const SymbolId parameterSymbol =
-        recordBindingOccurrence(parameter.name, parameterType,
-                                parameter.mutability == Mutability::Mutable,
-                                SemanticBindingKind::Parameter);
+        recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
@@ -6310,9 +6305,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         parameterType, parameter.type.name.last(), "lambda parameter",
         directOwningPayloadTransport);
     const SymbolId parameterSymbol =
-        recordBindingOccurrence(parameter.name, parameterType,
-                                parameter.mutability == Mutability::Mutable,
-                                SemanticBindingKind::Parameter);
+        recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
@@ -8724,7 +8717,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
          parameter.mutability == Mutability::Mutable) ||
         (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
          !isSupportedConstexprType(observedType(parameterType), true))) {
-      reject(parameter.name,
+      reject(parameter.sourceAnchor(),
              "Constexpr function parameters must be non-pack supported "
              "values or read-only references to supported values.");
     }

@@ -2212,7 +2212,7 @@ private:
          .info =
              info == nullptr ? makeBindingInfo(SemanticType::Unknown) : *info});
     if (info != nullptr) {
-      (void)enqueueClass(info->type, tokenSpan(parameter.name));
+      (void)enqueueClass(info->type, tokenSpan(parameter.sourceAnchor()));
     }
     return id;
   }

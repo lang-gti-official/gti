@@ -735,6 +735,11 @@ struct Parameter {
 
   [[nodiscard]] bool hasDefault() const { return defaultArgument.has_value(); }
 
+  // An omitted source name does not erase the formal's declaration location.
+  [[nodiscard]] const Token &sourceAnchor() const {
+    return name.lexeme.empty() ? type.name.last() : name;
+  }
+
   TypeRef type;
   Token name;
   Mutability mutability;
