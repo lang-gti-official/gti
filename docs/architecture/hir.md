@@ -370,6 +370,16 @@ linkage, parameters, result, and every value-to-adapter reference. This makes
 callback reachability a concrete-instance edge rather than a backend lookup by
 function spelling.
 
+Native value invocation is a separate `HirValueKind::Call` family. Semantics
+records `ResolvedCallInfo::nativeCalleeType` and any enclosing generic callable
+boundary; HIR preserves that exact signature without manufacturing a selected
+GTI declaration or adapter target. Its receiver is the callee value, staged as
+a passive value before the ordered arguments, and its invocation capability is
+read-only. HIR plan verification checks the signature, result, parameters,
+receiver, lexical foreign-pointer unsafe effect, and absence of unrelated
+static/lambda/adapter targets. Concrete generic callable signatures may select
+the exact native type as an alternative to a function or lambda target.
+
 A selected GTI-only namespace function becomes
 `HirValueKind::FunctionItem`. Its `SemanticType::FunctionItem` contains the
 nominal declaration ID and exact signature, while `functionTarget` names the

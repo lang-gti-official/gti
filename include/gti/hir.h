@@ -253,6 +253,7 @@ struct HirValue {
   std::vector<HirPackFoldElement> packFoldElements;
   std::vector<HirPackExpansionElement> packExpansionElements;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<SemanticType> nativeCalleeType;
   std::optional<HirNativeCallbackAdapterId> nativeCallbackAdapter;
   std::optional<HirThreadTaskAdapterId> threadTaskAdapter;
   std::optional<HirConstructorInstanceId> constructorTarget;
@@ -485,6 +486,7 @@ struct HirCallableSignature {
   std::optional<CallableInvocationCapability> selectedCapability;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirLambdaId> lambdaTarget;
+  std::optional<SemanticType> nativeCalleeType;
 };
 
 struct HirCallableForwarding {
