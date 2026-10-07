@@ -1,0 +1,49 @@
+#include <std/string>
+#include <std/vector>
+
+mut int stage = 0;
+
+class Value {
+  int divisor;
+public:
+  Value() : divisor(stage == 3 ? 0 : 1) { std::println(1); }
+  Value(Value& other) = delete;
+  Value(Value&& other) = default;
+  ~Value() {
+    std::println(3);
+    int checked = 1 / this.divisor;
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    std::println(2);
+    int divisor = stage == 2 || stage == 3 ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+};
+
+expected<Value, int> source(bool fail) {
+  if (fail) { return unexpected(41); }
+  return Value();
+}
+expected<int, Value> error_source() { return 42; }
+
+Value extract() {
+  Guard guard{};
+  if (stage == 4 || stage == 5) {
+    mut auto result = source(stage == 5);
+    return std::move(result).value();
+  }
+  if (stage == 6) { return error_source().error(); }
+  return source(stage == 1).value();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Value result = extract();
+  std::println(4);
+  return 0;
+}

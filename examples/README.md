@@ -69,7 +69,7 @@ is a teaching helper, not a production server.
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
 | `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
-| `23-direct-initialization.gti` | exact class construction without repeated declared types |
+| `23-direct-initialization.gti` | exact class construction, class field replacement, generated field defaults and omitted designated defaults |
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
@@ -79,7 +79,7 @@ is a teaching helper, not a production server.
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 | `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
-| `33-source-concepts.gti` | unary capabilities and exact structural class contracts, including destructor bodies |
+| `33-source-concepts.gti` | unary capabilities, structural class contracts, and trailing-clause admission of dependent compound arguments |
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
@@ -126,7 +126,7 @@ is a teaching helper, not a production server.
 | `77-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
 | `78-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `79-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
-| `80-function-items.gti` | exact namespace free functions passed to confined generic callables |
+| `80-function-items.gti` | exact namespace free functions passed to confined generic callables, including deduced argument packs |
 | `83-complete-ranges.gti` | structural whole-range algorithms over application ranges and fixed arrays |
 | `84-optional-values.gti` | allocation-free optional storage, checked access, reset, emplacement, and move-only payloads |
 | `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
@@ -405,6 +405,8 @@ inherit aliases through base classes, or add a `Box<int>::value_type` spelling.
 `80-function-items.gti` passes exact namespace free functions directly to
 confined generic callables and standard algorithms. Function items are
 zero-state GTI callable identities; they are not native function pointers.
+Its `invoke_with` client deduces the value pack before selecting the exact
+three-argument function item.
 The owning callback example below also demonstrates retaining one in a wrapper.
 
 `83-complete-ranges.gti` defines an application-owned range with the exact

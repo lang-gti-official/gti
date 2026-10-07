@@ -1,0 +1,50 @@
+[[c_abi]] struct Point {
+  mut int32_t x;
+  mut int32_t y;
+};
+extern "C" {
+  Point gti_call_result_make();
+  Point gti_call_result_transform(Point value);
+  int32_t gti_call_result_calls();
+};
+
+[[c_abi]] struct Address {
+  mut int32_t* pointer;
+  mut int32_t number;
+};
+extern "C" {
+  Address gti_call_result_address();
+  Address gti_call_result_address_transform(Address value);
+  int32_t gti_call_result_address_matches(Address value);
+};
+Address address_forward(Address value) {
+  unsafe { return gti_call_result_address_transform(value); }
+}
+
+Point forward(Point value) { return gti_call_result_transform(value); }
+
+Point forward_passive_cleanup(Point value) {
+  Point local = value;
+  return gti_call_result_transform(local);
+}
+
+int main() {
+  Point first = gti_call_result_make();
+  Point second = forward(first);
+  Point third = forward_passive_cleanup(second);
+  [[discard]] gti_call_result_make();
+  [[discard]] gti_call_result_transform(third);
+  mut Point assigned = first;
+  assigned = gti_call_result_transform(third);
+  unsafe {
+    Address original = gti_call_result_address();
+    mut Address address = original;
+    address = address_forward(address);
+    [[discard]] gti_call_result_address_transform(original);
+    if (gti_call_result_address_matches(address) != 1) { return 2; }
+  }
+  return assigned.x == 13 && assigned.y == 26 &&
+                 gti_call_result_calls() == 6
+             ? 0
+             : 1;
+}

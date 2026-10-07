@@ -47,6 +47,13 @@ well-formed but produces warning `GTI-S2096`. Removing that token is a
 semantics-preserving quick fix. The compiler is conservative at boundaries it
 cannot prove: generated range/reference bindings and compiler-trusted library
 implementation locals do not receive this advisory warning.
+Mutable operator receivers count like ordinary method receivers. A fixed
+mutable-reference argument in a pack fold also counts during primary generic
+analysis. Passing a mutable place to an unresolved callable conservatively
+retains `mut`, because its concrete parameter may require writable access.
+Advice is declaration-wide: one concrete `if constexpr` branch does not make
+shared source unreachable for other specializations. Independent unused
+mutable locals and unconditional unreachable tails still receive warnings.
 
 `T&` denotes a non-null read-only borrow of `T`. `mut T&` denotes a non-null
 writable borrow. Reference binding and escape are subject to the ownership
@@ -711,6 +718,13 @@ call-argument rules. There is no
 conversion ranking, overload-set value, ADL, or backend overload resolution.
 Exactly one viable declaration forms the item; zero candidates are a signature
 mismatch and multiple candidates are ambiguous.
+
+For a confined call such as `invoke_with(handler, args...)`, fixed arguments
+and the final value pack are deduced before matching the handler's expanded
+invocation signature. Pack elements use the existing value/read-only-reference
+binding rules; they do not acquire mutable-reference access. An open forwarding
+pack cannot distinguish overloads by its unknown arity. A unique eligible item
+may be retained symbolically, and every concrete invocation is checked again.
 
 The resulting semantic type contains the selected nominal function identity,
 exact parameter types, and exact result type. It is a zero-state read-callable
