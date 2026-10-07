@@ -1,8 +1,17 @@
+#include <std/string>
+#include <std/utility>
+
 struct Pair<T, U> {
   T first;
   U second;
 
   Pair(T first, U second) : first(first), second(second) {}
+};
+
+class Label {
+public:
+  std::string text;
+  Label(std::string text) : text(std::move(text)) {}
 };
 
 struct Interval {
@@ -20,9 +29,13 @@ int main() {
   // Class arrays need no default constructor: the hidden owner is a copy.
   mut Interval intervals[2] = {Interval(0, 1), Interval(5, 8)};
   auto [first, second] = intervals;
+  // A move-only class array transfers into the hidden owner explicitly.
+  Label labels[2] = {Label(std::string("left")), Label(std::string("right"))};
+  auto [left, right] = std::move(labels);
   intervals[0].lo = 99;
   if (width == 1920 && height == 1080 && score == 7 && ready &&
-      first.lo == 0 && first.width() == 1 && second.width() == 3) {
+      first.lo == 0 && first.width() == 1 && second.width() == 3 &&
+      left.text.view() == "left" && right.text.view() == "right") {
     std::println("structured bindings worked");
     return 0;
   }

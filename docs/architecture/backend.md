@@ -1870,6 +1870,20 @@ identity must all match. There is no default-initialized array SSA temporary,
 no extra ordinary constructor invocation, and no change to the hidden owned
 copy or its immutable element projections. Active cleanup/borrowed-state
 arrays retain their separate protocols rather than entering this fusion.
+An owning whole-array Move followed by its one adjacent lexical Initialize
+constructs the final binding directly only with an exact source ownership
+event, source/value drop Move, value/binding Reparent, and structurally
+failure-free element movement. All original source and destination cleanup
+instructions remain scheduled by MIR; no representation-only fusion may
+invent a source Drop or erase an owning result obligation.
+
+Raw address formation evaluates a selected array place without loading its
+referent. MIR lowering places the selected Index's semantic fixed-array bounds
+origin on AddressOf; verification rejects missing or mismatched bounds facts.
+The native detector checks every dimension before forming the address, and its
+paired Invoke carries the canonical source failure record through ordinary
+cleanup. Unsafe raw-pointer validity obligations remain distinct from these
+checked fixed-array selections. Forming an address creates no checked loan.
 
 Generated passive record copies may contain positive concrete
 fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
