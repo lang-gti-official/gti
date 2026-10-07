@@ -7,8 +7,11 @@ struct Samples {
 };
 
 _Static_assert(sizeof(struct Samples) == 20, "Samples C ABI size");
-_Static_assert(offsetof(struct Samples, count) == 16, "Samples C ABI field offset");
-_Static_assert(_Generic(((struct Samples *)0)->values[0], int32_t: 1, default: 0),
+_Static_assert(offsetof(struct Samples, count) == 16,
+               "Samples C ABI field offset");
+_Static_assert(_Generic(((struct Samples *)0)->values[0],
+                   int32_t: 1,
+                   default: 0),
                "Samples element is a C int32_t");
 
 struct Samples *native_samples(void) {

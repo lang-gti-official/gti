@@ -14967,7 +14967,25 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
       !instruction.bodyTarget && (sourceCall || restoring) &&
       (instruction.intrinsic == IntrinsicKind::None || restoring) &&
       cppMirOwningArrayPlacementResult(program, instruction.info.type);
-  if ((!aggregate && !call) || !instruction.result) {
+  const bool move =
+      instruction.kind == MirInstructionKind::Move &&
+      instruction.info.type.kind == SemanticType::Array &&
+      instruction.info.type.arguments.size() == 1 &&
+      instruction.info.type.arrayLengthParameterId == 0 &&
+      instruction.info.type.arrayLength != 0 &&
+      instruction.info.traits.movable &&
+      instruction.info.traits.drop == DropKind::Lexical &&
+      instruction.operands.size() == 1 &&
+      instruction.operands.front().kind == MirOperandKind::Move &&
+      instruction.operands.front().type == instruction.info.type &&
+      !instruction.receiver && !instruction.destination &&
+      !instruction.functionTarget && !instruction.constructorTarget &&
+      !instruction.lambdaTarget && !instruction.bodyTarget &&
+      instruction.localFailureSites.empty() &&
+      instruction.definedFailure.empty() &&
+      !invokePairedInstruction(body, instruction.id) &&
+      mirTypeMoveIsDefinedFailureFree(program, instruction.info.type);
+  if ((!aggregate && !call && !move) || !instruction.result) {
     return nullptr;
   }
   const std::vector<MirValueUse> uses =
@@ -14983,6 +15001,41 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
                                     : nullptr;
   const MirDropObligation *valueDrop =
       uniqueValueLifetimeDrop(body, *instruction.result, instruction.info.type);
+  if (move) {
+    const auto *source = body.findPlace(instruction.operands.front().place);
+    const auto *sourceDrop =
+        instruction.lifecycle.size() == 1
+            ? body.findDropObligation(instruction.lifecycle.front().source)
+            : nullptr;
+    if (!source || source->root != MirPlaceRootKind::Binding ||
+        !source->projections.empty() || source->type != instruction.info.type ||
+        !source->key || !instruction.ownership ||
+        instruction.ownership->kind != OwnershipEventKind::Move ||
+        instruction.ownership->place != *source->key ||
+        instruction.ownership->before != OwnershipStateSet::Available ||
+        instruction.ownership->after != OwnershipStateSet::Moved ||
+        !sourceDrop || sourceDrop->kind != MirDropObligationKind::Binding ||
+        sourceDrop->place != source->id ||
+        sourceDrop->dropType.type != source->type || !valueDrop ||
+        valueDrop->initiallyActive ||
+        instruction.lifecycle.front() !=
+            MirLifecycleEvent{.kind = MirLifecycleEventKind::Move,
+                              .source = sourceDrop->id,
+                              .target = valueDrop->id})
+      return nullptr;
+    const auto *producerBlock = body.findBlock(uses.front().block);
+    if (!producerBlock || !destination || destination->initiallyAvailable ||
+        destination->root != MirPlaceRootKind::Binding ||
+        !destination->projections.empty())
+      return nullptr;
+    bool adjacent = false;
+    for (std::size_t index = 0; index + 1 < producerBlock->instructions.size();
+         ++index)
+      adjacent |= &producerBlock->instructions[index] == &instruction &&
+                  &producerBlock->instructions[index + 1] == initialize;
+    if (!adjacent)
+      return nullptr;
+  }
   if (call && valueDrop != nullptr) {
     const bool successActivation =
         valueDrop != nullptr &&
@@ -28129,7 +28182,8 @@ public:
           if (instruction.kind == MirInstructionKind::Compute &&
               (!cppMirCheckedOperationHelperSpelling(instruction.operation)
                     .empty() ||
-               instruction.operation == MirOperation::Index) &&
+               instruction.operation == MirOperation::Index ||
+               instruction.operation == MirOperation::AddressOf) &&
               !instruction.localFailureSites.empty() &&
               instruction.info.type.kind != SemanticType::Float &&
               instruction.info.type.kind != SemanticType::Double &&
@@ -29993,7 +30047,26 @@ private:
             "verified MIR address formation lost its source place");
       }
       output << "::gti_internal::backend::raw_address_of(&";
-      if (slotPlace(facts.body, *place)) {
+      if (!instruction.localFailureSites.empty() &&
+          !allMirLocalFailuresDischarged(instruction)) {
+        const auto emitChecked = [&](const auto &access, auto &&emitParent) {
+          output << "::gti_internal::backend::array_at(";
+          emitParent();
+          output << ", ";
+          emitElementIndexValue(access.terminalIndex());
+          output << ')';
+        };
+        if (const auto access = arrayFieldElementAccess(facts.body, *place)) {
+          emitChecked(*access, [&] { emitArrayFieldParent(facts, *access); });
+        } else if (const auto access = arrayElementAccess(facts.body, *place)) {
+          emitChecked(*access, [&] { emitArrayParent(facts, *access); });
+        } else if (constantArrayElementFieldAccess(facts.body, *place)) {
+          // Every dimension already has a sealed constant in-bounds proof.
+          emitPlaceExpression(facts, *place);
+        } else {
+          throw std::logic_error("checked address lost its array place");
+        }
+      } else if (slotPlace(facts.body, *place)) {
         emitStoragePlaceValue(facts, *place);
       } else {
         emitPlaceExpression(facts, *place);
@@ -30525,6 +30598,60 @@ private:
           instruction.definedFailure.propagation ==
               FailurePropagationKind::None) {
         emitCompute(instruction, facts);
+        return;
+      }
+      if (failureForm && instruction.operation == MirOperation::AddressOf &&
+          !instruction.localFailureSites.empty()) {
+        const auto *place =
+            facts.body.findPlace(instruction.operands.front().place);
+        const auto emitCheckedAddress = [&](const auto &access, auto &&emitBase,
+                                            auto &&emitElement) {
+          std::size_t branches = 0;
+          for (std::size_t index = 0; index < access.indices.size(); ++index) {
+            output << "__gti_mir_failure_status_" << instruction.id
+                   << " = ::gti_internal::backend::mir_checked_array_bound_v1(";
+            emitBase();
+            for (std::size_t prefix = 0; prefix < index; ++prefix) {
+              output << '[';
+              emitElementIndex(access.indices[prefix]);
+              output << ']';
+            }
+            output << ", ";
+            emitElementIndexValue(access.indices[index]);
+            output << ");\n";
+            writeIndent();
+            output << "if (__gti_mir_failure_status_" << instruction.id
+                   << ".code == GTI_FAILURE_CODE_NONE_V1) {\n";
+            ++indentation;
+            ++branches;
+            writeIndent();
+          }
+          output << "__gti_mir_v_" << *instruction.result
+                 << " = ::gti_internal::backend::raw_address_of(&";
+          emitElement();
+          output << ");\n";
+          closeCheckedArrayChain(branches);
+        };
+        if (const auto access = arrayFieldElementAccess(facts.body, *place)) {
+          emitCheckedAddress(
+              *access, [&] { emitArrayFieldBase(facts, *access); },
+              [&] { emitArrayFieldElement(facts, *access, true); });
+        } else if (const auto access = arrayElementAccess(facts.body, *place)) {
+          emitCheckedAddress(
+              *access, [&] { emitArrayBase(facts, *access); },
+              [&] { emitArrayElement(facts, *access, true); });
+        } else if (const auto access =
+                       constantArrayElementFieldAccess(facts.body, *place)) {
+          emitCheckedAddress(
+              access->element, [&] { emitArrayBase(facts, access->element); },
+              [&] {
+                emitArrayElement(facts, access->element, true);
+                emitFieldProjectionChain(access->elementType, access->fields,
+                                         0);
+              });
+        } else {
+          throw std::logic_error("checked address lost its array place");
+        }
         return;
       }
       if (failureForm && instruction.operation == MirOperation::Index &&
@@ -33045,6 +33172,16 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Move && instruction.result) {
+      if (const auto *destination = fixedArrayValueDestinationSlot(
+              program, facts.body, instruction)) {
+        writeIndent();
+        output << "__gti_mir_p_"
+               << canonicalSlotPlaceId(facts.body, *destination)
+               << ".construct(std::move(";
+        emitMoveSource(facts, instruction);
+        output << "));\n";
+        return;
+      }
       const GeneratedSpecialMemberMoveStage stage =
           generatedSpecialMemberMoveStage(program, facts.body, instruction);
       if (stage.slot != nullptr && stage.source != nullptr) {
@@ -37640,9 +37777,14 @@ private:
           producer->localFailureSites.size() == 1;
       const bool viewIndexDetector =
           producer != nullptr && stringViewIndexFailureSite(program, *producer);
+      const bool addressDetector =
+          producer != nullptr &&
+          producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::AddressOf &&
+          checkedArrayAssignmentFailure(program, *producer);
       if (producer == nullptr ||
           (!elementDetector && !storageDetector && !expectedDetector &&
-           !viewIndexDetector &&
+           !viewIndexDetector && !addressDetector &&
            (producer->kind != MirInstructionKind::Compute ||
             cppMirCheckedOperationHelperSpelling(producer->operation)
                 .empty()))) {
@@ -46701,8 +46843,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.info.type.arguments.front() == source->type &&
               source->type == place->type &&
               instruction.info.type.pointerAccess == place->access;
-          if (!exactPointer || !instruction.localFailureSites.empty() ||
-              !instruction.definedFailure.empty() ||
+          const bool checkedAddress =
+              place != nullptr &&
+              checkedArrayAssignmentFailure(program_, instruction) &&
+              (arrayElementAccess(body, *place) ||
+               arrayFieldElementAccess(body, *place) ||
+               constantArrayElementFieldAccess(body, *place));
+          if (!exactPointer ||
+              ((!instruction.localFailureSites.empty() ||
+                !instruction.definedFailure.empty()) &&
+               !checkedAddress) ||
               !capabilityRow(CppMirEmissionCapabilityKind::RawMemory) ||
               !typeRow(instruction.info.type)) {
             return false;
@@ -47046,6 +47196,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.operands.size() == 1
                 ? body.findPlace(instruction.operands.front().place)
                 : nullptr;
+        if (instruction.info.type.kind == SemanticType::Array &&
+            instruction.info.traits.drop == DropKind::Lexical &&
+            !fixedArrayValueDestinationSlot(program_, body, instruction) &&
+            instruction.result &&
+            !classSsaLifetimeSlot(program_, representations_, body,
+                                  *instruction.result)) {
+          // An owning array cannot fall back to a default-constructed scalar
+          // SSA object when its exact publication/lifetime proof is absent.
+          return false;
+        }
         const bool terminalElementMove =
             movedSource != nullptr &&
             (arrayElementAccess(body, *movedSource) ||
@@ -49527,6 +49687,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (stringViewIndexFailureSite(program_, *producer)) {
+        continue;
+      }
+      if (producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::AddressOf &&
+          checkedArrayAssignmentFailure(program_, *producer)) {
         continue;
       }
       if (producer->kind != MirInstructionKind::Compute ||

@@ -27,10 +27,13 @@ int main() {
     int second = (*pointer).slots[next_index(evaluations)];
     if (second != 2 || evaluations != 2) { return 3; }
     pointer->slots[2] = 9;
-    int32_t* address = &pointer->slots[2];
+    int32_t* address = &pointer->slots[next_index(evaluations)];
+    if (evaluations != 3) { return 6; }
     *address = 11;
     if (pointer[0].slots[2] != 11) { return 4; }
-    if (pointer->cells[0].value != 7) { return 5; }
+    int32_t* cell_address = &pointer->cells[0].value;
+    *cell_address = 8;
+    if (pointer->cells[0].value != 8) { return 5; }
   }
   return 0;
 }
