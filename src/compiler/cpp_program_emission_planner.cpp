@@ -1156,10 +1156,7 @@ public:
   void emitLoweredCAbiSignature(const LoweredDeclaration &row,
                                 const LoweredFunctionDeclaration &function) {
     emitLoweredCAbiType(function.returnType);
-    output << ' '
-           << (function.externalSymbol.empty() ? row.name
-                                               : function.externalSymbol)
-           << '(';
+    output << ' ' << cppFunctionSpelling(function, row.name) << '(';
     for (std::size_t index = 0; index < function.parameters.size(); ++index) {
       if (index != 0) {
         output << ", ";
@@ -1853,7 +1850,21 @@ public:
       }
       writeIndent();
       emitLoweredCAbiSignature(*declaration, *function);
-      output << ";\n";
+      const std::string symbol = function->externalSymbol.empty()
+                                     ? declaration->name
+                                     : function->externalSymbol;
+      const std::string name =
+          cppFunctionSpelling(*function, declaration->name);
+      // Source semantics admits only portable ASCII C identifiers here, so no
+      // source-provided quote, escape or directive can enter the link label.
+      // GNU-compatible compilers consume an exact object-format symbol name.
+      // Native MSVC instead transports its C-name alias in the COFF directive.
+      output << "\n#if defined(_MSC_VER) && !defined(__clang__)\n;\n"
+             << "#pragma comment(linker, \"/alternatename:" << name << '='
+             << symbol << "\")\n"
+             << "#elif defined(__APPLE__)\n"
+             << " __asm__(\"_" << symbol << "\");\n"
+             << "#else\n __asm__(\"" << symbol << "\");\n#endif\n";
       emitLoweredBoundaryMarkers(*declaration, *function);
     }
     --indentation;
@@ -8255,7 +8266,16 @@ public:
             "hosted C-thread boundary lost its exact target");
       }
       writeIndent();
-      output << "::" << target->externalSymbol << "();\n";
+      const LoweredFunctionDeclaration *declaration =
+          loweredProgram.findFunctionDeclaration(target->declaration);
+      const LoweredDeclaration *row =
+          loweredFunctionRow(target->declaration);
+      if (declaration == nullptr || row == nullptr) {
+        throw std::logic_error(
+            "hosted C-thread boundary lost its declaration identity");
+      }
+      emitLoweredQualifiedFunctionName(*row, *declaration);
+      output << "();\n";
     };
     const MirBodyAddress entryAddress{.kind = MirBodyKind::Function,
                                       .owner = entry->id};

@@ -1117,7 +1117,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       valueType = field == nullptr
                       ? analyze(initializer.arguments.front())
                       : analyzeInitializer(initializer.arguments.front(),
-                                           initializerTarget);
+                                           initializerTarget, true);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
     if (field != nullptr && initializer.arguments.size() == 1 &&
