@@ -4023,6 +4023,30 @@ owning-object runtime evidence or a completed public manual-storage feature:
 final-address construction, typed carriers, relocation, source migration,
 examples, full acceptance and release gates remain outstanding.
 
+The construction checkpoint adds public unsafe `construct_at` through
+declaration-bound `ObjectConstruct`, sharing ordinary constructor selection,
+prepared-parameter transfer and verified failure rollback. An unrelated source
+byte owner and slot wrapper exercise owning and immovable payloads, failed
+argument preparation, partial construction, destruction failure, secondary
+failure and slot reuse. The eight-mode runtime matrix passes on the optimized
+compiler. A passive record returned by a fallible field-initializer call also
+required a backend representation fix: stage its result without a semantic
+drop, then publish only on the immediate success edge. No source constructor or
+cleanup is invented for the temporary representation. Typed inline carriers,
+relocation, source sparse migration, runnable campaign examples and the full
+integration gates are still outstanding; this remains an intermediate draft.
+
+The next checkpoint adds the layout-only inline carrier and raw destructive
+relocation. Focused carrier and owning-relocation runtime matrices pass all
+eight standard/optimization/no-elide/sanitizer modes. Static tests reject
+immovable carrier movement, incompatible access and forged capability/lifetime
+facts. Example 122 demonstrates the public inline owner with generated default
+construction, checked references and owning relocation. A source-written empty
+generic constructor around fixed-address storage still exposes a backend
+admission gap and needs closure before campaign completion. Example inventory
+and combined census reconciliation, source sparse migration/retirement, the
+unrelated pool/container example and broad acceptance gates remain outstanding.
+
 #### Why This Campaign Exists
 
 Phase 2 successfully separated resource selection and region release from

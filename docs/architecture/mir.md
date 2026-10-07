@@ -703,6 +703,33 @@ outcomes and source-destructor effects. Proving a local check safe does not
 prove element cleanup safe. Effect composition includes every source destructor
 in the recipe, and unrelated instructions cannot carry a recipe.
 
+`ObjectConstruct` records unsafe final-address construction with the exact
+selected constructor, concrete input types, prepared-parameter handoffs and
+constructor-failure edge. It reuses the ordinary constructor body and rollback
+schedule. Unlike sparse/prefix construction it has no container preflight:
+alignment, extent and vacancy belong to the unsafe caller. The verifier rejects
+forged storage preflights, borrowed destination authority and mismatched
+constructor/failure metadata. Scalar construction and generated transfer retain
+their exact typed selection. The backend supplies the address to the selected
+verified constructor; it does not infer lifetime permission from C++ traits.
+
+The declaration-bound `UninitializedStorage` class capability supplies only
+layout and inert representation. Concrete semantic traits derive copy/move
+eligibility from the payload's bitwise relocation contract and propagate its
+concurrency capabilities. MIR independently verifies those facts, empty field
+shape, generated special members and absence of payload cleanup. The backend
+implements a byte representation with no engagement state; source wrappers
+use ordinary address formation and existing typed/erased pointer conversions.
+
+`ObjectRelocate` is an unsafe, failure-free `Call` over two identical writable
+complete-object pointer types. Verification checks the exact metadata shape
+and rederives failure-free relocation eligibility from concrete MIR type facts.
+It permits no constructor override, cleanup recipe, storage preflight, loan or
+failure edge. Its effects conservatively read/write unknown memory, move and
+initialize a value, forming an optimization barrier. The backend performs the
+verified generated transfer, then ends the inactive source representation;
+it must not invoke source GTI cleanup or acquire/release a byte region.
+
 `ObjectDestroy` generalizes this exact `elementCleanup` contract to one writable
 raw pointer. Semantics requires explicit `ObjectLifetime` unsafe permission and
 an inferred complete pointee type. HIR seeds the concrete lifecycle declaration;

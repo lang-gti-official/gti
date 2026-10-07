@@ -364,6 +364,8 @@ enum class IntrinsicKind {
   ObjectAlignment,
   StorageTryAdopt,
   ObjectDestroy,
+  ObjectConstruct,
+  ObjectRelocate,
   Count,
 };
 
@@ -414,6 +416,7 @@ enum class CompilerCapabilityTypeKind {
   MutexStorage,
   MutexLockToken,
   SharedOwner,
+  UninitializedStorage,
 };
 
 enum class ProgramEntryKind {

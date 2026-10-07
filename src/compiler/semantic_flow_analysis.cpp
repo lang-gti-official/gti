@@ -1816,6 +1816,15 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
             operation.propagation = FailurePropagationKind::Constructor;
           }
           break;
+        case IntrinsicKind::ObjectConstruct:
+          // Raw validity is the unsafe caller's obligation. Only the selected
+          // GTI constructor may fail; there is no allocation or slot preflight.
+          if (const auto *construction = semanticModel.findConstruction(expr);
+              construction != nullptr &&
+              construction->kind == ConstructorKind::Ordinary &&
+              construction->constructor != 0 && !construction->generatedDefault)
+            operation.propagation = FailurePropagationKind::Constructor;
+          break;
         case IntrinsicKind::StorageRead:
         case IntrinsicKind::StorageReadMut:
         case IntrinsicKind::StorageDestroy:
@@ -1905,6 +1914,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::OptionalStorageHasValue:
         case IntrinsicKind::OptionalStorageReset:
         case IntrinsicKind::ObjectDestroy:
+        case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         // The expected extractions' defined-failure outcomes anchor in

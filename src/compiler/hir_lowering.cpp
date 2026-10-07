@@ -4845,7 +4845,9 @@ private:
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
-        if (value.intrinsic == IntrinsicKind::ObjectDestroy &&
+        if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
+             value.intrinsic == IntrinsicKind::ObjectRelocate ||
+             value.intrinsic == IntrinsicKind::ObjectConstruct) &&
             resolved->typeArguments.size() == 1)
           (void)seedConcreteDeclarationType(resolved->typeArguments.front());
         if ((value.intrinsic == IntrinsicKind::ObjectSize ||
@@ -5113,6 +5115,7 @@ private:
             model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
       const bool inPlaceStorageConstruction =
+          value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::StorageConstruct ||
           value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
           value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
@@ -5367,7 +5370,8 @@ private:
         }
       }
     }
-    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
+    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
+         value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
          value.intrinsic == IntrinsicKind::StorageConstruct) &&
         ((value.constructorTarget &&
           value.constructorKind == ConstructorKind::Ordinary) ||
@@ -5385,8 +5389,9 @@ private:
               static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
           value.operands.end());
       std::vector<SemanticType> roles = value.parameterTypes;
-      roles.front() =
-          SemanticType::referenceTo(roles.front(), AccessMode::Mutable);
+      if (value.intrinsic != IntrinsicKind::ObjectConstruct)
+        roles.front() =
+            SemanticType::referenceTo(roles.front(), AccessMode::Mutable);
       if (auto planned = orderedArguments(arguments, roles, body)) {
         // Storage is a capability-place input, not a source reference formal.
         planned->front().parameterType = value.parameterTypes.front();

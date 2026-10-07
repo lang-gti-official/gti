@@ -3217,6 +3217,27 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     return;
   }
+  if (compilerCapability == CompilerCapabilityTypeKind::UninitializedStorage) {
+    if (type.arguments.size() != 1 ||
+        type.arguments.front().genericArgumentSyntax ==
+            GenericArgumentSyntax::Value) {
+      report(type.name.last(),
+             "Uninitialized storage requires exactly one complete object type.",
+             "GTI-S2019");
+      return;
+    }
+    validateType(type.arguments.front());
+    const auto payload = typeOf(type.arguments.front());
+    if (payload != SemanticType::Unknown &&
+        !containsOpenTypeParameter(payload) &&
+        (!runtimeObjectLayoutType(payload) ||
+         typeTraits(payload).containsBorrowedState)) {
+      report(type.arguments.front().name.last(),
+             "Uninitialized storage requires a complete object type without "
+             "checked borrowed state.",
+             "GTI-S2019");
+    }
+  }
   if (compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
     if (type.arguments.size() != 1 ||
         type.arguments.front().genericArgumentSyntax ==
