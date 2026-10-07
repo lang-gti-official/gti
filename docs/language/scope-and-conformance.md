@@ -4,10 +4,21 @@ Status: Normative scaffold
 
 ## 1.1 Scope
 
+GTI is an independent systems language intended to become fully usable for
+serious systems programming, with excellent safety, strong C++ syntax familiarity,
+and a sound architecture. It is not a wrapper around C++. Familiar spelling does
+not import C++ behavior into the language.
+
 This specification defines the GTI source language, its static semantics, its
 abstract runtime behaviour, and the contracts of its standard library. It does
 not define the internal structure of the reference compiler or require
 translation through C++.
+
+Public library policy should be expressible in ordinary GTI over general
+facilities. Compiler and runtime support remains appropriate for facts and
+operations that source cannot establish, including layout, object lifetime,
+ownership verification and host access. The split is justified by each operation's
+invariant rather than by a public library name or the current backend.
 
 The specification covers hosted GTI programs compiled from an entry source
 unit and its dependency graph. Freestanding execution, a stable binary ABI,

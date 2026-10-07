@@ -2,6 +2,14 @@
 
 Status: Accepted
 
+Scope note (2026-10-07): the initial decision below describes the first checked
+typed-storage slice. Its exclusions and private implementation choices are not
+permanent restrictions on GTI's independent systems-language goal. The later
+low-level, optional-audit and programmable-resource revisions supersede the
+corresponding initial boundaries. Further general public lifetime facilities and
+provider-controlled bookkeeping are goals requiring their own contracts and
+validation; this note does not claim they are implemented.
+
 ## Context
 
 GTI needs allocator-controlled storage for arenas, pools, containers, and
@@ -212,9 +220,13 @@ GTI. No compiler or backend phase recognizes `std::allocator`,
 `std::storage<T>`, `std::alignment`, or `std::alloc_errc` by spelling.
 
 Their implementation uses exact declaration-bound `gti_internal` operations
-for the irreducible allocation, alignment, bitmap, construction, destruction,
-and checked-reference mechanics. Those declarations are available only to the
-trusted prelude and installed standard-library sources. HIR and MIR retain
+for the current allocation, alignment, bitmap, construction, destruction,
+and checked-reference mechanics. These responsibilities are not all inherently
+irreducible: raw byte acquisition and bookkeeping can be source-defined policy,
+whereas typed lifecycle and checked-reference facts need language/compiler
+authority. Reassess private placement per operation as public facilities grow.
+The current declarations are available only to the trusted prelude and installed
+standard-library sources. HIR and MIR retain
 their selected intrinsic identities and effects, and the backend receives
 only verified typed operations.
 
@@ -238,8 +250,10 @@ Their returned `size_t` positions deliberately are not generation-bearing
 handles. Reset or erase ends the current slot lifetime, and reuse may assign
 the same numeric position to another value. Stateful allocator ownership,
 generation-safe handles, allocator-aware growth/propagation, and heterogeneous
-arenas remain later work. Those features must remain ordinary GTI policy over
-the typed owner rather than add raw escape hatches.
+arenas were follow-up goals for this initial slice. They should use ordinary GTI
+policy over coherent general facilities, including explicitly unsafe raw
+operations where needed. The later low-level and programmable-resource revisions
+extend the original typed-owner-only boundary.
 
 ## Why This Is Safer Than The C++ Model
 
@@ -261,18 +275,22 @@ enforceable invariants:
   supported normal and failure exit, including failure while constructing the
   value passed to `construct`.
 
-C++ remains the appropriate escape level for the current backend
-implementation, but its pointer and object-lifetime rules are representation
-mechanics, not GTI source semantics.
+The reference backend currently implements these operations using C++. Its
+pointer and object-lifetime rules are representation mechanics, not GTI source
+semantics. GTI unsafe code and general public low-level facilities are the
+source-language extension boundary; missing source capabilities are goals to
+implement, not reasons to make host C++ the permanent user escape mechanism.
 
 ## Alternatives
 
-- **Expose `allocate`/`deallocate` and typed pointers.** Rejected because the
-  caller could lose or forge the provenance/count/alignment relationship and
+- **Expose `allocate`/`deallocate` and typed pointers as the initial safe API.**
+  Rejected for that slice because the caller could lose or forge the
+  provenance/count/alignment relationship and
   must manually pair every live object with destruction.
 - **Expose a public `MaybeUninit<T>`-style value.** Rejected for this slice
   because an unchecked `assume_init` would move the crucial proof into
-  `unsafe`; storage can track the finite slot state directly.
+  `unsafe`; storage can track the finite slot state directly. This does not
+  reject a general unsafe uninitialized-storage facility as a future goal.
 - **Use `std::allocator<T>` and C++ allocator traits.** Rejected because rebind,
   equality, propagation traits, fancy pointers, and container-specific copy
   rules are not required to create the first safe arena/pool substrate.
@@ -388,7 +406,7 @@ accepted design, chosen with the owner on 2026-10-06:
   region. Several leases coexist without an exclusive borrow of the resource.
   A safe reset or move of the resource needs exclusive access and is rejected
   while any lease is live. Element references borrow the owner as well, so
-  growth, release and movement are blocked until their last use. No reference
+  growth, release and movement are rejected until their last use. No reference
   counting, shared ownership or broad interior mutability is introduced:
   bookkeeping mutation goes through a provider's own raw pointers under its
   unsafe contract.

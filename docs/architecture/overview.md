@@ -2,6 +2,13 @@
 
 Status: Current implementation.
 
+GTI is an independent systems language with strong C++ syntax familiarity.
+The current C++ backend implements its semantics; source compatibility with C++
+and host representation behavior do not define those semantics. General GTI
+facilities support source-defined libraries, while compiler/runtime mechanisms
+retain authority over invariants source cannot establish. Historical placement
+of a facility in either layer is revisable when the language grows.
+
 GTI separates source-language decisions from backend representation. The
 shared pipeline is:
 

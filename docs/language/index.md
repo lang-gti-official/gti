@@ -50,11 +50,20 @@ otherwise.
 
 ## Design Principles
 
+GTI is an independent systems language, not a C++ wrapper. Its goal is a fully
+usable systems language with excellent safety and strong C++ syntax familiarity.
+Historical design assumptions and implementation restrictions are reviewed as
+capabilities grow; they are neither automatic future constraints nor evidence
+that a planned generalization already exists.
+
 GTI keeps C++-familiar spelling where it can provide a smaller complete rule.
 Ownership, lifetime, nullability, conversions, failure, and evaluation are GTI
 semantics rather than backend consequences. Invalid GTI should be rejected by
 the frontend. Public library policy should be ordinary GTI source; only
-irreducible capabilities belong behind a compiler/runtime boundary.
+operations whose invariants need compiler or host authority belong behind a
+compiler/runtime boundary. Justify that boundary per operation and expose general
+public facilities where coherent. Changing it requires implementation and
+validation, not merely deleting a restriction from the specification.
 
 ## Maintenance
 

@@ -3769,7 +3769,7 @@ canonicalization, container assertions) must carry tests that mirror the
 production code path rather than reimplementing it, so both libraries
 exercise the same contract. A change that touches those areas should be
 watched through CI after push; an asynchronous CI failure there is a Linux
-finding, not a release blocker discovered late.
+finding requiring follow-up, rather than evidence of a successful Linux check.
 
 ## Optional Local Language Audit
 

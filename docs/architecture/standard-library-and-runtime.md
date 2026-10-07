@@ -12,6 +12,32 @@ public std API in ordinary GTI
         -> host implementation / operating system
 ```
 
+## Source Policy And Compiler Mechanisms
+
+GTI is an independent language. The use of C++ in the reference backend or
+runtime is an implementation fact, not a requirement on source-level library
+design. Evaluate each facility's invariant before deciding where it belongs:
+ordinary GTI owns expressible policy, compiler support owns language facts, and
+native calls provide host services. A previous private implementation is not
+evidence that the entire facility must remain private as the language grows.
+
+For memory, distinguish acquiring bytes from starting and ending GTI object
+lifetimes. A provider can obtain regions through libc, operating-system APIs or
+another allocator. Layout queries and construction/drop operations describe the
+selected GTI representation and follow verified lifecycle schedules. Safe owners
+retain their resource dependencies regardless of how bytes were acquired.
+`malloc`/`free` and aligned `new`/`delete` are distinct allocation families;
+replacing a provider must preserve matching release, extent, alignment and
+failure contracts. An erased address alone establishes neither initialization
+nor checked ownership.
+
+The current process resource calls a C ABI implemented with aligned C++
+allocation. That host implementation is replaceable without changing GTI
+semantics. Typed region adoption remains private, and its slot bitmap currently
+uses the process heap. General public lifecycle facilities and provider-controlled
+bookkeeping are explicit extension goals, not claims of current support and not
+operations made inherently private by C++ generation.
+
 ## Public Library
 
 `stdlib/prelude.gti` is implicitly available. Optional source units live below

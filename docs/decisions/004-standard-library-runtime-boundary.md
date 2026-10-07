@@ -12,10 +12,20 @@ backend and prevent source-defined library evolution.
 
 Public `std` APIs are ordinary GTI source wherever the language can express
 their invariants. Narrow trusted `gti_internal` capabilities represent only
-irreducible operations such as unique allocation or partially initialized
-storage. Host calls use bounded C linkage/runtime entries. Intrinsic behavior
+operations requiring compiler authority, such as publishing typed ownership or
+executing object-lifetime transitions not yet expressible through public GTI.
+Acquiring raw bytes, selecting an allocation provider and maintaining
+initialization bookkeeping are separate responsibilities; they are not
+inherently private merely because a current storage representation combines
+them. Host calls use bounded C linkage/runtime entries. Intrinsic behavior
 is attached to trusted declaration identity, never public wrapper or call-site
 spelling.
+
+Reassess this boundary as general source facilities become available. Retain
+compiler support where its invariant requires it, expose usable public unsafe
+facilities where their contracts are coherent, and keep policy in GTI. A public
+primitive may be implemented by a compiler capability without making its users
+privileged or importing the reference backend's language semantics.
 
 A language-level boundary may still require an exact canonical public type
 identity without making that type's ordinary operations intrinsic. The hosted
@@ -29,8 +39,9 @@ letting a backend rediscover it from a public method name.
 
 - Make each public wrapper a built-in type/function: rejected because policy,
   tooling, and alternative backends would become compiler-specific.
-- Expose raw allocation and native handles everywhere: rejected because it
-  discards ownership and ABI boundaries before their proof obligations exist.
+- Expose raw allocation and native handles without explicit contracts: rejected
+  because it discards ownership and ABI boundaries. This does not exclude
+  general public unsafe facilities with documented obligations and safe wrappers.
 
 ## Consequences
 

@@ -794,15 +794,15 @@ for a repeatable callable. The generic whole-range predicate family,
 `for_each`, and `fill` use these concepts; concrete reanalysis replaces private
 symbolic endpoint carriers before HIR/MIR.
 
-### Current public blocker matrix
+### Public capability goals and prerequisites
 
-| Module | Public function family | Status | True blocker category |
+| Module | Public function family | Status | Capability evidence or prerequisite goal |
 | --- | --- | --- | --- |
 | `<std/algorithm>` | `find`, `count` | Implemented | Exact iterator/sentinel/dereference/equality contracts plus declaration-linked `first` return ownership now suffice. |
 | `<std/algorithm>` | `for_each` | Implemented | Repeated exact `void(T&)` invocation now composes with one exact moved callable return. |
 | `<std/algorithm>` | complete-range `all_of`, `any_of`, `none_of`, `count_if`, `for_each` | Implemented | Structural read endpoints plus exact range-predicate/operation relations accept nominal ranges and fixed arrays without public-name recognition. |
 | `<std/algorithm>` | `copy` | Implemented | `std::output_iterator` (mut dereference plus increment) drives the destination; the advanced mutable cursor is not returned because mutable owner-tied cursors cannot escape returns. |
-| `<std/algorithm>` | `fill`, `transform`, `reverse`, `sort` | `fill` is generic complete-range; the others have vector whole-owner forms | The exact mutable-range relation gives `fill` its element type and one exclusive borrow. Iterator-pair in-place forms remain blocked because `begin_mut()` plus `end()` in one call is an ownership conflict. The other rewrites still copy elements because indexed move-out awaits place-aware initialization tracking. |
+| `<std/algorithm>` | `fill`, `transform`, `reverse`, `sort` | `fill` is generic complete-range; the others have vector whole-owner forms | The exact mutable-range relation gives `fill` its element type and one exclusive borrow. Iterator-pair in-place forms require a coherent endpoint/borrow contract: `begin_mut()` plus `end()` in one call currently conflicts. Indexed move-out and restoration require place-aware initialization tracking before the other rewrites can transfer elements. |
 | `<std/algorithm>` | `sort(compare)` | Implemented for vector | The confined two-reference-argument comparator relation supplies a repeatable exact bool callable. |
 | `<std/utility>` | `swap`, `exchange` | Declaration only | Moving a value out through `mut T&`, then restoring that place on all paths, is not expressible. |
 | `<std/iterator>` | signed `advance`, signed `next`, `prev` | Implemented | `std::bidirectional_iterator` steps `advance` in both directions for value-state cursors (owner-tied cursors cannot pass through `mut Iterator&`), and `std::random_access_iterator` jumps the by-value `next`. |
