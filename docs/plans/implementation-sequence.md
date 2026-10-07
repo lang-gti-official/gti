@@ -45,13 +45,14 @@ The unfinished-work inventory is:
 
 | Work | Preserved state and release disposition |
 | --- | --- |
-| General object lifetimes, source sparse storage, conditional unsafe capabilities (PR #94) | Implemented candidate; combined corpus, installed-consumer and full-suite acceptance required before completion. |
+| General object lifetimes, source sparse storage, conditional unsafe capabilities (PR #94) | Implemented and reconciled candidate; the combined full-suite and installed-toolchain release gate remains authoritative. |
 | Source process byte provider (PR #104) | Published implementation is an ancestor of #94; confirm integration before closing its redundant PR. |
 | Generic payload enums (PR #110) | Complete implementation and preflight handoff reconciled into #94; use the shared final validation and one integration, not a second release. |
 | Constructor campaign (PR #125) | Loop reinitialization, owned constructor packs and stable base stages already included in #94. The later computed scalar base-argument extension remains preserved separately; general preparation frames are still proposed. |
 | Other campaign checkpoints (#114, #118, #124, #128) | Published partial-campaign work, not final combined acceptance. Preserve for explicit release-scope selection or the resumed campaign; do not silently claim their open issues fixed. |
 | Operator/borrowed-view relay (PR #127) | Preserved draft with a known failing map-key-view matrix; not ready for integration. |
 | Source string-view rewrite (PR #109) | Proposal/review-first, including separate unpublished Claude edits. Not approved for automatic adoption or required as a release prerequisite. |
+| Release-validation repairs (PRs #131/#132) | Passive-array/payload admission and exact constructor-publication tests, plus inherited failure-cleanup propagation, are consolidated into #94. Validate and integrate once; close these redundant PRs only after their commits reach main. |
 
 The legacy `feature-interactions` edits are already incorporated (or superseded
 by additive improvements). The `issues-30-33` test commit and dirty lowering
@@ -4188,9 +4189,11 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-06: General Object Lifetimes And Source-Defined Storage
 
-- **State/role:** implementation in progress, following completed
-  `S-ALLOC-04/05`. This brief records the owner's accepted direction; the API
-  spellings below are illustrative, not claims of implemented support.
+- **State/role:** implementation consolidated into the PR #94 release candidate,
+  following completed `S-ALLOC-04/05`. Completion requires the combined
+  [release gate](../architecture/verification.md#combined-lifetimestorage-and-payload-enum-release-gate).
+  This brief records the accepted direction; canonical language documentation
+  and source describe the implemented API and its structural bounds.
 - **Outcome:** an application can implement inline typed storage and an
   unrelated pool/container using public GTI facilities, without teaching the
   compiler its type name. Reimplement `std::storage<T>` policy on those same
