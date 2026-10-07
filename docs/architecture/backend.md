@@ -192,6 +192,34 @@ owns source bounds checks, place identity and array initialization/cleanup.
 Checked references to raw pointers remain outside the current language slice;
 the backend must not alias a native `T*` slot as a `raw_address<T>&`.
 
+Failure-free passive C-compatible call results share one consumer proof for
+bare assignment, discard, and unchanged return. The exact record/type/signature
+must agree, no result cleanup obligation may be invented, and return permits
+only the existing passive cleanup tail. A return writes caller-provided result
+storage at its Call; discard still executes the foreign call. Assignment and
+discard use byte-preserving representation transfer rather than native
+memberwise pointer reads. Neither source default construction nor owning-result
+transport is inferred from this passive representation rule.
+
+Checked class-payload extraction can construct a function's exact return result
+at its existing MIR Call, without an intermediate object or a second source
+move. Cleanup-free moved/copy receivers share the inert-return-tail proof;
+owning receivers retain their real moved or fresh-call lifetime slot on both
+success and wrong-state edges. The owning return consumer requires the exact
+success activation, transfer-out, and, when cleanup can fail, unpublished
+return-result reparent/rollback schedule. A non-owning placement adapter reuses
+the checked extraction helper against caller storage; it supplies neither
+implicit construction nor native unwinding. The state check still precedes
+construction, and MIR alone decides whether to destroy or publish the result.
+
+Results from consuming source members use the ordinary owning-call result
+staging and replacement proof. The exact `Once` receiver must resolve to its
+selected consuming member and materialized receiver place. Receiver cleanup
+remains at the recorded full-expression/failure Drop; it is not an argument
+transfer at Call. Only a successful result activates the replacement stage, so
+receiver failure cannot overwrite the old destination, and failed replacement
+cleanup destroys the unpublished result without committing it.
+
 Pointer-bearing passive C-compatible records use byte-preserving construction
 and assignment internally. Verified source calls snapshot value arguments
 before passing them by internal reference; result publication uses a typed
