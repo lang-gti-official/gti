@@ -3847,6 +3847,16 @@ versions and stale-fix rejection. `generic_contract_lsp` checks contextual
 function hover/definition, dependent-clause publication and error recovery.
 Focused passes do not replace the campaign's combined full-suite acceptance.
 
+The PR117 refresh retains the integrated constructor/lambda transport, physical
+field identities and diagnostic recovery from canonical `a23c66a`. Its owning
+declarations and diagnostics partitions, native contract/advisory matrices,
+LSP and focused integration controls are rerun with an optimized Release/Ninja
+compiler. The older contextual-array negative expected an argument-order
+message where the compiler now resolves a written type in a value slot; that
+expectation follows the correct GTI-S2026 value-kind diagnostic and additionally
+requires its exact three-byte written-argument span. No invalid program is
+admitted, source assertion removed, mode omitted, or warning policy relaxed.
+
 The reviewed example inventory adds five bodies to example 33 (the Box field
 and static initializer bodies, constructor, observer and constrained reader),
 and two to example 80 (the pack client and target). Their observed declaration
