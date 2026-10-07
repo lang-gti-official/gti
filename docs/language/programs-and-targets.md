@@ -349,7 +349,7 @@ may declare its entry symbols through the bounded C-linkage surface while
 keeping public policy in ordinary GTI wrappers.
 
 A generated embedding wrapper is a distinct future containment boundary. ADR
-023 now fixes its version-1 C contract, and the compiler has a dormant
+026 now fixes its version-1 C contract, and the compiler has a dormant
 artifact request that resolves exact exports and carries their verified roots
 through lowered-program construction. It must still convert GTI's explicit
 failure channel into a structured host result only after invocation-owned
