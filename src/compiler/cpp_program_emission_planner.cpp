@@ -6604,6 +6604,7 @@ public:
       const auto direct =
           loweredConcreteLifecycleInstances.find(classRow->name);
       bool emitted = false;
+      bool deferredToDirectClass = false;
       std::optional<std::pair<bool, std::string>> retainedBody;
       for (const CppMirGeneratedThunk &thunk : programPlan.thunks) {
         if (thunk.identity.kind != CppMirThunkKind::LifecycleCleanup) {
@@ -6616,6 +6617,14 @@ public:
         }
         if (direct != loweredConcreteLifecycleInstances.end() &&
             cleanup->classInstance != direct->second) {
+          continue;
+        }
+        // A directly represented instance is an ordinary concrete class, not
+        // a specialization of this primary. Its own deferred row defines its
+        // lifecycle members, matching the declarations emitted for it.
+        if (direct == loweredConcreteLifecycleInstances.end() &&
+            loweredClassUsesDirectRepresentation(cleanup->classInstance)) {
+          deferredToDirectClass = true;
           continue;
         }
         const MirDestructorInstance *destructor =
@@ -6757,9 +6766,10 @@ public:
         output << "}\n\n";
         emitted = true;
       }
-      if (!emitted && (direct != loweredConcreteLifecycleInstances.end() ||
-                       !loweredOwnerIsGeneric(*classRow) ||
-                       loweredClassHasConcreteInstance(classDeclaration->id))) {
+      if (!emitted && !deferredToDirectClass &&
+          (direct != loweredConcreteLifecycleInstances.end() ||
+           !loweredOwnerIsGeneric(*classRow) ||
+           loweredClassHasConcreteInstance(classDeclaration->id))) {
         throw std::logic_error(
             "lowered active-drop class has no lifecycle generated item");
       }
