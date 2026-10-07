@@ -1,0 +1,24 @@
+#include <std/memory>
+#include <std/optional>
+
+class Row {
+  mut int32_t cells[2] = {};
+public:
+  Row() {}
+  int32_t& operator[](std::size_t i) { return this.cells[i]; }
+  mut int32_t& operator[](std::size_t i) mut { return this.cells[i]; }
+};
+int main() {
+  mut auto owned = std::make_unique<int32_t>(1);
+  *owned = *owned + 100;
+  *owned += 5;
+  if (*owned != 106) { return 1; }
+  mut std::optional<int32_t> optional{2};
+  *optional = *optional + 1;
+  *optional *= 3;
+  if (*optional != 9) { return 2; }
+  mut auto row = std::make_unique<Row>();
+  (*row)[std::size_t(0)] += 7;
+  if ((*row)[std::size_t(0)] != 7) { return 3; }
+  return 0;
+}

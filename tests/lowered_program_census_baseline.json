@@ -556,8 +556,8 @@
       }
     },
     "14-operators.gti": {
-      "declarations": 152,
-      "bodies": 38,
+      "declarations": 159,
+      "bodies": 44,
       "generated_items": 3,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1817,8 +1817,8 @@
     }
   },
   "totals": {
-    "declarations": 51808,
-    "bodies": 16187,
+    "declarations": 51815,
+    "bodies": 16193,
     "generated_items": 3388
   }
 }
