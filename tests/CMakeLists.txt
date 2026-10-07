@@ -383,6 +383,14 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME source_storage_drain_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_storage_drain_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(source_storage_drain_runtime PROPERTIES TIMEOUT 240)
+  add_test(NAME inherited_cleanup_context_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/inherited_cleanup_context_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(inherited_cleanup_context_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME cleanup_context_scope_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cleanup_context_scope_runtime_test.py"
+      $<TARGET_FILE:gti> "${CMAKE_CXX_COMPILER}" $<TARGET_FILE:gti_runtime>
+      $<TARGET_FILE:gti_runtime_thread_tests>)
+  set_tests_properties(cleanup_context_scope_runtime PROPERTIES TIMEOUT 300)
 
   add_test(NAME object_destroy_scalar_runtime
            COMMAND ${Python3_EXECUTABLE}

@@ -58,6 +58,14 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "vector_size",
       "mir_lambda_identity_v",
       "mir_cleanup_emergency_abandonment",
+      "mir_failure_cleanup_context_v1",
+      "mir_failure_cleanup_scope_v1",
+      "mir_incoming_failure_cleanup_v1",
+      "mir_check_incoming_cleanup_failure_v1",
+      "activate",
+      "context_",
+      "active_",
+      "current",
       "add",
       "add_assign",
       "allocate",
@@ -1131,6 +1139,56 @@ template <typename T>
   return success;
 }
 
+// Inherited failure cleanup crosses ordinary source calls without changing
+// their value ABI. The context belongs to one synchronous cleanup stack, not
+// to an object or worker; its primary record stays alive in its owning frame.
+struct mir_failure_cleanup_context_v1 {
+  const ::gti_failure_record_v2 *record;
+  const ::gti_failure_artifact_descriptor_v1 *artifact;
+};
+inline const mir_failure_cleanup_context_v1 *&mir_incoming_failure_cleanup_v1() {
+  static thread_local const mir_failure_cleanup_context_v1 *current = nullptr;
+  return current;
+}
+class mir_failure_cleanup_scope_v1 {
+public:
+  mir_failure_cleanup_scope_v1() = default;
+  mir_failure_cleanup_scope_v1(const mir_failure_cleanup_scope_v1 &) = delete;
+  mir_failure_cleanup_scope_v1 &operator=(const mir_failure_cleanup_scope_v1 &) = delete;
+  mir_failure_cleanup_scope_v1(const ::gti_failure_record_v2 *record,
+      const ::gti_failure_artifact_descriptor_v1 *artifact) {
+    activate(record, artifact);
+  }
+  void activate(const ::gti_failure_record_v2 *record,
+      const ::gti_failure_artifact_descriptor_v1 *artifact) {
+    // A nested cleanup's local failure can never replace the earliest one.
+    if (mir_incoming_failure_cleanup_v1() != nullptr) return;
+    if (record == nullptr) std::abort();
+    context_ = {record, artifact};
+    mir_incoming_failure_cleanup_v1() = &context_;
+    active_ = true;
+  }
+  ~mir_failure_cleanup_scope_v1() {
+    if (active_) {
+      if (mir_incoming_failure_cleanup_v1() != &context_) std::abort();
+      mir_incoming_failure_cleanup_v1() = nullptr;
+    }
+  }
+private:
+  mir_failure_cleanup_context_v1 context_{};
+  bool active_ = false;
+};
+inline void mir_check_incoming_cleanup_failure_v1(
+    const ::gti_failure_record_v2 *secondary,
+    const ::gti_failure_artifact_descriptor_v1 *artifact) {
+  const auto *context = mir_incoming_failure_cleanup_v1();
+  if (context == nullptr) return;
+  if (secondary == nullptr) std::abort();
+  const ::gti_failure_emergency_v2 emergency{
+      GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0), *context->record, *secondary};
+  ::gti_rt_failure_terminate_cleanup_v2(&emergency, context->artifact, artifact);
+}
+
 // The aggregate schedule uses one record cursor across its ordered steps.
 // An incoming failure stops on the next failure; otherwise the first failure
 // is retained while remaining steps drain, and a second one terminates.
@@ -1149,6 +1207,7 @@ public:
       ::gti_rt_failure_terminate_cleanup_v2(&emergency, artifact_, artifact_);
     }
     success_ = success_ && success;
+    if (!success_) context_.activate(record_, artifact_);
     return true;
   }
   bool success() const { return success_; }
@@ -1158,6 +1217,7 @@ private:
   const ::gti_failure_artifact_descriptor_v1 *artifact_;
   bool success_ = true;
   ::gti_failure_record_v2 secondary_{};
+  mir_failure_cleanup_scope_v1 context_;
 };
 
 // The verified array recipe visits immediate elements in reverse order. It
@@ -1460,6 +1520,7 @@ private:
       bool cleanup_failure,
       const ::gti_failure_artifact_descriptor_v1 *artifact, bool &success) {
     static_assert(fixed_array_extent<std::remove_cvref_t<Array>>::value == Extent);
+    mir_failure_cleanup_scope_v1 context;
     for (std::size_t index = Extent; index != 0; --index) {
       auto &element = array[index - 1];
       // The leaf arm must be the discarded statement of this constexpr
@@ -1471,6 +1532,7 @@ private:
           return false;
         }
       } else {
+        if (!success) context.activate(failure_record, artifact);
         ::gti_failure_record_v2 secondary{};
         const bool already_cleaning = !success;
         ::gti_failure_record_v2 *element_record =

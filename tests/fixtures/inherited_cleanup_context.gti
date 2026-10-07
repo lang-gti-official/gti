@@ -1,0 +1,70 @@
+#include <std/thread>
+#include <std/vector>
+#include <std/string>
+
+class Marker {
+  int tag;
+public:
+  Marker(int tag) : tag(tag) {}
+  ~Marker() { std::println(this.tag); }
+};
+
+void nested_cleanup(bool fail) {
+  Marker inner{3};
+  if (fail) {
+    int zero = 0;
+    int secondary = 11 / zero;
+  }
+}
+
+class Owner {
+  bool fail;
+public:
+  Owner(bool fail) : fail(fail) {}
+  ~Owner() {
+    std::println(2);
+    nested_cleanup(this.fail);
+  }
+};
+
+[[unsafe_transfer]] class Task {
+  bool fail_body;
+  bool fail_cleanup;
+public:
+  Task(bool fail_body, bool fail_cleanup)
+      : fail_body(fail_body), fail_cleanup(fail_cleanup) {}
+  Task(Task& other) = delete;
+  Task(Task&& other) = default;
+  void operator()() && {
+    if (this.fail_body) {
+      int zero = 0;
+      int worker_primary = 7 % zero;
+    }
+  }
+  ~Task() {
+    std::println(2);
+    nested_cleanup(this.fail_cleanup);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int phase = argc - 1;
+  Marker outer{1};
+  if (phase >= 4) {
+    auto started = std::thread::start(Task(phase == 4, phase != 6));
+    if (!started) { return 1; }
+    mut auto worker = std::move(started).value();
+    [[discard]] worker.join();
+  } else {
+    Owner owner{phase == 1 || phase == 2};
+    if (phase == 2) {
+      int zero = 0;
+      int primary = 17 / zero;
+    }
+  }
+  if (phase == 3 || phase == 6) {
+    int zero = 0;
+    int after_success = 19 / zero;
+  }
+  return 0;
+}

@@ -29092,6 +29092,14 @@ public:
       writeIndent();
       output << plannedBlock.label << ": {\n";
       ++indentation;
+      if (failureForm && block->activeFailure != 0) {
+        writeIndent();
+        output << "::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+                  "__gti_mir_cleanup_context_"
+               << block->id
+               << "(__gti_mir_failure_record, &::gti_internal::backend::"
+                  "__gti_failure_artifact_descriptor_v1);\n";
+      }
       if (failureForm && block->failureParameter != 0) {
         writeIndent();
         output << "// GTI MIR failure-record " << block->failureParameter
@@ -36034,6 +36042,12 @@ private:
                << ".status == GTI_THREAD_JOIN_WORKER_FAILURE_V1) {\n";
         ++indentation;
         writeIndent();
+        output
+            << "::gti_internal::backend::mir_check_incoming_cleanup_failure_v1("
+               "&__gti_mir_thread_join_"
+            << instruction.id << ".failure, __gti_mir_thread_join_"
+            << instruction.id << ".primary_artifact);\n";
+        writeIndent();
         output << "::gti_rt_failure_terminate_v2(\n";
         ++indentation;
         writeIndent();
@@ -36060,6 +36074,14 @@ private:
           emitAutomaticJoinFailureRecord("__gti_mir_thread_join_failure_" +
                                              std::to_string(instruction.id),
                                          instruction);
+          writeIndent();
+          output << "::gti_internal::backend::mir_check_incoming_cleanup_"
+                    "failure_v1("
+                    "&__gti_mir_thread_join_failure_"
+                 << instruction.id
+                 << ", "
+                    "&::gti_internal::backend::__gti_failure_artifact_"
+                    "descriptor_v1);\n";
           writeIndent();
           output << "::gti_rt_failure_terminate_v2(\n";
           ++indentation;
@@ -37945,6 +37967,14 @@ private:
         output << "if (!__gti_mir_call_success_" << instruction.id << ") {\n";
         ++indentation;
         writeIndent();
+        output
+            << "::gti_internal::backend::mir_check_incoming_cleanup_failure_v1("
+               "&__gti_mir_boundary_failure_"
+            << instruction.id
+            << ", "
+               "&::gti_internal::backend::__gti_failure_artifact_descriptor_v1)"
+               ";\n";
+        writeIndent();
         output << "::gti_rt_failure_terminate_v2(\n";
         ++indentation;
         writeIndent();
@@ -38216,6 +38246,21 @@ private:
         destination->parameters.size() != arguments.size()) {
       throw std::logic_error(
           "verified MIR edge lost its block-argument signature");
+    }
+    if (failureForm && edge == 1 &&
+        source.terminator.kind == MirTerminatorKind::Invoke) {
+      const auto *producer =
+          findInstruction(facts.body, source.terminator.invokeInstruction);
+      writeIndent();
+      output << "::gti_internal::backend::"
+                "mir_check_incoming_cleanup_failure_v1(";
+      if (source.activeFailure != 0 && producer != nullptr &&
+          producer->kind == MirInstructionKind::Drop)
+        output << "&__gti_mir_cleanup_failure_record_" << producer->id;
+      else
+        output << "__gti_mir_failure_record";
+      output << ", &::gti_internal::backend::"
+                "__gti_failure_artifact_descriptor_v1);\n";
     }
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       const MirBlockParameter &parameter = destination->parameters[index];
