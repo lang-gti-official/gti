@@ -159,6 +159,46 @@ int main() {
   return id(first) == 5 && id(second) == 6 ? 0 : 1;
 }
 """, 0, "6\n5\n"),
+        "generic-owning-field-switch": (OWNING + """
+enum Shape<T> { rect(int32_t width), owned(T resource) };
+class Slot<T> {
+public:
+  Shape<T> shape;
+  Slot(Shape<T> shape) : shape(std::move(shape)) {}
+};
+int main() {
+  Slot<Resource> passive = Slot<Resource>(Shape<Resource>::rect(3));
+  Slot<Resource> owning = Slot<Resource>(Shape<Resource>::owned(Resource(7)));
+  switch (passive.shape) {
+    case Shape<Resource>::rect(width): if (width != 3) { return 1; } break;
+    case Shape<Resource>::owned: return 2;
+  }
+  switch (owning.shape) {
+    case Shape<Resource>::rect: return 3;
+    case Shape<Resource>::owned(auto& resource): return resource.id() == 7 ? 0 : 4;
+  }
+}
+""", 0, "7\n"),
+        "nongeneric-owning-field-switch": (OWNING + """
+enum Shape { rect(int32_t width), owned(Resource resource) };
+class Slot {
+public:
+  Shape shape;
+  Slot(Shape shape) : shape(std::move(shape)) {}
+};
+int main() {
+  Slot passive = Slot(Shape::rect(3));
+  Slot owning = Slot(Shape::owned(Resource(9)));
+  switch (passive.shape) {
+    case Shape::rect(width): if (width != 3) { return 1; } break;
+    case Shape::owned: return 2;
+  }
+  switch (owning.shape) {
+    case Shape::rect: return 3;
+    case Shape::owned(auto& resource): return resource.id() == 9 ? 0 : 4;
+  }
+}
+""", 0, "9\n"),
         "receiver-pattern-loans": ("""
 #include <std/vector>
 enum Buffer<std::move_constructible T> { data(std::vector<T> values) };

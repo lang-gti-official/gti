@@ -63,6 +63,16 @@ had no regression protection.
 
 ## Test-gap audit (A-series, 0.379.2)
 
+### Payload enum composition repair
+
+A47 (#88), A48 (#89), and A49 (#90) now require native success. Their original
+reproducers pass C++20/C++23 at O0/O1/O3, no-elide construction, and ASan/UBSan.
+The generic enum campaign repairs general checked-reference reborrowing,
+verified owning-field reads, and fresh call-result argument placement rather
+than recognizing a particular enum or wrapper. Focused generic and nongeneric
+cases also check mutation, exact active-payload cleanup, and failure rollback.
+This is focused evidence; full combined-campaign validation remains separate.
+
 ### Fixed-array construction repair
 
 A17 (#63), A42 (#85), and A52 (#93) are resolved and their six original
@@ -157,9 +167,9 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A44 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a44-raw-audit-duplicate-warning` |
 | A45 | [#86](https://git.internal.howetotech.dev/gti-lang/gti/issues/86) Derived classes with state-bearing bases: GTI-B0003, backend ICEs, and an undefined Base::Base() at link | ice, link, rejected | `reproducers/a45-base-plus-string-field-unsupported`<br>`reproducers/a45-base-state-rollback-unsupported`<br>`reproducers/a45-derived-destructor-explicit-base`<br>`reproducers/a45-derived-destructor-generated-ctor`<br>`reproducers/a45-literal-base-argument` |
 | A46 | [#87](https://git.internal.howetotech.dev/gti-lang/gti/issues/87) Chained user subscripts g[i][j]: compound assignment and self-read are ICEs | ice | `reproducers/a46-chained-subscript-compound`<br>`reproducers/a46-chained-subscript-self-read` |
-| A47 | [#88](https://git.internal.howetotech.dev/gti-lang/gti/issues/88) MIR ICE: 'mut auto&' payload binding when the switch subject is a mut T& parameter or range element | ice | `reproducers/a47-mut-payload-binding-through-mut-ref` |
-| A48 | [#89](https://git.internal.howetotech.dev/gti-lang/gti/issues/89) C++ backend ICE: switch on an owning payload enum held in a field (obj.field) | ice | `reproducers/a48-switch-on-owning-enum-field` |
-| A49 | [#90](https://git.internal.howetotech.dev/gti-lang/gti/issues/90) C++ backend ICE: an owning payload enum call result passed directly as an argument | ice | `reproducers/a49-owning-enum-call-result-argument` |
+| A47 | [#88](https://git.internal.howetotech.dev/gti-lang/gti/issues/88) Repaired: mutable payload binding through a checked mutable reference or range element | pass | `reproducers/a47-mut-payload-binding-through-mut-ref` |
+| A48 | [#89](https://git.internal.howetotech.dev/gti-lang/gti/issues/89) Repaired: switch on an owning payload enum held in a field (obj.field) | pass | `reproducers/a48-switch-on-owning-enum-field` |
+| A49 | [#90](https://git.internal.howetotech.dev/gti-lang/gti/issues/90) Repaired: an owning payload enum call result passed directly as an argument | pass | `reproducers/a49-owning-enum-call-result-argument` |
 | A50 | [#91](https://git.internal.howetotech.dev/gti-lang/gti/issues/91) C++ backend ICE: designated construction omitting a field whose default is 'Inner inner{};' | ice | `reproducers/a50-designated-omitted-brace-default` |
 | A51 | [#92](https://git.internal.howetotech.dev/gti-lang/gti/issues/92) Structured binding over a fixed array of class elements: ICE, or invalid C++ emitted | backend, ice | `reproducers/a51-binding-over-class-array`<br>`reproducers/a51-binding-over-class-array-invalid-cpp` |
 | A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) Fixed arrays of passive unions and union-containing records | resolved: pass | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
