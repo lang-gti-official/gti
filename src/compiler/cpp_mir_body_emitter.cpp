@@ -331,6 +331,17 @@ struct ArrayFieldElementAccess {
   }
 };
 
+struct RawMemoryPlaceAccess {
+  MirValueId pointer = 0;
+  MirValueId index = 0;
+  MirProjectionKind projection = MirProjectionKind::RawDereference;
+  SemanticType pointerType = SemanticType::Unknown;
+  SemanticType pointeeType = SemanticType::Unknown;
+};
+
+[[nodiscard]] std::optional<RawMemoryPlaceAccess>
+rawMemoryPlaceAccess(const MirBody &body, const MirPlace &place);
+
 [[nodiscard]] std::optional<ArrayFieldElementAccess>
 arrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
   const bool bindingRoot =
@@ -338,7 +349,9 @@ arrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
   const bool symbolRoot =
       place.root == MirPlaceRootKind::Symbol && place.symbol != 0;
   const bool receiverRoot = place.root == MirPlaceRootKind::This;
-  if ((!bindingRoot && !symbolRoot && !receiverRoot) ||
+  const bool rawRoot =
+      place.root == MirPlaceRootKind::Value && place.value != 0;
+  if ((!bindingRoot && !symbolRoot && !receiverRoot && !rawRoot) ||
       place.projections.size() < 2) {
     return std::nullopt;
   }
@@ -348,6 +361,11 @@ arrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
                      return projection.kind == MirProjectionKind::Index;
                    });
   auto firstField = place.projections.begin();
+  if (rawRoot && firstField != place.projections.end() &&
+      (firstField->kind == MirProjectionKind::RawDereference ||
+       firstField->kind == MirProjectionKind::RawIndex)) {
+    ++firstField;
+  }
   if (bindingRoot && firstField != place.projections.end() &&
       firstField->kind == MirProjectionKind::Dereference) {
     const bool referenceRoot = std::any_of(
@@ -391,8 +409,11 @@ arrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
         candidate.symbol == place.symbol && candidate.capture == place.capture;
     const bool sameReceiver =
         receiverRoot && candidate.root == MirPlaceRootKind::This;
+    const bool sameRaw = rawRoot && candidate.root == MirPlaceRootKind::Value &&
+                         candidate.value == place.value &&
+                         rawMemoryPlaceAccess(body, candidate).has_value();
     if (candidate.id == place.id ||
-        (!sameBinding && !sameSymbol && !sameReceiver) ||
+        (!sameBinding && !sameSymbol && !sameReceiver && !sameRaw) ||
         candidate.projections != fields ||
         candidate.type.kind != SemanticType::Array) {
       continue;
@@ -438,7 +459,11 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
       place.root == MirPlaceRootKind::Binding && place.binding != 0;
   const bool symbolRoot =
       place.root == MirPlaceRootKind::Symbol && place.symbol != 0;
-  if ((!bindingRoot && !symbolRoot) || place.projections.size() < 2) {
+  const bool receiverRoot = place.root == MirPlaceRootKind::This;
+  const bool rawRoot =
+      place.root == MirPlaceRootKind::Value && place.value != 0;
+  if ((!bindingRoot && !symbolRoot && !receiverRoot && !rawRoot) ||
+      place.projections.size() < 2) {
     return std::nullopt;
   }
   const auto firstIndex =
@@ -446,8 +471,13 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
                    [](const MirPlaceProjection &projection) {
                      return projection.kind == MirProjectionKind::Index;
                    });
+  auto firstFieldPrefix = place.projections.begin();
+  if (rawRoot && firstFieldPrefix != place.projections.end() &&
+      (firstFieldPrefix->kind == MirProjectionKind::RawDereference ||
+       firstFieldPrefix->kind == MirProjectionKind::RawIndex))
+    ++firstFieldPrefix;
   if (firstIndex == place.projections.end() ||
-      !std::all_of(place.projections.begin(), firstIndex,
+      !std::all_of(firstFieldPrefix, firstIndex,
                    [](const MirPlaceProjection &projection) {
                      return projection.kind == MirProjectionKind::Field &&
                             projection.field != 0;
@@ -477,7 +507,13 @@ constantArrayElementFieldAccess(const MirBody &body, const MirPlace &place) {
     const bool sameSymbol =
         symbolRoot && candidate.root == MirPlaceRootKind::Symbol &&
         candidate.symbol == place.symbol && candidate.capture == place.capture;
-    if (candidate.id == place.id || (!sameBinding && !sameSymbol) ||
+    const bool sameReceiver =
+        receiverRoot && candidate.root == MirPlaceRootKind::This;
+    const bool sameRaw = rawRoot && candidate.root == MirPlaceRootKind::Value &&
+                         candidate.value == place.value &&
+                         rawMemoryPlaceAccess(body, candidate).has_value();
+    if (candidate.id == place.id ||
+        (!sameBinding && !sameSymbol && !sameReceiver && !sameRaw) ||
         candidate.projections != prefix ||
         candidate.type.kind != SemanticType::Array) {
       continue;
@@ -548,14 +584,6 @@ viewElementAccess(const MirBody &body, const MirPlace &place) {
     return false;
   }
 }
-
-struct RawMemoryPlaceAccess {
-  MirValueId pointer = 0;
-  MirValueId index = 0;
-  MirProjectionKind projection = MirProjectionKind::RawDereference;
-  SemanticType pointerType = SemanticType::Unknown;
-  SemanticType pointeeType = SemanticType::Unknown;
-};
 
 // Raw memory places are deliberately narrow MIR lvalue views: one verified
 // raw-pointer SSA root followed by one unchecked index or dereference and an
@@ -7785,6 +7813,99 @@ uniqueClassInstanceForType(const MirProgram &program, const SemanticType &type);
          owner->copyConstructor == SpecialMemberStatus::Generated &&
          owner->moveConstructor == SpecialMemberStatus::Generated &&
          owner->destructorStatus == SpecialMemberStatus::Generated;
+}
+
+struct PassiveArrayCopyPublication {
+  const MirInstruction *load = nullptr;
+  const MirInstruction *initialize = nullptr;
+  const MirPlace *source = nullptr;
+  const MirPlace *destination = nullptr;
+
+  [[nodiscard]] explicit operator bool() const { return load != nullptr; }
+};
+
+// A passive fixed-array copy with one adjacent binding publication has no
+// independent MIR storage or drop. Copy-construct the destination array from
+// the exact source once; do not default-construct an SSA array and assign it.
+[[nodiscard]] PassiveArrayCopyPublication
+passiveArrayCopyPublication(const MirProgram &program, const MirBody &body,
+                            MirValueId id) {
+  const auto *value = body.findValue(id);
+  const auto *load = value ? findInstruction(body, value->definition) : nullptr;
+  if (!value || !load || load->kind != MirInstructionKind::Load ||
+      load->result != id || load->destination || load->receiver ||
+      load->operands.size() != 1 ||
+      load->operands.front().kind != MirOperandKind::Copy ||
+      load->info != value->info ||
+      !cleanupFreeCopyableFixedArray(program, value->info.type) ||
+      load->operation != MirOperation::None || load->loan ||
+      load->rawMemoryAccess ||
+      load->unsafeOperation != UnsafeOperationKind::None ||
+      !load->lifecycle.empty() || !load->definedFailure.empty() ||
+      !load->localFailureSites.empty())
+    return {};
+  const auto *source = body.findPlace(load->operands.front().place);
+  const auto uses = body.usesOf(id);
+  const auto *initialize =
+      uses.size() == 1 &&
+              uses.front().kind == MirValueUseKind::InstructionOperand &&
+              uses.front().operandIndex == 0
+          ? findInstruction(body, uses.front().instruction)
+          : nullptr;
+  const auto *destination = initialize && initialize->destination
+                                ? body.findPlace(*initialize->destination)
+                                : nullptr;
+  if (!source || source->root != MirPlaceRootKind::Binding ||
+      source->binding == 0 || !source->projections.empty() ||
+      source->type != value->info.type ||
+      source->traits != value->info.traits || !source->key ||
+      !load->ownership || load->ownership->kind != OwnershipEventKind::Read ||
+      load->ownership->place != *source->key || !load->ownership->reachable ||
+      load->ownership->before != OwnershipStateSet::Available ||
+      load->ownership->after != OwnershipStateSet::Available || !initialize ||
+      !destination || initialize->kind != MirInstructionKind::Initialize ||
+      initialize->result || initialize->receiver ||
+      initialize->constructorInitializer != 0 ||
+      initialize->operands.size() != 1 ||
+      initialize->operands.front().kind != MirOperandKind::Value ||
+      initialize->operands.front().value != id ||
+      initialize->operands.front().type != value->info.type ||
+      initialize->info.type != value->info.type ||
+      destination->type != value->info.type ||
+      destination->root != MirPlaceRootKind::Binding ||
+      destination->binding == 0 || !destination->projections.empty() ||
+      destination->initiallyAvailable || !initialize->definedFailure.empty() ||
+      !initialize->localFailureSites.empty() ||
+      initialize->lifecycle.size() != 1)
+    return {};
+  const auto &activation = initialize->lifecycle.front();
+  const auto *drop = body.findDropObligation(activation.target);
+  if (activation.kind != MirLifecycleEventKind::Initialize ||
+      activation.source != 0 || activation.conditional ||
+      activation.failureCleanup || !drop ||
+      drop->kind != MirDropObligationKind::Binding ||
+      drop->place != destination->id ||
+      drop->dropType.type != destination->type ||
+      drop->dropType.requiresActiveCleanup || drop->initiallyActive ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const auto &candidate) {
+                    return candidate.generatedValue == id;
+                  }))
+    return {};
+  const auto *block = body.findBlock(value->definitionBlock);
+  if (!block)
+    return {};
+  const auto position = std::find_if(
+      block->instructions.begin(), block->instructions.end(),
+      [&](const auto &candidate) { return candidate.id == load->id; });
+  if (position == block->instructions.end() ||
+      std::next(position) == block->instructions.end() ||
+      std::next(position)->id != initialize->id)
+    return {};
+  return {.load = load,
+          .initialize = initialize,
+          .source = source,
+          .destination = destination};
 }
 
 [[nodiscard]] const MirInstruction *
@@ -27473,6 +27594,10 @@ public:
         continue;
       }
       if (valueDefinition != nullptr &&
+          passiveArrayCopyPublication(program, facts.body, value.id)) {
+        continue;
+      }
+      if (valueDefinition != nullptr &&
           (fixedArrayValueDestinationSlot(program, facts.body,
                                           *valueDefinition) != nullptr ||
            passiveFixedArrayConstructAggregate(program, facts.body,
@@ -31169,6 +31294,12 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Load) {
+      if (instruction.result && passiveArrayCopyPublication(
+                                    program, facts.body, *instruction.result)) {
+        output << "// passive array copy publishes at its adjacent binding "
+                  "initializer\n";
+        return;
+      }
       if (instruction.result &&
           instruction.info.type.kind == SemanticType::Expected) {
         const auto slot = classSsaLifetimeSlot(program, representations,
@@ -31609,6 +31740,18 @@ private:
     if (instruction.kind == MirInstructionKind::Initialize &&
         instruction.destination) {
       const MirPlace *slot = facts.body.findPlace(*instruction.destination);
+      if (slot != nullptr && instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Value) {
+        const auto copy = passiveArrayCopyPublication(
+            program, facts.body, instruction.operands.front().value);
+        if (copy.initialize == &instruction && copy.destination == slot) {
+          output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
+                 << ".construct(";
+          emitStoragePlaceValue(facts, *copy.source);
+          output << ");\n";
+          return;
+        }
+      }
       if (slot != nullptr && instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Value) {
         if (const MirInstruction *extract = inlinePayloadClassExtract(
@@ -43955,6 +44098,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       continue;
     }
+    if (const auto access = constantArrayElementFieldAccess(body, place)) {
+      const MirPlace *array = body.findPlace(access->element.array);
+      if (array == nullptr || !typeRow(array->type) || !typeRow(place.type) ||
+          !exactFieldProjectionRows(program_, representations_,
+                                    access->elementType, access->fields, 0,
+                                    place.type))
+        return false;
+      continue;
+    }
     if (place.root == MirPlaceRootKind::This) {
       if (place.projections.empty()) {
         continue;
@@ -44105,17 +44257,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             arrayElementAccess(body, place)) {
       const MirPlace *array = body.findPlace(access->array);
       if (array == nullptr || !typeRow(array->type) || !typeRow(place.type)) {
-        return false;
-      }
-      continue;
-    }
-    if (const std::optional<ConstantArrayElementFieldAccess> access =
-            constantArrayElementFieldAccess(body, place)) {
-      const MirPlace *array = body.findPlace(access->element.array);
-      if (array == nullptr || !typeRow(array->type) || !typeRow(place.type) ||
-          !exactFieldProjectionRows(program_, representations_,
-                                    access->elementType, access->fields, 0,
-                                    place.type)) {
         return false;
       }
       continue;
@@ -44461,6 +44602,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     const MirInstruction *owningDefinition =
         findInstruction(body, value.definition);
+    if (passiveArrayCopyPublication(program_, body, value.id))
+      continue;
     if (owningDefinition != nullptr &&
         fixedArrayValueDestinationSlot(program_, body, *owningDefinition) !=
             nullptr) {

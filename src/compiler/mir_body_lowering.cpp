@@ -9498,8 +9498,22 @@ private:
           continue;
         }
         emitValue(*element.index);
+        const HirValue *indexValue = findValue(*element.index);
+        const auto *constantIndex =
+            indexValue != nullptr &&
+                    indexValue->kind == HirValueKind::Literal &&
+                    indexValue->literal
+                ? std::get_if<std::uint64_t>(&*indexValue->literal)
+                : nullptr;
+        if (constantIndex == nullptr ||
+            sourceSnapshot.type.kind != SemanticType::Array ||
+            *constantIndex >= sourceSnapshot.type.arrayLength) {
+          valid = false;
+          continue;
+        }
         projected.projections.push_back({.kind = MirProjectionKind::Index,
-                                         .index = mirValueFor(*element.index)});
+                                         .index = mirValueFor(*element.index),
+                                         .constantIndex = *constantIndex});
       }
       bindingPlaces.insert_or_assign(element.binding,
                                      appendPlace(std::move(projected)));

@@ -1964,12 +1964,13 @@
     "a40-c-abi-record-pointer-array-field": {
       "finding": "A40",
       "issue": 83,
-      "outcome": "ice"
+      "native_sources": ["native/projection_records.c"],
+      "outcome": "pass"
     },
     "a40-raw-pointer-fixed-array-field-index": {
       "finding": "A40",
       "issue": 83,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a41-storage-emplace-fixed-array-silent": {
       "finding": "A41",
@@ -2073,12 +2074,12 @@
     "a51-binding-over-class-array": {
       "finding": "A51",
       "issue": 92,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a51-binding-over-class-array-invalid-cpp": {
       "finding": "A51",
       "issue": 92,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a52-struct-with-union-array": {
       "issue": 93,

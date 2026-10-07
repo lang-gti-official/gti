@@ -1853,8 +1853,23 @@ share this representation; the former single-field/single-index receiver-only
 route is removed. Borrowed record parameters also admit one leading checked
 reference `Dereference` before the field chain; an exact root reference and
 sibling array place prove the path, without copying the owner or admitting a
-raw-pointer dereference. Read-only and mutable access still come from verified
-MIR and source loan analysis.
+raw-pointer dereference through that checked-reference proof. A separate exact
+raw-pointer SSA prefix (`RawDereference` or `RawIndex`) may select the same
+field-array sibling: the raw operation retains its unsafe access metadata,
+while every subsequent fixed-array dimension retains ordinary bounds checks.
+Read-only and mutable access still come from verified MIR and source loan
+analysis. Constant in-bounds array-element field chains use the same type/field
+rows for binding, receiver and raw-pointer roots; no extra object is materialized.
+
+Structured fixed-array decomposition retains its semantically chosen ordinal
+as a MIR constant index as well as the evaluated index value. A passive class
+array copy with one adjacent binding initialization constructs that destination
+directly from its exact source array. The source's Read/Available ownership
+event, generated copy/move/destruction traits and destination activation/drop
+identity must all match. There is no default-initialized array SSA temporary,
+no extra ordinary constructor invocation, and no change to the hidden owned
+copy or its immutable element projections. Active cleanup/borrowed-state
+arrays retain their separate protocols rather than entering this fusion.
 
 Generated passive record copies may contain positive concrete
 fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
