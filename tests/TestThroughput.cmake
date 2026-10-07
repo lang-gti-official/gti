@@ -38,6 +38,8 @@ if(Python3_Interpreter_FOUND)
     retained_owner_member_pack_runtime shared_accessor_range_runtime
     shared_ownership_runtime shared_ownership_threads
     source_storage_drain_runtime
+    inherited_cleanup_context_runtime
+    cleanup_context_scope_runtime
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
     uninitialized_carrier_runtime

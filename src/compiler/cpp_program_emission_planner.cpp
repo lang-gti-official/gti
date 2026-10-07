@@ -2916,6 +2916,7 @@ public:
     writeIndent();
     output << "if (!__gti_mir_contained_state.success) {\n";
     ++indentation;
+    emitIncomingCleanupFailureCheck("&__gti_mir_contained_state.record");
     writeIndent();
     output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
@@ -7248,10 +7249,22 @@ public:
                   "    if (pending == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) "
                   "return false;\n";
         if (cleanup && cleanup->requiresActiveCleanup) {
-          output << "    const bool unwinding = pending == "
-                    "GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;\n"
-                    "    ::gti_failure_record_v2 failure{};\n    const bool "
-                    "success = ";
+          output
+              << "    const bool unwinding = pending == "
+                 "GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;\n"
+                 "    ::gti_failure_record_v2 primary{};\n"
+                 "    const ::gti_failure_artifact_descriptor_v1 "
+                 "*primary_artifact = nullptr;\n"
+                 "    ::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+                 "cleanup_context;\n"
+                 "    if (unwinding) {\n"
+                 "      if "
+                 "(!::gti_runtime_detail::copy_managed_task_cleanup_primary_v2("
+                 "primary, primary_artifact)) std::abort();\n"
+                 "      cleanup_context.activate(&primary, primary_artifact);\n"
+                 "    }\n"
+                 "    ::gti_failure_record_v2 failure{};\n    const bool "
+                 "success = ";
           if (slot)
             output << "value.destroy_cleanup_with_failure(&failure, true, "
                       "unwinding, "
@@ -7265,6 +7278,9 @@ public:
                                                    "&failure", "unwinding")
                    << ";\n";
           output
+              << "    if (!success) ::gti_internal::backend::"
+                 "mir_check_incoming_cleanup_failure_v1(&failure, "
+                 "&__gti_failure_artifact_descriptor_v1);\n"
               << "    if (!success && "
                  "!::gti_runtime_detail::record_managed_task_cleanup_failure(\n"
                  "        failure, &__gti_failure_artifact_descriptor_v1)) {\n"
@@ -7611,6 +7627,7 @@ public:
         }
         output << "&__gti_failure_record)) {\n";
         ++indentation;
+        emitIncomingCleanupFailureCheck("&__gti_failure_record");
         writeIndent();
         output << "::gti_rt_failure_terminate_v2(\n";
         ++indentation;
@@ -8076,7 +8093,17 @@ public:
            << mir.hostedStartupPlan()->entry << "\n";
   }
 
+  void emitIncomingCleanupFailureCheck(std::string_view record) {
+    writeIndent();
+    output
+        << "::gti_internal::backend::mir_check_incoming_cleanup_failure_v1("
+        << record
+        << ", "
+           "&::gti_internal::backend::__gti_failure_artifact_descriptor_v1);\n";
+  }
+
   void emitHostedFailureTermination() {
+    emitIncomingCleanupFailureCheck("&__gti_failure_record");
     writeIndent();
     output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
