@@ -1,0 +1,10 @@
+export module main;
+
+namespace limits {
+  int largest() { return 2147483647; }
+  int step() { return 1; }
+  export int headroom = largest() - step();
+#ifdef OVERFLOW_AT_STARTUP
+  export int overflowed = largest() + step();
+#endif
+}

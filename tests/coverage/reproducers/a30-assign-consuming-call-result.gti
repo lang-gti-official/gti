@@ -1,0 +1,20 @@
+// A30: assigning a consuming (&&) call result to an existing cleanup-owning binding is a
+// backend ICE.
+#include <std/string>
+class Builder {
+  mut std::string name_;
+public:
+  Builder() : name_(std::string("b")) {}
+  Builder with(std::string_view s) && {
+    this.name_.append(s);
+    return std::move(this);
+  }
+  Builder plain() { return Builder(); }
+  bool ok() { return !this.name_.empty(); }
+};
+Builder make() { return Builder(); }
+int main() {
+  mut Builder b = Builder();
+  b = std::move(b).with("x");
+  return b.ok() ? 0 : 1;
+}

@@ -1,0 +1,7 @@
+int combine(int a int b) { //!ERR
+  return a + b;
+}
+
+int main() {
+  return combine(1, 2) - 3;
+}

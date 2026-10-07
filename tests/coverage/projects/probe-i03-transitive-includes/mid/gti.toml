@@ -1,0 +1,8 @@
+manifest-version = 1
+
+[package]
+name = "mid"
+version = "0.1.0"
+
+[dependencies]
+base = { path = "../base" }

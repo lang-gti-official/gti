@@ -1,0 +1,132 @@
+// Extensible formatting: formatters for a generic class specialization,
+// a struct that delegates to a nested user formatter, a move-only class
+// carrying an owning string (honouring width/alignment through the string
+// formatter), positional arguments, a generic formattable helper, an
+// integral enum through the primary formatter, and format_to accumulation
+// over a vector of user values.
+#include <std/format>
+#include <std/string>
+#include <std/vector>
+
+namespace geo {
+struct Point {
+  int x;
+  int y;
+};
+struct Segment {
+  Point from;
+  Point to;
+};
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+};
+class Label {
+public:
+  std::string text;
+  Label(std::string text) : text(std::move(text)) {}
+  Label(Label& other) = delete;
+  Label(Label&& other) = default;
+};
+enum class Level : uint8_t { low = 1, high = 9 };
+}
+
+class std::formatter<geo::Point> {
+public:
+  expected<void, std::format_errc> format(geo::Point& value,
+      mut std::string& output, std::format_spec& spec) {
+    if (spec.alternate) {
+      return std::try_format_to(output, "[{1};{0}]", value.x, value.y);
+    }
+    return std::try_format_to(output, "({}, {})", value.x, value.y);
+  }
+};
+
+// Delegates both endpoints to the Point formatter (copies of passive values).
+class std::formatter<geo::Segment> {
+public:
+  expected<void, std::format_errc> format(geo::Segment& value,
+      mut std::string& output, std::format_spec& spec) {
+    geo::Point from = value.from;
+    geo::Point to = value.to;
+    return std::try_format_to(output, "{} -> {}", from, to);
+  }
+};
+
+// An exact specialization for one instance of an application generic.
+class std::formatter<geo::Box<int32_t>> {
+public:
+  expected<void, std::format_errc> format(geo::Box<int32_t>& value,
+      mut std::string& output, std::format_spec& spec) {
+    std::formatter<int32_t> inner{};
+    output.append("Box<");
+    expected<void, std::format_errc> written = inner.format(value.value, output, spec);
+    if (!written) { return written; }
+    output.push_back('>');
+    return;
+  }
+};
+
+// Delegates width/fill/alignment to the owning-string formatter.
+class std::formatter<geo::Label> {
+public:
+  expected<void, std::format_errc> format(geo::Label& value,
+      mut std::string& output, std::format_spec& spec) {
+    std::formatter<std::string> text{};
+    return text.format(value.text, output, spec);
+  }
+};
+
+std::string describe<T>(std::string_view name, T value) requires std::formattable<T> {
+  return std::format("{}={}", name, std::move(value));
+}
+
+int main() {
+  geo::Point origin = {.x = 0, .y = -3};
+  geo::Segment segment = {.from = {.x = 1, .y = 2}, .to = {.x = 4, .y = 6}};
+  std::string a = std::format("{} {:#}", origin, origin);
+  std::println(a);
+  if (a != "(0, -3) [-3;0]") { return 1; }
+
+  std::string b = std::format("seg {1} / {0}", origin, segment);
+  std::println(b);
+  if (b != "seg (1, 2) -> (4, 6) / (0, -3)") { return 2; }
+
+  geo::Box<int32_t> boxed = geo::Box<int32_t>(255);
+  std::string c = std::format("{:#x}|{:>6}|{}", boxed, boxed, boxed);
+  std::println(c);
+  if (c != "Box<0xff>|Box<   255>|Box<255>") { return 3; }
+
+  std::string d = std::format("[{:<6}][{:*^7}]", geo::Label(std::string("ab")),
+                              geo::Label(std::string("mid")));
+  std::println(d);
+  if (d != "[ab    ][**mid**]") { return 4; }
+
+  // The string formatter rejects a numeric specifier; the error propagates.
+  auto rejected = std::try_format("{:d}", geo::Label(std::string("x")));
+  if (rejected || rejected.error() != std::format_errc::invalid_format) { return 5; }
+  auto missing = std::try_format("{} {}", origin);
+  if (missing || missing.error() != std::format_errc::argument_count_mismatch) { return 6; }
+
+  std::string e = describe("level", geo::Level::high);
+  std::string f = describe("where", origin);
+  std::string g = describe("tag", geo::Label(std::string("v1")));
+  std::println("{} {} {}", e.view(), f.view(), g.view());
+  if (e != "level=9" || f != "where=(0, -3)" || g != "tag=v1") { return 7; }
+  if (std::format("{:03}", geo::Level::low) != "001") { return 8; }
+
+  mut std::vector<geo::Point> path{};
+  for (mut int i = 0; i < 4; i++) {
+    geo::Point next = {.x = i, .y = i * i};
+    path.push_back(next);
+  }
+  mut std::string joined{};
+  for (auto& p : path) {
+    geo::Point copy = p;
+    std::format_to(joined, "{};", copy);
+  }
+  std::println(joined);
+  if (joined != "(0, 0);(1, 1);(2, 4);(3, 9);") { return 9; }
+  return 0;
+}

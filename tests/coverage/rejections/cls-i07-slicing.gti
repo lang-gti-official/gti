@@ -1,0 +1,17 @@
+// INVALID: copying a derived object into a base value (slicing).
+class Base {
+public:
+  int32_t k = 1;
+  Base() {}
+  virtual int32_t f() { return 1; }
+};
+class Derived : public Base {
+public:
+  Derived() {}
+  int32_t f() override { return 2; }
+};
+int main() {
+  Derived d = Derived();
+  Base b = d;
+  return b.f() - 1;
+}

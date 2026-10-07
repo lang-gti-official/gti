@@ -1,0 +1,19 @@
+// A19: a trailing requires-clause fact is not available when validating Box<T>.
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+concept boxed_int<B> = requires(B& b) { { b.get() } -> int32_t; };
+
+int32_t read<T>(Box<T>& box)
+  requires std::copyable<T> && boxed_int<Box<T>> {
+  return box.get();
+}
+
+int main() {
+  Box<int32_t> b = Box<int32_t>(7);
+  return read(b) == 7 ? 0 : 1;
+}

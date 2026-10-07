@@ -1,0 +1,18 @@
+manifest-version = 1
+
+[package]
+name = "i01-import-cycle"
+version = "0.1.0"
+
+[modules]
+alpha = "src/alpha.gti"
+beta = "src/beta.gti"
+gamma = "src/gamma.gti"
+
+[targets.named]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.selfimport]
+kind = "test"
+root = "src/self_main.gti"

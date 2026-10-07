@@ -1,0 +1,18 @@
+// A61: a designated list as an argument is reported as an ineligible struct instead of a
+// missing destination type.
+// Diagnostic quality: a designated list in argument position. The message
+// claims the struct is ineligible ("requires a struct with public value
+// fields, no declared constructors, and no inheritance ...") although Point
+// satisfies every listed condition; the real issue is the missing
+// destination type (static-semantics.md:370-379 only defines it for a
+// declared destination).
+#include <std/vector>
+struct Point {
+  int x;
+  int y;
+};
+int main() {
+  mut std::vector<Point> points{};
+  points.push_back({.x = 1, .y = 2});
+  return int(points.size());
+}

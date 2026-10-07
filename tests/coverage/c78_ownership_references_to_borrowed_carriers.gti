@@ -1,0 +1,75 @@
+// References to objects that hold checked borrows: a mutable-reference
+// session carrier passed by mut reference, aliased, relayed by a free
+// function returning a reference, moved into an application field and exposed
+// through receiver-tied reference accessors, then owner reuse afterwards.
+class Store {
+  mut int value_ = 0;
+
+public:
+  Store() {}
+  void add(int amount) mut { this.value_ += amount; }
+  int get() { return this.value_; }
+};
+
+class Session {
+  mut Store& store_;
+  int id_;
+
+public:
+  Session(mut Store& store, int id) : store_(store), id_(id) {}
+  void bump() mut { this.store_.add(this.id_); }
+  int read() { return this.store_.get(); }
+  int id() { return this.id_; }
+};
+
+class App {
+  mut Session session_;
+  mut int ticks_ = 0;
+
+public:
+  App(Session session) : session_(std::move(session)) {}
+  mut Session& session() mut { return this.session_; }
+  Session& view() { return this.session_; }
+  void tick() mut {
+    this.ticks_ += 1;
+    this.session_.bump();
+  }
+  int ticks() { return this.ticks_; }
+};
+
+void drive(mut Session& session, int rounds) {
+  for (mut int i = 0; i < rounds; i += 1) {
+    session.bump();
+  }
+}
+
+int peek(Session& session) { return session.read(); }
+Session& same(Session& session) { return session; }
+
+int main() {
+  mut Store store{};
+  {
+    mut Session session{store, 2};
+    drive(session, 3);
+    mut Session& alias = session;
+    alias.bump();
+    if (peek(same(session)) != 8) { return 1; }
+    Session& again = same(session);
+    if (again.id() != 2) { return 2; }
+  }
+  store.add(1);
+  if (store.get() != 9) { return 3; }
+  {
+    mut App app{Session(store, 5)};
+    app.tick();
+    drive(app.session(), 1);
+    if (peek(app.view()) != 19 || app.ticks() != 1) { return 4; }
+    Session& seen = app.view();
+    if (seen.read() != 19) { return 5; }
+  }
+  store.add(1);
+  if (store.get() != 20) { return 6; }
+  std::println(store.get());
+  std::println("v12 ok");
+  return 0;
+}

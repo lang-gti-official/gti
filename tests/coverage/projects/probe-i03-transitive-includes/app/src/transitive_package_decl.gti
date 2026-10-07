@@ -1,0 +1,6 @@
+#include <mid/stats>
+
+int main() {
+  // base::core::twice is visible to mid/stats, not to this unit.
+  return base::core::twice(mid::stats::quadruple(1)) - 8;
+}

@@ -1,0 +1,13 @@
+export module core;
+#include "../trace.gti"
+
+namespace core {
+  int core_step = trace::record(1);
+  export int core_value() { return core_step; }
+  export struct Pair {
+    int a;
+    int b;
+    Pair(int x, int y) : a(x), b(y) {}
+    int sum() { return a + b; }
+  };
+}

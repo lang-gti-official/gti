@@ -1,0 +1,115 @@
+// expected<T&, E> borrowed from a vector field of move-only records:
+// receiver-derived returns from inside a loop, `?` relayed through a
+// method and a free function, `?` inside a loop, `.expect` on fresh and
+// moved carriers, carrier copies, and owner mutation after the last use.
+#include <std/string>
+#include <std/vector>
+
+enum class find_errc { missing, disabled };
+
+class Command {
+  std::string name_;
+  bool enabled_;
+
+public:
+  Command(std::string_view name, bool enabled)
+      : name_(std::string(name)), enabled_(enabled) {}
+  Command(Command& other) = delete;
+  Command(Command&& other) = default;
+  std::string_view name() { return this.name_.view(); }
+  bool enabled() { return this.enabled_; }
+};
+
+class Table {
+  mut std::vector<Command> commands_{};
+
+public:
+  Table() {}
+  void add(std::string_view name, bool enabled) mut {
+    this.commands_.push_back(Command(name, enabled));
+  }
+  expected<Command&, find_errc> find(std::string_view name) {
+    for (mut std::size_t i = std::size_t(0); i < this.commands_.size();
+         i += std::size_t(1)) {
+      if (this.commands_[i].name() == name) {
+        return this.commands_[i];
+      }
+    }
+    return unexpected(find_errc::missing);
+  }
+  expected<Command&, find_errc> find_enabled(std::string_view name) {
+    Command& found = ?this.find(name);
+    if (!found.enabled()) {
+      return unexpected(find_errc::disabled);
+    }
+    return found;
+  }
+};
+
+expected<Command&, find_errc> relay(Table& table, std::string_view name) {
+  // Workaround: `Command& c = ?table.find(name); return c;` returns the
+  // Table instead of the Command (see red/e2.gti, red/e10.gti).
+  return table.find(name);
+}
+
+expected<int, find_errc> combined_length(Table& table, std::string_view a,
+                                         std::string_view b) {
+  Command& first = ?table.find(a);
+  Command& second = ?table.find_enabled(b);
+  // Workaround: `view_call().size()` ICEs in the backend (see red/d15.gti).
+  std::string_view a_name = first.name();
+  std::string_view b_name = second.name();
+  return int(a_name.size() + b_name.size());
+}
+
+expected<int, find_errc> repeated_length(Table& table, int rounds) {
+  mut int total = 0;
+  for (mut int i = 0; i < rounds; i += 1) {
+    if (i % 2 == 0) {
+      Command& command = ?table.find("build");
+      std::string_view name = command.name();
+      total += int(name.size());
+    } else {
+      auto carrier = relay(table, "test");
+      Command& command = ?std::move(carrier);
+      std::string_view name = command.name();
+      total += int(name.size());
+    }
+  }
+  return total;
+}
+
+int main() {
+  mut Table table{};
+  table.add("build", true);
+  table.add("test", true);
+  table.add("deploy", false);
+
+  auto ok = combined_length(table, "build", "test");
+  if (!ok || ok.value() != 9) { return 1; }
+  auto missing = combined_length(table, "nope", "test");
+  if (missing || missing.error() != find_errc::missing) { return 2; }
+  auto disabled = combined_length(table, "build", "deploy");
+  if (disabled || disabled.error() != find_errc::disabled) { return 3; }
+  auto repeated = repeated_length(table, 4);
+  if (!repeated || repeated.value() != 18) { return 4; }
+
+  {
+    Command& test = table.find("test").expect("test must exist");
+    Command& deploy = relay(table, "deploy").expect("deploy must exist");
+    if (test.name() != "test" || deploy.enabled()) { return 5; }
+    auto carrier = table.find("build");
+    auto copy = carrier;
+    Command& first = carrier.value();
+    Command& second = std::move(copy).expect("copied carrier");
+    if (first.name() != second.name()) { return 6; }
+  }
+
+  // Every borrow has ended; the owner may grow again.
+  table.add("lint", true);
+  auto lint = table.find_enabled("lint");
+  if (!lint || lint.value().name() != "lint") { return 7; }
+  std::println(lint.value().name());
+  std::println("v03 ok");
+  return 0;
+}

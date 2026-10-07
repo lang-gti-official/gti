@@ -1,0 +1,16 @@
+// A01: assigning a class value into a class-typed field is a backend ICE
+// (GTI-B0001); the same assignment into a local binding builds and runs.
+struct Inner {
+  mut int value = 0;
+};
+
+struct Outer {
+  mut Inner inner = Inner();
+};
+
+int main() {
+  mut Outer outer{};
+  Inner replacement = {.value = 5};
+  outer.inner = replacement;
+  return outer.inner.value == 5 ? 0 : 1;
+}

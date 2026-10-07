@@ -1,0 +1,7 @@
+int main() {
+  int offset = 3;
+  auto f = [offset](int value) -> int {
+    return "oops"; //!ERR
+  };
+  return f(1);
+}

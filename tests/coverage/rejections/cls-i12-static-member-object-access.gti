@@ -1,0 +1,12 @@
+// INVALID: a static field accessed through an object, and `this` in a static method.
+class Counter {
+public:
+  static mut int32_t hits = 0;
+  int32_t local = 0;
+  Counter() {}
+  static int32_t bad() { return this.local; }
+};
+int main() {
+  Counter c = Counter();
+  return c.hits;
+}

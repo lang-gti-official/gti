@@ -1,0 +1,22 @@
+// Compiler-supplied flags (manifest + -D) and includer flags are visible here.
+#ifdef FEATURE_A
+namespace dep {
+  int feature_a_bonus() { return 100; }
+}
+#else
+namespace dep {
+  int feature_a_bonus() { return 0; }
+}
+#endif
+
+#ifdef APP_LOCAL
+namespace dep {
+  constexpr bool saw_app_local = true;
+}
+#else
+namespace dep {
+  constexpr bool saw_app_local = false;
+}
+#endif
+
+#define DEP_DEFINED

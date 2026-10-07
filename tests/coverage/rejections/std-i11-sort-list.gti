@@ -1,0 +1,8 @@
+// INVALID: whole-container std::sort is defined for std::vector only.
+#include <std/algorithm>
+#include <std/list>
+int main() {
+  mut std::list<int> values = {3, 1, 2};
+  std::sort(values);
+  return values.front();
+}

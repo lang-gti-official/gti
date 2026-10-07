@@ -1,0 +1,6 @@
+import lib;
+
+int main() {
+  lib::Secret secret = lib::make_secret();
+  return secret.value - 42;
+}

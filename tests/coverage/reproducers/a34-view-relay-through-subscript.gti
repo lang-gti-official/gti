@@ -1,0 +1,22 @@
+// A34: a string_view relayed through a receiver-tied subscript is rejected, while the
+// identical std::string& relay is accepted.
+#include <std/string>
+#include <std/vector>
+class Record {
+  std::string key_;
+public:
+  Record(std::string_view key) : key_(std::string(key)) {}
+  std::string& key_ref() { return this.key_; }
+  std::string_view key() { return this.key_.view(); }
+};
+class Store {
+  mut std::vector<Record> records_{};
+public:
+  Store() { this.records_.push_back(Record("alpha")); }
+  std::string& key_ref_at(std::size_t i) { return this.records_[i].key_ref(); }
+  std::string_view key_at(std::size_t i) { return this.records_[i].key(); }
+};
+int main() {
+  Store s{};
+  return s.key_ref_at(std::size_t(0)) == "alpha" ? 0 : 1;
+}

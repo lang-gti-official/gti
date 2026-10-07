@@ -1,0 +1,15 @@
+class Account {
+  mut int balance = 0;
+  void audit() {}
+
+public:
+  Account() {}
+  int current() { return this.balance; }
+};
+
+int main() {
+  mut Account a{};
+  a.balance = 5; //!ERR
+  a.audit(); //!ERR
+  return a.current();
+}

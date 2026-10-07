@@ -1,0 +1,9 @@
+constexpr int32_t forever(int32_t n) {
+  return forever(n + 1); //!ERR
+}
+
+constexpr int32_t value = forever(0); //!ERR
+
+int main() {
+  return value;
+}

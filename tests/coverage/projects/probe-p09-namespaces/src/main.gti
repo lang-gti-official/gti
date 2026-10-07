@@ -1,0 +1,35 @@
+#include "engine/math_a.gti"
+#include "engine/math_b.gti"
+#include "engine/math_c.gti"
+
+namespace m2 = engine::math;
+namespace deep = engine::math::detail;
+
+int main() {
+  if (engine::math::add(1, 2) != 3) {
+    return 1;
+  }
+  if (engine::math::add(1, 2, 3) != 6) {
+    return 2;
+  }
+  if (em::add(5, 5) != 10 || m2::add(1, 1, 1) != 3) {
+    return 3;
+  }
+  if (engine::math::from_a() != 1 || engine::math::from_b() != 2) {
+    return 4;
+  }
+  if (deep::depth() != 3 || deep::widened() != 42) {
+    return 5;
+  }
+  engine::math::Counter::bump();
+  em::Counter::bump();
+  if (engine::math::Counter::created != 2 || m2::Counter::limit != 10) {
+    return 6;
+  }
+  em::scalar total = em::add(20, 22);
+  if (total != 42) {
+    return 7;
+  }
+  std::println("p09 namespaces ok");
+  return 0;
+}

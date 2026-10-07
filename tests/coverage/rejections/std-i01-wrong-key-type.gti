@@ -1,0 +1,8 @@
+// INVALID: inserting an int key into a map keyed by owning strings.
+#include <std/map>
+#include <std/string>
+int main() {
+  mut std::map<std::string, int> counts{};
+  [[discard]] counts.insert(1, 2);
+  return 0;
+}

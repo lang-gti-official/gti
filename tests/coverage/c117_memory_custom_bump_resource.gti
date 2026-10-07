@@ -1,0 +1,84 @@
+// Valid: a user-written resource over an inline array feeds resource_vector
+// growth, a fixed resource_storage of owning objects, and relocation between
+// two distinct resources of the same type. Recoverable exhaustion must leave
+// elements intact and consume the argument; everything is released once.
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+#include <std/string>
+#include "support/bump.gti"
+
+mut int32_t drops = 0;
+
+class Cell {
+  std::string text;
+  int32_t weight;
+public:
+  Cell(std::string text, int32_t weight) : text(std::move(text)), weight(weight) {}
+  Cell(Cell& other) = delete;
+  Cell(Cell&& other) = default;
+  ~Cell() { drops += 1; }
+  int32_t value() { return this.weight; }
+  std::string_view name() { return this.text.view(); }
+};
+
+int32_t fill(std::resource_ref<probe::Bump> first, std::resource_ref<probe::Bump> second) {
+  mut std::resource_vector<Cell, probe::Bump> cells{first};
+  for (mut int32_t i = 0; i < 9; i++) {
+    cells.emplace_back(std::string("cell"), i);
+  }
+  // Growth 4 -> 8 -> 16 released the two earlier regions.
+  if (cells.size() != std::size_t(9) || cells.capacity() != std::size_t(16)) { return 1; }
+  if (first.get().live() != std::size_t(1)) { return 2; }
+  mut int32_t sum = 0;
+  for (auto& cell : cells) { sum += cell.value(); }
+  if (sum != 36) { return 3; }
+  if (drops != 0) { return 4; }
+
+  // A fixed storage on the second resource; relocate three cells across.
+  mut std::resource_storage<Cell, probe::Bump> parked{second};
+  auto reserved = parked.try_allocate(std::size_t(4));
+  if (!reserved) { return 5; }
+  mut std::resource_storage<Cell, probe::Bump> staging{first};
+  // The first resource has budget left for exactly one more region.
+  auto staged = staging.try_allocate(std::size_t(3));
+  if (!staged) { return 6; }
+  staging.emplace(std::size_t(0), std::string("a"), 100);
+  staging.emplace(std::size_t(1), std::string("b"), 200);
+  staging.emplace(std::size_t(2), std::string("c"), 300);
+  staging.relocate_to(parked, std::size_t(3));
+  if (staging.initialized(std::size_t(0)) || !parked.initialized(std::size_t(2))) { return 7; }
+  if (parked.get(std::size_t(1)).name() != "b" || parked.get(std::size_t(2)).value() != 300) { return 8; }
+
+  // The first resource is now out of budget: growth fails recoverably.
+  for (mut int32_t i = 9; i < 16; i++) { cells.emplace_back(std::string("fill"), i); }
+  auto full = cells.try_push_back(Cell(std::string("overflow"), -1));
+  if (full || full.error() != std::alloc_errc::resource_exhausted) { return 9; }
+  // The rejected argument was consumed (destroyed) and nothing else changed.
+  if (drops != 1 || cells.size() != std::size_t(16) || cells.back().value() != 15) { return 10; }
+  auto retry = cells.try_emplace_back(std::string("again"), -2);
+  if (retry) { return 11; }
+  cells.pop_back();
+  if (drops != 2) { return 12; }
+  return 0;
+}
+
+int main() {
+  probe::Bump first{4, false};
+  probe::Bump second{1, false};
+  unsafe {
+    // Both resources hand out disjoint, aligned regions of their own inline
+    // buffers until matching release, and are never reset or moved meanwhile.
+    std::resource_ref<probe::Bump> a = std::bind_resource(first);
+    std::resource_ref<probe::Bump> b = std::bind_resource(second);
+    int32_t status = fill(a, b);
+    if (status != 0) { return status; }
+  }
+  // 15 live cells + 3 parked cells were destroyed; plus 2 earlier drops.
+  if (drops != 20) { return 20; }
+  if (first.live() != std::size_t(0) || second.live() != std::size_t(0)) { return 21; }
+  if (first.issued() != uint64_t(4) || second.issued() != uint64_t(1)) { return 22; }
+  if (first.released_bytes() == uint64_t(0) || second.released_bytes() == uint64_t(0)) { return 23; }
+  std::println("bump resource ok");
+  return 0;
+}

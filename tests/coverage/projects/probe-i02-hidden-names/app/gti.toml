@@ -1,0 +1,36 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+lib = { path = "../lib" }
+
+[targets.private_function]
+kind = "executable"
+root = "src/private_function.gti"
+
+[targets.private_type]
+kind = "test"
+root = "src/private_type.gti"
+
+[targets.private_import]
+kind = "test"
+root = "src/private_import.gti"
+
+[targets.leaked_alias]
+kind = "test"
+root = "src/leaked_alias.gti"
+
+[targets.include_bypass]
+kind = "test"
+root = "src/include_bypass.gti"
+
+[targets.private_overload]
+kind = "test"
+root = "src/private_overload.gti"
+
+[targets.transitive_dependency_module]
+kind = "test"
+root = "src/transitive_module.gti"

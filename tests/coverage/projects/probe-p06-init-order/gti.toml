@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "p06-init-order"
+version = "0.1.0"
+
+[targets.p06]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.reversed]
+kind = "test"
+root = "tests/reversed.gti"
+
+[profiles.release]
+optimization = 3

@@ -1,0 +1,19 @@
+// A47: a 'mut auto&' payload binding when the switch subject is a 'mut T&' is a MIR ICE.
+enum class Cell { empty, value(int32_t v) };
+void bump(mut Cell& c) {
+  switch (c) {
+  case Cell::value(mut auto& v):
+    v = v + 1;
+    break;
+  case Cell::empty:
+    break;
+  }
+}
+int main() {
+  mut Cell c = Cell::value(4);
+  bump(c);
+  switch (c) {
+  case Cell::value(v): return v - 5;
+  case Cell::empty: return 1;
+  }
+}

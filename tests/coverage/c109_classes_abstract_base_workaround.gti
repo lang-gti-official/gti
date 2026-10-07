@@ -1,0 +1,91 @@
+// WORKAROUND variant of v11 (base constructor argument passed through a
+// parameter instead of a literal).
+// Abstract state-bearing class base with pure virtual hooks (`= 0`), a
+// non-virtual template method calling the hooks, a class that both derives
+// from the abstract base and implements an interface, mut virtual overrides,
+// a virtual comparison operator, and dispatch through Base&, Interface&,
+// unique_ptr<Base> and unique_ptr<Interface>.
+#include <std/format>
+#include <std/memory>
+#include <std/vector>
+
+interface Named {
+  int32_t name_code();
+};
+
+class Report {
+  int32_t base_score;
+  mut int32_t runs = 0;
+public:
+  Report(int32_t base_score) : base_score(base_score) {}
+  virtual int32_t header() = 0;
+  virtual int32_t body(int32_t input) = 0;
+  virtual int32_t footer() { return 1; }
+  virtual void tick() mut { this.runs += 1; }
+  virtual bool operator==(int32_t code) { return code == this.base_score; }
+
+  // non-virtual template method
+  int32_t render(int32_t input) {
+    return this.header() * 10000 + this.body(input) * 10 + this.footer() + this.base_score * 0;
+  }
+  int32_t run_count() { return this.runs; }
+  int32_t score() { return this.base_score; }
+};
+
+class SalesReport : public Report, public Named {
+public:
+  SalesReport(int32_t score) : Report(score) {}
+  int32_t header() override { return 7; }
+  int32_t body(int32_t input) override { return input * 2; }
+  int32_t name_code() override { return 100; }
+};
+
+class AuditReport : public Report, public Named {
+public:
+  AuditReport(int32_t score) : Report(score) {} // WORKAROUND: `AuditReport() : Report(50) {}` ICEs
+  int32_t header() override { return 3; }
+  int32_t body(int32_t input) override { return input + 1; }
+  int32_t footer() override { return 9; }
+  void tick() mut override { this.tick_twice_helper(); }
+  bool operator==(int32_t code) override { return code == 3; }
+  int32_t name_code() override { return 200; }
+private:
+  void tick_twice_helper() mut {}
+};
+
+int32_t render_twice(mut Report& r, int32_t input) {
+  r.tick();
+  r.tick();
+  return r.render(input);
+}
+
+int32_t code_of(Named& n) { return n.name_code(); }
+
+int main() {
+  mut SalesReport sales = SalesReport(20);
+  mut AuditReport audit = AuditReport(50);
+  if (render_twice(sales, 5) != 70101) { return 1; }
+  if (render_twice(audit, 5) != 30069) { return 2; }
+  if (sales.run_count() != 2 || audit.run_count() != 0) { return 3; }
+  if (!(sales == 20) || sales == 3) { return 4; }
+  if (!(audit == 3) || audit == 50) { return 5; }
+  if (code_of(sales) + code_of(audit) != 300) { return 6; }
+
+  mut std::vector<std::unique_ptr<Report>> reports{};
+  reports.push_back(std::upcast_unique<Report, SalesReport>(std::make_unique<SalesReport>(1)));
+  reports.push_back(std::upcast_unique<Report, AuditReport>(std::make_unique<AuditReport>(50)));
+  mut int32_t sum = 0;
+  for (mut auto& r : reports) {
+    r->tick();
+    sum += r->render(1);
+  }
+  // SalesReport(1): 7*10000 + 2*10 + 1 = 70021 ; Audit: 30000 + 20 + 9 = 30029
+  if (sum != 100050) { return 7; }
+  if (reports[std::size_t(0)]->run_count() != 1) { return 8; }
+
+  std::unique_ptr<Named> named = std::upcast_unique<Named, AuditReport>(std::make_unique<AuditReport>(50));
+  if (named->name_code() != 200) { return 9; }
+
+  std::println("reports ok {}", sum);
+  return 0;
+}

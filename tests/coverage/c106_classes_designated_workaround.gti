@@ -1,0 +1,106 @@
+// WORKAROUND variant of v08 (nested struct default spelled `= Limits()`).
+// Designated construction of nested structs declared inside `namespace a::b`,
+// nested designated lists inside collection-initialized vector fields,
+// omitted fields with defaults, enum- and string-typed fields, class-scoped
+// alias field types, structured bindings over a designated struct, and a
+// user collection type initialized with a list of designated structs.
+#include <std/format>
+#include <std/string>
+#include <std/vector>
+
+namespace app::config {
+enum class Level { debug, info, warn };
+
+struct Limits {
+  using count_type = int32_t;
+  count_type retries = 3;
+  count_type timeout_ms = 1000;
+};
+
+struct Endpoint {
+  std::string host{};
+  int32_t port = 80;
+  Limits limits = Limits(); // WORKAROUND: `Limits limits{};` ICEs when omitted
+};
+
+struct Service {
+  std::string name{};
+  Level level = Level::info;
+  std::vector<Endpoint> endpoints{};
+  std::vector<std::string> tags{};
+};
+
+class Registry {
+public:
+  mut std::vector<Service> services{};
+  mut int32_t inserts = 0;
+  Registry() {}
+  static Registry collection_init(uint64_t count) {
+    mut Registry r = Registry();
+    r.services.reserve(std::size_t(count));
+    return std::move(r);
+  }
+  static Registry collection_insert(mut Registry r, Service s) {
+    r.services.push_back(std::move(s));
+    r.inserts += 1;
+    return std::move(r);
+  }
+  int32_t total_ports() {
+    mut int32_t sum = 0;
+    for (auto& s : this.services) {
+      for (auto& e : s.endpoints) { sum += e.port; }
+    }
+    return sum;
+  }
+};
+}
+
+struct Pair {
+  int32_t left = 0;
+  int32_t right = 0;
+};
+
+int32_t doubled(int32_t v) { return v * 2; }
+
+namespace cfg = app::config;
+
+int main() {
+  cfg::Service api = {
+    .name = std::string("api"),
+    .level = cfg::Level::warn,
+    .endpoints = {
+      {.host = std::string("a.local"), .port = 8080},
+      {.host = std::string("b.local"), .limits = {.retries = 5}},
+      {.host = std::string("c.local"), .port = 9090, .limits = {.retries = 1, .timeout_ms = 50}},
+    },
+    .tags = {std::string("public"), std::string("v2")},
+  };
+  if (api.endpoints.size() != std::size_t(3)) { return 1; }
+  if (api.endpoints[std::size_t(1)].port != 80) { return 2; }
+  if (api.endpoints[std::size_t(1)].limits.retries != 5) { return 3; }
+  if (api.endpoints[std::size_t(1)].limits.timeout_ms != 1000) { return 4; }
+  if (api.endpoints[std::size_t(2)].limits.timeout_ms != 50) { return 5; }
+  if (api.level != cfg::Level::warn) { return 6; }
+  if (api.tags[std::size_t(1)] != "v2") { return 7; }
+
+  cfg::Service quiet{.name = std::string("quiet")};
+  if (quiet.level != cfg::Level::info || !quiet.endpoints.empty()) { return 8; }
+
+  cfg::Registry reg = {
+    {.name = std::string("one"), .endpoints = {{.port = 1}, {.port = 2}}},
+    {.name = std::string("two"), .endpoints = {{.port = 3}}},
+    {.name = std::string("three")},
+  };
+  if (reg.inserts != 3 || reg.total_ports() != 6) { return 9; }
+  if (reg.services[std::size_t(2)].name != "three") { return 10; }
+
+  Pair p = {.left = doubled(4), .right = doubled(5)};
+  auto [l, r] = p;
+  if (l + r != 18) { return 11; }
+
+  cfg::Limits::count_type limit = api.endpoints[std::size_t(0)].limits.retries;
+  if (limit != 3) { return 12; }
+
+  std::println("{} endpoints, registry ports {}", api.endpoints.size(), reg.total_ports());
+  return 0;
+}

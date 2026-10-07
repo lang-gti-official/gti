@@ -1,0 +1,7 @@
+namespace flagged {
+#ifdef DEP_FLAG
+constexpr bool feature_enabled = true;
+#else
+constexpr bool feature_enabled = false;
+#endif
+}

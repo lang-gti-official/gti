@@ -1,0 +1,6 @@
+namespace geometry { //!ERR
+  int area(int w, int h) { return w * h; }
+
+int main() {
+  return geometry::area(2, 3) - 6;
+}

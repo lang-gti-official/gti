@@ -1,0 +1,23 @@
+#include <corelib/core>
+
+namespace app::shapes {
+  class Tri : public base::core::Shape {
+    int base_len;
+    int height;
+
+  public:
+    Tri(int b, int h) : base_len(b), height(h) {}
+    int area() override { return base_len * height / 2; }
+    int sides() override { return 3; }
+  };
+
+  class Quad : public base::core::Shape {
+    int w;
+    int h;
+
+  public:
+    Quad(int a, int b) : w(a), h(b) {}
+    int area() override { return w * h; }
+    int sides() override { return 4; }
+  };
+}

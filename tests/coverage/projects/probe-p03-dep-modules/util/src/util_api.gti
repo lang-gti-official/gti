@@ -1,0 +1,7 @@
+export module main;
+
+namespace util {
+  int offset() { return 1; }
+  export int next(int value) { return value + offset(); }
+  export constexpr int limit = 64;
+}

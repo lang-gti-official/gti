@@ -1,0 +1,12 @@
+// INVALID: a fallible borrow cannot be stored in a field (expected.md:109).
+enum class errc { missing };
+class Cache {
+  expected<int&, errc> slot_;
+public:
+  Cache(int& value) : slot_(value) {}
+};
+int main() {
+  int value = 1;
+  Cache cache{value};
+  return 0;
+}

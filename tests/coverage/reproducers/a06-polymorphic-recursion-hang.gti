@@ -1,0 +1,18 @@
+// A06: invalid polymorphic recursion (each call instantiates depth<Box<T>>) never terminates;
+// it must stop with a diagnostic.
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+};
+
+int depth<T>(T value, int n) {
+  if (n == 0) {
+    return 0;
+  }
+  return 1 + depth(Box<T>(value), n - 1);
+}
+
+int main() {
+  return depth(1, 3) - 3;
+}

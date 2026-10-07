@@ -1,0 +1,8 @@
+// A09: a rejected '#if' condition is followed by a false unmatched-'#endif' error.
+#if FLAG
+int v() { return 1; }
+#endif
+
+int main() {
+  return 0;
+}

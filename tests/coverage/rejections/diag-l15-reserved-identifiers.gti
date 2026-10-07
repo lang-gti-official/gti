@@ -1,0 +1,5 @@
+int main() {
+  int __gti_counter = 1; //!ERR
+  int template = 2; //!ERR
+  return __gti_counter + template;
+}

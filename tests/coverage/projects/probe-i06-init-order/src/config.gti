@@ -1,0 +1,6 @@
+export module config;
+
+namespace config {
+  int base = 4;
+  export int value() { return base; }
+}
