@@ -24,7 +24,7 @@
     "stdlib/std/json.gti": "3de0a06f6b25109551714c74f21f62fe9421f97e520efd73a428178dc8af21f9",
     "stdlib/std/list.gti": "f208f55111c02facf979574b9eceab97ab9676bb91cb8e52ff5a27ee09ca8244",
     "stdlib/std/map.gti": "39a314ff20943e99786f0165a77baca5d9276a73c6b31d253d8a5967647d706b",
-    "stdlib/std/memory.gti": "3de07e5167024af2b3132525b3ada0f0f72e450d214edee209b6cd3d1065713e",
+    "stdlib/std/memory.gti": "a71cf4887132dae9234f7f3247602fca658d00e807a28ee90814f43bfd890f66",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
@@ -663,6 +663,13 @@
       "source": "tests/fixtures/json_expected_value_backend_bug.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "manual-object-lifetimes",
+      "mode": "run",
+      "source": "examples/122-manual-object-lifetimes.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "42\nrelocated\n43\n", "stderr": ""}
     },
     {
       "id": "memory-layout",
@@ -2133,6 +2140,15 @@
       "case_ids": ["memory-layout"],
       "required_instantiations": ["std::layout_of<Envelope<Owner>>()", "std::layout_of<Owner>()", "std::layout_of<Pinned>()", "std::layout_of<int32_t>()", "std::layout_of<uint64_t[3]>()"],
       "evidence": ["examples/119-runtime-object-layout.gti", "tests/runtime_object_layout_tests.cpp", "tests/runtime_object_layout_test.py", "docs/language/standard-library.md"]
+    },
+    {
+      "id": "memory.manual-lifetimes",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::construct_at", "std::destroy_at", "std::relocate_at", "std::uninitialized", "std::uninitialized::data"],
+      "case_ids": ["manual-object-lifetimes"],
+      "required_instantiations": ["unrelated immovable Sensor", "owning std::string", "fixed-address inline owner with checked read-only and exclusive access"],
+      "evidence": ["examples/122-manual-object-lifetimes.gti", "tests/uninitialized_carrier_tests.cpp", "tests/uninitialized_carrier_runtime_test.py", "tests/object_lifetime_tests.cpp", "tests/object_construction_runtime_test.py", "tests/object_relocation_runtime_test.py", "docs/language/raw-pointers.md"]
     },
     {
       "id": "memory.scaffold",

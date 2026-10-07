@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Inline storage starts/ends unrelated object lifetimes without allocation."""
+import pathlib
 from lambda_pack_invocation_runtime_test import main
 
 if __name__ == "__main__":
-    main(names=("uninitialized_carrier",), cases={
+    root = pathlib.Path(__file__).resolve().parent.parent
+    main(names=("uninitialized_carrier", "inline_owner_example"), cases={
         "uninitialized_carrier": [((), (0, "42\n7\n19\n19\n", ""))],
+        "inline_owner_example": [((), (0, "42\nrelocated\n43\n", ""))],
+    }, fixture_paths={
+        "inline_owner_example": root / "examples/122-manual-object-lifetimes.gti",
     })
