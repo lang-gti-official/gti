@@ -1819,7 +1819,9 @@ auto SemanticVisitor::Impl::hasConstraintFailure(
 
 auto SemanticVisitor::Impl::reportConstraintFailure(
     const Token &site, const ConstraintFailure &failure) -> void {
-  reporter.reportConstraintFailure(site, failure);
+  reporter.reportConstraintFailure(
+      site, failure,
+      [&](const SemanticType &type) { return typeSpelling(type); });
 }
 
 auto SemanticVisitor::Impl::attachConstraintCallContext(

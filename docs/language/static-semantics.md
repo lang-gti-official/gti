@@ -719,6 +719,13 @@ conversion ranking, overload-set value, ADL, or backend overload resolution.
 Exactly one viable declaration forms the item; zero candidates are a signature
 mismatch and multiple candidates are ambiguous.
 
+For a confined call such as `invoke_with(handler, args...)`, fixed arguments
+and the final value pack are deduced before matching the handler's expanded
+invocation signature. Pack elements use the existing value/read-only-reference
+binding rules; they do not acquire mutable-reference access. An open forwarding
+pack cannot distinguish overloads by its unknown arity. A unique eligible item
+may be retained symbolically, and every concrete invocation is checked again.
+
 The resulting semantic type contains the selected nominal function identity,
 exact parameter types, and exact result type. It is a zero-state read-callable
 and is transfer- and share-capable, so the existing exact `void()` and owned-

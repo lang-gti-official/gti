@@ -11,6 +11,7 @@
 #include "gti/generic_constraint.h"
 #include "gti/semantic_model.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -102,8 +103,9 @@ public:
   // A generic argument that fails its declared constraint: concept,
   // structural, or built-in constraint kinds each carry their exact
   // message and hint set.
-  void reportConstraintFailure(const Token &site,
-                               const SemanticConstraintFailure &failure);
+  void reportConstraintFailure(
+      const Token &site, const SemanticConstraintFailure &failure,
+      const std::function<std::string(const SemanticType &)> &spelling = {});
 
 private:
   [[nodiscard]] std::string typeSpelling(const SemanticType &type) const;
