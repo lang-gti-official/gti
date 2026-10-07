@@ -871,8 +871,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
                                        : AccessMode::ReadOnly);
-    if (parameterType.kind == SemanticType::StringView ||
-        parameterType.kind == SemanticType::CString) {
+    if (isTextCarryingType(parameterType)) {
       parameterInfo.traits = ownerDependentTextInfo(parameterType).traits;
     }
     parameterInfo.symbol = parameterSymbol;
@@ -1162,6 +1161,37 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
         }
       }
     }
+    if (field != nullptr && initializer.arguments.size() == 1 &&
+        isTextCarryingType(fieldType) &&
+        isOwnerDependentTextExpression(initializer.arguments.front())) {
+      // A text-carrying field may retain owner-dependent text only when it is
+      // relayed from this constructor's text parameter, whose owners every
+      // caller already retains for the constructed value.
+      const auto dependencies =
+          storedBorrowDependencies(initializer.arguments.front());
+      const bool relayed =
+          !dependencies.empty() &&
+          std::all_of(
+              dependencies.begin(), dependencies.end(),
+              [&](const SemanticLoanDependency &dependency) {
+                if (dependency.place.receiver || dependency.place.root == 0)
+                  return false;
+                for (const Parameter &parameter : stmt.parameters()) {
+                  const Symbol *symbol = resolve(parameter.name);
+                  if (symbol != nullptr &&
+                      toolingSymbolFor(*symbol) == dependency.place.root &&
+                      isTextCarryingType(symbol->type))
+                    return true;
+                }
+                return false;
+              });
+      if (!relayed) {
+        report(expressionToken(initializer.arguments.front()),
+               "A text-carrying field can retain owner-dependent text only "
+               "from a constructor text parameter.",
+               "GTI-S2045");
+      }
+    }
     if (field != nullptr && fieldSymbol != 0 &&
         initializer.arguments.size() == 1) {
       if (collectingRawFields)
@@ -1325,6 +1355,8 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
   if (Symbol *receiver = receiverStateSymbol();
       receiver != nullptr && isDirectStoredReferenceType(receiver->type))
     recordStoredEntryDependency(*receiver, 0, receiver->type, true, &stmt);
+  else if (receiver != nullptr && isTextCarryingType(receiver->type))
+    recordReceiverTextEntry(*receiver, &stmt);
 
   analyze(stmt.body()->statements());
   finalizeLoanFlow();
@@ -1935,8 +1967,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
                                        : AccessMode::ReadOnly);
-    if (parameterType.kind == SemanticType::StringView ||
-        parameterType.kind == SemanticType::CString) {
+    if (isTextCarryingType(parameterType)) {
       parameterInfo.traits = ownerDependentTextInfo(parameterType).traits;
     }
     parameterInfo.symbol = parameterSymbol;
@@ -2072,6 +2103,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     if (Symbol *receiver = receiverStateSymbol();
         receiver != nullptr && isDirectStoredReferenceType(receiver->type)) {
       recordStoredEntryDependency(*receiver, 0, receiver->type, true);
+    } else if (receiver != nullptr && isTextCarryingType(receiver->type)) {
+      recordReceiverTextEntry(*receiver);
     }
   }
 
@@ -2429,8 +2462,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   if (typeTraits(currentReturnType).containsBorrowedState) {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
   }
-  if (currentReturnType.kind == SemanticType::StringView ||
-      currentReturnType.kind == SemanticType::CString) {
+  if (isTextCarryingType(currentReturnType)) {
     validateOwnerDependentTextReturn(valueType, stmt.value());
   }
   if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
@@ -3299,11 +3331,9 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const ExpressionInfo *initializerInfo =
       stmt.initializer() ? semanticModel.findExpression(*stmt.initializer())
                          : nullptr;
-  const bool ownerDependentText =
-      (declaredType.kind == SemanticType::StringView ||
-       declaredType.kind == SemanticType::CString) &&
-      initializerInfo != nullptr &&
-      initializerInfo->traits.containsBorrowedState;
+  const bool ownerDependentText = (isTextCarryingType(declaredType)) &&
+                                  initializerInfo != nullptr &&
+                                  initializerInfo->traits.containsBorrowedState;
   if (ownerDependentText) {
     const bool cString = declaredType.kind == SemanticType::CString;
     if (globalStorage) {
@@ -3607,9 +3637,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     valueType = simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                                  : analyze(expr.value());
   }
-  if (simpleAssignment &&
-      (targetType.kind == SemanticType::StringView ||
-       targetType.kind == SemanticType::CString) &&
+  if (simpleAssignment && (isTextCarryingType(targetType)) &&
       isOwnerDependentTextExpression(expr.value())) {
     reportOwnerDependentTextStorage(expr.value(),
                                     "assigned into an existing binding");
@@ -3846,8 +3874,7 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
                 "when necessary.");
       valid = false;
     }
-    if ((elementType.kind == SemanticType::StringView ||
-         elementType.kind == SemanticType::CString) &&
+    if ((isTextCarryingType(elementType)) &&
         isOwnerDependentTextExpression(element)) {
       reportOwnerDependentTextStorage(element, "stored in a collection");
       valid = false;
@@ -3922,8 +3949,7 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
 
   for (const ExprPtr &element : expr.elements()) {
     const SemanticType valueType = analyzeInitializer(element, elementType);
-    if ((elementType.kind == SemanticType::StringView ||
-         elementType.kind == SemanticType::CString) &&
+    if ((isTextCarryingType(elementType)) &&
         isOwnerDependentTextExpression(element)) {
       reportOwnerDependentTextStorage(element, "nested in a fixed array");
     }
@@ -5363,8 +5389,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
       diagnostics.push_back(std::move(diagnostic));
       valid = false;
     }
-    if ((types[index].kind == SemanticType::StringView ||
-         types[index].kind == SemanticType::CString) &&
+    if ((isTextCarryingType(types[index])) &&
         isOwnerDependentTextExpression(expr.arguments()[i])) {
       reportOwnerDependentTextStorage(expr.arguments()[i], "stored in a field");
       valid = false;
@@ -7310,9 +7335,7 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
-  if (simpleAssignment &&
-      (targetType.kind == SemanticType::StringView ||
-       targetType.kind == SemanticType::CString) &&
+  if (simpleAssignment && (isTextCarryingType(targetType)) &&
       isOwnerDependentTextExpression(expr.value())) {
     reportOwnerDependentTextStorage(expr.value(), "stored in a field");
   }
@@ -10570,11 +10593,9 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
       declaration.isRangeOwner() && initializerInfo != nullptr &&
       initializerInfo->category == ValueCategory::Place &&
       initializerType != SemanticType::Unknown;
-  const bool ownerDependentText =
-      (initializerType.kind == SemanticType::StringView ||
-       initializerType.kind == SemanticType::CString) &&
-      initializerInfo != nullptr &&
-      initializerInfo->traits.containsBorrowedState;
+  const bool ownerDependentText = (isTextCarryingType(initializerType)) &&
+                                  initializerInfo != nullptr &&
+                                  initializerInfo->traits.containsBorrowedState;
   if (rangeOwnerReference) {
     inferredType = SemanticType::referenceTo(
         initializerType,

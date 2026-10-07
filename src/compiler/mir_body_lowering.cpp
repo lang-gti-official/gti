@@ -1992,9 +1992,9 @@ private:
           // Carried/lifecycle loans and ancestors retained by them still end
           // through their owning scope's ordinary cleanup schedule.
           const HirValue *produced = findValue(record->producedBy);
-          const bool transientView =
-              record->kind == MirLoanKind::Stored && produced != nullptr &&
-              produced->info.type.kind == SemanticType::StringView;
+          const bool transientView = record->kind == MirLoanKind::Stored &&
+                                     produced != nullptr &&
+                                     textCarrier(produced->info.type);
           const bool transientResult =
               (record->kind == MirLoanKind::CallResult || transientView) &&
               !record->lifecycleBound && record->carriers.empty() &&
@@ -8726,6 +8726,21 @@ private:
     }
   }
 
+  // Semantics records which concrete classes relay counted text by value.
+  [[nodiscard]] bool textCarrier(const SemanticType &type) const {
+    if (type.kind == SemanticType::StringView ||
+        type.kind == SemanticType::CString) {
+      return true;
+    }
+    if (type.kind != SemanticType::Class) {
+      return false;
+    }
+    const auto instance = std::find_if(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &candidate) { return candidate.type == type; });
+    return instance != program.classInstances().end() && instance->textCarrier;
+  }
+
   void seedEntryLoans() {
     if (scopes.empty()) {
       return;
@@ -8734,8 +8749,11 @@ private:
       if (!loan.entry) {
         continue;
       }
-      const bool abstractStored = loan.kind == SemanticLoanKind::StoredValue &&
-                                  !loan.designatedFields.empty();
+      // A text-carrying receiver relays its caller's text owners through one
+      // abstract entry with no field label and no local carrier binding.
+      const bool abstractStored =
+          loan.kind == SemanticLoanKind::StoredValue &&
+          (!loan.designatedFields.empty() || loan.place.receiver);
       if (loan.semanticLoan == 0 || loan.parent != 0 ||
           (loan.carriers.empty() && !abstractStored)) {
         valid = false;
@@ -10384,8 +10402,10 @@ private:
         const HirValue *value = findValue(*statement.value);
         if (value != nullptr && value->info.traits.containsBorrowedState) {
           MirLoanId retained = loanForValue(*statement.value);
-          if (retained == 0 && output.returnType.kind == SemanticType::Class &&
-              value->info.traits.copyable) {
+          if (retained == 0 &&
+              ((output.returnType.kind == SemanticType::Class &&
+                value->info.traits.copyable) ||
+               textCarrier(output.returnType))) {
             // A copied nested member has no separate local carrier binding.
             // Its caller-owned receiver/reference entry supplies the external
             // authority; the exact returned Load remains executable evidence.
@@ -10470,9 +10490,7 @@ private:
             const bool exactDynamicTextEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.entry && retainedLoan.designatedFields.empty() &&
-                (value->info.type.kind == SemanticType::StringView ||
-                 value->info.type.kind == SemanticType::CString) &&
-                value->info.type.kind == output.returnType.kind;
+                textCarrier(value->info.type) && textCarrier(output.returnType);
             if ((exactStoredCarrierEntry || exactDynamicTextEntry) &&
                 returnedValue == 0) {
               valid = false;

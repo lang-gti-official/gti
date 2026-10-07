@@ -120,6 +120,10 @@ public:
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
 
+  [[nodiscard]] bool textCarrierFor(const SemanticType &type) const override {
+    return isTextCarryingType(type);
+  }
+
   void attachDeclarationDocumentation(SymbolId symbol, const Stmt &declaration);
 
   void attachTokenDocumentation(SymbolId symbol, const Token &declaration);
@@ -1395,6 +1399,19 @@ private:
                          ValueCategory category = ValueCategory::Value,
                          AccessMode access = AccessMode::ReadOnly) const;
 
+  // A text-carrying value relays the owner dependency of counted text it
+  // holds by value: the text capability itself, c_string, or a class without
+  // stored references whose instance field is text-carrying. The dependency
+  // is a fact of each value, not of the type, so ownerless (literal-backed)
+  // values remain independent trivial values.
+  [[nodiscard]] bool isTextCarryingType(const SemanticType &type) const;
+
+  // A receiver of a text-carrying class carries its caller's external text
+  // dependency. Record that abstract entry once per method body so receiver
+  // derived text results can publish it, exactly as a text parameter does.
+  SemanticLoanId recordReceiverTextEntry(Symbol &receiver,
+                                         const Stmt *declaration = nullptr);
+
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
 
@@ -1962,6 +1979,7 @@ private:
     bool requiresUnsafe = false;
   };
   mutable std::vector<ActiveMemberRequirement> activeMemberRequirements;
+  mutable std::vector<std::pair<SemanticType, bool>> textCarryingTypes;
   [[nodiscard]] std::optional<SemanticType>
   symbolicReadMemberReturnType(const SemanticType &receiver,
                                std::string_view member) const;

@@ -40,6 +40,11 @@ fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier);
 // Recover a cleanup-bound carrier's original publication after subsequent
 // moves changed its current carrier list. This proves identity, not liveness;
 // ordinary ownership/loan dataflow still checks availability at each use.
+// Counted text held by value: the text capability, c_string, or a concrete
+// class instance that semantics recorded as relaying text owners per value.
+[[nodiscard]] bool textCarrierType(const MirProgram &program,
+                                   const SemanticType &type);
+
 [[nodiscard]] bool bindingReceivedStoredLoan(const MirBody &body,
                                              HirBindingId binding,
                                              MirLoanId dependency,

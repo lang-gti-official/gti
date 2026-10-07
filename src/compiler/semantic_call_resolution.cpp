@@ -4417,9 +4417,16 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
   if (member != nullptr && receiverMode == CallReceiverMode::Value) {
     const ExpressionInfo *receiver =
         semanticModel.findExpression(*member->object());
+    // A read-only method of a temporary text-carrying value relays that
+    // value's external text owners; it never borrows the temporary itself.
+    const bool textRelayReceiver =
+        receiver != nullptr && isTextCarryingType(receiver->type) &&
+        function.receiverMutability != ReceiverMutability::Mutable &&
+        function.receiverMutability != ReceiverMutability::Consuming &&
+        (function.returnType.kind != SemanticType::Reference);
     if (receiver != nullptr && receiver->category == ValueCategory::Value &&
         receiver->type.kind == SemanticType::Class &&
-        receiver->traits.containsBorrowedState) {
+        receiver->traits.containsBorrowedState && !textRelayReceiver) {
       reportMutableReceiverFailure(member->object(), paren, function, "Method");
       return false;
     }

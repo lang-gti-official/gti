@@ -1176,6 +1176,7 @@ struct MirClassInstance {
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;
   bool mutexGuardBorrowCarrier = false;
+  bool textCarrier = false;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirBaseInstance> structuralBases;

@@ -1951,6 +1951,9 @@ int main() { return 0; }
       requiresActiveCleanupFor(const lang::SemanticType &type) const override {
         return delegate.requiresActiveCleanupFor(type);
       }
+      bool textCarrierFor(const lang::SemanticType &type) const override {
+        return delegate.textCarrierFor(type);
+      }
       lang::SemanticInstanceAnalysis analyzeFunctionInstance(
           lang::FunctionId, const std::vector<lang::SemanticType> &,
           const std::vector<lang::CompileTimeValue> &,

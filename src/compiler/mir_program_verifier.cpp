@@ -2785,7 +2785,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       }
       if (!instruction.loan) {
         const MirInstruction *argumentInput =
-            instruction.kind == MirInstructionKind::Call &&
+            (instruction.kind == MirInstructionKind::Call ||
+             instruction.kind == MirInstructionKind::Construct) &&
                     instruction.borrowOrigin == BorrowOriginKind::Argument &&
                     instruction.borrowArgument < instruction.operands.size() &&
                     instruction.operands[instruction.borrowArgument].kind ==
@@ -2794,23 +2795,27 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                       body,
                       instruction.operands[instruction.borrowArgument].value)
                 : nullptr;
+        // An ownerless text argument (for example a literal) gives the
+        // text-carrying result no owner to retain.
         const bool ownerlessTextResult =
-            instruction.kind == MirInstructionKind::Call &&
+            (instruction.kind == MirInstructionKind::Call ||
+             instruction.kind == MirInstructionKind::Construct) &&
             instruction.borrowOrigin == BorrowOriginKind::Argument &&
             instruction.borrowAccess == AccessMode::ReadOnly &&
             !instruction.borrowPlace &&
-            (instruction.info.type.kind == SemanticType::StringView ||
-             instruction.info.type.kind == SemanticType::CString) &&
+            mir_detail::textCarrierType(program, instruction.info.type) &&
             !instruction.info.traits.containsBorrowedState &&
             instruction.borrowArgument < instruction.parameterTypes.size() &&
-            instruction.parameterTypes[instruction.borrowArgument] ==
-                instruction.info.type &&
+            mir_detail::textCarrierType(
+                program,
+                instruction.parameterTypes[instruction.borrowArgument]) &&
             argumentInput != nullptr &&
             argumentInput->kind == MirInstructionKind::CallInput &&
             argumentInput->callInputRole == MirCallInputRole::Argument &&
             argumentInput->callInputIndex == instruction.borrowArgument &&
             argumentInput->callInputKind == HirCallInputKind::Value &&
-            argumentInput->info.type == instruction.info.type &&
+            argumentInput->info.type ==
+                instruction.parameterTypes[instruction.borrowArgument] &&
             !argumentInput->info.traits.containsBorrowedState;
         if (ownerlessTextResult) {
           continue;
@@ -3845,6 +3850,41 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
                                    "exact receiver or reference formal");
     }
     const auto paths = findStoredCarrierReferences(program, carrierType);
+    if (paths.empty() && source->root == MirPlaceRootKind::This &&
+        loan.designatedFields.empty() && loan.carriers.empty() &&
+        loan.access == AccessMode::ReadOnly) {
+      // A text-carrying receiver entry has no reference fields: it names the
+      // caller's external text owners as a whole value.
+      const auto *receiver = function != nullptr && function->owner
+                                 ? program.findClassInstance(*function->owner)
+                             : destructor != nullptr
+                                 ? program.findClassInstance(destructor->owner)
+                                 : nullptr;
+      if (receiver == nullptr || !receiver->textCarrier)
+        return verificationFailure(body, owner,
+                                   "abstract text receiver entry requires a "
+                                   "text-carrying receiver class");
+      // Loan flow admits writes to the receiver's non-text fields. A field
+      // whose class relays text would reseat the receiver's dependency.
+      for (const MirBlock &block : body.blocks) {
+        for (const MirInstruction &instruction : block.instructions) {
+          const MirPlace *destination =
+              instruction.destination
+                  ? body.findPlace(*instruction.destination)
+                  : nullptr;
+          if (destination != nullptr &&
+              destination->root == MirPlaceRootKind::This &&
+              !destination->projections.empty() &&
+              mir_detail::textCarrierType(program, destination->type))
+            return verificationFailure(
+                body, owner,
+                "a text-carrying receiver field cannot be rewritten while "
+                "the receiver relays its caller's text owners",
+                block.id, instruction.id);
+        }
+      }
+      continue;
+    }
     if (paths.empty()) {
       if (abstractEntry || loan.carriers.empty())
         return verificationFailure(
@@ -4208,10 +4248,13 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
           storedCarrierReference &&
           storedCarrierReference->reference.referenceAccess ==
               instance.returnBorrowAccess;
-      dynamicTextCarrier = (parameter.kind == SemanticType::StringView ||
-                            parameter.kind == SemanticType::CString) &&
-                           instance.returnType.kind == parameter.kind &&
-                           instance.returnBorrowAccess == AccessMode::ReadOnly;
+      // A by-value text carrier relays its owners into a text-carrying result.
+      dynamicTextCarrier =
+          mir_detail::textCarrierType(program, parameter) &&
+          mir_detail::textCarrierType(program, instance.returnType) &&
+          (parameter.kind != SemanticType::CString ||
+           instance.returnType.kind == SemanticType::CString) &&
+          instance.returnBorrowAccess == AccessMode::ReadOnly;
       if (!exactReference && !exactCarrier && !dynamicTextCarrier) {
         return invalidSummary(
             "argument return dependency does not identify one exact "
@@ -4441,8 +4484,40 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
     // checked producer contract. Merely seeding a receiver's abstract entry
     // does not replace those loans with a copy-publication protocol. Apply the
     // latter only when the Return publication actually consumes that entry.
+    // A text-carrying result produced by a call or construction is checked by
+    // that producer's own argument-relay contract, not as an entry copy.
+    const bool producedTextResult =
+        dynamicTextCarrier &&
+        std::any_of(
+            body.blocks.begin(), body.blocks.end(),
+            [&](const MirBlock &candidate) {
+              return std::any_of(
+                  candidate.instructions.begin(), candidate.instructions.end(),
+                  [&](const MirInstruction &instruction) {
+                    if (instruction.kind != MirInstructionKind::Borrow ||
+                        instruction.loan != loan->id ||
+                        instruction.operands.size() != 1 ||
+                        instruction.operands.front().kind !=
+                            MirOperandKind::Loan)
+                      return false;
+                    const MirLoan *produced =
+                        body.findLoan(instruction.operands.front().loan);
+                    if (produced == nullptr || produced->entry)
+                      return false;
+                    // The exact producer publishes this loan itself.
+                    for (const MirBlock &producerBlock : body.blocks)
+                      for (const MirInstruction &producer :
+                           producerBlock.instructions)
+                        if ((producer.kind == MirInstructionKind::Construct ||
+                             producer.kind == MirInstructionKind::Call) &&
+                            producer.loan == produced->id &&
+                            producer.borrowOrigin == BorrowOriginKind::Argument)
+                          return true;
+                    return false;
+                  });
+            });
     const bool consumesAbstractEntry =
-        !abstractCarrierValue ||
+        (!abstractCarrierValue && !producedTextResult) ||
         (storedCarrierEntryLoan != nullptr &&
          std::any_of(body.blocks.begin(), body.blocks.end(),
                      [&](const MirBlock &candidate) {
@@ -4736,12 +4811,18 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
     }();
     const auto carrierParameter =
         findStoredCarrierReference(program, borrowParameter);
+    // A text-carrying class relays the owners of one by-value text formal.
+    const bool textParameter =
+        constructedOwner != nullptr && constructedOwner->textCarrier &&
+        instance.borrowAccess == AccessMode::ReadOnly &&
+        mir_detail::textCarrierType(program, borrowParameter);
     if (instance.parameterBindings[instance.borrowParameter] == 0 ||
         !((borrowParameter.kind == SemanticType::Reference &&
            (borrowParameter.referenceAccess == instance.borrowAccess ||
             mutexGuardInteriorBorrow)) ||
           (carrierParameter && carrierParameter->reference.referenceAccess ==
-                                   instance.borrowAccess))) {
+                                   instance.borrowAccess) ||
+          textParameter)) {
       return invalidSummary(
           "constructor borrow dependency does not identify an exact "
           "reference or single-owner carrier formal parameter");
@@ -4908,8 +4989,17 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
       }
     }
   }
-  if ((instance.borrowOrigin == BorrowOriginKind::Argument) !=
-          (storedInitializers != 0) ||
+  // A text-carrying class conservatively relays its one by-value text formal;
+  // it publishes no stored-reference loan, and callers retain the formal's
+  // owners. Semantics rejects any other owner-dependent text field source.
+  const MirClassInstance *textOwner = program.findClassInstance(instance.owner);
+  const bool textRelay = textOwner != nullptr && textOwner->textCarrier &&
+                         instance.borrowOrigin == BorrowOriginKind::Argument &&
+                         storedInitializers == 0 &&
+                         instance.borrowParameters.empty() &&
+                         instance.borrowAccess == AccessMode::ReadOnly;
+  if ((!textRelay && (instance.borrowOrigin == BorrowOriginKind::Argument) !=
+                         (storedInitializers != 0)) ||
       (!instance.borrowParameters.empty() &&
        (dependencyParameters.size() != instance.borrowParameters.size() ||
         std::any_of(instance.borrowParameters.begin(),

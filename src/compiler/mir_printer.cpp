@@ -379,6 +379,7 @@ public:
              << instance.lifecycleBoundBorrowCarrier
              << " mutex-guard-borrow-carrier="
              << instance.mutexGuardBorrowCarrier
+             << " text-carrier=" << instance.textCarrier
              << " abstract=" << instance.abstract
              << " polymorphic=" << instance.polymorphic
              << " c-abi=" << instance.cAbiRecord

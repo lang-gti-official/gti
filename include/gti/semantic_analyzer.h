@@ -19,6 +19,9 @@ public:
   traitsFor(const SemanticType &type) const = 0;
   [[nodiscard]] virtual bool
   requiresActiveCleanupFor(const SemanticType &type) const = 0;
+  // A text carrier holds counted text by value (directly or through fields)
+  // and relays that text's owner dependency per value.
+  [[nodiscard]] virtual bool textCarrierFor(const SemanticType &type) const = 0;
 
   // A borrowed nominal value with executable cleanup must retain its external
   // dependencies until that cleanup completes, not merely its last source use.
@@ -77,6 +80,7 @@ public:
   traitsFor(const SemanticType &type) const override;
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] bool textCarrierFor(const SemanticType &type) const override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,

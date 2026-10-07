@@ -5,6 +5,22 @@
 
 namespace lang::mir_detail {
 
+bool textCarrierType(const MirProgram &program, const SemanticType &type) {
+  if (type.kind == SemanticType::StringView ||
+      type.kind == SemanticType::CString) {
+    return true;
+  }
+  if (type.kind != SemanticType::Class) {
+    return false;
+  }
+  const auto instance = std::find_if(program.classInstances().begin(),
+                                     program.classInstances().end(),
+                                     [&](const MirClassInstance &candidate) {
+                                       return candidate.type == type;
+                                     });
+  return instance != program.classInstances().end() && instance->textCarrier;
+}
+
 bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
                                MirLoanId dependency, std::size_t depth) {
   const auto *loan = body.findLoan(dependency);

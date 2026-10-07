@@ -1036,13 +1036,75 @@ auto SemanticVisitor::Impl::ownerDependentTextInfo(SemanticType type,
   return info;
 }
 
+auto SemanticVisitor::Impl::isTextCarryingType(const SemanticType &type) const
+    -> bool {
+  if (type.kind == SemanticType::StringView ||
+      type.kind == SemanticType::CString) {
+    return true;
+  }
+  if (type.kind != SemanticType::Class) {
+    return false;
+  }
+  if (const auto cached =
+          std::find_if(textCarryingTypes.begin(), textCarryingTypes.end(),
+                       [&](const auto &entry) { return entry.first == type; });
+      cached != textCarryingTypes.end()) {
+    return cached->second;
+  }
+  std::vector<SemanticType> visiting;
+  const auto visit = [&](const auto &self,
+                         const SemanticType &current) -> bool {
+    if (current.kind == SemanticType::StringView ||
+        current.kind == SemanticType::CString) {
+      return true;
+    }
+    if (current.kind != SemanticType::Class) {
+      return false;
+    }
+    const ClassInfo *owner = classInfo(current);
+    // Stored-reference carriers keep their type-level dependency model; a
+    // text field inside one is governed by that carrier's own field map.
+    if (owner == nullptr || owner->kind == ClassKind::Union ||
+        owner->cAbiRecord || owner->cOpaqueHandle ||
+        typeTraits(current).containsBorrowedState ||
+        std::find(visiting.begin(), visiting.end(), current) !=
+            visiting.end()) {
+      return false;
+    }
+    visiting.push_back(current);
+    const GenericSubstitution substitution = classSubstitution(current);
+    bool carries = false;
+    for (const FieldInfo &field : owner->fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = owner->members.find(field.declaration->name().lexeme);
+      if (member == owner->members.end() ||
+          member->second.symbol.staticMember) {
+        continue;
+      }
+      const SemanticType fieldType = substituteType(
+          substituteType(member->second.symbol.type, substitution),
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
+      if (self(self, fieldType)) {
+        carries = true;
+        break;
+      }
+    }
+    visiting.pop_back();
+    return carries;
+  };
+  const bool carries = visit(visit, type);
+  textCarryingTypes.emplace_back(type, carries);
+  return carries;
+}
+
 auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
     const ExprPtr &expression) const -> bool {
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
-  return info != nullptr &&
-         (info->type.kind == SemanticType::StringView ||
-          info->type.kind == SemanticType::CString) &&
+  return info != nullptr && isTextCarryingType(info->type) &&
          info->traits.containsBorrowedState;
 }
 
@@ -1052,9 +1114,14 @@ auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
       expression ? semanticModel.findExpression(*expression) : nullptr;
   const bool cString =
       info != nullptr && info->type.kind == SemanticType::CString;
+  const bool carrierClass = info != nullptr &&
+                            info->type.kind == SemanticType::Class &&
+                            typeSpelling(info->type) != "std::string_view";
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(expression),
-      (cString ? "An owner-dependent c_string" : "A dynamic std::string_view") +
+      (cString        ? "An owner-dependent c_string"
+       : carrierClass ? "A value carrying a dynamic std::string_view"
+                      : "A dynamic std::string_view") +
           std::string(" cannot be ") + std::string(destination) +
           (cString ? " in the single-owner text-borrow model."
                    : " in the single-owner view model."));
@@ -2214,6 +2281,34 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     }
     return dependencies;
   }
+  if (const ResolvedConstructionInfo *construction =
+          semanticModel.findConstruction(*expression);
+      construction != nullptr &&
+      construction->constructedType.kind == SemanticType::Class &&
+      isTextCarryingType(construction->constructedType)) {
+    // A text-carrying value relays the external owners of its owner-dependent
+    // text arguments; it never borrows an argument's own shell.
+    const auto *call = exprAs<Call>(expression.get());
+    const auto *initializer = exprAs<DirectInitializer>(expression.get());
+    const auto *arguments = call != nullptr          ? &call->arguments()
+                            : initializer != nullptr ? &initializer->arguments()
+                                                     : nullptr;
+    if (arguments == nullptr) {
+      return {};
+    }
+    std::vector<SemanticLoanDependency> dependencies;
+    for (const ExprPtr &argument : *arguments) {
+      if (!isOwnerDependentTextExpression(argument)) {
+        continue;
+      }
+      auto sources = storedBorrowDependencies(argument);
+      if (sources.empty()) {
+        return {};
+      }
+      dependencies.insert(dependencies.end(), sources.begin(), sources.end());
+    }
+    return dependencies;
+  }
   {
     const auto *call = exprAs<Call>(expression.get());
     const auto *resolved =
@@ -2314,6 +2409,22 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     }
   }
   if (const auto *call = exprAs<Call>(expression.get())) {
+    // A receiver-derived text result relays the receiver's external owners.
+    if (const auto *resolved = semanticModel.findCall(*call);
+        resolved != nullptr && resolved->intrinsic == IntrinsicKind::None &&
+        resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+        resolved->borrowArguments.empty() && resolved->borrowFields.empty() &&
+        isTextCarryingType(resolved->returnType)) {
+      if (const auto *member = exprAs<Get>(call->callee().get());
+          member != nullptr) {
+        const auto *receiver = semanticModel.findExpression(*member->object());
+        if (receiver != nullptr && isTextCarryingType(receiver->type)) {
+          return isOwnerDependentTextExpression(member->object())
+                     ? storedBorrowDependencies(member->object())
+                     : std::vector<SemanticLoanDependency>{};
+        }
+      }
+    }
     if (const auto *resolved = semanticModel.findCall(*call);
         resolved != nullptr && !resolved->borrowArguments.empty()) {
       std::vector<SemanticLoanDependency> dependencies;
@@ -4304,6 +4415,25 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
   return id;
 }
 
+auto SemanticVisitor::Impl::recordReceiverTextEntry(Symbol &receiver,
+                                                    const Stmt *declaration)
+    -> SemanticLoanId {
+  const SemanticLoanPlace place{.root = 0, .receiver = true};
+  const SemanticLoanId id =
+      createRetainedLoan(receiver, 0, SemanticLoanKind::StoredValue, nullptr,
+                         place, 0, true, AccessMode::ReadOnly, false, 0, true);
+  SemanticLoanInfo loan = *semanticModel.findLoan(id);
+  // The caller owns the receiver and its external text owners. This entry is
+  // their abstract read-only authority, not another alias of the receiver.
+  loan.carriers.clear();
+  loan.lifecycleBound = false;
+  loanFlow.records.at(id).lifecycleBound = false;
+  loan.entryDeclaration =
+      declaration != nullptr ? declaration : currentFunctionDeclaration;
+  semanticModel.recordLoan(std::move(loan));
+  return id;
+}
+
 auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
     -> void {
   Symbol *carrier = resolveMutable(parameter.name);
@@ -4355,9 +4485,7 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
              return index < function->declaration->parameters().size() &&
                     &function->declaration->parameters()[index] == &parameter;
            }));
-  const bool dynamicTextCarrier =
-      carrier->type.kind == SemanticType::StringView ||
-      carrier->type.kind == SemanticType::CString;
+  const bool dynamicTextCarrier = isTextCarryingType(carrier->type);
   const bool storedValueCarrier =
       isDirectStoredReferenceType(carrier->type) || dynamicTextCarrier;
   if (!referenceCarrier && !storedValueCarrier) {
@@ -7756,8 +7884,7 @@ auto SemanticVisitor::Impl::analyzePrefixStorageIntrinsicCall(
     if (argumentTypes.size() < argumentOffset) {
       return;
     }
-    if (elementType.kind == SemanticType::StringView ||
-        elementType.kind == SemanticType::CString) {
+    if (isTextCarryingType(elementType)) {
       for (std::size_t index = argumentOffset; index < argumentTypes.size();
            ++index) {
         if (isOwnerDependentTextExpression(expr.arguments()[index])) {
@@ -8211,8 +8338,7 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
   }
 
   if (constructing) {
-    if ((elementType.kind == SemanticType::StringView ||
-         elementType.kind == SemanticType::CString) &&
+    if ((isTextCarryingType(elementType)) &&
         isOwnerDependentTextExpression(expr.arguments()[1])) {
       reportOwnerDependentTextStorage(expr.arguments()[1],
                                       "nested in optional storage");
@@ -8419,8 +8545,7 @@ auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
     if (argumentTypes.size() >= 2) {
       requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
     }
-    if (elementType.kind == SemanticType::StringView ||
-        elementType.kind == SemanticType::CString) {
+    if (isTextCarryingType(elementType)) {
       for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
         if (isOwnerDependentTextExpression(expr.arguments()[index])) {
           reportOwnerDependentTextStorage(expr.arguments()[index],

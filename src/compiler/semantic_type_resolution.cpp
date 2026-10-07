@@ -1895,6 +1895,51 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
                storedFieldSymbols(selected.parameterTypes[binding.parameter],
                                   binding.sourceFields),
            .access = binding.destination.reference.referenceAccess});
+  // A text-carrying class without stored references relays the owner
+  // dependency of its one text-carrying constructor parameter by value.
+  const bool textCarrierConstruction =
+      !storedParameter && constructedType.kind == SemanticType::Class &&
+      !typeTraits(constructedType).containsBorrowedState &&
+      isTextCarryingType(constructedType);
+  std::optional<std::size_t> textParameter;
+  if (textCarrierConstruction && selected.kind == ConstructorKind::Ordinary) {
+    std::size_t textParameters = 0;
+    for (std::size_t index = 0; index < selected.parameterTypes.size();
+         ++index) {
+      if (isTextCarryingType(selected.parameterTypes[index])) {
+        ++textParameters;
+        textParameter = index;
+      }
+    }
+    if (textParameters != 1) {
+      textParameter.reset();
+    }
+  }
+  if (textParameter) {
+    storedParameter = textParameter;
+    storedAccess = AccessMode::ReadOnly;
+  } else if (textCarrierConstruction &&
+             selected.kind == ConstructorKind::Ordinary) {
+    // Without exactly one text parameter there is no single relay; reject an
+    // owner-dependent argument rather than silently dropping its owner.
+    const auto *call = exprAs<Call>(&construction);
+    const auto *initializer = exprAs<DirectInitializer>(&construction);
+    const auto *arguments = call != nullptr          ? &call->arguments()
+                            : initializer != nullptr ? &initializer->arguments()
+                                                     : nullptr;
+    if (arguments != nullptr) {
+      for (const ExprPtr &argument : *arguments) {
+        if (isOwnerDependentTextExpression(argument)) {
+          report(expressionToken(argument),
+                 "Constructing '" + typeSpelling(constructedType) +
+                     "' from owner-dependent text requires exactly one "
+                     "text-carrying constructor parameter.",
+                 "GTI-S2045");
+          break;
+        }
+      }
+    }
+  }
   semanticModel.record(
       construction,
       ResolvedConstructionInfo{
@@ -1909,13 +1954,14 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
           .requirements = selected.requirements,
           .parameterTypes = selected.parameterTypes,
           .defaultArguments = std::move(defaultArguments),
-          .borrowOrigin =
-              storedParameter
-                  ? BorrowOriginKind::Argument
-                  : (selected.kind != ConstructorKind::Ordinary &&
-                             typeTraits(constructedType).containsBorrowedState
-                         ? BorrowOriginKind::Argument
-                         : BorrowOriginKind::None),
+          .borrowOrigin = storedParameter
+                              ? BorrowOriginKind::Argument
+                              : (selected.kind != ConstructorKind::Ordinary &&
+                                         (typeTraits(constructedType)
+                                              .containsBorrowedState ||
+                                          textCarrierConstruction)
+                                     ? BorrowOriginKind::Argument
+                                     : BorrowOriginKind::None),
           .borrowArgument = storedParameter.value_or(0),
           .borrowAccess = storedAccess,
           .borrowArguments = std::move(storedParameters),
@@ -3858,8 +3904,7 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
 auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const SemanticType &type, const ExprPtr &initializer) -> void {
   if (!isDirectStoredReferenceType(type) && !isFallibleBorrowType(type) &&
-      type.kind != SemanticType::StringView &&
-      type.kind != SemanticType::CString) {
+      !isTextCarryingType(type)) {
     report(expressionToken(initializer),
            "Borrowed state cannot be nested inside another stored value in "
            "the current lifetime model.",
@@ -4862,8 +4907,40 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
     return owner != nullptr && owner->category == ValueCategory::Place &&
            hasStableBorrowStorage(unary->right(), visiting);
   }
+  if (const ResolvedConstructionInfo *construction =
+          semanticModel.findConstruction(*expression);
+      construction != nullptr &&
+      construction->constructedType.kind == SemanticType::Class &&
+      isTextCarryingType(construction->constructedType)) {
+    // A text-carrying value relays its arguments' external owners; its own
+    // shell is never the borrowed storage.
+    const auto *call = exprAs<Call>(expression.get());
+    const auto *initializer = exprAs<DirectInitializer>(expression.get());
+    const auto *arguments = call != nullptr          ? &call->arguments()
+                            : initializer != nullptr ? &initializer->arguments()
+                                                     : nullptr;
+    if (arguments == nullptr) {
+      return false;
+    }
+    return std::all_of(arguments->begin(), arguments->end(),
+                       [&](const ExprPtr &argument) {
+                         return !isOwnerDependentTextExpression(argument) ||
+                                hasStableBorrowStorage(argument, visiting);
+                       });
+  }
   if (const auto *call = exprAs<Call>(expression.get())) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    // A receiver-derived text result is as stable as its receiver's owners.
+    if (resolved != nullptr && resolved->intrinsic == IntrinsicKind::None &&
+        resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+        isTextCarryingType(resolved->returnType)) {
+      if (const auto *member = exprAs<Get>(call->callee().get())) {
+        const auto *receiver = semanticModel.findExpression(*member->object());
+        if (receiver != nullptr && isTextCarryingType(receiver->type)) {
+          return hasStableBorrowStorage(member->object(), visiting);
+        }
+      }
+    }
     if (resolved != nullptr &&
         resolved->intrinsic == IntrinsicKind::ExpectedValue &&
         resolved->borrowOrigin == BorrowOriginKind::Receiver) {

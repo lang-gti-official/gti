@@ -45,6 +45,10 @@ bool SemanticVisitor::requiresActiveCleanupFor(const SemanticType &type) const {
   return impl->requiresActiveCleanupFor(type);
 }
 
+bool SemanticVisitor::textCarrierFor(const SemanticType &type) const {
+  return impl->textCarrierFor(type);
+}
+
 SemanticInstanceAnalysis SemanticVisitor::analyzeFunctionInstance(
     FunctionId functionId, const std::vector<SemanticType> &classTypeArguments,
     const std::vector<CompileTimeValue> &classValueArguments,

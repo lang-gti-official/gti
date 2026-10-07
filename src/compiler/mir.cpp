@@ -1916,6 +1916,24 @@ successors(const MirTerminator &terminator) {
                     source->binding) == loan.carriers.end());
 }
 
+// A text-carrying receiver relays its caller's text owners through one
+// read-only abstract entry: no field label, carrier, parent or release
+// obligation. Program verification separately proves the receiver class is a
+// recorded text carrier.
+[[nodiscard]] bool abstractTextReceiverEntry(const MirBody &body,
+                                             const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::Stored || !loan.entry || loan.escapes ||
+      !loan.designatedFields.empty() || loan.parent != 0 ||
+      loan.storedDependency != 0 || loan.lifecycleBound ||
+      loan.producedBy != 0 || loan.storedField != 0 || !loan.carriers.empty() ||
+      loan.access != AccessMode::ReadOnly || !loan.additionalSources().empty())
+    return false;
+  const MirPlace *source = body.findPlace(loan.source);
+  return source != nullptr && source->projections.empty() &&
+         source->root == MirPlaceRootKind::This &&
+         source->type.kind == SemanticType::Class;
+}
+
 struct AbstractStoredAccess {
   bool overlaps = false;
   bool referent = false;
@@ -2256,8 +2274,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     };
     const auto checkPlace =
         [&](MirPlaceId placeId, bool write, const char *context,
-            MirInstructionId instruction = 0,
-            MirLoanId exemptLoan = 0) -> std::optional<MirVerificationResult> {
+            MirInstructionId instruction = 0, MirLoanId exemptLoan = 0,
+            bool reborrow = false) -> std::optional<MirVerificationResult> {
       const MirCanonicalPlace place =
           canonicalPlace(body, placeId, bindingLoans, active);
       const auto opaqueBorrowCarrierAccess = [&](const MirLoan &loan) {
@@ -2308,7 +2326,22 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         // case. A projection that still carries borrowed state receives no
         // exception, so this cannot reseat, write through, or duplicate
         // the stored reference.
-        return returnedCarrier ||
+        // A receiver text entry names the caller's external text owners, not
+        // the receiver shell. Writing a non-text field is independent of that
+        // referent, and a mutable receiver reborrow hands the same entry to a
+        // callee verified under this rule. A text-typed projection, or a
+        // write that replaces the whole shell, receives no exception, so this
+        // cannot reseat the relayed text. Program verification separately
+        // rejects writes to text-carrying class fields.
+        const bool textReceiverShell =
+            write && abstractTextReceiverEntry(body, loan) &&
+            accessed != nullptr && accessed->root == MirPlaceRootKind::This &&
+            (accessed->projections.empty()
+                 ? reborrow
+                 : accessed->type.kind != SemanticType::StringView &&
+                       accessed->type.kind != SemanticType::CString &&
+                       !accessed->traits.containsBorrowedState);
+        return returnedCarrier || textReceiverShell ||
                (canonicalStoredEntryCarrier && place.projections.empty()) ||
                (storedEntryCarrier &&
                 (accessed->projections.empty() ||
@@ -2564,7 +2597,7 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
       }
       case MirOperandKind::BorrowWrite:
         return checkPlace(resolved.place, true, context, instruction,
-                          inputLoan);
+                          inputLoan, true);
       case MirOperandKind::Value:
       case MirOperandKind::Constant:
         return std::nullopt;
@@ -8824,6 +8857,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           source->type.referenceAccess == loan.access &&
           loan.kind == MirLoanKind::Parameter && loan.semanticLoan != 0;
       if (!abstractStoredEntry(body, loan) &&
+          !abstractTextReceiverEntry(body, loan) &&
           (loan.producedBy != 0 || source == nullptr ||
            source->root != MirPlaceRootKind::Binding ||
            (!source->projections.empty() && !packElement) ||

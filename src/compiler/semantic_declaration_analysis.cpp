@@ -5066,9 +5066,9 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   if (!expression) {
     return {};
   }
-  if (const auto *literal = exprAs<LiteralExpr>(expression.get())) {
-    return {.known = literal->token().kind == TokenKind::STRING_LITERAL ||
-                     literal->token().kind == TokenKind::NULLPTR};
+  if (exprAs<LiteralExpr>(expression.get()) != nullptr) {
+    // Every literal is ownerless; string literals denote static text.
+    return {.known = true};
   }
   if (exprAs<This>(expression.get()) != nullptr) {
     return {.known = true,
@@ -5083,6 +5083,14 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
          index < function.declaration->parameters().size(); ++index) {
       if (function.declaration->parameters()[index].name.lexeme ==
           variable->name().lexeme) {
+        // A formal that cannot carry an owner (for example a position) is an
+        // ordinary ownerless input to a construction or slice.
+        if (index < function.parameterTypes.size() &&
+            function.parameterTypes[index].kind != SemanticType::Reference &&
+            !isTextCarryingType(function.parameterTypes[index]) &&
+            !typeTraits(function.parameterTypes[index]).containsBorrowedState) {
+          return {.known = true};
+        }
         return {.known = true,
                 .ownerDependent = true,
                 .origin = BorrowOriginKind::Argument,
@@ -5134,12 +5142,39 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
       const bool externalOwner =
           parameter.kind == SemanticType::Reference &&
           parameter.referenceAccess == AccessMode::ReadOnly;
-      if (!externalOwner && parameter.kind != SemanticType::StringView &&
-          parameter.kind != SemanticType::CString) {
+      if (!externalOwner && !isTextCarryingType(parameter)) {
         return {};
       }
     }
     return source;
+  }
+  // Constructing a text-carrying value relays the single owner shared by its
+  // owner-dependent arguments; ownerless arguments contribute nothing.
+  const auto constructedClass = [&]() {
+    if (const auto *variable = exprAs<Variable>(call->callee().get())) {
+      const Symbol *symbol = resolve(variable->name());
+      return symbol != nullptr && symbol->type.kind == SemanticType::TypeName;
+    }
+    return false;
+  };
+  if (constructedClass()) {
+    PredeclaredTextBorrowSource combined{.known = true};
+    for (const ExprPtr &argument : call->arguments()) {
+      const PredeclaredTextBorrowSource source =
+          predeclaredTextBorrowSource(argument, function);
+      if (!source.known) {
+        return {};
+      }
+      if (!source.ownerDependent) {
+        continue;
+      }
+      if (combined.ownerDependent && (combined.origin != source.origin ||
+                                      combined.parameter != source.parameter)) {
+        return {};
+      }
+      combined = source;
+    }
+    return combined;
   }
   const std::optional<CallableCandidate> intrinsic =
       intrinsicCandidate(call->callee());
@@ -5157,8 +5192,7 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
 auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     const FunctionInfo &function)
     -> std::optional<FunctionReturnBorrowSummary> {
-  if ((function.returnType.kind != SemanticType::StringView &&
-       function.returnType.kind != SemanticType::CString) ||
+  if (!isTextCarryingType(function.returnType) ||
       function.intrinsic != IntrinsicKind::None ||
       function.declaration == nullptr ||
       function.declaration->body() == nullptr) {

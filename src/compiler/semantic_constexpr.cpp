@@ -23,6 +23,9 @@ public:
   bool requiresActiveCleanupFor(const SemanticType &type) const override {
     return facts.requiresActiveCleanupFor(type);
   }
+  bool textCarrierFor(const SemanticType &type) const override {
+    return facts.textCarrierFor(type);
+  }
   SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId id, const std::vector<SemanticType> &ownerTypes,
       const std::vector<CompileTimeValue> &ownerValues,

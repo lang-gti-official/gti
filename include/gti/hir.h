@@ -449,6 +449,8 @@ struct HirClassInstance {
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;
   bool mutexGuardBorrowCarrier = false;
+  // Counted text is held by value; each value relays its text owners.
+  bool textCarrier = false;
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =

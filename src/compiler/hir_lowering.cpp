@@ -354,6 +354,7 @@ private:
          .compilerCapability = declaration->compilerCapability,
          .lifecycleBoundBorrowCarrier = lifecycleBoundBorrowCarrier,
          .mutexGuardBorrowCarrier = declaration->mutexGuardBorrowCarrier,
+         .textCarrier = instanceProvider->textCarrierFor(resolvedType),
          .transferPolicy = declaration->transferPolicy,
          .sharePolicy = declaration->sharePolicy,
          .kind = declaration->kind,

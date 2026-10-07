@@ -1233,9 +1233,8 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                                                SemanticType type) const
     -> ExpressionInfo {
   const ExprKind kind = expr.exprKind();
-  const auto borrowedTextType = [](const SemanticType &candidate) {
-    return candidate.kind == SemanticType::StringView ||
-           candidate.kind == SemanticType::CString;
+  const auto borrowedTextType = [&](const SemanticType &candidate) {
+    return isTextCarryingType(candidate);
   };
   const auto preserveCategory = [&](const Expr &source) {
     const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
@@ -1426,9 +1425,31 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                         : objectInfo != nullptr &&
                               objectInfo->category == ValueCategory::Place &&
                               objectInfo->access == AccessMode::Mutable));
+    // A text-carrying field of an owner-dependent value relays that value's
+    // external owner dependency. A receiver of a text-carrying class is
+    // conservatively owner-dependent, like a text parameter.
+    const bool dependentObject = objectInfo != nullptr &&
+                                 isTextCarryingType(objectInfo->type) &&
+                                 (objectInfo->traits.containsBorrowedState ||
+                                  get.object()->exprKind() == ExprKind::This);
+    if (borrowedTextType(type) && dependentObject) {
+      return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
+                                    mutableAccess ? AccessMode::Mutable
+                                                  : AccessMode::ReadOnly);
+    }
     return expressionInfo(std::move(type), ValueCategory::Place,
                           mutableAccess ? AccessMode::Mutable
                                         : AccessMode::ReadOnly);
+  }
+  if (kind == ExprKind::DirectInitializer && type.kind == SemanticType::Class &&
+      borrowedTextType(type)) {
+    const auto &initializer = static_cast<const DirectInitializer &>(expr);
+    for (const ExprPtr &argument : initializer.arguments()) {
+      if (isOwnerDependentTextExpression(argument)) {
+        return ownerDependentTextInfo(std::move(type));
+      }
+    }
+    return expressionInfo(std::move(type));
   }
   if (kind == ExprKind::Call) {
     const Call &call = static_cast<const Call &>(expr);
@@ -1468,6 +1489,18 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       return expressionInfo(std::move(type), ValueCategory::Place,
                             resolved->returnType.referenceAccess);
     }
+    // Constructing a text-carrying class relays the owner dependency of every
+    // owner-dependent text-carrying argument; ownerless arguments keep the
+    // result an independent value.
+    if (type.kind == SemanticType::Class && borrowedTextType(type) &&
+        semanticModel.findConstruction(expr) != nullptr) {
+      for (const ExprPtr &argument : call.arguments()) {
+        if (isOwnerDependentTextExpression(argument)) {
+          return ownerDependentTextInfo(std::move(type));
+        }
+      }
+      return expressionInfo(std::move(type));
+    }
     if (borrowedTextType(type) && resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
       if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
@@ -1480,7 +1513,8 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
              sourceInfo->type.kind == SemanticType::StringView ||
              sourceInfo->type.kind == SemanticType::NullPtr);
         if (sourceInfo != nullptr &&
-            (sourceInfo->type.kind == type.kind || ownerlessCStringSource) &&
+            (sourceInfo->type.kind == type.kind || ownerlessCStringSource ||
+             isTextCarryingType(sourceInfo->type)) &&
             !sourceInfo->traits.containsBorrowedState) {
           return expressionInfo(std::move(type));
         }

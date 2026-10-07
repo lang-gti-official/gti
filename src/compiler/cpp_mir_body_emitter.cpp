@@ -12778,12 +12778,15 @@ passiveGeneratedDestructorClass(const MirProgram &program,
              fieldType.arrayLength != 0 && fieldType.arguments.size() == 1 &&
              self(self, fieldType.arguments.front());
     }
+    // A counted text view is a trivially copyable descriptor; its owner
+    // dependency is a verified MIR loan fact, not representation state.
     const auto representation = expectedTypeRepresentation(fieldType);
     return representation &&
            (*representation == CppMirTypeRepresentationKind::Scalar ||
             *representation == CppMirTypeRepresentationKind::Enum ||
             *representation == CppMirTypeRepresentationKind::RawPointer ||
-            *representation == CppMirTypeRepresentationKind::NullPointer);
+            *representation == CppMirTypeRepresentationKind::NullPointer ||
+            *representation == CppMirTypeRepresentationKind::StringView);
   };
   const MirClassInstance *instance = uniqueClassInstanceForType(program, type);
   if (instance == nullptr || instance->abstract || instance->unionLayout ||
@@ -39967,7 +39970,15 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
       continue;
     }
 
-    if (loadedValue->info.traits.containsBorrowedState) {
+    // A text carrier relays its external owner through the verified entry
+    // loan; its representation is a passive descriptor copy with no
+    // separate field publication.
+    const MirClassInstance *textCarrierCopy =
+        uniqueClassInstanceForType(program, initializer.targetType);
+    if (loadedValue->info.traits.containsBorrowedState &&
+        (textCarrierCopy == nullptr || !textCarrierCopy->textCarrier ||
+         passiveGeneratedCopyClass(program, initializer.targetType) ==
+             nullptr)) {
       // Copy the carrier representation, not the address of its parameter
       // shell. The exact entry-to-field publication separately carries the
       // external owner's provenance and must name this very copied value.
@@ -43257,8 +43268,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return storedFieldValueLoanProducer(constructor->body, loan) !=
                    nullptr;
           });
-      if (!bindings || (constructor->borrowOrigin != BorrowOriginKind::None &&
-                        bindings->empty() && nestedPublications == 0)) {
+      // A text-carrying class relays its text formal's owners to callers;
+      // that verified caller-side fact emits no constructor representation.
+      const MirClassInstance *constructedOwner =
+          program_.findClassInstance(constructor->owner);
+      const bool textRelay =
+          constructedOwner != nullptr && constructedOwner->textCarrier &&
+          constructor->borrowOrigin == BorrowOriginKind::Argument &&
+          constructor->borrowParameters.empty();
+      if (!bindings ||
+          (constructor->borrowOrigin != BorrowOriginKind::None && !textRelay &&
+           bindings->empty() && nestedPublications == 0)) {
         {
           return false;
         }
