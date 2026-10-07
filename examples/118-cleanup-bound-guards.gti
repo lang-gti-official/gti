@@ -27,12 +27,20 @@ public:
   GuardOwner(Resource& resource) : retained(Guard(resource)) {}
 };
 
+// Moving an incoming owner through local bindings keeps its original resource
+// alive and transfers cleanup exactly once, just like moving a caller local.
+void consume(Guard guard) {
+  auto first = std::move(guard);
+  auto second = std::move(first);
+}
+
 int main() {
   mut Resource resource{};
   {
     Guard first{resource};
     Guard second{resource};
     auto moved = std::move(first);
+    consume(std::move(moved));
     GuardOwner nested{resource};
     // resource.reset() is rejected here: all guards still need the resource
     // during cleanup. Moving first transfers its cleanup responsibility.

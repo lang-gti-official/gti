@@ -124,6 +124,18 @@ def main():
 
             change(5, SOURCE)
             assert not errors(5)
+
+            missing_member = SOURCE.replace(" allocate(std::layout", " obtain(std::layout")
+            change(6, missing_member)
+            found = errors(6)
+            requirement = next((d for d in found if d.get("code") == "GTI-S2029"), None)
+            assert requirement is not None, found
+            assert "safe or unsafe" in requirement["message"], requirement
+            assert "public, safe" not in requirement["message"], requirement
+            assert any("unsafe { allocate(" in note["message"]
+                       for note in requirement.get("relatedInformation", [])), requirement
+            change(7, SOURCE)
+            assert not errors(7)
         finally:
             session.close()
     print("resource protocol LSP diagnostics, navigation and completion passed")

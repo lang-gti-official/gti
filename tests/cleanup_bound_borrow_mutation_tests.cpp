@@ -1578,6 +1578,68 @@ int main() {
 } // namespace
 
 int main() {
+  const auto moved = analyze("entry carrier moves", R"gti(
+void consume(Guard guard, Guard unrelated) {
+  auto first = std::move(guard);
+  auto second = std::move(first);
+}
+int main() {
+  Resource left{};
+  Resource right{};
+  consume(Guard(left), Guard(right));
+  return 0;
+}
+)gti");
+  bool checkedMoves = false;
+  if (moved) {
+    for (const auto &function : moved->functionInstances()) {
+      for (const auto &loan : function.body.loans) {
+        if (!loan.entry || !loan.lifecycleBound || loan.carriers.size() < 2)
+          continue;
+        const auto *source = function.body.findPlace(loan.source);
+        if (!source)
+          continue;
+        const BodyKey key{lang::MirBodyKind::Function, function.id};
+        auto erased = *moved;
+        std::erase(body(erased, key).loans[loan.id - 1].carriers,
+                   source->binding);
+        rejected(erased,
+                 "moving an entry owner cannot erase its formal anchor");
+        auto unmarked = *moved;
+        body(unmarked, key).loans[loan.id - 1].lifecycleBound = false;
+        rejected(unmarked,
+                 "moving an entry owner cannot erase lifecycle retention");
+        for (const auto &other : function.body.loans) {
+          if (!other.entry || !other.lifecycleBound || other.id == loan.id)
+            continue;
+          const auto *unrelated = function.body.findPlace(other.source);
+          if (!unrelated)
+            continue;
+          auto forged = *moved;
+          body(forged, key)
+              .loans[loan.id - 1]
+              .carriers.push_back(unrelated->binding);
+          rejected(forged,
+                   "unrelated parameter cannot acquire moved provenance",
+                   "owned entry carrier lacks an exact lifecycle transfer");
+          checkedMoves = true;
+        }
+        for (const auto &block : function.body.blocks) {
+          for (const auto &step : block.instructions) {
+            if (step.kind != lang::MirInstructionKind::Move ||
+                step.lifecycle.empty())
+              continue;
+            auto forged = *moved;
+            instruction(body(forged, key), step.id)->lifecycle.clear();
+            rejected(forged,
+                     "entry carrier cannot move without ownership transfer");
+          }
+        }
+      }
+    }
+  }
+  expect(checkedMoves,
+         "entry movement mutations exercise independent parameters");
   checkOwnedCall();
   checkNestedPublication();
   checkReturnedAndNestedLifetime();
