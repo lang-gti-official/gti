@@ -832,6 +832,12 @@ void destroyEnvelopeProbe(void *opaque) {
            "third-record probe first completes the pending emergency");
   const gti_failure_emergency_v2 emergency{GTI_FAILURE_ABI_VERSION_V2, 0,
                                            primary, probe.secondary};
+  if (probe.mutation == "stored") {
+    expect(gti_runtime_detail::record_managed_task_cleanup_emergency(
+               &emergency, artifact, &probe.secondaryArtifact),
+           "task cleanup can store the exact emergency without a handoff");
+    return;
+  }
   gti_runtime_detail::run_managed_task_adapter([&] {
     gti_rt_failure_terminate_cleanup_v2(&emergency, artifact,
                                         &probe.secondaryArtifact);
@@ -858,12 +864,14 @@ int main(int argc, char **argv) {
     const auto joined = gti_rt_thread_join_v2(&state);
     expect(
         joined.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
+            sameFailureRecord(joined.failure, gti_failure_record_v2{}) &&
             sameFailureRecord(joined.cleanup_failure.primary, probe.primary) &&
             sameFailureRecord(joined.cleanup_failure.secondary,
                               probe.secondary) &&
             joined.primary_artifact == &probe.primaryArtifact &&
             joined.secondary_artifact == &probe.secondaryArtifact,
-        "only the exact pending primary completes the two-record envelope");
+        "exact emergency promotion clears the ordinary payload and preserves "
+        "both records and descriptors");
     return failures == 0 ? 0 : 1;
   }
   testSpawnJoinAndConsumption();
