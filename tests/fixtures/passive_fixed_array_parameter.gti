@@ -14,13 +14,15 @@ Entry make_entry(int32_t value) { return Entry(value); }
 struct Table {
   Entry values[2];
   Table(Entry incoming[2]) : values(std::move(incoming)) {}
-  int32_t sum() { return this.values[0].key + this.values[1].key; }
+  Entry& front() { return this.values[0]; }
+  Entry& back() { return this.values[1]; }
 };
 
 int main() {
   Table table = Table({Entry(3), make_entry(4)});
   std::array<Entry, 2> array = std::array<Entry, 2>({make_entry(5), Entry(6)});
-  return table.sum() == 7 && array.front().key == 5 && array.back().key == 6 &&
+  return table.front().key == 3 && table.back().key == 4 &&
+                 array.front().key == 5 && array.back().key == 6 &&
                  constructions == 4
              ? 0 : 1;
 }
