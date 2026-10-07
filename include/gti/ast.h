@@ -434,6 +434,13 @@ struct FunctionAttribute {
   std::optional<Token> argument;
 };
 
+struct ClassAttribute {
+  Token name;
+  // A conditional unsafe assertion names one non-pack type parameter of
+  // this declaration. Semantics resolves the binder; this is not an expression.
+  std::optional<Token> capabilityParameter;
+};
+
 struct NativeLinkNameAttribute {
   Token attribute;
   Token symbol;
@@ -1461,7 +1468,9 @@ private:
 
 class QualifiedName final : public ExprOfKind<ExprKind::QualifiedName> {
 public:
-  explicit QualifiedName(NamePath name) : name_(std::move(name)) {}
+  explicit QualifiedName(NamePath name,
+                         std::optional<TypeRef> ownerType = std::nullopt)
+      : name_(std::move(name)), ownerType_(std::move(ownerType)) {}
 
   void accept(ExprVisitor &visitor) const override {
     visitor.visitQualifiedNameExpr(*this);
@@ -1469,9 +1478,13 @@ public:
 
   [[nodiscard]] const NamePath &name() const { return name_; }
   [[nodiscard]] NamePath takeName() { return std::move(name_); }
+  [[nodiscard]] const std::optional<TypeRef> &ownerType() const {
+    return ownerType_;
+  }
 
 private:
   NamePath name_;
+  std::optional<TypeRef> ownerType_;
 };
 
 class This final : public ExprOfKind<ExprKind::This> {
@@ -1771,8 +1784,9 @@ private:
 
 class ClassDecl final : public StmtOfKind<StmtKind::ClassDecl> {
 public:
-  ClassDecl(std::vector<Token> attributes, Token keyword, ClassKind kind,
-            Token name, std::optional<TypeRef> exactSpecialization,
+  ClassDecl(std::vector<ClassAttribute> attributes, Token keyword,
+            ClassKind kind, Token name,
+            std::optional<TypeRef> exactSpecialization,
             std::vector<GenericParameter> genericParameters,
             std::vector<BaseSpecifier> bases, StmtList members,
             bool forwardDeclaration = false,
@@ -1789,7 +1803,7 @@ public:
     visitor.visitClassDecl(*this);
   }
 
-  [[nodiscard]] const std::vector<Token> &attributes() const {
+  [[nodiscard]] const std::vector<ClassAttribute> &attributes() const {
     return attributes_;
   }
   [[nodiscard]] const Token &keyword() const { return keyword_; }
@@ -1819,7 +1833,7 @@ public:
   }
 
 private:
-  std::vector<Token> attributes_;
+  std::vector<ClassAttribute> attributes_;
   Token keyword_;
   ClassKind kind_;
   Token name_;
@@ -1839,19 +1853,23 @@ struct EnumeratorDecl {
 
 class EnumDecl final : public StmtOfKind<StmtKind::EnumDecl> {
 public:
-  EnumDecl(Token keyword, Token classKeyword, Token name,
+  EnumDecl(Token keyword, std::optional<Token> classKeyword, Token name,
            std::optional<TypeRef> underlyingType,
-           std::vector<EnumeratorDecl> enumerators)
+           std::vector<EnumeratorDecl> enumerators,
+           std::vector<GenericParameter> genericParameters = {})
       : keyword_(std::move(keyword)), classKeyword_(std::move(classKeyword)),
         name_(std::move(name)), underlyingType_(std::move(underlyingType)),
-        enumerators_(std::move(enumerators)) {}
+        enumerators_(std::move(enumerators)),
+        genericParameters_(std::move(genericParameters)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitEnumDecl(*this);
   }
 
   [[nodiscard]] const Token &keyword() const { return keyword_; }
-  [[nodiscard]] const Token &classKeyword() const { return classKeyword_; }
+  [[nodiscard]] const std::optional<Token> &classKeyword() const {
+    return classKeyword_;
+  }
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const std::optional<TypeRef> &underlyingType() const {
     return underlyingType_;
@@ -1859,13 +1877,17 @@ public:
   [[nodiscard]] const std::vector<EnumeratorDecl> &enumerators() const {
     return enumerators_;
   }
+  [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return genericParameters_;
+  }
 
 private:
   Token keyword_;
-  Token classKeyword_;
+  std::optional<Token> classKeyword_;
   Token name_;
   std::optional<TypeRef> underlyingType_;
   std::vector<EnumeratorDecl> enumerators_;
+  std::vector<GenericParameter> genericParameters_;
 };
 
 class ConditionalStmt final : public StmtOfKind<StmtKind::ConditionalStmt> {

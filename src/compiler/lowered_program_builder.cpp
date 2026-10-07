@@ -509,8 +509,9 @@ lowerUnionLayout(const ClassTypeInfo &info, const SemanticModel &semantics) {
 
 class DeclarationCollector final {
 public:
-  DeclarationCollector(const SemanticModel &semantics, const TargetInfo &target)
-      : semantics_(semantics), target_(target) {}
+  DeclarationCollector(const SemanticModel &semantics, const TargetInfo &target,
+                       const HirProgram &hir)
+      : semantics_(semantics), target_(target), hir_(hir) {}
 
   [[nodiscard]] std::vector<LoweredDeclaration>
   collect(const StmtList &declarations) {
@@ -543,6 +544,46 @@ private:
       return;
     }
     if (stmtAs<StaticAssertDecl>(&statement) != nullptr) {
+      return;
+    }
+    if (const auto *declaration = stmtAs<EnumDecl>(&statement)) {
+      const EnumTypeInfo *primary = semantics_.findEnumType(*declaration);
+      for (const HirEnum &instance : hir_.enumDeclarations()) {
+        if (instance.source != declaration || primary == nullptr)
+          continue;
+        LoweredDeclaration row;
+        row.id = result_.size() + 1;
+        row.parent = parent;
+        row.ownerClass = ownerClass;
+        row.ordinal = ++nextOrdinal_[parent];
+        row.namespaceScope = namespaceScope;
+        row.kind = LoweredDeclarationKind::Enum;
+        row.name = declaration->name().lexeme;
+        row.source = tokenSpan(declaration->name());
+        row.semanticIdentity = instance.declaration;
+        LoweredEnumDeclaration payload{
+            .id = instance.declaration,
+            .type = instance.type,
+            .sourceUnit = instance.sourceUnit,
+            .qualifiedName = instance.qualifiedName,
+            .underlyingType = instance.underlyingType,
+            .traits = instance.traits,
+            .requiresActiveCleanup = instance.requiresActiveCleanup,
+            .payload = instance.payload,
+            .compilerPrivate = primary->compilerPrivate};
+        for (const HirEnumerator &variant : instance.enumerators) {
+          payload.enumerators.push_back(
+              {.name = variant.source->name.lexeme,
+               .value = variant.value,
+               .variantIndex = variant.variantIndex,
+               .payloadTypes = variant.payloadTypes,
+               .payloadRequiresActiveCleanup =
+                   variant.payloadRequiresActiveCleanup,
+               .source = tokenSpan(variant.source->name)});
+        }
+        row.payload = std::move(payload);
+        result_.push_back(std::move(row));
+      }
       return;
     }
 
@@ -605,6 +646,8 @@ private:
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
             .sharePolicy = info->sharePolicy,
+            .transferCondition = info->transferCondition,
+            .shareCondition = info->shareCondition,
             .cAbiLayout = lowerCAbiLayout(*info, semantics_),
             .unionLayout = lowerUnionLayout(*info, semantics_),
             .compilerCapability = info->compilerCapability,
@@ -623,6 +666,9 @@ private:
         if (const ClassLifecycleInfo *lifecycle =
                 semantics_.findClassLifecycle(*declaration)) {
           payload.defaultConstructor = lifecycle->defaultConstructor;
+          payload.generatedDefaultRequiresSchedule =
+              lifecycle->generatedDefaultFieldInitializers ||
+              lifecycle->generatedDefaultBaseConstructor != 0;
           payload.copyConstructor = lifecycle->copyConstructor;
           payload.moveConstructor = lifecycle->moveConstructor;
           payload.copyAssignment = lifecycle->copyAssignment;
@@ -633,34 +679,6 @@ private:
         row.payload = std::move(payload);
       }
       children = &declaration->members();
-    } else if (const auto *declaration = stmtAs<EnumDecl>(&statement)) {
-      row.kind = LoweredDeclarationKind::Enum;
-      row.name = declaration->name().lexeme;
-      row.source = tokenSpan(declaration->name());
-      if (const EnumTypeInfo *info = semantics_.findEnumType(*declaration)) {
-        row.semanticIdentity = info->id;
-        LoweredEnumDeclaration payload{.id = info->id,
-                                       .sourceUnit = info->sourceUnit,
-                                       .qualifiedName = info->qualifiedName,
-                                       .underlyingType = info->underlyingType,
-                                       .payload = info->payload,
-                                       .compilerPrivate =
-                                           info->compilerPrivate};
-        payload.enumerators.reserve(info->enumerators.size());
-        for (const EnumeratorInfo &enumerator : info->enumerators) {
-          payload.enumerators.push_back(
-              {.name = enumerator.declaration == nullptr
-                           ? std::string{}
-                           : enumerator.declaration->name.lexeme,
-               .value = enumerator.value,
-               .variantIndex = enumerator.variantIndex,
-               .payloadTypes = enumerator.payloadTypes,
-               .source = enumerator.declaration == nullptr
-                             ? SourceSpan{}
-                             : tokenSpan(enumerator.declaration->name)});
-        }
-        row.payload = std::move(payload);
-      }
     } else if (const auto *declaration = stmtAs<FunctionDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Function;
       row.name = declaration->name().lexeme;
@@ -835,6 +853,7 @@ private:
 
   const SemanticModel &semantics_;
   const TargetInfo &target_;
+  const HirProgram &hir_;
   std::vector<LoweredDeclaration> result_;
   std::unordered_map<LoweredDeclarationId, std::size_t> nextOrdinal_;
 };
@@ -896,7 +915,7 @@ private:
     if (!source.payload) {
       continue;
     }
-    const MirPayloadEnum *lowered = mir.findPayloadEnum(source.declaration);
+    const MirPayloadEnum *lowered = mir.findPayloadEnum(source.type);
     if (lowered == nullptr || source.sourceUnit != lowered->sourceUnit ||
         source.traits != lowered->traits ||
         source.requiresActiveCleanup != lowered->requiresActiveCleanup ||
@@ -926,6 +945,8 @@ private:
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.type != lowered.type || source.kind != lowered.kind ||
         source.traits != lowered.traits ||
+        source.generatedDefaultRequiresSchedule !=
+            lowered.generatedDefaultRequiresSchedule ||
         source.cOpaqueHandle != lowered.cOpaqueHandle ||
         source.fieldInitializers.placeDomain !=
             lowered.fieldInitializers.placeDomain ||
@@ -988,15 +1009,14 @@ private:
         (source.source != nullptr || source.declaration != 0 ||
          !source.parameterTypes.empty() || owner == nullptr ||
          owner->defaultConstructor != SpecialMemberStatus::Generated ||
-         !owner->fields.empty() || owner->destructor ||
-         source.initializers.size() != 1 ||
-         source.initializers.front().kind !=
-             ConstructorInitializerTargetKind::Base ||
+         !source.parameterBindings.empty() || !source.body.roots.empty() ||
+         !source.body.statements.empty() ||
          lowered.definitionKind != MirDefinitionKind::Source))
       return reject("generated constructor instance " +
                     std::to_string(index + 1) +
                     " has an invalid structural schedule");
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.generatedDefault != lowered.generatedDefault ||
         source.constexprConstructor != lowered.constexprConstructor ||
         source.constexprConstructor !=
             (source.source != nullptr && source.source->isConstexpr()) ||
@@ -1155,8 +1175,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     }
     lowered.embeddingPlan_ = std::move(plan);
   }
-  lowered.declarations_ =
-      DeclarationCollector(semantics, target).collect(program.declarations());
+  lowered.declarations_ = DeclarationCollector(semantics, target, hir)
+                              .collect(program.declarations());
   for (LoweredDeclaration &declaration : lowered.declarations_) {
     auto *enumeration =
         std::get_if<LoweredEnumDeclaration>(&declaration.payload);
@@ -1166,10 +1186,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     const auto hirEnumeration = std::find_if(
         hir.enumDeclarations().begin(), hir.enumDeclarations().end(),
         [&](const HirEnum &candidate) {
-          return candidate.declaration == enumeration->id;
+          return candidate.type == enumeration->type;
         });
     const MirPayloadEnum *mirEnumeration =
-        optimizedMir.findPayloadEnum(enumeration->id);
+        optimizedMir.findPayloadEnum(enumeration->type);
     if (hirEnumeration == hir.enumDeclarations().end() ||
         mirEnumeration == nullptr ||
         hirEnumeration->enumerators.size() != enumeration->enumerators.size() ||

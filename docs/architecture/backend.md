@@ -31,6 +31,15 @@ concrete instances and typed values, MIR owns executable control flow and
 effects, `LoweredProgram` owns the complete backend-neutral program contract,
 and each backend owns target representation.
 
+Payload enum representation rows carry the complete semantic enum type, not
+only an `EnumId`. Definition naming, dependency scheduling, construction,
+matching and lifecycle lookup distinguish every exact instance. Verification
+rejects missing or conflicting concrete rows; generic primaries cannot serve as
+a fallback representation. Passive aggregate enum results use verified folded
+traits, while an owning enum argument produced by a call reuses that call's
+proved success-only result slot and ordinary ordered transfer/failure cleanup.
+No AST/HIR-only enum execution route is introduced.
+
 Signature-pattern primaries retain both their resolved public argument shapes
 and binder projections in sealed lowered declarations. Native template carriers
 spell a primary with the public arity and one patterned definition; GTI has
@@ -71,7 +80,7 @@ statement spans against the **optimized** MIR's retained HIR identities.
 Each `LoweredBody::sourceLocations` row owns its source path/span and exact
 block/instruction identity; instruction zero identifies a terminator. These
 optional rows are verified and sealed with the lowered contract (printer
-version 11), survive destruction of AST/HIR, and are never executable,
+version 13), survive destruction of AST/HIR, and are never executable,
 ownership, type, or optimization authority. The default contract has no rows.
 
 The C++ backend consumes only those lowered rows. Body/template planning emits
@@ -99,7 +108,7 @@ remain later slices; this metadata does not bypass MIR verification.
 ## Backend Contract
 
 Terminal and caller-tracking contracts are sealed declaration facts, also
-checked against the embedded MIR. Lowered-program serialization version 11
+checked against the embedded MIR. Lowered-program serialization version 13
 includes both flags and optional source debug locations. The C++ representation
 passes an explicit artifact-local caller-site parameter through supported
 tracked signatures and calls. An
@@ -542,11 +551,49 @@ reference, union and base projections do not enter this field-chain transport.
 A passive generated default used by a constructor field initializer preserves
 its verified declaration defaults at the adjacent publication instruction,
 using the existing private empty field shell and generated assignment protocol.
+This includes a passive union with its exact overlapping layout, trivial fields,
+and generated default/copy/move/destructor witnesses. Its targetless empty
+construction and adjacent field publication need no owning cleanup token;
+the containing constructor and fixed-array construction retain their original
+MIR Invoke, success activation, transfer, and rollback schedules. A union with
+active cleanup, user lifecycle, or mismatched field/layout metadata does not
+enter this representation proof.
+An immediately consumed by-value `CallInput` may copy a cleanup-free fixed-array
+aggregate from its exact value-rooted slot. Generated element copying is
+observation-free, while the source retains its original full-expression drop;
+this is not a consuming transfer. Exact source/stage/parameter identities,
+cleanup-free copyability, and same-block adjacent consumption authorize the
+representation alias. Owning or borrowed elements, intervening argument work,
+and a transfer of the retained source obligation do not enter this proof.
 Targetless `Construct` and `Call` default producers can also publish into the
 same exact prepared-parameter slot: omitted brace-default fields in designated
 construction retain CallInput activation, consuming handoff and failure cleanup.
 These are representation proofs over resolved MIR, not source-AST replay or
 standard-library type exceptions.
+
+Generated declaration-field schedules retain selected concrete constructor
+bodies and the verified `generatedDefaultRequiresSchedule` obligation. A native
+primary template may represent several such concrete owners: it declares its
+ordinary default constructor once and a distinct status overload for each
+selected MIR constructor. Out-of-line specializations execute those bodies;
+an inline native default or `noexcept` body must not replace them. Direct
+concrete representations retain their single exact-owner declaration.
+
+Constructor fields of `Expected<T, E>` can publish a separately produced
+success value, owned unexpected value, or passive scalar alternative into a
+proved private empty representation. Admission binds the exact declared field,
+selected initializer, source HIR root, full-expression boundary, unique
+consumer, and adjacent producer or Invoke-success edge. Owning input transfer
+and construction-rollback activation must match the verified MIR obligations;
+this path cannot replace a live field or invent a local-binding lifetime.
+An exact nonraising zero-argument source constructor still executes at its
+`Construct` instruction in the originating lexical context. Publication moves
+the completed payload into the field, retires only its moved-from native shell,
+and leaves semantic cleanup to MIR. The local Expected join writer explicitly
+excludes these proved field publications, since an actual field is not a
+temporary lifetime slot. Missing or mismatched targets, activation, source
+boundaries, or transfer events reject admission rather than selecting a native
+fallback.
 
 The passive default-body proof recurses through resolved, zero-argument generated
 class defaults with cycle detection. It does not admit source calls, selected
@@ -563,6 +610,39 @@ private constructor even when the originating GTI member can. The selected
 MIR constructor, staged arguments, destination, success activation, and
 rollback remain unchanged; source visibility is never widened.
 
+Empty-field admission for a containing owner of the sealed optional slot retains
+the exact selected private constructor's instruction-free, nonborrowed void
+`Return` witness. A recursive fields-only aggregate proof cannot substitute the
+slot's shape for that witness after the selected constructor has been corrupted.
+
+The existing MIR double-failure contract also has an inherited dynamic component:
+an ordinary source destructor or helper called by a failure-cleanup `Drop` cannot
+treat its next failure as a fresh primary and run callee-local cleanup first.
+Each failure-form MIR block with an active record establishes a backend-private,
+thread-local scope over that exact record and artifact descriptor. Every emitted
+`Invoke` failure edge checks the inherited context after producing its exact
+secondary record, before entering its local cleanup successor. Terminal source
+constructor/callback/call/join adapters preserve the same check. No public type
+spelling, reconstructed expression, allocation, or native source exception selects
+this behavior; verified MIR active-failure and edge identities own the schedule.
+
+Aggregate, array, prefix, optional, shared/unique, closure and polymorphic cleanup
+recipes inherit that scope. A cleanup sequence arms its own scope after its first
+failure so later child calls stop before local cleanup on a second failure; the
+fixed-array leaf traversal retains the same rule. Nested scopes never replace the
+earliest primary, and successful exit or the runtime's existing managed-worker
+emergency handoff restores the thread-local state. The managed task/capture cleanup
+adapter copies its pending v2 primary and immutable descriptor into its own frame
+through the internal `copy_managed_task_cleanup_primary_v2` query, rather than
+borrowing mutable worker state. Neither records nor stack contexts escape to
+another thread. Runtime-site records may legitimately retain a null descriptor.
+During managed task cleanup, an emergency may complete the already stored primary
+only when both that complete v2 record and its descriptor exactly match; replacing
+the primary or extending an existing two-record envelope remains terminal.
+Publishing that cleanup-kind outcome clears the inactive ordinary payload; the
+exact primary lives only in the emergency envelope. Join-result validation
+continues to reject contradictory active and inactive payloads.
+
 A moved class return is constructed at its MIR `Move`, before the cleanup
 continuation, but is not published until Return. The Move must dominate the
 Return, and later uses of its source remain restricted to moved-from drops.
@@ -573,9 +653,9 @@ and explicit construction use the same pending-result destination. Failure
 cleanup calls a fallible result's exact status cleanup recipe before native
 teardown; an infallible result uses native teardown directly. A wrapped
 `expected` value cleans its payload before tearing down the envelope.
-Storage handles keep their initialized result in an SSA carrier until the
-successful Return; rollback drains that carrier on the explicit MIR failure
-edge. This does not admit arbitrary executable work or reinitialization
+Private prefix-storage handles keep their initialized result in an SSA carrier
+until the successful Return; rollback drains that carrier on the explicit MIR
+failure edge. This does not admit arbitrary executable work or reinitialization
 between a class result's construction and Return.
 
 When the result is the class payload of an `expected` return, cleanup may
@@ -667,16 +747,18 @@ MIR, never as a backend analysis result. When all local overflow outcomes for a
 checked add, subtract, multiply, or negate are discharged, the C++ backend may
 emit the direct arithmetic representation. When all local outcomes for an
 admitted fixed-array read are discharged, it may emit a direct indexed read.
-For a private sparse-storage read or mutable read, it may select the
-backend-private unchecked helper only when both the exact bounds and
-initialized-slot outcomes are discharged. A fully discharged `Invoke` follows
-its verified success edge; any retained local or callee failure keeps the
-checked representation and failure transfer.
+An admitted prefix-storage read may select its backend-private unchecked
+helper only when its exact bounds outcome is discharged. A fully discharged
+`Invoke` follows its verified success edge; any retained local or callee failure
+keeps the checked representation and failure transfer.
 
 These choices inspect only MIR operation identities and exact discharge
 metadata. They do not recognize `std` wrappers, source declaration names, or
-generated C++ shape. Prefix storage and every unsupported operation remain on
-their checked backend route.
+generated C++ shape. Unsupported operations remain on their checked backend
+route. Sparse storage is ordinary source code: its slot-state guards and
+general object-lifetime calls do not acquire an unchecked sparse helper or an
+initialized-slot discharge from the public container's identity. The retired
+sparse-state optimizer pass and proof family have no backend equivalent.
 
 For a scalar block parameter, the C++ MIR body emitter owns one backend-private
 edge slot. Every `Goto`, `Branch`, `Invoke`, or `Switch` predecessor
@@ -1240,7 +1322,7 @@ construction and its publication when the old and new loans have identical
 sources, access, ancestry and dependency sets.
 
 A generated default constructor of a non-generic class with no declared
-instance fields or destructor has a selected HIR constructor instance when
+instance fields has a selected HIR constructor instance when
 its state-bearing non-generic base has an exact zero-parameter source
 constructor. Semantics records that base declaration identity; HIR discovers
 the base even when no expression constructs it directly. The generated
@@ -1257,10 +1339,12 @@ The C++ plan emits this body's admitted status constructor instead of a native
 `= default` operation that would call a missing ordinary base entry. Trivial
 and cleanup-owning bases use the same `InitializeBase` publication contract;
 the rollback record retains the base's exact cleanup requirement. No terminal
-adapter or native exception supplies the failure path. Derived instance fields,
-source destructors, generic owners/bases, constructor default arguments and
+adapter or native exception supplies the failure path. A source destructor
+does not prevent this base-only generated schedule. Derived instance fields,
+generic owners/bases, constructor default arguments and
 generated-base chains remain outside this generated-body slice and retain
-their existing structural construction representation.
+their existing structural construction representation or the separately
+verified declaration-field schedule described above.
 
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
@@ -1310,6 +1394,13 @@ folds access that slot, not the moved native parameter shell. Copy stages
 leave it live; move stages and reverse normal/failure drops follow the exact
 MIR lifecycle events. In particular, an unused owning pack cannot delegate
 destructor failure to native parameter scope and skip the caller's cleanup.
+Constructor-local packs use that same concrete layout and entry obligation
+proof when forwarding into a field constructor. A failure cleanup accepts only
+the exact element ordinal, flattened parameter type, source binding and active
+Binding drop; it does not reinterpret the pack root as one owning parameter.
+Completed fields and remaining arguments retain their existing reverse MIR
+rollback schedule. This applies equally to unrelated generic envelopes and
+source-defined list/deque/queue nodes, without recognizing container names.
 
 An admitted direct class/struct field uses the class initializer schedule's
 exact payload construction, `This.field` publication, value-rooted reparenting,
@@ -1960,6 +2051,14 @@ destructor failure entries in its own deferred concrete row; the primary's
 lifecycle pass leaves that instance alone and emits explicit specializations
 only for instances that remain specializations of the primary.
 
+Generated constructors have no source member declaration row. For a retained
+native primary, their exact ordinary and status-form specialization declarations
+are nevertheless emitted alongside source-member specializations, after the
+concrete field dependencies are complete and before executable consumers.
+The declarations and later definitions use the same verified constructor
+instance and admitted signature; native implicit instantiation cannot select a
+different body or precede the explicit specialization.
+
 C++ type syntax, include selection, helper names, failure ABI syntax, and
 representation choices remain inside the C++ backend. C++ source fragments do
 not belong in `LoweredProgram`.
@@ -1978,7 +2077,7 @@ a direct namespace call; MIR has already scheduled callee-expression effects.
 
 ### Defined Failure
 
-Private typed-storage results use a default-empty native handle at a
+Private prefix-storage results use a default-empty native handle at a
 status-returning call boundary. A successful MIR Return moves the exact handle
 through the out-parameter; it is not copied or default-constructed as an element
 value. If destination replacement later fails, the activated result's MIR Drop
@@ -1989,6 +2088,14 @@ when the receiver has its exact unique staged borrow and matching owner and
 mutability; result activation, input transfers, replacement, and shell cleanup
 retain the same proof as a free-function result. Container swaps are ordinary
 clients of these representations, not backend-recognized operations.
+
+Source-defined sparse owners use the ordinary class-result and field-cleanup
+representations. Their two region leases, live-slot metadata and reverse
+cleanup loops are emitted from verified MIR; there is no native sparse-storage
+handle, adoption primitive or hidden live-slot bitmap. The backend lowers
+general object construction, destruction and relocation using the selected
+constructor and exact cleanup recipe carried by MIR. It does not reconstruct
+the source owner's initialization state or release policy.
 
 MIR carries canonical failure metadata, detector sites, failure edges, cleanup
 schedules, propagation, and publication behavior. The C++ backend materializes

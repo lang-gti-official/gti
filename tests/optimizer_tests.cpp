@@ -1126,7 +1126,7 @@ int main() {
   const lang::OptimizationPassReport *ownedFold =
       findPass(optimized.report, "fold-literal-identities");
   expect(optimized.valid() && optimized.report.verificationEnabled &&
-             optimized.report.passes.size() == 10 && ownedFold != nullptr &&
+             optimized.report.passes.size() == 9 && ownedFold != nullptr &&
              ownedFold->shadowMismatches == 0,
          "the owned MIR pipeline should verify and report its bounded shadow "
          "transform");
@@ -2408,7 +2408,7 @@ int main() {
                                   .mir = frontend.mir,
                                   .level = level,
                                   .compatibility = &compatibility});
-    bool sharedPassesMatch = optimized.report.passes.size() == 10;
+    bool sharedPassesMatch = optimized.report.passes.size() == 9;
     for (const lang::OptimizationPassReport &expected : o1.report.passes) {
       if (expected.name != "scalar-promotion" &&
           expected.name != "fold-literal-identities") {
@@ -2424,9 +2424,12 @@ int main() {
     }
     expect(optimized.valid() && sharedPassesMatch &&
                findPass(optimized.report, "sparse-conditional-constants") !=
+                   nullptr &&
+               findPass(optimized.report, "discharge-storage-state-checks") ==
                    nullptr,
            "O2 and O3 should retain shared scalar/fold behavior before "
-           "adding independently replayable sparse and safety proofs");
+           "adding independently replayable sparse-constant and safety proofs, "
+           "without a private sparse-slot state pass");
   }
 
   const lang::OptimizedProgram unchecked =
@@ -3220,15 +3223,24 @@ void testMirEffectClassification() {
              !ownerUpcast.removableWhenUnused && !ownerUpcast.reorderable,
          "a unique-owner upcast should remain an exact consuming operation");
 
-  for (const lang::IntrinsicKind shift :
-       {lang::IntrinsicKind::StorageShiftRight,
-        lang::IntrinsicKind::StorageShiftLeft}) {
-    const lang::MirEffectTraits effect = lang::effects(shift);
+  const lang::MirEffectTraits relocation =
+      lang::effects(lang::IntrinsicKind::ObjectRelocate);
+  expect(relocation.readsUnknownMemory && relocation.writesUnknownMemory &&
+             relocation.movesValue && relocation.initializesValue &&
+             !relocation.speculatable && !relocation.removableWhenUnused &&
+             !relocation.reorderable,
+         "raw object relocation must remain an observable transfer barrier "
+         "even when source-defined slot checks precede it");
+  for (const lang::IntrinsicKind lifetime :
+       {lang::IntrinsicKind::ObjectConstruct,
+        lang::IntrinsicKind::ObjectDestroy}) {
+    const lang::MirEffectTraits effect = lang::effects(lifetime);
     expect(effect.readsUnknownMemory && effect.writesUnknownMemory &&
-               effect.invokesRuntime && effect.mayTrap && effect.movesValue &&
-               effect.invokesUserCode && !effect.speculatable &&
-               !effect.removableWhenUnused && !effect.reorderable,
-           "a storage shift should remain a checked move barrier");
+               effect.mayTrap && effect.invokesUserCode &&
+               !effect.speculatable && !effect.removableWhenUnused &&
+               !effect.reorderable,
+           "general construction and destruction must retain user-code and "
+           "raw-memory barriers for every source-defined storage policy");
   }
   for (std::size_t index = 0; index < lang::synchronizationOperationKindCount;
        ++index) {
@@ -3333,44 +3345,31 @@ void testMirEffectClassification() {
          "replacement lifecycle events should conservatively retain prior-"
          "value cleanup effects");
 
-  const lang::MirEffectTraits allocation = lang::effects(
-      lang::MirInstruction{.kind = lang::MirInstructionKind::Call,
-                           .intrinsic = lang::IntrinsicKind::AllocateStorage});
+  const lang::MirEffectTraits allocation = lang::effects(lang::MirInstruction{
+      .kind = lang::MirInstructionKind::Call,
+      .intrinsic = lang::IntrinsicKind::AllocatePrefixStorage});
   expect(allocation.allocates && allocation.invokesRuntime &&
              allocation.writesUnknownMemory && allocation.mayTrap &&
              allocation.maySynchronize,
          "runtime intrinsics should expose allocation and possible "
          "synchronization effects");
-  expect(lang::effects(lang::IntrinsicKind::AllocateStorage).maySynchronize,
-         "intrinsic summaries should expose possible runtime synchronization");
+  expect(
+      lang::effects(lang::IntrinsicKind::AllocatePrefixStorage).maySynchronize,
+      "intrinsic summaries should expose possible runtime synchronization");
 
-  const lang::MirEffectTraits recoverableAllocation =
-      lang::effects(lang::MirInstruction{
-          .kind = lang::MirInstructionKind::Call,
-          .intrinsic = lang::IntrinsicKind::StorageTryAllocate});
-  expect(recoverableAllocation.allocates &&
-             recoverableAllocation.invokesRuntime &&
-             recoverableAllocation.writesPlace &&
-             recoverableAllocation.writesUnknownMemory &&
-             recoverableAllocation.initializesValue &&
-             !recoverableAllocation.mayTrap &&
-             !recoverableAllocation.removableWhenUnused &&
-             !recoverableAllocation.reorderable,
-         "recoverable storage allocation should retain publication and host "
-         "allocation effects without claiming that request failure traps");
-
-  for (const lang::IntrinsicKind observer :
-       {lang::IntrinsicKind::StorageCapacity,
-        lang::IntrinsicKind::StorageInitialized}) {
-    const lang::MirEffectTraits observation =
-        lang::effects(lang::MirInstruction{
-            .kind = lang::MirInstructionKind::Call, .intrinsic = observer});
-    expect(observation.readsUnknownMemory && observation.invokesRuntime &&
-               !observation.writesPlace && !observation.writesUnknownMemory &&
-               !observation.allocates && !observation.mayTrap &&
-               !observation.reorderable,
-           "storage allocation-state observers should remain total runtime "
-           "reads without mutation, allocation, or trapping effects");
+  for (const lang::IntrinsicKind guard :
+       {lang::IntrinsicKind::RequireVacantStorage,
+        lang::IntrinsicKind::RequireLiveStorage,
+        lang::IntrinsicKind::RequireRelocationCapacity,
+        lang::IntrinsicKind::RequireRelocationSource,
+        lang::IntrinsicKind::RequireRelocationDestination}) {
+    const lang::MirEffectTraits effect = lang::effects(guard);
+    expect(effect.mayTrap && !effect.readsUnknownMemory &&
+               !effect.writesUnknownMemory && !effect.allocates &&
+               !effect.speculatable && !effect.removableWhenUnused &&
+               !effect.reorderable,
+           "source-computed slot-policy checks must retain exact failure "
+           "without inventing hidden storage effects");
   }
 
   const lang::MirEffectTraits drop = lang::effects(
@@ -3738,7 +3737,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v77\n") &&
+  expect(dump.starts_with("mir-body-v80\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&
@@ -5925,10 +5924,18 @@ int switch_reactivation(mut int& parent) {
   lang::MirBody sharedLocalChild = branchState;
   sharedLocalChild.loans[0].access = lang::AccessMode::ReadOnly;
   sharedLocalChild.loans[1].access = lang::AccessMode::ReadOnly;
-  expect(hasError(lang::verifyMirBody(sharedLocalChild),
-                  "read-only derived call result"),
-         "a read-only Local child must reuse its parent's identity instead of "
-         "forming persistent read-only ancestry");
+  expect(lang::verifyMirBody(sharedLocalChild).valid(),
+         "a checked non-escaping read-only Local child may retain its exact "
+         "parent ancestry until its own endpoint");
+  lang::MirBody escapingSharedChild = sharedLocalChild;
+  escapingSharedChild.loans[1].escapes = true;
+  expect(hasError(lang::verifyMirBody(escapingSharedChild),
+                  "non-escaping Local, CallResult, or Stored"),
+         "a shared child must not escape its parent's checked topology");
+  lang::MirBody entrySharedChild = sharedLocalChild;
+  entrySharedChild.loans[1].entry = true;
+  expect(hasError(lang::verifyMirBody(entrySharedChild), "non-entry"),
+         "a shared child must be created locally, not forged as an entry loan");
 
   lang::MirBody overlappingCallResults{
       .kind = lang::MirBodyKind::Function,

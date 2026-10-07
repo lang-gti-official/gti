@@ -63,6 +63,23 @@ had no regression protection.
 
 ## Test-gap audit (A-series, 0.379.2)
 
+### Payload enum composition repair
+
+A47 (#88), A48 (#89), and A49 (#90) now require native success. Their original
+reproducers pass C++20/C++23 at O0/O1/O3, no-elide construction, and ASan/UBSan.
+The generic enum campaign repairs general checked-reference reborrowing,
+verified owning-field reads, and fresh call-result argument placement rather
+than recognizing a particular enum or wrapper. Focused generic and nongeneric
+cases also check mutation, exact active-payload cleanup, and failure rollback.
+This is focused evidence; full combined-campaign validation remains separate.
+
+S15 (#103) is also repaired: the passive-class SSA prelude now respects the
+same exact fused construction and extraction proofs as admission and body
+emission. Its original reproducer prints `1` and exits successfully; generic
+and nongeneric cases cover fresh class payloads, named copies, and copied or
+borrowed patterns across all eight native configurations. Its gate now requires
+native success rather than an internal compiler error.
+
 ### Fixed-array construction repair
 
 A17 (#63), A42 (#85), and A52 (#93) are resolved and their six original
@@ -141,7 +158,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A28 | [#73](https://git.internal.howetotech.dev/gti-lang/gti/issues/73) C++ backend ICE: overloaded operator on a field of a range-for element | ice | `reproducers/a28-map-range-for-key-view`<br>`reproducers/a28-range-element-field-overloaded-operator`<br>`reproducers/a28-range-element-field-ref-method` |
 | A29 | [#74](https://git.internal.howetotech.dev/gti-lang/gti/issues/74) C++ backend ICE: calling a method on a string_view returned by a call | ice | `reproducers/a29-method-on-returned-string-view`<br>`reproducers/a29-string-view-size-on-dynamic-view` |
 | A30 | [#75](https://git.internal.howetotech.dev/gti-lang/gti/issues/75) Consuming member results stage before replacing existing owning bindings, retaining receiver and replacement failure cleanup | pass | `reproducers/a30-assign-consuming-call-result` |
-| A31 | [#76](https://git.internal.howetotech.dev/gti-lang/gti/issues/76) MIR ICE: move on a loop's break path, then reinitialization after the loop | ice | `reproducers/a31-move-on-break-path-then-reinit` |
+| A31 | [#76](https://git.internal.howetotech.dev/gti-lang/gti/issues/76) Resolved: literal loop exit ownership agrees with post-break reinitialization; native cleanup and safety negatives covered | pass | `reproducers/a31-move-on-break-path-then-reinit` |
 | A32 | [#77](https://git.internal.howetotech.dev/gti-lang/gti/issues/77) Resolved: same-owner value construction preserves selected copy/move lifecycle instead of a generic converting constructor | pass | `reproducers/a32-optional-emplace-move-only-function`<br>`reproducers/a32-vector-push-back-move-only-function`, `constructor_transport`, `generic_callable_transport_runtime` |
 | A33 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | resolved: pass | `reproducers/a33-unnecessary-mut-deref-store` |
 | A34 | [#78](https://git.internal.howetotech.dev/gti-lang/gti/issues/78) string_view relayed through a receiver-tied subscript is rejected (GTI-S2045) | rejected | `reproducers/a34-view-relay-through-subscript` |
@@ -149,23 +166,23 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A36 | [#79](https://git.internal.howetotech.dev/gti-lang/gti/issues/79) unique_ptr member-initializer ': child_(nullptr)' is rejected while '= nullptr' is accepted | rejected | `reproducers/a36-unique-ptr-member-init-nullptr` |
 | A37 | [#80](https://git.internal.howetotech.dev/gti-lang/gti/issues/80) Binding libc functions whose C prototypes use size_t fails in native C++ compilation | backend | `reproducers/a37-libc-qsort-link-name-conflict`<br>`reproducers/a37-libc-strlen-prototype-conflict` |
 | A38 | [#81](https://git.internal.howetotech.dev/gti-lang/gti/issues/81) Checked class payload extraction publishes the exact return result, preserving wrong-state detection and unpublished-result cleanup | pass | `reproducers/a38-return-call-value-class`<br>`reproducers/a38-return-expected-value-class` |
-| A39 | [#82](https://git.internal.howetotech.dev/gti-lang/gti/issues/82) C++ backend ICE: taking the address of a struct-typed field inside a constructor body | ice | `reproducers/a39-ctor-address-of-struct-field` |
+| A39 | [#82](https://git.internal.howetotech.dev/gti-lang/gti/issues/82) Taking the address of a struct-typed field inside a constructor body | pass after general constructor reconciliation; original runs without an additional feature change | `reproducers/a39-ctor-address-of-struct-field` |
 | A40 | [#83](https://git.internal.howetotech.dev/gti-lang/gti/issues/83) C++ backend ICE: indexing a fixed-array field through a raw pointer | ice | `reproducers/a40-c-abi-record-pointer-array-field`<br>`reproducers/a40-raw-pointer-fixed-array-field-index` |
-| A41 | [#84](https://git.internal.howetotech.dev/gti-lang/gti/issues/84) Unresolved fixed-array forwarding through storage::emplace or vector::emplace_back; invalid HIR is now diagnosed | ice (located GTI-B0001, no longer silent) | `reproducers/a41-storage-emplace-fixed-array-silent`<br>`reproducers/a41-vector-emplace-back-fixed-array-silent` |
+| A41 | [#84](https://git.internal.howetotech.dev/gti-lang/gti/issues/84) Resolved: exact passive fixed-array values retain typed by-value forwarding through storage and vector emplacement; originals and independent-copy observations pass all eight native modes | pass | `reproducers/a41-storage-emplace-fixed-array-silent`<br>`reproducers/a41-vector-emplace-back-fixed-array-silent`, `storage_final_address_runtime` |
 | A42 | [#85](https://git.internal.howetotech.dev/gti-lang/gti/issues/85) Fixed arrays of named passive records | resolved: pass | `reproducers/a42-c-abi-record-array-from-named-values`<br>`reproducers/a42-struct-array-from-named-values`<br>`reproducers/a42-struct-array-two-named-values` |
 | A43 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: mismatched native callbacks show the exact required and candidate signatures | rejected, fixed regression | `reproducers/a43-callback-argument-unknown-type` |
-| A44 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: identical direct and transitive raw lifetime observations publish one warning | pass, fixed regression | `reproducers/a44-raw-audit-duplicate-warning` |
-| A45 | [#86](https://git.internal.howetotech.dev/gti-lang/gti/issues/86) Derived classes with state-bearing bases: GTI-B0003, backend ICEs, and an undefined Base::Base() at link | ice, link, rejected | `reproducers/a45-base-plus-string-field-unsupported`<br>`reproducers/a45-base-state-rollback-unsupported`<br>`reproducers/a45-derived-destructor-explicit-base`<br>`reproducers/a45-derived-destructor-generated-ctor`<br>`reproducers/a45-literal-base-argument` |
+| A44 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: identical direct and transitive raw lifetime observations publish one warning at the application access; distinct included-library findings remain visible | pass, exact source-location duplicate guard | `reproducers/a44-raw-audit-duplicate-warning` |
+| A45 | [#86](https://git.internal.howetotech.dev/gti-lang/gti/issues/86) Selected state-bearing base construction, owning derived fields, literal arguments and declared cleanup: five originals pass; checked/effectful base-argument preparation remains pending | partial: five pass; prefix pending | `reproducers/a45-base-plus-string-field-unsupported`<br>`reproducers/a45-base-state-rollback-unsupported`<br>`reproducers/a45-derived-destructor-explicit-base`<br>`reproducers/a45-derived-destructor-generated-ctor`<br>`reproducers/a45-literal-base-argument` |
 | A46 | [#87](https://git.internal.howetotech.dev/gti-lang/gti/issues/87) Chained user subscript compound and self-read stores | resolved: pass | `reproducers/a46-chained-subscript-compound`<br>`reproducers/a46-chained-subscript-self-read` |
-| A47 | [#88](https://git.internal.howetotech.dev/gti-lang/gti/issues/88) MIR ICE: 'mut auto&' payload binding when the switch subject is a mut T& parameter or range element | ice | `reproducers/a47-mut-payload-binding-through-mut-ref` |
-| A48 | [#89](https://git.internal.howetotech.dev/gti-lang/gti/issues/89) C++ backend ICE: switch on an owning payload enum held in a field (obj.field) | ice | `reproducers/a48-switch-on-owning-enum-field` |
-| A49 | [#90](https://git.internal.howetotech.dev/gti-lang/gti/issues/90) C++ backend ICE: an owning payload enum call result passed directly as an argument | ice | `reproducers/a49-owning-enum-call-result-argument` |
+| A47 | [#88](https://git.internal.howetotech.dev/gti-lang/gti/issues/88) Repaired: mutable payload binding through a checked mutable reference or range element | pass | `reproducers/a47-mut-payload-binding-through-mut-ref` |
+| A48 | [#89](https://git.internal.howetotech.dev/gti-lang/gti/issues/89) Repaired: switch on an owning payload enum held in a field (obj.field) | pass | `reproducers/a48-switch-on-owning-enum-field` |
+| A49 | [#90](https://git.internal.howetotech.dev/gti-lang/gti/issues/90) Repaired: an owning payload enum call result passed directly as an argument | pass | `reproducers/a49-owning-enum-call-result-argument` |
 | A50 | [#91](https://git.internal.howetotech.dev/gti-lang/gti/issues/91) C++ backend ICE: designated construction omitting a field whose default is 'Inner inner{};' | fixed; focused native and representation checks | `reproducers/a50-designated-omitted-brace-default` |
 | A51 | [#92](https://git.internal.howetotech.dev/gti-lang/gti/issues/92) Structured binding over a fixed array of class elements: ICE, or invalid C++ emitted | backend, ice | `reproducers/a51-binding-over-class-array`<br>`reproducers/a51-binding-over-class-array-invalid-cpp` |
 | A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) Fixed arrays of passive unions and union-containing records | resolved: pass | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
 | A53 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a53-operator-temporary-ref-diagnostic` |
 | A54 | [#95](https://git.internal.howetotech.dev/gti-lang/gti/issues/95) Resolved: alias constraints inspect completed class facts | pass | `reproducers/a54-alias-constrained-generic-class-argument`<br>`reproducers/a54-alias-constrained-generic-user-class` |
-| A55 | [#96](https://git.internal.howetotech.dev/gti-lang/gti/issues/96) C++ backend ICE: list/deque/queue emplacement forwarding a move-only constructor argument | ice | `reproducers/a55-ctor-pack-move-only-field-init`<br>`reproducers/a55-list-emplace-move-only-argument` |
+| A55 | [#96](https://git.internal.howetotech.dev/gti-lang/gti/issues/96) Resolved: exact constructor-pack entry cleanup supports move-only field construction and container emplacement; ordered rollback covered | pass | `reproducers/a55-ctor-pack-move-only-field-init`<br>`reproducers/a55-list-emplace-move-only-argument` |
 | A56 | [#97](https://git.internal.howetotech.dev/gti-lang/gti/issues/97) C++ backend ICE: std::make_unique<T>(T value) | ice | `reproducers/a56-make-unique-same-type`<br>`reproducers/a56-make-unique-string-from-string` |
 | A57 | [#98](https://git.internal.howetotech.dev/gti-lang/gti/issues/98) Resolved: non-dependent generic ranges preserve instance-local loans | pass | `reproducers/a57-generic-member-field-range-for-silent`<br>`reproducers/a57-generic-nondependent-range-for-silent` |
 | A58 | [#99](https://git.internal.howetotech.dev/gti-lang/gti/issues/99) MIR ICE: reference to a unique_ptr field's pointee reached through a local reference | ice | `reproducers/a58-map-unique-ptr-value-deref`<br>`reproducers/a58-ref-to-owner-field-pointee-via-local-ref` |
@@ -954,7 +971,9 @@ by value deliberately.
 
 ## S15 — ICE: a payload enum carrying a class without a destructor
 
-`reproducers/s15-payload-enum-plain-class.gti`
+`reproducers/s15-payload-enum-plain-class.gti` — repaired by the generic enum
+composition campaign; now gated as passing. The following records the original
+failure, not the current compiler behavior.
 
 ```gti
 class P { mut int32_t n = 0; public: P(int32_t n) : n(n) {} };

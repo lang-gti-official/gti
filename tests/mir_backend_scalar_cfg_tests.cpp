@@ -946,9 +946,32 @@ void testIncoherentSwitchRejected(const std::filesystem::path &fixture) {
     (void)lang::rebuildMirValueUses(enumFunction->body);
   }
   expect(enumTerminator != nullptr && enumSelectorPlace != 0 &&
+             !lang::verifyMirProgram(forgedEnumeratorOwner).valid(),
+         "a synthetic enum selector requires its exact concrete catalog row");
+  // This synthetic switch replaces an integer selector. Publish the numeric
+  // representation just as lowering does for a source integral enum; the
+  // selector and cases alone are not a complete enum identity.
+  auto &integralEnums = const_cast<std::vector<lang::MirIntegralEnum> &>(
+      forgedEnumeratorOwner.integralEnums());
+  integralEnums.push_back({.declaration = syntheticEnum,
+                           .type = enumType,
+                           .sourceUnit = 1,
+                           .underlyingType = lang::SemanticType::Int32});
+  expect(enumTerminator != nullptr && enumSelectorPlace != 0 &&
              lang::verifyMirProgram(forgedEnumeratorOwner).valid(),
          "a well-formed synthetic enum switch should satisfy the generic "
          "selector and case-domain contract");
+  auto incoherentEnumCatalog = forgedEnumeratorOwner;
+  auto *incoherentEnum = const_cast<lang::MirIntegralEnum *>(
+      incoherentEnumCatalog.findIntegralEnum(enumType));
+  expect(incoherentEnum != nullptr,
+         "the synthetic enum publishes its exact integral representation");
+  if (incoherentEnum != nullptr) {
+    incoherentEnum->type = lang::SemanticType::enumType(syntheticEnum + 1);
+    expect(!lang::verifyMirProgram(incoherentEnumCatalog).valid(),
+           "an integral enum catalog row cannot substitute another exact "
+           "type while retaining its declaration identity");
+  }
   if (enumTerminator != nullptr && !enumTerminator->switchTargets.empty() &&
       enumTerminator->switchTargets.front().value &&
       lang::verifyMirProgram(forgedEnumeratorOwner).valid()) {

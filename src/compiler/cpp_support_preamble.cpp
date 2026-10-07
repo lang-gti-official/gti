@@ -58,16 +58,20 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "vector_size",
       "mir_lambda_identity_v",
       "mir_cleanup_emergency_abandonment",
+      "mir_failure_cleanup_context_v1",
+      "mir_failure_cleanup_scope_v1",
+      "mir_incoming_failure_cleanup_v1",
+      "mir_check_incoming_cleanup_failure_v1",
+      "activate",
+      "context_",
+      "active_",
+      "current",
       "add",
       "add_assign",
       "allocate",
-      "allocate_storage",
       "address",
       "alignment",
       "extent",
-      "initialized",
-      "try_adopt",
-      "storage_try_adopt",
       "allocation",
       "allocation_",
       "allocation_bytes",
@@ -125,6 +129,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "is_trivially_move_assignable_v",
       "assign_representation",
       "mir_restoring_exchange_into_v1",
+      "mir_object_relocate_v1",
       "from_storage_address",
       "bytes",
       "callable",
@@ -200,6 +205,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "once_call",
       "offset",
       "optional_storage",
+      "uninitialized_storage",
       "optional_storage_construct",
       "optional_storage_has_value",
       "optional_storage_read",
@@ -253,19 +259,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "status",
       "state_",
       "storage",
-      "storage_capacity",
-      "storage_construct",
-      "storage_destroy",
       "storage_error",
-      "storage_initialized",
-      "storage_read",
-      "storage_read_mut",
-      "storage_read_mut_unchecked",
-      "storage_read_unchecked",
-      "storage_relocate",
-      "storage_shift_left",
-      "storage_shift_right",
-      "storage_try_allocate",
       "string_view_at",
       "string_view_bounds_error",
       "strong",
@@ -746,6 +740,12 @@ void assign_representation(T &destination, Source &&source) {
 // Called only for MIR-proven, failure-free structural relocation. Destruction
 // here ends inactive representation shells, not GTI cleanup obligations.
 template <typename T>
+void mir_object_relocate_v1(T *destination, T *source) {
+  construct_representation_at(destination, std::move(*source));
+  std::destroy_at(source);
+}
+
+template <typename T>
 T mir_restoring_exchange_v1(T &destination, T &&replacement) {
   T previous(std::move(destination));
   std::destroy_at(std::addressof(destination));
@@ -1139,6 +1139,56 @@ template <typename T>
   return success;
 }
 
+// Inherited failure cleanup crosses ordinary source calls without changing
+// their value ABI. The context belongs to one synchronous cleanup stack, not
+// to an object or worker; its primary record stays alive in its owning frame.
+struct mir_failure_cleanup_context_v1 {
+  const ::gti_failure_record_v2 *record;
+  const ::gti_failure_artifact_descriptor_v1 *artifact;
+};
+inline const mir_failure_cleanup_context_v1 *&mir_incoming_failure_cleanup_v1() {
+  static thread_local const mir_failure_cleanup_context_v1 *current = nullptr;
+  return current;
+}
+class mir_failure_cleanup_scope_v1 {
+public:
+  mir_failure_cleanup_scope_v1() = default;
+  mir_failure_cleanup_scope_v1(const mir_failure_cleanup_scope_v1 &) = delete;
+  mir_failure_cleanup_scope_v1 &operator=(const mir_failure_cleanup_scope_v1 &) = delete;
+  mir_failure_cleanup_scope_v1(const ::gti_failure_record_v2 *record,
+      const ::gti_failure_artifact_descriptor_v1 *artifact) {
+    activate(record, artifact);
+  }
+  void activate(const ::gti_failure_record_v2 *record,
+      const ::gti_failure_artifact_descriptor_v1 *artifact) {
+    // A nested cleanup's local failure can never replace the earliest one.
+    if (mir_incoming_failure_cleanup_v1() != nullptr) return;
+    if (record == nullptr) std::abort();
+    context_ = {record, artifact};
+    mir_incoming_failure_cleanup_v1() = &context_;
+    active_ = true;
+  }
+  ~mir_failure_cleanup_scope_v1() {
+    if (active_) {
+      if (mir_incoming_failure_cleanup_v1() != &context_) std::abort();
+      mir_incoming_failure_cleanup_v1() = nullptr;
+    }
+  }
+private:
+  mir_failure_cleanup_context_v1 context_{};
+  bool active_ = false;
+};
+inline void mir_check_incoming_cleanup_failure_v1(
+    const ::gti_failure_record_v2 *secondary,
+    const ::gti_failure_artifact_descriptor_v1 *artifact) {
+  const auto *context = mir_incoming_failure_cleanup_v1();
+  if (context == nullptr) return;
+  if (secondary == nullptr) std::abort();
+  const ::gti_failure_emergency_v2 emergency{
+      GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0), *context->record, *secondary};
+  ::gti_rt_failure_terminate_cleanup_v2(&emergency, context->artifact, artifact);
+}
+
 // The aggregate schedule uses one record cursor across its ordered steps.
 // An incoming failure stops on the next failure; otherwise the first failure
 // is retained while remaining steps drain, and a second one terminates.
@@ -1157,6 +1207,7 @@ public:
       ::gti_rt_failure_terminate_cleanup_v2(&emergency, artifact_, artifact_);
     }
     success_ = success_ && success;
+    if (!success_) context_.activate(record_, artifact_);
     return true;
   }
   bool success() const { return success_; }
@@ -1166,6 +1217,7 @@ private:
   const ::gti_failure_artifact_descriptor_v1 *artifact_;
   bool success_ = true;
   ::gti_failure_record_v2 secondary_{};
+  mir_failure_cleanup_scope_v1 context_;
 };
 
 // The verified array recipe visits immediate elements in reverse order. It
@@ -1468,6 +1520,7 @@ private:
       bool cleanup_failure,
       const ::gti_failure_artifact_descriptor_v1 *artifact, bool &success) {
     static_assert(fixed_array_extent<std::remove_cvref_t<Array>>::value == Extent);
+    mir_failure_cleanup_scope_v1 context;
     for (std::size_t index = Extent; index != 0; --index) {
       auto &element = array[index - 1];
       // The leaf arm must be the discarded statement of this constexpr
@@ -1479,6 +1532,7 @@ private:
           return false;
         }
       } else {
+        if (!success) context.activate(failure_record, artifact);
         ::gti_failure_record_v2 secondary{};
         const bool already_cleaning = !success;
         ::gti_failure_record_v2 *element_record =
@@ -1510,485 +1564,6 @@ private:
   bool engaged_ = false;
 };
 
-template <typename T>
-class storage {
-public:
-  storage() = default;
-  explicit storage(std::uint64_t capacity) { allocate(capacity); }
-
-  storage(const storage &) = delete;
-  storage &operator=(const storage &) = delete;
-
-  storage(storage &&other) noexcept { take(std::move(other)); }
-
-  storage &operator=(storage &&other) noexcept {
-    if (this != &other) {
-      release();
-      take(std::move(other));
-    }
-    return *this;
-  }
-
-  // Called only for a verified unsafe adoption operation. The region remains
-  // owned by its source-level lease; allocation_ deliberately stays null.
-  [[nodiscard]] static std::int32_t
-  try_adopt(void *address, std::uint64_t requested, std::uint64_t extent,
-            std::uint64_t alignment, storage *result) noexcept {
-    if (!result || result->data_ || result->allocation_ || result->capacity_ ||
-        result->initialized_) return 4;
-    if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
-        alignment < alignof(T)) return 1;
-    const auto maximum = (std::numeric_limits<std::size_t>::max)();
-    if (alignment > maximum || requested > maximum / sizeof(T) ||
-        extent > maximum) return 2;
-    const auto capacity = static_cast<std::size_t>(requested);
-    const auto bytes = capacity * sizeof(T);
-    if (extent < bytes) return 4;
-    if (capacity == 0) return 0;
-    if (!address) return 4;
-    void *aligned = address;
-    auto available = static_cast<std::size_t>(extent);
-    if (!std::align(static_cast<std::size_t>(alignment), bytes, aligned, available) ||
-        aligned != address) return 1;
-    std::unique_ptr<unsigned char[]> initialized(
-        new (std::nothrow) unsigned char[capacity]{});
-    if (!initialized) return 3;
-    result->data_ = address;
-    result->capacity_ = capacity;
-    result->initialized_ = std::move(initialized);
-    return 0;
-  }
-
-  ~storage() {
-    if (!mir_cleanup_emergency_abandonment()) release();
-  }
-
-  template <typename Cleanup>
-  [[nodiscard]] bool destroy_elements_with_failure(
-      ::gti_failure_record_v2 *record, bool unwinding,
-      const ::gti_failure_artifact_descriptor_v1 *artifact, Cleanup cleanup) {
-    mir_cleanup_sequence_v1 sequence(record, unwinding, artifact);
-    for (std::size_t index = capacity_; index > 0; --index) {
-      if (initialized_[index - 1] == 0) continue;
-      initialized_[index - 1] = 0;
-      T *element = std::launder(slot(index - 1));
-      const bool success = cleanup(*element, sequence.record(), sequence.unwinding());
-      if (!success && sequence.unwinding()) {
-        (void)sequence.step(false);
-        return false;
-      }
-      std::destroy_at(element);
-      if (!sequence.step(success)) return false;
-    }
-    release();
-    return sequence.success();
-  }
-
-  [[nodiscard]] std::uint64_t capacity() const {
-    return static_cast<std::uint64_t>(capacity_);
-  }
-
-  [[nodiscard]] bool initialized(std::uint64_t index) const noexcept {
-    return index < capacity() && initialized_ != nullptr &&
-           initialized_[static_cast<std::size_t>(index)] != 0;
-  }
-
-  template <typename... Args>
-  [[nodiscard]] bool try_construct(std::uint64_t index, Args &&...args) {
-    const std::size_t offset = static_cast<std::size_t>(index);
-    try {
-      construct_representation_at(slot(offset), std::forward<Args>(args)...);
-    } catch (const std::bad_alloc &) {
-      return false;
-    }
-    initialized_[offset] = 1;
-    return true;
-  }
-
-  // Verified MIR preflight has checked the slot before handing over parameters.
-  // A failed source constructor has already cleaned its initialized members;
-  // do not publish a live T or run complete-object destruction in that case.
-  template <typename Constructor>
-  [[nodiscard]] bool construct_with_constructor(std::uint64_t index,
-                                               Constructor construct) {
-    const auto offset = static_cast<std::size_t>(index);
-    if (!construct(slot(offset))) return false;
-    initialized_[offset] = 1;
-    return true;
-  }
-
-  template <typename... Args>
-  void construct(std::uint64_t index, Args &&...args) {
-    const std::size_t offset = checked_index(index);
-    if (initialized_[offset] != 0) {
-      storage_error("constructed an initialized storage slot");
-    }
-    try {
-      construct_representation_at(slot(offset), std::forward<Args>(args)...);
-    } catch (const std::bad_alloc &) {
-      allocation_error();
-    }
-    initialized_[offset] = 1;
-  }
-
-  [[nodiscard]] const T &read(std::uint64_t index) const {
-    const std::size_t offset = checked_initialized_index(index);
-    return *std::launder(slot(offset));
-  }
-
-  [[nodiscard]] T &read_mut(std::uint64_t index) {
-    const std::size_t offset = checked_initialized_index(index);
-    return *std::launder(slot(offset));
-  }
-
-  // Used only after verified GTI MIR discharges both the bounds and
-  // initialized-slot outcomes. These methods are backend representation
-  // details and are not part of the source-visible intrinsic vocabulary.
-  [[nodiscard]] const T &unchecked_read(std::uint64_t index) const {
-    return *std::launder(slot(static_cast<std::size_t>(index)));
-  }
-
-  [[nodiscard]] T &unchecked_read_mut(std::uint64_t index) {
-    return *std::launder(slot(static_cast<std::size_t>(index)));
-  }
-
-  void destroy(std::uint64_t index) {
-    const std::size_t offset = checked_initialized_index(index);
-    std::destroy_at(std::launder(slot(offset)));
-    initialized_[offset] = 0;
-  }
-
-  template <typename Cleanup>
-  [[nodiscard]] bool destroy_with_failure(std::uint64_t index,
-      ::gti_failure_record_v2 *record, Cleanup cleanup) {
-    const std::size_t offset = checked_initialized_index(index);
-    initialized_[offset] = 0;
-    T *element = std::launder(slot(offset));
-    const bool success = cleanup(*element, record, false);
-    std::destroy_at(element);
-    return success;
-  }
-
-  template <bool Bitwise = false>
-  void relocate_to(storage &destination, std::uint64_t count) {
-    if (count > capacity() || count > destination.capacity()) {
-      storage_error("storage relocation exceeds capacity");
-    }
-    const std::size_t elements = static_cast<std::size_t>(count);
-    for (std::size_t index = 0; index < elements; ++index) {
-      if (initialized_[index] == 0 || destination.initialized_[index] != 0) {
-        storage_error("storage relocation requires initialized source and empty destination slots");
-      }
-    }
-    // GTI grants eligibility; host traits only gate whether this particular
-    // C++ representation has implicit lifetime and legal bytewise copying.
-    // Never byte-copy an owner representation with nontrivial cleanup.
-    if constexpr (Bitwise && std::is_trivially_copyable_v<T> &&
-                  std::is_trivially_move_constructible_v<T> &&
-                  std::is_trivially_destructible_v<T>) {
-      if (elements == 0) return;
-      std::memcpy(destination.slot(0), slot(0), sizeof(T) * elements);
-      for (std::size_t index = 0; index < elements; ++index) {
-        std::destroy_at(std::launder(slot(index)));
-        destination.initialized_[index] = 1;
-        initialized_[index] = 0;
-      }
-      return;
-    }
-    for (std::size_t index = 0; index < elements; ++index) {
-      try {
-        construct_representation_at(destination.slot(index),
-                          std::move(*std::launder(slot(index))));
-      } catch (const std::bad_alloc &) {
-        allocation_error();
-      }
-      destination.initialized_[index] = 1;
-      std::destroy_at(std::launder(slot(index)));
-      initialized_[index] = 0;
-    }
-  }
-
-  void shift_right(std::uint64_t first, std::uint64_t last) {
-    if (first > last || last >= capacity()) {
-      storage_error("storage right shift exceeds capacity or has an invalid range");
-    }
-    const std::size_t begin = static_cast<std::size_t>(first);
-    const std::size_t end = static_cast<std::size_t>(last);
-    if (initialized_[end] != 0) {
-      storage_error("storage right shift requires an empty destination slot");
-    }
-    for (std::size_t index = begin; index < end; ++index) {
-      if (initialized_[index] == 0) {
-        storage_error("storage right shift requires initialized source slots");
-      }
-    }
-    for (std::size_t destination = end; destination > begin; --destination) {
-      const std::size_t source = destination - 1;
-      try {
-        construct_representation_at(slot(destination),
-                          std::move(*std::launder(slot(source))));
-      } catch (const std::bad_alloc &) {
-        allocation_error();
-      }
-      initialized_[destination] = 1;
-      std::destroy_at(std::launder(slot(source)));
-      initialized_[source] = 0;
-    }
-  }
-
-  void shift_left(std::uint64_t first, std::uint64_t last) {
-    if (first >= last || last > capacity()) {
-      storage_error("storage left shift exceeds capacity or has an invalid range");
-    }
-    const std::size_t begin = static_cast<std::size_t>(first);
-    const std::size_t end = static_cast<std::size_t>(last);
-    if (initialized_[begin] != 0) {
-      storage_error("storage left shift requires an empty destination slot");
-    }
-    for (std::size_t index = begin + 1; index < end; ++index) {
-      if (initialized_[index] == 0) {
-        storage_error("storage left shift requires initialized source slots");
-      }
-    }
-    for (std::size_t destination = begin; destination + 1 < end;
-         ++destination) {
-      const std::size_t source = destination + 1;
-      try {
-        construct_representation_at(slot(destination),
-                          std::move(*std::launder(slot(source))));
-      } catch (const std::bad_alloc &) {
-        allocation_error();
-      }
-      initialized_[destination] = 1;
-      std::destroy_at(std::launder(slot(source)));
-      initialized_[source] = 0;
-    }
-  }
-
-  // Recoverable public allocation statuses. These values are consumed by the
-  // ordinary-GTI std::storage wrapper and are deliberately not language
-  // failure codes: no owner is published until every allocation succeeds.
-  //   0 success
-  //   1 invalid minimum alignment
-  //   2 byte-count or alignment-padding overflow
-  //   3 host resource exhaustion
-  [[nodiscard]] static std::int32_t
-  try_allocate(std::uint64_t requested, std::uint64_t minimum_alignment,
-               storage *result) noexcept {
-    // Recoverable publication is valid only into a pristine destination. This
-    // keeps failure side-effect-free and prevents an intrinsic call from
-    // hiding destruction of an earlier allocation from MIR's lifecycle model.
-    if (result == nullptr || result->allocation_ != nullptr ||
-        result->data_ != nullptr || result->capacity_ != 0 ||
-        result->initialized_ != nullptr) {
-      return 3;
-    }
-    storage pending;
-    const std::int32_t status =
-        pending.allocate_nothrow(requested, minimum_alignment);
-    if (status != 0) {
-      return status;
-    }
-    *result = std::move(pending);
-    return 0;
-  }
-
-private:
-  void allocate(std::uint64_t requested) {
-    if (allocate_nothrow(requested, 0) != 0) {
-      allocation_error();
-    }
-  }
-
-  [[nodiscard]] std::int32_t
-  allocate_nothrow(std::uint64_t requested,
-                   std::uint64_t minimum_alignment) noexcept {
-    if (minimum_alignment != 0 &&
-        (minimum_alignment & (minimum_alignment - 1)) != 0) {
-      return 1;
-    }
-    if (minimum_alignment > (std::numeric_limits<std::size_t>::max)() ||
-        requested > (std::numeric_limits<std::size_t>::max)() ||
-        (requested != 0 &&
-         requested > (std::numeric_limits<std::size_t>::max)() / sizeof(T))) {
-      return 2;
-    }
-    const std::size_t capacity = static_cast<std::size_t>(requested);
-    if (capacity == 0) {
-      return 0;
-    }
-    const std::size_t requested_alignment =
-        static_cast<std::size_t>(minimum_alignment);
-    const std::size_t effective_alignment =
-        requested_alignment > alignof(T) ? requested_alignment : alignof(T);
-    const std::size_t bytes = sizeof(T) * capacity;
-    const std::size_t padding = effective_alignment - 1;
-    if (bytes > (std::numeric_limits<std::size_t>::max)() - padding) {
-      return 2;
-    }
-    const std::size_t allocation_bytes = bytes + padding;
-    void *allocation = ::operator new(allocation_bytes, std::nothrow);
-    if (allocation == nullptr) {
-      return 3;
-    }
-    void *aligned = allocation;
-    std::size_t available = allocation_bytes;
-    if (std::align(effective_alignment, bytes, aligned, available) == nullptr) {
-      ::operator delete(allocation);
-      return 3;
-    }
-    initialized_.reset(new (std::nothrow) unsigned char[capacity]{});
-    if (!initialized_) {
-      ::operator delete(allocation);
-      return 3;
-    }
-    allocation_ = allocation;
-    data_ = aligned;
-    capacity_ = capacity;
-    return 0;
-  }
-
-  [[nodiscard]] std::size_t checked_index(std::uint64_t index) const {
-    if (index >= capacity()) {
-      storage_error("storage index out of bounds");
-    }
-    return static_cast<std::size_t>(index);
-  }
-
-  [[nodiscard]] std::size_t
-  checked_initialized_index(std::uint64_t index) const {
-    const std::size_t offset = checked_index(index);
-    if (initialized_[offset] == 0) {
-      storage_error("accessed an uninitialized storage slot");
-    }
-    return offset;
-  }
-
-  [[nodiscard]] T *slot(std::size_t index) {
-    return reinterpret_cast<T *>(static_cast<std::byte *>(data_) +
-                                 sizeof(T) * index);
-  }
-
-  [[nodiscard]] const T *slot(std::size_t index) const {
-    return reinterpret_cast<const T *>(static_cast<const std::byte *>(data_) +
-                                       sizeof(T) * index);
-  }
-
-  void release() noexcept {
-    if (data_ != nullptr) {
-      for (std::size_t index = capacity_; index > 0; --index) {
-        if (initialized_[index - 1] != 0) {
-          std::destroy_at(std::launder(slot(index - 1)));
-        }
-      }
-    }
-    ::operator delete(allocation_);
-    initialized_.reset();
-    allocation_ = nullptr;
-    data_ = nullptr;
-    capacity_ = 0;
-  }
-
-  void take(storage &&other) noexcept {
-    allocation_ = other.allocation_;
-    data_ = other.data_;
-    capacity_ = other.capacity_;
-    initialized_ = std::move(other.initialized_);
-    other.allocation_ = nullptr;
-    other.data_ = nullptr;
-    other.capacity_ = 0;
-  }
-
-  void *allocation_ = nullptr;
-  void *data_ = nullptr;
-  std::size_t capacity_ = 0;
-  std::unique_ptr<unsigned char[]> initialized_;
-};
-
-template <typename T>
-inline storage<T> allocate_storage(std::uint64_t capacity) {
-  return storage<T>(capacity);
-}
-
-template <typename T>
-inline std::int32_t
-storage_try_allocate(storage<T> &destination, std::uint64_t capacity,
-                     std::uint64_t minimum_alignment) noexcept {
-  return storage<T>::try_allocate(capacity, minimum_alignment, &destination);
-}
-
-template <typename T>
-inline std::int32_t storage_try_adopt(storage<T> &destination,
-                                     raw_address<void> address,
-                                     std::uint64_t capacity,
-                                     std::uint64_t extent,
-                                     std::uint64_t alignment) noexcept {
-  return storage<T>::try_adopt(native_pointer_value(address), capacity, extent,
-                               alignment, &destination);
-}
-
-template <typename T>
-inline std::uint64_t storage_capacity(const storage<T> &value) noexcept {
-  return value.capacity();
-}
-
-template <typename T>
-inline bool storage_initialized(const storage<T> &value,
-                                std::uint64_t index) noexcept {
-  return value.initialized(index);
-}
-
-template <typename T, typename... Args>
-inline void storage_construct(storage<T> &value, std::uint64_t index,
-                              Args &&...args) {
-  value.construct(index, std::forward<Args>(args)...);
-}
-
-template <typename T>
-inline const T &storage_read(const storage<T> &value, std::uint64_t index) {
-  return value.read(index);
-}
-
-template <typename T>
-inline T &storage_read_mut(storage<T> &value, std::uint64_t index) {
-  return value.read_mut(index);
-}
-
-template <typename T>
-inline const T &storage_read_unchecked(const storage<T> &value,
-                                       std::uint64_t index) {
-  return value.unchecked_read(index);
-}
-
-template <typename T>
-inline T &storage_read_mut_unchecked(storage<T> &value,
-                                     std::uint64_t index) {
-  return value.unchecked_read_mut(index);
-}
-
-template <typename T>
-inline void storage_destroy(storage<T> &value, std::uint64_t index) {
-  value.destroy(index);
-}
-
-template <bool Bitwise = false, typename T>
-inline void storage_relocate(storage<T> &source, storage<T> &destination,
-                             std::uint64_t count) {
-  source.template relocate_to<Bitwise>(destination, count);
-}
-
-template <typename T>
-inline void storage_shift_right(storage<T> &value, std::uint64_t first,
-                                std::uint64_t last) {
-  value.shift_right(first, last);
-}
-
-template <typename T>
-inline void storage_shift_left(storage<T> &value, std::uint64_t first,
-                               std::uint64_t last) {
-  value.shift_left(first, last);
-}
-
 // The identity-bound public logical-size check (P-STORAGE-01): container
 // indexing reports the logical bound instead of leaking the private
 // storage invariant.
@@ -1997,6 +1572,35 @@ inline void index_bounds_check(std::uint64_t index, std::uint64_t size) {
     storage_error("container index out of logical bounds");
   }
 }
+
+// Layout-only storage. These booleans are verified GTI traits, never native
+// type-trait guesses. Copy/move transfers bytes without reading a live T and
+// destruction does not inspect the bytes or invoke T's destructor.
+template <typename T, bool Copyable, bool Movable>
+class uninitialized_storage {
+  alignas(T) std::byte bytes_[sizeof(T)];
+public:
+  uninitialized_storage() noexcept {}
+  uninitialized_storage(const uninitialized_storage &other) noexcept requires(Copyable) {
+    std::memcpy(bytes_, other.bytes_, sizeof(T));
+  }
+  uninitialized_storage(const uninitialized_storage &) requires(!Copyable) = delete;
+  uninitialized_storage(uninitialized_storage &&other) noexcept requires(Movable) {
+    std::memcpy(bytes_, other.bytes_, sizeof(T));
+  }
+  uninitialized_storage(uninitialized_storage &&) requires(!Movable) = delete;
+  uninitialized_storage &operator=(const uninitialized_storage &other) noexcept requires(Copyable) {
+    if (this != &other) std::memcpy(bytes_, other.bytes_, sizeof(T));
+    return *this;
+  }
+  uninitialized_storage &operator=(const uninitialized_storage &) requires(!Copyable) = delete;
+  uninitialized_storage &operator=(uninitialized_storage &&other) noexcept requires(Movable) {
+    if (this != &other) std::memcpy(bytes_, other.bytes_, sizeof(T));
+    return *this;
+  }
+  uninitialized_storage &operator=(uninitialized_storage &&) requires(!Movable) = delete;
+  ~uninitialized_storage() = default;
+};
 
 // Inline zero-or-one storage used only by the declaration-bound
 // <std/optional> capability. It has no allocation state: engagement and one

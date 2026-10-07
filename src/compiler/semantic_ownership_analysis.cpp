@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <stdexcept>
+
 namespace lang {
 namespace {
 void preserveStorageConstructorParameters(
@@ -130,7 +132,6 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   switch (type.kind) {
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     return true;
   case SemanticType::Array:
@@ -193,7 +194,10 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
         !enums[type.enumId - 1].payload) {
       break;
     }
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete)
+      break;
+    for (const auto &enumerator : concrete->enumerators) {
       if (std::any_of(enumerator.payloadTypes.begin(),
                       enumerator.payloadTypes.end(),
                       [&](const SemanticType &payload) {
@@ -327,7 +331,10 @@ auto SemanticVisitor::Impl::typeCapabilities(
     }
     ConcurrencyCapabilities result{.transferCapable = true,
                                    .shareCapable = true};
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete)
+      return {};
+    for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const ConcurrencyCapabilities component =
             typeCapabilities(payload, visiting);
@@ -340,7 +347,6 @@ auto SemanticVisitor::Impl::typeCapabilities(
   }
   case SemanticType::Array:
   case SemanticType::UniqueOwner:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     if (type.arguments.size() == 1) {
       return typeCapabilities(type.arguments.front(), visiting);
@@ -392,8 +398,10 @@ auto SemanticVisitor::Impl::typeCapabilities(
   case SemanticType::Class:
     if (const ClassInfo *owner = classInfo(type);
         owner != nullptr &&
-        owner->compilerCapability ==
-            CompilerCapabilityTypeKind::OptionalStorage &&
+        (owner->compilerCapability ==
+             CompilerCapabilityTypeKind::OptionalStorage ||
+         owner->compilerCapability ==
+             CompilerCapabilityTypeKind::UninitializedStorage) &&
         type.arguments.size() == 1) {
       return typeCapabilities(type.arguments.front(), visiting);
     }
@@ -495,11 +503,25 @@ auto SemanticVisitor::Impl::typeCapabilities(
   } else if (owner.transferPolicy ==
              ConcurrencyCapabilityPolicy::UnsafeAsserted) {
     result.transferCapable = true;
+  } else if (owner.transferPolicy ==
+             ConcurrencyCapabilityPolicy::UnsafeConditional) {
+    result.transferCapable =
+        owner.transferCondition &&
+        typeCapabilities(substituteType(*owner.transferCondition, substitution),
+                         visiting)
+            .transferCapable;
   }
   if (owner.sharePolicy == ConcurrencyCapabilityPolicy::Denied) {
     result.shareCapable = false;
   } else if (owner.sharePolicy == ConcurrencyCapabilityPolicy::UnsafeAsserted) {
     result.shareCapable = true;
+  } else if (owner.sharePolicy ==
+             ConcurrencyCapabilityPolicy::UnsafeConditional) {
+    result.shareCapable =
+        owner.shareCondition &&
+        typeCapabilities(substituteType(*owner.shareCondition, substitution),
+                         visiting)
+            .shareCapable;
   }
   visiting.pop_back();
   return result;
@@ -565,7 +587,10 @@ auto SemanticVisitor::Impl::typeTraits(
     SemanticTypeTraits traits = semanticTraits(type);
     traits.relocation = RelocationKind::Structural;
     ActiveCleanupQuery cleanupQuery;
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete)
+      return traits;
+    for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         const SemanticTypeTraits component = typeTraits(payload, visiting);
         if (component.ownership == OwnershipKind::Unique ||
@@ -608,6 +633,31 @@ auto SemanticVisitor::Impl::typeTraits(
   visiting.push_back(type);
 
   const ClassInfo &owner = classInfo(type.classId);
+  if (owner.compilerCapability ==
+      CompilerCapabilityTypeKind::UninitializedStorage) {
+    const auto payload = type.arguments.size() == 1
+                             ? typeTraits(type.arguments.front(), visiting)
+                             : SemanticTypeTraits{};
+    // Symbolic declarations retain generated operations; concrete reanalysis
+    // deletes each operation whose payload fails the structural contract.
+    const bool open = type.arguments.size() == 1 &&
+                      containsOpenTypeParameter(type.arguments.front());
+    const bool movable =
+        type.arguments.size() == 1 &&
+        (open || payload.relocation == RelocationKind::Bitwise);
+    const bool copyable = movable && payload.copyable;
+    visiting.pop_back();
+    return SemanticTypeTraits{.ownership = OwnershipKind::Value,
+                              .drop = DropKind::Trivial,
+                              .copyable = copyable,
+                              .movable = movable,
+                              .copyAssignable = copyable,
+                              .moveAssignable = movable,
+                              .containsBorrowedState = false,
+                              .relocation = movable
+                                                ? RelocationKind::Bitwise
+                                                : RelocationKind::Unavailable};
+  }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
     visiting.pop_back();
     return SemanticTypeTraits{.ownership = OwnershipKind::Unique,
@@ -793,6 +843,16 @@ auto SemanticVisitor::Impl::shareCapabilityDenial(
         .source = &*owner.sharePolicySource,
         .message = "This type explicitly opts out of sharing here."};
   }
+  if (owner.sharePolicy == ConcurrencyCapabilityPolicy::UnsafeConditional &&
+      owner.shareCondition && owner.sharePolicySource) {
+    return ShareCapabilityDenial{
+        .source = &*owner.sharePolicySource,
+        .message =
+            "This unsafe sharing assertion requires share-capable payload '" +
+            typeSpelling(substituteType(*owner.shareCondition,
+                                        classSubstitution(type))) +
+            "'."};
+  }
   if (hasSourceDestructorBody(owner)) {
     return ShareCapabilityDenial{
         .source = &owner.destructor->declaration->tilde(),
@@ -863,6 +923,16 @@ auto SemanticVisitor::Impl::transferCapabilityDenial(
     return TransferCapabilityDenial{
         .source = &*owner.transferPolicySource,
         .message = "This type explicitly opts out of transfer here."};
+  }
+  if (owner.transferPolicy == ConcurrencyCapabilityPolicy::UnsafeConditional &&
+      owner.transferCondition && owner.transferPolicySource) {
+    return TransferCapabilityDenial{
+        .source = &*owner.transferPolicySource,
+        .message = "This unsafe transfer assertion requires transfer-capable "
+                   "payload '" +
+                   typeSpelling(substituteType(*owner.transferCondition,
+                                               classSubstitution(type))) +
+                   "'."};
   }
   if (hasSourceDestructorBody(owner)) {
     return TransferCapabilityDenial{
@@ -1652,7 +1722,6 @@ auto SemanticVisitor::Impl::isBorrowedCarrierReference(
 auto SemanticVisitor::Impl::isDirectOwnerType(const SemanticType &type)
     -> bool {
   return type.kind == SemanticType::UniqueOwner ||
-         type.kind == SemanticType::Storage ||
          type.kind == SemanticType::PrefixStorage;
 }
 
@@ -1836,6 +1905,15 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "object_alignment") {
       return IntrinsicKind::ObjectAlignment;
     }
+    if (name == "object_destroy") {
+      return IntrinsicKind::ObjectDestroy;
+    }
+    if (name == "object_construct") {
+      return IntrinsicKind::ObjectConstruct;
+    }
+    if (name == "object_relocate") {
+      return IntrinsicKind::ObjectRelocate;
+    }
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
     }
@@ -1877,42 +1955,6 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "shared_owner_upcast") {
       return IntrinsicKind::SharedOwnerUpcast;
-    }
-    if (name == "allocate_storage") {
-      return IntrinsicKind::AllocateStorage;
-    }
-    if (name == "storage_try_allocate") {
-      return IntrinsicKind::StorageTryAllocate;
-    }
-    if (name == "storage_try_adopt") {
-      return IntrinsicKind::StorageTryAdopt;
-    }
-    if (name == "storage_capacity") {
-      return IntrinsicKind::StorageCapacity;
-    }
-    if (name == "storage_initialized") {
-      return IntrinsicKind::StorageInitialized;
-    }
-    if (name == "storage_construct") {
-      return IntrinsicKind::StorageConstruct;
-    }
-    if (name == "storage_read") {
-      return IntrinsicKind::StorageRead;
-    }
-    if (name == "storage_read_mut") {
-      return IntrinsicKind::StorageReadMut;
-    }
-    if (name == "storage_destroy") {
-      return IntrinsicKind::StorageDestroy;
-    }
-    if (name == "storage_relocate") {
-      return IntrinsicKind::StorageRelocate;
-    }
-    if (name == "storage_shift_right") {
-      return IntrinsicKind::StorageShiftRight;
-    }
-    if (name == "storage_shift_left") {
-      return IntrinsicKind::StorageShiftLeft;
     }
     return IntrinsicKind::None;
   }
@@ -2032,6 +2074,21 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "require_container_argument") {
     return IntrinsicKind::RequireContainerArgument;
+  }
+  if (name == "require_vacant_storage") {
+    return IntrinsicKind::RequireVacantStorage;
+  }
+  if (name == "require_live_storage") {
+    return IntrinsicKind::RequireLiveStorage;
+  }
+  if (name == "require_relocation_capacity") {
+    return IntrinsicKind::RequireRelocationCapacity;
+  }
+  if (name == "require_relocation_source") {
+    return IntrinsicKind::RequireRelocationSource;
+  }
+  if (name == "require_relocation_destination") {
+    return IntrinsicKind::RequireRelocationDestination;
   }
   if (name == "panic") {
     return IntrinsicKind::Panic;
@@ -4572,8 +4629,10 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     }
   }
   if (storedReferencePaths(carrier->type).size() > 1 &&
-      ((construction != nullptr && !construction->borrowArguments.empty()) ||
-       (resolved != nullptr && !resolved->borrowArguments.empty()))) {
+      ((construction != nullptr && (!construction->borrowArguments.empty() ||
+                                    !construction->borrowFields.empty())) ||
+       (resolved != nullptr && (!resolved->borrowArguments.empty() ||
+                                !resolved->borrowFields.empty())))) {
     auto dependencies = storedBorrowDependencies(expression);
     if (dependencies.empty()) {
       report(expressionToken(expression),
@@ -4583,18 +4642,37 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       return;
     }
     // Consuming a complete carrier transfers its capabilities rather than
-    // competing with them. Only exact moved constructor inputs authorize
-    // this exception; an ordinary lvalue must still obey copy/reborrow rules.
+    // competing with them. Constructors and ordinary functions use the same
+    // exact moved by-value input rule; lvalues and reference parameters still
+    // obey copy/reborrow rules. Exclude only that input's loan, not its live
+    // children or unrelated overlapping loans.
     std::vector<SemanticLoanId> transferredInputs;
-    if (construction != nullptr) {
+    if (construction != nullptr ||
+        (resolved != nullptr && resolved->intrinsic == IntrinsicKind::None)) {
       const auto *initializer = exprAs<DirectInitializer>(expression.get());
       const auto *arguments = call != nullptr ? &call->arguments()
                               : initializer != nullptr
                                   ? &initializer->arguments()
                                   : nullptr;
+      auto parameters = construction != nullptr ? construction->borrowArguments
+                                                : resolved->borrowArguments;
+      const auto &fields = construction != nullptr ? construction->borrowFields
+                                                   : resolved->borrowFields;
+      const auto &parameterTypes = construction != nullptr
+                                       ? construction->parameterTypes
+                                       : resolved->parameterTypes;
+      for (const auto &field : fields)
+        if (field.origin == BorrowOriginKind::Argument &&
+            std::find(parameters.begin(), parameters.end(), field.parameter) ==
+                parameters.end())
+          parameters.push_back(field.parameter);
       if (arguments != nullptr)
-        for (const auto parameter : construction->borrowArguments)
-          if (parameter < arguments->size())
+        for (const auto parameter : parameters)
+          if (parameter < arguments->size() &&
+              parameter < parameterTypes.size() &&
+              parameterTypes[parameter].kind == SemanticType::Class &&
+              semanticModel.typeOf(*(*arguments)[parameter]) ==
+                  parameterTypes[parameter])
             if (const auto source = retainedLoanSource((*arguments)[parameter]);
                 source && source->transfer)
               transferredInputs.push_back(source->loan);
@@ -4610,11 +4688,39 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           "Cannot compose borrowed values while an overlapping mutable "
           "borrow may still be live.");
     }
+    // Several fields can share one cleanup-bearing input's external loan.
+    // Retain that ancestry just as for a single-field carrier; recording all
+    // field identities must not sever the input's lifetime dependency.
+    SemanticLoanId parent = 0;
+    const auto origin = retainedLoanSource(expression);
+    const auto *originLoan =
+        origin ? semanticModel.findLoan(origin->loan) : nullptr;
+    const auto *fields = construction != nullptr ? &construction->borrowFields
+                                                 : &resolved->borrowFields;
+    const auto originKind = construction != nullptr ? construction->borrowOrigin
+                                                    : resolved->borrowOrigin;
+    const auto argument = construction != nullptr ? construction->borrowArgument
+                                                  : resolved->borrowArgument;
+    const auto &parameters = construction != nullptr
+                                 ? construction->borrowArguments
+                                 : resolved->borrowArguments;
+    if (originLoan != nullptr && !origin->transfer &&
+        originLoan->kind == SemanticLoanKind::StoredValue &&
+        originLoan->access == AccessMode::ReadOnly &&
+        lifecycleBoundBorrowCarrierFor(carrier->type) &&
+        originKind == BorrowOriginKind::Argument &&
+        std::all_of(parameters.begin(), parameters.end(),
+                    [&](auto parameter) { return parameter == argument; }) &&
+        std::all_of(fields->begin(), fields->end(), [&](const auto &field) {
+          return field.origin == BorrowOriginKind::Argument &&
+                 field.parameter == argument;
+        }))
+      parent = originLoan->id;
     const auto primary = dependencies.front();
     const SemanticLoanId id = createRetainedLoan(
         *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
         expression.get(), primary.place, primary.place.root,
-        primary.place.receiver, primary.access, primary.protectsStorage, 0,
+        primary.place.receiver, primary.access, primary.protectsStorage, parent,
         false, primary.designatedFields);
     SemanticLoanInfo loan = *semanticModel.findLoan(id);
     loan.additionalDependencies.assign(dependencies.begin() + 1,
@@ -6650,6 +6756,117 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::ObjectRelocate) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
+                  "Relocating a raw object");
+    const bool pointerShape =
+        arguments.size() == 2 && expr.typeArguments().empty() &&
+        arguments[0] == arguments[1] &&
+        arguments[0].kind == SemanticType::RawPointer &&
+        arguments[0].pointerAccess == AccessMode::Mutable &&
+        arguments[0].arguments.size() == 1;
+    if (!pointerShape) {
+      report(expr.paren(),
+             "Object relocation requires two writable pointers to the same "
+             "complete object type.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto &element = arguments[0].arguments.front();
+    if (!containsOpenTypeParameter(element) &&
+        (!runtimeObjectLayoutType(element) ||
+         typeTraits(element).containsBorrowedState ||
+         typeTraits(element).relocation == RelocationKind::Unavailable)) {
+      report(expr.paren(),
+             "Object relocation requires a complete relocatable type without "
+             "checked borrowed state.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
+                                                .parameterTypes = arguments,
+                                                .typeArguments = {element},
+                                                .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::ObjectDestroy ||
+      intrinsic == IntrinsicKind::ObjectConstruct) {
+    const bool construction = intrinsic == IntrinsicKind::ObjectConstruct;
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
+                  construction ? "Constructing a raw object"
+                               : "Ending a raw object's lifetime");
+    if (arguments.empty() || (!construction && arguments.size() != 1) ||
+        !expr.typeArguments().empty() ||
+        arguments.front().kind != SemanticType::RawPointer ||
+        arguments.front().pointerAccess != AccessMode::Mutable ||
+        arguments.front().arguments.size() != 1 ||
+        (!containsOpenTypeParameter(arguments.front().arguments.front()) &&
+         !runtimeObjectLayoutType(arguments.front().arguments.front()))) {
+      report(
+          expr.paren(),
+          construction
+              ? "Object construction requires a writable pointer to a "
+                "complete object type followed by constructor arguments."
+              : "Object destruction requires one writable pointer to a "
+                "complete "
+                "object type; the element type is inferred from the pointer.",
+          "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const SemanticType element = arguments.front().arguments.front();
+    if (construction) {
+      if (!containsOpenTypeParameter(element) &&
+          typeTraits(element).containsBorrowedState) {
+        report(expr.paren(),
+               "Raw construction cannot store checked borrowed state without "
+               "a tracked destination owner.",
+               "GTI-S2019");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      std::vector<AnalyzedCallArgument> constructorArguments;
+      bool concrete = true;
+      for (std::size_t index = 1; index < arguments.size(); ++index) {
+        if (!appendConcreteCallArgument(arguments[index],
+                                        expr.arguments()[index],
+                                        constructorArguments)) {
+          concrete = false;
+          break;
+        }
+      }
+      if (concrete) {
+        if (element.kind == SemanticType::Class)
+          analyzeConstructorCallArguments(
+              expr, element.classId, element.arguments, element.valueArguments,
+              constructorArguments, expr.paren());
+        else if (!containsOpenTypeParameter(element))
+          validateStorageValueConstruction(expr, element, constructorArguments);
+      }
+      preserveStorageConstructorParameters(semanticModel, expr, 1, arguments);
+    }
+    currentType = SemanticType::Void;
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
+                                                .parameterTypes = arguments,
+                                                .typeArguments = {element},
+                                                .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::ObjectSize ||
       intrinsic == IntrinsicKind::ObjectAlignment) {
     const std::size_t diagnosticsBefore = diagnostics.size();
@@ -6822,8 +7039,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
-  if (intrinsic == IntrinsicKind::RequireKey ||
-      intrinsic == IntrinsicKind::RequireContainerArgument) {
+  if (intrinsicBooleanFailureOutcome(intrinsic)) {
     std::vector<SemanticType> argumentTypes;
     for (const auto &argument : expr.arguments()) {
       argumentTypes.push_back(analyze(argument));
@@ -6906,6 +7122,24 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::PrefixStorageCString ||
       intrinsic == IntrinsicKind::PrefixStorageTryCString) {
     analyzePrefixStorageIntrinsicCall(expr, intrinsic);
+    // Intrinsic analysis resolves element/constructor facts directly rather
+    // than going through ordinary argument matching. It must still enforce
+    // the trusted declaration's storage access contract. In particular, both
+    // operands of relocation are mutable, and a mutable read cannot overlap
+    // an existing live loan. Do not duplicate that contract in an operation
+    // allowlist or infer it from the public wrapper's spelling.
+    for (std::size_t index = 0; index < expr.arguments().size() &&
+                                index < declaration.parameterTypes.size();
+         ++index) {
+      const auto &parameter = declaration.parameterTypes[index];
+      if (parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::Mutable &&
+          parameter.arguments.size() == 1 &&
+          parameter.arguments.front().kind == SemanticType::PrefixStorage) {
+        requireMutableStorage(expr.arguments()[index],
+                              declaration.declaration->name().lexeme);
+      }
+    }
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
@@ -6918,13 +7152,11 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
-  if (intrinsic != IntrinsicKind::Move) {
-    analyzeStorageIntrinsicCall(expr, intrinsic);
-    bindIntrinsicCallDeclaration(expr, declaration);
+  if (intrinsic == IntrinsicKind::Move) {
+    analyzeMoveCall(expr, &declaration);
     return;
   }
-
-  analyzeMoveCall(expr, &declaration);
+  throw std::logic_error("unhandled compiler intrinsic in semantic analysis");
 }
 
 auto SemanticVisitor::Impl::analyzeMoveCall(
@@ -8304,278 +8536,6 @@ auto SemanticVisitor::Impl::analyzeStorageBoundsCheckCall(const Call &expr)
                              .intrinsic = IntrinsicKind::StorageBoundsCheck});
 }
 
-auto SemanticVisitor::Impl::analyzeStorageIntrinsicCall(const Call &expr,
-                                                        IntrinsicKind intrinsic)
-    -> void {
-  std::vector<SemanticType> argumentTypes;
-  argumentTypes.reserve(expr.arguments().size());
-  for (const ExprPtr &argument : expr.arguments()) {
-    argumentTypes.emplace_back(analyze(argument));
-  }
-
-  if (intrinsic == IntrinsicKind::AllocateStorage) {
-    analyzeStorageAllocation(expr, argumentTypes);
-    return;
-  }
-
-  for (const TypeRef &argument : expr.typeArguments()) {
-    validateType(argument);
-  }
-  if (!expr.typeArguments().empty()) {
-    report(expr.paren(),
-           "Storage operations infer their element type from the storage "
-           "argument and do not take explicit type arguments.",
-           "GTI-S2019");
-  }
-
-  if (intrinsic == IntrinsicKind::StorageConstruct) {
-    if (expr.arguments().size() < 2) {
-      report(expr.paren(),
-             "storage_construct expects mutable storage, a uint64_t "
-             "index, and zero or more constructor arguments.",
-             "GTI-S2019");
-    }
-  } else {
-    const std::size_t expectedArguments = [&] {
-      switch (intrinsic) {
-      case IntrinsicKind::StorageCapacity:
-        return std::size_t{1};
-      case IntrinsicKind::StorageTryAdopt:
-        return std::size_t{5};
-      case IntrinsicKind::StorageTryAllocate:
-      case IntrinsicKind::StorageRelocate:
-      case IntrinsicKind::StorageShiftRight:
-      case IntrinsicKind::StorageShiftLeft:
-        return std::size_t{3};
-      default:
-        return std::size_t{2};
-      }
-    }();
-    if (expr.arguments().size() != expectedArguments) {
-      reportStorageArity(expr, intrinsic, expectedArguments);
-    }
-  }
-
-  if (argumentTypes.empty() ||
-      argumentTypes.front().kind != SemanticType::Storage ||
-      argumentTypes.front().arguments.size() != 1) {
-    if (!argumentTypes.empty() &&
-        argumentTypes.front() != SemanticType::Unknown) {
-      report(expressionToken(expr.arguments().front()),
-             storageIntrinsicName(intrinsic) +
-                 " requires gti_internal::storage<T> as its first argument.",
-             "GTI-S2019");
-    }
-    currentType = SemanticType::Unknown;
-    return;
-  }
-
-  const SemanticType storageType = argumentTypes.front();
-  const SemanticType elementType = storageType.arguments.front();
-  const bool mutatesFirst = intrinsic == IntrinsicKind::StorageTryAllocate ||
-                            intrinsic == IntrinsicKind::StorageTryAdopt ||
-                            intrinsic == IntrinsicKind::StorageConstruct ||
-                            intrinsic == IntrinsicKind::StorageReadMut ||
-                            intrinsic == IntrinsicKind::StorageDestroy ||
-                            intrinsic == IntrinsicKind::StorageRelocate ||
-                            intrinsic == IntrinsicKind::StorageShiftRight ||
-                            intrinsic == IntrinsicKind::StorageShiftLeft;
-  if (mutatesFirst) {
-    requireMutableStorage(expr.arguments().front(),
-                          storageIntrinsicName(intrinsic));
-  }
-
-  if (intrinsic == IntrinsicKind::StorageTryAdopt) {
-    requireUnsafe(expr, UnsafeOperationKind::StorageAdoption, expr.paren(),
-                  "Adopting externally owned raw storage");
-    if (argumentTypes.size() >= 2 &&
-        argumentTypes[1] != SemanticType::Unknown &&
-        argumentTypes[1] != SemanticType::rawPointerTo(SemanticType::Void)) {
-      report(expressionToken(expr.arguments()[1]),
-             "storage_try_adopt requires a writable void* region address.",
-             "GTI-S2019");
-    }
-    for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
-      requireStorageIndex(expr.arguments()[index], argumentTypes[index],
-                          intrinsic);
-    }
-    currentType = SemanticType::Int32;
-  } else if (intrinsic == IntrinsicKind::StorageTryAllocate) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    if (argumentTypes.size() >= 3) {
-      requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
-    }
-    currentType = SemanticType::Int32;
-  } else if (intrinsic == IntrinsicKind::StorageCapacity) {
-    currentType = SemanticType::UInt64;
-  } else if (intrinsic == IntrinsicKind::StorageInitialized) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    currentType = SemanticType::Bool;
-  } else if (intrinsic == IntrinsicKind::StorageConstruct) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    if (elementType.kind == SemanticType::StringView ||
-        elementType.kind == SemanticType::CString) {
-      for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
-        if (isOwnerDependentTextExpression(expr.arguments()[index])) {
-          reportOwnerDependentTextStorage(expr.arguments()[index],
-                                          "nested in dynamic storage");
-        }
-      }
-    }
-    if (argumentTypes.size() >= 2) {
-      std::vector<AnalyzedCallArgument> constructorArguments;
-      bool concreteArguments = true;
-      for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
-        if (!appendConcreteCallArgument(argumentTypes[index],
-                                        expr.arguments()[index],
-                                        constructorArguments)) {
-          concreteArguments = false;
-          break;
-        }
-      }
-      if (concreteArguments) {
-        if (elementType.kind == SemanticType::Class) {
-          analyzeConstructorCallArguments(
-              expr, elementType.classId, elementType.arguments,
-              elementType.valueArguments, constructorArguments, expr.paren());
-        } else if (elementType != SemanticType::Unknown &&
-                   elementType.kind != SemanticType::TypeParameter) {
-          validateStorageValueConstruction(expr, elementType,
-                                           constructorArguments);
-        }
-      }
-    }
-    currentType = SemanticType::Void;
-  } else if (intrinsic == IntrinsicKind::StorageRead ||
-             intrinsic == IntrinsicKind::StorageReadMut) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    currentType = elementType;
-  } else if (intrinsic == IntrinsicKind::StorageDestroy) {
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    currentType = SemanticType::Void;
-  } else if (intrinsic == IntrinsicKind::StorageRelocate) {
-    if (!satisfiesConstraint(elementType,
-                             constraintBit(GenericConstraintKind::Movable))) {
-      report(expr.paren(),
-             "storage_relocate requires a movable element type, but '" +
-                 typeSpelling(elementType) +
-                 "' does not guarantee move construction.",
-             "GTI-S2019");
-    }
-    if (argumentTypes.size() >= 2 &&
-        argumentTypes[1] != SemanticType::Unknown) {
-      if (argumentTypes[1] != storageType) {
-        report(expressionToken(expr.arguments()[1]),
-               "storage_relocate requires source and destination storage to "
-               "have the same element type.",
-               "GTI-S2019");
-      } else {
-        requireMutableStorage(expr.arguments()[1], "storage_relocate");
-      }
-    }
-    if (argumentTypes.size() >= 3) {
-      requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
-    }
-    currentType = SemanticType::Void;
-  } else {
-    if (!satisfiesConstraint(elementType,
-                             constraintBit(GenericConstraintKind::Movable))) {
-      report(expr.paren(),
-             storageIntrinsicName(intrinsic) +
-                 " requires a movable element type, but '" +
-                 typeSpelling(elementType) +
-                 "' does not guarantee move construction.",
-             "GTI-S2019");
-    }
-    if (argumentTypes.size() >= 2) {
-      requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
-    }
-    if (argumentTypes.size() >= 3) {
-      requireStorageIndex(expr.arguments()[2], argumentTypes[2], intrinsic);
-    }
-    currentType = SemanticType::Void;
-  }
-
-  const bool borrowsStorage = intrinsic == IntrinsicKind::StorageRead ||
-                              intrinsic == IntrinsicKind::StorageReadMut;
-  if (intrinsic == IntrinsicKind::StorageConstruct) {
-    preserveStorageConstructorParameters(semanticModel, expr, 2, argumentTypes);
-  }
-  semanticModel.record(
-      expr,
-      ResolvedCallInfo{
-          .returnType =
-              borrowsStorage
-                  ? SemanticType::referenceTo(
-                        elementType, intrinsic == IntrinsicKind::StorageReadMut
-                                         ? AccessMode::Mutable
-                                         : AccessMode::ReadOnly)
-                  : currentType,
-          .parameterTypes = std::move(argumentTypes),
-          .typeArguments = {elementType},
-          .intrinsic = intrinsic,
-          .borrowOrigin = borrowsStorage ? BorrowOriginKind::Argument
-                                         : BorrowOriginKind::None,
-          .borrowArgument = 0,
-          .borrowAccess = intrinsic == IntrinsicKind::StorageReadMut
-                              ? AccessMode::Mutable
-                              : AccessMode::ReadOnly});
-}
-
-auto SemanticVisitor::Impl::analyzeStorageAllocation(
-    const Call &expr, const std::vector<SemanticType> &argumentTypes) -> void {
-  if (expr.typeArguments().size() != 1) {
-    for (const TypeRef &argument : expr.typeArguments()) {
-      validateType(argument);
-    }
-    report(expr.paren(),
-           "gti_internal::allocate_storage<T> requires exactly one element "
-           "type.",
-           "GTI-S2019");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-
-  const TypeRef &elementRef = expr.typeArguments().front();
-  validateType(elementRef);
-  validateReferencePlacement(elementRef, false, "storage element type");
-  const SemanticType elementType = typeOf(elementRef);
-  if (!isStorageElementType(elementType)) {
-    report(elementRef.name.last(),
-           "Compiler-private storage requires a concrete value element type.",
-           "GTI-S2019");
-  } else if (elementType.kind != SemanticType::TypeParameter &&
-             typeTraits(elementType).containsBorrowedState) {
-    report(elementRef.name.last(),
-           "Compiler-private storage cannot contain a value that retains "
-           "borrowed state until general owner dependencies are available.",
-           "GTI-S2019");
-  }
-  if (argumentTypes.size() != 1) {
-    reportStorageArity(expr, IntrinsicKind::AllocateStorage, 1);
-  } else {
-    requireStorageIndex(expr.arguments().front(), argumentTypes.front(),
-                        IntrinsicKind::AllocateStorage);
-  }
-
-  currentType = SemanticType::storageOf(elementType);
-  semanticModel.record(
-      expr, ResolvedCallInfo{.returnType = currentType,
-                             .parameterTypes = argumentTypes,
-                             .typeArguments = {elementType},
-                             .intrinsic = IntrinsicKind::AllocateStorage});
-}
-
 auto SemanticVisitor::Impl::isAllocatedScalarType(
     const SemanticType &type) const -> bool {
   return isNumeric(type) || type == SemanticType::Bool ||
@@ -8595,7 +8555,6 @@ auto SemanticVisitor::Impl::isStorageElementType(const SemanticType &type)
   case SemanticType::Reference:
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
   case SemanticType::TypeName:
   case SemanticType::Function:
@@ -8624,18 +8583,6 @@ auto SemanticVisitor::Impl::requireMutableStorage(const ExprPtr &argument,
       std::string(operation) +
           " cannot mutate storage while an overlapping borrow may still "
           "be live.");
-}
-
-auto SemanticVisitor::Impl::requireStorageIndex(const ExprPtr &argument,
-                                                const SemanticType &type,
-                                                IntrinsicKind intrinsic)
-    -> void {
-  if (type != SemanticType::Unknown && type != SemanticType::UInt64) {
-    report(expressionToken(argument),
-           storageIntrinsicName(intrinsic) +
-               " requires a uint64_t index or count.",
-           "GTI-S2019");
-  }
 }
 
 } // namespace lang

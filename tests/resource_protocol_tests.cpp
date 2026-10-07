@@ -39,6 +39,9 @@ void diagnostics(const lang::FrontendResult &result) {
       if (!printed.emplace(error.bodyKind, error.owner).second)
         continue;
       if (error.bodyKind == lang::MirBodyKind::Function) {
+        if (const auto *function = result.hir.findFunctionInstance(error.owner);
+            function != nullptr && function->source != nullptr)
+          std::cerr << "Function " << function->source->name().lexeme << '\n';
         if (const auto *function = result.mir.findFunctionInstance(error.owner))
           std::cerr << lang::MirPrinter().print(function->body);
       } else if (error.bodyKind == lang::MirBodyKind::Constructor) {
@@ -83,6 +86,87 @@ void negative(const std::string &source, std::string_view code,
 } // namespace
 
 int main() {
+  {
+    const auto root =
+        std::filesystem::path(__FILE__).parent_path().parent_path();
+    const auto example = lang::Frontend().analyze(
+        root / "examples/121-programmable-allocators.gti", std::nullopt,
+        {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+    if (!example.canGenerateCode())
+      diagnostics(example);
+    expect(example.canGenerateCode(),
+           "complete resource example preserves nested owner loans");
+  }
+  positive(
+      R"(
+struct Owner { int value = 42; };
+class Handle {
+  Owner& owner;
+public:
+  Handle(Owner& owner) : owner(owner) {}
+  int read() { return this.owner.value; }
+};
+class Guard {
+  Handle handle;
+public:
+  Guard(Handle handle) : handle(handle) {}
+  ~Guard() { int observed = this.handle.read(); }
+};
+class Pair {
+  Guard first;
+  Guard second;
+public:
+  Pair(Handle handle) : first(Guard(handle)), second(Guard(handle)) {}
+};
+void use(Handle handle) { Pair pair{handle}; }
+int main() { Owner owner{}; use(Handle(owner)); return 0; }
+)",
+      "two cleanup-bearing fields preserve their distinct paths to one formal");
+  positive(
+      R"(
+concept number_source<T> = requires(T& value) { { value.number() } -> int; };
+class Adapter<T> {
+public:
+  int number() { return 42; }
+};
+int read<T>(T& value) requires number_source<T> { return value.number(); }
+int relay<T>(Adapter<T>& value) { return read(value); }
+int main() { Adapter<int> value{}; return relay(value) - 42; }
+)",
+      "nominal generic receiver proves a concrete ordinary member contract");
+  for (const auto *declaration : {"private: int number() { return 42; }",
+                                  "public: unsafe int number() { return 42; }",
+                                  "public: bool number() { return true; }"}) {
+    negative(std::string(R"(
+concept number_source<T> = requires(T& value) { { value.number() } -> int; };
+class Adapter<T> { )") +
+                 declaration + R"( };
+int read<T>(T& value) requires number_source<T> { return value.number(); }
+int relay<T>(Adapter<T>& value) { return read(value); }
+int main() { return 0; }
+)",
+             "GTI-S2029",
+             "open nominal receiver does not bypass access, effect or result "
+             "checks");
+  }
+  negative(R"(
+concept number_source<T> = requires(T& value) { { value.number() } -> int; };
+int read<T>(T& value) requires number_source<T> { return value.number(); }
+int relay<T>(T& value) { return read(value); }
+int main() { return 0; }
+)",
+           "GTI-S2029",
+           "bare type parameters still require explicit member evidence");
+  negative(R"(
+struct Borrowed { int& value; Borrowed(int& value) : value(value) {} };
+int main() {
+  std::allocator allocator{};
+  auto result = allocator.try_storage<Borrowed>(std::size_t(0));
+  return 0;
+}
+)",
+           "GTI-S2029",
+           "zero capacity does not admit unchecked external element loans");
   positive(R"(
 int use(std::resource_ref<std::process_resource> resource) {
   mut std::resource_storage<int, std::process_resource> slots{resource};
@@ -152,6 +236,51 @@ int main() {
 )",
            "GTI-S2055",
            "initial resource binding requires explicit unsafe authority");
+  positive(R"(
+int main() {
+  std::detail::process_lease empty{};
+  auto moved = std::move(empty);
+  return 0;
+}
+)",
+           "empty process leases can be moved and destroyed safely");
+  for (const auto *operation :
+       {"auto result = lease.allocate(std::layout(uint64_t(8), uint64_t(8)));",
+        "lease.attach(std::raw_allocation(nullptr, uint64_t(0), uint64_t(1), "
+        "uint64_t(0)));"}) {
+    negative(
+        std::string("int main() { mut std::detail::process_lease lease{}; ") +
+            operation + "return 0; }",
+        "GTI-S2055", "process lease raw allocation and adoption remain unsafe");
+    negative(
+        std::string(
+            "void use(std::resource_ref<std::process_resource> resource) { "
+            "mut std::detail::resource_lease<std::process_resource> "
+            "lease{resource}; ") +
+            operation + " } int main() { return 0; }",
+        "GTI-S2055",
+        "resource lease raw allocation and adoption remain unsafe");
+  }
+  negative(R"(
+int main() {
+  std::detail::process_lease lease{
+    gti_internal::empty_storage_adoption::trusted,
+    std::raw_allocation(nullptr, uint64_t(0), uint64_t(1), uint64_t(0))};
+  return 0;
+}
+)",
+           "GTI-S2058",
+           "process descriptor adoption cannot forge a private token");
+  negative(R"(
+void use(std::resource_ref<std::process_resource> resource) {
+  std::detail::resource_lease<std::process_resource> lease{
+    gti_internal::resource_binding::trusted, resource,
+    std::raw_allocation(nullptr, uint64_t(0), uint64_t(1), uint64_t(0))};
+}
+int main() { return 0; }
+)",
+           "GTI-S2058",
+           "resource descriptor adoption cannot forge a private token");
   negative(R"(
 int main() {
   std::process_resource resource{};

@@ -518,7 +518,6 @@ void testForwardListEmplacementPublication() {
         emitter.emitFailureBodyText(address, "emplacement", 1).text;
     if (text.find("in-place constructor field reparent") == std::string::npos)
       continue;
-    ++directFields;
     const lang::MirInstruction *elementPublication = nullptr;
     for (const auto &block : constructor.body.blocks) {
       for (const auto &instruction : block.instructions) {
@@ -530,6 +529,11 @@ void testForwardListEmplacementPublication() {
           elementPublication = &instruction;
       }
     }
+    // Generated owning-wrapper constructors may also publish fields in
+    // place. This regression concerns the selected immovable list element.
+    if (elementPublication == nullptr)
+      continue;
+    ++directFields;
     const std::string elementPlace =
         elementPublication == nullptr
             ? ""
@@ -1105,48 +1109,114 @@ int main() {
   if (selected == nullptr) {
     return;
   }
-  const auto hasSpelling = [&](std::string_view first,
-                               std::string_view second = {}) {
-    return std::any_of(
-        selected->fields.begin(), selected->fields.end(),
-        [&](const lang::CppMirFieldInitializerSpelling &field) {
-          return field.spelling.find(first) != std::string::npos &&
-                 (second.empty() ||
-                  field.spelling.find(second) != std::string::npos);
-        });
-  };
-  expect(hasSpelling("Mode::Ready"),
-         "the enum field should use the copied enumerator storage row");
-  expect(hasSpelling("::__gti_program::baseline"),
-         "the global-backed field should use the copied program-storage "
-         "row");
-  expect(hasSpelling("Reading", "(static_cast<std::int32_t>(7))"),
-         "the direct field construction should be reconstructed from the "
-         "MIR Construct and CallInput stages");
-  expect(hasSpelling("std::array<std::int32_t, 2>",
-                     "{static_cast<std::int32_t>(2), "
-                     "static_cast<std::int32_t>(3)}"),
-         "the fixed-array field aggregate should preserve its staged element "
-         "order");
-  expect(hasSpelling("Marker{}"),
-         "a targetless default Construct should publish an empty class field "
-         "initializer from verified MIR");
-  expect(hasSpelling("Component{}"),
-         "a targetless generated default Construct should publish a non-empty "
-         "class field initializer from verified MIR");
+  expect(std::all_of(selected->fields.begin(), selected->fields.end(),
+                     [](const auto &field) { return field.spelling.empty(); }),
+         "selected declaration defaults must not execute again as native "
+         "in-class initializers");
+  const auto dashboard = std::find_if(
+      frontend.mir.constructorInstances().begin(),
+      frontend.mir.constructorInstances().end(), [&](const auto &constructor) {
+        return constructor.generatedDefault &&
+               constructor.initializers.size() == 6;
+      });
+  const bool bodySupported =
+      dashboard != frontend.mir.constructorInstances().end() &&
+      emitter.supportsFailureBodyText(
+          {.kind = lang::MirBodyKind::Constructor, .owner = dashboard->id});
+  expect(bodySupported,
+         "the selected constructor must retain the mixed enum, global, "
+         "constructed-class, fixed-array and empty-field schedule");
+  if (!bodySupported)
+    return;
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("Marker marker =") != std::string::npos &&
+  expect(artifact.contents.find("Marker marker;") != std::string::npos &&
              artifact.contents.find("Marker{}") != std::string::npos &&
-             artifact.contents.find("Component component =") !=
+             artifact.contents.find("Component component;") !=
                  std::string::npos &&
-             artifact.contents.find("Component{}") != std::string::npos,
-         "the complete C++ backend should emit verified targetless empty and "
-         "non-empty class field initializers without a vocabulary error");
+             artifact.contents.find("passive generated default publishes") !=
+                 std::string::npos &&
+             artifact.contents.find("Mode::Ready") != std::string::npos &&
+             artifact.contents.find("::__gti_program::baseline") !=
+                 std::string::npos &&
+             artifact.contents.find("std::array<std::int32_t, 2>") !=
+                 std::string::npos,
+         "the complete backend must spell each rich declaration default in "
+         "its selected MIR constructor, not duplicate in-class defaults");
+
+  for (const bool explicitConstructor : {false, true}) {
+    const auto mixed = analyze("array-empty-field-schedule.gti", std::string(R"(
+struct Empty {};
+class Holder {
+  int32_t samples[2] = {2, 3};
+  Empty empty{};
+public:
+)") + (explicitConstructor ? "  Holder() {}\n" : "") + R"(
+};
+int main() { Holder holder{}; return 0; }
+)");
+    expect(mixed.canGenerateCode(),
+           "array plus empty-class declaration defaults must verify");
+    if (!mixed.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap mixedMap(buildRows(mixed, mixed.mir));
+    const lang::CppMirBodyEmitter mixedEmitter(mixed.mir, mixedMap);
+    const auto holder = std::find_if(
+        mixed.mir.constructorInstances().begin(),
+        mixed.mir.constructorInstances().end(), [](const auto &constructor) {
+          return constructor.initializers.size() == 2;
+        });
+    expect(holder != mixed.mir.constructorInstances().end(),
+           "the mixed default schedule must have an exact constructor");
+    if (holder == mixed.mir.constructorInstances().end())
+      continue;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                       .owner = holder->id};
+    expect(mixedEmitter.supportsBodyText(address),
+           "explicit and generated constructors both admit exact empty "
+           "construction beside array initialization");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto forged = mixed.mir;
+      auto *body = lang::findMirBody(forged, address);
+      bool changed = false;
+      for (auto &block : body->blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Construct ||
+              instruction.constructorTarget || !instruction.result)
+            continue;
+          if (mutation == 0) {
+            instruction.hirValue = 0;
+          } else {
+            auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+                forged.classInstances());
+            const auto empty = std::find_if(
+                classes.begin(), classes.end(), [&](const auto &type) {
+                  return type.type == instruction.info.type;
+                });
+            if (empty == classes.end())
+              continue;
+            if (mutation == 1)
+              empty->declaredFields.push_back({});
+            else
+              empty->requiresActiveCleanup = true;
+          }
+          changed = true;
+          break;
+        }
+        if (changed)
+          break;
+      }
+      const lang::CppMirBodyEmitter forgedEmitter(forged, mixedMap);
+      expect(changed && !forgedEmitter.supportsBodyText(address) &&
+                 !forgedEmitter.supportsFailureBodyText(address),
+             "empty-field publication rejects forged provenance, nonempty "
+             "layout and active cleanup rather than erasing their semantics");
+    }
+  }
 }
 
 void testDependentFieldInitializerSchedule() {
@@ -1179,8 +1249,8 @@ int main() {
   const lang::CppMirBodyEmitter emitter(frontend.mir, map);
   std::size_t arrays = 0;
   std::size_t wrappers = 0;
-  std::unordered_set<std::string> arraySpellings;
-  std::unordered_set<std::string> wrapperSpellings;
+  std::unordered_set<std::uint64_t> arrayExtents;
+  std::unordered_set<lang::HirClassInstanceId> wrappedOwners;
   for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
     const lang::ClassTypeInfo *info =
         frontend.semantics.findClassType(instance.declaration);
@@ -1199,28 +1269,73 @@ int main() {
     if (!schedule.supported || schedule.fields.size() != 1) {
       continue;
     }
-    const std::string &spelling = schedule.fields.front().spelling;
+    expect(schedule.fields.front().spelling.empty(),
+           "selected generated constructors must suppress duplicate native "
+           "declaration defaults");
+    const auto constructor = std::find_if(
+        frontend.mir.constructorInstances().begin(),
+        frontend.mir.constructorInstances().end(), [&](const auto &candidate) {
+          return candidate.owner == instance.id && candidate.generatedDefault;
+        });
+    expect(constructor != frontend.mir.constructorInstances().end() &&
+               constructor->initializers.size() == 1 &&
+               instance.declaredFields.size() == 1,
+           "each concrete dependent owner must have its exact generated "
+           "one-field constructor");
+    if (constructor == frontend.mir.constructorInstances().end() ||
+        constructor->initializers.size() != 1 ||
+        instance.declaredFields.size() != 1)
+      continue;
+    const auto &initializer = constructor->initializers.front();
+    const auto &field = instance.declaredFields.front();
+    expect(initializer.field == field.symbol &&
+               initializer.targetType == field.type &&
+               emitter.supportsFailureBodyText(
+                   {.kind = lang::MirBodyKind::Constructor,
+                    .owner = constructor->id}),
+           "concrete initializer identities must retain an executable "
+           "verified-MIR constructor schedule");
     if (info->declaration->name().lexeme == "StaticArray") {
-      expect((spelling == "std::array<std::int32_t, 4>{}" ||
-              spelling == "std::array<std::int32_t, 8>{}"),
-             "each direct StaticArray instance should project its concrete "
-             "aggregate spelling");
-      arraySpellings.insert(spelling);
+      expect(field.type.kind == lang::SemanticType::Array &&
+                 field.type.arguments.size() == 1 &&
+                 field.type.arguments.front() == lang::SemanticType::Int32 &&
+                 (field.type.arrayLength == 4 || field.type.arrayLength == 8),
+             "each array initializer must retain its concrete element and "
+             "extent rather than a representative generic spelling");
+      arrayExtents.insert(field.type.arrayLength);
       ++arrays;
     } else {
-      expect(spelling.find("::__gti_type_") != std::string::npos &&
-                 spelling.find("_StaticArray{}") != std::string::npos &&
-                 spelling.find("<T, N>") == std::string::npos,
-             "each direct WrappedArray instance should project its concrete "
-             "nested-class default-construction spelling");
-      wrapperSpellings.insert(spelling);
+      const auto wrapped = std::find_if(
+          frontend.mir.classInstances().begin(),
+          frontend.mir.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == field.type; });
+      expect(wrapped != frontend.mir.classInstances().end() &&
+                 wrapped->declaredFields.size() == 1 &&
+                 wrapped->declaredFields.front().type.kind ==
+                     lang::SemanticType::Array,
+             "each wrapper must select its exact concrete array owner");
+      if (wrapped != frontend.mir.classInstances().end())
+        wrappedOwners.insert(wrapped->id);
       ++wrappers;
     }
   }
-  expect(arrays == 2 && wrappers == 2 && arraySpellings.size() == 2 &&
-             wrapperSpellings.size() == 2,
+  expect(arrays == 2 && wrappers == 2 && arrayExtents.size() == 2 &&
+             wrappedOwners.size() == 2,
          "the dependent initializer fixture should exercise both concrete "
-         "instances and spell each physical representation distinctly");
+         "instances without collapsing their physical representations");
+  bool emittedDistinctExtents = false;
+  try {
+    const auto artifact = gti_test::emitCpp(frontend);
+    emittedDistinctExtents =
+        artifact.contents.find("std::array<std::int32_t, 4>") !=
+            std::string::npos &&
+        artifact.contents.find("std::array<std::int32_t, 8>") !=
+            std::string::npos;
+  } catch (const std::exception &) {
+  }
+  expect(emittedDistinctExtents,
+         "the complete backend must preserve both concrete array extents "
+         "through the selected generated constructor schedules");
 }
 
 void testContainedOwningFieldConstructor() {
@@ -1342,6 +1457,134 @@ int32_t main() {
          "the ordinary Holder constructor should publish from verified MIR "
          "with checked field construction in its selected initialization "
          "schedule");
+}
+
+void testConstructedPrvalueCheckedFieldReplacement() {
+  const auto frontend =
+      analyzeWithStandardLibrary("constructed-prvalue-checked-field.gti", R"(
+#include <std/memory>
+class Payload {
+  mut std::unique_ptr<int32_t> data;
+public:
+  Payload(int32_t value) : data(std::make_unique<int32_t>(value)) {}
+};
+struct Holder { mut Payload value = Payload(1); };
+void replace(mut std::unique_ptr<Holder>& owner) {
+  owner->value = Payload(2);
+}
+int main() {
+  mut auto owner = std::make_unique<Holder>();
+  replace(owner);
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "an unrelated owning constructed prvalue must assign through a "
+         "checked owner field");
+  if (!frontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId target = 0;
+  for (const auto &function : frontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "replace")
+      target = function.id;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = target};
+  const auto *body = lang::findMirBody(frontend.mir, address);
+  expect(target != 0 && body != nullptr,
+         "checked replacement must have a concrete function body");
+  if (body == nullptr)
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "constructed RHS staging must preserve checked receiver evaluation "
+         "and its success-edge field publication");
+  lang::MirInstructionId producerId = 0, endId = 0, dropId = 0;
+  lang::MirDropObligationId obligation = 0;
+  lang::MirLoanId destinationLoan = 0;
+  for (const auto &block : body->blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Construct &&
+          instruction.constructorTarget && instruction.successResultDrop) {
+        producerId = instruction.id;
+        obligation = *instruction.successResultDrop;
+      }
+    }
+  for (const auto &block : body->blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Assign ||
+          !instruction.destination || instruction.lifecycle.size() != 1 ||
+          instruction.lifecycle.front().source != obligation)
+        continue;
+      const auto *destination = body->findPlace(*instruction.destination);
+      if (destination != nullptr &&
+          destination->root == lang::MirPlaceRootKind::Loan)
+        destinationLoan = destination->loan;
+    }
+  std::size_t destinationEnds = 0;
+  for (const auto &block : body->blocks) {
+    if (block.activeFailure != 0)
+      continue;
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+          instruction.loan == destinationLoan) {
+        endId = instruction.id;
+        ++destinationEnds;
+      }
+      if (instruction.kind == lang::MirInstructionKind::Drop &&
+          instruction.lifecycle.size() == 1 &&
+          instruction.lifecycle.front().source == obligation)
+        dropId = instruction.id;
+    }
+  }
+  expect(producerId && obligation && destinationLoan && destinationEnds == 1 &&
+             endId && dropId,
+         "constructed field replacement retains exact activation, loan end "
+         "and staging-shell destruction identities");
+  if (!producerId || !obligation || !destinationLoan || destinationEnds != 1 ||
+      !endId || !dropId)
+    return;
+  constexpr std::array<std::string_view, 4> mutationReasons = {
+      "checked constructed-field publication rejects missing destination loan "
+      "retirement",
+      "checked constructed-field publication rejects destination retirement "
+      "after staging-shell destruction",
+      "checked constructed-field publication rejects lost staging-shell "
+      "cleanup",
+      "checked constructed-field publication rejects lost success activation"};
+  for (int mutation = 0; mutation < 4; ++mutation) {
+    auto forged = frontend.mir;
+    auto *changedBody = lang::findMirBody(forged, address);
+    bool changed = false;
+    for (auto &block : changedBody->blocks) {
+      auto end =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const auto &i) { return i.id == endId; });
+      auto drop =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [&](const auto &i) { return i.id == dropId; });
+      if (mutation == 0 && end != block.instructions.end()) {
+        block.instructions.erase(end);
+        changed = true;
+      } else if (mutation == 1 && end != block.instructions.end() &&
+                 drop != block.instructions.end()) {
+        std::iter_swap(end, drop);
+        changed = true;
+      } else if (mutation == 2 && drop != block.instructions.end()) {
+        block.instructions.erase(drop);
+        changed = true;
+      } else if (mutation == 3) {
+        for (auto &instruction : block.instructions)
+          if (instruction.id == producerId) {
+            instruction.successResultDrop.reset();
+            changed = true;
+          }
+      }
+    }
+    const lang::CppMirBodyEmitter forgedEmitter(forged, map);
+    expect(changed && !forgedEmitter.supportsFailureBodyText(address),
+           mutationReasons[mutation]);
+  }
 }
 
 void testPreparedConstructorReplacement() {
@@ -1653,9 +1896,10 @@ int main() { Mixed mixed{}; Holder value{}; return std::move(value)(3) - 3; }
   const auto schedule =
       lang::CppMirBodyEmitter(frontend.mir, map).initializerSchedule(address);
   expect(schedule.supported && schedule.fields.size() == 1 &&
-             !schedule.fields.front().spelling.empty() &&
+             schedule.fields.front().spelling.empty() &&
              owner->fieldInitializers.failureRecords.empty(),
-         "non-failing construction publishes its exact owning field default");
+         "generated constructor owns the field default without duplicate "
+         "native declaration execution");
   expect(!gti_test::emitCppText(frontend).empty(),
          "production emission accepts the generated constructor and consuming "
          "fallback");
@@ -1743,7 +1987,673 @@ int main() { Mixed mixed{}; Holder value{}; return std::move(value)(3) - 3; }
   }
 }
 
-void testContainedOwningStringFieldConstructor() {
+void testGeneratedDefaultScheduleObligation() {
+  const auto rejectOrdinarySubstitute = [](const lang::MirProgram &program,
+                                           lang::IntrinsicKind intrinsic) {
+    auto substituted = program;
+    std::optional<lang::MirConstructorInstance> replacement;
+    lang::MirBodyAddress selected;
+    lang::MirInstructionId selectedInstruction = 0;
+    for (const auto address : lang::enumerateMirBodyAddresses(substituted)) {
+      auto *body = lang::findMirBody(substituted, address);
+      if (!body || replacement)
+        continue;
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions) {
+          if (replacement || instruction.intrinsic != intrinsic ||
+              !instruction.constructorTarget)
+            continue;
+          const auto *target = substituted.findConstructorInstance(
+              *instruction.constructorTarget);
+          if (!target || !target->generatedDefault)
+            continue;
+          replacement = *target;
+          replacement->id = substituted.constructorInstances().size() + 1;
+          replacement->generatedDefault = false;
+          instruction.constructorTarget = replacement->id;
+          selected = address;
+          selectedInstruction = instruction.id;
+        }
+    }
+    if (replacement)
+      const_cast<std::vector<lang::MirConstructorInstance> &>(
+          substituted.constructorInstances())
+          .push_back(std::move(*replacement));
+    const auto rejected = lang::verifyMirProgram(substituted);
+    expect(replacement &&
+               std::any_of(rejected.errors.begin(), rejected.errors.end(),
+                           [&](const auto &issue) {
+                             return issue.bodyKind == selected.kind &&
+                                    issue.owner == selected.owner &&
+                                    issue.instruction == selectedInstruction &&
+                                    issue.message.find(
+                                        "required generated schedule") !=
+                                        std::string::npos;
+                           }),
+           "an ordinary constructor with a matching signature cannot replace "
+           "an obligated generated-default target");
+  };
+  const auto frontend = analyze("generated-default-obligation.gti", R"gti(
+class Box<T> {
+  int marker = 1;
+public:
+  Box(int value) : marker(value) {}
+};
+int main() { Box<int> first{}; Box<bool> second{2}; return 0; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "generic defaults retain an obligation without eagerly instantiating "
+         "an unused default constructor");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::MirClassInstance *unusedDefault = nullptr;
+  for (const auto &owner : frontend.mir.classInstances()) {
+    if (owner.type.arguments !=
+        std::vector<lang::SemanticType>{lang::SemanticType::Bool})
+      continue;
+    unusedDefault = &owner;
+  }
+  expect(unusedDefault && unusedDefault->generatedDefaultRequiresSchedule &&
+             std::none_of(frontend.mir.constructorInstances().begin(),
+                          frontend.mir.constructorInstances().end(),
+                          [&](const auto &constructor) {
+                            return constructor.owner == unusedDefault->id &&
+                                   constructor.generatedDefault;
+                          }),
+         "the uncalled specialization retains its semantic obligation without "
+         "an executable generated body");
+  if (!unusedDefault)
+    return;
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "generic declaration catalogs agree when only one specialization "
+         "actually invokes its default");
+  auto erased = frontend.mir;
+  const_cast<lang::MirClassInstance *>(
+      erased.findClassInstance(unusedDefault->id))
+      ->generatedDefaultRequiresSchedule = false;
+  expect(lang::verifyMirProgram(erased).valid() &&
+             !lang::verifyMirOptimizationCoherence(frontend.mir, erased, {})
+                  .valid(),
+         "optimization replay preserves unused generated-default obligations "
+         "as immutable class metadata");
+  auto malformedHir = frontend.hir;
+  const_cast<lang::HirClassInstance &>(
+      malformedHir.classInstances()[unusedDefault->id - 1])
+      .generatedDefaultRequiresSchedule = false;
+  expect(!lang::verifyHirProgramPlans(frontend.semantics, malformedHir).valid(),
+         "HIR cannot erase the semantic generated-default obligation");
+  auto detached = gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  auto &detachedMir = const_cast<lang::MirProgram &>(detached.mir());
+  const_cast<lang::MirClassInstance *>(
+      detachedMir.findClassInstance(unusedDefault->id))
+      ->generatedDefaultRequiresSchedule = false;
+  const auto issues = lang::verifyLoweredProgram(detached);
+  expect(
+      std::any_of(issues.begin(), issues.end(),
+                  [](const auto &issue) {
+                    return issue.detail.find("generated-default obligation") !=
+                           std::string::npos;
+                  }),
+      "detached declarations independently retain unused default obligations");
+
+  const auto direct = analyze("generated-default-target-erasure.gti", R"gti(
+struct Only { int value = 1; };
+int main() { Only value{}; return 0; }
+)gti");
+  expect(direct.canGenerateCode() &&
+             direct.mir.constructorInstances().size() == 1,
+         "target-erasure control has one exact generated constructor");
+  if (!direct.canGenerateCode() ||
+      direct.mir.constructorInstances().size() != 1)
+    return;
+  rejectOrdinarySubstitute(direct.mir, lang::IntrinsicKind::None);
+  auto missing = direct.mir;
+  bool erasedTarget = false;
+  for (const auto address : lang::enumerateMirBodyAddresses(missing)) {
+    auto *body = lang::findMirBody(missing, address);
+    if (!body)
+      continue;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.constructorTarget) {
+          instruction.constructorTarget.reset();
+          instruction.definedFailure = {};
+          erasedTarget = true;
+        }
+  }
+  const_cast<std::vector<lang::MirConstructorInstance> &>(
+      missing.constructorInstances())
+      .clear();
+  const auto invalid = lang::verifyMirProgram(missing);
+  expect(erasedTarget &&
+             std::any_of(invalid.errors.begin(), invalid.errors.end(),
+                         [](const auto &issue) {
+                           return issue.message.find(
+                                      "missing its selected schedule") !=
+                                  std::string::npos;
+                         }),
+         "erasing both target and generated body cannot restore native "
+         "default construction");
+  const std::string inPlaceSource = R"gti(
+#include <std/memory>
+struct Element { int value = 1; };
+int main() {
+  unsafe {
+    Element* address = nullptr;
+    std::construct_at(address);
+  }
+  mut auto appended = gti_internal::allocate_prefix_storage<Element>(uint64_t(1));
+  gti_internal::prefix_storage_append(appended);
+  mut auto inserted = gti_internal::allocate_prefix_storage<Element>(uint64_t(1));
+  gti_internal::prefix_storage_insert(inserted, uint64_t(0));
+  return 0;
+}
+)gti";
+  // Prefix storage is compiler-private. Register this mutation fixture as a
+  // trusted prelude overlay, exactly as analyzeTrustedPreludeFixture does;
+  // ordinary application sources must continue to reject these declarations.
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto inPlaceEntry = std::filesystem::temp_directory_path() /
+                            "gti-trusted-generated-in-place-obligation.gti";
+  const auto inPlace = lang::Frontend().analyze(
+      inPlaceEntry, inPlaceSource,
+      {standardLibrary / "prelude.gti", inPlaceEntry},
+      {{std::filesystem::weakly_canonical(inPlaceEntry).string(),
+        inPlaceSource}},
+      {standardLibrary});
+  if (!inPlace.canGenerateCode())
+    for (const auto &diagnostic : inPlace.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(inPlace.canGenerateCode(),
+         "raw and prefix default construction retain selected schedules");
+  if (inPlace.canGenerateCode()) {
+    for (const auto intrinsic : {lang::IntrinsicKind::ObjectConstruct,
+                                 lang::IntrinsicKind::PrefixStorageAppend,
+                                 lang::IntrinsicKind::PrefixStorageInsert}) {
+      rejectOrdinarySubstitute(inPlace.mir, intrinsic);
+      auto absent = inPlace.mir;
+      bool changed = false;
+      for (const auto address : lang::enumerateMirBodyAddresses(absent)) {
+        auto *body = lang::findMirBody(absent, address);
+        if (!body)
+          continue;
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.intrinsic == intrinsic &&
+                instruction.constructorTarget) {
+              instruction.constructorTarget.reset();
+              instruction.definedFailure.propagation =
+                  lang::FailurePropagationKind::None;
+              changed = true;
+            }
+      }
+      expect(changed && !lang::verifyMirProgram(absent).valid(),
+             "in-place default construction cannot discard its required "
+             "generated constructor target");
+    }
+  }
+
+  const auto bases = analyze("source-constructor-default-obligation.gti", R"gti(
+class Base { int value = 1; };
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+};
+class DeclaredBase { public: DeclaredBase() {} };
+class DeclaredDerived : public DeclaredBase {
+public:
+  DeclaredDerived() : DeclaredBase() {}
+};
+int main() {
+  Derived derived{};
+  DeclaredDerived declared{};
+  Base direct{};
+  return 0;
+}
+)gti");
+  expect(bases.canGenerateCode(),
+         "source constructors preserve generated and explicit zero-argument "
+         "base selection as distinct valid cases");
+  if (!bases.canGenerateCode())
+    return;
+  bool mutatedBase = false;
+  for (const auto &constructor : bases.mir.constructorInstances()) {
+    if (constructor.generatedDefault)
+      continue;
+    for (std::size_t index = 0; index < constructor.initializers.size();
+         ++index) {
+      const auto &initializer = constructor.initializers[index];
+      const auto *base = initializer.base
+                             ? bases.mir.findClassInstance(*initializer.base)
+                             : nullptr;
+      if (initializer.kind != lang::ConstructorInitializerTargetKind::Base ||
+          !base || !base->generatedDefaultRequiresSchedule)
+        continue;
+      auto malformed = bases.mir;
+      auto &changed = const_cast<lang::MirConstructorInstance *>(
+                          malformed.findConstructorInstance(constructor.id))
+                          ->initializers[index];
+      changed.generatedDefault = false;
+      changed.constructorTarget.reset();
+      const auto rejected = lang::verifyMirProgram(malformed);
+      expect(std::any_of(
+                 rejected.errors.begin(), rejected.errors.end(),
+                 [&](const auto &issue) {
+                   return issue.owner == constructor.id &&
+                          issue.bodyKind == lang::MirBodyKind::Constructor &&
+                          issue.message.find("required exact schedule") !=
+                              std::string::npos;
+                 }),
+             "erasing a source constructor's base-default flag and target "
+             "cannot bypass the exact base class obligation");
+      mutatedBase = true;
+    }
+  }
+  expect(mutatedBase, "the source-constructor base mutation must be exercised");
+
+  const auto unrelated = std::find_if(
+      bases.mir.constructorInstances().begin(),
+      bases.mir.constructorInstances().end(), [](const auto &constructor) {
+        return !constructor.generatedDefault &&
+               constructor.parameterTypes.empty() &&
+               constructor.initializers.empty();
+      });
+  auto wrongOwner = bases.mir;
+  bool redirected = false;
+  if (unrelated != bases.mir.constructorInstances().end()) {
+    for (const auto address : lang::enumerateMirBodyAddresses(wrongOwner)) {
+      auto *body = lang::findMirBody(wrongOwner, address);
+      if (!body)
+        continue;
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions) {
+          const auto *target = instruction.constructorTarget
+                                   ? wrongOwner.findConstructorInstance(
+                                         *instruction.constructorTarget)
+                                   : nullptr;
+          if (instruction.kind != lang::MirInstructionKind::Construct ||
+              !target || !target->generatedDefault)
+            continue;
+          instruction.constructorTarget = unrelated->id;
+          redirected = true;
+        }
+    }
+  }
+  const auto rejectedOwner = lang::verifyMirProgram(wrongOwner);
+  expect(redirected &&
+             std::any_of(rejectedOwner.errors.begin(),
+                         rejectedOwner.errors.end(),
+                         [](const auto &issue) {
+                           return issue.message.find(
+                                      "result type differs from its exact "
+                                      "constructor owner") != std::string::npos;
+                         }),
+         "an unrelated zero-argument constructor cannot evade the result "
+         "class's generated-default schedule obligation");
+}
+
+void testGeneratedDeclarationFailureRollback() {
+  const auto pointerDefault =
+      analyzeWithStandardLibrary("generated-null-default.gti", R"gti(
+using Callback = (int32_t) -> int32_t;
+struct RawHolder {
+  void* address = nullptr;
+  c_string text = nullptr;
+  Callback callback = nullptr;
+};
+int main() { RawHolder holder{}; return 0; }
+)gti");
+  expect(pointerDefault.canGenerateCode(),
+         "generated declaration defaults preserve exact null-to-pointer, "
+         "C-string, and native-function "
+         "initialization");
+  const auto scalarDefaults = analyze("generated-scalar-default.gti", R"gti(
+int16_t small() { return 1; }
+struct ScalarDefaults {
+  double wide_float = small();
+  float narrow_float = small();
+  int64_t wide_integer = small();
+  uint8_t typed_literal = 1;
+  int8_t signed_literal = -1;
+  uint8_t grouped_literal = (1);
+};
+int main() { ScalarDefaults value{}; return 0; }
+)gti");
+  expect(scalarDefaults.canGenerateCode(),
+         "generated declaration defaults preserve existing scalar widening "
+         "and contextually typed literals");
+  if (scalarDefaults.canGenerateCode()) {
+    auto malformed = scalarDefaults.hir;
+    bool changedInteger = false;
+    for (const auto &constructor : malformed.constructorInstances()) {
+      for (const auto &initializer : constructor.initializers) {
+        if (initializer.targetType != lang::SemanticType::Int64 ||
+            initializer.arguments.size() != 1)
+          continue;
+        auto *value = const_cast<lang::HirValue *>(
+            constructor.body.findValue(initializer.arguments.front()));
+        if (value) {
+          value->info.type = lang::SemanticType::Double;
+          changedInteger = true;
+          break;
+        }
+      }
+    }
+    expect(changedInteger &&
+               !lang::verifyHirProgramPlans(scalarDefaults.semantics, malformed)
+                    .valid(),
+           "selected integer fields cannot acquire an implicit floating "
+           "narrowing conversion");
+  }
+  const auto expectedDefaults = analyze("generated-expected-default.gti", R"gti(
+class Payload<T> { int marker = 1; public: ~Payload() {} };
+class Wrapped<T> {
+  expected<Payload<T>, int> success = Payload<T>();
+  expected<int, Payload<T>> error = unexpected(Payload<T>());
+  expected<int, Payload<T>> passive = 1;
+};
+int main() { Wrapped<int> value{}; return 0; }
+)gti");
+  expect(expectedDefaults.canGenerateCode(),
+         "generated expected defaults publish exact generic success, error, "
+         "and passive alternatives with typed rollback");
+  if (expectedDefaults.canGenerateCode()) {
+    bool foundTypedTransfer = false;
+    bool corruptedAlternative = false;
+    auto wrongAlternative = expectedDefaults.mir;
+    for (const auto &constructor :
+         expectedDefaults.mir.constructorInstances()) {
+      for (const auto &block : constructor.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Initialize ||
+              instruction.info.type.kind != lang::SemanticType::Expected)
+            continue;
+          foundTypedTransfer |= instruction.lifecycle.size() == 2 &&
+                                instruction.lifecycle[0].kind ==
+                                    lang::MirLifecycleEventKind::TransferOut &&
+                                instruction.lifecycle[1].kind ==
+                                    lang::MirLifecycleEventKind::Initialize;
+        }
+      }
+      for (const auto &drop : constructor.body.dropObligations) {
+        if (drop.kind != lang::MirDropObligationKind::ConstructionRollback ||
+            drop.dropType.type.kind != lang::SemanticType::Expected ||
+            drop.dropType.aggregate.size() != 2)
+          continue;
+        auto *changed = const_cast<lang::MirConstructorInstance *>(
+            wrongAlternative.findConstructorInstance(constructor.id));
+        std::swap(
+            changed->body.dropObligations[drop.id - 1].dropType.aggregate[0],
+            changed->body.dropObligations[drop.id - 1].dropType.aggregate[1]);
+        corruptedAlternative = true;
+        break;
+      }
+      if (corruptedAlternative)
+        break;
+    }
+    expect(foundTypedTransfer,
+           "a payload publication transfers its lifetime and initializes the "
+           "distinct expected field lifetime");
+    expect(corruptedAlternative &&
+               !lang::verifyMirProgram(wrongAlternative).valid(),
+           "an expected field rollback cannot exchange success and error "
+           "cleanup alternatives");
+    auto wrongPayload = expectedDefaults.hir;
+    bool changedPayload = false;
+    for (const auto &constructor : wrongPayload.constructorInstances()) {
+      for (const auto &initializer : constructor.initializers) {
+        if (initializer.targetType.kind != lang::SemanticType::Expected ||
+            initializer.targetType.arguments.front().kind !=
+                lang::SemanticType::Class ||
+            initializer.arguments.size() != 1)
+          continue;
+        auto *value = const_cast<lang::HirValue *>(
+            constructor.body.findValue(initializer.arguments.front()));
+        if (value) {
+          value->info.type = lang::SemanticType(lang::SemanticType::Unexpected,
+                                                {value->info.type});
+          changedPayload = true;
+          break;
+        }
+      }
+      if (changedPayload)
+        break;
+    }
+    expect(changedPayload && !lang::verifyHirProgramPlans(
+                                  expectedDefaults.semantics, wrongPayload)
+                                  .valid(),
+           "a success payload cannot become an incompatible error alternative");
+  }
+  const auto genericDefaults =
+      analyzeWithStandardLibrary("generated-generic-default.gti", R"gti(
+#include <std/memory>
+class GenericPointer<T> { std::unique_ptr<T> value = std::unique_ptr<T>(); };
+int main() { GenericPointer<int> first{}; GenericPointer<bool> second{}; return 0; }
+)gti");
+  expect(genericDefaults.canGenerateCode(),
+         "primary default expressions preserve concrete generic owner types");
+  if (genericDefaults.canGenerateCode()) {
+    bool changedEmptyOwner = false;
+    auto wrongEmptyOwner = genericDefaults.hir;
+    for (const auto &candidate : wrongEmptyOwner.constructorInstances()) {
+      if (!candidate.generatedDefault)
+        continue;
+      for (const auto &initializer : candidate.initializers) {
+        if (initializer.targetType.kind != lang::SemanticType::UniqueOwner ||
+            initializer.arguments.size() != 1)
+          continue;
+        auto *value = const_cast<lang::HirValue *>(
+            candidate.body.findValue(initializer.arguments.front()));
+        if (value && value->info.type == lang::SemanticType::NullPtr) {
+          value->info.type = lang::SemanticType::Int32;
+          changedEmptyOwner = true;
+          break;
+        }
+      }
+      if (changedEmptyOwner)
+        break;
+    }
+    expect(changedEmptyOwner && !lang::verifyHirProgramPlans(
+                                     genericDefaults.semantics, wrongEmptyOwner)
+                                     .valid(),
+           "empty unique-owner defaults admit null, not arbitrary scalar "
+           "initializers");
+    bool changedTarget = false;
+    auto malformed = genericDefaults.hir;
+    for (const auto &candidate : malformed.constructorInstances()) {
+      for (const auto &value : candidate.body.values) {
+        if (!value.constructorTarget)
+          continue;
+        const auto *selected =
+            malformed.findConstructorInstance(*value.constructorTarget);
+        if (!selected || !selected->generatedDefault)
+          continue;
+        const auto &selectedOwner =
+            malformed.classInstances()[selected->owner - 1];
+        const auto other = std::find_if(
+            malformed.constructorInstances().begin(),
+            malformed.constructorInstances().end(), [&](const auto &target) {
+              const auto &owner = malformed.classInstances()[target.owner - 1];
+              return target.generatedDefault &&
+                     owner.declaration == selectedOwner.declaration &&
+                     owner.type != selectedOwner.type;
+            });
+        if (other != malformed.constructorInstances().end()) {
+          const_cast<lang::HirValue &>(value).constructorTarget = other->id;
+          changedTarget = true;
+          break;
+        }
+      }
+      if (changedTarget)
+        break;
+    }
+    expect(changedTarget && !lang::verifyHirProgramPlans(
+                                 genericDefaults.semantics, malformed)
+                                 .valid(),
+           "an unresolved primary cannot authorize a different concrete "
+           "constructor owner than the selected value or storage");
+  }
+  const auto frontend =
+      analyzeWithStandardLibrary("generated-declaration-failure.gti", R"gti(
+class First { public: First() {} ~First() {} };
+class Failing {
+public:
+  Failing() {
+    int[1] values = {1};
+    int index = 2;
+    int failure = values[index];
+  }
+  ~Failing() {}
+};
+class Outer {
+  First first = First();
+  Failing second = Failing();
+public:
+  ~Outer() {}
+};
+int main() { Outer object{}; return 0; }
+)gti");
+  expect(frontend.canGenerateCode(), "generated defaults have concrete MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::HirConstructorInstance *generated = nullptr;
+  for (const auto &constructor : frontend.hir.constructorInstances()) {
+    const auto &owner = frontend.hir.classInstances()[constructor.owner - 1];
+    if (constructor.generatedDefault && owner.source->name().lexeme == "Outer")
+      generated = &constructor;
+  }
+  expect(generated && generated->initializers.size() == 2 &&
+             generated->initializerValues.size() == 2,
+         "the generated body contains both selected declaration defaults");
+  if (!generated)
+    return;
+  const auto *constructor = frontend.mir.findConstructorInstance(generated->id);
+  expect(
+      constructor && constructor->mayRaiseDefinedFailure &&
+          std::any_of(
+              constructor->body.dropObligations.begin(),
+              constructor->body.dropObligations.end(),
+              [](const auto &drop) {
+                return drop.kind ==
+                           lang::MirDropObligationKind::ConstructionRollback &&
+                       !drop.initiallyActive;
+              }),
+      "completed field publication arms explicit rollback, never entry-live "
+      "or incomplete-object cleanup");
+  expect(!gti_test::emitCppText(frontend).empty(),
+         "production consumes the generated failure constructor MIR");
+  for (const bool eraseGenerated : {false, true}) {
+    auto malformed =
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+    auto &mir = const_cast<lang::MirProgram &>(malformed.mir());
+    const auto selected = std::find_if(
+        mir.constructorInstances().begin(), mir.constructorInstances().end(),
+        [&](const auto &candidate) {
+          return eraseGenerated ? candidate.id == generated->id
+                                : !candidate.generatedDefault;
+        });
+    expect(selected != mir.constructorInstances().end(),
+           "generated and ordinary constructor controls are both present");
+    if (selected != mir.constructorInstances().end())
+      const_cast<lang::MirConstructorInstance &>(*selected).generatedDefault =
+          !eraseGenerated;
+    expect(!lang::verifyLoweredProgram(malformed).empty(),
+           "detached constructor catalog rejects erased or forged generated "
+           "identity independently of body arity");
+  }
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto malformed = frontend.hir;
+    auto *changed = const_cast<lang::HirConstructorInstance *>(
+        malformed.findConstructorInstance(generated->id));
+    if (mutation == 0)
+      changed->initializers.erase(changed->initializers.begin());
+    else if (mutation == 1)
+      std::swap(changed->initializers[0], changed->initializers[1]);
+    else if (mutation == 2)
+      changed->initializers[1].arguments = changed->initializers[0].arguments;
+    else if (mutation == 3)
+      changed->body.roots.push_back(999999);
+    else
+      changed->initializerValues.clear();
+    expect(!lang::verifyHirProgramPlans(frontend.semantics, malformed).valid(),
+           "generated field schedule cannot omit, reorder or substitute "
+           "semantic defaults or add executable roots");
+  }
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *changed = const_cast<lang::MirConstructorInstance *>(
+        malformed.findConstructorInstance(generated->id));
+    bool mutated = false;
+    for (auto &block : changed->body.blocks) {
+      for (auto &instruction : block.instructions) {
+        if (!mutated && mutation == 0 &&
+            instruction.kind == lang::MirInstructionKind::Initialize &&
+            !instruction.lifecycle.empty()) {
+          instruction.lifecycle.clear();
+          mutated = true;
+        }
+        if (!mutated && mutation == 1 &&
+            instruction.kind == lang::MirInstructionKind::Drop &&
+            !instruction.lifecycle.empty() &&
+            instruction.lifecycle.front().failureCleanup) {
+          instruction.lifecycle.clear();
+          mutated = true;
+        }
+      }
+    }
+    if (mutation == 2) {
+      for (auto &drop : changed->body.dropObligations) {
+        if (drop.kind == lang::MirDropObligationKind::ConstructionRollback) {
+          drop.initiallyActive = true;
+          mutated = true;
+          break;
+        }
+      }
+    }
+    expect(mutated && !lang::verifyMirProgram(malformed).valid(),
+           "field activation, failure cleanup and unconstructed-state "
+           "authority are independently checked");
+  }
+  const auto inherited = analyze("generated-base-field-default.gti", R"gti(
+class Base { public: Base() {} ~Base() {} };
+class Derived : public Base {
+  int value = 3;
+public:
+  ~Derived() {}
+};
+int main() { Derived value{}; return 0; }
+)gti");
+  expect(inherited.canGenerateCode(),
+         "generated default schedule composes exact base and declared fields");
+  if (!inherited.canGenerateCode())
+    return;
+  for (const auto &candidate : inherited.mir.constructorInstances()) {
+    if (!candidate.generatedDefault || candidate.initializers.size() != 2)
+      continue;
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = inherited.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(candidate.id));
+      if (mutation == 0)
+        changed->initializers.erase(changed->initializers.begin());
+      else if (mutation == 1)
+        changed->initializers.insert(changed->initializers.begin(),
+                                     candidate.initializers.front());
+      else if (mutation == 2)
+        changed->initializers.front().base = candidate.owner;
+      else if (mutation == 3)
+        changed->initializers.front().targetType = lang::SemanticType::Int32;
+      else
+        changed->initializers.front().constructorTarget = candidate.id;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "generated base schedule rejects omitted, duplicate, substituted "
+             "or incorrectly targeted base initialization");
+    }
+  }
+}
+
+void testGeneratedOwningStringFieldConstructor() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-body-owning-string-field-constructor.gti", R"(
 #include <std/string>
@@ -1847,8 +2757,6 @@ int main() {
   if (contained == rows.containedConstructors.end()) {
     return;
   }
-  const std::string tagSpelling = contained->tagSpelling;
-  const std::string stateSpelling = contained->stateSpelling;
 
   lang::CppMirBodyEmissionMapRows duplicateRows = rows;
   duplicateRows.containedConstructors.push_back(*contained);
@@ -1874,14 +2782,10 @@ int main() {
       schedule.supported && schedule.fields.size() == 2 &&
           std::all_of(schedule.fields.begin(), schedule.fields.end(),
                       [&](const lang::CppMirFieldInitializerSpelling &field) {
-                        return field.spelling.find(tagSpelling) !=
-                                   std::string::npos &&
-                               field.spelling.find(stateSpelling) !=
-                                   std::string::npos;
+                        return field.spelling.empty();
                       }),
-      "the field schedule should select the exact terminal-containment "
-      "constructor overload for both owning fields and prove the retained "
-      "cleanup-only failure branch");
+      "both defaults execute in generated constructor MIR, never terminal "
+      "containment before its rollback scope");
 
   std::erase_if(rows.containedConstructors,
                 [&](const lang::CppMirContainedConstructorRepresentation &row) {
@@ -1889,25 +2793,29 @@ int main() {
                 });
   const lang::CppMirBodyEmissionMap missingRowMap(std::move(rows));
   const lang::CppMirBodyEmitter missingRowEmitter(frontend.mir, missingRowMap);
-  expect(
-      !missingRowEmitter
-           .initializerSchedule({.kind = lang::MirBodyKind::FieldInitializers,
-                                 .owner = owner->id})
-           .supported,
-      "removing the exact contained-constructor row should fail closed");
+  expect(missingRowEmitter
+             .initializerSchedule({.kind = lang::MirBodyKind::FieldInitializers,
+                                   .owner = owner->id})
+             .supported,
+         "unused declaration-only containment rows are not execution authority "
+         "for generated constructor field defaults");
 
   const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
-  expect(artifact.contents.find(tagSpelling) != std::string::npos &&
-             artifact.contents.find(stateSpelling) != std::string::npos &&
+  const auto generated = std::find_if(
+      frontend.mir.constructorInstances().begin(),
+      frontend.mir.constructorInstances().end(), [&](const auto &candidate) {
+        return candidate.owner == owner->id && candidate.generatedDefault;
+      });
+  expect(generated != frontend.mir.constructorInstances().end() &&
+             generated->mayRaiseDefinedFailure &&
              artifact.contents.find(lang::cppMirFailureConstructorTagSpelling(
                  fieldConstructor->id)) != std::string::npos &&
-             artifact.contents.find("&__gti_mir_contained_state.success, "
-                                    "&__gti_mir_contained_state.record)") !=
-                 std::string::npos &&
+             artifact.contents.find(lang::cppMirFailureConstructorTagSpelling(
+                 generated->id)) != std::string::npos &&
              artifact.contents.find("gti_rt_failure_terminate_v2") !=
                  std::string::npos,
-         "the C++ artifact should emit the contained overload, delegate to "
-         "the exact failure constructor, and terminate with its record");
+         "the C++ artifact emits the selected outer and field failure "
+         "constructors, preserving first failure through rollback");
 }
 
 void testBodyOrderedOwnedParameterConstructor() {
@@ -2086,7 +2994,7 @@ void testSourceDestructorOwningFieldCleanup() {
       return;
     const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
     const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-    bool checked = false;
+    bool checkedReceiver = false;
     for (const auto &constructor : frontend.mir.constructorInstances()) {
       const auto owned = std::find_if(
           constructor.initializers.begin(), constructor.initializers.end(),
@@ -2101,37 +3009,66 @@ void testSourceDestructorOwningFieldCleanup() {
           });
       if (owned == constructor.initializers.end())
         continue;
-      checked = true;
       const auto nativeBindings =
           lang::cppMirOwnedParameterFieldBindings(frontend.mir, constructor);
-      expect(nativeBindings && nativeBindings->size() == 1 &&
-                 nativeBindings->front().field == owned->field &&
-                 nativeBindings->front().parameter == *owned->ownedParameter &&
-                 nativeBindings->front().initializeInstruction != 0 &&
-                 nativeBindings->front().parameterDrop != 0 &&
-                 nativeBindings->front().valueDrop != 0 &&
-                 nativeBindings->front().fieldDrop != 0 &&
-                 nativeBindings->front().fieldTransferInstruction != 0,
-             "the exact native prefix must preserve parameter, moved value, "
-             "field rollback and successful transfer identities");
+      const auto ownedCount = std::count_if(
+          constructor.initializers.begin(), constructor.initializers.end(),
+          [](const auto &initializer) {
+            return initializer.ownedParameter.has_value();
+          });
+      expect(nativeBindings &&
+                 nativeBindings->size() == static_cast<std::size_t>(ownedCount),
+             "the native prefix must cover every owned field exactly once");
+      if (nativeBindings) {
+        for (const auto &initializer : constructor.initializers) {
+          if (!initializer.ownedParameter)
+            continue;
+          const auto binding = std::find_if(
+              nativeBindings->begin(), nativeBindings->end(),
+              [&](const auto &candidate) {
+                return candidate.field == initializer.field &&
+                       candidate.parameter == *initializer.ownedParameter;
+              });
+          expect(binding != nativeBindings->end() &&
+                     binding->initializeInstruction != 0 &&
+                     binding->parameterDrop != 0 && binding->valueDrop != 0 &&
+                     binding->fieldDrop != 0 &&
+                     binding->fieldTransferInstruction != 0,
+                 "each native field binding must preserve parameter, moved "
+                 "value, rollback and successful transfer identities");
+        }
+      }
       const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
                                          .owner = constructor.id};
       const auto text =
           emitter.emitFailureBodyText(address, "source-fields-v0", 1);
+      const bool hasFailurePath = !constructor.body.failureRecords.empty();
+      const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+      const auto *ownerInfo =
+          owner == nullptr
+              ? nullptr
+              : frontend.semantics.findClassType(owner->declaration);
+      if (ownerInfo != nullptr && ownerInfo->declaration != nullptr &&
+          ownerInfo->declaration->name().lexeme == "Receiver") {
+        checkedReceiver = true;
+        expect(hasFailurePath,
+               "the Receiver control must retain executable failure rollback");
+      }
       expect(
           text.emitted() &&
               text.text.find(" = std::move(__gti_mir_v_") ==
                   std::string::npos &&
               text.text.find("field initialization publishes in the member") !=
                   std::string::npos &&
-              text.text.find("__gti_mir_unique_cleanup_failure<") !=
-                  std::string::npos,
-          "the native prefix consumes one MIR publication without a second "
-          "move, retaining rollback through the contained source destructor");
+              (!hasFailurePath ||
+               text.text.find("__gti_mir_unique_cleanup_failure<") !=
+                   std::string::npos),
+          "the native prefix consumes each MIR publication without a second "
+          "move and retains source-destructor rollback on failure paths");
     }
     if (std::string_view(name) ==
         "temporary_constructor_argument_user_drop_gap.gti")
-      expect(checked,
+      expect(checkedReceiver,
              "receiver regression must check its owned field publication");
     const auto artifact = gti_test::emitCpp(frontend);
     expect(artifact.contents.find(
@@ -2166,6 +3103,13 @@ void testOwningBaseConstructorStatus() {
       return;
     for (const auto &generated : frontend.hir.constructorInstances()) {
       if (!generated.generatedDefault)
+        continue;
+      const auto &owner = frontend.hir.classInstances()[generated.owner - 1];
+      const auto *lifecycle =
+          owner.source == nullptr
+              ? nullptr
+              : frontend.semantics.findClassLifecycle(*owner.source);
+      if (lifecycle && lifecycle->generatedDefaultFieldInitializers)
         continue;
       expect(
           generated.declaration == 0 && generated.source == nullptr &&
@@ -2639,6 +3583,9 @@ int main() {
   }
   expect(classFieldConstructors == 2,
          "both concrete node-constructor families need an exact field proof");
+  const lang::CppMirBodyEmissionMap defaultMap(
+      buildRows(classFields, classFields.mir));
+  const lang::CppMirBodyEmitter defaultEmitter(classFields.mir, defaultMap);
   std::size_t defaultFieldConstructors = 0;
   for (const auto &constructor : classFields.mir.constructorInstances()) {
     if (!constructor.parameterTypes.empty() ||
@@ -2647,47 +3594,139 @@ int main() {
             lang::SemanticType::Class) {
       continue;
     }
-    const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-        classFields.mir, constructor);
-    expect(bindings.size() == 2,
-           "zero-argument class construction may precede a selected empty "
-           "owner without losing its exact field publication");
-    if (bindings.size() != 2) {
+    const auto *owner = classFields.mir.findClassInstance(constructor.owner);
+    std::vector<const lang::MirInstruction *> publications;
+    std::vector<const lang::MirInstruction *> producers;
+    std::vector<lang::MirDropObligationId> rollbackDrops;
+    bool exactStages = owner != nullptr && owner->declaredFields.size() == 2;
+    for (std::size_t index = 0; index < constructor.initializers.size();
+         ++index) {
+      const auto &initializer = constructor.initializers[index];
+      const lang::MirInstruction *publication = nullptr;
+      for (const auto &block : constructor.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.constructorInitializer != index + 1)
+            continue;
+          exactStages &= publication == nullptr;
+          publication = &instruction;
+        }
+      }
+      const auto *place =
+          publication && publication->destination
+              ? constructor.body.findPlace(*publication->destination)
+              : nullptr;
+      const auto *value =
+          publication && publication->operands.size() == 1 &&
+                  publication->operands.front().kind ==
+                      lang::MirOperandKind::Value
+              ? constructor.body.findValue(publication->operands.front().value)
+              : nullptr;
+      const lang::MirInstruction *producer = nullptr;
+      for (const auto &block : constructor.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (value && instruction.id == value->definition)
+            producer = &instruction;
+      const auto *target = producer && producer->constructorTarget
+                               ? classFields.mir.findConstructorInstance(
+                                     *producer->constructorTarget)
+                               : nullptr;
+      const auto *targetOwner =
+          target ? classFields.mir.findClassInstance(target->owner) : nullptr;
+      exactStages &=
+          publication && producer && target && targetOwner && place &&
+          publication->kind == lang::MirInstructionKind::Initialize &&
+          producer->kind == lang::MirInstructionKind::Construct &&
+          initializer.arguments.size() == 1 &&
+          producer->hirValue == initializer.arguments.front() &&
+          value->sourceValue == initializer.arguments.front() &&
+          targetOwner->type == initializer.targetType &&
+          target->parameterTypes.empty() &&
+          place->root == lang::MirPlaceRootKind::This &&
+          place->projections.size() == 1 &&
+          place->projections.front().kind == lang::MirProjectionKind::Field &&
+          place->projections.front().field == initializer.field &&
+          place->type == initializer.targetType && owner &&
+          index < owner->declaredFields.size() &&
+          owner->declaredFields[index].symbol == initializer.field;
+      lang::MirDropObligationId rollback = 0;
+      if (publication) {
+        for (const auto &event : publication->lifecycle) {
+          if (event.kind == lang::MirLifecycleEventKind::Reparent)
+            rollback = event.target;
+        }
+      }
+      const auto *drop = constructor.body.findDropObligation(rollback);
+      if (owner && index < owner->declaredFields.size() &&
+          owner->declaredFields[index].requiresActiveCleanup)
+        exactStages &=
+            drop && !drop->initiallyActive && place &&
+            drop->kind == lang::MirDropObligationKind::ConstructionRollback &&
+            drop->place == place->id &&
+            drop->dropType.type == initializer.targetType;
+      if (index == 1)
+        exactStages &= target && target->generatedDefault && rollback != 0;
+      publications.push_back(publication);
+      producers.push_back(producer);
+      rollbackDrops.push_back(rollback);
+    }
+    expect(exactStages,
+           "both defaults retain exact concrete constructor targets, field "
+           "publication, and success-armed typed rollback");
+    if (!exactStages) {
       continue;
     }
     ++defaultFieldConstructors;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Constructor,
+                                       .owner = constructor.id};
+    const auto text =
+        defaultEmitter.emitFailureBodyText(address, "default-fields-v0", 1);
+    expect(lang::cppMirConstructedFieldInitializerBindings(classFields.mir,
+                                                           constructor)
+                   .empty() &&
+               text.emitted() &&
+               text.text.find("in-place constructor field reparent") !=
+                   std::string::npos &&
+               text.text.find("field initialization publishes in the member") ==
+                   std::string::npos &&
+               publications.front()->id < producers.back()->id,
+           "selected generated defaults retain body-ordered publication, "
+           "not an assumed native-prologue fusion");
     for (int mutation = 0; mutation < 3; ++mutation) {
       lang::MirProgram malformed = classFields.mir;
       auto *changed = const_cast<lang::MirConstructorInstance *>(
           malformed.findConstructorInstance(constructor.id));
+      bool mutated = false;
       if (mutation == 0) {
         for (auto &block : changed->body.blocks) {
           for (auto &instruction : block.instructions) {
-            if (instruction.id == bindings.front().constructInstruction) {
+            if (instruction.id == producers.front()->id) {
               instruction.callSite = instruction.hirValue + 10000;
+              mutated = true;
             }
           }
         }
       } else if (mutation == 1) {
         for (auto &drop : changed->body.dropObligations) {
-          if (drop.id == bindings.back().fieldDrop) {
+          if (drop.id == rollbackDrops.back()) {
             drop.initiallyActive = true;
+            mutated = true;
           }
         }
       } else {
         for (auto &block : changed->body.blocks) {
           for (auto &instruction : block.instructions) {
-            if (instruction.kind == lang::MirInstructionKind::Call) {
-              instruction.functionTarget = 1;
+            if (instruction.id == producers.back()->id) {
+              instruction.constructorTarget = constructor.id;
+              mutated = true;
             }
           }
         }
       }
-      expect(
-          lang::cppMirConstructedFieldInitializerBindings(malformed, *changed)
-              .empty(),
-          "forged constructor identity, premature default-field cleanup, "
-          "and observable selected defaults must fail the field proof");
+      const lang::CppMirBodyEmitter malformedEmitter(malformed, defaultMap);
+      expect(mutated && (!lang::verifyMirProgram(malformed).valid() ||
+                         !malformedEmitter.supportsFailureBodyText(address)),
+             "forged call identity, premature cleanup, and a substituted "
+             "concrete constructor must fail verification or body admission");
     }
   }
   expect(defaultFieldConstructors == 2,
@@ -2696,6 +3735,67 @@ int main() {
     expect(!gti_test::emitCpp(classFields).contents.empty(),
            "mixed and active node constructors must have production emission");
   }
+
+  const auto observableDefault =
+      analyzeWithStandardLibrary("cpp-mir-observable-default-order.gti", R"(
+#include <std/memory>
+mut int32_t order = 0;
+std::unique_ptr<int32_t> make_next() {
+  order = order * 10 + 2;
+  return std::unique_ptr<int32_t>();
+}
+class Payload {
+public:
+  Payload() { order = order * 10 + 1; }
+  ~Payload() {}
+};
+class Ordered {
+  Payload value;
+  std::unique_ptr<int32_t> next = make_next();
+public:
+  Ordered() : value(Payload()) {}
+};
+int main() { Ordered value{}; return order - 12; }
+)");
+  expect(observableDefault.canGenerateCode(),
+         "an observable later default remains valid source construction");
+  bool checkedObservableDefault = false;
+  if (observableDefault.canGenerateCode()) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(observableDefault, observableDefault.mir));
+    const lang::CppMirBodyEmitter emitter(observableDefault.mir, map);
+    for (const auto &constructor :
+         observableDefault.mir.constructorInstances()) {
+      if (!constructor.parameterTypes.empty() ||
+          constructor.initializers.size() != 2)
+        continue;
+      checkedObservableDefault = true;
+      lang::MirInstructionId firstPublication = 0;
+      lang::MirInstructionId laterCall = 0;
+      for (const auto &block : constructor.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.constructorInitializer == 1)
+            firstPublication = instruction.id;
+          if (instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.functionTarget)
+            laterCall = instruction.id;
+        }
+      }
+      expect(firstPublication != 0 && laterCall > firstPublication &&
+                 lang::cppMirConstructedFieldInitializerBindings(
+                     observableDefault.mir, constructor)
+                     .empty() &&
+                 emitter.supportsFailureBodyText(
+                     {.kind = lang::MirBodyKind::Constructor,
+                      .owner = constructor.id}),
+             "an observable default call stays after the first field's "
+             "publication and cannot enter native-prologue fusion");
+    }
+    expect(!gti_test::emitCpp(observableDefault).contents.empty(),
+           "observable body-ordered defaults retain production emission");
+  }
+  expect(checkedObservableDefault,
+         "the observable-default negative fusion control must be exercised");
 
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-move-only-result-field-transfer.gti", R"(
@@ -3083,9 +4183,20 @@ int main() {
         if (slot == nullptr || destroy == nullptr) {
           continue;
         }
-        if (producer->kind == lang::MirInstructionKind::Call &&
-            !producer->functionTarget && !producer->constructorTarget &&
-            !producer->receiver && producer->operands.empty() &&
+        const auto *defaultConstructor =
+            producer->constructorTarget ? frontend.mir.findConstructorInstance(
+                                              *producer->constructorTarget)
+                                        : nullptr;
+        const bool generatedDefault =
+            producer->kind == lang::MirInstructionKind::Construct &&
+            defaultConstructor != nullptr &&
+            defaultConstructor->generatedDefault &&
+            defaultConstructor->parameterTypes.empty();
+        if (((producer->kind == lang::MirInstructionKind::Call &&
+              !producer->constructorTarget) ||
+             generatedDefault) &&
+            !producer->functionTarget && !producer->receiver &&
+            producer->operands.empty() &&
             producer->intrinsic == lang::IntrinsicKind::None) {
           defaultField = {.function = &function,
                           .producer = producer,
@@ -3230,9 +4341,20 @@ int main() {
              movedText.find(shellDestroy(movedField)) != std::string::npos,
          "pop_front should construct from the borrowed field, replace the "
          "receiver field, and destroy only the moved-from shell");
-  expect(defaultText.find("__gti_mir_p_" +
-                          std::to_string(defaultField.slot->id) +
-                          ".construct();") != std::string::npos &&
+  const auto defaultSlot =
+      "__gti_mir_p_" + std::to_string(defaultField.slot->id);
+  const bool exactDefaultConstruction =
+      defaultField.producer->constructorTarget
+          ? defaultText.find(defaultSlot + ".construction_address()") !=
+                    std::string::npos &&
+                defaultText.find(lang::cppMirFailureConstructorTagSpelling(
+                    *defaultField.producer->constructorTarget)) !=
+                    std::string::npos &&
+                defaultText.find(defaultSlot + ".mark_constructed();") !=
+                    std::string::npos
+          : defaultText.find(defaultSlot + ".construct();") !=
+                std::string::npos;
+  expect(exactDefaultConstruction &&
              defaultText.find(destinationMove(defaultField)) !=
                  std::string::npos &&
              defaultText.find(shellDestroy(defaultField)) != std::string::npos,
@@ -3284,6 +4406,12 @@ int main() {
           instruction.lifecycle.front().conditional = true;
           forgedActivation = true;
         }
+      }
+      if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+          block.terminator.invokeInstruction == defaultField.producer->id &&
+          block.terminator.successLifecycle.size() == 1) {
+        block.terminator.successLifecycle.front().conditional = true;
+        forgedActivation = true;
       }
     }
   }
@@ -3652,9 +4780,15 @@ void testOwnedLifecycleConstructionBodiesReady() {
 void testDefaultConstructionPreparedParameterStaging() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-default-prepared-parameter.gti", R"(
+mut int observed = 0;
 struct Scalar {
   int value = 0;
 };
+struct Explicit {
+  int value;
+  Explicit() : value(7) {}
+};
+void mark() { observed = 9; }
 
 T transfer_value<T>(T value) {
   return std::move(value);
@@ -3663,6 +4797,9 @@ T transfer_value<T>(T value) {
 int main() {
   Scalar scalar = transfer_value(Scalar());
   expected<Scalar, int> result = Scalar();
+  expected<Explicit, int> explicit_result = Explicit();
+  if (explicit_result.value().value != 7) { return 1; }
+  mark();
   return scalar.value;
 }
 )");
@@ -3691,31 +4828,271 @@ int main() {
                                      .owner = entry->id};
   expect(emitter.analyze(address).ready() &&
              emitter.supportsFailureBodyText(address),
-         "a targetless default construction should publish through its exact "
-         "prepared-parameter lifecycle");
+         "selected zero-argument constructions should retain exact prepared "
+         "parameter and Expected publication schedules");
+  if (!emitter.supportsFailureBodyText(address))
+    return;
+
+  lang::MirInstructionId payloadProducer = 0, publication = 0, marker = 0;
+  lang::HirConstructorInstanceId otherConstructor = 0;
+  for (const auto &block : entry->body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.functionTarget && instruction.operands.empty() &&
+          !instruction.result)
+        marker = instruction.id;
+      if (instruction.kind != lang::MirInstructionKind::Initialize ||
+          !instruction.destination || instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != lang::MirOperandKind::Value)
+        continue;
+      const auto *destination = entry->body.findPlace(*instruction.destination);
+      const auto *value =
+          entry->body.findValue(instruction.operands.front().value);
+      if (!destination ||
+          destination->type.kind != lang::SemanticType::Expected || !value)
+        continue;
+      for (const auto &producerBlock : entry->body.blocks)
+        for (const auto &producer : producerBlock.instructions) {
+          if (producer.id != value->definition || !producer.constructorTarget)
+            continue;
+          const auto *target =
+              frontend.mir.findConstructorInstance(*producer.constructorTarget);
+          if (target && target->generatedDefault) {
+            payloadProducer = producer.id;
+            publication = instruction.id;
+          } else if (target) {
+            otherConstructor = target->id;
+          }
+        }
+    }
+  expect(payloadProducer && publication && marker && otherConstructor,
+         "the publication mutations select exact constructor, consumer and "
+         "observable call identities");
+  if (!payloadProducer || !publication || !marker || !otherConstructor)
+    return;
+  constexpr std::array<std::string_view, 3> mutationReasons = {
+      "Expected default publication rejects a constructor of another owner",
+      "Expected default publication cannot move construction across an "
+      "observable call",
+      "Expected default publication rejects a mismatched destination drop"};
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(forged, address);
+    std::optional<lang::MirInstruction> movedMarker;
+    if (mutation == 1)
+      for (auto &block : body->blocks) {
+        const auto found = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) { return instruction.id == marker; });
+        if (found != block.instructions.end()) {
+          movedMarker = *found;
+          block.instructions.erase(found);
+          break;
+        }
+      }
+    for (auto &block : body->blocks)
+      for (auto position = block.instructions.begin();
+           position != block.instructions.end(); ++position) {
+        if (mutation == 0 && position->id == payloadProducer)
+          position->constructorTarget = otherConstructor;
+        if (position->id != publication)
+          continue;
+        if (mutation == 1 && movedMarker) {
+          block.instructions.insert(position, *movedMarker);
+          break;
+        }
+        if (mutation == 2 && !position->lifecycle.empty())
+          position->lifecycle.front().target = 0;
+      }
+    const lang::CppMirBodyEmitter forgedEmitter(forged, map);
+    expect(!forgedEmitter.supportsFailureBodyText(address),
+           mutationReasons[mutation]);
+  }
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("function-instance " +
-                                std::to_string(entry->id) + "\n") !=
-                 std::string::npos &&
-             artifact.contents.find(".construct();") != std::string::npos &&
-             artifact.contents.find("stages a placement class result") !=
-                 std::string::npos &&
-             artifact.contents.find("publishes at its Expected initializer") !=
-                 std::string::npos &&
-             artifact.contents.find(".construct(::__gti_program::Scalar{});") !=
-                 std::string::npos,
-         "production emission should publish targetless default values "
-         "directly through both verified destination schedules");
+  expect(
+      artifact.contents.find("function-instance " + std::to_string(entry->id) +
+                             "\n") != std::string::npos &&
+          artifact.contents.find(".construct();") != std::string::npos &&
+          artifact.contents.find("stages a placement class result") !=
+              std::string::npos &&
+          artifact.contents.find("publishes at its Expected initializer") !=
+              std::string::npos &&
+          artifact.contents.find(".construct(::__gti_program::Scalar{});") !=
+              std::string::npos &&
+          artifact.contents.find(".construct(::__gti_program::Explicit{});") !=
+              std::string::npos,
+      "production emission should invoke exact generated and explicit "
+      "constructors through their verified destination schedules");
 }
 
 // A generic member on a non-generic class cannot use the generic-owner
 // explicit-specialization spelling. Its transformed ABI is one concrete
 // overload declared on the class and defined without a template<> prefix.
+
+void testCheckedPassiveExpectedConstruction() {
+  const auto frontend = analyzeWithStandardLibrary(
+      "checked-passive-expected-construction.gti", R"(
+mut int observed = 0;
+int checked(int divisor) { return 24 / divisor; }
+void mark() { observed = 1; }
+struct Scalar { int value = checked(3); };
+struct Other { int value = 7; };
+int main() {
+  Other other = Other();
+  expected<Scalar, int> result = Scalar();
+  mark();
+  return result.value().value - 8;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "fallible generated passive construction must retain typed Expected "
+         "publication in MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind != lang::ProgramEntryKind::None;
+      });
+  if (entry == frontend.mir.functionInstances().end()) {
+    expect(false, "checked passive Expected fixture retains its entry");
+    return;
+  }
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.supportsFailureBodyText(address),
+         "checked passive constructor publishes only on Invoke success into "
+         "its exact Expected binding");
+  lang::MirInstructionId producerId = 0, publicationId = 0, markerId = 0;
+  lang::HirConstructorInstanceId otherConstructor = 0;
+  lang::MirValueId payload = 0;
+  for (const auto &block : entry->body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.functionTarget && !instruction.result &&
+          instruction.operands.empty())
+        markerId = instruction.id;
+      if (instruction.kind != lang::MirInstructionKind::Construct ||
+          !instruction.constructorTarget)
+        continue;
+      if (instruction.definedFailure.propagation ==
+          lang::FailurePropagationKind::Constructor) {
+        producerId = instruction.id;
+        payload = instruction.result.value_or(0);
+      } else {
+        otherConstructor = *instruction.constructorTarget;
+      }
+    }
+  for (const auto &block : entry->body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == lang::MirOperandKind::Value &&
+          instruction.operands.front().value == payload)
+        publicationId = instruction.id;
+  expect(producerId && publicationId && markerId && payload && otherConstructor,
+         "passive Expected mutation sites are exact and concrete");
+  if (!producerId || !publicationId || !markerId || !payload ||
+      !otherConstructor)
+    return;
+  expect(std::none_of(
+             entry->body.dropObligations.begin(),
+             entry->body.dropObligations.end(),
+             [&](const auto &drop) { return drop.generatedValue == payload; }),
+         "passive constructor staging does not invent a semantic payload drop");
+  constexpr std::array<std::string_view, 5> reasons = {
+      "passive Expected rejects a constructor targeting another payload type",
+      "passive Expected rejects publication after an intervening observable "
+      "call",
+      "passive Expected rejects lost binding activation",
+      "passive Expected rejects publication on the failure edge",
+      "passive Expected staging does not erase borrowed state"};
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(forged, address);
+    std::optional<lang::MirInstruction> moved;
+    if (mutation == 1)
+      for (auto &block : body->blocks) {
+        const auto marker =
+            std::find_if(block.instructions.begin(), block.instructions.end(),
+                         [&](const auto &instruction) {
+                           return instruction.id == markerId;
+                         });
+        if (marker != block.instructions.end()) {
+          moved = *marker;
+          block.instructions.erase(marker);
+          break;
+        }
+      }
+    for (auto &block : body->blocks) {
+      if (mutation == 3 && block.terminator.invokeInstruction == producerId)
+        std::swap(block.terminator.target, block.terminator.elseTarget);
+      for (auto it = block.instructions.begin(); it != block.instructions.end();
+           ++it) {
+        if (it->id == producerId) {
+          if (mutation == 0)
+            it->constructorTarget = otherConstructor;
+          if (mutation == 4)
+            it->info.traits.containsBorrowedState = true;
+        }
+        if (it->id != publicationId)
+          continue;
+        if (mutation == 1 && moved) {
+          block.instructions.insert(it, *moved);
+          break;
+        }
+        if (mutation == 2 && !it->lifecycle.empty())
+          it->lifecycle.front().target = 0;
+      }
+    }
+    if (mutation == 4)
+      for (auto &value : body->values)
+        if (value.id == payload)
+          value.info.traits.containsBorrowedState = true;
+    const lang::CppMirBodyEmitter forgedEmitter(forged, map);
+    expect(!forgedEmitter.supportsFailureBodyText(address), reasons[mutation]);
+  }
+  if (emitter.supportsFailureBodyText(address)) {
+    const auto optimizations = lang::OptimizationPipeline().run(
+        frontend.hir, lang::OptimizationLevel::O0);
+    const auto artifact =
+        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+    lang::MirPlaceId destination = 0;
+    for (const auto &block : entry->body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == publicationId)
+          destination = instruction.destination.value_or(0);
+    const auto entryMarker = artifact.contents.find(
+        "function-instance " + std::to_string(entry->id) + "\n");
+    const std::string declaration =
+        " __gti_mir_p_" + std::to_string(destination) + ";\n";
+    const auto end = artifact.contents.find(declaration, entryMarker);
+    const auto start = end == std::string::npos
+                           ? std::string::npos
+                           : artifact.contents.rfind('\n', end);
+    const std::string line =
+        start == std::string::npos
+            ? std::string{}
+            : artifact.contents.substr(start + 1, end - start - 1);
+    expect(
+        destination && entryMarker != std::string::npos &&
+            line.find("mir_lifetime_slot<") != std::string::npos &&
+            artifact.contents.find("__gti_mir_p_" +
+                                       std::to_string(destination) +
+                                       ".construct(std::move(__gti_mir_v_" +
+                                       std::to_string(payload) + ".get()));",
+                                   entryMarker) != std::string::npos,
+        "checked passive Expected publication declares an uninitialized "
+        "wrapper lifetime slot, never an eagerly default-constructed wrapper");
+  }
+}
 
 void testReferenceReturnFailureAbi() {
   const lang::FrontendResult frontend =
@@ -8953,6 +10330,7 @@ void testNestedOwnedFieldAssignment() {
   expect(lang::CppMirBodyEmitter(fresh.mir, freshMap).analyzeProgram().ready(),
          "a fresh class value can restore an exact mutable owned field");
   std::size_t restoredFields = 0;
+  std::size_t passiveFields = 0;
   for (const auto &function : fresh.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
@@ -8966,15 +10344,43 @@ void testNestedOwnedFieldAssignment() {
             destination->projections.size() != 1 ||
             destination->type.kind != lang::SemanticType::Class)
           continue;
-        ++restoredFields;
-        expect(instruction.replacementPair != 0 &&
-                   instruction.lifecycle.size() == 1 &&
-                   instruction.lifecycle.front().kind ==
-                       lang::MirLifecycleEventKind::Replace &&
-                   instruction.lifecycle.front().target == 0,
-               "receiver restoration keeps paired cleanup and the containing "
-               "object's sole field cleanup authority");
-        for (int mutation = 0; mutation != 4; ++mutation) {
+        const auto *owner = function.owner
+                                ? fresh.mir.findClassInstance(*function.owner)
+                                : nullptr;
+        const lang::MirClassFieldInfo *selectedField = nullptr;
+        if (owner) {
+          for (const auto &field : owner->declaredFields) {
+            if (field.symbol == destination->projections.front().field &&
+                field.type == destination->type)
+              selectedField = &field;
+          }
+        }
+        expect(selectedField != nullptr,
+               "receiver assignment must select an exact declared field "
+               "before classifying its cleanup obligation");
+        if (!selectedField)
+          continue;
+        const bool owning = selectedField->requiresActiveCleanup;
+        if (owning) {
+          ++restoredFields;
+          expect(instruction.replacementPair != 0 &&
+                     instruction.lifecycle.size() == 1 &&
+                     instruction.lifecycle.front().kind ==
+                         lang::MirLifecycleEventKind::Replace &&
+                     instruction.lifecycle.front().target == 0,
+                 "receiver restoration keeps paired cleanup and the containing "
+                 "object's sole field cleanup authority");
+        } else {
+          ++passiveFields;
+          expect(instruction.replacementPair == 0 &&
+                     instruction.lifecycle.empty(),
+                 "passive descriptor assignment must not invent owning "
+                 "replacement cleanup or lifetime publication");
+        }
+        // Access and representation authority apply to every class field.
+        // Only an owning field has cleanup/publication records to remove;
+        // selecting by those records would hide a missing-cleanup regression.
+        for (int mutation = 0; mutation != (owning ? 4 : 2); ++mutation) {
           auto malformed = fresh.mir;
           auto *changed = const_cast<lang::MirFunctionInstance *>(
               malformed.findFunctionInstance(function.id));
@@ -9017,6 +10423,9 @@ void testNestedOwnedFieldAssignment() {
   }
   expect(restoredFields == 1,
          "dependent fixture exercises exactly one fresh owned field restore");
+  expect(passiveFields != 0,
+         "source allocator descriptors must exercise passive field assignment "
+         "without weakening the owning restoration checks");
 }
 
 void testNestedBorrowedFieldProjection() {
@@ -9804,8 +11213,14 @@ int32_t main() { return cleanup_t().value - 7; }
 constexpr NamedTest kTests[] = {
     {"testGeneratedMoveReferenceBindings", testGeneratedMoveReferenceBindings},
     {"testPreparedConstructorReplacement", testPreparedConstructorReplacement},
+    {"testConstructedPrvalueCheckedFieldReplacement",
+     testConstructedPrvalueCheckedFieldReplacement},
     {"testNonFailingOwningDeclarationInitializer",
      testNonFailingOwningDeclarationInitializer},
+    {"testGeneratedDeclarationFailureRollback",
+     testGeneratedDeclarationFailureRollback},
+    {"testGeneratedDefaultScheduleObligation",
+     testGeneratedDefaultScheduleObligation},
     {"testCopiedBorrowedArgumentAcrossInvoke",
      testCopiedBorrowedArgumentAcrossInvoke},
     {"testPackParameterCleanup", testPackParameterCleanup},
@@ -9824,8 +11239,8 @@ constexpr NamedTest kTests[] = {
      testDependentFieldInitializerSchedule},
     {"testContainedOwningFieldConstructor",
      testContainedOwningFieldConstructor},
-    {"testContainedOwningStringFieldConstructor",
-     testContainedOwningStringFieldConstructor},
+    {"testGeneratedOwningStringFieldConstructor",
+     testGeneratedOwningStringFieldConstructor},
     {"testBodyOrderedOwnedParameterConstructor",
      testBodyOrderedOwnedParameterConstructor},
     {"testSourceDestructorOwningFieldCleanup",
@@ -9848,6 +11263,8 @@ constexpr NamedTest kTests[] = {
      testOwnedLifecycleConstructionBodiesReady},
     {"testDefaultConstructionPreparedParameterStaging",
      testDefaultConstructionPreparedParameterStaging},
+    {"testCheckedPassiveExpectedConstruction",
+     testCheckedPassiveExpectedConstruction},
     {"testReferenceReturnFailureAbi", testReferenceReturnFailureAbi},
     {"testGenericOwnerReferenceReturnFailureAbi",
      testGenericOwnerReferenceReturnFailureAbi},

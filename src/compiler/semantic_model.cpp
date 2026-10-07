@@ -554,7 +554,6 @@ SemanticModel::compilerCapabilityType(const TypeRef &type) const {
 SemanticModel::isCompilerPrivateType(const SemanticType &type) const {
   switch (type.kind) {
   case SemanticType::UniqueOwner:
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     return true;
   case SemanticType::Class: {
@@ -954,6 +953,22 @@ SemanticModel::findEnumerator(const QualifiedName &expression) const {
   return base == nullptr ? nullptr : base->findEnumerator(expression);
 }
 
+std::optional<EnumTypeInfo>
+SemanticModel::enumTypeFor(const SemanticType &type) const {
+  if (type.kind != SemanticType::Enum)
+    return std::nullopt;
+  const auto found =
+      std::find_if(enumInstanceTypes.begin(), enumInstanceTypes.end(),
+                   [&](const auto &row) { return row.first == type; });
+  if (found != enumInstanceTypes.end())
+    return found->second;
+  const auto *primary = findEnumType(type.enumId);
+  if (primary != nullptr && primary->genericParameters.empty() &&
+      type == SemanticType::enumType(primary->id))
+    return *primary;
+  return base == nullptr ? std::nullopt : base->enumTypeFor(type);
+}
+
 [[nodiscard]] const SwitchCaseValue *
 SemanticModel::findSwitchCase(const Expr &expression) const {
   const auto found = switchCases.find(&expression);
@@ -1249,6 +1264,9 @@ SemanticModel::findGenericParameter(GenericParameterId id) const {
   if (const GenericParameterInfo *parameter = find(classTypes)) {
     return parameter;
   }
+  if (const GenericParameterInfo *parameter = find(enumTypes)) {
+    return parameter;
+  }
   for (const auto &[_, lifecycle] : classLifecycles) {
     for (const ConstructorInfo &constructor : lifecycle.constructors) {
       const auto parameter =
@@ -1342,6 +1360,7 @@ void SemanticModel::clear() {
   exactClassSpecializations.clear();
   typeAliases.clear();
   enumTypes.clear();
+  enumInstanceTypes.clear();
   enumTypesById.clear();
   enumerators.clear();
   switchCases.clear();
@@ -1801,9 +1820,22 @@ void SemanticModel::record(const TypeAliasDecl &declaration,
 
 void SemanticModel::recordEnumType(const EnumDecl &declaration,
                                    EnumTypeInfo info) {
+  std::erase_if(enumInstanceTypes,
+                [&](const auto &row) { return row.first.enumId == info.id; });
   const auto [found, _] =
       enumTypes.insert_or_assign(&declaration, std::move(info));
   enumTypesById.insert_or_assign(found->second.id, &declaration);
+}
+
+void SemanticModel::recordEnumInstanceType(SemanticType type,
+                                           EnumTypeInfo info) {
+  const auto found =
+      std::find_if(enumInstanceTypes.begin(), enumInstanceTypes.end(),
+                   [&](const auto &row) { return row.first == type; });
+  if (found == enumInstanceTypes.end())
+    enumInstanceTypes.emplace_back(std::move(type), std::move(info));
+  else
+    found->second = std::move(info);
 }
 
 void SemanticModel::record(const QualifiedName &expression,
@@ -2503,7 +2535,6 @@ semanticFloatFormat(const SemanticType &type) {
       traits.shareCapable = false;
     }
     return traits;
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;

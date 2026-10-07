@@ -238,7 +238,8 @@ compiler-constraint-binding
    binding directly. Compiler-trusted standard-library units may compose a
    bound declaration into public source concepts. *)
 
-enum-declaration       = "enum" "class" IDENTIFIER
+enum-declaration       = "enum" [ "class" ] IDENTIFIER
+                         [ generic-parameter-clause ]
                          [ ":" integer-type ]
                          "{" [ enumerator { "," enumerator } [ "," ] ] "}"
                          ";" ;
@@ -248,7 +249,9 @@ enumerator             = IDENTIFIER [ parameter-clause ]
 
 signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
 
-(* GTI supports scoped enums only. Enumerators are addressed through
+(* GTI supports scoped enums only. The optional `class` keyword is a spelling
+   choice with no semantic effect: `enum E` and `enum class E` are identical.
+   Enumerators are addressed through
    `EnumName::value` (or a namespace-qualified/aliased enum name) and are not
    injected into the surrounding namespace. Each enum is a distinct nominal
    type: it does not implicitly convert to integers or bool and participates
@@ -263,6 +266,17 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    A payload alternative is constructed as `EnumName::case(arguments)`; a
    unit alternative is the value `EnumName::case` and is not called. Payload
    field restrictions and exhaustive switch patterns are semantic rules. *)
+
+(* Payload enums may declare ordinary type parameters, a suffix of uint64_t
+   value parameters, or one final type pack. Defaults and inline constraints
+   use the nominal generic rules. The declaration identity, canonical type
+   arguments and value arguments identify each concrete enum. Generic
+   integral-only enums are not supported. A concrete alternative may be named
+   as `Message<int, 3>::item`, including in construction and switch patterns;
+   namespace qualification and transparent aliases preserve exact identity.
+   Arguments belong to the owner, not the alternative. There is no enum CTAD
+   or partial specialization. Substitution must leave each actual payload field
+   inside the same admitted family as a nongeneric payload enum. *)
 
 (* Type aliases are transparent namespace or class-member names for complete
    types. They are available regardless of declaration order in their direct
@@ -383,7 +397,9 @@ qualified-specialization-name
 class-attributes       = "[[" class-attribute
                          { "," class-attribute } "]]" ;
 
-class-attribute        = IDENTIFIER ;
+class-attribute        = IDENTIFIER [ "(" IDENTIFIER ")" ] ;
+(* An argument is valid only for unsafe_transfer/unsafe_share and names one
+   non-pack type parameter of the annotated class/struct. *)
 
 class-key              = "class" | "struct" | "interface" | "union" ;
 
@@ -969,25 +985,15 @@ expected-type          = "expected" "<" type "," type ">" ;
    globals, references over arrays, and references to raw pointers remain
    unsupported.
 
-   `gti_internal::storage<T>` parses through `user-type` but has
-   compiler-defined semantics. It is a reserved move-only owner for standard
-   library containers. Its allocate, capacity, construct, borrowed read,
-   destroy, and relocate operations are ordinary qualified-call syntax
-   recognized and checked as compiler intrinsics. A class or struct containing
-   storage, directly or through another field, is also move-only after generic
-   type substitution. Storage rejects element types containing borrowed state.
-   Construction accepts a final variadic argument sequence, selects one exact
-   accessible element constructor after concrete pack expansion, and constructs
-   directly in an empty slot. Primitive elements accept zero arguments for
-   value initialization or one exact value. Relocation requires a movable
-   element type. These operations expose no raw address or independent
-   deallocation operation.
+   Public sparse storage uses ordinary class, generic, call and unsafe-block
+   syntax over the general typed object-lifetime operations. The former private
+   sparse-storage type and operation family have no compiler syntax or identity.
 
-   `gti_internal::prefix_storage<T>` is the corresponding reserved move-only
+   `gti_internal::prefix_storage<T>` is a separate reserved move-only
    capability for one contiguous live prefix. Its allocate, append, pop,
    borrowed read, complete-prefix relocate, insert, and erase operations
    preserve that prefix invariant. It cannot create an arbitrary live-slot
-   pattern. Like sparse storage, it rejects borrowed-state elements and exposes
+   pattern. It rejects borrowed-state elements and exposes
    no raw address or independent deallocation operation. Public size, capacity,
    growth, and invalidation policy remain ordinary source-defined class state.
 *)
@@ -1515,6 +1521,7 @@ primary-expression     = literal
                        | member-requirement
                        | qualified-name
                        | lambda-expression
+                       | generic-qualified-enumerator
                        | unexpected-expression
                        | "this"
                        | "nullptr"
@@ -1522,6 +1529,10 @@ primary-expression     = literal
                        | "(" expression ")" ;
 
 pack-fold-expression   = "(" assignment-expression "," "..." ")" ;
+
+generic-qualified-enumerator
+                       = qualified-name generic-argument-clause
+                         "::" IDENTIFIER ;
 
 (* The assignment-expression in a pack fold is syntactically required to have
    a call as its root. The semantic restrictions above make this a bounded

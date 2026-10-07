@@ -541,7 +541,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         parameter.type.kind == SemanticType::UniqueOwner ||
-        parameter.type.kind == SemanticType::Storage ||
         parameter.type.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
@@ -581,7 +580,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         projectedType.kind == SemanticType::UniqueOwner ||
-        projectedType.kind == SemanticType::Storage ||
         projectedType.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
@@ -1341,11 +1339,14 @@ public:
       }
       if (const auto *enumeration =
               std::get_if<LoweredEnumDeclaration>(&declaration->payload)) {
+        const std::string name =
+            cppConcreteEnumName(loweredProgram, enumeration->type)
+                .value_or(declaration->name);
         writeIndent();
         if (enumeration->payload) {
-          output << "struct " << declaration->name << ";\n";
+          output << "struct " << name << ";\n";
         } else {
-          output << "enum class " << declaration->name << " : ";
+          output << "enum class " << name << " : ";
           emitSemanticType(enumeration->underlyingType);
           output << ";\n";
         }
@@ -2073,9 +2074,12 @@ public:
 
   void emitLoweredEnumDefinition(const LoweredDeclaration &row,
                                  const LoweredEnumDeclaration &enumeration) {
+    const std::string name =
+        cppConcreteEnumName(loweredProgram, enumeration.type)
+            .value_or(row.name);
     writeIndent();
     if (enumeration.payload) {
-      output << "struct " << row.name << " {\n";
+      output << "struct " << name << " {\n";
       ++indentation;
       for (const LoweredEnumerator &variant : enumeration.enumerators) {
         writeIndent();
@@ -2115,15 +2119,15 @@ public:
       }
       output << "> __gti_value;\n";
       writeIndent();
-      output << "friend bool operator==(const " << row.name << " &, const "
-             << row.name << " &) = default;\n";
+      output << "friend bool operator==(const " << name << " &, const " << name
+             << " &) = default;\n";
       --indentation;
       writeIndent();
       output << "};\n";
       return;
     }
 
-    output << "enum class " << row.name << " : ";
+    output << "enum class " << name << " : ";
     emitSemanticType(enumeration.underlyingType);
     output << " {\n";
     ++indentation;
@@ -2912,6 +2916,7 @@ public:
     writeIndent();
     output << "if (!__gti_mir_contained_state.success) {\n";
     ++indentation;
+    emitIncomingCleanupFailureCheck("&__gti_mir_contained_state.record");
     writeIndent();
     output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
@@ -3372,31 +3377,46 @@ public:
       output << (status == SpecialMemberStatus::Generated ? " = default;\n"
                                                           : " = delete;\n");
     };
-    const MirConstructorInstance *generatedConstructor = nullptr;
+    std::vector<const MirConstructorInstance *> generatedConstructors;
     for (const LoweredConstructorInstance &candidate :
          loweredProgram.constructorInstances()) {
       const MirClassInstance *owner = mir.findClassInstance(candidate.owner);
       if (candidate.declaration == 0 && owner != nullptr &&
-          owner->declaration == declaration.id) {
-        if (generatedConstructor != nullptr || !owner->type.arguments.empty() ||
-            !owner->type.valueArguments.empty())
+          owner->declaration == declaration.id &&
+          (concreteInstance != nullptr
+               ? owner->id == concreteInstance->id
+               : !loweredClassUsesDirectRepresentation(*owner))) {
+        if (concreteInstance != nullptr && !generatedConstructors.empty())
           throw std::logic_error(
-              "generated base constructor needs one concrete owner");
-        generatedConstructor = mir.findConstructorInstance(candidate.id);
+              "generated constructor needs one exact concrete owner");
+        const auto *generated = mir.findConstructorInstance(candidate.id);
+        if (generated == nullptr)
+          throw std::logic_error("generated constructor lost its MIR body");
+        generatedConstructors.push_back(generated);
       }
     }
-    if (generatedConstructor != nullptr) {
-      const auto &plan =
-          generalMirBodyPlan({.kind = MirBodyKind::Constructor,
-                              .owner = generatedConstructor->id});
-      if (plan.supportsPlainText()) {
+    if (!generatedConstructors.empty()) {
+      // A native primary template can serve several concrete MIR owners.
+      // Declare its ordinary default once and each exact status overload;
+      // the out-of-line specializations remain the executable authority.
+      if (std::any_of(
+              generatedConstructors.begin(), generatedConstructors.end(),
+              [&](const auto *constructor) {
+                return generalMirBodyPlan({.kind = MirBodyKind::Constructor,
+                                           .owner = constructor->id})
+                    .supportsPlainText();
+              })) {
         writeIndent();
         output << classRow.name << "();\n";
       }
-      if (plan.supportsFailureText()) {
+      for (const auto *constructor : generatedConstructors) {
+        if (!generalMirBodyPlan(
+                 {.kind = MirBodyKind::Constructor, .owner = constructor->id})
+                 .supportsFailureText())
+          continue;
         writeIndent();
         output << classRow.name << '(';
-        emitLoweredConstructorParameters(*generatedConstructor, true);
+        emitLoweredConstructorParameters(*constructor, true);
         output << ");\n";
       }
     } else if (declaration.defaultConstructor !=
@@ -4141,6 +4161,8 @@ public:
     concrete.genericArgumentPatterns.clear();
     concrete.traits = instance.traits;
     concrete.defaultConstructor = instance.defaultConstructor;
+    concrete.generatedDefaultRequiresSchedule =
+        instance.generatedDefaultRequiresSchedule;
     concrete.copyConstructor = instance.copyConstructor;
     concrete.moveConstructor = instance.moveConstructor;
     concrete.copyAssignment = instance.copyAssignment;
@@ -4252,7 +4274,7 @@ public:
       const auto *declaration =
           std::get_if<LoweredEnumDeclaration>(&enumeration->payload);
       if (declaration == nullptr || declaration->id == 0 ||
-          !sourceEnumerationSchedule.emplace(declaration->id, enumeration)
+          !sourceEnumerationSchedule.emplace(enumeration->id, enumeration)
                .second) {
         throw std::logic_error(
             "lowered enum schedule contains a duplicate or invalid identity");
@@ -4273,7 +4295,6 @@ public:
       case SemanticType::Reference:
       case SemanticType::UniqueOwner:
       case SemanticType::SharedPointer:
-      case SemanticType::Storage:
       case SemanticType::PrefixStorage:
         return;
       case SemanticType::Class: {
@@ -4284,8 +4305,10 @@ public:
             mir.classInstances().begin(), mir.classInstances().end(),
             [&](const MirClassInstance &candidate) {
               return candidate.type == type &&
-                     candidate.compilerCapability ==
-                         CompilerCapabilityTypeKind::OptionalStorage;
+                     (candidate.compilerCapability ==
+                          CompilerCapabilityTypeKind::OptionalStorage ||
+                      candidate.compilerCapability ==
+                          CompilerCapabilityTypeKind::UninitializedStorage);
             });
         if (capability != mir.classInstances().end()) {
           for (const SemanticType &argument : type.arguments) {
@@ -4337,9 +4360,13 @@ public:
         return;
       }
       case SemanticType::Enum:
-        if (type.enumId != 0 &&
-            sourceEnumerationSchedule.contains(type.enumId)) {
-          result.enumerations.push_back(type.enumId);
+        for (const auto &[identity, row] : sourceEnumerationSchedule) {
+          const auto *enumeration =
+              std::get_if<LoweredEnumDeclaration>(&row->payload);
+          if (enumeration != nullptr && enumeration->type == type) {
+            result.enumerations.push_back(identity);
+            break;
+          }
         }
         return;
       case SemanticType::Array:
@@ -4525,7 +4552,7 @@ public:
       const LoweredDeclaration &row = *scheduled->second;
       const auto *declaration =
           std::get_if<LoweredEnumDeclaration>(&row.payload);
-      if (declaration == nullptr || declaration->id != id) {
+      if (declaration == nullptr || row.id != id) {
         throw std::logic_error(
             "lowered enum schedule lost its declaration payload");
       }
@@ -4611,6 +4638,8 @@ public:
       emitLoweredMemberSpecializationDeclarations(
           firstDeferredMember, lastDeferredMember, firstDeferredLifecycleClass,
           lastDeferredLifecycleClass);
+      if (node.concrete == nullptr)
+        emitLoweredGeneratedConstructorSpecializationDeclarations(row);
     };
     for (std::size_t index = 0; index < classes.size(); ++index) {
       emitClass(index);
@@ -4623,7 +4652,7 @@ public:
         throw std::logic_error(
             "lowered enum schedule lost its declaration payload");
       }
-      emitEnumeration(declaration->id);
+      emitEnumeration(enumeration->id);
     }
   }
 
@@ -5420,6 +5449,46 @@ public:
       output << '\n';
     }
     loweredDeferredStaticFields.clear();
+  }
+
+  void emitLoweredGeneratedConstructorSpecializationDeclarations(
+      const LoweredDeclaration &owner) {
+    const auto *declaration =
+        std::get_if<LoweredClassDeclaration>(&owner.payload);
+    if (declaration == nullptr || !loweredOwnerIsGeneric(owner))
+      return;
+    for (const LoweredConstructorInstance &candidate :
+         loweredProgram.constructorInstances()) {
+      if (candidate.declaration != 0)
+        continue;
+      const MirClassInstance *instance = mir.findClassInstance(candidate.owner);
+      if (instance == nullptr || instance->declaration != declaration->id ||
+          loweredClassUsesDirectRepresentation(*instance))
+        continue;
+      const MirConstructorInstance *constructor =
+          mir.findConstructorInstance(candidate.id);
+      if (constructor == nullptr)
+        throw std::logic_error(
+            "generated constructor declaration lost its MIR body");
+      // Generated constructors have no source declaration row, so the ordinary
+      // deferred-member pass cannot declare these specializations. Match every
+      // emitted definition's exact signature before any body can instantiate
+      // the retained primary; declaration order does not select GTI behavior.
+      const std::size_t namespaceCount =
+          emitLoweredNamespaceOpen(owner.namespaceScope);
+      const auto &plan = generalMirBodyPlan(
+          {.kind = MirBodyKind::Constructor, .owner = constructor->id});
+      for (const bool failure : {false, true}) {
+        if (!(failure ? plan.supportsFailureText() : plan.supportsPlainText()))
+          continue;
+        writeIndent();
+        output << "template <> " << loweredConcreteClassName(instance->id)
+               << "::" << owner.name << '(';
+        emitLoweredConstructorParameters(*constructor, failure);
+        output << ");\n";
+      }
+      emitLoweredNamespaceClose(namespaceCount);
+    }
   }
 
   void emitLoweredMemberSpecializationDeclarations(
@@ -6814,6 +6883,15 @@ public:
                               : loweredClassRow(instance->declaration);
       if (constructor == nullptr || owner == nullptr)
         throw std::logic_error("generated constructor lost its concrete owner");
+      const bool directOwner = loweredClassUsesDirectRepresentation(*instance);
+      const bool genericOwner = loweredOwnerIsGeneric(*owner);
+      const std::string ownerSpelling =
+          directOwner || genericOwner
+              ? loweredConcreteClassName(constructor->owner)
+              : loweredPrimaryClassSpelling(*owner);
+      const std::string constructorName =
+          directOwner ? loweredConcreteClassLeafName(constructor->owner)
+                      : owner->name;
       const std::size_t namespaceCount =
           emitLoweredNamespaceOpen(owner->namespaceScope);
       const auto &plan = generalMirBodyPlan(
@@ -6822,8 +6900,9 @@ public:
         if (!(failure ? plan.supportsFailureText() : plan.supportsPlainText()))
           continue;
         writeIndent();
-        output << loweredPrimaryClassSpelling(*owner) << "::" << owner->name
-               << '(';
+        if (genericOwner && !directOwner)
+          output << "template <> ";
+        output << ownerSpelling << "::" << constructorName << '(';
         emitLoweredConstructorParameters(*constructor, failure);
         output << ')';
         emitGeneralMirConstructorInitializerList(*constructor, failure);
@@ -7170,10 +7249,22 @@ public:
                   "    if (pending == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1) "
                   "return false;\n";
         if (cleanup && cleanup->requiresActiveCleanup) {
-          output << "    const bool unwinding = pending == "
-                    "GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;\n"
-                    "    ::gti_failure_record_v2 failure{};\n    const bool "
-                    "success = ";
+          output
+              << "    const bool unwinding = pending == "
+                 "GTI_THREAD_WORKER_FAILURE_ORDINARY_V1;\n"
+                 "    ::gti_failure_record_v2 primary{};\n"
+                 "    const ::gti_failure_artifact_descriptor_v1 "
+                 "*primary_artifact = nullptr;\n"
+                 "    ::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+                 "cleanup_context;\n"
+                 "    if (unwinding) {\n"
+                 "      if "
+                 "(!::gti_runtime_detail::copy_managed_task_cleanup_primary_v2("
+                 "primary, primary_artifact)) std::abort();\n"
+                 "      cleanup_context.activate(&primary, primary_artifact);\n"
+                 "    }\n"
+                 "    ::gti_failure_record_v2 failure{};\n    const bool "
+                 "success = ";
           if (slot)
             output << "value.destroy_cleanup_with_failure(&failure, true, "
                       "unwinding, "
@@ -7187,6 +7278,9 @@ public:
                                                    "&failure", "unwinding")
                    << ";\n";
           output
+              << "    if (!success) ::gti_internal::backend::"
+                 "mir_check_incoming_cleanup_failure_v1(&failure, "
+                 "&__gti_failure_artifact_descriptor_v1);\n"
               << "    if (!success && "
                  "!::gti_runtime_detail::record_managed_task_cleanup_failure(\n"
                  "        failure, &__gti_failure_artifact_descriptor_v1)) {\n"
@@ -7533,6 +7627,7 @@ public:
         }
         output << "&__gti_failure_record)) {\n";
         ++indentation;
+        emitIncomingCleanupFailureCheck("&__gti_failure_record");
         writeIndent();
         output << "::gti_rt_failure_terminate_v2(\n";
         ++indentation;
@@ -7700,6 +7795,7 @@ public:
       SemanticType fieldType = SemanticType::Unknown;
       SemanticType baseType = SemanticType::Unknown;
       std::vector<std::size_t> baseParameters;
+      std::vector<CppMirConstructedFieldInitializerArgument> baseArguments;
       std::vector<bool> movedParameters;
       std::vector<CppMirConstructedFieldInitializerArgument>
           constructedArguments;
@@ -7713,7 +7809,8 @@ public:
       initializers.push_back({.kind = BindingKind::Base,
                               .initializer = binding.initializer,
                               .baseType = binding.baseType,
-                              .baseParameters = binding.parameters});
+                              .baseParameters = binding.parameters,
+                              .baseArguments = binding.arguments});
     }
     for (const CppMirStoredReferenceBinding &binding : *bindings) {
       initializers.push_back({.initializer = binding.initializer,
@@ -7785,7 +7882,15 @@ public:
         // constructor needs the exact private empty state proved for that
         // concrete type. This is deliberately per-field: a mutex owner is
         // move-constructible while its public move assignment stays deleted.
-        if (field->type.kind != SemanticType::Array &&
+        const auto representation =
+            cppMirExpectedTypeRepresentation(field->type);
+        const bool passiveScalar =
+            field->dropKind == DropKind::Trivial &&
+            !field->requiresActiveCleanup && representation &&
+            (*representation == CppMirTypeRepresentationKind::Scalar ||
+             *representation == CppMirTypeRepresentationKind::Enum ||
+             field->type.kind == SemanticType::RawPointer);
+        if (!passiveScalar && field->type.kind != SemanticType::Array &&
             !cppMirFailureConstructorEmptyStateTypeEligible(mir, field->type)) {
           continue;
         }
@@ -7812,42 +7917,34 @@ public:
       if (initializer.kind == BindingKind::Base) {
         emitSemanticType(initializer.baseType);
         output << '(';
-        const MirBlock *entry =
-            constructor.body.findBlock(constructor.body.entry);
-        const MirInstruction *baseStage =
-            failureForm && entry != nullptr && !entry->instructions.empty() &&
-                    entry->instructions.front().kind ==
-                        MirInstructionKind::InitializeBase &&
-                    entry->instructions.front().constructorInitializer ==
-                        initializer.initializer + 1
-                ? &entry->instructions.front()
-                : nullptr;
-        if (baseStage != nullptr) {
-          if (!baseStage->constructorTarget ||
-              !initializer.baseParameters.empty()) {
-            throw std::logic_error(
-                "MIR base initialization lost its exact zero-argument target");
-          }
-          output
-              << cppMirFailureConstructorTagSpelling(
-                     *baseStage->constructorTarget)
-              << "{}, __gti_mir_constructor_success, __gti_mir_failure_record";
-        }
-        for (std::size_t argument = 0;
-             argument < initializer.baseParameters.size(); ++argument) {
-          if (argument != 0) {
+        const MirInstruction *baseStage = nullptr;
+        for (const auto &block : constructor.body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == MirInstructionKind::InitializeBase &&
+                instruction.constructorInitializer ==
+                    initializer.initializer + 1)
+              baseStage = &instruction;
+        const bool status = failureForm && baseStage != nullptr &&
+                            !baseStage->definedFailure.empty();
+        if (status)
+          output << cppMirFailureConstructorTagSpelling(
+                        *baseStage->constructorTarget)
+                 << "{}";
+        for (std::size_t index = 0; index < initializer.baseArguments.size();
+             ++index) {
+          if (status || index != 0)
             output << ", ";
-          }
-          const bool moved = argument < initializer.movedParameters.size() &&
-                             initializer.movedParameters[argument];
-          if (moved) {
-            output << "std::move(";
-          }
-          output << "__gti_mir_arg_" << initializer.baseParameters[argument];
-          if (moved) {
-            output << ')';
-          }
+          const auto &argument = initializer.baseArguments[index];
+          if (argument.parameter)
+            output << "__gti_mir_arg_" << *argument.parameter;
+          else if (argument.literal)
+            emitMirLiteral(*argument.literal, argument.type);
+          else
+            throw std::logic_error(
+                "MIR base initializer lost its exact scalar argument");
         }
+        if (status)
+          output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
         output << ')';
         continue;
       }
@@ -7996,7 +8093,17 @@ public:
            << mir.hostedStartupPlan()->entry << "\n";
   }
 
+  void emitIncomingCleanupFailureCheck(std::string_view record) {
+    writeIndent();
+    output
+        << "::gti_internal::backend::mir_check_incoming_cleanup_failure_v1("
+        << record
+        << ", "
+           "&::gti_internal::backend::__gti_failure_artifact_descriptor_v1);\n";
+  }
+
   void emitHostedFailureTermination() {
+    emitIncomingCleanupFailureCheck("&__gti_failure_record");
     writeIndent();
     output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;

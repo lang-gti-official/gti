@@ -1,5 +1,225 @@
 # Compiler Verification
 
+## Combined lifetime/storage and payload-enum release gate
+
+PR #94 is the single integration point for the S-ALLOC-06/07 and generic
+payload-enum candidates. The 2026-10-08 stabilization reset preserves unfinished
+issue-campaign branches separately; they are not prerequisites of this release.
+Earlier checkpoints below are historical evidence, not substitutes for testing
+the combined revision.
+
+Final acceptance requires an optimized full build and unfiltered CTest run,
+including both complete MIR corpus oracles, the language coverage corpus,
+standard-library surface, editor and native matrices. Run the pinned formatter
+and Tree-sitter corpus/query/shipped-source checks, then stage the same toolchain
+and rebuild all installed-library consumers. Execute examples 125, 126, 128,
+129 and the unrelated libc region provider with the staged toolchain and no
+source-tree library overrides. Record exact revision, toolchain, results and
+platform limitations in the integration PR; a focused pass is not release
+acceptance.
+
+The cleanup regression gates additionally require that an inherited primary
+failure stops callee-local cleanup immediately on a second failure, including
+managed task destruction. They retain exact output and both failure identities.
+Native scope probes independently check earliest-primary preservation,
+thread isolation, scope restoration and rejection of forged managed envelopes.
+
+## Consolidated lifetime and enum acceptance checkpoint
+
+The optimized macOS arm64 Release/Ninja candidate at `17787a0c` passes the full
+compiler partition (46.86 seconds), CLI smoke, backend preflight (6.43 seconds),
+and optional allocator raw-audit Off/Warn parity (92.05 seconds). Its generated
+constructor-order regression passes sixteen native configurations, including
+the expected empty-owner failure, no elision and sanitizers. The report remains
+at the source-defined checked owner accessor; this fix does not change failure
+attribution. Test-worker registration accounts for all shared matrix clients.
+
+Both complete corpus oracles pass for all 125 top-level examples. Detached
+emission admits all 19,902 lowered bodies and compares all 11,996 applicable
+general-body emissions. The native oracle builds and executes O0/C++20 and
+O3/C++23 with identical behavior and all 19,895 reviewed emitted body identities.
+The seven-body difference is unchanged (scalar atomics, optionals and owning
+callbacks). The complete LoweredProgram inventory is 60,581 declarations and
+3,900 generated items; manual-lifetime, conditional-capability and inline-pool
+examples are now included rather than omitted from a mechanically merged census.
+
+Census category labels previously reversed thread-task and concrete-instance
+adapters. The numerical totals were unaffected. The census executable now
+publishes its compiled column identities; the Python reader rejects a mismatched
+schema, and compile-time checks reject omitted or reordered enum identities.
+Baseline categories are corrected without treating ordinary instance adapters
+as new threading work. These are focused and corpus results; final full-suite,
+installed-consumer and integration evidence remain required.
+
+## Source sparse-storage integration checkpoint
+
+The S-ALLOC-06 candidate now routes public sparse and resource-backed owners
+through source fields, live-byte loops, general typed lifetime operations and
+two same-provider leases. With the optimized Release/Ninja compiler on macOS
+arm64, `resource_protocol_contract` passes frontend, MIR and backend admission;
+`programmable_allocators_runtime` passes its eight C++20/C++23 O0/O1/O3,
+no-elide and ASan/UBSan configurations (310.79 seconds). Its cases exercise
+object- and metadata-allocation failures, malformed descriptors, unchanged
+owners on failed growth, original release descriptors and order, final-address
+immovable construction and cleanup failures. `process_resource_policy` passes
+its corresponding matrix (25.31 seconds).
+
+The unrelated multi-guard constructor fixture additionally passes all eight
+configurations for success, later-field failure, reverse rollback, cleanup
+failure and secondary failure. Detached backend admission rejects 32 malformed
+constructor schedules; lifetime verification rejects 118 malformed schedules.
+The inline-owner/two-slot-pool matrix and source sparse-policy matrix pass all
+eight configurations. Following retirement of the legacy sparse type,
+intrinsics, backend helpers and optimizer slot-state pass, the source sparse,
+structural-relocation and final-address runtime matrices pass again.
+`allocator_storage_runtime` passes (127.43 seconds), and
+`optimizer_safety_native_evidence` passes (23.67 seconds). The latter retains
+exactly two existing vector overflow proofs in its independent positive case
+and explicitly verifies the conservative allocator-first context boundary and
+O0/O2/O3 behavior rather than attributing private slot proofs to source storage.
+
+The fixed-array emplacement regression covers ordinary generic forwarding,
+mixed fixed/variadic parameters, sparse storage and vector construction in all
+eight native configurations. Raw construction's reference staging has three
+independent malformed-MIR/backend rejection cases; conditional capability
+serialization rejects embedded NUL bytes. The object-lifetime, conditional
+capability, prefix-constructor, storage-adoption and structural-relocation
+contracts pass together. These are focused candidate results, not completion:
+reconciling current main and census inventories, full production/tooling and
+installed-consumer checks remain required. No active user toolchain was
+installed, and native Windows/Linux execution is not claimed.
+
+The acceptance audit additionally tests public source-storage transfer/share
+capabilities independently, including each payload denial and the borrowed
+resource-owner boundary. Those contracts pass. Optional raw-pointer auditing
+exposed one source-result producer that incorrectly emitted a mandatory type
+error from advisory provenance. It now uses the existing audit severity policy;
+static pointer compatibility and constness remain mandatory. The reduced
+frontend and LSP regressions pass, including Strict rejection, exact caller
+locations and Off/Warn C++20/C++23 equality. All eleven allocator/manual-lifetime
+sources in `allocator_raw_audit_independence` pass (119.47 seconds).
+Preliminary tooling checks also pass the 73-case Tree-sitter corpus, all 190
+shipped-source parses, highlight/locals/rainbow queries and focused formatter/LSP
+round trips. These results precede the next current-main reconciliation and
+do not replace final combined verification.
+
+The generated-constructor acceptance checkpoint passes all 63 ownership cases
+with the optimized compiler. Focused backend cases also pass for exact default
+schedule obligations, target/owner and base-target erasure mutations, passive
+and owning declaration-field rollback, staged field replacement and checked
+passive construction into `expected`. Native testing is an independent gate:
+the initial emission-only expected test passed while native compilation caught
+a wrapper storage-declaration mismatch. Declaration and publication now share
+the same exact lifetime-slot proof; all three passive expected fixtures pass
+the eight-mode native matrix (25.98 seconds), including first-failure ordering,
+caller cleanup, no elision and sanitizers. The nested-field regression now
+classifies cleanup from declared-field facts, preserving access checks for
+passive descriptors and cleanup-pair mutations for owning fields; it passes.
+The full lifecycle suite still awaits reconciliation of the state-bearing base
+constructor implementation. Neither these focused results
+nor the published draft checkpoint establishes full acceptance.
+
+After reconciling canonical main through `7604c36a`, all thirteen focused
+manual-lifetime, carrier, sparse/resource storage, prefix construction,
+relocation, borrowed-composition, cleanup-mutation, executable-closure and
+detached LoweredProgram contracts pass (21.43 seconds). Conditional-capability
+runtime/LSP and the incoming call-result, expected-return, consuming-assignment
+and class-field native matrices also pass. The class-field unit inventory now
+passes with exact generated constructor targets, prepared-argument activation,
+and malformed nested executable-schedule checks instead of targetless-default
+assumptions. Complete corpus inventories, the combined base schedule,
+installed consumers and broad campaign validation remain outstanding.
+
+The PR125 base-stage reconciliation passes the full lifecycle emitter suite
+(42.77 seconds), exact generated-base/field-evaluation ordering mutations, and
+the 48-case base native matrix with 24 failure observations and sanitizer
+coverage. Loop-break native checks pass. The constructor-pack native matrix
+also passes (104.85 seconds), including distinct recursive node owners sharing
+a native primary template, after retaining every selected generated default's
+status declaration. Test-only maintenance preserves actual generated schedules
+instead of expecting inline native defaults or same-block base completion.
+The subsequent Expected constructor-field publication fix passes the complete
+24-scenario declaration-field failure matrix in eight modes (30.57 seconds),
+including reverse rollback, allocation failure and secondary cleanup failure.
+`expected_constructor_field` rejects 23 malformed field-publication schedules
+and two nonraising constructor target/activation mutations. Its strict emitted
+field count exposed a local-slot writer incorrectly intercepting an owning
+error field; the exact field route now handles it without relaxing the test.
+The four-fixture `expected_passive_publication_runtime` matrix passes all eight
+modes (25.68 seconds), including generated and explicit payload constructors,
+both alternatives, no premature destruction and exactly-once cleanup. The full
+lifecycle emitter suite passes again against this backend (41.87 seconds). These
+focused results still precede the latest canonical/enum reconciliation and
+final campaign validation; they do not establish full acceptance.
+The updated inheritance test separately passes exact selected base-target,
+single-stage Invoke and status-constructor representation checks. The broader
+declarations run still reports two obsolete generated-default spelling
+assertions already under maintenance in the parallel enum reconciliation;
+that aggregate is not counted as passing at this checkpoint.
+
+## Source-defined process byte provider (S-ALLOC-07 checkpoint)
+
+The pre-reconciliation storage-cost probe uses frozen optimized compiler,
+runtime and library snapshots: clean baseline `229f095f` (0.381.0), and the
+source-storage candidate built from `d98d87fd` plus the recorded retirement
+diff. `scripts/storage_migration_compare.py` preserves source/tool hashes,
+commands, build/optimization reports and raw observations. Its identical
+public-API workload performs 25,000 allocation rounds with sparse slot reuse,
+mutation, reads and destruction; the resource case additionally grows the
+owner. After warmups, five interleaved compile samples and nine runtime samples
+on macOS arm64 gave these descriptive medians:
+
+| Operation | Baseline | Source-storage candidate |
+| --- | ---: | ---: |
+| Emit C++ | 1,959.62 ms | 2,285.21 ms |
+| Full direct compilation | 3,346.95 ms | 3,582.38 ms |
+| Process-storage workload | 29.97 ms | 35.58 ms |
+| Resource-storage workload | 55.92 ms | 52.90 ms |
+
+The process workload regresses about 18.7% in this bounded measurement; it is
+not evidence of a generally faster source implementation. Resource runtime is
+about 5.4% lower, and full compilation about 7.0% higher. Generated C++ grows
+2,424,838 to 2,713,958 bytes and the executable 461,784 to 484,376 bytes.
+The baseline removed no sparse-state checks in this workload, so losing an
+applied sparse-state optimization does not explain its process slowdown. The
+process path now uses the source provider, validation and paired cleanup for
+both allocations instead of native `new` plus hidden metadata; this is a
+plausible contributor, not measured causal attribution.
+
+Both versions produce the same complete scalar/destructor observations:
+process sum 364,681,856, resource sum 729,363,712, 4,800,000 destructions and
+destructor sum 542,222,784. Explicit resource allocations and releases are
+50,000 versus 100,000, matching the accepted two-region policy. The process
+case does not instrument process-heap requests; its zero resource-counter
+output is not a claim of zero allocation. Raw local evidence is retained at
+`/private/tmp/gti-storage-cost.j2arYZ/retry/report.json`. These short local
+samples are not a cross-platform or statistical performance guarantee and
+predate current-main reconciliation.
+
+The independent provider checkpoint moves request validation and failure policy
+into GTI without changing compiler semantics or sparse storage. The focused
+`process_resource_policy` matrix covers C++20/C++23 at O0/O1/O3, no-elide and
+ASan/UBSan. Its injected native ABI proves rejected and zero requests never
+acquire bytes, validates native-size overflow without dangerous huge requests,
+checks POSIX normalization, native error/null translation, distinct simultaneous
+regions, original descriptors and exactly-once matching release. An application
+`free` declaration coexists with the private provider. Actual byte acquisition
+also runs through the native implementation and a moved raw owner. The separate
+`libc-region-provider` project supplies an unrelated malloc-backed byte owner in
+all eight configurations; its ordinary GTI source owns zero/failure and cleanup
+policy. Off/Warn produce byte-identical provider C++.
+
+`process_provider_target_contract` analyzes and emits the provider for macOS,
+Linux and Windows targets, requiring only the corresponding POSIX/CRT adapter
+family. `resource_memory_runtime` checks actual target facts, writable aligned
+extents and matching native release. The C ABI header smoke fixes the exact
+fixed-width adapter signatures. These are local macOS arm64 tests with optimized
+compiler libraries, not evidence of native Windows/Linux execution. Native CI,
+installed consumers and production gates remain required before the full
+S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
+metadata/default-factory migration described above; the provider checkpoint's
+independent tests alone do not validate that integration.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
@@ -437,6 +657,17 @@ not evidence that every source call/container transport route is closed.
 
 ## Programmable allocation and cleanup-bound resource leases
 
+The S-ALLOC-06 migration prerequisite `source_storage_drain_runtime` proves
+source-defined cleanup-guard traversal over the existing storage surface. An
+unrelated guard drains immovable owning elements in reverse order, continues
+after a first destructor failure, preserves member cleanup and the original
+record, and retains the existing double-failure stop. A marker distinguishes
+the guard's work from the underlying storage's fallback cleanup. The matrix
+includes ordinary entry and entry during failure cleanup across C++20/C++23
+O0/O1/O3, disabled elision and ASan/UBSan. This is baseline lifecycle evidence,
+not a claim that public raw lifetime operations or source-defined sparse
+storage have already landed.
+
 Phase 2 (`S-ALLOC-05`) completed on 2026-10-07. The gates below are its
 acceptance evidence, and the completion record below states what passed.
 
@@ -452,8 +683,10 @@ elements in growable or relocating paths. `resource_protocol_lsp` checks the
 same unsafe-call and borrow-conflict diagnostics, navigation to the library
 declarations and member completion through the language server.
 `resource_memory_runtime` independently checks the process-memory
-size/alignment/status boundary. `storage_adoption_contract` and runtime object-layout
-gates own the compiler-private placement contract and its malformed-MIR cases.
+size/alignment/status boundary. `storage_adoption_contract` checks public
+source-defined ownership and that retired private storage names have no magic
+meaning. General object-lifetime contracts and runtime object-layout gates own
+typed placement and its malformed-MIR cases.
 
 `cleanup_bound_borrow`, `cleanup_bound_borrow_mutations`, and
 `cleanup_bound_backend_mutations` distinguish external referents from the
@@ -2939,6 +3172,7 @@ upstream code.
 | `driver_pipeline` / `driver_library_boundary` | fail-closed target/runtime analysis configuration, requests, artifacts, resources, native tools, driver archive |
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
+| `cli_hardlink_fixture` | scratch-prefix context and copy fallback for the same-inode executable/report overwrite probe |
 | `lsp_protocol` / `atomic_lsp` / `mutex_lsp` | document lifecycle, diagnostics, positions, semantic features, edits, bounded-depth analysis/completion worker survival, default-project-profile and standalone-startup concurrency analysis, public thread/atomic/mutex/I/O hover, definition, completion, and tokens, plus private capability filtering |
 | `lsp_project_facts` | driver-owned default-profile/package-graph parity for analysis and completion; path-dependency diagnostics, hover, definition, semantic tokens, and member completion; authoritative dirty dependency overlays; read-only locked-Git failure publication; manifest/lock watcher coverage; and standalone compatibility |
 | `frontend_cache_invalidation` | cached/uncached semantic and diagnostic equivalence, immutable AST hover, root/dependency/unrelated invalidation, dirty-overlay/disk transitions, configuration identity, stale source generations, and entry/estimated-byte LRU bounds |
@@ -2957,6 +3191,16 @@ CTest boundary. A hung source is therefore identified only as an aggregate
 timeout rather than by a calibrated worker deadline. This residual
 observability risk avoids replacing the corrected topology with an
 unsubstantiated per-example timing gate.
+
+The CLI producer/report collision probe puts its executable hardlink inside an
+isolated mirrored prefix. Loader-relative library directories, installed source
+and header directories, and adjacent shared libraries remain available through
+links or copies; the original installation is not rewritten. This preserves the
+same-inode overwrite rejection (status 64) even when macOS identifies the
+executable through its new hardlink. It does not require loader-environment
+overrides or treat loader failure as a successful overwrite-protection check.
+`cli_hardlink_fixture` independently checks prefix context, unprivileged copy
+fallback, build-tree layout, and unchanged compiler bytes.
 
 For resource-limited local project checks, run
 `python3 tests/project_cli_smoke_test.py <gti> --jobs 1`. The default remains four
@@ -3322,6 +3566,20 @@ and rejected assignment. Preflight mutations reject lost reparent identities
 and premature field activation. Generic field and transport mutations retain the
 independent preflight gates. The Tree-sitter corpus and capture tests own editor grammar and
 highlighting.
+
+`generic_enum_declaration` owns generic payload declaration binders, defaults,
+exact nominal identity, invalid applications, optional `class` spelling, and
+retained instance-signature reset. `generic_payload_enum_backend` verifies
+exact concrete enum rows and construction/matching through detached lowering,
+including forged type/instance metadata. `generic_enum_instances_runtime`
+checks generic and nongeneric transport, owning and passive field publication,
+borrowed/copied patterns, finite owning recursion, cleanup and failure rollback
+under both C++ standards at O0/O1/O3, no-elide construction, and ASan/UBSan.
+`generic_enum_lsp` covers concrete/default/alias signatures, qualified
+completion and dirty dependency reanalysis, including rejection of stale
+diagnostics republished with a newer document version. Example 129 and the
+MIR/lowered censuses demonstrate a source-defined message queue without
+special treatment of a result-library type.
 
 Recursive owning sums additionally use `recursive_payload_sum_runtime` for
 finite generic containment, reverse sibling cleanup, partially constructed

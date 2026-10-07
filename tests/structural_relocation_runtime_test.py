@@ -9,21 +9,25 @@ from lambda_pack_invocation_runtime_test import main
 if __name__ == "__main__":
     memory = pathlib.Path(__file__).parent.parent / "stdlib/std/memory.gti"
     lines = memory.read_text().splitlines()
-    relocate = next(i + 1 for i, line in enumerate(lines)
-                    if "storage_relocate(this.data" in line)
+    capacity = next(i + 1 for i, line in enumerate(lines)
+                    if "require_relocation_capacity(count <= this.slots" in line)
+    source = next(i + 1 for i, line in enumerate(lines)
+                  if "require_relocation_source(this.initialized(index))" in line)
+    destination = next(i + 1 for i, line in enumerate(lines)
+                       if "require_relocation_destination(!destination.initialized(index))" in line)
     read = next(i + 1 for i, line in enumerate(lines)
-                if "return gti_internal::storage_read(this.data" in line)
+                if "require_live_storage(this.initialized(index))" in line)
     def failure(line, detail, stdout=""):
         return (70, stdout, f"<std/memory>:{line}: runtime error[GTI-R0010]: "
                 f"invalid_storage_state in {detail}\n")
     main(names=("structural_relocation",), cases={"structural_relocation": [
         ((), (0, "71\n82\n81\nrelocation passed\n", "")),
-        (("capacity",), failure(relocate, "relocation_capacity")),
-        (("occupied", "destination"), failure(relocate, "occupied_relocation_destination")),
-        (("uninitialized", "source", "tail"), failure(relocate, "invalid_relocation_source")),
+        (("capacity",), failure(capacity, "relocation_capacity")),
+        (("occupied", "destination"), failure(destination, "occupied_relocation_destination")),
+        (("uninitialized", "source", "tail"), failure(source, "invalid_relocation_source")),
         (("consumed", "source", "cannot", "read"), failure(read, "uninitialized_access")),
         (("owned", "occupied", "late", "slot", "transaction"),
-         failure(relocate, "occupied_relocation_destination", "201\n104\n102\n101\n")),
+         failure(destination, "occupied_relocation_destination", "201\n104\n102\n101\n")),
         (("owned", "uninitialized", "late", "source", "slot", "transaction"),
-         failure(relocate, "invalid_relocation_source", "104\n102\n101\n")),
+         failure(source, "invalid_relocation_source", "104\n102\n101\n")),
     ]})

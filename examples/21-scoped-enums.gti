@@ -1,5 +1,6 @@
 namespace engine {
-enum class RenderState : uint8_t {
+// `enum class` is also accepted; both spellings always declare a scoped enum.
+enum RenderState : uint8_t {
   stopped,
   loading = 4,
   running,

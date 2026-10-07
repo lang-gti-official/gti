@@ -66,7 +66,8 @@ public:
       return classType(type);
     case SemanticType::Enum:
       if (const EnumTypeInfo *info = semantics.findEnumType(type.enumId)) {
-        return info->qualifiedName;
+        return nominalType(info->qualifiedName, type.arguments,
+                           type.valueArguments);
       }
       return "unknown enum";
     case SemanticType::Reference:
@@ -79,8 +80,6 @@ public:
       return unaryType("gti_internal::unique_owner", type);
     case SemanticType::SharedPointer:
       return unaryType("std::shared_ptr", type);
-    case SemanticType::Storage:
-      return unaryType("gti_internal::storage", type);
     case SemanticType::PrefixStorage:
       return unaryType("gti_internal::prefix_storage", type);
     case SemanticType::TypeParameter:
@@ -172,6 +171,13 @@ private:
     const std::vector<CompileTimeValue> &valueArguments =
         info->exactSpecializationPrimary == 0 ? type.valueArguments
                                               : info->exactValueArguments;
+    return nominalType(std::move(result), typeArguments, valueArguments);
+  }
+
+  [[nodiscard]] std::string
+  nominalType(std::string result,
+              const std::vector<SemanticType> &typeArguments,
+              const std::vector<CompileTimeValue> &valueArguments) const {
     if (typeArguments.empty() && valueArguments.empty()) {
       return result;
     }

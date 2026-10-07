@@ -64,7 +64,11 @@ int main() {
   return 0;
 }
 """,
-        ("GTI-S2029", "does not satisfy generic constraint 'std::movable'"),
+        (
+            "GTI-S2029",
+            "does not satisfy generic constraint 'gti_internal::movable_sparse_element'",
+            "Required application 'std::movable<pinned>'",
+        ),
     ),
 }
 

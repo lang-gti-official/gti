@@ -139,6 +139,7 @@ struct CppMirPayloadVariantRepresentation {
 
 struct CppMirEnumRepresentation {
   EnumId owner = 0;
+  SemanticType type = SemanticType::Unknown;
   std::string spelling;
   SemanticType underlyingType = SemanticType::Unknown;
   SemanticTypeTraits traits{};
@@ -474,17 +475,23 @@ cppMirFailureConstructorEmptyStateTypeEligible(const MirProgram &program,
 cppMirFailureConstructorEmptyFieldsEligible(const MirProgram &program,
                                             HirClassInstanceId instance);
 
-// An explicit base initializer whose arguments are exact copy-loads of this
-// constructor's scalar parameters. The native C++ initializer list may spell
-// those parameters directly; all other base-expression shapes remain on the
-// compatibility path until MIR carries a general initializer expression
-// schedule.
+// An exact selected base initializer whose argument prefix contains only
+// scalar parameter copy-loads and literals. Native fusion preserves those
+// observation-free reads; checked/effectful prefixes need an executable
+// pre-native-base MIR preparation runner and are not silently reconstructed.
+struct CppMirConstructedFieldInitializerArgument {
+  SemanticType type = SemanticType::Unknown;
+  std::optional<std::size_t> parameter;
+  std::optional<Literal> literal;
+  bool moved = false;
+};
 struct CppMirBaseParameterInitializerBinding {
   std::size_t initializer = 0;
   SemanticType baseType = SemanticType::Unknown;
   HirClassInstanceId base = 0;
   HirConstructorInstanceId constructor = 0;
   std::vector<std::size_t> parameters;
+  std::vector<CppMirConstructedFieldInitializerArgument> arguments;
 };
 [[nodiscard]]
 std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
@@ -537,13 +544,6 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
 // read-only reference formals and a non-failing selected constructor. Its
 // Value-to-ConstructionRollback publication and dependency transfer remain
 // mandatory; later body/failure cleanup is not part of the fused prefix.
-struct CppMirConstructedFieldInitializerArgument {
-  SemanticType type = SemanticType::Unknown;
-  std::optional<std::size_t> parameter;
-  std::optional<Literal> literal;
-  bool moved = false;
-};
-
 struct CppMirConstructedFieldInitializerBinding {
   std::size_t initializer = 0;
   SymbolId field = 0;

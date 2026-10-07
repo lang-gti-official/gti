@@ -23,14 +23,27 @@ GTI adopts two separate source constructs:
   around every member read or write. Semantics owns its target size and
   alignment. Native C++ union emission is a representation choice, not the
   source safety model or an implicit C ABI guarantee.
-- `enum class Name { unit, case_name(Type field, ...), ... };` is a safe closed
+- `enum Name { unit, case_name(Type field, ...), ... };` (equivalently
+  `enum class Name { ... };`) is a safe closed
   tagged sum. A qualified payload case is constructed with exact argument
   types. `switch` patterns bind immutable copied payload values and must cover
   every case or provide `default`. The frontend owns case identity,
   construction, binding, and exhaustiveness.
 
-Enum declarations remain non-generic; their payload fields accept passive
-values and concrete class instances, including generic and move-only classes whose active
+The `class` keyword is optional familiarity spelling, not a choice between
+scoped and unscoped semantics. Both forms have exactly the same nominal type,
+qualified enumerators, conversions, exhaustiveness and lifecycle rules.
+
+Payload enum declarations may be generic. Ordinary semantic binders, defaults,
+constraints, type/value arguments and a final metadata pack select exact
+concrete alternative signatures. Every argument contributes to nominal
+identity; ownership is folded from actual substituted fields, not metadata.
+Generic integral-only enums, owner deduction from case arguments and enum
+specializations are not introduced. The original non-generic first slice was
+implementation staging, not a permanent restriction.
+
+Payload fields accept passive values and concrete class instances, including
+generic and move-only classes whose active
 cleanup is represented per alternative. Construction transfers owning class
 operands into the selected alternative, whole-enum move transfers that active
 alternative (including replacement assignment), and tag-only exhaustive
@@ -68,8 +81,8 @@ optional storage. Generic argument identity is not ownership containment;
 concrete fields and declaration-bound storage capabilities supply the owning
 facts that HIR and MIR preserve and verify.
 
-Polymorphic callable transport, direct enum lambda capture, direct array or
-non-class payloads, stored borrowed state, consuming patterns, and a stable source layout
+Polymorphic callable transport, direct enum lambda capture, direct fixed-array
+or owning non-class payloads, stored borrowed state, consuming patterns, and a stable source layout
 remain outside this decision. The C++ backend may use `std::variant` plus a
 private disengaged representation state because all language decisions are
 complete before emission; that state is not a source alternative and a future
