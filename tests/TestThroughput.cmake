@@ -24,6 +24,7 @@ if(Python3_Interpreter_FOUND)
     generic_callable_adapter_runtime hosted_constructor_identity_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime
+    native_c_scalar_runtime nested_raw_pointer_runtime
     nested_nominal_result_runtime owned_expected_error_runtime
     owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
     owning_function_resource_result_runtime owning_function_runtime
