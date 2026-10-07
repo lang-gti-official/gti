@@ -46,7 +46,7 @@ Initial non-overlapping batches:
 | Owner | Issues | Integration state |
 | --- | --- | --- |
 | Aggregate-array worker | #63, #85, #93 | PR #106; focused checks passed, reconciliation in progress |
-| Generic-instance worker | #57, #95, #98 | PR #107; focused checks passed, final body-family controls in progress |
+| Generic-instance worker | #57, #95, #98 | merged PR #107 at `5f5f370c`; five focused gates passed, issues closed |
 | Main (no subagents) | #58, #68, #69 | `codex/diagnostics-58-68-69`; claimed with direct owner authorization |
 | General-lifetime owner, on existing PR #94 | #84 | focused eight-mode checks passed; #70 replay still fails, remains unclaimed |
 | Payload-enum owner | #88, #89, #90; #103/S15 overlap | offered; claim pending |
