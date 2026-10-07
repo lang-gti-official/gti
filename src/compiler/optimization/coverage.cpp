@@ -265,6 +265,11 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::MutexLockFailure:
   case IntrinsicKind::RequireKey:
   case IntrinsicKind::RequireContainerArgument:
+  case IntrinsicKind::RequireVacantStorage:
+  case IntrinsicKind::RequireLiveStorage:
+  case IntrinsicKind::RequireRelocationCapacity:
+  case IntrinsicKind::RequireRelocationSource:
+  case IntrinsicKind::RequireRelocationDestination:
     return barrier("defined failure without a discharge proof family");
   case IntrinsicKind::Panic:
     return barrier("explicit terminal failure with bounded message capture");

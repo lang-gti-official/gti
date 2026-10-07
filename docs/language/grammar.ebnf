@@ -384,7 +384,9 @@ qualified-specialization-name
 class-attributes       = "[[" class-attribute
                          { "," class-attribute } "]]" ;
 
-class-attribute        = IDENTIFIER ;
+class-attribute        = IDENTIFIER [ "(" IDENTIFIER ")" ] ;
+(* An argument is valid only for unsafe_transfer/unsafe_share and names one
+   non-pack type parameter of the annotated class/struct. *)
 
 class-key              = "class" | "struct" | "interface" | "union" ;
 

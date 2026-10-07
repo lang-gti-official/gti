@@ -464,6 +464,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .writesUnknownMemory = true,
                     .movesValue = true,
                     .initializesValue = true}, // ObjectRelocate
+    MirEffectTraits{.mayTrap = true},          // RequireVacantStorage
+    MirEffectTraits{.mayTrap = true},          // RequireLiveStorage
+    MirEffectTraits{.mayTrap = true},          // RequireRelocationCapacity
+    MirEffectTraits{.mayTrap = true},          // RequireRelocationSource
+    MirEffectTraits{.mayTrap = true},          // RequireRelocationDestination
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -704,6 +709,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "object-destroy",
     "object-construct",
     "object-relocate",
+    "require-vacant-storage",
+    "require-live-storage",
+    "require-relocation-capacity",
+    "require-relocation-source",
+    "require-relocation-destination",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

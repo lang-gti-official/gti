@@ -990,6 +990,8 @@ private:
         ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferPolicySource;
     std::optional<Token> sharePolicySource;
+    std::optional<SemanticType> transferCondition;
+    std::optional<SemanticType> shareCondition;
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
@@ -1008,6 +1010,8 @@ private:
     ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferSource;
     std::optional<Token> shareSource;
+    std::optional<SemanticType> transferCondition;
+    std::optional<SemanticType> shareCondition;
     bool cAbiRecord = false;
     std::optional<Token> cAbiSource;
     bool cOpaqueHandle = false;
@@ -2923,8 +2927,9 @@ private:
 
   void resolveEnumPayloads();
 
-  [[nodiscard]] CapabilityPolicyRegistration
-  registerClassAttributes(const ClassDecl &declaration);
+  [[nodiscard]] CapabilityPolicyRegistration registerClassAttributes(
+      const ClassDecl &declaration,
+      const std::vector<GenericParameterInfo> &parameters = {});
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope);

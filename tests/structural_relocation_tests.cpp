@@ -51,7 +51,7 @@ int main() {
   }
   const auto serialized = lang::MirPrinter().print(frontend.mir);
   expect(serialized.find('\0') == std::string::npos &&
-             serialized.starts_with("mir-v90"),
+             serialized.starts_with("mir-v92"),
          "all relocation kinds serialize as textual integers, not bytes");
   const lang::MirClassInstance *particle = nullptr;
   const lang::MirClassInstance *resource = nullptr;

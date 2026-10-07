@@ -283,6 +283,7 @@ enum class ConcurrencyCapabilityPolicy : std::uint8_t {
   Denied,
   Required,
   UnsafeAsserted,
+  UnsafeConditional,
 };
 
 struct ConcurrencyCapabilities {

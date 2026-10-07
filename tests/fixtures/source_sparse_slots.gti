@@ -1,0 +1,73 @@
+#include <std/detail/sparse_storage>
+#include <std/memory>
+#include <std/resource>
+#include <std/string>
+#include <std/vector>
+
+class Packet {
+  int id;
+  int divisor;
+public:
+  Packet(int id, int divisor) : id(id), divisor(divisor) {}
+  int value() { return this.id; }
+  ~Packet() {
+    std::println(this.id);
+    int checked = 1 / this.divisor;
+  }
+};
+
+class Region {
+  std::process_resource provider{};
+  mut std::raw_allocation allocation;
+public:
+  Region(std::layout request)
+      : allocation(std::raw_allocation(nullptr, uint64_t(0), uint64_t(1), uint64_t(0))) {
+    unsafe { this.allocation = this.provider.allocate(request).expect("region allocation"); }
+  }
+  void* data() { return this.allocation.address; }
+  ~Region() { unsafe { this.provider.release(this.allocation); } }
+};
+
+// Test-only trusted entry accesses the private ordinary-source algorithm.
+// Public allocator/resource integration is tested separately as it migrates.
+int main(int argc, std::vector<std::string> argv) {
+  Region objects{std::layout_of<Packet[3]>()};
+  Region destination{std::layout_of<Packet[3]>()};
+  Region flags{std::layout_of<uint8_t[3]>()};
+  Region destination_flags{std::layout_of<uint8_t[3]>()};
+  mut gti_internal::sparse_slots<Packet> first{};
+  mut gti_internal::sparse_slots<Packet> second{};
+  unsafe {
+    first.attach(std::typed_address<Packet>(objects.data()),
+                 std::typed_address<uint8_t>(flags.data()), uint64_t(3));
+    second.attach(std::typed_address<Packet>(destination.data()),
+                  std::typed_address<uint8_t>(destination_flags.data()), uint64_t(3));
+  }
+  first.emplace(uint64_t(0), 1, 1);
+  if (argc == 2) { first.emplace(uint64_t(0), 9, 1); }
+  if (argc == 3) { Packet& absent = first.read(uint64_t(1)); }
+  if (argc == 4) { first.relocate_to(second, uint64_t(4)); }
+  if (argc == 5) { first.relocate_to(second, uint64_t(2)); }
+  if (argc == 6) {
+    second.emplace(uint64_t(0), 9, 1);
+    first.relocate_to(second, uint64_t(1));
+  }
+  first.emplace(uint64_t(1), 2, argc == 8 ? 0 : 1);
+  if (argc >= 7) {
+    first.emplace(uint64_t(2), 3, 0);
+    first.clear();
+  }
+  first.shift_right(uint64_t(0), uint64_t(2));
+  if (first.initialized(uint64_t(0)) || first.read(uint64_t(1)).value() != 1 ||
+      first.read(uint64_t(2)).value() != 2) { return 1; }
+  first.emplace(uint64_t(0), 3, 1);
+  first.destroy(uint64_t(0));
+  first.shift_left(uint64_t(0), uint64_t(3));
+  first.relocate_to(second, uint64_t(2));
+  if (first.initialized(uint64_t(0)) || first.initialized(uint64_t(1)) ||
+      second.read(uint64_t(0)).value() != 1 || second.read(uint64_t(1)).value() != 2) {
+    return 2;
+  }
+  auto moved = std::move(second);
+  return moved.capacity() == uint64_t(3) ? 0 : 3;
+}

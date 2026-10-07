@@ -1,4 +1,5 @@
 #include "cpp_mir_body_emitter.h"
+#include "cpp_failure_support_writer.h"
 #include "cpp_mir_body_text_writer.h"
 #include "cpp_mir_control_flow.h"
 #include "cpp_representation.h"
@@ -21834,8 +21835,7 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
 
 [[nodiscard]] bool explicitFailureCall(const MirInstruction &instruction) {
   return instruction.kind == MirInstructionKind::Call &&
-         (instruction.intrinsic == IntrinsicKind::RequireKey ||
-          instruction.intrinsic == IntrinsicKind::RequireContainerArgument ||
+         (intrinsicBooleanFailureOutcome(instruction.intrinsic) ||
           instruction.intrinsic == IntrinsicKind::Panic) &&
          !instruction.functionTarget;
 }
@@ -21863,11 +21863,7 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
   const DefinedFailureOutcome expected =
       panic ? DefinedFailureOutcome{DefinedFailureCode::Panic,
                                     DefinedFailureDetail::ExplicitPanic}
-      : instruction.intrinsic == IntrinsicKind::RequireKey
-          ? DefinedFailureOutcome{DefinedFailureCode::KeyNotFound,
-                                  DefinedFailureDetail::KeyLookup}
-          : DefinedFailureOutcome{DefinedFailureCode::InvalidContainerArgument,
-                                  DefinedFailureDetail::ContainerArgument};
+            : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
   return site != nullptr &&
          site->outcomes == std::vector<DefinedFailureOutcome>{expected} &&
          instruction.definedFailure.localOrigins.front().outcomes ==
@@ -35879,11 +35875,10 @@ private:
       output << "__gti_mir_failure_status_" << instruction.id
              << " = ::gti_internal::backend::mir_checked_contract_v1(";
       emitOperand(instruction.operands.front());
-      output << (instruction.intrinsic == IntrinsicKind::RequireKey
-                     ? ", GTI_FAILURE_CODE_KEY_NOT_FOUND_V1, "
-                       "GTI_FAILURE_DETAIL_KEY_LOOKUP_V1);\n"
-                     : ", GTI_FAILURE_CODE_INVALID_CONTAINER_ARGUMENT_V1, "
-                       "GTI_FAILURE_DETAIL_CONTAINER_ARGUMENT_V1);\n");
+      const auto outcome =
+          *intrinsicBooleanFailureOutcome(instruction.intrinsic);
+      output << ", " << cppFailureCodeAbiConstant(outcome.code) << ", "
+             << cppFailureDetailAbiConstant(outcome.detail) << ");\n";
       return;
     }
     if (dischargedStorageBoundsCheck(program, instruction)) {

@@ -327,6 +327,15 @@ private:
       return std::nullopt;
     }
     const HirClassInstanceId id = output.program.classes.size() + 1;
+    const GenericSubstitution capabilitySubstitution = classSubstitution(
+        *declaration, resolvedType.arguments, resolvedType.valueArguments);
+    const auto concreteCondition =
+        [&](const std::optional<SemanticType> &condition)
+        -> std::optional<SemanticType> {
+      return condition
+                 ? std::optional(substitute(*condition, capabilitySubstitution))
+                 : std::nullopt;
+    };
     SemanticTypeTraits instanceTraits =
         instanceProvider->traitsFor(resolvedType);
     if (declaration->compilerCapability ==
@@ -356,6 +365,8 @@ private:
          .mutexGuardBorrowCarrier = declaration->mutexGuardBorrowCarrier,
          .transferPolicy = declaration->transferPolicy,
          .sharePolicy = declaration->sharePolicy,
+         .transferCondition = concreteCondition(declaration->transferCondition),
+         .shareCondition = concreteCondition(declaration->shareCondition),
          .kind = declaration->kind,
          .abstract = declaration->abstract,
          .polymorphic = declaration->polymorphic,

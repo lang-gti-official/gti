@@ -453,6 +453,8 @@ struct HirClassInstance {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
+  std::optional<SemanticType> transferCondition;
+  std::optional<SemanticType> shareCondition;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   bool abstract = false;

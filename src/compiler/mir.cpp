@@ -4956,8 +4956,7 @@ validFailureInstructionShape(const MirInstruction &instruction) {
       instruction.kind != MirInstructionKind::Construct) {
     return false;
   }
-  if (instruction.intrinsic == IntrinsicKind::RequireKey ||
-      instruction.intrinsic == IntrinsicKind::RequireContainerArgument ||
+  if (intrinsicBooleanFailureOutcome(instruction.intrinsic) ||
       instruction.intrinsic == IntrinsicKind::Panic) {
     const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
     const SemanticType parameter =
@@ -4965,12 +4964,7 @@ validFailureInstructionShape(const MirInstruction &instruction) {
     const DefinedFailureOutcome expected =
         panic ? DefinedFailureOutcome{DefinedFailureCode::Panic,
                                       DefinedFailureDetail::ExplicitPanic}
-        : instruction.intrinsic == IntrinsicKind::RequireKey
-            ? DefinedFailureOutcome{DefinedFailureCode::KeyNotFound,
-                                    DefinedFailureDetail::KeyLookup}
-            : DefinedFailureOutcome{
-                  DefinedFailureCode::InvalidContainerArgument,
-                  DefinedFailureDetail::ContainerArgument};
+              : *intrinsicBooleanFailureOutcome(instruction.intrinsic);
     return instruction.kind == MirInstructionKind::Call &&
            !instruction.functionTarget && !instruction.constructorTarget &&
            !instruction.bodyTarget && !instruction.lambdaTarget &&

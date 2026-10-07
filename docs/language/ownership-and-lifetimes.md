@@ -211,6 +211,30 @@ structural facts or an explicit unsafe assertion. A declaration may select at
 most one policy for each capability; conflicting, misplaced, or unknown
 capability attributes produce `GTI-S2059`.
 
+An unsafe assertion can instead be conditional on one non-pack type parameter
+of the same declaration:
+
+```gti
+[[unsafe_transfer(T), unsafe_share(T)]] class ReviewedOwner<T> {
+  // Audited ownership, access and cleanup implementation.
+};
+```
+
+`unsafe_transfer(T)` grants transfer exactly when the concrete `T` is
+transfer-capable; `unsafe_share(T)` analogously requires sharing. A false
+condition denies that capability, rather than falling back to structural
+inference. The attributes do not constrain which payloads can instantiate the
+owner: an owner of a thread-affine payload remains usable on its original
+thread. Generic uses need the corresponding capability constraint before
+assuming the conditional promise holds. The two capabilities are independent.
+
+The author still audits the entire wrapper, including state not named in the
+condition, native pointers, movement and cleanup. This is not a compiler proof
+of the unsafe implementation. The bounded condition names a type parameter,
+not a value parameter, parameter pack, arbitrary type expression, or boolean
+expression. Existing unconditional assertions and explicit opt-outs retain
+their meaning; duplicate policies remain errors.
+
 The prelude exposes `std::transferable<T>` and `std::shareable<T>` as ordinary
 public concepts backed by these compiler-owned facts. They constrain generic
 code without making transfer imply movement, sharing imply copying, or either

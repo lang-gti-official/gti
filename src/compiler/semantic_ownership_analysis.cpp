@@ -497,11 +497,25 @@ auto SemanticVisitor::Impl::typeCapabilities(
   } else if (owner.transferPolicy ==
              ConcurrencyCapabilityPolicy::UnsafeAsserted) {
     result.transferCapable = true;
+  } else if (owner.transferPolicy ==
+             ConcurrencyCapabilityPolicy::UnsafeConditional) {
+    result.transferCapable =
+        owner.transferCondition &&
+        typeCapabilities(substituteType(*owner.transferCondition, substitution),
+                         visiting)
+            .transferCapable;
   }
   if (owner.sharePolicy == ConcurrencyCapabilityPolicy::Denied) {
     result.shareCapable = false;
   } else if (owner.sharePolicy == ConcurrencyCapabilityPolicy::UnsafeAsserted) {
     result.shareCapable = true;
+  } else if (owner.sharePolicy ==
+             ConcurrencyCapabilityPolicy::UnsafeConditional) {
+    result.shareCapable =
+        owner.shareCondition &&
+        typeCapabilities(substituteType(*owner.shareCondition, substitution),
+                         visiting)
+            .shareCapable;
   }
   visiting.pop_back();
   return result;
@@ -820,6 +834,16 @@ auto SemanticVisitor::Impl::shareCapabilityDenial(
         .source = &*owner.sharePolicySource,
         .message = "This type explicitly opts out of sharing here."};
   }
+  if (owner.sharePolicy == ConcurrencyCapabilityPolicy::UnsafeConditional &&
+      owner.shareCondition && owner.sharePolicySource) {
+    return ShareCapabilityDenial{
+        .source = &*owner.sharePolicySource,
+        .message =
+            "This unsafe sharing assertion requires share-capable payload '" +
+            typeSpelling(substituteType(*owner.shareCondition,
+                                        classSubstitution(type))) +
+            "'."};
+  }
   if (hasSourceDestructorBody(owner)) {
     return ShareCapabilityDenial{
         .source = &owner.destructor->declaration->tilde(),
@@ -890,6 +914,16 @@ auto SemanticVisitor::Impl::transferCapabilityDenial(
     return TransferCapabilityDenial{
         .source = &*owner.transferPolicySource,
         .message = "This type explicitly opts out of transfer here."};
+  }
+  if (owner.transferPolicy == ConcurrencyCapabilityPolicy::UnsafeConditional &&
+      owner.transferCondition && owner.transferPolicySource) {
+    return TransferCapabilityDenial{
+        .source = &*owner.transferPolicySource,
+        .message = "This unsafe transfer assertion requires transfer-capable "
+                   "payload '" +
+                   typeSpelling(substituteType(*owner.transferCondition,
+                                               classSubstitution(type))) +
+                   "'."};
   }
   if (hasSourceDestructorBody(owner)) {
     return TransferCapabilityDenial{
@@ -2068,6 +2102,21 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "require_container_argument") {
     return IntrinsicKind::RequireContainerArgument;
+  }
+  if (name == "require_vacant_storage") {
+    return IntrinsicKind::RequireVacantStorage;
+  }
+  if (name == "require_live_storage") {
+    return IntrinsicKind::RequireLiveStorage;
+  }
+  if (name == "require_relocation_capacity") {
+    return IntrinsicKind::RequireRelocationCapacity;
+  }
+  if (name == "require_relocation_source") {
+    return IntrinsicKind::RequireRelocationSource;
+  }
+  if (name == "require_relocation_destination") {
+    return IntrinsicKind::RequireRelocationDestination;
   }
   if (name == "panic") {
     return IntrinsicKind::Panic;
@@ -6969,8 +7018,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
-  if (intrinsic == IntrinsicKind::RequireKey ||
-      intrinsic == IntrinsicKind::RequireContainerArgument) {
+  if (intrinsicBooleanFailureOutcome(intrinsic)) {
     std::vector<SemanticType> argumentTypes;
     for (const auto &argument : expr.arguments()) {
       argumentTypes.push_back(analyze(argument));

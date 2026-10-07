@@ -2180,12 +2180,8 @@
           "value": "[["
         },
         {
-          "type": "FIELD",
-          "name": "attribute",
-          "content": {
-            "type": "SYMBOL",
-            "name": "identifier"
-          }
+          "type": "SYMBOL",
+          "name": "_class_attribute"
         },
         {
           "type": "REPEAT",
@@ -2197,12 +2193,8 @@
                 "value": ","
               },
               {
-                "type": "FIELD",
-                "name": "attribute",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "identifier"
-                }
+                "type": "SYMBOL",
+                "name": "_class_attribute"
               }
             ]
           }
@@ -2210,6 +2202,48 @@
         {
           "type": "STRING",
           "value": "]]"
+        }
+      ]
+    },
+    "_class_attribute": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "attribute",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "("
+                },
+                {
+                  "type": "FIELD",
+                  "name": "capability_parameter",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  }
+                },
+                {
+                  "type": "STRING",
+                  "value": ")"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         }
       ]
     },

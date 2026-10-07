@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v90`, `mir-body-v76`).
+instruction, body, and caller-assignment facts (`mir-v92`, `mir-body-v78`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,7 +236,15 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The deterministic serialization is currently `mir-v90`/`mir-body-v76`.
+The deterministic serialization is currently `mir-v92`/`mir-body-v78`.
+
+Concrete class rows retain transfer/share policy and any substituted unsafe
+capability condition. The verifier checks that a conditional policy retains
+its condition and that its result agrees with the payload's concrete MIR
+capabilities; nominal facts remain frontend-owned, while real builtin aggregate
+components compose those facts. Removing the condition or changing the derived
+capability is invalid MIR. The declaration catalog preserves the generic
+condition in `lowered-program-v12`, and optimization replay includes these facts.
 Field-aware borrowed-return and construction contracts serialize each result
 field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
@@ -741,6 +749,15 @@ representation, and returns its boolean cleanup result through `Invoke` without
 replacing the original failure record. No byte release occurs. Effect analysis
 includes the same exact destructor targets and synchronization effects; the
 optimizer classifies raw lifetime end as a conservative memory/cleanup barrier.
+
+Source-defined sparse policy uses private boolean checks for vacancy, liveness,
+relocation capacity, source initialization and destination vacancy. Source GTI
+computes each condition; the intrinsic only raises its exact existing
+`InvalidStorageState` detail when false. The shared intrinsic failure mapping
+feeds semantics, MIR verification and lowering, just as the key/container
+argument checks do. These calls have no storage inspection or lifecycle side
+effects. They remain trapping optimization barriers without a supported
+discharge proof, and forged outcome families are rejected independently.
 
 Explicit removal retires the sparse live bit or prefix length before cleanup,
 ends the disarmed element representation once, and returns to the same MIR

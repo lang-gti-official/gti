@@ -366,8 +366,46 @@ enum class IntrinsicKind {
   ObjectDestroy,
   ObjectConstruct,
   ObjectRelocate,
+  RequireVacantStorage,
+  RequireLiveStorage,
+  RequireRelocationCapacity,
+  RequireRelocationSource,
+  RequireRelocationDestination,
   Count,
 };
+
+// These checks consume a source-computed condition, not a storage object.
+// The declaration-bound intrinsic selects the failure family; neither MIR
+// nor a backend needs to inspect a container or rediscover its slot policy.
+[[nodiscard]] inline std::optional<DefinedFailureOutcome>
+intrinsicBooleanFailureOutcome(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::RequireKey:
+    return DefinedFailureOutcome{DefinedFailureCode::KeyNotFound,
+                                 DefinedFailureDetail::KeyLookup};
+  case IntrinsicKind::RequireContainerArgument:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidContainerArgument,
+                                 DefinedFailureDetail::ContainerArgument};
+  case IntrinsicKind::RequireVacantStorage:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::DuplicateConstruction};
+  case IntrinsicKind::RequireLiveStorage:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::UninitializedAccess};
+  case IntrinsicKind::RequireRelocationCapacity:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::RelocationCapacity};
+  case IntrinsicKind::RequireRelocationSource:
+    return DefinedFailureOutcome{DefinedFailureCode::InvalidStorageState,
+                                 DefinedFailureDetail::InvalidRelocationSource};
+  case IntrinsicKind::RequireRelocationDestination:
+    return DefinedFailureOutcome{
+        DefinedFailureCode::InvalidStorageState,
+        DefinedFailureDetail::OccupiedRelocationDestination};
+  default:
+    return std::nullopt;
+  }
+}
 
 [[nodiscard]] constexpr bool simdIntrinsic(IntrinsicKind intrinsic) {
   return intrinsic >= IntrinsicKind::SimdAdd &&
@@ -730,6 +768,8 @@ struct ClassTypeInfo {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
+  std::optional<SemanticType> transferCondition;
+  std::optional<SemanticType> shareCondition;
   bool compilerPrivate = false;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
