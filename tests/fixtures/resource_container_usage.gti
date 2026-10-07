@@ -1,0 +1,171 @@
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+#include <std/string>
+#include "../../examples/allocator-support/arena.gti"
+
+// Ordinary client shapes beyond the motivating example: containers stored in
+// classes and passed by mutable reference, owning and unique elements, the
+// process resource, recoverable exhaustion, element destruction independent of
+// region release, and relocation between distinct resource instances.
+// Counters prove exactly-once element cleanup.
+mut int alive = 0;
+mut int destroyed = 0;
+
+class Tracked {
+  std::string label;
+  int id;
+public:
+  Tracked(int id) : label(std::string("tracked")), id(id) { alive++; }
+  int value() { return this.id; }
+  ~Tracked() { alive--; destroyed += this.id; }
+};
+
+class World {
+  mut std::resource_vector<Tracked, engine::Arena> entities;
+public:
+  World(std::resource_ref<engine::Arena> resource)
+      : entities(std::resource_vector<Tracked, engine::Arena>(resource)) {}
+  void spawn(int id) mut { this.entities.emplace_back(id); }
+  std::size_t count() { return this.entities.size(); }
+  int sum() {
+    mut int total = 0;
+    for (auto& entity : this.entities) { total += entity.value(); }
+    return total;
+  }
+};
+
+void fill(mut std::resource_vector<int, engine::Arena>& values, int count) {
+  for (mut int index = 0; index < count; index++) { values.push_back(index); }
+}
+
+int member_growth(std::resource_ref<engine::Arena> resource) {
+  destroyed = 0;
+  {
+    mut World world{resource};
+    for (mut int id = 1; id <= 40; id++) { world.spawn(id); }
+    // Growth relocated the owning elements several times without running
+    // their destructors or constructing copies.
+    if (world.count() != std::size_t(40) || world.sum() != 820 || alive != 40 ||
+        destroyed != 0) { return 1; }
+  }
+  return alive == 0 && destroyed == 820 ? 0 : 2;
+}
+
+int by_reference(std::resource_ref<engine::Arena> resource) {
+  mut std::resource_vector<int, engine::Arena> values{resource};
+  fill(values, 10);
+  fill(values, 5);
+  return values.size() == std::size_t(15) && values.back() == 4 ? 0 : 10;
+}
+
+int unique_elements(std::resource_ref<engine::Arena> resource) {
+  mut std::resource_vector<std::unique_ptr<int>, engine::Arena> boxes{resource};
+  for (mut int index = 0; index < 20; index++) {
+    boxes.push_back(std::make_unique<int>(index));
+  }
+  return *boxes.get(std::size_t(19)) == 19 && *boxes.front() == 0 ? 0 : 20;
+}
+
+int exhaustion(std::resource_ref<engine::Arena> resource) {
+  mut std::resource_vector<int, engine::Arena> values{resource};
+  auto huge = values.try_reserve(std::size_t(1000000));
+  if (huge || huge.error() != std::alloc_errc::resource_exhausted) { return 30; }
+  values.push_back(7);
+  return values.size() == std::size_t(1) && values.get(std::size_t(0)) == 7 ? 0 : 31;
+}
+
+int independent_destruction(std::resource_ref<engine::Arena> resource) {
+  destroyed = 0;
+  mut std::resource_storage<Tracked, engine::Arena> slots{resource};
+  if (!slots.try_allocate(std::size_t(4))) { return 40; }
+  slots.emplace(std::size_t(0), 100);
+  slots.emplace(std::size_t(2), 200);
+  slots.emplace(std::size_t(3), 300);
+  if (!slots.initialized(std::size_t(0)) || slots.initialized(std::size_t(1)) ||
+      alive != 3) { return 41; }
+  slots.destroy(std::size_t(2));
+  if (slots.initialized(std::size_t(2)) || alive != 2 || destroyed != 200) { return 42; }
+  // Destroying an object does not release its region: the slot is reusable.
+  slots.emplace(std::size_t(2), 400);
+  if (slots.get_mut(std::size_t(2)).value() != 400 ||
+      slots.capacity() != std::size_t(4)) { return 43; }
+  slots.clear();
+  if (alive != 0 || destroyed != 1000 || slots.capacity() != std::size_t(4)) { return 44; }
+  if (resource.get().live_allocations() != std::size_t(1)) { return 45; }
+  slots.release();
+  return slots.capacity() == std::size_t(0) &&
+      resource.get().live_allocations() == std::size_t(0) ? 0 : 46;
+}
+
+int cross_resource(std::resource_ref<engine::Arena> first,
+                   std::resource_ref<engine::Arena> second) {
+  destroyed = 0;
+  mut std::resource_storage<Tracked, engine::Arena> source{first};
+  mut std::resource_storage<Tracked, engine::Arena> destination{second};
+  if (!source.try_allocate(std::size_t(2))) { return 50; }
+  if (!destination.try_allocate(std::size_t(4))) { return 51; }
+  source.emplace(std::size_t(0), 5);
+  source.emplace(std::size_t(1), 6);
+  // Elements move between regions of different resource instances; each
+  // owner keeps its own binding and releases only its own region.
+  source.relocate_to(destination, std::size_t(2));
+  if (source.initialized(std::size_t(0)) || !destination.initialized(std::size_t(1)) ||
+      destination.get(std::size_t(1)).value() != 6 || alive != 2 ||
+      destroyed != 0) { return 52; }
+  return 0;
+}
+
+int process_backed() {
+  std::process_resource heap{};
+  unsafe {
+    // The process resource satisfies the provider contract by construction.
+    auto resource = std::bind_resource(heap);
+    mut std::resource_vector<std::string, std::process_resource> words{resource};
+    words.push_back(std::string("alpha"));
+    words.emplace_back("beta");
+    words.reserve(std::size_t(32));
+    if (words.size() != std::size_t(2) || words.capacity() < std::size_t(32) ||
+        words.get(std::size_t(1)).view() != "beta") { return 60; }
+  }
+  return 0;
+}
+
+int main() {
+  mut engine::Arena arena{std::size_t(65536), std::size_t(256)};
+  unsafe {
+    // Arena supplies aligned, writable, disjoint regions until matching
+    // release, and nothing resets it independently while it is bound.
+    auto resource = std::bind_resource(arena);
+    int growth = member_growth(resource);
+    if (growth != 0) { return growth; }
+    int reference = by_reference(resource);
+    if (reference != 0) { return reference; }
+    int unique = unique_elements(resource);
+    if (unique != 0) { return unique; }
+    int exhausted = exhaustion(resource);
+    if (exhausted != 0) { return exhausted; }
+    int independent = independent_destruction(resource);
+    if (independent != 0) { return independent; }
+  }
+  if (arena.live_allocations() != std::size_t(0) ||
+      arena.allocation_count() != arena.release_count()) { return 70; }
+  {
+    engine::Arena first{std::size_t(4096), std::size_t(64)};
+    engine::Arena second{std::size_t(4096), std::size_t(64)};
+    unsafe {
+      auto left = std::bind_resource(first);
+      auto right = std::bind_resource(second);
+      int crossed = cross_resource(left, right);
+      if (crossed != 0) { return crossed; }
+    }
+    if (alive != 0 || destroyed != 11 ||
+        first.allocation_count() != uint64_t(1) || first.release_count() != uint64_t(1) ||
+        second.allocation_count() != uint64_t(1) ||
+        second.release_count() != uint64_t(1)) { return 71; }
+  }
+  int process = process_backed();
+  if (process != 0) { return process; }
+  arena.reset();
+  return arena.used_bytes() == std::size_t(0) ? 0 : 72;
+}

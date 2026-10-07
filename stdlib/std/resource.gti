@@ -228,11 +228,16 @@ public:
     candidate.lease.attach(previous_allocation);
     return;
   }
+  /// Destroys live elements, then returns the region to its own resource.
+  /// The binding is retained, so the owner can allocate again afterwards.
   void release() mut {
     raw_allocation allocation = this.lease.take();
     gti_internal::resource_lease<R> previous_lease{this.lease.binding(), allocation};
+    mut gti_internal::storage<T> empty = gti_internal::allocate_storage<T>(uint64_t(0));
+    // Reverse local cleanup destroys previous's elements before
+    // previous_lease returns their region.
     gti_internal::storage<T> previous = std::move(this.data);
-    this.data = gti_internal::allocate_storage<T>(uint64_t(0));
+    this.data = std::move(empty);
   }
 };
 }

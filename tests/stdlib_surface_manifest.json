@@ -33,7 +33,7 @@
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
-    "stdlib/std/resource.gti": "086eb46306ff21eff9bd654f1c97a118273a13f160558a7fca370aad2f1dc09c",
+    "stdlib/std/resource.gti": "42abee4267c6c3cbdfaafd34eb03f7ad507c1f0280cf1e410a89fc4ec86c5ebf",
     "stdlib/std/resource_vector.gti": "9b052fac66fd2f9d6dcf9af01620d7ce04dfd4c839da2be8a8b9e4065e708d79",
     "stdlib/std/set.gti": "706d93edf068cc7a207ce3eedc2cd19ad08ea46cdd70b924309c6230cd90c716",
     "stdlib/std/simd.gti": "ec60e8807ec3d4cf617a03d4f593231e54b298c2b399b260aa19acfddcdbe720",
@@ -894,6 +894,13 @@
       "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
     },
     {
+      "id": "resource-container-usage",
+      "mode": "run",
+      "source": "tests/fixtures/resource_container_usage.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "resource-programmable",
       "mode": "run",
       "source": "tests/fixtures/programmable_allocators.gti",
@@ -913,6 +920,13 @@
       "source": "tests/fixtures/resource_region_contracts.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "resource-vector-constructor-rollback",
+      "mode": "run",
+      "source": "tests/fixtures/resource_vector_constructor_rollback.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
     },
     {
       "id": "restoring-exchange-example",
@@ -2425,9 +2439,9 @@
         "std::resource_vector::try_reserve",
         "std::resource_vector_element"
       ],
-      "case_ids": ["resource-allocator-example", "resource-programmable"],
+      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-container-usage", "resource-vector-constructor-rollback"],
       "required_instantiations": ["int and std::string", "owning Item with an observable destructor", "application-defined arena and allocation-budget provider", "growth, iteration, mutable element access, owner movement and recoverable growth failure"],
-      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md"]
+      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti"]
     },
     {
       "id": "resource.protocol",
@@ -2443,9 +2457,9 @@
         "std::resource_ref",
         "std::resource_ref::get"
       ],
-      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-raw-movement", "resource-region-contracts"],
+      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-raw-movement", "resource-region-contracts", "resource-container-usage"],
       "required_instantiations": ["process_resource", "application-defined Arena, CountingResource and ProbeResource", "one-time unsafe binding followed by checked safe ownership", "exact allocation descriptor release, provider lifetime retention and region-shape rejection"],
-      "evidence": ["stdlib/std/resource.gti", "examples/allocator-support/arena.gti", "tests/resource_protocol_tests.cpp", "tests/resource_memory_runtime_tests.cpp", "tests/fixtures/resource_region_contracts.gti", "tests/fixtures/raw_resource_movement.gti", "tests/programmable_allocators_runtime_test.py", "docs/language/raw-pointers.md"]
+      "evidence": ["stdlib/std/resource.gti", "examples/allocator-support/arena.gti", "tests/resource_protocol_tests.cpp", "tests/resource_memory_runtime_tests.cpp", "tests/fixtures/resource_region_contracts.gti", "tests/fixtures/raw_resource_movement.gti", "tests/programmable_allocators_runtime_test.py", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti"]
     },
     {
       "id": "resource.storage",
@@ -2465,9 +2479,9 @@
         "std::resource_storage::try_allocate",
         "std::resource_storage::try_reserve_prefix"
       ],
-      "case_ids": ["resource-allocator-example", "resource-constructor-rollback", "resource-programmable", "resource-region-contracts"],
+      "case_ids": ["resource-allocator-example", "resource-constructor-rollback", "resource-programmable", "resource-region-contracts", "resource-container-usage", "resource-vector-constructor-rollback"],
       "required_instantiations": ["int and owning Item", "immovable FixedObject and Fixed", "explicit over-alignment and sparse slots", "structural relocation with strong allocation-failure preservation", "element cleanup before provider release and constructor rollback"],
-      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/fixtures/resource_constructor_rollback.gti", "tests/fixtures/resource_region_contracts.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md"]
+      "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/fixtures/resource_constructor_rollback.gti", "tests/fixtures/resource_region_contracts.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti"]
     },
     {
       "id": "set.executable",

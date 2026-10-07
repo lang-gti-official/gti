@@ -291,6 +291,120 @@ int main() { return 0; }
            "GTI-S2045",
            "a resource binding cannot outlive its checked resource");
 
+  const std::string resettable = R"(
+#include <std/resource_vector>
+struct Resource {
+  unsafe expected<std::raw_allocation,std::alloc_errc> allocate(std::layout request) {
+    return unexpected(std::alloc_errc::resource_exhausted);
+  }
+  unsafe void release(std::raw_allocation allocation) {}
+  void reset() mut {}
+};
+class Fixed {
+  int value;
+public:
+  Fixed(int value) : value(value) {}
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+};
+)";
+  negative(resettable + R"(
+int use(std::resource_ref<Resource> resource) {
+  resource.get().reset();
+  return 0;
+}
+int main() { return 0; }
+)",
+           "GTI-S2000",
+           "a shared resource binding cannot reach the provider's exclusive "
+           "reset");
+  negative(resettable + R"(
+int main() {
+  mut Resource resource{};
+  unsafe {
+    auto binding = std::bind_resource(resource);
+    mut std::resource_vector<int,Resource> values{binding};
+    resource.reset();
+    values.try_reserve(std::size_t(1)).value();
+  }
+  return 0;
+}
+)",
+           "GTI-S2017", "a live growable container prevents provider reset");
+  negative(resettable + R"(
+int main() {
+  mut Resource resource{};
+  unsafe {
+    auto binding = std::bind_resource(resource);
+    std::resource_storage<int,Resource> retained{binding};
+    auto moved = std::move(resource);
+  }
+  return 0;
+}
+)",
+           "GTI-S2017", "a live lease prevents moving its provider");
+  for (const auto &operation :
+       {std::string("values.push_back(7);"),
+        std::string("values.emplace_back(7);"),
+        std::string("values.try_push_back(7).value();"),
+        std::string("mut int& slot = values.get_mut(std::size_t(0));\n"
+                    "  slot = 9;")}) {
+    negative(R"(
+#include <std/resource_vector>
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_vector<int,std::process_resource> values{resource};
+  values.emplace_back(42);
+  int& element = values.get(std::size_t(0));
+  )" + operation +
+                 R"(
+  return element;
+}
+int main() { return 0; }
+)",
+             "GTI-S2017",
+             "a live vector element prevents growth or mutable access: " +
+                 operation);
+  }
+  negative(R"(
+#include <std/resource_vector>
+int& leak(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_vector<int,std::process_resource> values{resource};
+  values.emplace_back(42);
+  return values.get(std::size_t(0));
+}
+int main() { return 0; }
+)",
+           "GTI-S2017",
+           "an element reference cannot escape its local container");
+  negative(resettable + R"(
+int use(std::resource_ref<Resource> resource) {
+  std::resource_vector<Fixed,Resource> values{resource};
+  return 0;
+}
+int main() { return 0; }
+)",
+           "GTI-S2029",
+           "a growable container rejects elements it would need to relocate");
+  for (const auto &operation :
+       {std::string("left.relocate_to(right, std::size_t(0));"),
+        std::string("left.try_reserve_prefix(std::size_t(4), "
+                    "std::size_t(0)).value();")}) {
+    negative(
+        resettable + R"(
+int use(std::resource_ref<Resource> resource) {
+  mut std::resource_storage<Fixed,Resource> left{resource};
+  mut std::resource_storage<Fixed,Resource> right{resource};
+  )" + operation +
+            R"(
+  return 0;
+}
+int main() { return 0; }
+)",
+        "GTI-S2029",
+        "fixed-address storage rejects relocation of immovable elements: " +
+            operation);
+  }
+
   if (failures == 0)
     std::cout << "resource binding and typed lease contracts passed\n";
   return failures == 0 ? 0 : 1;

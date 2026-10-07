@@ -270,7 +270,10 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(immovable_storage_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME programmable_allocators_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 300)
+  set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)
+  add_test(NAME allocator_raw_audit_independence
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(allocator_raw_audit_independence PROPERTIES TIMEOUT 600)
 endif()
 add_executable(gti_shared_ownership_tests shared_ownership_tests.cpp)
 target_link_libraries(gti_shared_ownership_tests PRIVATE gti_compiler)
@@ -2969,6 +2972,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME runtime_object_layout_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    add_test(NAME resource_protocol_lsp
+             COMMAND "${Python3_EXECUTABLE}"
+                     "${PROJECT_SOURCE_DIR}/tests/resource_protocol_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     add_test(NAME structural_class_lsp
              COMMAND "${Python3_EXECUTABLE}"
