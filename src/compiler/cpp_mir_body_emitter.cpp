@@ -15450,7 +15450,17 @@ passiveFixedArrayAggregateCallInput(const MirProgram &program,
   const auto *drop =
       uniqueValueLifetimeDrop(body, input.value, stage.info.type);
   const auto *source = drop ? body.findPlace(drop->place) : nullptr;
-  const auto sourceUses = nonRootRecordUses(body, input.value);
+  std::vector<MirValueUse> sourceUses;
+  std::size_t owningRoots = 0;
+  for (const auto &use : body.usesOf(input.value)) {
+    if (use.kind == MirValueUseKind::PlaceRoot) {
+      if (source == nullptr || use.place != source->id)
+        return nullptr;
+      ++owningRoots;
+    } else {
+      sourceUses.push_back(use);
+    }
+  }
   const auto uses = body.usesOf(*stage.result);
   const auto *stagedValue = body.findValue(*stage.result);
   if (value == nullptr || value->info.type != stage.info.type ||
@@ -15461,7 +15471,7 @@ passiveFixedArrayAggregateCallInput(const MirProgram &program,
       source == nullptr || source->root != MirPlaceRootKind::Value ||
       source->value != input.value || !source->projections.empty() ||
       source->type != stage.info.type || drop->dropType.requiresActiveCleanup ||
-      sourceUses.size() != 1 ||
+      owningRoots != 1 || sourceUses.size() != 1 ||
       sourceUses.front().kind != MirValueUseKind::InstructionOperand ||
       sourceUses.front().instruction != stage.id ||
       sourceUses.front().operandIndex != 0 || uses.size() != 1 ||
@@ -47910,7 +47920,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !capabilityRow(CppMirEmissionCapabilityKind::Payload) ||
               !typeRow(instruction.info.type) ||
               (instruction.operation == MirOperation::PayloadConstruct
-                   ? variant->fieldTypes.size() != instruction.operands.size()
+                   ? (variant->fieldTypes.size() !=
+                          instruction.operands.size() ||
+                      !std::equal(variant->fieldTypes.begin(),
+                                  variant->fieldTypes.end(),
+                                  instruction.operands.begin(),
+                                  [](const SemanticType &type,
+                                     const MirOperand &operand) {
+                                    return type == operand.type;
+                                  }))
                    : instruction.operands.size() != 1 ||
                          !instruction.payloadIndex ||
                          *instruction.payloadIndex >=
