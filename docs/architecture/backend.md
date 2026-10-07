@@ -520,6 +520,14 @@ construction retain CallInput activation, consuming handoff and failure cleanup.
 These are representation proofs over resolved MIR, not source-AST replay or
 standard-library type exceptions.
 
+The passive default-body proof recurses through resolved, zero-argument generated
+class defaults with cycle detection. It does not admit source calls, selected
+user constructors, borrowed state, active cleanup, failure edges, or union/base
+layouts. Thus a nested record's declaration defaults remain executable without
+turning arbitrary constructor bodies into supposedly passive native initializers.
+The same proof permits a targetless default producer in representation-only
+assignment-result storage; construction still happens at its MIR instruction.
+
 Source-constructor failure-tag calls placement-construct in the originating
 member's lexical context using global placement `new`. They do not delegate
 access checking to `std::construct_at`: that library template cannot call a

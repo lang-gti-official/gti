@@ -760,7 +760,15 @@ add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
 add_executable(gti_passive_fixed_array_tests passive_fixed_array_tests.cpp)
 target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend)
 add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
+add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
+target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend)
+add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME class_field_value_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(class_field_value_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME passive_fixed_array_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
