@@ -2279,6 +2279,14 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_c_scalar_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(native_c_scalar_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME nested_raw_pointer_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_raw_pointer_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(nested_raw_pointer_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME nested_raw_pointer_native_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_raw_pointer_native_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(nested_raw_pointer_native_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME raw_record_containers_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_record_containers_runtime_test.py"
             "$<TARGET_FILE:gti>")

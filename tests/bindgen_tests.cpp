@@ -385,7 +385,7 @@ int use_plain(struct Plain plain);
 
 void testFieldPositionDegradation() {
   // Native char pointer fields use c_char rather than the call-only c_string
-  // conversion family. Unsupported nested fields still degrade honestly.
+  // conversion family. Nested pointer fields use the same recursive family.
   const lang::bindgen::ReadResult read = readC(R"(
 struct Labeled { const char *text; int code; };
 struct Tails { const char **tails; };
@@ -399,9 +399,9 @@ struct Tails { const char **tails; };
          "a 'const char*' field must retain native plain char identity");
   const lang::bindgen::BindingItem *tails = findItem(plan, "Tails");
   expect(tails != nullptr &&
-             tails->kind == lang::bindgen::BindingItemKind::Opaque &&
-             contains(tails->reason, "nested pointer"),
-         "a nested-pointer field should degrade the record with its reason");
+             tails->kind == lang::bindgen::BindingItemKind::Record &&
+             tails->fields.front().spelling == "const c_char** tails",
+         "a nested-pointer field should preserve its C representation");
 }
 
 void testRecordFieldExpansion() {
@@ -517,9 +517,9 @@ int _Reserved(int value);
              openItem->kind == lang::bindgen::BindingItemKind::Function &&
              findTail->kind == lang::bindgen::BindingItemKind::Function &&
              openItem->parameters[0].spelling == "Item**" &&
-             findTail->parameters[0].spelling == "c_string*",
+             findTail->parameters[0].spelling == "const c_char**",
          "the importer should retain exact opaque-handle and C-string out "
-         "parameters without enabling general nested pointers");
+         "parameters through ordinary nested pointer types");
   const auto expectSkip = [&](std::string_view name,
                               std::string_view fragment) {
     const lang::bindgen::BindingItem *item = findItem(plan, name);
@@ -537,8 +537,14 @@ int _Reserved(int value);
            std::string(name) +
                " must import with its exact native scalar identity");
   }
-  expectSkip("rejected_two_level", "two-level pointers are limited");
-  expectSkip("rejected_const_handle", "two-level pointers are limited");
+  for (const auto &[name, spelling] :
+       {std::pair{"rejected_two_level", "c_int**"},
+        std::pair{"rejected_const_handle", "const Item**"}}) {
+    const auto *item = findItem(plan, name);
+    expect(item && item->kind == lang::bindgen::BindingItemKind::Function &&
+               item->parameters.front().spelling == spelling,
+           std::string(name) + " must preserve the recursive pointer type");
+  }
   expectSkip("template", "reserved GTI spelling");
   expectSkip("_Reserved", "implementation-reserved");
 }
@@ -764,9 +770,7 @@ int engine_no_proto(void (*handler)());
          "the synthesized alias should emit before its first use");
 }
 
-// Read-only string arrays (`const char* const*`) share the language's
-// c_string* spelling with `const char**` out parameters; a writable char**
-// stays outside the bounded surface.
+// Preserve the distinct per-layer qualifiers of native string pointer arrays.
 void testStringArrayParameters() {
   const lang::bindgen::BindgenResult result =
       lang::bindgen::runCBindgen(R"(
@@ -777,15 +781,17 @@ int take_writable(char **buffers);
                                  "argv.h");
   expect(result.usable(), "the string-array header should read");
   const std::string &source = result.gtiSource;
-  expect(contains(source, "run_tool(c_string* arguments, c_int count)"),
-         "a const char* const* parameter should bind as c_string*");
-  expect(contains(source, "take_out(c_string* out_message)"),
+  expect(
+      contains(source, "run_tool(const c_char* const* arguments, c_int count)"),
+      "a const char* const* parameter should preserve both qualifiers");
+  expect(contains(source, "take_out(const c_char** out_message)"),
          "the const char** out parameter should stay bound");
   const lang::bindgen::BindingItem *writable =
       findItem(result.plan, "take_writable");
   expect(writable != nullptr &&
-             writable->kind == lang::bindgen::BindingItemKind::Skipped,
-         "a writable char** should stay outside the bounded surface");
+             writable->kind == lang::bindgen::BindingItemKind::Function &&
+             writable->parameters.front().spelling == "c_char**",
+         "a writable char** should use ordinary nested pointers");
 }
 
 // Shapes real system headers exposed: a use must never spell a typedef the
@@ -807,11 +813,9 @@ int queue_size(struct util__queue *queue);
                                  "shapes.h");
   expect(result.usable(), "the shapes header should read");
   const std::string &source = result.gtiSource;
-  expect(contains(source, "info_init(Info** handle)"),
-         "a use of a skipped Handle** typedef should spell the canonical "
-         "out-parameter form");
-  expect(!contains(source, "InfoHandle handle"),
-         "the skipped typedef name should not appear at a use site");
+  expect(contains(source, "using InfoHandle = Info**;") &&
+             contains(source, "info_init(InfoHandle handle)"),
+         "nested-pointer typedefs should be retained and usable normally");
   std::size_t handles = 0;
   for (std::size_t at = source.find("[[c_opaque]] struct SharedTag;");
        at != std::string::npos;
@@ -999,8 +1003,9 @@ int lib_public(int value);
     const lang::bindgen::BindingItem *handles =
         findItem(unannotated.plan, "lib_handles");
     expect(handles != nullptr &&
-               handles->kind == lang::bindgen::BindingItemKind::Skipped,
-           "without the contract the two-level result stays refused");
+               handles->kind == lang::bindgen::BindingItemKind::Function &&
+               handles->resultSpelling == "Handle**",
+           "count metadata should not determine whether a pointer type exists");
   }
   {
     // An unusable count parameter must refuse the function rather than emit

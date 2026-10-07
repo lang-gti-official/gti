@@ -10842,13 +10842,10 @@ auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, const std::vector<std::string> &fromScope) const
     -> SemanticType {
   SemanticType result = baseTypeOf(type, fromScope);
-  if (type.pointer) {
+  for (const auto &pointer : type.pointers) {
     result = SemanticType::rawPointerTo(
         std::move(result),
-        type.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
-  }
-  if (type.outerPointer) {
-    result = SemanticType::rawPointerTo(std::move(result));
+        pointer.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
   }
   for (auto extent = type.arrayExtents.rbegin();
        extent != type.arrayExtents.rend(); ++extent) {

@@ -34,6 +34,7 @@
     "120-immovable-storage.gti": 364,
     "121-programmable-allocators.gti": 551,
     "123-native-c-scalars.gti": 31,
+    "124-nested-raw-pointers.gti": 26,
     "13-ownership.gti": 46,
     "14-operators.gti": 38,
     "15-variadic-generics.gti": 36,
@@ -120,5 +121,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16101
+  "total": 16127
 }

@@ -136,8 +136,8 @@ enum class RecordBinding { CAbi, Opaque, Unavailable };
 // a direct function parameter. `RecordField` marks uses inside a [[c_abi]]
 // record, whose field set admits neither.
 // `ArrayResult` marks the result of a function the caller annotated with
-// `[[c_array(count)]]`, which the language admits one pointer level deeper
-// than an ordinary result.
+// `[[c_array(count)]]`; its count contract does not change pointer type
+// identity.
 enum class TypeUse {
   Ordinary,
   DirectFunctionParameter,
@@ -544,9 +544,9 @@ private:
 
   [[nodiscard]] MappedType mapPointer(const NativeType &pointer, TypeUse use,
                                       std::size_t pointerDepth) const {
-    if (pointerDepth >= 1) {
-      return unsupportedType("pointers deeper than the bounded C out-parameter "
-                             "surface are not supported");
+    if (pointerDepth >= 64) {
+      return unsupportedType("native pointer nesting exceeds the source "
+                             "parser's structural depth budget");
     }
     const NativeType *pointee = canonical(pointer.pointee);
     if (pointee == nullptr) {
@@ -556,47 +556,15 @@ private:
       return mapFunctionPointer(*pointee);
     }
     if (pointee->kind == NativeTypeKind::Pointer) {
-      if (use == TypeUse::RecordField) {
-        return unsupportedType("a nested pointer has no GTI [[c_abi]] field "
-                               "representation");
-      }
-      const NativeType *innerPointee = canonical(pointee->pointee);
-      if (innerPointee == nullptr) {
-        return unsupportedType("the nested pointee type is invalid");
-      }
-      if (innerPointee->kind == NativeTypeKind::Char && pointee->constPointee) {
-        // `const char**` out parameters and `const char* const*` string
-        // arrays share the language's c_string* spelling.
-        return supportedType("c_string*");
-      }
-      if (pointer.constPointee) {
-        return unsupportedType(
-            "a const-qualified inner pointer has no bounded GTI C ABI "
-            "out-parameter spelling");
-      }
-      if (use == TypeUse::DirectFunctionParameter && !pointee->constPointee &&
-          innerPointee->kind == NativeTypeKind::Record) {
-        const NativeDeclaration *record =
-            model_.findDeclaration(innerPointee->declaration);
-        const auto binding = recordBindings_.find(innerPointee->declaration);
-        if (record != nullptr && binding != recordBindings_.end() &&
-            binding->second == RecordBinding::Opaque) {
-          return supportedType(spelled(*record) + "**");
-        }
-      }
-      if (use == TypeUse::ArrayResult) {
-        // The language's `[[c_array(count)]]` result rule: one outer pointer
-        // over an otherwise admitted one-level pointer.
-        const MappedType inner =
-            mapType(pointer.pointee, false, TypeUse::Ordinary, 0);
-        if (inner.supported) {
-          return supportedType(inner.spelling + "*");
-        }
-        return inner;
-      }
-      return unsupportedType(
-          "two-level pointers are limited to const char** and exact opaque "
-          "C handle out parameters");
+      // Nested slots are the same recursive C pointer family in parameters,
+      // results and fields. Avoid the call-only c_string convenience spelling
+      // inside this tree so every qualification level remains explicit.
+      const MappedType inner = mapType(pointer.pointee, false,
+                                       TypeUse::RecordField, pointerDepth + 1);
+      return inner.supported
+                 ? supportedType(inner.spelling +
+                                 (pointer.constPointee ? " const*" : "*"))
+                 : inner;
     }
     if (pointee->kind == NativeTypeKind::Char) {
       if (pointer.constPointee && use != TypeUse::RecordField) {

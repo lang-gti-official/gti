@@ -48,6 +48,9 @@ public:
       return "nullptr_t";
     case SemanticType::RawPointer:
       if (type.arguments.size() == 1) {
+        if (type.arguments.front().kind == SemanticType::RawPointer)
+          return print(type.arguments.front()) +
+                 (type.pointerAccess == AccessMode::ReadOnly ? " const*" : "*");
         return (type.pointerAccess == AccessMode::ReadOnly ? "const " : "") +
                print(type.arguments.front()) + "*";
       }

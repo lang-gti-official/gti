@@ -2339,9 +2339,6 @@ private:
   isContextualNativeFunctionArgument(const ExprPtr &expression) const;
 
   [[nodiscard]] bool
-  isContextualNativeOutPointerArgument(const ExprPtr &expression) const;
-
-  [[nodiscard]] bool
   isContextualCallableResultArgument(const ExprPtr &expression) const;
 
   [[nodiscard]] ContextualCallArguments
@@ -2475,8 +2472,7 @@ private:
 
   void validateArrayExtent(const ArrayExtentExprPtr &extent);
 
-  void validateType(const TypeRef &type, bool allowNativeCOuterPointer = false,
-                    bool allowNativeFunctionType = false);
+  void validateType(const TypeRef &type, bool allowNativeFunctionType = false);
 
   [[nodiscard]] CompilerCapabilityTypeKind
   compilerCapabilityType(const TypeRef &type,
@@ -2723,15 +2719,10 @@ private:
   [[nodiscard]] bool isCAbiRawPointer(const SemanticType &type) const;
 
   [[nodiscard]] bool
-  isCAbiOpaqueHandleOutPointer(const SemanticType &type) const;
-
-  [[nodiscard]] bool
   nativeFunctionBoundaryTypeAllowed(const SemanticType &type,
                                     bool returnPosition) const;
 
   [[nodiscard]] bool isCAbiNativeFunction(const SemanticType &type) const;
-
-  [[nodiscard]] bool isCAbiArrayReturnPointer(const SemanticType &type) const;
 
   void validateNativeCArrayAttribute(const FunctionDecl &function,
                                      const SemanticType &returnType);
@@ -4334,7 +4325,6 @@ private:
     const Expr *contextualInitializerExpression = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
     std::optional<ContextualCallableResult> contextualCallableResult;
-    std::optional<SemanticType> contextualNativeOutPointerType;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
     std::size_t constructorDepth = 0;
     std::size_t destructorDepth = 0;
@@ -4510,8 +4500,6 @@ private:
       requestSession.contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> &contextualCallableResult =
       requestSession.contextualCallableResult;
-  std::optional<SemanticType> &contextualNativeOutPointerType =
-      requestSession.contextualNativeOutPointerType;
   ReceiverMutability &currentReceiverMutability =
       requestSession.currentReceiverMutability;
   std::size_t &constructorDepth = requestSession.constructorDepth;
