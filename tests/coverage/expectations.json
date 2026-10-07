@@ -1683,17 +1683,17 @@
     "a01-call-result-into-field": {
       "finding": "A01",
       "issue": 53,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a01-class-value-into-field": {
       "finding": "A01",
       "issue": 53,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a01-field-assign-from-call-result-method": {
       "finding": "A01",
       "issue": 53,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a03-generic-call-in-global-initializer": {
       "code": "GTI-S2068",
@@ -1775,7 +1775,7 @@
     "a14-generated-ctor-field-in-user-ctor": {
       "finding": "A14",
       "issue": 60,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a15-dependent-if-constexpr-local": {
       "finding": "A15",
@@ -2064,7 +2064,7 @@
     "a50-designated-omitted-brace-default": {
       "finding": "A50",
       "issue": 91,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a51-binding-over-class-array": {
       "finding": "A51",
