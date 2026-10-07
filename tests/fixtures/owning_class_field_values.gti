@@ -1,0 +1,34 @@
+#include <std/string>
+#include <std/utility>
+
+class OwnedValue {
+public:
+  std::string text;
+  OwnedValue(std::string initial) : text(std::move(initial)) {}
+};
+
+OwnedValue make_owned(std::string text) {
+  return OwnedValue(std::move(text));
+}
+
+class Owner {
+public:
+  mut OwnedValue value;
+  Owner(OwnedValue initial) : value(std::move(initial)) {}
+  void replace(OwnedValue next) mut {
+    this.value = std::move(next);
+  }
+};
+
+int main() {
+  mut Owner owner = Owner(OwnedValue(std::string("old")));
+  OwnedValue replacement = OwnedValue(std::string("named"));
+  owner.value = std::move(replacement);
+  if (owner.value.text.view() != "named") { return 1; }
+  owner.value = make_owned(std::string("call"));
+  if (owner.value.text.view() != "call") { return 2; }
+  owner.value = OwnedValue(std::string("fresh"));
+  if (owner.value.text.view() != "fresh") { return 3; }
+  owner.replace(OwnedValue(std::string("method")));
+  return owner.value.text.view() == "method" ? 0 : 4;
+}
