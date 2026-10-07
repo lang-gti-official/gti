@@ -1045,6 +1045,13 @@ through an exact whole-value initialization or move chain; the shared verifier
 query proves that historical identity while the flow verifier still requires
 the currently active owner and valid loan state. This is not an exemption for
 use after movement or for ending a resource loan before cleanup.
+A by-value cleanup-bound entry loan retains its formal parameter as an immutable
+provenance anchor even after that parameter moves into locals. Current binding
+availability is tracked separately. Every additional carrier must be reachable
+from the formal's initially active drop obligation through exact lifecycle
+transfers; an unrelated same-typed local or parameter cannot supply this proof.
+The program verifier checks this history independently of the loan's carrier
+summary, and the flow verifier still checks active ownership at each operation.
 A newly constructed cleanup-bound owner can retain a copied passive view's
 shared dependency as a distinct child loan. Its cleanup obligation does not
 merge with that view's ordinary last-use endpoint. Mapped reference returns

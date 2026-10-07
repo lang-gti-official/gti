@@ -1646,6 +1646,9 @@ and does not make either public class compiler-recognized.
   from one resource coexist; none needs an exclusive borrow of the resource.
   Moving an owner transfers its region and release obligation without moving
   its elements.
+  This includes taking an owner by value and moving that parameter through
+  local bindings: the original provider dependency survives until the final
+  owner's cleanup, not merely until the parameter's last source use.
 - **Borrowing objects in a region.** Element references and iterators borrow
   the owning storage, not merely the resource. They block growth, release,
   clearing and movement of that owner until their last use. Keeping the

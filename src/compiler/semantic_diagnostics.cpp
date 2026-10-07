@@ -317,6 +317,8 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       signature += ")";
       if (memberQuery->receiver().referenceMutability)
         signature += " mut";
+      if (memberQuery->unsafeKeyword())
+        signature = "unsafe { " + signature + " }";
       diagnostic.related.push_back(
           {tokenSpan(memberQuery->member()),
            "Required here as '" + signature + " -> " +
@@ -330,18 +332,25 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
            "Required here as '" + constraint + "<" + arguments + ">'."});
     }
     switch (failure.structural) {
-    case StructuralConstraintKind::ReadMember:
+    case StructuralConstraintKind::ReadMember: {
+      const bool permitsUnsafe = memberQuery && memberQuery->unsafeKeyword();
+      const std::string safety = permitsUnsafe ? "public" : "public, safe";
       if (memberQuery && memberQuery->parameters().empty() &&
           !memberQuery->receiver().referenceMutability)
         diagnostic.hints.emplace_back(
-            "Provide a public, safe, read-only '" + failure.memberName +
+            "Provide a " + safety + ", read-only '" + failure.memberName +
             "()' member with the exact required owned result type.");
       else
         diagnostic.hints.emplace_back(
-            "Provide a public, safe '" + failure.memberName +
+            "Provide a " + safety + " '" + failure.memberName +
             "' member with the required receiver access, exact parameter types "
             "and exact owned result type.");
+      if (permitsUnsafe)
+        diagnostic.hints.emplace_back(
+            "This requirement permits a safe or unsafe member; generic calls "
+            "through this requirement still need an explicit unsafe context.");
       break;
+    }
     case StructuralConstraintKind::InputIterator:
       diagnostic.hints.emplace_back(
           "The iterator must provide public read-only operator*() returning "
