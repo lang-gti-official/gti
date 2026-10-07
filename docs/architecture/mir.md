@@ -2824,11 +2824,11 @@ occurs after both checks succeed. Postfix retains the original narrow value;
 prefix and compound assignment retain the committed narrow result. Bare
 instance-field destinations and explicit receiver projections use the same
 primitive schedule. The general C++ MIR emitter consumes every
-physical-place operation in this family. A non-array indexed class projection
-still denotes a selected subscript call, not a physical element address; it
-retains the checked closed compound boundary until one exact returned
-reference can be staged. Splitting that projection into read/write would
-duplicate the accessor or require an unselected overload. The emitter admits
+physical-place operation in this family. A selected class subscript stages its
+exact returned reference as one loan-rooted place before the primitive update;
+the accessor is evaluated once, not separately for the read and write. The
+older unstaged class-index representation retains its closed compound boundary
+only where no returned-reference place has been staged. The emitter admits
 each operation in this fixed-integer allowlist only after both MIR verification
 and representation preflight.
 
