@@ -571,6 +571,11 @@ add_test(NAME call_result_publication_runtime
                  "${PROJECT_SOURCE_DIR}/tests/call_result_publication_runtime_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(call_result_publication_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_return_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_return_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_return_runtime PROPERTIES TIMEOUT 240)
 
 add_executable("gti_native_header_tests" "${PROJECT_SOURCE_DIR}/tests/native_header_tests.cpp")
 target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)

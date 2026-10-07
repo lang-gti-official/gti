@@ -1950,12 +1950,12 @@
     "a38-return-call-value-class": {
       "finding": "A38",
       "issue": 81,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a38-return-expected-value-class": {
       "finding": "A38",
       "issue": 81,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a39-ctor-address-of-struct-field": {
       "finding": "A39",
