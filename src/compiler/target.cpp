@@ -109,6 +109,179 @@ std::string_view TargetInfo::value(TargetProperty property) const {
   return {};
 }
 
+std::string_view nativeCScalarKindName(NativeCScalarKind kind) {
+  switch (kind) {
+  case NativeCScalarKind::Bool:
+    return "c_bool";
+  case NativeCScalarKind::Char:
+    return "c_char";
+  case NativeCScalarKind::SignedChar:
+    return "c_schar";
+  case NativeCScalarKind::UnsignedChar:
+    return "c_uchar";
+  case NativeCScalarKind::Short:
+    return "c_short";
+  case NativeCScalarKind::UnsignedShort:
+    return "c_ushort";
+  case NativeCScalarKind::Int:
+    return "c_int";
+  case NativeCScalarKind::UnsignedInt:
+    return "c_uint";
+  case NativeCScalarKind::Long:
+    return "c_long";
+  case NativeCScalarKind::UnsignedLong:
+    return "c_ulong";
+  case NativeCScalarKind::LongLong:
+    return "c_longlong";
+  case NativeCScalarKind::UnsignedLongLong:
+    return "c_ulonglong";
+  case NativeCScalarKind::Float:
+    return "c_float";
+  case NativeCScalarKind::Double:
+    return "c_double";
+  case NativeCScalarKind::Size:
+    return "c_size_t";
+  case NativeCScalarKind::Ptrdiff:
+    return "c_ptrdiff_t";
+  case NativeCScalarKind::Intptr:
+    return "c_intptr_t";
+  case NativeCScalarKind::Uintptr:
+    return "c_uintptr_t";
+  case NativeCScalarKind::None:
+  case NativeCScalarKind::Count:
+    return {};
+  }
+  return {};
+}
+
+std::optional<NativeCScalarKind> parseNativeCScalarKind(std::string_view name) {
+  for (unsigned index = 1;
+       index < static_cast<unsigned>(NativeCScalarKind::Count); ++index) {
+    const auto kind = static_cast<NativeCScalarKind>(index);
+    if (nativeCScalarKindName(kind) == name) {
+      return kind;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<TargetCScalarInfo>
+TargetInfo::nativeCScalar(NativeCScalarKind kind) const {
+  if (!supported()) {
+    return std::nullopt;
+  }
+  // All accepted Unix targets use LP64; accepted Windows targets use LLP64.
+  // Their pointer-sized C typedefs therefore select different primitive
+  // declaration identities even though all of them occupy eight bytes.
+  const bool llp64 = os == "windows";
+  NativeCScalarKind declaration = kind;
+  switch (kind) {
+  case NativeCScalarKind::Size:
+  case NativeCScalarKind::Uintptr:
+    declaration = llp64 ? NativeCScalarKind::UnsignedLongLong
+                        : NativeCScalarKind::UnsignedLong;
+    break;
+  case NativeCScalarKind::Ptrdiff:
+  case NativeCScalarKind::Intptr:
+    declaration = llp64 ? NativeCScalarKind::LongLong : NativeCScalarKind::Long;
+    break;
+  default:
+    break;
+  }
+  TargetScalarKind value = TargetScalarKind::Count;
+  switch (declaration) {
+  case NativeCScalarKind::Bool:
+    value = TargetScalarKind::Bool;
+    break;
+  case NativeCScalarKind::Char:
+    value = os == "linux" && arch == "arm64" ? TargetScalarKind::UInt8
+                                             : TargetScalarKind::Int8;
+    break;
+  case NativeCScalarKind::SignedChar:
+    value = TargetScalarKind::Int8;
+    break;
+  case NativeCScalarKind::UnsignedChar:
+    value = TargetScalarKind::UInt8;
+    break;
+  case NativeCScalarKind::Short:
+    value = TargetScalarKind::Int16;
+    break;
+  case NativeCScalarKind::UnsignedShort:
+    value = TargetScalarKind::UInt16;
+    break;
+  case NativeCScalarKind::Int:
+    value = TargetScalarKind::Int32;
+    break;
+  case NativeCScalarKind::UnsignedInt:
+    value = TargetScalarKind::UInt32;
+    break;
+  case NativeCScalarKind::Long:
+    value = llp64 ? TargetScalarKind::Int32 : TargetScalarKind::Int64;
+    break;
+  case NativeCScalarKind::UnsignedLong:
+    value = llp64 ? TargetScalarKind::UInt32 : TargetScalarKind::UInt64;
+    break;
+  case NativeCScalarKind::LongLong:
+    value = TargetScalarKind::Int64;
+    break;
+  case NativeCScalarKind::UnsignedLongLong:
+    value = TargetScalarKind::UInt64;
+    break;
+  case NativeCScalarKind::Float:
+    value = TargetScalarKind::Float32;
+    break;
+  case NativeCScalarKind::Double:
+    value = TargetScalarKind::Float64;
+    break;
+  default:
+    return std::nullopt;
+  }
+  const auto layout = dataLayout.scalarLayout(value);
+  if (!layout) {
+    return std::nullopt;
+  }
+  return TargetCScalarInfo{declaration, value, *layout};
+}
+
+std::optional<NativeCScalarKind>
+TargetInfo::fixedCScalarIdentity(TargetScalarKind kind) const {
+  if (!supported()) {
+    return std::nullopt;
+  }
+  switch (kind) {
+  case TargetScalarKind::Bool:
+    return NativeCScalarKind::Bool;
+  case TargetScalarKind::Int8:
+    return NativeCScalarKind::SignedChar;
+  case TargetScalarKind::UInt8:
+    return NativeCScalarKind::UnsignedChar;
+  case TargetScalarKind::Int16:
+    return NativeCScalarKind::Short;
+  case TargetScalarKind::UInt16:
+    return NativeCScalarKind::UnsignedShort;
+  case TargetScalarKind::Int32:
+    return NativeCScalarKind::Int;
+  case TargetScalarKind::UInt32:
+    return NativeCScalarKind::UnsignedInt;
+  case TargetScalarKind::Int64:
+    return os == "linux" ? NativeCScalarKind::Long
+                         : NativeCScalarKind::LongLong;
+  case TargetScalarKind::UInt64:
+    return os == "linux" ? NativeCScalarKind::UnsignedLong
+                         : NativeCScalarKind::UnsignedLongLong;
+  case TargetScalarKind::Float32:
+    return NativeCScalarKind::Float;
+  case TargetScalarKind::Float64:
+    return NativeCScalarKind::Double;
+  // GTI char is a distinct code unit, not C's implementation-defined char.
+  case TargetScalarKind::Char:
+  case TargetScalarKind::Pointer:
+  case TargetScalarKind::Count:
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 bool TargetInfo::supported() const {
   const bool supportedOs = os == "macos" || os == "linux" || os == "windows";
   const bool supportedVendor =

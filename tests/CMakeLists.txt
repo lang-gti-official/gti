@@ -2,6 +2,10 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_native_c_scalar_target_tests native_c_scalar_target_tests.cpp)
+target_link_libraries(gti_native_c_scalar_target_tests PRIVATE gti_compiler)
+add_test(NAME native_c_scalar_target COMMAND gti_native_c_scalar_target_tests)
+
 add_executable("gti_c_abi_smoke" "${PROJECT_SOURCE_DIR}/tests/c_abi_smoke.c")
 target_include_directories(
   "gti_c_abi_smoke"
