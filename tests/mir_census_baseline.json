@@ -32,7 +32,7 @@
     "119-runtime-object-layout.gti": 50,
     "12-fixed-arrays.gti": 28,
     "120-immovable-storage.gti": 364,
-    "121-programmable-allocators.gti": 551,
+    "121-programmable-allocators.gti": 555,
     "13-ownership.gti": 46,
     "14-operators.gti": 38,
     "15-variadic-generics.gti": 36,
@@ -119,5 +119,5 @@
     "98-shared-ownership.gti": 361,
     "99-borrowed-expected.gti": 353
   },
-  "total": 16070
+  "total": 16074
 }
