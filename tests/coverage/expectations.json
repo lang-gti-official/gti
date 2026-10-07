@@ -1889,7 +1889,7 @@
     "a30-assign-consuming-call-result": {
       "finding": "A30",
       "issue": 75,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a31-move-on-break-path-then-reinit": {
       "finding": "A31",
@@ -1947,12 +1947,12 @@
     "a38-return-call-value-class": {
       "finding": "A38",
       "issue": 81,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a38-return-expected-value-class": {
       "finding": "A38",
       "issue": 81,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a39-ctor-address-of-struct-field": {
       "finding": "A39",
