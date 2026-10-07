@@ -8305,7 +8305,8 @@ private:
       MirLoanId parent = 0;
       if (desired->parent != 0) {
         if (const auto retainedParent = semanticLoans.find(desired->parent);
-            !exactRangeElement && retainedParent != semanticLoans.end() &&
+            (!exactRangeElement || desired->access == AccessMode::ReadOnly) &&
+            retainedParent != semanticLoans.end() &&
             retainableCallResultChain(existing, retainedParent->second, valueId,
                                       desired->access)) {
           // The call-result chain this expression built for this very value
@@ -8328,6 +8329,10 @@ private:
           // unused would still fail the emitter's place-coherence scan, which
           // reads every place a body records.
           //
+          // Read-only range elements use this same exact returned address.
+          // Replacing their call result with a Local loan under the shared
+          // range would lose the accessor relationship. Mutable range elements
+          // still require their direct child loan and concrete selected place.
           // The links this reborrows stay live. A parent must outlive its
           // child reborrow on every edge, which the full-expression release
           // preserves for a retained chain, and the owning scope ends the
