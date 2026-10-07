@@ -9,6 +9,10 @@ _Static_assert(_Generic(&gti_rt_native_size_max_v1,
                    uint64_t (*)(void): 1,
                    default: 0),
                "process provider native-size fact ABI");
+_Static_assert(_Generic(&gti_rt_address_is_aligned_v1,
+                   int32_t (*)(const void *, uint64_t): 1,
+                   default: 0),
+               "raw-region alignment observer ABI");
 #if defined(_WIN32)
 _Static_assert(_Generic(&gti_rt_aligned_malloc_v1,
                    void *(*)(uint64_t, uint64_t): 1,

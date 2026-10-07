@@ -1,5 +1,28 @@
 # Compiler Verification
 
+## Source sparse-storage integration checkpoint
+
+The S-ALLOC-06 candidate now routes public sparse and resource-backed owners
+through source fields, live-byte loops, general typed lifetime operations and
+two same-provider leases. With the optimized Release/Ninja compiler on macOS
+arm64, `resource_protocol_contract` passes frontend, MIR and backend admission;
+`programmable_allocators_runtime` passes its eight C++20/C++23 O0/O1/O3,
+no-elide and ASan/UBSan configurations (310.79 seconds). Its cases exercise
+object- and metadata-allocation failures, malformed descriptors, unchanged
+owners on failed growth, original release descriptors and order, final-address
+immovable construction and cleanup failures. `process_resource_policy` passes
+its corresponding matrix (25.31 seconds).
+
+The unrelated multi-guard constructor fixture additionally passes all eight
+configurations for success, later-field failure, reverse rollback, cleanup
+failure and secondary failure. Detached backend admission rejects 32 malformed
+constructor schedules; lifetime verification rejects 118 malformed schedules.
+The inline-owner/two-slot-pool matrix and source sparse-policy matrix pass all
+eight configurations. These are focused candidate results, not completion:
+retiring legacy sparse support, reconciling current main and census inventories,
+full production/tooling and installed-consumer checks remain required. No active
+user toolchain was installed, and native Windows/Linux execution is not claimed.
+
 ## Source-defined process byte provider (S-ALLOC-07 checkpoint)
 
 The independent provider checkpoint moves request validation and failure policy

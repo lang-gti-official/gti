@@ -430,6 +430,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "concrete array, or complete non-abstract class, struct or passive "
           "union. Copying and moving are not required.");
       break;
+    case StructuralConstraintKind::IndependentObject:
+      diagnostic.hints.emplace_back(
+          "The element must be a complete object type without checked borrowed "
+          "state. Raw pointers remain nonowning and retain their unsafe "
+          "validity "
+          "obligations; copying or moving the element is not required.");
+      break;
     case StructuralConstraintKind::Adds:
       diagnostic.hints.emplace_back(
           "The domain type must provide a public read-only "

@@ -3950,6 +3950,14 @@ do not expose C++ object layout as GTI semantics.
 
 #### Implementation Audit And Accepted Choices (2026-10-07)
 
+The source sparse/resource-owner integration now passes the focused resource
+contract and native allocator matrix, including same-resource metadata failure
+rollback. General multiple borrowed-field constructor admission has independent
+malformed-MIR coverage and an unrelated runtime fixture. Example 128 adds a
+fixed-address inline application pool. This is an intermediate checkpoint:
+legacy sparse compiler/backend retirement, current-main reconciliation and the
+remaining broad acceptance gates below are still outstanding.
+
 The baseline is `52f27033`; the initial audit checkpoint did not implement the
 public manual-lifetime APIs below. Phase 2's accepted borrowing,
 unsafe binding and failure contracts remain unchanged.
@@ -4084,6 +4092,22 @@ census now includes the five private detector declarations/bodies in every
 example and the earlier memory API declarations in memory consumers, with no
 change to existing generated-family counts. Full native corpus, installed
 consumers and final current-main reconciliation remain final campaign gates.
+
+The public-storage integration is now under validation, not complete. Sparse
+policy resides directly in `<std/memory>` so ordinary source-unit visibility
+does not require transitive includes. Both process storage and resource storage
+use separate object and live-slot leases; `storage_element<T>` makes the existing
+no-checked-borrow payload boundary an explicit source constraint. A narrow
+native address-alignment observation preserves defensive provider validation;
+it does not prove provenance or replace the unsafe provider obligations.
+Source sparse runtime/cleanup and native alignment/ABI checks pass. Resource
+integration exposed multi-field lifetime identity and constructor-representation
+gaps; these are being fixed with unrelated guarded-pair and malformed-MIR
+regressions before claiming public runtime parity. Two-allocation rollback,
+descriptor/release tests have been updated but the full resource runtime matrix
+is not yet passing evidence. Old sparse compiler paths remain temporarily for
+comparison and must still be retired, followed by census/current-main
+reconciliation, canonical documentation and the remaining acceptance gates.
 
 #### Why This Campaign Exists
 

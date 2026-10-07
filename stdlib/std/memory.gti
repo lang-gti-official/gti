@@ -9,6 +9,7 @@ class storage<T> {};
 class uninitialized_storage<T> {};
 
 @compiler_constraint("object_layout") concept object_layout_capability<T>;
+@compiler_constraint("independent_object") concept independent_object<T>;
 
 uint64_t object_size<T>();
 uint64_t object_alignment<T>();
@@ -68,6 +69,8 @@ enum class empty_storage_adoption {
 namespace std {
 /// Complete object types supported by the runtime representation query.
 concept layout_queryable<T> = gti_internal::object_layout_capability<T>;
+/// Complete storage elements that retain no checked external owner borrow.
+concept storage_element<T> = layout_queryable<T> && gti_internal::independent_object<T>;
 
 /// End one live object's lifetime without releasing its storage.
 /// The caller guarantees a live, writable, correctly aligned complete object,
@@ -267,6 +270,364 @@ public:
   }
 };
 
+} // namespace std
+
+namespace gti_internal {
+// Source policy seal: no public spelling establishes allocator trust.
+enum class resource_binding { trusted };
+namespace runtime {
+extern "C" {
+uint64_t gti_rt_native_size_max_v1();
+int32_t gti_rt_address_is_aligned_v1(const void* address, uint64_t alignment);
+}
+#if target.os == "windows"
+extern "C" {
+void* gti_rt_aligned_malloc_v1(uint64_t bytes, uint64_t alignment);
+void gti_rt_aligned_free_v1(void* address);
+}
+#else
+extern "C" {
+uint64_t gti_rt_posix_pointer_size_v1();
+int32_t gti_rt_posix_enomem_v1();
+int32_t gti_rt_posix_einval_v1();
+void* gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t* status);
+void gti_rt_posix_free_v1(void* address);
+}
+#endif
+}
+}
+
+
+namespace std::detail {
+/// Passive provider descriptor. Ownership belongs to a lease, not this value.
+/// Copying it copies metadata only: it neither retains a region nor authorizes
+/// a second release. The provider defines id; the process resource uses zero.
+struct raw_allocation {
+  void* address = nullptr;
+  uint64_t bytes = 0;
+  uint64_t alignment = 0;
+  uint64_t id = 0;
+  raw_allocation() {}
+  raw_allocation(void* address, uint64_t bytes, uint64_t alignment, uint64_t id)
+      : address(address), bytes(bytes), alignment(alignment), id(id) {}
+};
+
+} // namespace std::detail
+
+namespace gti_internal {
+class process_resource {
+public:
+  process_resource() {}
+  unsafe expected<std::detail::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    if (request.alignment == uint64_t(0) or
+        (request.alignment & (request.alignment - uint64_t(1))) != uint64_t(0)) {
+      return unexpected(std::alloc_errc::invalid_alignment);
+    }
+    uint64_t maximum = gti_internal::runtime::gti_rt_native_size_max_v1();
+    if (request.bytes > maximum or request.alignment > maximum) {
+      return unexpected(std::alloc_errc::size_overflow);
+    }
+    if (request.bytes == uint64_t(0)) {
+      return std::detail::raw_allocation(nullptr, request.bytes, request.alignment, uint64_t(0));
+    }
+    unsafe {
+#if target.os == "windows"
+      void* address = gti_internal::runtime::gti_rt_aligned_malloc_v1(
+          request.bytes, request.alignment);
+#else
+      mut uint64_t selected = request.alignment;
+      uint64_t native_minimum = gti_internal::runtime::gti_rt_posix_pointer_size_v1();
+      if (selected < native_minimum) { selected = native_minimum; }
+      mut int32_t status = 0;
+      void* address = gti_internal::runtime::gti_rt_posix_memalign_v1(
+          request.bytes, selected, &status);
+      if (status == gti_internal::runtime::gti_rt_posix_einval_v1()) {
+        return unexpected(std::alloc_errc::invalid_alignment);
+      }
+      if (status == gti_internal::runtime::gti_rt_posix_enomem_v1()) {
+        return unexpected(std::alloc_errc::resource_exhausted);
+      }
+      if (status != 0) { return unexpected(std::alloc_errc::invalid_region); }
+#endif
+      if (address == nullptr) { return unexpected(std::alloc_errc::resource_exhausted); }
+      return std::detail::raw_allocation(address, request.bytes, request.alignment, uint64_t(0));
+    }
+  }
+  unsafe void release(std::detail::raw_allocation allocation) {
+    if (allocation.address == nullptr) { return; }
+    unsafe {
+#if target.os == "windows"
+      gti_internal::runtime::gti_rt_aligned_free_v1(allocation.address);
+#else
+      gti_internal::runtime::gti_rt_posix_free_v1(allocation.address);
+#endif
+    }
+  }
+};
+} // namespace gti_internal
+namespace std::detail {
+// No external owner borrow: this lease owns one process allocation outright.
+// Shared observation cannot release or mutate its bytes. Its exclusive methods
+// transfer the descriptor, and generated movement suppresses source cleanup.
+[[unsafe_transfer, unsafe_share]]
+class process_lease {
+  mut std::detail::raw_allocation allocation;
+public:
+  process_lease()
+      : allocation(std::detail::raw_allocation()) {}
+  process_lease(gti_internal::empty_storage_adoption token, std::detail::raw_allocation allocation) : allocation(allocation) {}
+  process_lease(process_lease& other) = delete;
+  process_lease(process_lease&& other) = default;
+  unsafe expected<std::detail::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    gti_internal::process_resource process{};
+    unsafe { return process.allocate(request); }
+  }
+  std::detail::raw_allocation take() mut {
+    std::detail::raw_allocation previous = this.allocation;
+    this.allocation = std::detail::raw_allocation();
+    return previous;
+  }
+  unsafe void attach(std::detail::raw_allocation allocation) mut { this.allocation = allocation; }
+  void release() mut {
+    std::detail::raw_allocation previous = this.take();
+    gti_internal::process_resource process{};
+    unsafe { process.release(previous); }
+  }
+  ~process_lease() { this.release(); }
+};
+
+}
+
+namespace gti_internal {
+concept sparse_element<T> = std::storage_element<T>;
+concept movable_sparse_element<T> = sparse_element<T> && std::movable<T>;
+
+// Ordinary GTI cleanup policy. A local guard resumes the remaining reverse
+// traversal if the first destructor fails; it never retries a retired slot.
+class sparse_drain<std::layout_queryable T> {
+  T* objects = nullptr;
+  uint8_t* live = nullptr;
+  mut uint64_t next;
+public:
+  sparse_drain(T* objects, uint8_t* live, uint64_t count)
+      : objects(objects), live(live), next(count) {}
+  void finish() mut {
+    unsafe {
+      while (this.next > uint64_t(0)) {
+        this.next--;
+        if (this.live[this.next] != uint8_t(0)) {
+          this.live[this.next] = uint8_t(0);
+          std::destroy_at(this.objects + this.next);
+        }
+      }
+    }
+  }
+  ~sparse_drain() { this.finish(); }
+};
+
+// Owns element lifetimes only. Enclosing leases keep both disjoint regions
+// alive until after this object is destroyed, and alone release their bytes.
+// This is source policy, not a compiler-recognized capability or public type.
+[[unsafe_transfer(T), unsafe_share(T)]]
+class sparse_slots<gti_internal::sparse_element T> {
+  mut T* objects = nullptr;
+  mut uint8_t* live = nullptr;
+  mut uint64_t slots = 0;
+public:
+  sparse_slots() {}
+  sparse_slots(sparse_slots<T>& other) = delete;
+  sparse_slots(sparse_slots<T>&& other) = default;
+
+  // The caller supplies exclusive vacant object storage and writable metadata
+  // with sufficient extent/alignment; neither region may move or be released
+  // until the element owner dies. Metadata initialization cannot invoke T.
+  unsafe void attach(T* objects, uint8_t* live, uint64_t count) mut {
+    require_relocation_capacity(this.slots == uint64_t(0));
+    unsafe {
+      for (mut uint64_t index = 0; index < count; index++) {
+        std::construct_at(live + index, uint8_t(0));
+      }
+    }
+    this.objects = objects;
+    this.live = live;
+    this.slots = count;
+  }
+  uint64_t capacity() { return this.slots; }
+  bool initialized(uint64_t index) {
+    if (index >= this.slots) { return false; }
+    unsafe { return this.live[index] != uint8_t(0); }
+  }
+  [[discardable]]
+  mut T& emplace<Args...>(uint64_t index, Args... args) mut {
+    index_bounds_check(index, this.slots);
+    require_vacant_storage(!this.initialized(index));
+    unsafe {
+      std::construct_at(this.objects + index, args...);
+      this.live[index] = uint8_t(1);
+      return std::assume_mut(this.objects + index, this);
+    }
+  }
+  T& read(uint64_t index) {
+    index_bounds_check(index, this.slots);
+    require_live_storage(this.initialized(index));
+    unsafe { return std::assume_ref(this.objects + index, this); }
+  }
+  mut T& read_mut(uint64_t index) mut {
+    index_bounds_check(index, this.slots);
+    require_live_storage(this.initialized(index));
+    unsafe { return std::assume_mut(this.objects + index, this); }
+  }
+  void destroy(uint64_t index) mut {
+    index_bounds_check(index, this.slots);
+    require_live_storage(this.initialized(index));
+    unsafe {
+      this.live[index] = uint8_t(0);
+      std::destroy_at(this.objects + index);
+    }
+  }
+  void clear() mut {
+    mut sparse_drain<T> pending{this.objects, this.live, this.slots};
+    pending.finish();
+  }
+  void relocate_to(mut sparse_slots<T>& destination, uint64_t count) mut
+      requires std::relocatable<T> {
+    require_relocation_capacity(count <= this.slots && count <= destination.slots);
+    for (mut uint64_t index = 0; index < count; index++) {
+      require_relocation_source(this.initialized(index));
+      require_relocation_destination(!destination.initialized(index));
+    }
+    unsafe {
+      for (mut uint64_t index = 0; index < count; index++) {
+        std::relocate_at(destination.objects + index, this.objects + index);
+        this.live[index] = uint8_t(0);
+        destination.live[index] = uint8_t(1);
+      }
+    }
+  }
+  void shift_right(uint64_t first, uint64_t last) mut
+      requires std::relocatable<T> {
+    require_relocation_capacity(first <= last && last < this.slots);
+    require_relocation_destination(!this.initialized(last));
+    for (mut uint64_t index = first; index < last; index++) {
+      require_relocation_source(this.initialized(index));
+    }
+    unsafe {
+      mut uint64_t destination = last;
+      while (destination > first) {
+        uint64_t source = destination - uint64_t(1);
+        std::relocate_at(this.objects + destination, this.objects + source);
+        this.live[source] = uint8_t(0);
+        this.live[destination] = uint8_t(1);
+        destination--;
+      }
+    }
+  }
+  void shift_left(uint64_t first, uint64_t last) mut
+      requires std::relocatable<T> {
+    require_relocation_capacity(first < last && last <= this.slots);
+    require_relocation_destination(!this.initialized(first));
+    for (mut uint64_t index = first + uint64_t(1); index < last; index++) {
+      require_relocation_source(this.initialized(index));
+    }
+    unsafe {
+      for (mut uint64_t source = first + uint64_t(1); source < last; source++) {
+        uint64_t destination = source - uint64_t(1);
+        std::relocate_at(this.objects + destination, this.objects + source);
+        this.live[source] = uint8_t(0);
+        this.live[destination] = uint8_t(1);
+      }
+    }
+  }
+  ~sparse_slots() { this.clear(); }
+};
+
+// Defensive descriptor checks are not proof of the unsafe provider contract.
+// The native seam observes pointer alignment; all allocation policy stays here.
+expected<void, std::alloc_errc> validate_region(
+    std::detail::raw_allocation allocation, std::layout requested) {
+  if (allocation.alignment < requested.alignment) {
+    return unexpected(std::alloc_errc::invalid_region);
+  }
+  if (allocation.alignment == uint64_t(0) ||
+      (allocation.alignment & (allocation.alignment - uint64_t(1))) != uint64_t(0)) {
+    return unexpected(std::alloc_errc::invalid_alignment);
+  }
+  uint64_t maximum = runtime::gti_rt_native_size_max_v1();
+  if (allocation.bytes > maximum || allocation.alignment > maximum) {
+    return unexpected(std::alloc_errc::size_overflow);
+  }
+  if (allocation.address == nullptr || allocation.bytes < requested.bytes) {
+    return unexpected(std::alloc_errc::invalid_region);
+  }
+  unsafe {
+    if (runtime::gti_rt_address_is_aligned_v1(allocation.address, allocation.alignment) == 0) {
+      return unexpected(std::alloc_errc::invalid_alignment);
+    }
+  }
+  return;
+}
+
+// Both byte regions come from the owner's selected resource. Publication is
+// last; a failed second request returns the first region through its own lease.
+concept byte_lease<L> = requires(L& lease, std::layout request) {
+  unsafe { lease.allocate(request) } -> expected<std::detail::raw_allocation, std::alloc_errc>;
+} && requires(mut L& lease, std::detail::raw_allocation allocation) {
+  unsafe { lease.attach(allocation) } -> void;
+} && requires(mut L& lease) {
+  { lease.release() } -> void;
+};
+
+expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
+    mut Lease& objects, mut Lease& metadata, mut sparse_slots<T>& destination,
+    uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
+  if (destination.capacity() != uint64_t(0)) {
+    return unexpected(std::alloc_errc::invalid_state);
+  }
+  if (minimum == uint64_t(0) || (minimum & (minimum - uint64_t(1))) != uint64_t(0)) {
+    return unexpected(std::alloc_errc::invalid_alignment);
+  }
+  std::layout object = std::layout_of<T>();
+  mut uint64_t selected = object.alignment;
+  if (minimum > selected) { selected = minimum; }
+  uint64_t maximum = runtime::gti_rt_native_size_max_v1();
+  if (selected > maximum || count > maximum / object.bytes) {
+    return unexpected(std::alloc_errc::size_overflow);
+  }
+  if (count == uint64_t(0)) { return; }
+  std::layout request{count * object.bytes, selected};
+  unsafe {
+    auto attempt = objects.allocate(request);
+    if (!attempt) { return unexpected(attempt.error()); }
+    std::detail::raw_allocation region = std::move(attempt).value();
+    objects.attach(region);
+    auto valid = validate_region(region, request);
+    if (!valid) {
+      objects.release();
+      return unexpected(valid.error());
+    }
+    // uint8_t is exactly one byte; no hidden heap or bitmap allocation occurs.
+    std::layout metadata_request{count, std::layout_of<uint8_t>().alignment};
+    auto flags_attempt = metadata.allocate(metadata_request);
+    if (!flags_attempt) {
+      objects.release();
+      return unexpected(flags_attempt.error());
+    }
+    std::detail::raw_allocation flags = std::move(flags_attempt).value();
+    metadata.attach(flags);
+    auto valid_flags = validate_region(flags, metadata_request);
+    if (!valid_flags) {
+      metadata.release();
+      objects.release();
+      return unexpected(valid_flags.error());
+    }
+    destination.attach(std::typed_address<T>(region.address),
+                       std::typed_address<uint8_t>(flags.address), count);
+  }
+  return;
+}
+}
+
+namespace std {
 /// A move-only owner of partially initialized typed storage.
 ///
 /// `T` must not contain borrowed state. Final-address emplacement supports
@@ -276,28 +637,33 @@ public:
 /// owner drops every remaining live slot once in reverse slot order and then
 /// releases the allocation. `release()` performs that cleanup early and
 /// leaves an empty owner; it never detaches an unmanaged allocation address.
-class storage<T> {
-  mut gti_internal::storage<T> data;
+[[unsafe_transfer(T), unsafe_share(T)]]
+class storage<gti_internal::sparse_element T> {
+  mut std::detail::process_lease objects;
+  mut std::detail::process_lease metadata;
+  mut gti_internal::sparse_slots<T> data;
 
 public:
-  // This constructor is compiler-private despite its access label because its
-  // parameter exposes a declaration-bound capability. It is callable by the
-  // trusted allocator implementation and withheld from application lookup.
-  storage(gti_internal::storage<T> value)
-      : data(std::move(value)) {}
+  // Source factory token prevents unchecked adoption by application code.
+  storage(gti_internal::empty_storage_adoption token,
+          std::detail::process_lease objects,
+          std::detail::process_lease metadata,
+          gti_internal::sparse_slots<T> data)
+      : objects(std::move(objects)), metadata(std::move(metadata)),
+        data(std::move(data)) {}
 
   storage(storage<T>& other) = delete;
   storage(storage<T>&& other) = default;
 
   /// Returns the number of owned `T` slots.
   size_t capacity() {
-    return gti_internal::storage_capacity(this.data);
+    return this.data.capacity();
   }
 
   /// Returns whether the checked slot currently contains a live `T`.
   bool initialized(size_t index) {
     gti_internal::index_bounds_check(index, this.capacity());
-    return gti_internal::storage_initialized(this.data, index);
+    return this.data.initialized(index);
   }
 
   /// Moves one completed `T` into an uninitialized checked slot.
@@ -308,7 +674,7 @@ public:
   /// runtime failure.
   void construct(size_t index, T value) mut requires std::movable<T> {
     gti_internal::index_bounds_check(index, this.capacity());
-    gti_internal::storage_construct(this.data, index, std::move(value));
+    this.data.emplace(index, std::move(value));
   }
 
   /// Constructs directly in the final slot and borrows the completed object.
@@ -316,14 +682,13 @@ public:
   /// slot uninitialized; it propagates the constructor's original failure.
   [[discardable]]
   mut T& emplace<Args...>(size_t index, Args... args) mut {
-    gti_internal::storage_construct(this.data, index, args...);
-    return gti_internal::storage_read_mut(this.data, index);
+    return this.data.emplace(index, args...);
   }
 
   /// Destroys the live value in one checked slot.
   void destroy(size_t index) mut {
     gti_internal::index_bounds_check(index, this.capacity());
-    gti_internal::storage_destroy(this.data, index);
+    this.data.destroy(index);
   }
 
   /// Consumes the live prefix [0, count) into the same empty destination slots.
@@ -333,41 +698,33 @@ public:
   /// of an already-live destination is deliberately not supported.
   void relocate_to(mut storage<T>& destination, size_t count) mut
       requires std::movable<T> && std::relocatable<T> {
-    gti_internal::storage_relocate(this.data, destination.data, count);
+    this.data.relocate_to(destination.data, count);
   }
 
   /// Returns a checked read-only reference to a live slot.
   T& get(size_t index) {
     gti_internal::index_bounds_check(index, this.capacity());
-    return gti_internal::storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   /// Returns a checked exclusive reference to a live slot.
   mut T& get_mut(size_t index) mut {
     gti_internal::index_bounds_check(index, this.capacity());
-    return gti_internal::storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 
   /// Destroys every live slot once in reverse slot order.
-  void clear() mut {
-    mut size_t index = this.capacity();
-    while (index > size_t(0)) {
-      index--;
-      if (gti_internal::storage_initialized(this.data, index)) {
-        gti_internal::storage_destroy(this.data, index);
-      }
-    }
-  }
+  void clear() mut { this.data.clear(); }
 
   /// Destroys remaining live slots and releases the backing allocation.
   /// The receiver becomes empty before cleanup begins, including when an
   /// element destructor raises defined failure. Releasing an empty owner is
   /// harmless. Live element borrows prevent this exclusive operation.
   void release() mut {
-    gti_internal::storage<T> empty =
-        gti_internal::allocate_storage<T>(uint64_t(0));
-    storage<T> previous = storage<T>(std::move(this.data));
-    this.data = std::move(empty);
+    std::detail::process_lease previous_objects{gti_internal::empty_storage_adoption::trusted, this.objects.take()};
+    std::detail::process_lease previous_metadata{gti_internal::empty_storage_adoption::trusted, this.metadata.take()};
+    gti_internal::sparse_slots<T> previous = std::move(this.data);
+    this.data = gti_internal::sparse_slots<T>();
   }
 };
 
@@ -378,23 +735,18 @@ public:
 /// the allocator value is destroyed.
 class allocator {
   expected<storage<T>, alloc_errc>
-  try_storage_impl<T>(size_t count,
-                                   uint64_t minimum_alignment) {
-    mut gti_internal::storage<T> candidate =
-        gti_internal::allocate_storage<T>(uint64_t(0));
-    int32_t status = gti_internal::storage_try_allocate(
-        candidate, count, minimum_alignment);
-    if (status == 1) {
-      return unexpected(alloc_errc::invalid_alignment);
-    }
-    if (status == 2) {
-      return unexpected(alloc_errc::size_overflow);
-    }
-    if (status != 0) {
-      return unexpected(alloc_errc::resource_exhausted);
-    }
-    mut storage<T> result = storage<T>(std::move(candidate));
-    return std::move(result);
+  try_storage_impl<T>(size_t count, uint64_t minimum_alignment)
+      requires gti_internal::sparse_element<T> {
+    mut std::detail::process_lease objects{};
+    mut std::detail::process_lease metadata{};
+    mut gti_internal::sparse_slots<T> candidate{};
+    mut uint64_t selected = minimum_alignment;
+    if (selected == uint64_t(0)) { selected = layout_of<T>().alignment; }
+    auto attempt = gti_internal::try_allocate_sparse(objects, metadata, candidate,
+                                                    count, selected);
+    if (!attempt) { return unexpected(attempt.error()); }
+    return storage<T>(gti_internal::empty_storage_adoption::trusted,
+                      std::move(objects), std::move(metadata), std::move(candidate));
   }
 
 public:
@@ -402,13 +754,13 @@ public:
 
   /// Attempts to create naturally aligned typed storage.
   expected<storage<T>, alloc_errc>
-  try_storage<T>(size_t count) {
+  try_storage<T>(size_t count) requires gti_internal::sparse_element<T> {
     return this.try_storage_impl<T>(count, uint64_t(0));
   }
 
   /// Attempts to create typed storage with a minimum byte alignment.
   expected<storage<T>, alloc_errc>
-  try_storage<T>(size_t count, alignment requested) {
+  try_storage<T>(size_t count, alignment requested) requires gti_internal::sparse_element<T> {
     size_t bytes = requested.bytes();
     if (bytes == size_t(0) or
         (bytes & (bytes - size_t(1))) != size_t(0)) {
@@ -429,7 +781,7 @@ enum class arena_errc {
 /// every prior position and destroys every live value before the positions
 /// may be reused. A retained element reference prevents reset, insertion, or
 /// movement through the normal receiver-borrow rules.
-class arena<std::movable T> {
+class arena<gti_internal::movable_sparse_element T> {
   mut storage<T> values;
   mut size_t next = 0;
 
@@ -501,7 +853,7 @@ enum class pool_errc {
 /// Erasing and then reusing a position can therefore make that same numeric
 /// position name a new value. References remain tied to the pool receiver and
 /// statically prevent overlapping erase, insertion, clearing, or movement.
-class pool<std::movable T> {
+class pool<gti_internal::movable_sparse_element T> {
   mut storage<T> values;
   mut size_t live = 0;
 
@@ -579,7 +931,7 @@ public:
 
 /// Attempts to allocate one fixed-capacity homogeneous arena.
 expected<arena<T>, alloc_errc>
-try_make_arena<std::movable T>(size_t capacity) {
+try_make_arena<T>(size_t capacity) requires gti_internal::movable_sparse_element<T> {
   allocator source = allocator();
   mut storage<T> backing = ?source.try_storage<T>(capacity);
   gti_internal::empty_storage_adoption token =
@@ -590,7 +942,7 @@ try_make_arena<std::movable T>(size_t capacity) {
 
 /// Attempts to allocate one fixed-capacity homogeneous pool.
 expected<pool<T>, alloc_errc>
-try_make_pool<std::movable T>(size_t capacity) {
+try_make_pool<T>(size_t capacity) requires gti_internal::movable_sparse_element<T> {
   allocator source = allocator();
   mut storage<T> backing = ?source.try_storage<T>(capacity);
   gti_internal::empty_storage_adoption token =

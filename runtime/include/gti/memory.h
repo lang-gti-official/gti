@@ -9,6 +9,9 @@ extern "C" {
 // Native ABI facts, not allocator policy. The source provider validates every
 // request before narrowing uint64_t to the platform's actual size_t.
 uint64_t gti_rt_native_size_max_v1(void);
+// Observes address alignment only; does not prove extent, liveness or access.
+// Returns zero for null addresses and invalid/nonrepresentable alignments.
+int32_t gti_rt_address_is_aligned_v1(const void *address, uint64_t alignment);
 
 #if defined(_WIN32)
 // Preconditions: bytes > 0; alignment is a nonzero power of two; both fit

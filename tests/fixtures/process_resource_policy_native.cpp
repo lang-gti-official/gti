@@ -23,6 +23,16 @@ extern "C" std::int32_t provider_test_releases() { return releases; }
 extern "C" std::uint64_t gti_rt_native_size_max_v1() {
   return mode == 1 ? 4095 : (std::numeric_limits<std::size_t>::max)();
 }
+// Keep the observation seam in this injected adapter set too: pulling the
+// production memory object from the runtime archive would also pull its
+// allocation definitions and conflict with this fixture's injected provider.
+extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *address,
+                                                     std::uint64_t alignment) {
+  if (!address || alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+      alignment > (std::numeric_limits<std::uintptr_t>::max)())
+    return 0;
+  return reinterpret_cast<std::uintptr_t>(address) % alignment == 0;
+}
 #if defined(_WIN32)
 extern "C" void *gti_rt_aligned_malloc_v1(std::uint64_t bytes,
                                           std::uint64_t alignment) {

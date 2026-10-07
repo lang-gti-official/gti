@@ -821,14 +821,17 @@ multiplication and requested power-of-two alignment, and verifies the reported
 region before typed adoption. Requested over-alignment is retained across
 prefix growth. A fresh-only allocation attempt reports `invalid_state` for an
 occupied owner; provider errors are preserved, and malformed region metadata
-is not silently converted to exhaustion. Adoption allocates only a slot
-liveness bitmap. The typed storage never frees the external region: ordinary
-reverse field cleanup destroys elements first, then the resource lease returns
-the original descriptor. These checks do not establish provenance, actual
+is not silently converted to exhaustion. A nonempty request makes two separate
+requests to the same bound resource: object bytes first, then one metadata byte
+per slot. Zero capacity requests neither. If the second request or its validation
+fails, both acquired descriptors are returned through their original leases.
+Ordinary reverse field cleanup destroys elements first, then releases metadata
+and object regions. These checks do not establish provenance, actual
 extent, non-overlap, writability or race freedom.
 
-`resource_storage<T,R>` owns sparse element lifetimes in one provider-selected
-region. `try_allocate` is recoverable; `emplace` constructs directly at the final
+`resource_storage<T,R>` owns sparse element lifetimes in a provider-selected
+object region, with separately leased metadata. `try_allocate` is recoverable;
+`emplace` constructs directly at the final
 address, `get`/`get_mut` borrow initialized elements, and `destroy` ends one
 element lifetime without returning the region. `clear` destroys live elements;
 `release` destroys them and returns the original descriptor to the original
@@ -877,7 +880,8 @@ The unrelated `engine::Arena` in
 [`examples/allocator-support/arena.gti`](../../examples/allocator-support/arena.gti)
 is a single-threaded monotonic resource, not a heap-free arena implementation.
 It obtains one backing region and separately heap-allocates stable bookkeeping;
-typed adoption also needs its liveness bitmap. Suballocations use checked
+each typed owner requests both its object region and liveness bytes from that
+arena. Suballocations use checked
 padding/extent arithmetic, remain disjoint while live, and are reclaimed for
 reuse only by reset after all releases. Its read-only methods mutate separately
 owned bookkeeping through reviewed unsafe pointers; read-only receiver access

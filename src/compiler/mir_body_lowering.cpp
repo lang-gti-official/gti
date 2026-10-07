@@ -4303,7 +4303,10 @@ private:
       return 0;
     MirPlace projected = *origin;
     projected.id = 0;
-    projected.key.reset();
+    // Preserve the semantic overlap identity while adding executable typed
+    // projections. Reference-field dereference is transparent in that key;
+    // losing it makes two mapped fields sharing an entry owner impossible to
+    // reconcile with their semantic dependencies at local publication.
     const auto intern = [&]() {
       projected.traits = resolvedTraits(projected.type);
       for (const auto &place : output.places)
@@ -4313,8 +4316,11 @@ private:
             place.value == projected.value &&
             place.temporary == projected.temporary &&
             place.projections == projected.projections &&
-            place.type == projected.type)
+            place.type == projected.type) {
+          if (projected.key && !place.key)
+            output.places[place.id - 1].key = projected.key;
           return place.id;
+        }
       return appendPlace(projected);
     };
     const auto dereference = [&] {
@@ -4345,6 +4351,9 @@ private:
         return 0;
       projected.projections.push_back(
           {.kind = MirProjectionKind::Field, .field = field});
+      if (projected.key)
+        projected.key->projections.push_back(
+            {.kind = PlaceProjectionKind::Field, .field = field});
       projected.type = member->info.type;
       dereference();
       // Keep the typed prefix as well as the final referent. Independent
@@ -4404,7 +4413,8 @@ private:
     const auto *retained =
         receiver ? output.findLoan(loanForValue(*receiver)) : nullptr;
     if (retained != nullptr && retained->kind == MirLoanKind::Local &&
-        retained->storedDependency == 0)
+        (retained->storedDependency == 0 ||
+         (receiver && isRangeIteratorValue(*receiver))))
       return false; // An opaque range cursor carries its checked range loan.
     return source != nullptr && source->info.traits.containsBorrowedState;
   }
@@ -4533,7 +4543,7 @@ private:
             value.info.category == ValueCategory::Value &&
             value.info.type.kind == SemanticType::Class &&
             value.info.traits.containsBorrowedState &&
-            value.info.traits.copyable &&
+            value.info.traits.copyable && value.borrowFields.size() == 1 &&
             loan->additionalDependencies.empty() &&
             loan->designatedFields == mapping.sourceFields)
           return loan->source;

@@ -3033,7 +3033,15 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           receiverLoans->second.size() == 1 &&
           body.findLoan(receiverLoans->second.front())->kind ==
               MirLoanKind::Local &&
-          body.findLoan(receiverLoans->second.front())->storedDependency == 0;
+          (body.findLoan(receiverLoans->second.front())->storedDependency ==
+               0 ||
+           std::any_of(body.rangeIterations.begin(), body.rangeIterations.end(),
+                       [&](const MirRangeIteration &range) {
+                         const auto *iterator = body.findPlace(range.iterator);
+                         return iterator != nullptr &&
+                                iterator->root == MirPlaceRootKind::Binding &&
+                                iterator->binding == receiverPlace->binding;
+                       }));
       const bool receiverStorageResult =
           !opaqueRangeCarrier && instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None && target != nullptr &&
@@ -3287,7 +3295,8 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                   "stored field mapping has no exact formal origin", block.id,
                   instruction.id);
             auto sources = dependencySources(
-                dependencySources, instruction.operands[origin->parameter]);
+                dependencySources, instruction.operands[origin->parameter], 0,
+                true);
             const auto &suffix = origin->sourceFields;
             const auto &mapping = instruction.borrowFields[mapped.size()];
             if (mapping != *origin)

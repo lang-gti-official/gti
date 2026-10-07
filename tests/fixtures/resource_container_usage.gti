@@ -92,7 +92,8 @@ int independent_destruction(std::resource_ref<engine::Arena> resource) {
       slots.capacity() != std::size_t(4)) { return 43; }
   slots.clear();
   if (alive != 0 || destroyed != 1000 || slots.capacity() != std::size_t(4)) { return 44; }
-  if (resource.get().live_allocations() != std::size_t(1)) { return 45; }
+  // Both object bytes and live-slot metadata remain owned after clear().
+  if (resource.get().live_allocations() != std::size_t(2)) { return 45; }
   slots.release();
   return slots.capacity() == std::size_t(0) &&
       resource.get().live_allocations() == std::size_t(0) ? 0 : 46;
@@ -160,9 +161,9 @@ int main() {
       if (crossed != 0) { return crossed; }
     }
     if (alive != 0 || destroyed != 11 ||
-        first.allocation_count() != uint64_t(1) || first.release_count() != uint64_t(1) ||
-        second.allocation_count() != uint64_t(1) ||
-        second.release_count() != uint64_t(1)) { return 71; }
+        first.allocation_count() != uint64_t(2) || first.release_count() != uint64_t(2) ||
+        second.allocation_count() != uint64_t(2) ||
+        second.release_count() != uint64_t(2)) { return 71; }
   }
   int process = process_backed();
   if (process != 0) { return process; }
