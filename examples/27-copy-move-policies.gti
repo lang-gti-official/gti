@@ -32,6 +32,20 @@ public:
   int read() { return this.id; }
 };
 
+void consume_ticket(Ticket ticket) {}
+
+int reinitialize_after_break() {
+  mut Ticket ticket{1};
+  while (true) {
+    consume_ticket(std::move(ticket));
+    break;
+  }
+  // Every reachable exit consumed ticket. Plain assignment starts its next
+  // available state; reading it before this assignment remains invalid.
+  ticket = Ticket(2);
+  return ticket.read();
+}
+
 int main() {
   StructuralValue structural{};
   Snapshot original{7};
@@ -44,7 +58,7 @@ int main() {
   Ticket transferred = Ticket(std::move(ticket));
 
   if (structural.read() == 5 and copied.read() == 7 and moved.read() == 9 and
-      transferred.read() == 42) {
+      transferred.read() == 42 and reinitialize_after_break() == 2) {
     std::println("defaulted lifecycle and copy/move policies worked");
     return 0;
   }

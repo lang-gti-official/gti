@@ -7,6 +7,17 @@
 #include <std/set>
 #include <std/unordered_set>
 
+class NamedJob {
+  int priority;
+  std::string name;
+public:
+  NamedJob(int priority, std::string name)
+      : priority(priority), name(std::move(name)) {}
+  NamedJob(NamedJob& other) = delete;
+  NamedJob(NamedJob&& other) = default;
+  bool ready() { return this.priority == 1 and this.name == "check"; }
+};
+
 // Parse an option, schedule work, and retain a deduplicated execution history.
 // Filesystem observation is fallible; this example does not modify any files.
 int main() {
@@ -53,5 +64,10 @@ int main() {
     line.replace(std::size_t(0), std::size_t(4), "finished");
     std::println(line);
   }
+  // Emplacement forwards an owned argument through a constructor-local pack
+  // into the element. The string is consumed once, not copied implicitly.
+  mut std::list<NamedJob> jobs{};
+  [[discard]] jobs.emplace_back(1, std::string("check"));
+  if (!jobs.front().ready()) { return 6; }
   return 0;
 }
