@@ -309,11 +309,13 @@
     "c52_higher_order_lambdas": {
       "code": "GTI-S2015",
       "finding": "F14",
+      "issue": 103,
       "outcome": "rejected"
     },
     "c55_iterator_utilities": {
       "code": "GTI-S2022",
       "finding": "F16",
+      "issue": 103,
       "outcome": "rejected"
     }
   },
@@ -2187,6 +2189,7 @@
     "f10-assign-through-mut-ref-method": {
       "code": "GTI-P0001",
       "finding": "F10",
+      "issue": 103,
       "outcome": "rejected"
     },
     "f11-pair-nested-in-pair": {
@@ -2201,6 +2204,7 @@
     "f14-nested-callable-invocation": {
       "code": "GTI-S2015",
       "finding": "F14",
+      "issue": 103,
       "outcome": "rejected"
     },
     "f15-method-on-operator-result": {
@@ -2209,11 +2213,13 @@
     "f16-canonical-iterator-loop": {
       "code": "GTI-S2022",
       "finding": "F16",
+      "issue": 103,
       "outcome": "rejected"
     },
     "f17-unnamed-parameter-bad-span": {
       "code": "GTI-S2045",
       "finding": "F17",
+      "issue": 103,
       "outcome": "bad-location"
     },
     "f2-generic-callable-by-reference": {
@@ -2257,10 +2263,12 @@
     },
     "s01-parenthesized-constructor": {
       "finding": "S01",
+      "issue": 103,
       "outcome": "ice"
     },
     "s02-ternary-class-value": {
       "finding": "S02",
+      "issue": 103,
       "outcome": "ice"
     },
     "s03-method-on-moved-value": {
@@ -2268,6 +2276,7 @@
     },
     "s04-bodyless-decl-unnamed-param": {
       "finding": "S04",
+      "issue": 103,
       "outcome": "ice"
     },
     "s05-owning-enum-assign-invalid-cpp": {
@@ -2276,6 +2285,7 @@
     "s06-constexpr-unnamed-param-no-span": {
       "code": "GTI-S2057",
       "finding": "S06",
+      "issue": 103,
       "outcome": "bad-location"
     },
     "s07-alias-as-scope-qualifier": {
@@ -2286,6 +2296,7 @@
     },
     "s09-uninitialized-mut-scalar": {
       "finding": "S09",
+      "issue": 103,
       "outcome": "ice"
     },
     "s10-ctor-by-value-copy": {
@@ -2296,10 +2307,12 @@
     },
     "s12-lossy-implicit-int-to-float": {
       "finding": "S12",
+      "issue": 103,
       "outcome": "pass"
     },
     "s15-payload-enum-plain-class": {
       "finding": "S15",
+      "issue": 103,
       "outcome": "ice"
     }
   }
