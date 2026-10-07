@@ -535,6 +535,11 @@ private:
     for (const SemanticType &parameter : parameterTypes) {
       (void)enqueueClass(parameter, classUse);
     }
+    // Discovering signature classes may consume the final inventory entry.
+    // Recheck immediately before publication, as well as before expansion.
+    if (!admitInstance(declarationToken, site)) {
+      return 0;
+    }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
     functionDiscoveryDepths.push_back(discoveryDepth + 1);
     if (freeFunction || owner.has_value()) {
