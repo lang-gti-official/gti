@@ -1793,16 +1793,12 @@
       "outcome": "pass"
     },
     "a18-function-item-pack-invoke": {
-      "code": "GTI-S2090",
-      "finding": "A18",
       "issue": 64,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a19-trailing-clause-dependent-compound": {
-      "code": "GTI-S2029",
-      "finding": "A19",
       "issue": 65,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a20-unnecessary-mut-per-instance": {
       "forbid": [

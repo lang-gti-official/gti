@@ -11199,7 +11199,85 @@ int main() {
   }
 }
 
+void testDependentRequiresArgumentAdmission() {
+  const std::string prefix = R"(
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+)";
+  const auto analyze = [&](std::string source) {
+    const auto root =
+        std::filesystem::path(__FILE__).parent_path().parent_path();
+    return lang::Frontend().analyze("dependent-requires.gti", prefix + source,
+                                    {root / "stdlib/prelude.gti"}, {},
+                                    {root / "stdlib"});
+  };
+  for (const std::string clause : {"std::copyable<T> && boxed_int<Box<T>>",
+                                   "boxed_int<Box<T>> && std::copyable<T>",
+                                   "(std::copyable<T> && boxed_int<Box<T>>) || "
+                                   "(boxed_int<Box<T>> && std::copyable<T>)"}) {
+    const auto result = analyze(
+        "int read<T>(Box<T>& box) requires " + clause +
+        " { return box.get(); }\n"
+        "int main() { Box<int> box{7}; return read(box) == 7 ? 0 : 1; }");
+    expect(result.canGenerateCode() && result.diagnostics.empty(),
+           "compound clause arguments use complete guaranteed facts "
+           "independent of conjunct order");
+  }
+  for (const std::string clause :
+       {"boxed_int<Box<T>>",
+        "(std::copyable<T> && boxed_int<Box<T>>) || boxed_int<Box<T>>"}) {
+    const auto result =
+        analyze("int read<T>(Box<T>& box) requires " + clause +
+                " { return box.get(); }\nint main() { return 0; }");
+    const auto *failure = findDiagnosticByCode(result.diagnostics, "GTI-S2029");
+    expect(!result.canGenerateCode() && failure != nullptr &&
+               failure->message.find("Type 'T'") != std::string::npos &&
+               failure->message.find("type parameter") == std::string::npos &&
+               failure->fixes.empty(),
+           "a branch-local or absent copyability fact cannot admit Box<T>; "
+           "diagnostics name T");
+  }
+  const auto concrete = analyze(R"(
+int read<T>(Box<T>& box) requires std::copyable<T> && boxed_int<Box<T>> { return box.get(); }
+int main() { Box<bool> box{true}; return read(box); }
+)");
+  expect(
+      !concrete.canGenerateCode() &&
+          hasDiagnosticCode(concrete.diagnostics, "GTI-S2029") &&
+          !hasDiagnosticCode(concrete.diagnostics, "GTI-B0001"),
+      "concrete arguments recheck the exact structural member result contract");
+  const auto unknown = analyze(R"(
+int read<T>(T value) requires std::copyable<NoSuchType> { return 0; }
+int main() { return 0; }
+)");
+  expect(!unknown.canGenerateCode() &&
+             hasDiagnosticCode(unknown.diagnostics, "GTI-S2000"),
+         "pure first-pass clause formation must not lose unknown argument "
+         "diagnostics");
+  const auto closed = analyze(R"(
+class Immovable {
+public:
+  Immovable() = default;
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+};
+int read<T>(T value) requires std::copyable<Immovable> && boxed_int<Box<Immovable>> { return 0; }
+int main() { return 0; }
+)");
+  expect(!closed.canGenerateCode() &&
+             hasDiagnosticCode(closed.diagnostics, "GTI-S2029"),
+         "an asserted clause fact cannot replace actual admission of a closed "
+         "noncopyable class");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testDependentRequiresArgumentAdmission",
+     testDependentRequiresArgumentAdmission},
     {"testStructuralClassConstraints", testStructuralClassConstraints},
     {"testFunctionContracts", testFunctionContracts},
     {"testContainerScaffoldSurfaces", testContainerScaffoldSurfaces},

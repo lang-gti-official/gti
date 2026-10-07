@@ -1023,6 +1023,18 @@ fully general allocation and failure cleanup through erased owners remain
 incomplete. This does not claim that
 public owning wrappers are implemented.
 
+Contextual namespace-function selection deduces ordinary fixed arguments and
+the final value pack before comparing a confined invocation signature.
+Substitution precedes `concreteCallArguments` expansion; forwarded elements
+use the same value/read-only-reference matching as ordinary pack invocation.
+An effect-free function name may defer its own selection without postponing
+later typed arguments. Effectful contextual producers still defer their suffix,
+and concrete HIR/MIR retain source-order call-input stages. An open forwarding
+pack cannot distinguish overload arities; a unique eligible item can remain
+symbolic until the ordinary concrete invocation check. Failed contextual
+selection owns its diagnostic instead of suggesting an unspellable explicit
+function-item type.
+
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter
 requires read-callable invocation. A `mut` by-value parameter permits mutable
@@ -1205,8 +1217,13 @@ remain ordinary source-defined generic bodies and verified-MIR calls.
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
-non-pack parameters or closed concrete types; unresolved dependent compound
-types fail before candidate selection. During symbolic body analysis, a
+non-pack parameters, closed concrete types, or dependent compounds.
+`resolveRequirements` first forms the complete application identities and
+types, then validates the written arguments within that same clause's ordinary
+guaranteed-fact scope. This makes conjunction order irrelevant without assuming
+facts from only one disjunction alternative. Invalid and unknown arguments
+still receive ordinary type diagnostics; concrete admission is rechecked.
+During symbolic body analysis, a
 requirement scope contributes unary facts to ordinary constrained operations
 and supplies synthetic exact operator or callable candidates for the bounded
 structural relationships. Callable requirements carry unary/binary argument
@@ -1215,6 +1232,12 @@ capability; iterator-aware predicate and operation relations derive the exact
 checked-dereference referent privately. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
+
+Registration-time constraint diagnostics use the canonical semantic type
+printer with a read-only lookup into declaration-owned generic parameter
+records when completed model rows are not available yet. The reporter consumes
+that spelling operation without owning proof or registration state; it does
+not manufacture incomplete `FunctionInfo` rows to obtain a parameter name.
 
 Unary structural annotations on class generic parameters reuse those same
 applications. The parameter's resolved `conceptId` remains the concrete

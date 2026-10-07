@@ -5951,7 +5951,30 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
 
 auto SemanticVisitor::Impl::typeSpelling(const SemanticType &type) const
     -> std::string {
-  return semantic_spelling::typeSpelling(semanticModel, type);
+  // Registration may report before FunctionInfo is complete. Supply the
+  // canonical declaration record to the same printer used by finished models.
+  return SemanticTypePrinter(semanticModel)
+      .print(type, [&](GenericParameterId id) {
+        for (const auto &[declaration, parameters] :
+             functionGenericParameters) {
+          if (const auto *parameter = findGenericParameter(parameters, id)) {
+            return parameter;
+          }
+        }
+        for (const auto &[declaration, parameters] :
+             constructorGenericParameters) {
+          if (const auto *parameter = findGenericParameter(parameters, id)) {
+            return parameter;
+          }
+        }
+        for (const auto &owner : classes) {
+          if (const auto *parameter =
+                  findGenericParameter(owner.genericParameters, id)) {
+            return parameter;
+          }
+        }
+        return static_cast<const GenericParameterInfo *>(nullptr);
+      });
 }
 
 auto SemanticVisitor::Impl::tracksValueState(const Symbol &symbol) const

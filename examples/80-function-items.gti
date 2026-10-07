@@ -5,6 +5,10 @@ int32_t apply<Function>(int32_t value, Function function) {
   return function(value);
 }
 
+int32_t invoke_with<Function, Args...>(Function function, Args... args) {
+  return function(args...);
+}
+
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
 
@@ -13,11 +17,14 @@ int main() {
   // involved.
   auto positive = std::count_if(values, operations::is_positive);
   int32_t doubled = apply(21, operations::twice);
+  // Args is deduced before matching the function item's expanded signature.
+  int32_t sum = invoke_with(operations::add3, 1, 2, 3);
 
-  return positive == 3 && doubled == 42 ? 0 : 1;
+  return positive == 3 && doubled == 42 && sum == 6 ? 0 : 1;
 }
 
 namespace operations {
 bool is_positive(int32_t& value) { return value > 0; }
 int32_t twice(int32_t value) { return value * 2; }
+int32_t add3(int32_t a, int32_t b, int32_t c) { return a + b + c; }
 }
