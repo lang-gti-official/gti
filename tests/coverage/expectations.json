@@ -1,0 +1,41 @@
+{
+  "programs": {
+    "c52_higher_order_lambdas": {"finding": "F14", "outcome": "rejected", "code": "GTI-S2015"},
+    "c55_iterator_utilities": {"finding": "F16", "outcome": "rejected", "code": "GTI-S2022"}
+  },
+  "reproducers": {
+    "f1-generic-range-for-silent": {"outcome": "pass"},
+    "f2-generic-callable-by-reference": {"outcome": "pass"},
+    "f3-propagation-in-loop": {"outcome": "pass"},
+    "f4-algorithm-class-functor": {"outcome": "pass"},
+    "f5-nested-generic-chained-get": {"outcome": "pass"},
+    "f6-file-scope-static-assert": {"outcome": "pass"},
+    "f7-scaffold-operation-link-error": {"outcome": "pass"},
+    "f7-declaration-only-weak-ptr": {"finding": "F7", "issue": 51, "outcome": "link"},
+    "f7-undefined-user-function": {"finding": "F7", "issue": 51, "outcome": "link"},
+    "f8-view-from-returned-owner": {"outcome": "pass"},
+    "f9-propagation-on-method-call": {"outcome": "pass"},
+    "f10-assign-through-mut-ref-method": {"finding": "F10", "outcome": "rejected", "code": "GTI-P0001"},
+    "f11-pair-nested-in-pair": {"outcome": "pass"},
+    "f12-span-returned-by-plain-copy": {"outcome": "pass"},
+    "f13-string-ctor-in-member-init-list": {"outcome": "pass"},
+    "f14-nested-callable-invocation": {"finding": "F14", "outcome": "rejected", "code": "GTI-S2015"},
+    "f15-method-on-operator-result": {"outcome": "pass"},
+    "f16-canonical-iterator-loop": {"finding": "F16", "outcome": "rejected", "code": "GTI-S2022"},
+    "f17-unnamed-parameter-bad-span": {"finding": "F17", "outcome": "bad-location", "code": "GTI-S2045"},
+    "s01-parenthesized-constructor": {"finding": "S01", "outcome": "ice"},
+    "s02-ternary-class-value": {"finding": "S02", "outcome": "ice"},
+    "s03-method-on-moved-value": {"outcome": "pass"},
+    "s04-bodyless-decl-unnamed-param": {"finding": "S04", "outcome": "ice"},
+    "s05-owning-enum-assign-invalid-cpp": {"outcome": "pass"},
+    "s06-constexpr-unnamed-param-no-span": {"finding": "S06", "outcome": "bad-location", "code": "GTI-S2057"},
+    "s07-alias-as-scope-qualifier": {"outcome": "pass"},
+    "s08-exponential-method-chain": {"outcome": "pass"},
+    "s09-uninitialized-mut-scalar": {"finding": "S09", "outcome": "ice"},
+    "s10-ctor-by-value-copy": {"outcome": "pass"},
+    "s11-nested-generic-class-arg": {"outcome": "pass"},
+    "s12-lossy-implicit-int-to-float": {"finding": "S12", "outcome": "pass"},
+    "s15-payload-enum-plain-class": {"finding": "S15", "outcome": "ice"}
+  },
+  "rejections": {}
+}
