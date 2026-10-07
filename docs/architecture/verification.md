@@ -1,5 +1,32 @@
 # Compiler Verification
 
+## Consolidated lifetime and enum acceptance checkpoint
+
+The optimized macOS arm64 Release/Ninja candidate at `17787a0c` passes the full
+compiler partition (46.86 seconds), CLI smoke, backend preflight (6.43 seconds),
+and optional allocator raw-audit Off/Warn parity (92.05 seconds). Its generated
+constructor-order regression passes sixteen native configurations, including
+the expected empty-owner failure, no elision and sanitizers. The report remains
+at the source-defined checked owner accessor; this fix does not change failure
+attribution. Test-worker registration accounts for all shared matrix clients.
+
+Both complete corpus oracles pass for all 125 top-level examples. Detached
+emission admits all 19,902 lowered bodies and compares all 11,996 applicable
+general-body emissions. The native oracle builds and executes O0/C++20 and
+O3/C++23 with identical behavior and all 19,895 reviewed emitted body identities.
+The seven-body difference is unchanged (scalar atomics, optionals and owning
+callbacks). The complete LoweredProgram inventory is 60,581 declarations and
+3,900 generated items; manual-lifetime, conditional-capability and inline-pool
+examples are now included rather than omitted from a mechanically merged census.
+
+Census category labels previously reversed thread-task and concrete-instance
+adapters. The numerical totals were unaffected. The census executable now
+publishes its compiled column identities; the Python reader rejects a mismatched
+schema, and compile-time checks reject omitted or reordered enum identities.
+Baseline categories are corrected without treating ordinary instance adapters
+as new threading work. These are focused and corpus results; final full-suite,
+installed-consumer and integration evidence remain required.
+
 ## Source sparse-storage integration checkpoint
 
 The S-ALLOC-06 candidate now routes public sparse and resource-backed owners
