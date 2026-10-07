@@ -563,6 +563,24 @@ add_test(NAME bindgen_pipeline COMMAND gti_bindgen_tests)
 add_executable("gti_native_record_tests" "${PROJECT_SOURCE_DIR}/tests/native_record_tests.cpp")
 target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_record_pipeline COMMAND gti_native_record_tests)
+add_executable(gti_call_result_publication_tests call_result_publication_tests.cpp)
+target_link_libraries(gti_call_result_publication_tests PRIVATE gti_cpp_backend)
+add_test(NAME call_result_publication COMMAND gti_call_result_publication_tests)
+add_test(NAME call_result_publication_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/call_result_publication_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(call_result_publication_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME expected_class_return_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/expected_class_return_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(expected_class_return_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME consuming_call_assignment_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/consuming_call_assignment_runtime_test.py"
+                 $<TARGET_FILE:gti>)
+set_tests_properties(consuming_call_assignment_runtime PROPERTIES TIMEOUT 240)
 
 add_executable("gti_native_header_tests" "${PROJECT_SOURCE_DIR}/tests/native_header_tests.cpp")
 target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)
@@ -662,6 +680,15 @@ add_executable("gti_lowered_program_tests"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_contract_client.cpp")
 target_link_libraries("gti_lowered_program_tests" PRIVATE gti_compiler)
 add_test(NAME lowered_program_contract COMMAND gti_lowered_program_tests)
+add_executable(gti_field_symbol_identity_tests field_symbol_identity_tests.cpp)
+target_link_libraries(gti_field_symbol_identity_tests PRIVATE gti_compiler)
+add_test(NAME field_symbol_identity COMMAND gti_field_symbol_identity_tests)
+add_executable(gti_constructor_transport_tests constructor_transport_tests.cpp)
+target_link_libraries(gti_constructor_transport_tests PRIVATE gti_compiler)
+add_test(NAME constructor_transport COMMAND gti_constructor_transport_tests)
+add_test(NAME generic_callable_transport_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_callable_transport_runtime_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(generic_callable_transport_runtime PROPERTIES TIMEOUT 360)
 
 add_executable("gti_lowered_program_census"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_census.cpp"
@@ -734,6 +761,15 @@ add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_fai
 add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
 target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
 add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
+add_executable(gti_generic_discovery_tests generic_discovery_tests.cpp)
+target_link_libraries(gti_generic_discovery_tests PRIVATE gti_compiler)
+add_test(NAME generic_discovery COMMAND gti_generic_discovery_tests)
+set_tests_properties(generic_discovery PROPERTIES TIMEOUT 60)
+add_test(NAME generic_discovery_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/generic_discovery_runtime_test.py"
+          "$<TARGET_FILE:gti>")
+set_tests_properties(generic_discovery_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
 target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_cpp_backend)
@@ -748,6 +784,27 @@ add_test(NAME optional_empty_prefix COMMAND gti_optional_empty_prefix_tests)
 add_executable(gti_field_array_empty_state_tests field_array_empty_state_tests.cpp)
 target_link_libraries(gti_field_array_empty_state_tests PRIVATE gti_cpp_backend)
 add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
+add_executable(gti_passive_fixed_array_tests passive_fixed_array_tests.cpp)
+target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend)
+add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
+add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
+target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend)
+add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME class_field_value_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(class_field_value_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME passive_fixed_array_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(passive_fixed_array_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME coverage_native_fixture_policy
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/coverage/native_fixture_policy_test.py")
+endif()
 add_executable(gti_expected_payload_pending_cleanup_tests
                expected_payload_pending_cleanup_tests.cpp)
 target_link_libraries(gti_expected_payload_pending_cleanup_tests PRIVATE gti_cpp_backend)
@@ -1356,6 +1413,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/examples/07-generics.gti"
   )
+  add_test(NAME mir_field_determinism
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/determinism_test.py"
+      "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/tests/coverage/reproducers/a13-mir-field-symbol-order.gti" --mir-runs 30)
+  add_test(NAME mir_associative_determinism
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/determinism_test.py"
+      "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/examples/87-associative-containers.gti" --mir-runs 6)
+  set_tests_properties(mir_field_determinism mir_associative_determinism PROPERTIES TIMEOUT 180)
   add_test(
     NAME compiler_debug_tooling
     COMMAND "${Python3_EXECUTABLE}"

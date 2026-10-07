@@ -793,6 +793,9 @@ auto SemanticVisitor::Impl::registerTypeAliases(const StmtList &statements,
 }
 
 auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
+  // Alias identities are needed by member/signature registration. Structural
+  // constraints, however, require the completed member/lifecycle inventory.
+  deferringTypeAliasConstraints = true;
   for (RegisteredTypeAlias &alias : typeAliases) {
     if (alias.ownerDeclaration == nullptr) {
       continue;
@@ -838,6 +841,34 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
                        alias.compilerPrivate);
     }
   }
+  deferringTypeAliasConstraints = false;
+}
+
+auto SemanticVisitor::Impl::validateTypeAliasConstraints() -> void {
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingClass = currentClass;
+  for (const RegisteredTypeAlias &alias : typeAliases) {
+    if (alias.resolution != TypeAliasResolution::Resolved) {
+      continue;
+    }
+    currentSourceUnit = alias.sourceUnit;
+    currentNamespace = alias.lookupScope;
+    currentClass = alias.ownerClass == 0
+                       ? std::nullopt
+                       : std::optional<ClassId>(alias.ownerClass);
+    if (currentClass) {
+      beginTypeParameterScope(classInfo(*currentClass).genericParameters);
+    }
+    validateType(alias.declaration->target(),
+                 alias.declaration->target().isNativeFunction());
+    if (currentClass) {
+      endTypeParameterScope();
+    }
+  }
+  currentSourceUnit = enclosingUnit;
+  currentNamespace = enclosingNamespace;
+  currentClass = enclosingClass;
 }
 
 auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
@@ -6879,6 +6910,34 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .kind = owner.kind,
             .compilerPrivate = owner.compilerPrivate,
             .compilerCapability = owner.compilerCapability});
+  }
+}
+
+auto SemanticVisitor::Impl::recordClassFieldSymbols() -> void {
+  for (const ClassInfo &owner : classes) {
+    if (owner.declaration == nullptr)
+      continue;
+    // The catalog owns active declaration order. Reserve physical field
+    // identities before summaries/layout queries can first-reference them in
+    // pointer-keyed lookup order; inherited lookup aliases reuse the same ID.
+    const auto visit = [&](const auto &self, const StmtList &members) -> void {
+      for (const StmtPtr &statement : members) {
+        if (const auto *conditional =
+                stmtAs<ConditionalStmt>(statement.get())) {
+          if (const StmtList *active = conditional->activeBranch(target))
+            self(self, *active);
+        } else if (const auto *field = stmtAs<VariableDecl>(statement.get())) {
+          const auto member = owner.members.find(field->name().lexeme);
+          if (member != owner.members.end() &&
+              (member->second.symbol.bindingKind ==
+                   SemanticBindingKind::Field ||
+               member->second.symbol.bindingKind ==
+                   SemanticBindingKind::StaticField))
+            toolingSymbolFor(member->second.symbol);
+        }
+      }
+    };
+    visit(visit, owner.declaration->members());
   }
 }
 
