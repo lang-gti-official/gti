@@ -390,3 +390,139 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
    contract lists it among the unsupported forms — so there is nothing for
    the tool to emit. Adding it is a language change first, exactly as
    `link_name` was, and belongs to that language work rather than to bindgen.
+
+## C-08: Native Invocation And Foreign Storage
+
+Status: groundwork recorded and current-boundary regressions added; native
+indirect invocation and foreign-variable declarations are not implemented.
+This is a follow-on language campaign, not permission for the importer to emit
+declarations the frontend rejects. Target-correct native scalar identity and
+general nested raw pointers have their own implementation campaign; reuse its
+resolved types and native pointer-slot contract rather than duplicating them.
+
+### Named outcomes and current evidence
+
+Applications must eventually be able to call a function pointer obtained from a
+C library or stored in a passive dispatch table, and access real externally
+defined C data/function-pointer variables. GLAD is a motivating client, not a
+nominal compiler exception. An unrelated native fixture must prove each rule.
+
+The current compiler already provides the important foundation:
+
+- `SemanticType::NativeFunction` owns an exact named C signature; a value may
+  be null, reside in an admitted passive record, and pass through ordinary GTI
+  parameters/results. `NativeFunctionConversionInfo` instead records an exact
+  GTI function-to-C-adapter conversion. These are different identities.
+- HIR/MIR retain adapter rows, and the verified production backend emits their
+  C ABI thunks. They describe C calling an eligible GTI body, not GTI calling
+  an arbitrary foreign address.
+- `visitCallExpr` has no native-function invocation family. `ResolvedCallInfo`
+  and downstream calls normally identify selected GTI declarations or other
+  existing callable families. A callback value cannot legitimately manufacture
+  a static GTI declaration target from its signature alone.
+- `externCDeclaration` admits only bodyless functions. The native reader warns
+  about `CXCursor_VarDecl` and does not retain a foreign-storage declaration;
+  there is no compiler external-global storage identity today.
+
+`native_callback_pipeline` now checks exact field/parameter/result transport
+without an invented GTI adapter, and frontend rejection of local, field and
+call-result invocation plus scalar/const/callback foreign variables. Those
+negatives preserve the current executable-authority boundary, not a permanent
+language prohibition. Replace them with the positive invocation/storage
+contracts when the respective verified production paths are implemented.
+
+### C-08A: Call native function-pointer values
+
+Use the existing named signature and ordinary call syntax. Resolve a distinct
+native-indirect call identity in semantics, carrying the exact callee value,
+target ABI/signature, ordered arguments/result, and required unsafe effect.
+Do not overload an adapter identity or use a dummy selected `FunctionId`.
+
+All native-indirect calls require lexical unsafe: a scalar-only signature does
+not prove a non-null valid executable address or satisfy foreign preconditions.
+The caller owns those obligations, including platform calling convention and
+native implementation behavior. This does not require mandatory pointer
+provenance analysis or turn callback transport into an unsafe operation.
+Null transport remains permitted; safe checked wrappers can enforce a useful
+subset of preconditions above the raw binding. This slice does not introduce
+capturing callbacks, anonymous function-pointer declarators, or new foreign
+thread attachment rules.
+
+Extend the existing call-plan machinery, rather than building another callable
+type system. Evaluate the callee once before arguments and retain all prepared
+inputs through the call's established full-expression boundary. Apply existing
+ABI argument conversion/marshalling to the resolved native shape, including the
+general nested-pointer/writeback family when available. The result may itself
+be a native function-pointer value. No implicit GTI owner is created by a raw
+native result.
+
+HIR preserves the semantic native-indirect target. MIR must represent the
+ordered callee input, exact native signature, conservative foreign effects and
+unsafe permission independently of any AST or GTI body target. Program and
+body verification must reject signature/arity mismatches, forged safe calls,
+lost or duplicated callee evaluation, unrelated static/lambda/adapter targets,
+and unsupported ABI conversions. Reuse the existing foreign-call exception and
+defined-failure boundary; do not infer GTI body effects from a native address.
+Constant-context invocation remains rejected unless a separate general CTFE
+contract can execute it deterministically.
+
+Production emission consumes only those verified MIR facts. A C++ backend may
+emit a typed C function-pointer call, but must not cast an unrelated address or
+recover signature/lookup from source spelling. Compatibility-emitter-only
+support is not an acceptable implementation. Externally supplied pointer calls
+do not authorize broader C-to-GTI callback entry; existing thunk containment and
+thread-registration restrictions remain intact.
+
+Acceptance: unrelated native fixtures return and store a function pointer;
+GTI invokes locals, record fields and returned values, including nested callback
+results and existing admitted pointer-bearing signatures. Check exact argument
+errors, missing unsafe and invalid generic/capture conversions. Mutate MIR
+callee identity/type, call signature, operands and permission. Run production
+runtime evidence at O0/O1/O3 and C++20/C++23, applicable sanitizers, and an
+explicit runnable example with normal corpus/census registration. Synchronize
+compiler-owned hover/call tooling with the new resolved call family.
+
+### C-08B: Declare and access actual foreign variables
+
+Introduce a real external-storage declaration identity, never an ordinary GTI
+global initialized with a placeholder. Retain exact link symbol, resolved ABI
+type, mutability/constness, source origin and target storage facts. A declaration
+does not create initialization, allocation, ownership, startup or destruction
+obligations. It must participate in program-global native symbol collision
+checking and native-header generation, including eventual `link_name` support.
+
+Native facts must survive import before policy decides what is expressible.
+Extend `NativeDeclarationKind` and the libclang reader for variable declarations
+with linkage, type qualifiers, thread-local storage, declaration-versus-definition
+and external symbol facts. Redeclaration handling must preserve one canonical
+identity. The planner records exact skips for unsupported storage kinds rather
+than silently approximating them. Read-only data is not a macro constant;
+`errno` and other accessor macros legitimately continue to need native adapters.
+
+Raw foreign loads/stores and address acquisition require unsafe obligations for
+validity, initialization, access, lifetime and synchronization. Constness rejects
+writes; it does not independently prove a safe foreign read. Initial support can
+be structurally bounded to non-thread-local, non-volatile ABI-representable
+objects. TLS and volatile access require explicit general semantics and target
+support before acceptance; they must never degrade into ordinary globals or
+ordinary cached loads. Checked references to foreign storage require the
+existing explicit raw-to-checked contract, not an invented owning witness.
+
+HIR/MIR retain external-storage identity on places and effects. Loads/stores
+must be conservatively observable across foreign calls; optimizers cannot
+assume GTI startup ownership, value stability or thread confinement. Backends
+emit declarations and references to externally linked storage, never GTI-owned
+definitions. Verifiers reject missing/forged identity, prohibited mutation and
+ownership/drop obligations on foreign declarations.
+
+Acceptance: a native fixture defines writable scalar data, read-only data and
+a function-pointer variable; GTI reads, writes and transports them, then combines
+function-pointer variable loading with C-08A invocation. Verify exact symbol
+renaming/collision behavior, unsupported TLS/volatile diagnostics, no emitted
+definition or destructor, generated C17/C++20/C++23 header compatibility,
+optimizer effects, MIR mutations, tooling and a runnable registered example.
+
+Implement and verify C-08A and C-08B as independent vertical slices. Groundwork
+does not claim either capability is usable, require a version bump, or satisfy
+their future executable-example gates. Revise the canonical native interop
+contract only as implementation lands.
