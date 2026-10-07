@@ -174,7 +174,8 @@ def main():
             assert has_error_diagnostics(publication(declaration_uri, 4))
             publication(uri, 2)
             change(declaration_uri, changed, 5)
-            assert not has_error_diagnostics(publication(declaration_uri, 5))
+            recovered = publication(declaration_uri, 5)
+            assert not has_error_diagnostics(recovered), recovered
             assert not has_error_diagnostics(publication(uri, 2))
             assert_hover(uri, fixed, "item(1", "int32_t payload, bool detail")
 

@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v92`, `mir-body-v77`).
+instruction, body, and caller-assignment facts (`mir-v93`, `mir-body-v77`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -480,6 +480,12 @@ checking the selected variant/field. A shared local child may reborrow a shared
 parent without gaining mutable access; parent activity, CFG containment,
 non-escape and child-before-parent endpoints remain mandatory and independently
 verified.
+
+Canonical checked-place forwarding does not cross `RawDereference` or
+`RawIndex`. Such projections designate pointee storage, not the storage holding
+the pointer; a read-only carrier shell therefore does not make the raw pointee
+read-only. Ordinary pointer type/access and lexical unsafe obligations remain
+separate from checked loan ancestry.
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in

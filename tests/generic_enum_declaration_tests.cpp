@@ -70,16 +70,22 @@ int main() { return 0; }
       "enum Message<T> { idle, item(T payload) }; "
       "using Count = Message<int>; "
       "int main() { auto result = Count::item(7); return 0; }";
-  const auto callResult = lang::Frontend().analyze("enum-hover.gti", callSource);
+  const auto callResult =
+      lang::Frontend().analyze("enum-hover.gti", callSource);
   const auto offset = callSource.find("item(7");
   const auto variantHover = lang::LanguageQueries().hover(
       callResult, callResult.sourceGraph.entryUnit(), offset);
-  expect(variantHover && variantHover->signature.find("::item(int32_t payload)") != std::string::npos,
+  expect(variantHover && variantHover->signature.find(
+                             "::item(int32_t payload)") != std::string::npos,
          "generic variant hover uses the exact occurrence signature");
-  if (!variantHover || variantHover->signature.find("::item(") == std::string::npos) {
+  if (!variantHover ||
+      variantHover->signature.find("::item(") == std::string::npos) {
     const auto *occurrence = callResult.semantics.database().findOccurrence(
         callResult.sourceGraph.entryUnit(), offset);
-    const auto *symbol = occurrence ? callResult.semantics.database().findSymbol(occurrence->symbol) : nullptr;
+    const auto *symbol =
+        occurrence
+            ? callResult.semantics.database().findSymbol(occurrence->symbol)
+            : nullptr;
     std::cerr << "hover=" << (variantHover ? variantHover->signature : "none")
               << " occurrence=" << (occurrence ? int(occurrence->kind) : -1)
               << " symbol=" << (symbol ? int(symbol->kind) : -1) << '\n';

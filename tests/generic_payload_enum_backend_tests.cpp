@@ -273,5 +273,53 @@ int main() {
     for (const auto &diagnostic : nested.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
+  const auto rawPointee =
+      lang::Frontend().analyze("raw-pointee-carrier-boundary.gti", R"(
+struct Counts { mut int value = 0; };
+class Counter {
+  int& source;
+  Counts* state = nullptr;
+public:
+  Counter(int& source, Counts* state) : source(source), state(state) {}
+  unsafe void increment() { unsafe { this.state->value++; } }
+  int count() { unsafe { return this.state->value; } }
+};
+int main() {
+  int owner = 7;
+  mut Counts counts{};
+  Counter counter{owner, &counts};
+  unsafe { counter.increment(); }
+  return counter.count() - 1;
+}
+)");
+  expect(
+      rawPointee.canGenerateCode(),
+      "an unsafe mutable pointee is not the readonly borrowed carrier shell");
+  if (rawPointee.canGenerateCode()) {
+    bool distinct = false;
+    for (const auto &function : rawPointee.mir.functionInstances()) {
+      const auto &body = function.body;
+      for (const auto &place : body.places) {
+        if (place.root != lang::MirPlaceRootKind::Value ||
+            std::none_of(place.projections.begin(), place.projections.end(),
+                         [](const auto &projection) {
+                           return projection.kind ==
+                                  lang::MirProjectionKind::RawDereference;
+                         }))
+          continue;
+        for (const auto &loan : body.loans)
+          if (loan.kind == lang::MirLoanKind::Stored && loan.entry)
+            distinct = distinct || !lang::mirCanonicalPlaceContains(
+                                       body, loan.source, place.id);
+      }
+    }
+    expect(distinct,
+           "raw pointee identity stays separate from a checked carrier origin");
+    expect(!gti_test::emitCpp(rawPointee).contents.empty(),
+           "the raw pointer boundary retains verified-MIR production emission");
+  } else {
+    for (const auto &diagnostic : rawPointee.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
   return failures == 0 ? 0 : 1;
 }
