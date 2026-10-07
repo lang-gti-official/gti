@@ -24,11 +24,19 @@ int32_t& plain(Table& table) {
   return alias;
 }
 
+expected<int32_t&, errc> relay_alias(Table& table) {
+  Cell& row = table.cell;
+  int32_t& selected = row[std::size_t(0)];
+  int32_t& alias = selected;
+  return alias;
+}
+
 int main() {
   Table table{};
   auto value = relay(table, true);
   if (!value || value.value() != 29) { return 1; }
   auto missing = relay(table, false);
   if (missing || missing.error() != errc::missing) { return 2; }
-  return plain(table) == 29 ? 0 : 3;
+  if (plain(table) != 29) { return 3; }
+  return relay_alias(table).value() == 29 ? 0 : 4;
 }

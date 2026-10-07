@@ -35,6 +35,13 @@ rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
                                                const MirPlace &address,
                                                const MirLoan &retained);
 
+// A stable, checked field projection through an entry reference parameter is
+// still caller-owned. This establishes owner containment, not the referent
+// address or permission to escape; call publication and loan flow prove those.
+[[nodiscard]] bool referenceParameterContainsPlace(const MirBody &body,
+                                                   const MirLoan &parameter,
+                                                   MirPlaceId place);
+
 // Recognize the exact, single-use signed-minimum literal schedule shared by
 // native emission and constant execution. Ordinary runtime negation is not
 // interchangeable with this failure-free literal formation.

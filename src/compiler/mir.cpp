@@ -10536,7 +10536,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      address->projections.empty() && resultLoan != nullptr &&
                      resultLoan->kind == MirLoanKind::CallResult &&
                      (resultLoan->parent == retained->id || extractedAddress) &&
-                     resultLoan->source == retained->source &&
+                     (resultLoan->source == retained->source ||
+                      mir_detail::referenceParameterContainsPlace(
+                          body, *retained, resultLoan->source)) &&
                      resultLoan->storedDependency ==
                          retained->storedDependency &&
                      resultLoan->producedBy != 0 &&
