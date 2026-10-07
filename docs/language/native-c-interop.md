@@ -704,8 +704,8 @@ function's documented contract. In the example, that includes proving that
 `output` remains live and writable for at least one byte for the duration of
 the call and that the callee does not retain the address.
 
-A C function whose source signature contains only the fixed-width scalar
-allowlist, pointer-free C ABI records, `float`, `double`, `void`, or the special
+A C function whose source signature contains only the C ABI scalar families
+above, pointer-free C ABI records, `float`, `double`, `void`, or the special
 non-retained `std::string_view` parameter remains callable from safe code. The
 private pointer inside the `gti_c_string_view` lowering does not turn the
 source-level call into a raw pointer operation.
