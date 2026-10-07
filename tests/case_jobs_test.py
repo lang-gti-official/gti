@@ -80,6 +80,16 @@ class CaseJobsTests(unittest.TestCase):
         self.assertIn("2: AssertionError", str(failure.exception))
         self.assertEqual(visited, [0, 2, 3])
 
+    def test_missing_and_duplicate_completions_fail(self):
+        for repeat in (False, True):
+            def corrupted(futures):
+                values = list(futures)
+                return iter([values[0], *values] if repeat else values[1:])
+
+            with patch.object(case_jobs, "as_completed", corrupted):
+                with self.assertRaisesRegex(RuntimeError, "case census"):
+                    self.run_cases([("a", 1), ("b", 2)], lambda value: value, 2)
+
     def test_serial_preserves_work_observation_interleaving(self):
         visits = []
         self.run_cases([("a", 0), ("b", 1)],
