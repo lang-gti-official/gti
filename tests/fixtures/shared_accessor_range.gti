@@ -1,0 +1,74 @@
+#include <std/vector>
+#include <std/string>
+
+// An application-defined owner and noncopyable elements, independent of JSON.
+class Item {
+  int number;
+public:
+  Item(int number) : number(number) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  int read() { return this.number; }
+};
+class Bag {
+  mut std::vector<Item> items;
+public:
+  Bag() : items(std::vector<Item>()) {
+    this.items.push_back(Item(3));
+    this.items.push_back(Item(5));
+    this.items.push_back(Item(7));
+  }
+  ~Bag() { std::println(90); }
+  std::vector<Item>& elements() { return this.items; }
+  void clear() mut { this.items.clear(); }
+};
+expected<Bag&, int> lookup(Bag& bag) { return bag; }
+
+int first(Bag& owner) {
+  auto borrowed = lookup(owner);
+  for (auto& item : borrowed.value().elements()) { return item.read(); }
+  return 0;
+}
+expected<int, int> checked_sum(Bag& owner, bool fail) {
+  auto borrowed = lookup(owner);
+  mut int sum = 0;
+  for (auto& item : borrowed.value().elements()) {
+    if (fail && item.read() == 5) { return unexpected(7); }
+    sum += item.read();
+  }
+  return sum;
+}
+int main(int argc, std::vector<std::string> argv) {
+  mut Bag owner{};
+  {
+    auto borrowed = lookup(owner);
+    mut int sum = 0;
+    for (auto& item : borrowed.value().elements()) {
+      if (argc > 1) {
+        std::println(item.read());
+        int divisor = item.read() == 5 ? 0 : 1;
+        int checked = 12 / divisor;
+      }
+      sum += item.read();
+    }
+    if (sum != 15 || first(owner) != 3) { return 1; }
+    mut int pairs = 0;
+    for (auto& left : borrowed.value().elements()) {
+      for (auto& right : borrowed.value().elements()) {
+        pairs += left.read() + right.read();
+      }
+    }
+    if (pairs != 90) { return 2; }
+    mut int selected = 0;
+    for (auto& item : borrowed.value().elements()) {
+      if (item.read() == 3) { continue; }
+      selected = item.read();
+      break;
+    }
+    if (selected != 5 || checked_sum(owner, false).value() != 15 ||
+        checked_sum(owner, true).error() != 7) { return 3; }
+  }
+  // The shared carrier and every element loan have ended at this scope exit.
+  owner.clear();
+  return 0;
+}
