@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -258,6 +259,78 @@ int main() {
   Callback callback = [](int32_t value) -> int32_t { return value; };
   return 0;
 }
+
+// Groundwork for general foreign invocation: transport already has exact
+// native shape, but it must not silently acquire a static GTI call target.
+// Replace these current-boundary negatives with invocation contract tests when
+// semantic target identity, MIR verification and production emission land.
+void testNativeCallableGroundwork() {
+  const lang::FrontendResult transported = analyze("foreign-table.gti", R"(
+using Transform = (int32_t) -> int32_t;
+[[c_abi]] struct DispatchTable { Transform transform; };
+Transform select_transform(DispatchTable table) { return table.transform; }
+Transform forward_transform(Transform value) { return value; }
+int main() { Transform inert = nullptr; return inert == nullptr ? 0 : 1; }
+)");
+  if (!transported.canGenerateCode()) {
+    printDiagnostics(transported);
+  }
+  expect(transported.canGenerateCode() &&
+             lang::verifyMirProgram(transported.mir).valid() &&
+             transported.mir.nativeCallbackAdapters().empty(),
+         "foreign callback values retain exact shapes through fields and "
+         "ordinary forwarding without inventing a GTI adapter target");
+
+  const std::vector<std::pair<std::string, std::string>> invocations = {
+      {"foreign-local-invoke.gti", R"(
+using Transform = (int32_t) -> int32_t;
+int main() {
+  Transform callback = nullptr;
+  unsafe { return callback(7); }
+}
+)"},
+      {"foreign-field-invoke.gti", R"(
+using Transform = (int32_t) -> int32_t;
+[[c_abi]] struct DispatchTable { Transform transform; };
+int32_t invoke(DispatchTable table) {
+  unsafe { return table.transform(7); }
+}
+int main() { return 0; }
+)"},
+      {"foreign-result-invoke.gti", R"(
+using Transform = (int32_t) -> int32_t;
+extern "C" { Transform obtain_transform(); }
+int main() { unsafe { return obtain_transform()(7); } }
+)"},
+  };
+  for (const auto &[name, source] : invocations) {
+    const lang::FrontendResult rejected = analyze(name, source);
+    expect(!rejected.canGenerateCode() && !rejected.diagnostics.empty(),
+           name + " must remain frontend-rejected until native indirect "
+                  "invocation has an executable MIR contract");
+  }
+
+  for (const std::string declaration : {
+           "int32_t foreign_counter;",
+           "const int32_t foreign_limit;",
+           "Transform foreign_transform;",
+       }) {
+    const lang::FrontendResult rejected =
+        analyze("foreign-variable.gti",
+                "using Transform = (int32_t) -> int32_t;\nextern \"C\" { " +
+                    declaration + " }\nint main() { return 0; }\n");
+    expect(!rejected.canGenerateCode() &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const lang::Diagnostic &diagnostic) {
+                             return diagnostic.message.find(
+                                        "only function declarations") !=
+                                    std::string::npos;
+                           }),
+           declaration + " must not become owned GTI global storage through "
+                         "foreign-declaration parser recovery");
+  }
+}
 )");
   expect(!lambda.canGenerateCode() && hasCode(lambda, "GTI-S2003"),
          "capturing or non-capturing lambdas should not silently acquire a C "
@@ -305,6 +378,7 @@ void testFormatterSurface() {
 int main() {
   testNativeCallbackPipeline();
   testNativeCallbackRejections();
+  testNativeCallableGroundwork();
   testExecutionProfileBoundary();
   testFormatterSurface();
   if (failures != 0) {
