@@ -35,6 +35,7 @@ public:
     Destructor,
     FieldInitializers,
     Lambda,
+    ConcreteInstance,
   };
 
   struct ProgramEffectOwner {
@@ -78,6 +79,28 @@ public:
     std::vector<ProgramEffectEdge> edges;
     std::vector<ProgramUnknownEffect> unknown;
   };
+
+  struct ProgramConcreteEffectQuery {
+    ProgramEffectOwner target;
+    SemanticType owner = SemanticType::Unknown;
+    std::vector<SemanticType> types;
+    std::vector<CompileTimeValue> values;
+    SourceSpan site;
+    bool complete = false;
+  };
+  struct ProgramConcreteEffectState {
+    std::vector<ProgramConcreteEffectQuery> queries;
+    // Hash buckets accelerate lookup; the ordered vector alone assigns IDs.
+    std::unordered_map<std::size_t, std::vector<std::size_t>> buckets;
+    std::size_t analyzed = 0;
+  };
+
+  void recordConcreteProgramEffect(ProgramEffectOwner target,
+                                   const SemanticType &owner,
+                                   const std::vector<SemanticType> &types,
+                                   const std::vector<CompileTimeValue> &values,
+                                   const SourceSpan &site);
+  void closeConcreteProgramEffects(const ProgramInitializationPlan &plan);
 
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
                 bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
@@ -2996,11 +3019,13 @@ private:
                            std::vector<std::string> scope);
 
   [[nodiscard]] bool
-  byValueTypeReachesClass(const SemanticType &type, ClassId target,
-                          std::unordered_set<ClassId> &visiting,
-                          std::unordered_set<EnumId> &visitingEnums) const;
+  byValueTypeReachesClass(const SemanticType &type, const SemanticType &target,
+                          std::vector<SemanticType> &visiting,
+                          std::unordered_set<EnumId> &visitingEnums,
+                          bool &exhausted) const;
 
   void validateOrdinaryClassLayouts();
+  void validateOrdinaryClassLayout(const SemanticType &type);
 
   void refreshFunctionPolymorphism(const CallableCandidate &candidate);
 
@@ -3019,9 +3044,6 @@ private:
   [[nodiscard]] static const ClassBaseTypeInfo *
   concreteBase(const ClassInfo &owner);
 
-  [[nodiscard]] static bool
-  fieldsHaveDeclarationInitializers(const ClassInfo &owner);
-
   [[nodiscard]] static const ConstructorInfo *
   defaultConstructor(const ClassInfo &owner);
 
@@ -3033,14 +3055,15 @@ private:
 
   [[nodiscard]] static bool hasSourceDestructorBody(const ClassInfo &owner);
 
-  [[nodiscard]] bool classCanUseStructuralDefaultConstruction(
-      const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const;
-
   [[nodiscard]] bool
   classCanUseStructuralDefaultConstruction(const ClassInfo &owner) const;
 
-  [[nodiscard]] bool classCanGenerateDefaultConstructor(
-      const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const;
+  [[nodiscard]] bool classCanUseStructuralDefaultConstruction(
+      const SemanticType &type, std::vector<SemanticType> &visiting) const;
+  [[nodiscard]] bool
+  classCanUseStructuralDefaultConstruction(const SemanticType &type) const;
+  [[nodiscard]] bool
+  classCanGenerateDefaultConstructor(const SemanticType &type) const;
 
   [[nodiscard]] bool
   classCanGenerateDefaultConstructor(const ClassInfo &owner) const;
@@ -3239,10 +3262,10 @@ private:
   void recordProgramDefaultConstructionEffects(const SemanticType &type,
                                                const SourceSpan &span);
 
-  void
-  recordProgramSelectedConstructorEffect(const ConstructorInfo *constructor,
-                                         const SemanticType &constructedType,
-                                         const SourceSpan &span);
+  void recordProgramSelectedConstructorEffect(
+      const ConstructorInfo *constructor, const SemanticType &constructedType,
+      const SourceSpan &span, const std::vector<SemanticType> &types = {},
+      const std::vector<CompileTimeValue> &values = {});
 
   [[nodiscard]] bool hasOpenProgramCleanupShape(const SemanticType &type) const;
 
@@ -4367,10 +4390,12 @@ private:
     std::unordered_map<ProgramEffectOwner, ProgramEffectSummary,
                        ProgramEffectOwnerHash>
         programEffects;
+    std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
     std::size_t programStoragePlaceUseDepth = 0;
     LambdaId nextLambdaId = 1;
     SemanticLoanId nextSemanticLoanId = 1;
     std::size_t nextPlaceSelectionId = 1;
+    std::vector<SemanticType> invalidOrdinaryLayouts;
   } requestSession;
 
   std::vector<SemanticDiagnostic> &diagnostics = requestSession.diagnostics;

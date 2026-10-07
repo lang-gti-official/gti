@@ -617,6 +617,30 @@ declaration, open generic cleanup shape, or other missing summary is unknown;
 `GTI-S2068` rejects a later-storage access or unknown transitive effect before
 HIR. This proof does not infer safety from a backend or from `findConstant()`.
 
+Closed generic calls use request-local concrete effect queries keyed by the
+declaration, concrete owner, and type/value substitutions. A reused isolated
+semantic instance worker analyzes only initializer-reachable selected bodies;
+discarded `if constexpr` arms do not contribute effects. Nongeneric bridge
+calls retain their graph edges, and source constructor/destructor/field effects
+use the same exact instance identity. Query expansion is bounded by 64 generic
+ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
+diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
+without exact selected generic arguments remain conservatively unknown.
+
+Value-generic arithmetic needed before complete program HIR/MIR is retained as
+an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.
+Substitution reuses the checked constant-operation kernel and exact-specialization
+selection. Complete MIR cannot yet own this early type-formation query because
+array/value arguments and class field layout shape the semantic instance itself;
+the remaining L-CONST-01 staged/query-driven MIR evaluator remains the migration
+goal, not a separate permanent runtime interpreter.
+
+Missing nominal-field defaults use semantic-owned empty construction anchors,
+retained across snapshots and deltas. Ordinary contextual construction analysis
+publishes the exact selected operation and effects; HIR lowers that typed field
+initializer, and MIR owns final-address construction, stage activation, ordering,
+and rollback. Other omitted field categories do not gain an implicit initializer.
+
 `SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
 active-statement preorder, and exact ordered source-graph/prelude provenance.
 HIR copies that seal and must match the same program and target before

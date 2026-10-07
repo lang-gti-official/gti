@@ -197,6 +197,17 @@ struct GenericValueExpression {
   GenericParameterId parameterId = 0;
   std::shared_ptr<const GenericValueExpression> left;
   std::shared_ptr<const GenericValueExpression> right;
+
+  friend bool operator==(const GenericValueExpression &a,
+                         const GenericValueExpression &b) {
+    const auto equal = [](const auto &x, const auto &y) {
+      return (!x && !y) || (x && y && *x == *y);
+    };
+    return a.kind == b.kind && a.value == b.value &&
+           a.parameterId == b.parameterId &&
+           (a.kind != Binary || a.token.kind == b.token.kind) &&
+           equal(a.left, b.left) && equal(a.right, b.right);
+  }
 };
 
 struct GenericParameterInfo {
@@ -231,13 +242,24 @@ struct CompileTimeValue {
     return CompileTimeValue{.kind = Parameter, .parameterId = parameterId};
   }
 
-  friend bool operator==(const CompileTimeValue &,
-                         const CompileTimeValue &) = default;
+  friend bool operator==(const CompileTimeValue &a, const CompileTimeValue &b) {
+    return a.kind == b.kind && a.value == b.value &&
+           a.parameterId == b.parameterId &&
+           ((!a.expression && !b.expression) ||
+            (a.expression && b.expression && *a.expression == *b.expression));
+  }
 
   Kind kind = Unknown;
   std::uint64_t value = 0;
   GenericParameterId parameterId = 0;
+  // Share the declaration-bound owned representation used by generic defaults.
+  std::shared_ptr<const GenericValueExpression> expression;
 };
+
+[[nodiscard]] CompileTimeValue substituteCompileTimeValue(
+    const CompileTimeValue &value,
+    const std::unordered_map<GenericParameterId, CompileTimeValue>
+        &substitution);
 
 enum class ArrayExtentEvaluationError {
   None,

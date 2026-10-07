@@ -1506,6 +1506,13 @@ public:
   // Own semantic-generated constructor syntax for the lifetime of every
   // downstream reference; cached parsed source trees remain immutable.
   std::vector<std::shared_ptr<const ConstructorDecl>> designatedConstructors;
+  // Source-free empty construction anchors are owned across immutable copies
+  // and instance deltas, just like semantic-generated constructor syntax.
+  [[nodiscard]] const ExprPtr &
+  implicitFieldInitializer(const VariableDecl &field) const;
+  [[nodiscard]] const ExprPtr &
+  resolvedFieldInitializer(const VariableDecl &field) const;
+  void retainImplicitFieldInitializer(const VariableDecl &field);
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
 
   [[nodiscard]] ExecutionProfile executionProfile() const;
@@ -2103,6 +2110,8 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
+  std::unordered_map<const VariableDecl *, std::shared_ptr<const ExprPtr>>
+      implicitFieldInitializers;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
       collections;

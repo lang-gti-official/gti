@@ -69,7 +69,7 @@ is a teaching helper, not a production server.
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
 | `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
-| `23-direct-initialization.gti` | exact class construction without repeated declared types |
+| `23-direct-initialization.gti` | direct construction, checked nominal-field defaults, and finite value-generic layouts |
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |

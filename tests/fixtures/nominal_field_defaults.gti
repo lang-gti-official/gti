@@ -1,0 +1,33 @@
+mut int trace = 0;
+mut int live = 0;
+
+class Leaf {
+  mut int identity = 0;
+public:
+  Leaf() {
+    live += 1;
+    identity = live;
+    trace = trace * 10 + identity;
+  }
+  ~Leaf() {
+    trace = trace * 10 + identity;
+    live -= 1;
+  }
+};
+
+struct Generated { Leaf first; Leaf second; };
+class Declared {
+  Leaf first;
+  Leaf second;
+public:
+  Declared() { trace = trace * 10 + 3; }
+};
+
+int main() {
+  { Generated object{}; }
+  if (trace != 1221 || live != 0) return 1;
+  trace = 0;
+  { Declared object{}; }
+  if (trace != 12321 || live != 0) return 2;
+  return 0;
+}

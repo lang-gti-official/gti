@@ -1298,7 +1298,8 @@ movement as it can in C++.
 
 The exact declarations `Type() = default;` and `~Type() = default;` make the
 compiler-derived default construction and destruction policy explicit. They do
-not create empty source bodies: declaration initializers, state-bearing base
+not create empty source bodies: declaration initializers, checked default
+construction of omitted nominal fields, state-bearing base
 construction, reverse field/base destruction, and nested cleanup remain the
 same as when the declarations are omitted. A defaulted destructor therefore
 does not make a type noncopyable or require an active-drop flag.

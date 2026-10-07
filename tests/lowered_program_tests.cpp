@@ -927,15 +927,15 @@ int main() { return choose<0>() - 2; }
   expect(inactive.canGenerateCode(), "discarded arms remain unanalyzed");
   auto invalidBorrow =
       lang::Frontend().analyze("selected-borrow-escape.gti", R"gti(
-int& borrow<uint64_t N>() {
+int& borrow<uint64_t N>(int& source) {
   if constexpr (N == 0) { int local = 2; return local; }
 }
-int main() { return borrow<0>(); }
+int main() { int value = 1; return borrow<0>(value); }
 )gti");
   expect(!invalidBorrow.canGenerateCode() &&
              std::any_of(invalidBorrow.diagnostics.begin(),
                          invalidBorrow.diagnostics.end(),
-                         [](const auto &d) { return d.code == "GTI-S2045"; }),
+                         [](const auto &d) { return d.code == "GTI-S2017"; }),
          "selected-arm locals still cannot escape by reference");
   auto forged = frontend.hir;
   auto &forgedSymbols =

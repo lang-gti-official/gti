@@ -6,6 +6,64 @@
 #include <utility>
 
 namespace lang {
+CompileTimeValue substituteCompileTimeValue(
+    const CompileTimeValue &value,
+    const std::unordered_map<GenericParameterId, CompileTimeValue>
+        &substitution) {
+  if (value.kind == CompileTimeValue::Parameter) {
+    const auto found = substitution.find(value.parameterId);
+    return found == substitution.end() ? value : found->second;
+  }
+  if (!value.expression)
+    return value;
+  const auto evaluate =
+      [&](const auto &self,
+          const GenericValueExpression &expression) -> CompileTimeValue {
+    if (expression.kind == GenericValueExpression::UInt64)
+      return CompileTimeValue::uint64(expression.value);
+    if (expression.kind == GenericValueExpression::Parameter)
+      return substituteCompileTimeValue(
+          CompileTimeValue::parameter(expression.parameterId), substitution);
+    if (!expression.left || !expression.right)
+      return {};
+    auto left = self(self, *expression.left);
+    auto right = self(self, *expression.right);
+    if (left.kind == CompileTimeValue::UInt64 &&
+        right.kind == CompileTimeValue::UInt64) {
+      const auto evaluated = evaluateConstantBinary(
+          expression.token.kind,
+          ConstantValue{
+              makeConstantInteger({.magnitude = left.value}, {.width = 64})},
+          ConstantValue{
+              makeConstantInteger({.magnitude = right.value}, {.width = 64})},
+          CheckedIntegerDomain{.width = 64});
+      if (evaluated)
+        if (const auto result = constantUnsignedMagnitude(*evaluated.value))
+          return CompileTimeValue::uint64(*result);
+      return {};
+    }
+    const auto retain = [](const CompileTimeValue &operand) {
+      if (operand.expression)
+        return operand.expression;
+      return std::shared_ptr<const GenericValueExpression>(
+          std::make_shared<GenericValueExpression>(GenericValueExpression{
+              .kind = operand.kind == CompileTimeValue::Parameter
+                          ? GenericValueExpression::Parameter
+                          : GenericValueExpression::UInt64,
+              .value = operand.value,
+              .parameterId = operand.parameterId}));
+    };
+    if ((left.kind == CompileTimeValue::Unknown && !left.expression) ||
+        (right.kind == CompileTimeValue::Unknown && !right.expression))
+      return {};
+    return {.expression = std::make_shared<GenericValueExpression>(
+                GenericValueExpression{.kind = GenericValueExpression::Binary,
+                                       .token = expression.token,
+                                       .left = retain(left),
+                                       .right = retain(right)})};
+  };
+  return evaluate(evaluate, *value.expression);
+}
 
 namespace {
 
@@ -690,6 +748,37 @@ SemanticModel::findBinding(const VariableDecl &declaration) const {
   return base == nullptr ? nullptr : base->findBinding(declaration);
 }
 
+const ExprPtr &
+SemanticModel::implicitFieldInitializer(const VariableDecl &field) const {
+  const auto found = implicitFieldInitializers.find(&field);
+  if (found != implicitFieldInitializers.end())
+    return *found->second;
+  if (base != nullptr)
+    return base->implicitFieldInitializer(field);
+  static const ExprPtr absent;
+  return absent;
+}
+
+void SemanticModel::retainImplicitFieldInitializer(const VariableDecl &field) {
+  if (implicitFieldInitializer(field))
+    return;
+  implicitFieldInitializers.emplace(
+      &field,
+      std::make_shared<const ExprPtr>(std::make_unique<DirectInitializer>(
+          field.name(), ExprList{}, field.name())));
+}
+
+const ExprPtr &
+SemanticModel::resolvedFieldInitializer(const VariableDecl &field) const {
+  if (field.initializer())
+    return field.initializer();
+  const ExprPtr &implicit = implicitFieldInitializer(field);
+  if (implicit && findConstruction(*implicit) != nullptr)
+    return implicit;
+  static const ExprPtr absent;
+  return absent;
+}
+
 [[nodiscard]] const BindingInfo *
 SemanticModel::findBinding(const Parameter &parameter) const {
   const auto found = parameterBindings.find(&parameter);
@@ -1365,6 +1454,7 @@ void SemanticModel::clear() {
   contextualConversions.clear();
   contextualIntegerOperands.clear();
   classLifecycles.clear();
+  implicitFieldInitializers.clear();
   designatedConstructors.clear();
   constructions.clear();
   collections.clear();
