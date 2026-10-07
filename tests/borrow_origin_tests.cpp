@@ -121,6 +121,71 @@ expected<Item&, errc> relay(Item& item) {
   }
 }
 
+void checkProjectedParameterOrigins() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrow_projected_parameter_return.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "projected parameter and captured-reference origins publish exactly");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  std::size_t publications = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *child = instruction.loan
+                                ? function.body.findLoan(*instruction.loan)
+                                : nullptr;
+        const auto *parameter =
+            child ? function.body.findLoan(child->parent) : nullptr;
+        const auto *dependency =
+            child ? function.body.findPlace(child->source) : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.receiver || !child || !parameter || !dependency ||
+            child->kind != lang::MirLoanKind::CallResult ||
+            parameter->kind != lang::MirLoanKind::Parameter ||
+            child->source == parameter->source)
+          continue;
+        ++publications;
+        for (unsigned mutation = 0; mutation < 6; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = &const_cast<lang::MirFunctionInstance *>(
+                            malformed.findFunctionInstance(function.id))
+                            ->body;
+          auto &changedLoan = body->loans[child->id - 1];
+          auto &changedPlace = body->places[dependency->id - 1];
+          if (mutation == 0)
+            changedLoan.source = parameter->source;
+          if (mutation == 1)
+            changedPlace.binding = parameter->carriers.back();
+          if (mutation == 2)
+            changedPlace.symbol = 0;
+          if (mutation == 3)
+            changedLoan.parent = 0;
+          if (mutation == 4)
+            changedLoan.producedBy = 0;
+          if (mutation == 5)
+            changedPlace.projections.back().kind =
+                lang::MirProjectionKind::RawDereference;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "projected parameter rejects forged physical origin " +
+                     std::to_string(mutation));
+          expect(!lang::CppMirBodyEmitter(malformed, rows)
+                      .supportsFailureBodyText(
+                          {lang::MirBodyKind::Function, function.id}),
+                 "representation rejects forged projected origin " +
+                     std::to_string(mutation));
+        }
+      }
+  expect(publications == 2,
+         "plain and fallible projected-parameter returns have origin controls");
+  std::cout << "projected parameter origins: " << publications * 6
+            << " mutations checked by MIR and C++ admission\n";
+}
+
 void checkOwnedFieldPlaces() {
   const auto root = std::filesystem::path(__FILE__).parent_path();
   for (const auto &relative :
@@ -346,6 +411,7 @@ void checkNestedReadonlyReferences() {
 int main() {
   checkReferents();
   checkInvalidEscapes();
+  checkProjectedParameterOrigins();
   checkOwnedFieldPlaces();
   checkLoweringFailureContext();
   checkNestedReadonlyReferences();

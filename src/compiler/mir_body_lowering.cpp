@@ -4187,11 +4187,10 @@ private:
                           ? nullptr
                           : output.findLoan(found->second));
         projectionOffset = loan == nullptr ? 0 : 1;
-        if (projectionOffset < place->projections.size() &&
-            referenceAccessorBindings.contains(place->binding)) {
-          // The binding captured an accessor's exact returned address while
-          // retaining its coarser owner loan. Its fields belong to that
-          // referent, not to the protected enclosing owner or range.
+        if (referenceAccessorBindings.contains(place->binding)) {
+          // The binding captured an exact returned/projected address while
+          // retaining its coarser owner loan. Dereference and fields belong
+          // to that referent, not to the protected enclosing owner or range.
           return current;
         }
       } else if (place->root == MirPlaceRootKind::Value) {
@@ -9194,7 +9193,9 @@ private:
         retainedLoan = reference.loan;
         const auto *address = output.findPlace(reference.place);
         if (address != nullptr &&
-            ((address->root == MirPlaceRootKind::Loan &&
+            ((!address->projections.empty() &&
+              address->type == reference.type) ||
+             (address->root == MirPlaceRootKind::Loan &&
               retainableCallResultChain(address->loan, retainedLoan,
                                         *statement.value,
                                         binding->info.type.referenceAccess)) ||

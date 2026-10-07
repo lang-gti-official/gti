@@ -2351,6 +2351,14 @@ itself. Such a return also carries the exact dereferenced alias place in the
 `Loan` operand. Verification follows unique, dominating reference
 initializations back to the same parameter dereference or a verified
 call-result address, preserving type, access and stored dependencies throughout.
+An accessor's dependency may instead name a checked field projection of that
+formal, or of a uniquely initialized reference carrier retaining the same
+parameter loan. `referenceParameterContainsPlace` proves that stable field-only
+path back to the formal; it does not substitute the projected owner for the
+accessor's returned address. Typed call publication still checks the exact
+physical projected receiver, while a captured reference may retain the whole
+formal's conservative lifetime authority. Raw, indexed or opaque origin paths
+are not admitted by this field-containment proof.
 Without an explicit runtime place, only the exact parameter referent type is
 valid. Carrier membership or a same-typed unrelated alias cannot substitute
 for this executable address evidence.
@@ -2364,6 +2372,9 @@ through this binding (or a direct reference alias of it) stays rooted at its
 captured address; canonicalization must not append the referent's fields to the
 enclosing owner or range. The transient accessor loans still end normally,
 while the reference retains the owner's checked lifetime and overlap authority.
+The same identity applies to a directly captured projected field address and
+to an unprojected dereference of its reference carrier, not only to another
+field access on that carrier.
 This applies equally to source-defined accessors and allocation-backed members.
 
 `MirRangeIteration` owns the bounded range exceptions. It names the exact

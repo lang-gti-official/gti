@@ -3829,6 +3829,20 @@ observations.
 
 ## Development And Completion Cadence
 
+The borrowed-reference issue checkpoint extends example 99 with two passive
+source-defined owner/referent types, nested read-only accessors and a fallible
+projected-parameter relay. Its reviewed closure adds seven source bodies
+(the two types' field/static-field initializer bodies, their accessors and
+the relay) and eleven declarations; the 53 generated items are unchanged.
+Only that example's inventory entry and derived totals change. Focused native
+endpoints, exact body identities and the LoweredProgram inventory must agree;
+this does not claim the whole corpus has been rerun. `borrow_origin` additionally
+checks wrong-address, detached/wrong-owner, access-upgrade and projected-origin
+forgeries independently in MIR and C++ admission, while
+`borrow_origin_runtime` retains the original missing-key runtime failure and
+tests populated nested storage and unrelated user-defined accessors across
+all eight native modes.
+
 ### Generic contract and advisory regression gates
 
 `testDependentRequiresArgumentAdmission` in the declarations partition checks
