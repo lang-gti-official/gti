@@ -535,6 +535,13 @@ add_executable("gti_native_callback_tests"
                "${PROJECT_SOURCE_DIR}/tests/native_callback_tests.cpp")
 target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_callback_pipeline COMMAND gti_native_callback_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME native_indirect_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/native_indirect_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(native_indirect_runtime PROPERTIES TIMEOUT 900)
+endif()
 
 add_executable(gti_cthread_tests "${PROJECT_SOURCE_DIR}/tests/cthread_tests.cpp")
 target_link_libraries(gti_cthread_tests PRIVATE gti_cpp_backend)

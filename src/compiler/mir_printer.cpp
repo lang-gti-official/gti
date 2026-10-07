@@ -1037,6 +1037,10 @@ private:
     optional(value.functionTarget);
     output << ";lambda=";
     optional(value.lambdaTarget);
+    if (value.nativeCalleeType) {
+      output << ";native-callee=";
+      type(*value.nativeCalleeType);
+    }
     output << ";required=" << callableCapabilityName(value.requiredCapability)
            << ";selected=";
     if (value.selectedCapability) {
@@ -1539,6 +1543,10 @@ private:
     type(value.dispatchOwner);
     output << " function=";
     optional(value.functionTarget);
+    if (value.nativeCalleeType) {
+      output << " native-callee=";
+      type(*value.nativeCalleeType);
+    }
     output << " constructor=";
     optional(value.constructorTarget);
     output << " object-allocation=" << value.objectAllocation

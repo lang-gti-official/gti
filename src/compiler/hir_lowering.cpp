@@ -1515,8 +1515,9 @@ private:
           } else if (const ResolvedCallInfo *resolved =
                          model->findCall(*signature.source);
                      resolved != nullptr &&
-                     model->typeOf(*signature.source->callee())
-                         .hasFunctionItemShape()) {
+                     (resolved->nativeCalleeType ||
+                      model->typeOf(*signature.source->callee())
+                          .hasFunctionItemShape())) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
             concrete.selectedCapability = CallableInvocationCapability::Read;
@@ -1529,6 +1530,7 @@ private:
           if (value != body.values.end()) {
             concrete.functionTarget = value->functionTarget;
             concrete.lambdaTarget = value->lambdaTarget;
+            concrete.nativeCalleeType = value->nativeCalleeType;
           }
         }
         lowered.signatures.emplace_back(std::move(concrete));
@@ -3734,7 +3736,7 @@ private:
         appendExtraction(IntrinsicKind::ExpectedValue, valueType);
     const HirValueId successValue =
         valueType == SemanticType::Void ? HirValueId{0}
-        : borrowedSuccess               ? successExtraction
+        : borrowedSuccess ? successExtraction
                           : appendTransport(successExtraction, valueType);
     const HirValueId errorExtraction =
         appendExtraction(IntrinsicKind::ExpectedError, errorType);
@@ -4844,6 +4846,9 @@ private:
     }
     if (const auto *call = exprAs<Call>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
+        value.nativeCalleeType = resolved->nativeCalleeType;
+        if (value.nativeCalleeType)
+          value.callableInvocation = CallableInvocationCapability::Read;
         value.intrinsic = resolved->intrinsic;
         if ((value.intrinsic == IntrinsicKind::ObjectSize ||
              value.intrinsic == IntrinsicKind::ObjectAlignment) &&
@@ -5345,6 +5350,22 @@ private:
           plan.arguments = *plannedArguments;
           value.callPlan = std::move(plan);
         }
+      }
+    }
+    if (value.nativeCalleeType && !value.operands.empty() &&
+        value.operands.size() == value.parameterTypes.size() + 1) {
+      value.receiver = value.operands.front();
+      const std::vector<HirValueId> arguments(value.operands.begin() + 1,
+                                              value.operands.end());
+      if (auto planned = orderedArguments(arguments, value.parameterTypes, body,
+                                          arguments.size())) {
+        value.callPlan = HirCallPlan{
+            .receiver = HirCallReceiver{.value = *value.receiver,
+                                        .kind = HirCallInputKind::Value,
+                                        .type = *value.nativeCalleeType},
+            .arguments = std::move(*planned)};
+      } else {
+        lifecycleValid = false;
       }
     }
     if (value.lambdaTarget && value.receiver && !value.callPlan) {

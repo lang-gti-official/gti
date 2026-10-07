@@ -4998,6 +4998,7 @@ private:
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
+                        .nativeCalleeType = value.nativeCalleeType,
                         .threadTaskAdapter = value.threadTaskAdapter,
                         .constructorTarget = value.constructorTarget,
                         .constructorKind = value.constructorKind,
@@ -5048,7 +5049,8 @@ private:
           return;
         }
         sourceReceiver =
-            retainedReceiver
+            value.nativeCalleeType ? valueOperand(receiver.value)
+            : retainedReceiver
                 ? receiverOperand(receiverSource->operands.front(), access)
             : temporaryReceiver
                 ? temporaryBorrowOperand(receiver.value, access, receiver.type,

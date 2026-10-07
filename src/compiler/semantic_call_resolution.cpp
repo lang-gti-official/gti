@@ -618,6 +618,77 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
       valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
 }
 
+auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
+    const Call &call, const SemanticType &calleeType,
+    const std::vector<SemanticType> &argumentTypes) -> void {
+  const SemanticType *result = calleeType.nativeFunctionReturnType();
+  if (result == nullptr || !isCAbiNativeFunction(calleeType)) {
+    report(call.paren(), "Native function pointer has no valid C signature.",
+           "GTI-S2076");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  bool valid = true;
+  if (!call.typeArguments().empty()) {
+    report(call.paren(),
+           "Native function pointers do not take explicit generic arguments.",
+           "GTI-S2076");
+    valid = false;
+  }
+  requireUnsafe(call, UnsafeOperationKind::ForeignPointerCall, call.paren(),
+                "Calling a native function pointer");
+  const auto arguments = concreteCallArguments(argumentTypes, call.arguments());
+  if (!arguments) {
+    currentType = valid ? *result : SemanticType::Unknown;
+    return;
+  }
+  const auto parameters = calleeType.nativeFunctionParameterTypes();
+  if (arguments->size() != parameters.size()) {
+    report(call.paren(),
+           "Native function pointer expects " +
+               std::to_string(parameters.size()) + " argument" +
+               (parameters.size() == 1 ? "" : "s") + " but received " +
+               std::to_string(arguments->size()) + ".",
+           "GTI-S2005");
+    valid = false;
+  }
+  std::vector<SemanticType> ordinaryParameters;
+  std::vector<const ExprPtr *> ordinaryArguments;
+  for (std::size_t index = 0;
+       index < std::min(arguments->size(), parameters.size()); ++index) {
+    const auto &argument = (*arguments)[index];
+    const auto &expression = *argument.expression;
+    if (!argument.forwardedPackElement) {
+      ordinaryParameters.push_back(parameters[index]);
+      ordinaryArguments.push_back(argument.expression);
+    }
+    const bool matches =
+        argument.forwardedPackElement
+            ? forwardedPackArgumentMatches(parameters[index], argument.type)
+            : callArgumentMatches(parameters[index], argument.type, expression);
+    if (argument.type != SemanticType::Unknown && !matches) {
+      reportCallArgumentMismatch(index, parameters[index], argument.type,
+                                 expression, "Native function pointer");
+      valid = false;
+    }
+  }
+  validateCallPlaceExclusivityImpl(ordinaryParameters, ordinaryArguments,
+                                   call.paren());
+  valid = validateCallableReturn(call, *result) && valid;
+  valid = validateCallableCapability(call, CallableInvocationCapability::Read) &&
+          valid;
+  if (valid) {
+    ResolvedCallInfo resolved{
+        .nativeCalleeType = calleeType,
+        .returnType = *result,
+        .parameterTypes = {parameters.begin(), parameters.end()}};
+    semanticModel.record(call, resolved);
+    semanticModel.recordDefinedFailure(call, {});
+    recordSelectedCallOccurrence(call, std::move(resolved));
+  }
+  currentType = valid ? callExpressionType(*result) : SemanticType::Unknown;
+}
+
 auto SemanticVisitor::Impl::analyzeFunctionItemCall(
     const Call &call, const SemanticType &calleeType,
     const std::vector<SemanticType> &argumentTypes) -> void {
@@ -6228,13 +6299,23 @@ auto SemanticVisitor::Impl::callArgumentGeometry(const Call &call)
 auto SemanticVisitor::Impl::recordSelectedCallOccurrence(
     const Call &call, ResolvedCallInfo resolved) -> void {
   recordRawBorrowCall(call, resolved);
-  const Token token = callableToken(call.callee());
+  const Token token =
+      resolved.nativeCalleeType && exprAs<Call>(call.callee().get()) != nullptr
+          ? call.paren()
+          : callableToken(call.callee());
   if (token.generated) {
     return;
   }
-  const SymbolId symbol = resolved.declaration == nullptr
-                              ? 0
-                              : recordFunctionSymbol(*resolved.declaration);
+  const auto *calleeOccurrence = resolved.nativeCalleeType
+                                     ? semanticModel.database().findOccurrence(
+                                           currentSourceUnit, token.position)
+                                     : nullptr;
+  const SymbolId symbol =
+      resolved.declaration != nullptr
+          ? recordFunctionSymbol(*resolved.declaration)
+      : calleeOccurrence && calleeOccurrence->type == *resolved.nativeCalleeType
+          ? calleeOccurrence->symbol
+          : 0;
   semanticModel.recordOccurrence(
       {.sourceUnit = currentSourceUnit,
        .span = tokenSpan(token),

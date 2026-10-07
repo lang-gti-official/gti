@@ -1,0 +1,31 @@
+// Native function-pointer values use the ordinary call spelling. Invocation
+// requires unsafe even for scalar-only signatures. These process-lifetime
+// adapters have known exact targets; arbitrary foreign values need the caller
+// to uphold executable-address and native precondition obligations.
+using Transform = (int32_t) -> int32_t;
+using Factory = () -> Transform;
+
+int32_t increment(int32_t value) { return value + 1; }
+Transform choose_transform() { return increment; }
+
+class Pipeline {
+  Transform transform;
+public:
+  Pipeline(Transform selected) : transform(selected) {}
+  unsafe int32_t apply(int32_t value) { return this.transform(value); }
+};
+
+int main() {
+  Transform absent = nullptr;
+  if (absent != nullptr) { return 1; }
+  Factory factory = choose_transform;
+  Pipeline pipeline{increment};
+  unsafe {
+    Transform selected = factory();
+    if (selected == nullptr) { return 2; }
+    if (selected(41) != 42) { return 3; }
+    if (pipeline.apply(6) != 7) { return 4; }
+    if (factory()(9) != 10) { return 5; }
+  }
+  return 0;
+}

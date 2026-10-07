@@ -36404,7 +36404,7 @@ private:
              << typeSpelling(instruction.info.type) << "{};\n";
       return;
     }
-    if (!instruction.functionTarget) {
+    if (!instruction.functionTarget && !instruction.nativeCalleeType) {
       throw std::logic_error(
           "verified MIR direct call lost its exact target declaration");
     }
@@ -36426,7 +36426,7 @@ private:
         instruction.functionTarget
             ? program.findFunctionInstance(*instruction.functionTarget)
             : nullptr;
-    if (instruction.receiver) {
+    if (instruction.receiver && !instruction.nativeCalleeType) {
       // Staged through a CallInput, or borrowed directly on the receiver
       // operand (a self-member call); both name the spellable place.
       const MirInstruction *staged =
@@ -36993,17 +36993,24 @@ private:
       if (instruction.info.type != SemanticType::Void)
         output << "auto __gti_native_result = ";
     }
-    const std::string calleeSpelling = selectedBodySpelling();
-    output << (instruction.dispatch == CallDispatch::Virtual
-                   ? unqualifiedBodySpelling(calleeSpelling)
-                   : std::string_view(calleeSpelling));
+    if (instruction.nativeCalleeType) {
+      output << '(';
+      emitOperand(*instruction.receiver);
+      output << ')';
+    } else {
+      const std::string calleeSpelling = selectedBodySpelling();
+      output << (instruction.dispatch == CallDispatch::Virtual
+                     ? unqualifiedBodySpelling(calleeSpelling)
+                     : std::string_view(calleeSpelling));
+    }
     if (target != nullptr) {
       emitThreadTaskTemplateArgument(*target);
       emitCallablePackTemplateArguments(facts.body, *target);
     }
     output << '(';
     const bool cBoundary =
-        target != nullptr && target->linkage == LanguageLinkage::C;
+        instruction.nativeCalleeType ||
+        (target != nullptr && target->linkage == LanguageLinkage::C);
     // The C prototype takes ::gti_c_string_view; the shared operand writer
     // marshals views and expands an exact trailing concrete GTI pack.
     (void)emitCallOperands(target, cBoundary, false);
@@ -46904,6 +46911,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       case MirInstructionKind::Call: {
+        if (instruction.nativeCalleeType) {
+          if (!isMirNativeIndirectCall(program_, body, instruction) ||
+              !typeRow(*instruction.nativeCalleeType) ||
+              !typeRow(instruction.info.type) ||
+              !valueOperand(*instruction.receiver) ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand))
+            return false;
+          continue;
+        }
         if (simdIntrinsic(instruction.intrinsic)) {
           if (instruction.operands.size() != 3 || instruction.result ||
               instruction.receiver || instruction.functionTarget)

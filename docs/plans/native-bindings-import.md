@@ -393,8 +393,8 @@ finalize/close workflow without a SQLite-specific parser or planner rule.
 
 ## C-08: Native Invocation And Foreign Storage
 
-Status: groundwork recorded and current-boundary regressions added; native
-indirect invocation and foreign-variable declarations are not implemented.
+Status: C-08A native indirect invocation is actively being implemented and
+verified; C-08B foreign-variable declarations remain planned.
 This is a follow-on language campaign, not permission for the importer to emit
 declarations the frontend rejects. Target-correct native scalar identity and
 general nested raw pointers have their own implementation campaign; reuse its
