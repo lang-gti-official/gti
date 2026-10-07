@@ -101,8 +101,11 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerTypeAliases(program.declarations(), {});
   registerEnums(program.declarations(), {});
   registerConcepts(program.declarations(), {});
+  registerEnumGenericParameters();
   genericDefaultConstants.clear();
   registerClasses(program.declarations(), {});
+  for (EnumId id = 1; id <= enums.size(); ++id)
+    resolveEnumGenericDefaults(id);
   resolveTypeAliases();
   for (ClassId id = 1; id <= classes.size(); ++id) {
     resolveClassArgumentPatterns(id);
@@ -530,6 +533,9 @@ auto SemanticVisitor::Impl::visitAccessSpecifierDecl(
 
 auto SemanticVisitor::Impl::visitEnumDecl(const EnumDecl &stmt) -> void {
   const EnumTypeInfo *info = semanticModel.findEnumType(stmt);
+  if (info != nullptr) {
+    beginTypeParameterScope(info->genericParameters);
+  }
   const SemanticType type = info == nullptr ? SemanticType::Unknown
                                             : SemanticType::enumType(info->id);
   const SymbolId symbol = recordToolingSymbol(
@@ -564,6 +570,7 @@ auto SemanticVisitor::Impl::visitEnumDecl(const EnumDecl &stmt) -> void {
     for (std::size_t payloadIndex = 0; payloadIndex < enumerator.payload.size();
          ++payloadIndex) {
       const Parameter &parameter = enumerator.payload[payloadIndex];
+      recordTypeUse(parameter.type);
       if (parameter.defaultArgument) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2077", DiagnosticPhase::Semantics,
@@ -595,6 +602,9 @@ auto SemanticVisitor::Impl::visitEnumDecl(const EnumDecl &stmt) -> void {
            .name = parameter.name.lexeme,
            .type = fieldType});
     }
+  }
+  if (info != nullptr) {
+    endTypeParameterScope();
   }
 }
 
@@ -2992,6 +3002,7 @@ auto SemanticVisitor::Impl::visitTypeAliasDecl(const TypeAliasDecl &stmt)
   const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
   const SemanticType type =
       info == nullptr ? SemanticType::Unknown : info->type;
+  validateConcreteEnumPayloads(type, stmt.name());
   const SymbolId symbol = recordToolingSymbol(
       stmt.name(), SymbolKind::TypeAlias,
       info == nullptr ? qualifiedName(currentNamespace, stmt.name().lexeme)
@@ -4120,8 +4131,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     analyzeMoveCall(expr, nullptr, immediateReceiver);
     return;
   }
-  if (const EnumeratorRecord *enumerator =
-          payloadEnumeratorForCallee(expr.callee())) {
+  if (const auto enumerator = payloadEnumeratorForCallee(expr.callee())) {
     analyzePayloadConstruction(expr, *enumerator);
     return;
   }
@@ -7105,12 +7115,29 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     return;
   }
   if (expr.name().last().completion) {
-    captureQualifiedCompletion(expr.name());
+    captureQualifiedCompletion(expr.name(),
+                               expr.ownerType() ? &*expr.ownerType() : nullptr);
     currentType = SemanticType::Unknown;
     return;
   }
   recordQualifiedPathUses(expr.name());
-  const Symbol *symbol = resolveQualified(expr.name());
+  if (expr.ownerType()) {
+    validateType(*expr.ownerType());
+    recordTypeUse(*expr.ownerType());
+  }
+  const auto concreteEnumerator = resolveEnumerator(expr);
+  const Symbol *symbol = concreteEnumerator ? &concreteEnumerator->symbol
+                                            : resolveQualified(expr.name());
+  if (symbol && !concreteEnumerator &&
+      symbol->type.kind == SemanticType::Enum && symbol->type.enumId != 0 &&
+      symbol->type.enumId <= enums.size() &&
+      !enums[symbol->type.enumId - 1].genericParameters.empty()) {
+    report(expr.name().last(),
+           "A generic payload variant requires a concrete enum owner type.",
+           "GTI-S2067");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (symbol == nullptr) {
     if (expr.name().segments.size() >= 2) {
       const NamePath ownerPath(std::vector<Token>(
@@ -7169,10 +7196,20 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
         {tokenSpan(symbol->declaration), "Static member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  if (const EnumeratorRecord *enumerator = resolveEnumerator(expr.name())) {
+  if (const auto &enumerator = concreteEnumerator) {
     const SemanticType &type = enumerator->symbol.type;
+    if (type.enumId != 0 && type.enumId <= enums.size() &&
+        !enums[type.enumId - 1].genericParameters.empty() &&
+        type.arguments.empty() && type.valueArguments.empty()) {
+      report(expr.name().last(),
+             "A generic payload variant requires a concrete enum owner type.",
+             "GTI-S2067");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     semanticModel.record(
         expr, ResolvedEnumeratorInfo{.owner = type.enumId,
+                                     .type = type,
                                      .declaration = enumerator->declaration,
                                      .value = enumerator->value,
                                      .variantIndex = enumerator->variantIndex});

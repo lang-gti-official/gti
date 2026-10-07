@@ -919,6 +919,20 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
       return {.ambiguous = true};
     }
 
+    if (place->root == MirPlaceRootKind::Value) {
+      const MirValue *value = body.findValue(place->value);
+      if (value != nullptr && value->info.category == ValueCategory::Place) {
+        const auto source = borrowSourceForValue(body, place->value, depth + 1);
+        if (source && *source != id) {
+          auto result = self(self, *source, depth + 1);
+          result.projections.insert(result.projections.end(),
+                                    place->projections.begin(),
+                                    place->projections.end());
+          return result;
+        }
+      }
+    }
+
     MirLoanId throughLoan = 0;
     std::size_t projectionOffset = 0;
     // A local carrier's reference field designates its recorded external
@@ -3939,6 +3953,18 @@ joinLifecycleState(const MirLifecycleState &left,
 }
 
 } // namespace
+
+bool mirCanonicalPlaceContains(const MirBody &body, MirPlaceId parent,
+                               MirPlaceId child) {
+  std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
+  for (const MirLoan &loan : body.loans)
+    for (const HirBindingId carrier : loan.carriers)
+      bindingLoans[carrier].push_back(loan.id);
+  const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+  return canonicalPlaceContains(
+      canonicalPlace(body, parent, bindingLoans, inactive),
+      canonicalPlace(body, child, bindingLoans, inactive));
+}
 
 void rebuildMirReachability(MirBody &body) {
   const std::vector<bool> reachable = reachableBlocks(body);
@@ -8858,7 +8884,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                            "Stored loan");
       }
       const bool sharedDerivedCall =
-          (loan.kind == MirLoanKind::CallResult ||
+          (loan.kind == MirLoanKind::Local ||
+           loan.kind == MirLoanKind::CallResult ||
            (loan.kind == MirLoanKind::Stored &&
             (parent.kind == MirLoanKind::CallResult ||
              (parent.kind == MirLoanKind::Stored &&
@@ -8879,7 +8906,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return failure(body, owner,
                        "child loan " + std::to_string(loan.id) +
                            " must be non-entry and either have a mutable "
-                           "parent or be a read-only derived call result "
+                           "parent or be a read-only derived local/call result "
                            "or stored accessor result");
       }
     }

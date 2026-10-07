@@ -2,6 +2,23 @@
 
 Status: Current implementation.
 
+## Generic payload enum signatures
+
+Enum registration inventories ordinary generic parameter identities before
+resolving defaults and payloads. Demand-resolved defaults detect cycles and
+avoid declaration-order-dependent acceptance. A concrete enum type retains its
+primary identity and complete canonical arguments; existing substitution
+produces its exact alternative types. Payload admissibility is revalidated
+through aliases after field facts are available. Ownership, cleanup and
+concurrency traits fold actual substituted fields, not generic metadata.
+
+`SemanticModel::enumTypeFor` exposes retained exact signature rows to immutable
+snapshot consumers. Semantic resolution and concrete instance discovery record
+these rows through the existing substitution service; compiler-owned hover and
+completion therefore use the same signatures without implementing generic
+substitution in tooling. Replacing a primary descriptor invalidates its earlier
+signature rows so pre-payload registration cannot leave stale field metadata.
+
 ## Native C scalar target facts
 
 `NativeCScalarKind` identifies a C declaration family independently of numeric

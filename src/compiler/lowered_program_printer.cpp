@@ -520,8 +520,9 @@ private:
 
   void printValue(const LoweredEnumDeclaration &value) {
     output << "enum(id=" << value.id << ";unit=" << value.sourceUnit
-           << ";qualified=" << std::quoted(value.qualifiedName)
-           << ";underlying=";
+           << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
+    type(value.type);
+    output << ";underlying=";
     type(value.underlyingType);
     output << ";payload=" << value.payload << ";traits=";
     traits(value.traits);
@@ -791,7 +792,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v11\n";
+  output << "lowered-program-v12\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

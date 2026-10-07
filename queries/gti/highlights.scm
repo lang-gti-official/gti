@@ -147,6 +147,14 @@
   scope: (scoped_identifier
     name: (identifier) @module))
 
+(generic_scoped_identifier
+  scope: (identifier) @type
+  name: (identifier) @constant)
+(generic_scoped_identifier
+  scope: (scoped_identifier
+    name: (identifier) @type)
+  name: (identifier) @constant)
+
 (member_expression
   member: (identifier) @variable.member)
 (call_expression
@@ -162,6 +170,10 @@
 (call_expression
   function: (primary_expression
     (scoped_identifier
+      name: (identifier) @function.call)))
+(call_expression
+  function: (primary_expression
+    (generic_scoped_identifier
       name: (identifier) @function.call)))
 (call_expression
   function: (generic_function

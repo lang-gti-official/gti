@@ -67,7 +67,7 @@ is a teaching helper, not a production server.
 | `18-lambdas.gti` | typed lambdas with explicit immutable value captures |
 | `19-auto.gti` | local type inference, inferred mutability, and ownership traits |
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
-| `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
+| `21-scoped-enums.gti` | nominal scoped enums with optional `class` spelling, fixed backing types, aliases, and equality |
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
 | `23-direct-initialization.gti` | exact class construction without repeated declared types |
 | `24-static.gti` | source-local storage and type-owned class members |
@@ -167,6 +167,7 @@ is a teaching helper, not a production server.
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
+| `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 
 ## Build and run
 

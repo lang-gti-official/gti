@@ -942,6 +942,22 @@ SemanticModel::findEnumerator(const QualifiedName &expression) const {
   return base == nullptr ? nullptr : base->findEnumerator(expression);
 }
 
+std::optional<EnumTypeInfo>
+SemanticModel::enumTypeFor(const SemanticType &type) const {
+  if (type.kind != SemanticType::Enum)
+    return std::nullopt;
+  const auto found = std::find_if(
+      enumInstanceTypes.begin(), enumInstanceTypes.end(),
+      [&](const auto &row) { return row.first == type; });
+  if (found != enumInstanceTypes.end())
+    return found->second;
+  const auto *primary = findEnumType(type.enumId);
+  if (primary != nullptr && primary->genericParameters.empty() &&
+      type == SemanticType::enumType(primary->id))
+    return *primary;
+  return base == nullptr ? std::nullopt : base->enumTypeFor(type);
+}
+
 [[nodiscard]] const SwitchCaseValue *
 SemanticModel::findSwitchCase(const Expr &expression) const {
   const auto found = switchCases.find(&expression);
@@ -1235,6 +1251,9 @@ SemanticModel::findGenericParameter(GenericParameterId id) const {
     return parameter;
   }
   if (const GenericParameterInfo *parameter = find(classTypes)) {
+    return parameter;
+  }
+  if (const GenericParameterInfo *parameter = find(enumTypes)) {
     return parameter;
   }
   for (const auto &[_, lifecycle] : classLifecycles) {
@@ -1778,9 +1797,21 @@ void SemanticModel::record(const TypeAliasDecl &declaration,
 
 void SemanticModel::recordEnumType(const EnumDecl &declaration,
                                    EnumTypeInfo info) {
+  std::erase_if(enumInstanceTypes,
+               [&](const auto &row) { return row.first.enumId == info.id; });
   const auto [found, _] =
       enumTypes.insert_or_assign(&declaration, std::move(info));
   enumTypesById.insert_or_assign(found->second.id, &declaration);
+}
+
+void SemanticModel::recordEnumInstanceType(SemanticType type, EnumTypeInfo info) {
+  const auto found = std::find_if(
+      enumInstanceTypes.begin(), enumInstanceTypes.end(),
+      [&](const auto &row) { return row.first == type; });
+  if (found == enumInstanceTypes.end())
+    enumInstanceTypes.emplace_back(std::move(type), std::move(info));
+  else
+    found->second = std::move(info);
 }
 
 void SemanticModel::record(const QualifiedName &expression,

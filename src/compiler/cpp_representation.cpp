@@ -85,10 +85,10 @@ classDeclarationRow(const LoweredProgram &program, ClassId id) {
 }
 
 [[nodiscard]] const LoweredDeclaration *
-enumDeclarationRow(const LoweredProgram &program, EnumId id) {
+enumDeclarationRow(const LoweredProgram &program, const SemanticType &type) {
   for (const LoweredDeclaration &row : program.declarations()) {
     const auto *declaration = std::get_if<LoweredEnumDeclaration>(&row.payload);
-    if (declaration != nullptr && declaration->id == id) {
+    if (declaration != nullptr && declaration->type == type) {
       return &row;
     }
   }
@@ -417,15 +417,15 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
   }
   case SemanticType::Enum: {
     const LoweredEnumDeclaration *declaration =
-        program.findEnumDeclaration(type.enumId);
-    const LoweredDeclaration *row = enumDeclarationRow(program, type.enumId);
+        program.findEnumDeclaration(type);
+    const LoweredDeclaration *row = enumDeclarationRow(program, type);
     if (declaration == nullptr || row == nullptr) {
       return false;
     }
     appendIdentityText(output, "enum");
     appendIdentityText(output, declaration->qualifiedName);
     appendIdentityText(output, row->source.source);
-    return true;
+    return appendArguments();
   }
   case SemanticType::Reference:
     appendIdentityText(output, "reference");
@@ -673,7 +673,7 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
         return false;
       }
       if (current.kind == SemanticType::Enum) {
-        const auto *payload = program.findPayloadEnum(current.enumId);
+        const auto *payload = program.findPayloadEnum(current);
         if (payload)
           for (const auto &variant : payload->variants)
             for (const auto &field : variant.payloadTypes)
@@ -950,11 +950,18 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
     return result;
   }
   case SemanticType::Enum: {
-    const LoweredEnumDeclaration *enumInfo =
-        program.findEnumDeclaration(type.enumId);
-    return enumInfo == nullptr
-               ? "void"
-               : cppLoweredQualifiedName(enumInfo->qualifiedName, false);
+    const LoweredEnumDeclaration *enumInfo = program.findEnumDeclaration(type);
+    if (enumInfo == nullptr)
+      return "void";
+    if (const auto name = cppConcreteEnumName(program, type)) {
+      const auto separator = enumInfo->qualifiedName.rfind("::");
+      return cppLoweredQualifiedName(
+          separator == std::string::npos
+              ? *name
+              : enumInfo->qualifiedName.substr(0, separator + 2) + *name,
+          false);
+    }
+    return cppLoweredQualifiedName(enumInfo->qualifiedName, false);
   }
   case SemanticType::Reference: {
     std::string result;
@@ -1044,6 +1051,26 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   default:
     return "void";
   }
+}
+
+std::optional<std::string> cppConcreteEnumName(const LoweredProgram &program,
+                                               const SemanticType &type) {
+  if (type.kind != SemanticType::Enum ||
+      (type.arguments.empty() && type.valueArguments.empty()))
+    return std::nullopt;
+  const LoweredEnumDeclaration *declaration = program.findEnumDeclaration(type);
+  if (declaration == nullptr)
+    return std::nullopt;
+  std::vector<std::uint8_t> identity;
+  appendIdentityText(identity, "GTI-CONCRETE-ENUM-V1");
+  if (!appendConcreteTypeIdentity(identity, program, type))
+    return std::nullopt;
+  const auto separator = declaration->qualifiedName.rfind("::");
+  const std::string name =
+      separator == std::string::npos
+          ? declaration->qualifiedName
+          : declaration->qualifiedName.substr(separator + 2);
+  return name + "__gti_enum_" + identityDigestHex(identity);
 }
 
 std::optional<std::string> cppConcreteClassName(const LoweredProgram &program,

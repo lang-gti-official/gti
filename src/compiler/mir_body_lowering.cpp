@@ -238,8 +238,8 @@ public:
                 std::any_of(program.enumDeclarations().begin(),
                             program.enumDeclarations().end(),
                             [&](const HirEnum &enumeration) {
-                              return enumeration.declaration ==
-                                         initializer.targetType.enumId &&
+                              return enumeration.type ==
+                                         initializer.targetType &&
                                      !enumeration.payload;
                             }))) &&
               (field->info.traits.drop == DropKind::Trivial ||
@@ -744,9 +744,7 @@ private:
     if (type.kind == SemanticType::Enum) {
       const auto enumeration = std::find_if(
           program.enumDeclarations().begin(), program.enumDeclarations().end(),
-          [&](const auto &candidate) {
-            return candidate.declaration == type.enumId;
-          });
+          [&](const auto &candidate) { return candidate.type == type; });
       if (enumeration == program.enumDeclarations().end() ||
           !enumeration->payload)
         return std::nullopt;
@@ -788,8 +786,7 @@ private:
                std::none_of(program.enumDeclarations().begin(),
                             program.enumDeclarations().end(),
                             [&](const auto &item) {
-                              return item.declaration == alternative.enumId &&
-                                     item.payload;
+                              return item.type == alternative && item.payload;
                             }));
           if (passive) {
             child = MirDropType{.type = alternative};
@@ -847,11 +844,11 @@ private:
           value.kind == SemanticType::CString ||
           value.kind == SemanticType::StringView ||
           (value.kind == SemanticType::Enum &&
-           std::none_of(
-               program.enumDeclarations().begin(),
-               program.enumDeclarations().end(), [&](const auto &item) {
-                 return item.declaration == value.enumId && item.payload;
-               }))) {
+           std::none_of(program.enumDeclarations().begin(),
+                        program.enumDeclarations().end(),
+                        [&](const auto &item) {
+                          return item.type == value && item.payload;
+                        }))) {
         return MirDropType{.type = type, .requiresActiveCleanup = true};
       }
       if (type.kind == SemanticType::Storage ||
@@ -1224,9 +1221,7 @@ private:
     if (type.kind == SemanticType::Enum) {
       const auto enumeration = std::find_if(
           program.enumDeclarations().begin(), program.enumDeclarations().end(),
-          [&](const HirEnum &candidate) {
-            return candidate.declaration == type.enumId;
-          });
+          [&](const HirEnum &candidate) { return candidate.type == type; });
       if (enumeration == program.enumDeclarations().end() ||
           !enumeration->requiresActiveCleanup) {
         return std::nullopt;
@@ -8238,10 +8233,12 @@ private:
       (void)appendInstruction(
           {.kind = MirInstructionKind::Borrow,
            .hirValue = valueId,
-           .operands = {{.kind = desired->access == AccessMode::Mutable
+           .operands = {{.kind = parent != 0 ? MirOperandKind::Loan
+                                 : desired->access == AccessMode::Mutable
                                      ? MirOperandKind::BorrowWrite
                                      : MirOperandKind::BorrowRead,
                          .place = field,
+                         .loan = parent,
                          .type = value->info.type}},
            .loan = loan,
            .info = value->info});

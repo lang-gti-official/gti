@@ -17,7 +17,7 @@
   body: (class_body) @local.scope)
 
 (enum_declaration
-  name: (identifier) @local.definition.type)
+  name: (identifier) @local.definition.type) @local.scope
 
 (enumerator
   name: (identifier) @local.definition.var)

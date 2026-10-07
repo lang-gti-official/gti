@@ -3,7 +3,8 @@ union NumberBits {
   mut float real;
 };
 
-enum class Command {
+// Omitting `class` does not change payload construction or exhaustive matching.
+enum Command {
   stop,
   translate(int32_t x, int32_t y),
   exit_code(int32_t code),

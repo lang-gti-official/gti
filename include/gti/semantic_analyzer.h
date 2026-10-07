@@ -19,6 +19,12 @@ public:
   traitsFor(const SemanticType &type) const = 0;
   [[nodiscard]] virtual bool
   requiresActiveCleanupFor(const SemanticType &type) const = 0;
+  // Concrete enum descriptions are produced by semantic generic substitution;
+  // HIR must not reinterpret the declaration's dependent payload syntax.
+  [[nodiscard]] virtual std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &) const {
+    return std::nullopt;
+  }
 
   // A borrowed nominal value with executable cleanup must retain its external
   // dependencies until that cleanup completes, not merely its last source use.
@@ -77,6 +83,8 @@ public:
   traitsFor(const SemanticType &type) const override;
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &type) const override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,

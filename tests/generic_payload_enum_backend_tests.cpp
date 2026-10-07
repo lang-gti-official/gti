@@ -1,0 +1,277 @@
+#include "../src/compiler/cpp_mir_representation_snapshot.h"
+#include "../src/compiler/cpp_representation.h"
+#include "cpp_backend_test_support.h"
+#include "gti/lowered_program_printer.h"
+#include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
+
+#include <algorithm>
+#include <iostream>
+#include <string>
+#include <variant>
+
+namespace lang {
+struct MirProgramTestAccess {
+  static std::vector<MirPayloadEnum> &enums(MirProgram &program) {
+    return program.payloadEnums_;
+  }
+  static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
+    return program.functions;
+  }
+};
+struct LoweredProgramTestAccess {
+  static std::vector<LoweredDeclaration> &
+  declarations(LoweredProgram &program) {
+    return program.declarations_;
+  }
+};
+} // namespace lang
+
+int main() {
+  int failures = 0;
+  const auto expect = [&](bool condition, const char *message) {
+    if (!condition) {
+      std::cerr << "FAIL: " << message << '\n';
+      ++failures;
+    }
+  };
+  const auto frontend = lang::Frontend().analyze("generic-enum-backend.gti", R"(
+struct Box<T> { mut T value; };
+enum Message<T> { empty, item(T value), boxed(Box<T> value) };
+Message<int> make_message() { return Message<int>::item(7); }
+int read(Message<int>& message) {
+  switch (message) {
+    case Message<int>::empty: return 0;
+    case Message<int>::item(value): return value;
+    case Message<int>::boxed(auto& value): return value.value;
+  }
+}
+int read(Message<bool>& message) {
+  switch (message) {
+    case Message<bool>::empty: return 0;
+    case Message<bool>::item(value): return value ? 1 : 0;
+    case Message<bool>::boxed(auto& value): return value.value ? 1 : 0;
+  }
+}
+int main() {
+  auto left = make_message();
+  auto right = Message<bool>::item(true);
+  return read(left) + read(right) - 8;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "generic enum fixture reaches verified MIR");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return 1;
+  }
+  expect(frontend.hir.enumDeclarations().size() == 2 &&
+             frontend.mir.payloadEnums().size() == 2,
+         "two exact instances coexist without a symbolic primary");
+  if (frontend.mir.payloadEnums().size() != 2)
+    return 1;
+  const auto &left = frontend.mir.payloadEnums()[0];
+  const auto &right = frontend.mir.payloadEnums()[1];
+  expect(left.declaration == right.declaration && left.type != right.type &&
+             left.variants[1].payloadTypes != right.variants[1].payloadTypes,
+         "primary declaration identity does not collapse concrete payloads");
+  expect(frontend.mir.findPayloadEnum(left.type) == &left &&
+             frontend.mir.findPayloadEnum(right.type) == &right &&
+             frontend.mir.findPayloadEnum(left.declaration) == nullptr,
+         "catalog lookup requires the exact concrete type");
+  for (const auto &enumeration : frontend.mir.payloadEnums()) {
+    const auto &unusedClass = enumeration.variants[2].payloadTypes[0];
+    expect(std::any_of(frontend.mir.classInstances().begin(),
+                       frontend.mir.classInstances().end(),
+                       [&](const auto &instance) {
+                         return instance.type == unusedClass;
+                       }),
+           "unused alternatives still discover their concrete payload layout");
+  }
+  auto badMir = frontend.mir;
+  lang::MirProgramTestAccess::enums(badMir)[1].type = left.type;
+  expect(!lang::verifyMirProgram(badMir).valid(),
+         "MIR rejects duplicated or cross-instance enum metadata");
+  const auto lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  const auto leftName = lang::cppConcreteEnumName(lowered, left.type);
+  const auto rightName = lang::cppConcreteEnumName(lowered, right.type);
+  expect(leftName && rightName && leftName != rightName,
+         "native representation names preserve exact generic identity");
+  const auto serialized = lang::LoweredProgramPrinter().print(lowered);
+  expect(serialized.starts_with("lowered-program-v12") &&
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v92"),
+         "snapshot versions retain the concrete enum identity contract");
+  auto badLowered = lowered;
+  for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
+    if (auto *enumeration =
+            std::get_if<lang::LoweredEnumDeclaration>(&row.payload);
+        enumeration && enumeration->type == right.type) {
+      enumeration->type = left.type;
+      break;
+    }
+  }
+  expect(!lang::verifyLoweredProgram(badLowered).empty(),
+         "sealed declarations reject a forged concrete enum identity");
+  auto rows =
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
+  expect(rows.enums.size() == 2 && rows.enums[0].type != rows.enums[1].type,
+         "detached representation rows preserve both enum instances");
+  for (auto &row : rows.enums) {
+    if (row.type == right.type)
+      row.type = left.type;
+  }
+  const lang::CppMirBodyEmitter rejected(frontend.mir,
+                                         lang::CppMirBodyEmissionMap(rows));
+  expect(
+      !rejected
+           .analyze({lang::MirBodyKind::Function,
+                     frontend.mir.functionInstances().front().id})
+           .ready(),
+      "production emission rejects cross-instance copied representation rows");
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto artifact = gti_test::emitCpp(frontend, standard);
+    expect(leftName && rightName &&
+               artifact.contents.find("struct " + *leftName) !=
+                   std::string::npos &&
+               artifact.contents.find("struct " + *rightName) !=
+                   std::string::npos,
+           "production verified-MIR emission defines both concrete layouts");
+  }
+  const auto projected =
+      lang::Frontend().analyze("projected-enum-borrow.gti", R"(
+enum Event<T> { item(T value) };
+int main() {
+  Event<int> event = Event<int>::item(7);
+  int unrelated = 3;
+  Event<int>& view = event;
+  switch (view) {
+    case Event<int>::item(auto& value): return value - 7;
+  }
+}
+)");
+  expect(projected.canGenerateCode(),
+         "borrowed patterns through local references use checked shared "
+         "reborrows");
+  if (projected.canGenerateCode()) {
+    auto unrelated = projected.mir;
+    bool changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(unrelated)) {
+      auto &body = function.body;
+      for (auto &loan : body.loans) {
+        if (loan.parent == 0 || loan.kind != lang::MirLoanKind::Local)
+          continue;
+        const auto *source = body.findPlace(loan.source);
+        const auto other = std::find_if(
+            body.places.begin(), body.places.end(), [&](const auto &place) {
+              return place.root == lang::MirPlaceRootKind::Binding &&
+                     place.type == source->type && place.projections.empty();
+            });
+        if (other != body.places.end()) {
+          loan.source = other->id;
+          changed = true;
+          break;
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(unrelated).valid(),
+           "a shared projected child cannot borrow unrelated storage");
+    auto mutableChild = projected.mir;
+    changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(mutableChild)) {
+      for (auto &loan : function.body.loans) {
+        if (loan.parent != 0 && loan.kind == lang::MirLoanKind::Local) {
+          loan.access = lang::AccessMode::Mutable;
+          changed = true;
+          break;
+        }
+      }
+    }
+    expect(changed && !lang::verifyMirProgram(mutableChild).valid(),
+           "a shared projected child cannot escalate its parent access");
+    auto deadParent = projected.mir;
+    changed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(deadParent)) {
+      auto &body = function.body;
+      for (const auto &loan : body.loans) {
+        if (loan.parent == 0 || loan.kind != lang::MirLoanKind::Local)
+          continue;
+        lang::MirBlockId childBlock = 0;
+        lang::MirInstructionId childInstruction = 0;
+        for (const auto &block : body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::Borrow &&
+                instruction.loan == loan.id) {
+              childBlock = block.id;
+              childInstruction = instruction.id;
+            }
+        std::optional<lang::MirInstruction> retire;
+        for (auto &block : body.blocks) {
+          const auto end =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &instruction) {
+                             return instruction.kind ==
+                                        lang::MirInstructionKind::EndBorrow &&
+                                    instruction.loan == loan.parent;
+                           });
+          if (end != block.instructions.end()) {
+            retire = *end;
+            block.instructions.erase(end);
+            break;
+          }
+        }
+        auto *block = body.findBlock(childBlock);
+        if (retire && block != nullptr) {
+          const auto before = std::find_if(
+              block->instructions.begin(), block->instructions.end(),
+              [&](const auto &instruction) {
+                return instruction.id == childInstruction;
+              });
+          block->instructions.insert(before, *retire);
+          changed = true;
+        }
+        break;
+      }
+      if (changed)
+        break;
+    }
+    expect(changed && !lang::verifyMirProgram(deadParent).valid(),
+           "a projected child cannot be created after its parent has ended");
+  } else {
+    for (const auto &diagnostic : projected.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  const auto nested = lang::Frontend().analyze("returned-enum-argument.gti", R"(
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+enum Event<T> { idle, item(T value) };
+Event<Resource> make_event() { return Event<Resource>::item(Resource(7)); }
+void consume<T>(T value) {}
+int main() {
+  consume(make_event());
+  return 0;
+}
+)");
+  expect(nested.canGenerateCode(),
+         "returned owning enum arguments retain exact MIR cleanup identity");
+  if (nested.canGenerateCode()) {
+    for (const auto standard :
+         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+      const auto artifact = gti_test::emitCpp(nested, standard);
+      expect(
+          !artifact.contents.empty(),
+          "a returned owning enum is transported directly into another call");
+    }
+  } else {
+    for (const auto &diagnostic : nested.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  return failures == 0 ? 0 : 1;
+}

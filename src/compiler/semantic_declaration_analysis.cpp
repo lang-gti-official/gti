@@ -1573,6 +1573,11 @@ auto SemanticVisitor::Impl::registerEnums(const StmtList &statements,
                                      [](const EnumeratorDecl &enumerator) {
                                        return !enumerator.payload.empty();
                                      });
+    if (!payload && !enumDecl->genericParameters().empty()) {
+      report(enumDecl->name(),
+             "Generic enum declarations require a payload alternative.",
+             "GTI-S2067");
+    }
     if (payload && enumDecl->underlyingType()) {
       report(enumDecl->underlyingType()->name.last(),
              "Payload enums use compiler-defined variant indices and "
@@ -1729,6 +1734,75 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
   }
 }
 
+auto SemanticVisitor::Impl::registerEnumGenericParameters() -> void {
+  const auto enclosingNamespace = currentNamespace;
+  for (auto &info : enums) {
+    if (!info.payload || info.declaration == nullptr)
+      continue;
+    currentSourceUnit = info.sourceUnit;
+    currentNamespace = info.namespaceScope;
+    info.genericParameters =
+        makeGenericParameters(info.declaration->genericParameters(), info.name,
+                              info.namespaceScope, true, false);
+    for (std::size_t index = 0; index < info.genericParameters.size();
+         ++index) {
+      const auto &parameter = info.genericParameters[index];
+      if (parameter.pack &&
+          (index + 1 != info.genericParameters.size() ||
+           genericValueParameterCount(info.genericParameters) != 0))
+        report(parameter.name,
+               "A nominal type pack must be the final generic parameter and "
+               "cannot be combined with value parameters.",
+               "GTI-S2023");
+    }
+  }
+  currentNamespace = enclosingNamespace;
+}
+
+auto SemanticVisitor::Impl::resolveEnumGenericDefaults(EnumId id) -> void {
+  if (id == 0 || id > enums.size())
+    return;
+  auto &info = enums[id - 1];
+  if (info.defaultsState == EnumInfo::DefaultsState::Resolved ||
+      info.defaultsState == EnumInfo::DefaultsState::Invalid)
+    return;
+  if (info.defaultsState == EnumInfo::DefaultsState::Resolving) {
+    report(info.name, "Generic enum defaults form a recursive dependency.",
+           "GTI-S2023");
+    info.defaultsState = EnumInfo::DefaultsState::Invalid;
+    return;
+  }
+  if (!info.payload || !info.declaration) {
+    info.defaultsState = EnumInfo::DefaultsState::Resolved;
+    return;
+  }
+  info.defaultsState = EnumInfo::DefaultsState::Resolving;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingSource = currentSourceUnit;
+  auto enclosingTypes = std::move(typeParameterScopes);
+  auto enclosingValues = std::move(valueParameterScopes);
+  auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingRequirements = std::move(requirementScopes);
+  typeParameterScopes.clear();
+  valueParameterScopes.clear();
+  typePackScopes.clear();
+  requirementScopes.clear();
+  currentNamespace = info.namespaceScope;
+  currentSourceUnit = info.sourceUnit;
+  const auto before = diagnostics.size();
+  resolveGenericParameterDefaults(info.declaration->genericParameters(),
+                                  info.genericParameters, info.namespaceScope);
+  info.defaultsState = diagnostics.size() == before
+                           ? EnumInfo::DefaultsState::Resolved
+                           : EnumInfo::DefaultsState::Invalid;
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingSource;
+  typeParameterScopes = std::move(enclosingTypes);
+  valueParameterScopes = std::move(enclosingValues);
+  typePackScopes = std::move(enclosingPacks);
+  requirementScopes = std::move(enclosingRequirements);
+}
+
 auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   for (EnumInfo &info : enums) {
@@ -1737,6 +1811,7 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
     }
     currentSourceUnit = info.sourceUnit;
     currentNamespace = info.namespaceScope;
+    beginTypeParameterScope(info.genericParameters);
     std::vector<EnumeratorInfo> modelEnumerators;
     modelEnumerators.reserve(info.declaration->enumerators().size());
     for (std::size_t variantIndex = 0;
@@ -1780,6 +1855,7 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                  "or fixed arrays.",
                  "GTI-S2067");
         } else if (type != SemanticType::Unknown &&
+                   !containsOpenTypeParameter(type) &&
                    !payloadTypeAllowed(type, info.id)) {
           report(location,
                  "Payload field type '" + typeSpelling(type) +
@@ -1809,12 +1885,56 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                      .qualifiedName =
                          qualifiedName(info.namespaceScope, info.name.lexeme),
                      .namespaceScope = info.namespaceScope,
+                     .genericParameters = info.genericParameters,
                      .underlyingType = info.underlyingType,
                      .enumerators = std::move(modelEnumerators),
                      .payload = true,
                      .compilerPrivate = info.compilerPrivate});
+    endTypeParameterScope();
   }
   currentNamespace = enclosingNamespace;
+}
+
+auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
+    const SemanticType &type, const Token &site) -> void {
+  std::vector<SemanticType> visiting;
+  const auto validate = [&](const auto &self,
+                            const SemanticType &current) -> void {
+    if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+      return;
+    visiting.push_back(current);
+    for (const auto &argument : current.arguments)
+      self(self, argument);
+    if (current.kind == SemanticType::Enum) {
+      if (const auto info = enumTypeFor(current)) {
+        for (const auto &variant : info->enumerators) {
+          for (std::size_t index = 0; index < variant.payloadTypes.size();
+               ++index) {
+            const auto &payload = variant.payloadTypes[index];
+            if (containsOpenTypeParameter(payload) ||
+                payload == SemanticType::Unknown)
+              continue;
+            if (!payloadTypeAllowed(payload, current.enumId) ||
+                typeTraits(payload).containsBorrowedState) {
+              auto diagnostic = makeDiagnostic(
+                  "GTI-S2067", DiagnosticPhase::Semantics, site,
+                  "Payload field type '" + typeSpelling(payload) +
+                      "' is not a supported owning or passive enum payload.");
+              if (variant.declaration &&
+                  index < variant.declaration->payload.size())
+                diagnostic.related.push_back(
+                    {tokenSpan(
+                         variant.declaration->payload[index].type.name.last()),
+                     "Payload field declared here."});
+              diagnostics.push_back(std::move(diagnostic));
+            }
+          }
+        }
+      }
+    }
+    visiting.pop_back();
+  };
+  validate(validate, type);
 }
 
 auto SemanticVisitor::Impl::registerClassAttributes(
@@ -3072,7 +3192,12 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
       return false;
     }
     bool reaches = false;
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete) {
+      visitingEnums.erase(type.enumId);
+      return false;
+    }
+    for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         reaches = reaches || byValueTypeReachesClass(payload, target, visiting,
                                                      visitingEnums);

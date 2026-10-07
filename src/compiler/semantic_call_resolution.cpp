@@ -2297,14 +2297,40 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
   if (pattern.kind != argument.kind ||
       pattern.nativeCScalar != argument.nativeCScalar ||
       pattern.classId != argument.classId ||
+      pattern.enumId != argument.enumId ||
       pattern.signatureReceiver != argument.signatureReceiver ||
       pattern.arrayLength != argument.arrayLength ||
       pattern.arrayLengthParameterId != argument.arrayLengthParameterId ||
-      pattern.valueArguments != argument.valueArguments) {
+      pattern.valueArguments.size() != argument.valueArguments.size()) {
     return true;
+  }
+  for (std::size_t index = 0; index < pattern.valueArguments.size(); ++index) {
+    const auto &formal = pattern.valueArguments[index];
+    const auto &actual = argument.valueArguments[index];
+    const auto *parameter =
+        formal.kind == CompileTimeValue::Parameter
+            ? findGenericParameter(parameters, formal.parameterId)
+            : nullptr;
+    if (!parameter || !parameter->value) {
+      if (formal != actual)
+        return true;
+      continue;
+    }
+    if (actual.kind == CompileTimeValue::Unknown)
+      continue;
+    const auto [found, inserted] =
+        substitution.values.emplace(parameter->id, actual);
+    if (!inserted && found->second != actual) {
+      if (conflictingParameter)
+        *conflictingParameter = parameter->id;
+      if (conflictingValueParameter)
+        *conflictingValueParameter = true;
+      return false;
+    }
   }
   const GenericParameterInfo *tail = nullptr;
   if ((pattern.kind == SemanticType::Class ||
+       pattern.kind == SemanticType::Enum ||
        pattern.kind == SemanticType::FunctionSignature) &&
       !pattern.arguments.empty() &&
       pattern.arguments.back().kind == SemanticType::TypePack &&
@@ -2744,16 +2770,19 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size() && enums[type.enumId - 1].payload) {
-    return std::any_of(
-        enums[type.enumId - 1].enumerators.begin(),
-        enums[type.enumId - 1].enumerators.end(), [&](const auto &entry) {
-          return std::any_of(entry.second.payloadTypes.begin(),
-                             entry.second.payloadTypes.end(),
+    const auto concrete = enumTypeFor(type);
+    if (!concrete)
+      return false;
+    return std::any_of(concrete->enumerators.begin(),
+                       concrete->enumerators.end(), [&](const auto &entry) {
+                         return std::any_of(
+                             entry.payloadTypes.begin(),
+                             entry.payloadTypes.end(),
                              [&](const SemanticType &payload) {
                                return containsDisallowedCallableCaptureState(
                                    payload, visiting);
                              });
-        });
+                       });
   }
   return std::any_of(type.arguments.begin(), type.arguments.end(),
                      [&](const SemanticType &argument) {

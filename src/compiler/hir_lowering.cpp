@@ -184,6 +184,7 @@ private:
       argument = substitute(argument, substitution);
     }
     if (result.kind == SemanticType::Class ||
+        result.kind == SemanticType::Enum ||
         result.kind == SemanticType::FunctionSignature) {
       std::vector<SemanticType> expanded;
       for (SemanticType &argument : result.arguments) {
@@ -293,6 +294,10 @@ private:
                              : baseModel->resolveExactClassSpecialization(type);
     for (const SemanticType &argument : resolvedType.arguments) {
       (void)enqueueClass(argument);
+    }
+    if (resolvedType.kind == SemanticType::Enum) {
+      enqueueEnum(resolvedType);
+      return std::nullopt;
     }
     if (resolvedType.kind != SemanticType::Class || resolvedType.classId == 0) {
       return std::nullopt;
@@ -699,6 +704,55 @@ private:
     return concrete;
   }
 
+  void enqueueEnum(const SemanticType &type) {
+    if (std::any_of(output.program.enums.begin(), output.program.enums.end(),
+                    [&](const HirEnum &item) { return item.type == type; })) {
+      return;
+    }
+    std::optional<EnumTypeInfo> info = instanceProvider->enumTypeFor(type);
+    // Nongeneric declarations are already concrete semantic descriptors.
+    // Lightweight provider clients need no instantiation service for them.
+    if (!info) {
+      const EnumTypeInfo *declaration = baseModel->findEnumType(type.enumId);
+      if (declaration != nullptr && declaration->genericParameters.empty() &&
+          type == SemanticType::enumType(declaration->id))
+        info = *declaration;
+    }
+    if (!info) {
+      return;
+    }
+    HirEnum lowered{.declaration = info->id,
+                    .type = type,
+                    .sourceUnit = info->sourceUnit,
+                    .source = info->declaration,
+                    .qualifiedName = info->qualifiedName,
+                    .underlyingType = info->underlyingType,
+                    .traits = instanceProvider->traitsFor(type),
+                    .requiresActiveCleanup =
+                        instanceProvider->requiresActiveCleanupFor(type),
+                    .payload = info->payload};
+    lowered.enumerators.reserve(info->enumerators.size());
+    for (const EnumeratorInfo &enumerator : info->enumerators) {
+      HirEnumerator variant{.source = enumerator.declaration,
+                            .value = enumerator.value,
+                            .variantIndex = enumerator.variantIndex,
+                            .payloadTypes = enumerator.payloadTypes};
+      for (const SemanticType &payload : enumerator.payloadTypes) {
+        variant.payloadRequiresActiveCleanup.push_back(
+            instanceProvider->requiresActiveCleanupFor(payload));
+      }
+      lowered.enumerators.push_back(std::move(variant));
+    }
+    // Publish the identity before discovering contained types: finite owning
+    // recursion may revisit this enum through a concrete class's fields.
+    output.program.enums.push_back(std::move(lowered));
+    for (const EnumeratorInfo &enumerator : info->enumerators) {
+      for (const SemanticType &payload : enumerator.payloadTypes) {
+        (void)enqueueClass(payload);
+      }
+    }
+  }
+
   void seedDeclarations(const StmtList &declarations,
                         std::optional<ClassId> enclosingClass) {
     for (const StmtPtr &statement : declarations) {
@@ -715,6 +769,11 @@ private:
       }
       if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
         seedDeclarations(externC->declarations(), enclosingClass);
+        continue;
+      }
+      if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
+        if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
+          seedConcreteDeclarationType(info->type);
         continue;
       }
       if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
@@ -742,37 +801,8 @@ private:
       }
       if (const auto *enumDeclaration = stmtAs<EnumDecl>(statement.get())) {
         const EnumTypeInfo *info = baseModel->findEnumType(*enumDeclaration);
-        if (info != nullptr) {
-          HirEnum lowered{.declaration = info->id,
-                          .sourceUnit = info->sourceUnit,
-                          .source = enumDeclaration,
-                          .qualifiedName = info->qualifiedName,
-                          .underlyingType = info->underlyingType,
-                          .traits = instanceProvider->traitsFor(
-                              SemanticType::enumType(info->id)),
-                          .requiresActiveCleanup =
-                              instanceProvider->requiresActiveCleanupFor(
-                                  SemanticType::enumType(info->id)),
-                          .payload = info->payload};
-          lowered.enumerators.reserve(info->enumerators.size());
-          for (const EnumeratorInfo &enumerator : info->enumerators) {
-            HirEnumerator variant{.source = enumerator.declaration,
-                                  .value = enumerator.value,
-                                  .variantIndex = enumerator.variantIndex,
-                                  .payloadTypes = enumerator.payloadTypes};
-            variant.payloadRequiresActiveCleanup.reserve(
-                enumerator.payloadTypes.size());
-            for (const SemanticType &payload : enumerator.payloadTypes) {
-              // An alternative is representation-bearing even if no source
-              // construction mentions it. Discover its exact concrete class
-              // before lifecycle verification and detached backend planning.
-              (void)enqueueClass(payload);
-              variant.payloadRequiresActiveCleanup.push_back(
-                  instanceProvider->requiresActiveCleanupFor(payload));
-            }
-            lowered.enumerators.push_back(std::move(variant));
-          }
-          output.program.enums.push_back(std::move(lowered));
+        if (info != nullptr && info->genericParameters.empty()) {
+          enqueueEnum(SemanticType::enumType(info->id));
         }
         continue;
       }
