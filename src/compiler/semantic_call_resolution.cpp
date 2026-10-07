@@ -4561,7 +4561,12 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     }
     return false;
   };
-  if (containsOpenTypeParameter(receiver) ||
+  // A nominal generic class already supplies a declaration-owned member set.
+  // Unresolved payload parameters do not hide an otherwise concrete signature.
+  // A bare parameter (or an open required signature) still needs an explicit
+  // enclosing requirement; do not infer members on arbitrary unknown types.
+  if ((containsOpenTypeParameter(receiver) &&
+       receiver.kind != SemanticType::Class) ||
       containsOpenTypeParameter(result) ||
       std::any_of(parameters.begin(), parameters.end(),
                   containsOpenTypeParameter)) {
@@ -5150,6 +5155,10 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
   case StructuralConstraintKind::ObjectLayout:
     return arguments.size() == 1 && runtimeObjectLayoutType(arguments.front());
+  case StructuralConstraintKind::IndependentObject:
+    return arguments.size() == 1 &&
+           runtimeObjectLayoutType(arguments.front()) &&
+           !typeTraits(arguments.front()).containsBorrowedState;
   case StructuralConstraintKind::ReadCallable:
     return unaryCallable(CallableInvocationCapability::Read);
   case StructuralConstraintKind::MutCallable:
@@ -5398,6 +5407,7 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
       break;
     case StructuralConstraintKind::EnumUnderlying:
     case StructuralConstraintKind::ObjectLayout:
+    case StructuralConstraintKind::IndependentObject:
       // Enum representation classification grants no numeric operators.
       break;
 

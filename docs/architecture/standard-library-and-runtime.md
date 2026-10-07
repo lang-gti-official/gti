@@ -36,11 +36,13 @@ zero-size requests, selects its target provider and maps failures in GTI source.
 POSIX uses `posix_memalign`/`free`; Windows uses the matching CRT
 `_aligned_malloc`/`_aligned_free` family. Narrow forwarding adapters still bridge
 the currently unsupported native `size_t`, POSIX `void**` and reserved CRT symbol
-spellings; they contain no GTI allocation policy. Typed region adoption remains
-private, and its slot bitmap currently
-uses the process heap. General public lifecycle facilities and provider-controlled
-bookkeeping are explicit extension goals, not claims of current support and not
-operations made inherently private by C++ generation.
+spellings; they contain no GTI allocation policy. Sparse typed owners now keep
+their slot state in ordinary GTI and lease its bytes from the same provider as
+their object region. Public unsafe manual-lifetime operations supply typed
+construction, destruction and relocation; raw validity remains the programmer's
+obligation. The older specialized sparse compiler paths remain temporarily in
+the implementation pending the migration's parity and retirement gates; they
+are not used by the source-defined public storage owners.
 
 ## Public Library
 
@@ -240,11 +242,14 @@ cleanup itself has already produced an emergency before returning to the adapter
 
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI
-wrappers. The sparse-storage allocation extent and initialized-slot bitmap are
-the exception in kind, not in authority: narrow private observers let the
-source-defined `std::storage<T>` wrapper expose checked `capacity()` and
-`initialized(index)` without exposing an address, bitmap, raw mutation, or
-deallocation operation.
+wrappers. Sparse-storage capacity, live-slot state, traversal and validation
+are ordinary GTI fields and algorithms. The source owner obtains two regions
+through matching leases, initializes one metadata byte per slot, and exposes
+checked `capacity()` and `initialized(index)` without exposing its raw state.
+Final-address construction, typed destruction and relocation use the general
+manual-lifetime operations; checked access uses the existing owner-witness
+bridge. Retiring a live byte precedes potentially failing element destruction,
+and a source drain guard resumes reverse traversal after the first failure.
 
 Allocated character `prefix_storage<char>` reserves one additional
 representation-private slot and maintains NUL at the logical length. A

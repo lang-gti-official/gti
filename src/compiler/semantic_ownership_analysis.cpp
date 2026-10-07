@@ -4657,8 +4657,10 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     }
   }
   if (storedReferencePaths(carrier->type).size() > 1 &&
-      ((construction != nullptr && !construction->borrowArguments.empty()) ||
-       (resolved != nullptr && !resolved->borrowArguments.empty()))) {
+      ((construction != nullptr && (!construction->borrowArguments.empty() ||
+                                    !construction->borrowFields.empty())) ||
+       (resolved != nullptr && (!resolved->borrowArguments.empty() ||
+                                !resolved->borrowFields.empty())))) {
     auto dependencies = storedBorrowDependencies(expression);
     if (dependencies.empty()) {
       report(expressionToken(expression),
@@ -4677,8 +4679,14 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                               : initializer != nullptr
                                   ? &initializer->arguments()
                                   : nullptr;
+      auto parameters = construction->borrowArguments;
+      for (const auto &field : construction->borrowFields)
+        if (field.origin == BorrowOriginKind::Argument &&
+            std::find(parameters.begin(), parameters.end(), field.parameter) ==
+                parameters.end())
+          parameters.push_back(field.parameter);
       if (arguments != nullptr)
-        for (const auto parameter : construction->borrowArguments)
+        for (const auto parameter : parameters)
           if (parameter < arguments->size())
             if (const auto source = retainedLoanSource((*arguments)[parameter]);
                 source && source->transfer)
@@ -4695,11 +4703,39 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           "Cannot compose borrowed values while an overlapping mutable "
           "borrow may still be live.");
     }
+    // Several fields can share one cleanup-bearing input's external loan.
+    // Retain that ancestry just as for a single-field carrier; recording all
+    // field identities must not sever the input's lifetime dependency.
+    SemanticLoanId parent = 0;
+    const auto origin = retainedLoanSource(expression);
+    const auto *originLoan =
+        origin ? semanticModel.findLoan(origin->loan) : nullptr;
+    const auto *fields = construction != nullptr ? &construction->borrowFields
+                                                 : &resolved->borrowFields;
+    const auto originKind = construction != nullptr ? construction->borrowOrigin
+                                                    : resolved->borrowOrigin;
+    const auto argument = construction != nullptr ? construction->borrowArgument
+                                                  : resolved->borrowArgument;
+    const auto &parameters = construction != nullptr
+                                 ? construction->borrowArguments
+                                 : resolved->borrowArguments;
+    if (originLoan != nullptr && !origin->transfer &&
+        originLoan->kind == SemanticLoanKind::StoredValue &&
+        originLoan->access == AccessMode::ReadOnly &&
+        lifecycleBoundBorrowCarrierFor(carrier->type) &&
+        originKind == BorrowOriginKind::Argument &&
+        std::all_of(parameters.begin(), parameters.end(),
+                    [&](auto parameter) { return parameter == argument; }) &&
+        std::all_of(fields->begin(), fields->end(), [&](const auto &field) {
+          return field.origin == BorrowOriginKind::Argument &&
+                 field.parameter == argument;
+        }))
+      parent = originLoan->id;
     const auto primary = dependencies.front();
     const SemanticLoanId id = createRetainedLoan(
         *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
         expression.get(), primary.place, primary.place.root,
-        primary.place.receiver, primary.access, primary.protectsStorage, 0,
+        primary.place.receiver, primary.access, primary.protectsStorage, parent,
         false, primary.designatedFields);
     SemanticLoanInfo loan = *semanticModel.findLoan(id);
     loan.additionalDependencies.assign(dependencies.begin() + 1,

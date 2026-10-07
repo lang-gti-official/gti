@@ -120,11 +120,12 @@ An intrinsic must represent an operation or invariant that ordinary GTI cannot
 yet express. It may retain private bookkeeping needed to validate that
 operation, but it must not expose library policy. Logical container size,
 growth, free-list order, and invalidation belong to nominal stdlib types. The
-private sparse-storage capability now has total allocation-extent and slot-live
-observers because those facts are irreducible representation state; only the
-ordinary `std::storage<T>` wrapper exposes them through checked public methods.
-This is not a general `std::optional`-shaped place API and exposes no bitmap or
-address.
+source-defined sparse-storage owner keeps allocation extent and slot-live state
+in ordinary fields and metadata bytes. Its safe methods expose these facts
+without exposing raw mutation or allocation addresses. General unsafe typed
+lifetime operations and the owner-witness bridge provide the compiler-owned
+facts; a bitmap or a particular container's bookkeeping is not an irreducible
+language capability.
 
 The unique-owner capabilities used by the wrapper are:
 

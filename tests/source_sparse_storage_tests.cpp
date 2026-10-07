@@ -82,11 +82,11 @@ int main(int argc, char **argv) {
   }
   for (const char *operation : {"owner.destroy(uint64_t(0));", "owner.clear();",
                                 "auto moved = std::move(owner);"}) {
-    const auto invalid = analyze(
-        std::string("#include <std/detail/sparse_storage>\nint main() { "
-                    "mut gti_internal::sparse_slots<int> owner{}; "
-                    "int& loan = owner.read(uint64_t(0)); ") +
-        operation + "return loan; }");
+    const auto invalid =
+        analyze(std::string("#include <std/memory>\nint main() { "
+                            "mut gti_internal::sparse_slots<int> owner{}; "
+                            "int& loan = owner.read(uint64_t(0)); ") +
+                operation + "return loan; }");
     expect(!invalid.canGenerateCode() &&
                std::any_of(invalid.diagnostics.begin(),
                            invalid.diagnostics.end(),

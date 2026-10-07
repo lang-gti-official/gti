@@ -18,6 +18,15 @@ int main() {
   expect(gti_rt_native_size_max_v1() ==
              (std::numeric_limits<std::size_t>::max)(),
          "native size conversion uses the target size_t limit");
+  expect(!gti_rt_address_is_aligned_v1(nullptr, 1),
+         "null does not satisfy nonempty-region alignment");
+  alignas(64) unsigned char aligned[128]{};
+  expect(gti_rt_address_is_aligned_v1(aligned, 64) &&
+             !gti_rt_address_is_aligned_v1(aligned + 1, 64) &&
+             gti_rt_address_is_aligned_v1(aligned + 1, 1) &&
+             !gti_rt_address_is_aligned_v1(aligned, 0) &&
+             !gti_rt_address_is_aligned_v1(aligned, 3),
+         "address observer checks actual alignment without dereferencing");
 #if !defined(_WIN32)
   expect(gti_rt_posix_pointer_size_v1() == sizeof(void *),
          "POSIX alignment normalization uses the actual pointer size");

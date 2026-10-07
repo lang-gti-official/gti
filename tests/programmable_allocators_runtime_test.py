@@ -29,15 +29,15 @@ if __name__ == "__main__":
                "allocator_example": [((), (0, "", ""))],
                "programmable_allocators": [((), (0, "", ""))],
                "resource_constructor_rollback": [
-                   ((), (0, "2\n102\n1\n101\n900\n901\n", "")),
-                   (("fail",), (70, "102\n1\n101\n900\n901\n", storage_failure))],
+                   ((), (0, "2\n102\n1\n101\n900\n900\n901\n", "")),
+                   (("fail",), (70, "102\n1\n101\n900\n900\n901\n", storage_failure))],
                "resource_vector_constructor_rollback": [
-                   ((), (0, "2\n102\n1\n101\n900\n901\n", "")),
-                   (("fail",), (70, "102\n1\n101\n900\n901\n", vector_failure))],
+                   ((), (0, "2\n102\n1\n101\n900\n900\n901\n", "")),
+                   (("fail",), (70, "102\n1\n101\n900\n900\n901\n", vector_failure))],
                "resource_container_usage": [((), (0, "", ""))],
                "resource_owner_moves": [
-                   ((), (0, "2\n1\n900\n901\n", "")),
-                   (("fail",), (70, "2\n1\n900\n901\n", owner_failure)),
-                   (("fail", "release"), (70, "2\n1\n900\n901\n", owner_failure)),
-                   (("success", "explicit", "release"), (0, "2\n1\n900\n901\n", ""))]},
+                   ((), (0, "2\n1\n900\n900\n901\n", "")),
+                   (("fail",), (70, "2\n1\n900\n900\n901\n", owner_failure)),
+                   (("fail", "release"), (70, "2\n1\n900\n900\n901\n", owner_failure)),
+                   (("success", "explicit", "release"), (0, "2\n1\n900\n900\n901\n", ""))]},
         fixture_paths={"allocator_example": root / "examples/121-programmable-allocators.gti"})

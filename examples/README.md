@@ -159,6 +159,7 @@ is a teaching helper, not a production server.
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 | `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
+| `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
@@ -467,6 +468,13 @@ while any allocation from it remains live.
 returns checked owner-bound references, and explicitly relocates an owning
 string between fixed carriers. Raw validity stays inside the owner's `unsafe`
 implementation; ordinary callers use checked methods.
+
+[`128-inline-object-pool.gti`](128-inline-object-pool.gti) applies the same
+facilities to an unrelated fixed-address, two-slot application pool. It owns
+slot bytes inline, returns a recoverable error when full, reuses erased slots,
+and relies on ordinary reverse field cleanup. Its immovable nodes own strings;
+the compiler does not recognize the pool or cell names. A slot index is not a
+generation-checked handle: after erasure and reuse it names the replacement.
 
 ## Complete projects
 

@@ -1058,6 +1058,14 @@ storage under a single merged owner. Loan conflicts, scalar-promotion admission,
 and alias/escape analysis inspect the entire set. Shared reference/subview
 projections conservatively preserve that complete set rather than independently
 shortening one owner's endpoint.
+Two distinct result fields may intentionally name the same concrete owner.
+Their field paths remain distinct in `additionalDependencies`; equality of the
+source place is not permission to discard either path. Typed field projection
+preserves its semantic overlap key so local publication can reconcile every
+dependency. A cleanup-bound construction from one shared input retains that
+input's ancestry while recording the full result map. Multi-input composition
+does not invent a common parent. Independent mutations reject missing or
+collapsed result paths and premature release of the guarded pair.
 Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's
@@ -1083,6 +1091,10 @@ For a cleanup-free, generated-copy read-only carrier parameter, native member
 initialization may copy that shell only when the copy binding also proves its
 exact entry-to-field `Stored` publication. The same proof admits the parameter's
 representation slot; it does not turn the by-value shell into the referent.
+After exact field-mapped publication, cleanup of a copied formal shell is also
+distinct from destruction of its external referent. The verifier recognizes
+this only through the entry's checked reference-field/dereference path; an
+ordinary owned field does not receive the exemption, even when its type matches.
 
 A nested shared-view value return binds the actual `Load` operand's field
 prefix to the source entry dependency and publishes result-relative stored

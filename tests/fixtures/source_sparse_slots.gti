@@ -1,4 +1,3 @@
-#include <std/detail/sparse_storage>
 #include <std/memory>
 #include <std/resource>
 #include <std/string>

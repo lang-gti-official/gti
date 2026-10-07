@@ -39446,16 +39446,20 @@ bool CppMirBodyEmitter::supportsFailureBodyText(MirBodyAddress address) const {
 
 namespace {
 
-// The sole nonempty impossible alternate admitted below retires passive
-// by-value parameter shells. Prove the exact Drop/Failure-boundary schedule;
-// active cleanup, a user destructor, borrowing and other effects stay excluded.
+// Impossible alternates may retire passive by-value parameter shells. Prove
+// the exact Drop/Failure-boundary schedule; the stronger constructor proof may
+// also retain read-only dependency ends and passive bound-reference shells.
+// Active cleanup, user destructors and other runtime effects stay excluded.
 bool passiveConstructorFailureCleanup(
     const MirProgram &program, const MirConstructorInstance &constructor,
-    const MirBlock &block, std::unordered_set<std::size_t> &boundaries) {
+    const MirBlock &block, std::unordered_set<std::size_t> &boundaries,
+    bool allowBorrowedShells = false) {
   if (block.instructions.empty())
     return true;
   const auto &body = constructor.body;
   std::vector<MirDropObligationId> dropped;
+  std::unordered_set<MirLoanId> ended;
+  bool boundarySeen = false;
   for (std::size_t index = 0; index < block.instructions.size(); ++index) {
     const auto &instruction = block.instructions[index];
     if (instruction.result || instruction.receiver ||
@@ -39465,31 +39469,58 @@ bool passiveConstructorFailureCleanup(
         instruction.fullExpressionEnd != 0 ||
         instruction.earlyExitFullExpressionEnd)
       return false;
-    if (index + 1 == block.instructions.size()) {
+    // Ending a verified dependency has no runtime effect. A passive borrowed
+    // parameter may publish a field dependency before an independently proved
+    // impossible failure; preserve its exact cleanup metadata, including ends
+    // which follow the parameter cleanup boundary.
+    if (allowBorrowedShells &&
+        instruction.kind == MirInstructionKind::EndBorrow) {
+      const auto *loan =
+          instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+      if (loan == nullptr || loan->kind != MirLoanKind::Stored ||
+          loan->access != AccessMode::ReadOnly ||
+          body.findPlace(loan->source) == nullptr || instruction.destination ||
+          !instruction.lifecycle.empty() ||
+          instruction.cleanupBoundaryEnd != 0 || !ended.insert(loan->id).second)
+        return false;
+      continue;
+    }
+    if (instruction.kind == MirInstructionKind::Lifecycle) {
       const auto id = instruction.cleanupBoundaryEnd;
-      if (instruction.kind != MirInstructionKind::Lifecycle ||
-          instruction.destination || !instruction.lifecycle.empty() ||
-          id == 0 || id > body.cleanupBoundaries.size() || dropped.empty())
+      if (instruction.destination || instruction.loan ||
+          !instruction.lifecycle.empty() || boundarySeen || id == 0 ||
+          id > body.cleanupBoundaries.size() || dropped.empty() ||
+          (!allowBorrowedShells && index + 1 != block.instructions.size()))
         return false;
       const auto &boundary = body.cleanupBoundaries[id - 1];
-      return boundary.id == id && boundary.hostedStartupOperation == 0 &&
-             boundary.kind == MirCleanupBoundaryKind::Failure &&
-             boundary.obligations == dropped && boundaries.insert(id).second;
+      if (boundary.id != id || boundary.hostedStartupOperation != 0 ||
+          boundary.kind != MirCleanupBoundaryKind::Failure ||
+          boundary.obligations != dropped || !boundaries.insert(id).second)
+        return false;
+      boundarySeen = true;
+      continue;
     }
-    if (instruction.kind != MirInstructionKind::Drop ||
-        !instruction.destination || instruction.cleanupBoundaryEnd != 0 ||
+    if (instruction.kind != MirInstructionKind::Drop || boundarySeen ||
+        instruction.loan || !instruction.destination ||
+        instruction.cleanupBoundaryEnd != 0 ||
         instruction.lifecycle.size() != 1)
       return false;
     const auto &event = instruction.lifecycle.front();
     const auto *drop = body.findDropObligation(event.source);
     const auto *place = body.findPlace(*instruction.destination);
     const auto *owner =
-        place ? passiveGeneratedDestructorClass(program, place->type) : nullptr;
+        place ? uniqueClassInstanceForType(program, place->type) : nullptr;
+    std::unordered_set<HirClassInstanceId> visiting;
+    const bool passive =
+        place && (passiveGeneratedDestructorClass(program, place->type) ||
+                  (allowBorrowedShells && failureConstructorPassiveBoundShell(
+                                              program, place->type, visiting)));
     if (event.kind != MirLifecycleEventKind::Drop || event.target != 0 ||
         event.conditional || !event.failureCleanup || drop == nullptr ||
         drop->kind != MirDropObligationKind::Binding ||
         !drop->initiallyActive || drop->dropType.requiresActiveCleanup ||
-        owner == nullptr || drop->dropType.classInstance != owner->id ||
+        !passive || owner == nullptr ||
+        drop->dropType.classInstance != owner->id ||
         drop->dropType.destructor || place->root != MirPlaceRootKind::Binding ||
         !place->projections.empty() || !place->initiallyAvailable ||
         drop->place != place->id || drop->binding != place->binding ||
@@ -39502,7 +39533,7 @@ bool passiveConstructorFailureCleanup(
       return false;
     dropped.push_back(drop->id);
   }
-  return false;
+  return dropped.empty() ? !boundarySeen : boundarySeen;
 }
 
 // A constructor prologue may be split by conservative failure publication.
@@ -39514,7 +39545,8 @@ std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
     const MirProgram &program, const MirConstructorInstance &constructor,
     const ProveConstructor &proveConstructor,
     std::unordered_set<std::size_t> *provedFailureBoundaries = nullptr,
-    bool proveSuccessResultActivation = false) {
+    bool proveSuccessResultActivation = false,
+    bool allowBorrowedShells = false) {
   const auto &body = constructor.body;
   std::vector<const MirInstruction *> sequence;
   std::unordered_set<MirBlockId> visited;
@@ -39586,7 +39618,8 @@ std::optional<std::vector<const MirInstruction *>> constructorSuccessSequence(
         alternate->programInitializationStep != 0 ||
         !alternate->parameters.empty() ||
         !passiveConstructorFailureCleanup(program, constructor, *alternate,
-                                          failureBoundaries) ||
+                                          failureBoundaries,
+                                          allowBorrowedShells) ||
         !visited.insert(alternate->id).second)
       return std::nullopt;
     if (proveSuccessResultActivation &&
@@ -39652,7 +39685,7 @@ public:
     if (valid) {
       const auto sequence = constructorSuccessSequence(
           program_, *constructor, [&](auto target) { return prove(target); },
-          nullptr, true);
+          nullptr, true, true);
       valid = sequence.has_value();
       if (sequence) {
         for (const auto *instruction : *sequence) {
@@ -40774,6 +40807,173 @@ plainConstructedFieldTarget(const MirProgram &program,
   return published;
 }
 
+// This is a representation-shape proof over already verified MIR, not a new
+// loan/lifetime analysis. Even an independently impossible child failure must
+// retain a coherent rollback schedule: earlier fields in reverse order,
+// passive formal retirement, exact dependency ends and failure publication.
+[[nodiscard]] bool borrowedPrefixRollbackCovered(
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    const MirBlock &first, const MirLoan &failedChild,
+    const std::vector<CppMirConstructedFieldInitializerBinding> &previous) {
+  const auto &body = constructor.body;
+  const auto originalFailure = first.failureParameter;
+  if (originalFailure == 0 || first.activeFailure != originalFailure)
+    return false;
+  std::vector<MirDropObligationId> fields;
+  std::unordered_set<MirLoanId> requiredEnds{failedChild.id};
+  for (auto it = previous.rbegin(); it != previous.rend(); ++it) {
+    if (it->fieldDrop != 0)
+      fields.push_back(it->fieldDrop);
+    const auto *value = body.findValue(it->constructedValue);
+    const MirLoan *published = nullptr;
+    for (const auto &loan : body.loans) {
+      if (value && loan.storedField == it->field &&
+          loan.producedBy == value->sourceValue) {
+        if (published || !storedFieldValueLoanProducer(body, loan))
+          return false;
+        published = &loan;
+      }
+    }
+    if (published == nullptr)
+      return false;
+    requiredEnds.insert(published->id);
+  }
+  std::vector<MirDropObligationId> dropped;
+  std::unordered_set<MirLoanId> ended;
+  std::unordered_set<MirBlockId> visited;
+  std::size_t fieldsDropped = 0;
+  bool boundarySeen = false;
+  const auto cleanTerm = [](const MirTerminator &term) {
+    return !term.value && !term.returnLoan &&
+           term.hostedStartupOperation == 0 && term.targetArguments.empty() &&
+           term.elseArguments.empty() && term.switchTargets.empty() &&
+           term.successLifecycle.empty();
+  };
+  const MirBlock *block = &first;
+  while (block && visited.insert(block->id).second) {
+    if (!block->reachable || !block->parameters.empty() ||
+        block->programInitializationStep != 0 ||
+        block->activeFailure != originalFailure ||
+        block->failureParameter != (block == &first ? originalFailure : 0))
+      return false;
+    for (const auto &instruction : block->instructions) {
+      if (instruction.result || instruction.receiver ||
+          !instruction.operands.empty() || instruction.ownership ||
+          !instruction.localFailureSites.empty() ||
+          !instruction.definedFailure.localOrigins.empty() ||
+          instruction.fullExpressionEnd != 0 ||
+          instruction.earlyExitFullExpressionEnd)
+        return false;
+      if (instruction.kind == MirInstructionKind::EndBorrow) {
+        const auto *loan =
+            instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+        const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+        const bool formal =
+            loan && loan->entry && !loan->escapes && source &&
+            source->root == MirPlaceRootKind::Binding &&
+            source->projections.empty() &&
+            std::find(constructor.parameterBindings.begin(),
+                      constructor.parameterBindings.end(),
+                      source->binding) != constructor.parameterBindings.end();
+        if (!loan || loan->kind != MirLoanKind::Stored ||
+            loan->access != AccessMode::ReadOnly ||
+            (!requiredEnds.contains(loan->id) && !formal) ||
+            !ended.insert(loan->id).second || instruction.destination ||
+            !instruction.lifecycle.empty() ||
+            !instruction.definedFailure.empty() ||
+            instruction.cleanupBoundaryEnd != 0)
+          return false;
+        continue;
+      }
+      if (instruction.kind == MirInstructionKind::Lifecycle) {
+        const auto id = instruction.cleanupBoundaryEnd;
+        if (boundarySeen || id == 0 || id > body.cleanupBoundaries.size() ||
+            instruction.destination || instruction.loan ||
+            !instruction.lifecycle.empty() ||
+            !instruction.definedFailure.empty())
+          return false;
+        const auto &boundary = body.cleanupBoundaries[id - 1];
+        if (boundary.id != id || boundary.hostedStartupOperation != 0 ||
+            boundary.kind != MirCleanupBoundaryKind::Failure ||
+            boundary.obligations != dropped || dropped.empty())
+          return false;
+        boundarySeen = true;
+        continue;
+      }
+      if (boundarySeen || instruction.kind != MirInstructionKind::Drop ||
+          instruction.loan || instruction.lifecycle.size() != 1 ||
+          instruction.cleanupBoundaryEnd != 0)
+        return false;
+      const auto &event = instruction.lifecycle.front();
+      const auto *drop = body.findDropObligation(event.source);
+      if (!drop || event.kind != MirLifecycleEventKind::Drop ||
+          event.target != 0 || event.conditional || !event.failureCleanup ||
+          std::find(dropped.begin(), dropped.end(), drop->id) != dropped.end())
+        return false;
+      if (fieldsDropped < fields.size()) {
+        if (drop->id != fields[fieldsDropped++] ||
+            !aggregateConstructorRollbackDrop(body, instruction) ||
+            (instruction.definedFailure.propagation !=
+                 FailurePropagationKind::None &&
+             instruction.definedFailure.propagation !=
+                 FailurePropagationKind::Destructor))
+          return false;
+      } else {
+        std::unordered_set<HirClassInstanceId> visiting;
+        if (!failureConstructorParameterCleanupDrop(constructor, instruction) ||
+            drop->dropType.requiresActiveCleanup ||
+            !failureConstructorPassiveBoundShell(program, drop->dropType.type,
+                                                 visiting) ||
+            !instruction.definedFailure.empty())
+          return false;
+      }
+      if (!instruction.definedFailure.empty() &&
+          (&instruction != &block->instructions.back() ||
+           block->terminator.kind != MirTerminatorKind::Invoke ||
+           block->terminator.invokeInstruction != instruction.id))
+        return false;
+      dropped.push_back(drop->id);
+    }
+    const auto &term = block->terminator;
+    if (!cleanTerm(term))
+      return false;
+    if (term.kind == MirTerminatorKind::PropagateFailure)
+      return term.failureRecord == originalFailure &&
+             term.invokeInstruction == 0 && term.target == 0 &&
+             term.elseTarget == 0 && fieldsDropped == fields.size() &&
+             (dropped.empty() ? !boundarySeen : boundarySeen) &&
+             std::all_of(requiredEnds.begin(), requiredEnds.end(),
+                         [&](auto id) { return ended.contains(id); });
+    const auto *record = body.findFailureRecord(term.failureRecord);
+    const auto *secondary = body.findBlock(term.elseTarget);
+    if (term.kind != MirTerminatorKind::Invoke || block->instructions.empty() ||
+        block->instructions.back().kind != MirInstructionKind::Drop ||
+        block->instructions.back().definedFailure.propagation !=
+            FailurePropagationKind::Destructor ||
+        term.invokeInstruction != block->instructions.back().id ||
+        record == nullptr || record->hostedStartupOperation != 0 ||
+        record->producerBlock != block->id ||
+        record->producerInstruction != term.invokeInstruction ||
+        record->parameterBlock != term.elseTarget ||
+        record->id == originalFailure || secondary == nullptr ||
+        !visited.insert(secondary->id).second || !secondary->reachable ||
+        !secondary->instructions.empty() || !secondary->parameters.empty() ||
+        secondary->programInitializationStep != 0 ||
+        secondary->failureParameter != record->id ||
+        secondary->activeFailure != originalFailure ||
+        secondary->terminator.kind !=
+            MirTerminatorKind::TerminateCleanupFailure ||
+        secondary->terminator.failureRecord != record->id ||
+        secondary->terminator.invokeInstruction != 0 ||
+        secondary->terminator.target != 0 ||
+        secondary->terminator.elseTarget != 0 ||
+        !cleanTerm(secondary->terminator))
+      return false;
+    block = body.findBlock(term.target);
+  }
+  return false;
+}
+
 // A completed borrowed child cannot be represented by default construction
 // followed by assignment: its native reference members must be bound once.
 // Fuse only this exact first-field prefix. A raising child uses its existing
@@ -40783,22 +40983,39 @@ plainConstructedFieldTarget(const MirProgram &program,
 // instructions cannot fail, nor executes their effects ahead of the prefix.
 [[nodiscard]] std::optional<CppMirConstructedFieldInitializerBinding>
 nativeBorrowedConstructedFieldPrefix(
-    const MirProgram &program, const MirConstructorInstance &constructor) {
+    const MirProgram &program, const MirConstructorInstance &constructor,
+    const std::vector<CppMirConstructedFieldInitializerBinding> *previous =
+        nullptr,
+    const MirBlock *prefixBlock = nullptr,
+    ConstructorNoFailureProof *noFailure = nullptr) {
   const auto &body = constructor.body;
   const auto *owner = program.findClassInstance(constructor.owner);
-  const auto *entry = body.findBlock(body.entry);
+  const auto *entry = prefixBlock ? prefixBlock : body.findBlock(body.entry);
+  const std::size_t fieldIndex = previous ? previous->size() : 0;
+  const std::size_t instructionOffset = fieldIndex == 0 ? 0 : 4;
   if (owner == nullptr || entry == nullptr || !entry->reachable ||
       entry->activeFailure != 0 || entry->failureParameter != 0 ||
-      !entry->parameters.empty() || owner->declaredFields.empty() ||
+      !entry->parameters.empty() ||
+      fieldIndex >= owner->declaredFields.size() ||
+      static_cast<bool>(previous) != static_cast<bool>(noFailure) ||
+      (fieldIndex == 0 && entry->id != body.entry) ||
       constructor.initializers.size() != owner->declaredFields.size() ||
       !owner->bases.empty() || !owner->structuralBases.empty() ||
       owner->abstract || owner->polymorphic ||
       !passiveConstructorFieldInitializers(program, owner->fieldInitializers) ||
       entry->instructions.empty())
     return std::nullopt;
+  // A later block starts with precisely the previous child's publication
+  // already proved by this same matcher; do not skip arbitrary instructions.
+  if (fieldIndex != 0 &&
+      (entry->instructions.size() < instructionOffset ||
+       entry->instructions[0].id != previous->back().initializeInstruction ||
+       entry->instructions[3].id != previous->back().boundaryInstruction))
+    return std::nullopt;
   // Unclaimed siblings remain body-staged. Only their independently proved
   // empty native shells can be established before this first field succeeds.
-  for (std::size_t index = 1; index < owner->declaredFields.size(); ++index) {
+  for (std::size_t index = previous ? owner->declaredFields.size() : 1;
+       index < owner->declaredFields.size(); ++index) {
     const auto &later = owner->declaredFields[index];
     const auto &selected = constructor.initializers[index];
     const bool passiveValue = later.dropKind == DropKind::Trivial &&
@@ -40811,8 +41028,8 @@ nativeBorrowedConstructedFieldPrefix(
                                                   EmptyFieldUse::Construction)))
       return std::nullopt;
   }
-  const auto &field = owner->declaredFields.front();
-  const auto &initializer = constructor.initializers.front();
+  const auto &field = owner->declaredFields[fieldIndex];
+  const auto &initializer = constructor.initializers[fieldIndex];
   const auto &construct = entry->instructions.back();
   const auto *target =
       construct.constructorTarget
@@ -40858,10 +41075,16 @@ nativeBorrowedConstructedFieldPrefix(
       construct.callSite != construct.hirValue ||
       construct.parameterTypes != target->parameterTypes ||
       construct.operands.size() != target->parameterTypes.size() ||
-      entry->instructions.size() != construct.operands.size() + 1 ||
+      entry->instructions.size() !=
+          instructionOffset + construct.operands.size() + 1 ||
       loan == nullptr || loan->kind != MirLoanKind::Stored || loan->entry ||
       loan->escapes || loan->lifecycleBound != activeCleanup ||
       loan->storedField != 0 || loan->producedBy != construct.hirValue)
+    return std::nullopt;
+
+  // Multiple native children require proof of actual absence of failure;
+  // terminal containment alone must never advance a later initializer.
+  if (noFailure && !noFailure->prove(target->id))
     return std::nullopt;
 
   const bool failureStatus =
@@ -40871,7 +41094,7 @@ nativeBorrowedConstructedFieldPrefix(
     return std::nullopt;
 
   CppMirConstructedFieldInitializerBinding binding{
-      .initializer = 0,
+      .initializer = fieldIndex,
       .field = field.symbol,
       .fieldType = field.type,
       .constructor = target->id,
@@ -40881,7 +41104,7 @@ nativeBorrowedConstructedFieldPrefix(
   std::vector<MirDropObligationId> preparedDrops;
   for (std::size_t index = 0; index < construct.operands.size(); ++index) {
     const auto &operand = construct.operands[index];
-    const auto &input = entry->instructions[index];
+    const auto &input = entry->instructions[instructionOffset + index];
     const auto *staged = input.result ? body.findValue(*input.result) : nullptr;
     const auto *place = input.operands.size() == 1
                             ? body.findPlace(input.operands.front().place)
@@ -41006,10 +41229,16 @@ nativeBorrowedConstructedFieldPrefix(
       record->producerInstruction != construct.id ||
       record->parameterBlock != failure->id ||
       failure->failureParameter != record->id ||
-      failure->activeFailure != record->id || !failure->parameters.empty() ||
-      failure->terminator.kind != MirTerminatorKind::PropagateFailure ||
-      failure->terminator.failureRecord != record->id)
+      failure->activeFailure != record->id || !failure->parameters.empty())
     return std::nullopt;
+  if (previous) {
+    if (!borrowedPrefixRollbackCovered(program, constructor, *failure, *loan,
+                                       *previous))
+      return std::nullopt;
+  } else if (failure->terminator.kind != MirTerminatorKind::PropagateFailure ||
+             failure->terminator.failureRecord != record->id) {
+    return std::nullopt;
+  }
   // A passive shared-reference shell still needs exact dependency publication,
   // but owns no cleanup to activate or transfer. Keep that absence explicit;
   // the cleanup-bearing branch must retain its exact value/field obligations.
@@ -41030,7 +41259,8 @@ nativeBorrowedConstructedFieldPrefix(
   }
   std::size_t failedChildEnds = 0;
   std::vector<MirDropObligationId> failedParameterDrops;
-  for (std::size_t index = 0; index < failure->instructions.size(); ++index) {
+  for (std::size_t index = 0; !previous && index < failure->instructions.size();
+       ++index) {
     const auto &instruction = failure->instructions[index];
     if (instruction.result || instruction.receiver ||
         !instruction.operands.empty() ||
@@ -41087,7 +41317,7 @@ nativeBorrowedConstructedFieldPrefix(
         boundary->obligations != failedParameterDrops)
       return std::nullopt;
   }
-  if (failedChildEnds != 1)
+  if (!previous && failedChildEnds != 1)
     return std::nullopt;
   const auto &initialize = success->instructions[0];
   const auto &publication = success->instructions[1];
@@ -41106,7 +41336,7 @@ nativeBorrowedConstructedFieldPrefix(
       storedFieldValueLoanProducer(body, *published) != &publication ||
       publication.operands.front().loan != loan->id ||
       publication.operands.front().value != value->id ||
-      initialize.constructorInitializer != 1 ||
+      initialize.constructorInitializer != fieldIndex + 1 ||
       initialize.info.type != field.type ||
       !initialize.definedFailure.empty() ||
       !initialize.localFailureSites.empty() || initialize.result ||
@@ -41142,7 +41372,7 @@ nativeBorrowedConstructedFieldPrefix(
                      return candidate.id == boundary.fullExpressionEnd;
                    });
   if (expression == body.fullExpressions.end() ||
-      expression->constructorInitializer != 1 ||
+      expression->constructorInitializer != fieldIndex + 1 ||
       expression->roots != initializer.arguments ||
       (valueDrop && valueDrop->fullExpression != expression->id))
     return std::nullopt;
@@ -41161,6 +41391,52 @@ nativeBorrowedConstructedFieldPrefix(
   return binding;
 }
 
+// A contiguous prefix of borrowed children can be represented in native
+// declaration order when every child is independently non-failing. Argument
+// reads, publication, rollback and exact lifecycle identities are still proved
+// by the shared single-child matcher. Later source work stays in MIR, and
+// unclaimed siblings retain the existing independently-empty shell boundary.
+[[nodiscard]] std::vector<CppMirConstructedFieldInitializerBinding>
+nativeBorrowedConstructedFieldSequence(
+    const MirProgram &program, const MirConstructorInstance &constructor) {
+  const auto *owner = program.findClassInstance(constructor.owner);
+  const auto &body = constructor.body;
+  if (owner == nullptr ||
+      constructor.initializers.size() != owner->declaredFields.size())
+    return {};
+  std::size_t prefixSize = 0;
+  for (std::size_t index = 0; index < owner->declaredFields.size(); ++index) {
+    const auto &field = owner->declaredFields[index];
+    const auto &initializer = constructor.initializers[index];
+    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+        initializer.field != field.symbol ||
+        initializer.targetType != field.type)
+      return {};
+    const bool passiveValue = field.dropKind == DropKind::Trivial &&
+                              !field.requiresActiveCleanup &&
+                              passiveConstructorAggregateType(field.type);
+    if (!passiveValue && !failureConstructorEmptyDefaultFieldType(
+                             program, field.type, EmptyFieldUse::Construction))
+      prefixSize = index + 1;
+  }
+  if (prefixSize < 2)
+    return {};
+  ConstructorNoFailureProof noFailure(program);
+  const MirBlock *block = body.findBlock(body.entry);
+  std::vector<CppMirConstructedFieldInitializerBinding> bindings;
+  for (std::size_t index = 0; index < prefixSize; ++index) {
+    if (block == nullptr)
+      return {};
+    const auto binding = nativeBorrowedConstructedFieldPrefix(
+        program, constructor, &bindings, block, &noFailure);
+    if (!binding)
+      return {};
+    bindings.push_back(*binding);
+    block = body.findBlock(block->terminator.target);
+  }
+  return bindings;
+}
+
 } // namespace
 
 std::vector<CppMirConstructedFieldInitializerBinding>
@@ -41169,6 +41445,10 @@ cppMirConstructedFieldInitializerBindings(
   if (const auto prefix =
           nativeBorrowedConstructedFieldPrefix(program, constructor))
     return {*prefix};
+  if (auto sequence =
+          nativeBorrowedConstructedFieldSequence(program, constructor);
+      !sequence.empty())
+    return sequence;
   if (const auto prefix =
           nativeOptionalStorageEmptyPrefix(program, constructor))
     return {*prefix};

@@ -985,7 +985,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         binding.name == "atomic_scalar";
     const bool trustedMemoryConstraint =
         isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
-        binding.name == "object_layout";
+        (binding.name == "object_layout" ||
+         binding.name == "independent_object");
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||

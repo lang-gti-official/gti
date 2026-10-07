@@ -2282,10 +2282,44 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 ? body.findPlace(loan.source)
                 : nullptr;
         const auto isReturnedCarrier = [&](const MirPlace *source) {
-          return source != nullptr && source->traits.containsBorrowedState &&
-                 source->root == MirPlaceRootKind::Binding &&
-                 source->projections.empty() && accessed != nullptr &&
-                 accessed->id == source->id;
+          if (source == nullptr || accessed == nullptr ||
+              source->root != MirPlaceRootKind::Binding)
+            return false;
+          if (source->traits.containsBorrowedState &&
+              source->projections.empty() && accessed->id == source->id)
+            return true;
+          if (accessed->root != MirPlaceRootKind::Binding ||
+              accessed->binding != source->binding ||
+              !accessed->projections.empty())
+            return false;
+          // A field-mapped publication can name the exact external referent
+          // instead of the compact parameter shell. Destroying that shell
+          // still does not destroy the caller-owned referent. Require the
+          // entry contract's checked reference path, even after its local
+          // loan has ended; an ordinary owned field earns no exemption.
+          const auto referent =
+              canonicalPlace(body, source->id, bindingLoans, active);
+          return std::any_of(
+              body.loans.begin(), body.loans.end(), [&](const MirLoan &entry) {
+                const auto *entrySource = body.findPlace(entry.source);
+                const bool valueEntry =
+                    entry.entry && entry.kind == MirLoanKind::Stored &&
+                    entry.parent == 0 && entry.storedDependency == 0 &&
+                    !entry.designatedFields.empty() && entrySource != nullptr &&
+                    entrySource->root == MirPlaceRootKind::Binding &&
+                    entrySource->projections.empty() &&
+                    entrySource->traits.containsBorrowedState &&
+                    std::find(entry.carriers.begin(), entry.carriers.end(),
+                              entrySource->binding) != entry.carriers.end();
+                if (!valueEntry && !abstractStoredEntry(body, entry))
+                  return false;
+                const auto origin =
+                    canonicalPlace(body, entry.source, bindingLoans, active);
+                if (!sameCanonicalRoot(origin, referent))
+                  return false;
+                const auto path = abstractStoredAccess(entry, referent);
+                return path.referent && !path.invalidReferentProjection;
+              });
         };
         const bool returnedCarrier =
             isReturnedCarrier(returnSource) ||

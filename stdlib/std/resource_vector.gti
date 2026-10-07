@@ -5,7 +5,7 @@
 namespace std {
 /// Growable resource-backed storage transfers elements by structural relocation.
 concept resource_vector_element<T> = std::movable<T> && std::relocatable<T>
-    && std::layout_queryable<T>;
+    && std::storage_element<T>;
 
 namespace detail {
 class resource_vector_sentinel {
@@ -15,7 +15,7 @@ public:
   size_t position() { return this.finish; }
 };
 
-class resource_vector_iterator<T, std::memory_resource R> {
+class resource_vector_iterator<std::storage_element T, std::memory_resource R> {
   resource_storage<T, R>& slots;
   mut size_t position;
 public:
