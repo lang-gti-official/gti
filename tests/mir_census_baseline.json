@@ -32,7 +32,7 @@
     "119-runtime-object-layout.gti": 55,
     "12-fixed-arrays.gti": 33,
     "120-immovable-storage.gti": 369,
-    "121-programmable-allocators.gti": 556,
+    "121-programmable-allocators.gti": 560,
     "122-manual-object-lifetimes.gti": 495,
     "126-conditional-thread-capabilities.gti": 61,
     "13-ownership.gti": 51,
@@ -121,5 +121,5 @@
     "98-shared-ownership.gti": 366,
     "99-borrowed-expected.gti": 358
   },
-  "total": 17216
+  "total": 17220
 }

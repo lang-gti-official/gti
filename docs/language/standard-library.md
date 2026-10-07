@@ -797,6 +797,15 @@ typed ownership. It is separate from the process-backed
 not require a resource binding. Resource types are selected by generic type
 arguments, without runtime type erasure or allocator-propagation traits.
 
+`process_resource` is the hosted byte provider: its ordinary GTI implementation
+validates power-of-two alignment and native-size conversion, handles zero bytes
+without an allocation, and maps native failure to `alloc_errc`. POSIX uses
+`posix_memalign`/`free`; Windows uses `_aligned_malloc`/`_aligned_free`. The
+descriptor retains the requested alignment even when POSIX normalization yields
+stronger alignment. Direct calls remain unsafe: a descriptor is passive metadata,
+not duplicate release authority, and live objects must end before release.
+The generic resource protocol does not require libc or a process heap.
+
 `memory_resource<R>` requires read-only `allocate(layout)` and
 `release(raw_allocation)` calls under an explicit unsafe requirement.
 `raw_allocation` carries `address`, `bytes`, `alignment` and provider-defined

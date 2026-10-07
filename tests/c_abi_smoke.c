@@ -1,8 +1,25 @@
+#include "gti/memory.h"
 #include "gti/runtime.h"
 #include "gti/runtime_thread.h"
 
 #include <stddef.h>
 #include <stdint.h>
+
+_Static_assert(_Generic(&gti_rt_native_size_max_v1,
+                   uint64_t (*)(void): 1,
+                   default: 0),
+               "process provider native-size fact ABI");
+#if defined(_WIN32)
+_Static_assert(_Generic(&gti_rt_aligned_malloc_v1,
+                   void *(*)(uint64_t, uint64_t): 1,
+                   default: 0),
+               "CRT byte forwarding ABI");
+#else
+_Static_assert(_Generic(&gti_rt_posix_memalign_v1,
+                   void *(*)(uint64_t, uint64_t, int32_t *): 1,
+                   default: 0),
+               "POSIX byte forwarding ABI");
+#endif
 
 _Static_assert(_Generic(&gti_rt_once_invoke_v1,
                    void (*)(gti_once_initializer_v1): 1,
