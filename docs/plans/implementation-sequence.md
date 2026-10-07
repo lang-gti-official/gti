@@ -3705,12 +3705,13 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-05: Programmable Allocators And Safe Container Integration
 
-- **State/role:** active Phase 2; prerequisite audit complete and statically
-  borrowed lease direction approved on 2026-10-06 through the user's delegated
-  design review. The public protocol, real arena, fixed-address owner and
-  growable container are implemented with focused native evidence. Broad
-  compiler reconciliation and final integration remain in progress; a counting
-  adapter or another process-allocation wrapper is not completion.
+- **State/role:** complete (2026-10-07). The statically borrowed lease
+  direction was approved on 2026-10-06 through the user's delegated design
+  review. The public protocol, a real placement-choosing arena, fixed-address
+  owners, the growable `resource_vector` and an unrelated application container
+  are implemented and pass the full production, installed-toolchain and tooling
+  gates recorded below. Remaining structural limits are listed under
+  **Completion evidence**; they are follow-up work, not open Phase 2 gates.
 - **Outcome:** an engine-defined arena obtains one backing region, chooses
   differently sized/aligned subregions, and simultaneously supplies owning
   objects, a substantial growable container and an unrelated application-defined
@@ -3754,27 +3755,54 @@ do not expose C++ object layout as GTI semantics.
   `std::movable` requirement (`GTI-S2029`). The frontend and library sources for
   these rules are unchanged between the validated 0.376.0 candidate and the
   inspected head. These are prerequisite evidence, not Phase 2 acceptance tests.
-- **Current client checkpoint (in progress):** source-defined `resource_ref`,
+- **Completion evidence (2026-10-07):** source-defined `resource_ref`,
   `resource_storage` and `resource_vector` clients, a real monotonic arena,
   a counting/failure adapter and an unrelated fixed-address container are
-  implemented. The complete allocator runtime fixture, example 121, independent
-  arena placement, raw-owner movement, constructor rollback and region-contract
-  fixtures pass all eight native configurations: C++20/C++23 at O0/O1/O3,
-  disabled elision and ASan/UBSan. This is focused local macOS arm64 evidence;
-  full production and installed-toolchain verification remain outstanding.
+  implemented. The optimized macOS arm64 Release compiler (LLVM 22.1.8,
+  AppleClang) passes all 460 registered gates in one full run. The allocator
+  matrix runs example 121 and seven resource fixtures in all eight native
+  configurations (C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan):
+  aligned placement from one backing region, simultaneous leases, zero size,
+  invalid alignment, overflow, exhaustion, injected growth failure, a consumed
+  failed push, constructor rollback through storage and `try_emplace_back`,
+  owner-only movement, independent element destruction, cross-resource
+  relocation and exactly-once destruction/release through the correct resource.
+  Ordinary client shapes are executable: owners as class members, mutable
+  container parameters, owning and unique elements, and the process resource.
+  Negative controls reject provider reset or movement beneath live owners,
+  reset through a shared binding, conflicting element access, element escape,
+  forged bindings and immovable elements on relocating paths. Off/Warn
+  raw-pointer auditing accepts the same allocator programs and emits identical
+  C++. An isolated install passes all eleven external SDK consumers, example
+  121 and the client fixture at C++20/O0 and C++23/O3, the resource LSP gate
+  and the installed raw-audit policy harness. Tree-sitter's 72 corpus cases,
+  highlight/locals/rainbow checks, 183 shipped sources and pinned regeneration
+  pass; all 453 first-party C/C++ sources pass formatting and API
+  documentation generation is deterministic. Linux/Windows execution and
+  bundled-LLVM release packaging are not claimed.
+  Integration repaired three backend gaps: chain-form generated moves now
+  admit their `TransferOut` handoff as a native no-op, direct concrete
+  instances of generic active-drop classes no longer receive duplicate
+  explicit-specialization lifecycle definitions, and storage release publishes
+  a prebuilt empty storage. Remaining structural limits: a free function cannot
+  return a borrowed carrier constructed from a by-value carrier parameter
+  (`GTI-S2085`, pre-existing and general, so resource-owner factories are
+  unavailable); only `resource_vector` is allocator-aware; resources are
+  compile-time selected, single-threaded unless their own contract says
+  otherwise, and the example arena reclaims space only by whole reset; and the
+  optional audit reports many analysis-limitation findings inside provider
+  implementations.
   Explicit nested constructors now
   compose formal-to-field dependency paths, with generic three-level and
-  reordered two-origin tests. Backend nested-publication admission remains
-  under validation. Client integration exposed a separate lifetime bug:
+  reordered two-origin tests, and backend nested publication is admitted.
+  Client integration exposed a separate lifetime bug:
   an accessor returning an owned field of a borrowed carrier must protect that
   carrier's physical storage, not substitute its external resource dependency.
   Unrelated-class semantic regressions now cover reset/move conflicts, exact
   nested shared-view returns and physical-shell versus external-owner
-  references. Focused semantic/MIR checks and all 61 ownership-suite cases
-  passed at the earlier checkpoint; the expanded ownership suite is under
-  reconciliation. All resource-protocol contract tests and 81 lifecycle-emitter
-  cases pass, and 106 forged lifetime/return proofs are rejected at the latest
-  focused checkpoint. The owned-field,
+  references. The expanded ownership suite, the resource-protocol contract,
+  the lifecycle emitter and the forged lifetime/return proof mutations all
+  pass in the full run. The owned-field,
   passive-field assignment and constructor-rollback regressions pass all
   eight native modes, including copied-formal status failure. Generic source
   destructors retain caller-owned receiver dependencies without acquiring
@@ -3782,7 +3810,6 @@ do not expose C++ object layout as GTI semantics.
   double-failure traces pass all eight configurations. Iterator/reference
   tests distinguish physical container storage from its external resource,
   including explicitly retained iterators, copied adapters and range loops.
-  Integration and broader validation remain required for completion.
   A separate raw-region owner regression passes O0/O1/O3 under C++20/C++23,
   disabled elision and ASan/UBSan: generated movement preserves the region
   address and transfers exactly one release obligation. The arena shell now
