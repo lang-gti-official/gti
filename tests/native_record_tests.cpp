@@ -332,7 +332,7 @@ int main() {
 
 void testNativeArrayRowProjection() {
   const auto result = analyze("native-array-row.gti", R"(
-[[c_abi]] struct Matrix { c_int values[2][3]; };
+[[c_abi]] struct Matrix { int32_t values[2][3]; };
 extern "C" { Matrix native_matrix(); }
 int main() {
   auto matrix = native_matrix();
