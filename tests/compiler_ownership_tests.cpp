@@ -15038,6 +15038,110 @@ int main() {
          "the C++ backend should emit a passive-cleanup range temporary");
 }
 
+void testSharedPayloadSiblingReborrows() {
+  // Read-only payload bindings of one matched enum are siblings. Reborrowing a
+  // payload of one sibling must not conflict with the other read-only ones.
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "shared-payload-sibling-reborrows.gti", R"(
+enum Event<T> { item(T value) };
+class Inner {
+public:
+  Event<int32_t> data;
+  Inner(Event<int32_t> data) : data(data) {}
+};
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+
+enum class Tag { small(int32_t value), big(int64_t value) };
+class Cell {
+public:
+  Tag tag;
+  int32_t weight;
+  Cell(Tag tag, int32_t weight) : tag(tag), weight(weight) {}
+};
+enum class Trio { all(Cell a, Cell b, Cell c), none };
+
+int32_t generic_pair() {
+  Inner left = Inner(Event<int32_t>::item(1));
+  Inner right = Inner(Event<int32_t>::item(2));
+  Pair<Inner> pair = Pair<Inner>::items(left, right);
+  switch (pair) {
+    case Pair<Inner>::items(auto& first, auto& second):
+      switch (first.data) {
+        case Event<int32_t>::item(auto& value):
+          if (value != 1) { return 1; }
+          break;
+      }
+      switch (second.data) {
+        case Event<int32_t>::item(value): return value - 2;
+      }
+    case Pair<Inner>::other: return 3;
+  }
+}
+
+int32_t three_siblings() {
+  Cell x = Cell(Tag::small(1), 2);
+  Cell y = Cell(Tag::big(int64_t(3)), 4);
+  Cell z = Cell(Tag::small(5), 6);
+  Trio trio = Trio::all(x, y, z);
+  switch (trio) {
+    case Trio::all(auto& a, auto& b, auto& c):
+      switch (a.tag) {
+        case Tag::small(auto& v): if (v != 1) { return 1; } break;
+        case Tag::big(auto& v): return 2;
+      }
+      switch (b.tag) {
+        case Tag::small(auto& v): return 3;
+        case Tag::big(auto& v): return int32_t(v) + a.weight + c.weight - 11;
+      }
+    case Trio::none: return 4;
+  }
+}
+
+int main() { return generic_pair() + three_siblings(); }
+)",
+      {standardLibraryPrelude()});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << "Unexpected shared payload diagnostic: " << diagnostic.message
+              << '\n';
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "nested read-only payload reborrows beside live read-only payload "
+         "siblings should lower to verified MIR");
+
+  std::size_t corrupted = 0;
+  std::size_t rejected = 0;
+  for (const lang::HirFunctionInstance &hirFunction :
+       frontend.hir.functionInstances()) {
+    const lang::MirFunctionInstance *mirFunction =
+        frontend.mir.findFunctionInstance(hirFunction.id);
+    if (mirFunction == nullptr || hirFunction.source == nullptr ||
+        hirFunction.source->name().lexeme == "main") {
+      continue;
+    }
+    for (const lang::MirLoan &child : mirFunction->body.loans) {
+      const lang::MirLoan *parent = mirFunction->body.findLoan(child.parent);
+      if (child.kind != lang::MirLoanKind::Local ||
+          child.access != lang::AccessMode::ReadOnly || parent == nullptr ||
+          parent->kind != lang::MirLoanKind::Local ||
+          parent->access != lang::AccessMode::ReadOnly) {
+        continue;
+      }
+      // Widening the parent lets the child's place be written through it, so
+      // the overlapping read-only sibling becomes a genuine conflict.
+      lang::MirBody widened = mirFunction->body;
+      widened.loans[parent->id - 1].access = lang::AccessMode::Mutable;
+      ++corrupted;
+      rejected += !lang::verifyMirBody(widened).valid();
+      break;
+    }
+  }
+  expect(corrupted == 2 && rejected == 2,
+         "MIR verification should still reject a payload reborrow whose "
+         "parent was widened to mutable access");
+}
+
 void testExpectedPayloadRangeLoans() {
   const std::string source = R"(
 #include <std/string>
@@ -21243,6 +21347,7 @@ constexpr NamedTest kTests[] = {
      testRangeBasedForAndIteratorProtocol},
     {"testReadOnlyRangeLoans", testReadOnlyRangeLoans},
     {"testPassiveCleanupRangeTemporary", testPassiveCleanupRangeTemporary},
+    {"testSharedPayloadSiblingReborrows", testSharedPayloadSiblingReborrows},
     {"testExpectedPayloadRangeLoans", testExpectedPayloadRangeLoans},
     {"testMutableRangeLoans", testMutableRangeLoans},
     {"testLambdas", testLambdas},

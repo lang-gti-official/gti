@@ -3327,14 +3327,16 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
               other.kind == MirLoanKind::CallResult &&
               body.loans[loan - 1].access == AccessMode::ReadOnly &&
               other.access == AccessMode::ReadOnly;
-          const bool sharedStoredAccess =
-              body.loans[parent - 1].kind == MirLoanKind::Stored &&
+          // A read-only child of a parent that grants no mutation over the
+          // child place shares access with every read-only sibling, whatever
+          // kind of loan the parent is.
+          const bool sharedReadOnlyAccess =
               body.loans[loan - 1].access == AccessMode::ReadOnly &&
               other.access == AccessMode::ReadOnly &&
               !loanPermitsPlace(body, body.loans[parent - 1], childPlace,
                                 AccessMode::Mutable, bindingLoans, active);
           if (canonicalPlacesOverlap(childPlace, otherPlace) &&
-              !sharedEphemeralAccess && !sharedStoredAccess) {
+              !sharedEphemeralAccess && !sharedReadOnlyAccess) {
             return failure(body, owner,
                            "child loan " + std::to_string(loan) +
                                " conflicts with active sibling loan " +
