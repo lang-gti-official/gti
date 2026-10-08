@@ -5012,6 +5012,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   runtime and native prefix evidence also pass. Complete corpus admission,
   optimizer regression migration, performance and installed-consumer evidence remain
   acceptance gates, not consequences of those focused proofs.
+  Corpus iteration also found an unconstrained `std::json::decode_array`
+  definition: it now explicitly requires the vector's structural element
+  contract. The affected JSON example reaches verified MIR again. Native
+  acceptance still rejects a reduced owning payload-enum receiver-field
+  move/restore/return profile; that rejection remains a required repair, not
+  permission to reintroduce private storage or skip the example.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound
