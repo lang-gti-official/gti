@@ -349,6 +349,80 @@ int main() { Holder holder{}; return 0; }
   expect(checked, "fixture must reach Holder's field initializer body");
 }
 
+void testPassiveStatusDefaultField() {
+  for (const bool abstract : {false, true}) {
+    const std::string source =
+        "class Base { public: int stamp = 5; Base() {} " +
+        std::string(abstract ? "virtual int read() = 0;" : "") +
+        "}; class Derived : public Base { public: int read() " +
+        std::string(abstract ? "override " : "") +
+        "{ return this.stamp; } }; struct Holder { Derived value; }; "
+        "int main() { Holder owner{}; return owner.value.read() - 5; }";
+    const auto frontend = analyze("passive-status-default.gti", source);
+    expect(frontend.canGenerateCode(), "selected base defaults verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    bool checked = false;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+      if (!owner || owner->declaredFields.size() != 1 ||
+          owner->declaredFields.front().type.kind != lang::SemanticType::Class)
+        continue;
+      const auto fields = lang::cppMirConstructedFieldInitializerBindings(
+          frontend.mir, constructor);
+      expect(fields.size() == 1 && fields.front().failureStatus,
+             "status-only child keeps exact native field construction");
+      if (fields.size() != 1)
+        continue;
+      checked = true;
+      const auto child = fields.front().constructor;
+      expect(lang::cppMirConstructorStatusCannotFail(frontend.mir, child),
+             "exact selected base Invoke is independently non-failing");
+      for (int mutation = 0; mutation < 9; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirConstructorInstance *>(
+            malformed.findConstructorInstance(constructor.id));
+        auto *entry = const_cast<lang::MirBlock *>(
+            changed->body.findBlock(changed->body.entry));
+        auto *success = const_cast<lang::MirBlock *>(
+            changed->body.findBlock(entry->terminator.target));
+        if (mutation == 0)
+          changed->initializers.clear();
+        if (mutation == 1)
+          changed->initializers.front().field += 10000;
+        if (mutation == 2)
+          entry->instructions.front().constructorTarget = 0;
+        if (mutation == 3)
+          entry->terminator.failureRecord = 0;
+        if (mutation == 4)
+          entry->terminator.elseTarget = entry->terminator.target;
+        if (mutation == 5)
+          success->instructions.front().constructorInitializer = 0;
+        if (mutation == 6)
+          success->instructions.front().operands.front().value = 0;
+        if (mutation == 7)
+          success->instructions.back().fullExpressionEnd = 0;
+        if (mutation == 8) {
+          auto *nested = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(child));
+          nested->initializers.front().constructorTarget = 0;
+          expect(!lang::cppMirConstructorStatusCannotFail(malformed, child),
+                 "base construction retains its exact selected target");
+        }
+        expect(
+            lang::cppMirConstructedFieldInitializerBindings(malformed, *changed)
+                .empty(),
+            "status field rejects missing/forged selection, target, outcome "
+            "and publication " +
+                std::to_string(mutation));
+      }
+    }
+    expect(checked, "status default fixture reaches selected field proof");
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "selected status-only default reaches production emission");
+  }
+}
+
 const lang::MirInstruction *testInstruction(const lang::MirBody &body,
                                             lang::MirInstructionId id) {
   for (const auto &block : body.blocks)
@@ -11414,6 +11488,7 @@ constexpr NamedTest kTests[] = {
     {"testFreshOwnedCallableArgument", testFreshOwnedCallableArgument},
     {"testGeneratedDefaultOwningFieldInitializer",
      testGeneratedDefaultOwningFieldInitializer},
+    {"testPassiveStatusDefaultField", testPassiveStatusDefaultField},
 };
 
 } // namespace
