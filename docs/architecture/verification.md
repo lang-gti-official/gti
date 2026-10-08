@@ -19,6 +19,15 @@ index effects and deterministic cleanup, including owning element arrays.
 These are current acceptance requirements, not a claim that the combined full
 suite has already passed.
 
+The reconciliation also closes the two remaining bad-diagnostic expectations
+from issue #69. Operator reference failures identify the temporary or read-only
+operand; unavailable overload arity no longer recommends a cast. Ordinary
+include discovery can prove a missing overload declaration, including an
+unrelated user-defined header. The full diagnostics suite, include-suggestion
+suite and focused LSP tests cover source ranges, candidate/operand notes,
+safe include edits and clearing after applying the edit. This is focused
+evidence; the combined final run remains required.
+
 The `6d25a313` audit checkpoint passes the full compiler aggregate and the
 repaired native-identity, optimizer, signature, borrowing, aggregate projection,
 installed-runtime and stdlib-surface gates. Its native corpus oracle builds and

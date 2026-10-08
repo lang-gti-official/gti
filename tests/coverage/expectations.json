@@ -2041,12 +2041,11 @@
     },
     "a53-operator-temporary-ref-diagnostic": {
       "code": "GTI-S2022",
-      "finding": "A53",
       "forbid": [
         "convert the operand explicitly"
       ],
       "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a54-alias-constrained-generic-class-argument": {
       "outcome": "pass"
@@ -2100,12 +2099,12 @@
       "outcome": "pass"
     },
     "a60-println-format-missing-include": {
-      "finding": "A60",
+      "code": "GTI-S2089",
       "forbid": [
         "convert"
       ],
       "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a61-designated-argument-diagnostic": {
       "code": "GTI-S2091",

@@ -5401,10 +5401,12 @@ def test_advisory_diagnostics_and_actions(executable, root):
 
 
 def test_missing_standard_library_include_code_action(
-    executable, root, symbol="vector", argument="int", header="std/vector"
+    executable, root, symbol="vector", argument="int", header="std/vector",
+    source=None,
 ):
     suffix = f"<{argument}>" if argument is not None else ""
-    source = f"// 🙂\nusing values = std::{symbol}{suffix};\n"
+    if source is None:
+        source = f"// 🙂\nusing values = std::{symbol}{suffix};\n"
     include = f"#include <{header}>\n"
     corrected_source = include + source
     path = root / "missing-standard-include.gti"
@@ -9824,6 +9826,40 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
         assert "implicit conversions" in diagnostic["data"]["hints"][0], diagnostic
         assert diagnostic["relatedInformation"], diagnostic
         assert "fixes" not in diagnostic["data"], diagnostic
+        temporary_source = (
+            "// 🙂\nclass Exact { public: "
+            "bool operator==(Exact& other) { return true; } };\n"
+            "int main() { Exact value{}; "
+            "if (value == Exact()) { return 1; } return 0; }\n"
+        )
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {"uri": uri, "version": 3},
+                "contentChanges": [{"text": temporary_source}],
+            },
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )
+        diagnostic = next(
+            item for item in publication["params"]["diagnostics"]
+            if item.get("code") == "GTI-S2022"
+        )
+        use = temporary_source.index("== Exact()")
+        assert diagnostic["range"] == {
+            "start": lsp_position(temporary_source, use),
+            "end": lsp_position(temporary_source, use + 2),
+        }, diagnostic
+        assert any("temporary value" in item["message"]
+                   for item in diagnostic["relatedInformation"]), diagnostic
+        assert any("Bind a temporary" in hint
+                   for hint in diagnostic["data"]["hints"]), diagnostic
+        assert not any("convert" in hint
+                       for hint in diagnostic["data"]["hints"]), diagnostic
+        assert "fixes" not in diagnostic["data"], diagnostic
     finally:
         session.close()
 
@@ -9947,6 +9983,10 @@ def main():
     test_managed_thread_tooling(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_missing_standard_library_include_code_action(sys.argv[1], root)
+    test_missing_standard_library_include_code_action(
+        sys.argv[1], root, "println", None, "std/format",
+        '// 🙂\nint main() { std::println("line {}", 2); return 0; }\n',
+    )
     for symbol in ("deque", "queue", "set", "unordered_set"):
         test_missing_standard_library_include_code_action(
             sys.argv[1], root, symbol, "int", f"std/{symbol}"
