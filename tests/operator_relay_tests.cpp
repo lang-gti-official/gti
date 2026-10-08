@@ -220,6 +220,82 @@ void checkFieldMutations(const lang::FrontendResult &frontend) {
             << " rejected executing access upgrades\n";
 }
 
+bool emitterAdmits(const lang::FrontendResult &frontend,
+                   const lang::MirProgram &mir,
+                   decltype(lang::MirBodyAddress{}.owner) function) {
+  const auto lowered =
+      gti_test::lowerProgram(frontend, mir, mir, lang::TargetInfo::host());
+  lang::CppMirBodyEmissionMap rows(
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp20));
+  lang::CppMirBodyEmitter emitter(mir, rows);
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = function};
+  return emitter.analyze(address).ready() &&
+         (emitter.supportsBodyText(address) ||
+          emitter.supportsFailureBodyText(address));
+}
+
+// A view observer may read a call-produced SSA view directly; forged
+// receiver category, type, identity or failure contract must fail closed.
+void checkViewObserverMutations(const lang::FrontendResult &frontend) {
+  std::size_t count = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if ((instruction.intrinsic != lang::IntrinsicKind::StringViewSize &&
+             instruction.intrinsic != lang::IntrinsicKind::StringViewEmpty) ||
+            !instruction.receiver ||
+            instruction.receiver->kind != lang::MirOperandKind::Value)
+          continue;
+        const auto *producer =
+            function.body.findValue(instruction.receiver->value);
+        const auto *definition = producer == nullptr
+                                     ? nullptr
+                                     : [&]() -> const lang::MirInstruction * {
+          for (const auto &candidate : function.body.blocks)
+            for (const auto &operation : candidate.instructions)
+              if (operation.result && *operation.result == producer->id)
+                return &operation;
+          return nullptr;
+        }();
+        if (definition == nullptr ||
+            definition->kind == lang::MirInstructionKind::CallInput)
+          continue;
+        ++count;
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto malformed = frontend.mir;
+          auto &body = const_cast<lang::MirFunctionInstance *>(
+                           malformed.findFunctionInstance(function.id))
+                           ->body;
+          auto &changed =
+              *std::find_if(body.findBlock(block.id)->instructions.begin(),
+                            body.findBlock(block.id)->instructions.end(),
+                            [&](const auto &candidate) {
+                              return candidate.id == instruction.id;
+                            });
+          if (mutation == 0) {
+            changed.receiver->type = lang::SemanticType::Int32;
+          } else if (mutation == 1) {
+            changed.receiver->kind = lang::MirOperandKind::Copy;
+          } else if (mutation == 2) {
+            changed.receiver->value = *instruction.result;
+          } else {
+            changed.definedFailure.propagation =
+                lang::FailurePropagationKind::Constructor;
+          }
+          (void)lang::rebuildMirValueUses(body);
+          expect(!lang::verifyMirProgram(malformed).valid() ||
+                     !emitterAdmits(frontend, malformed, function.id),
+                 "forged view observer receiver or failure contract fails "
+                 "closed");
+        }
+      }
+  expect(count >= 10,
+         "call-produced views exercise direct size/empty observation");
+  std::cout << "Returned view observers: " << count << " observers, "
+            << count * 4 << " rejected mutations\n";
+}
+
 void checkNegative(const std::string &prefix, const std::string &extra) {
   auto result = analyzeWithStandardLibrary(
       "operator-relay-negative.gti", prefix + extra + "int main(){return 0;}");
@@ -248,7 +324,9 @@ int main() {
   auto allocation =
       analyzeWithStandardLibrary("existing_value_allocation.gti",
                                  readFixture("existing_value_allocation"));
-  for (const auto *frontend : {&range, &text, &allocation}) {
+  auto views = analyzeWithStandardLibrary(
+      "returned_view_observers.gti", readFixture("returned_view_observers"));
+  for (const auto *frontend : {&range, &text, &allocation, &views}) {
     expect(frontend->canGenerateCode() &&
                lang::verifyMirProgram(frontend->mir).valid(),
            "positive fixture completes all compiler phases");
@@ -258,6 +336,7 @@ int main() {
   }
   checkFieldMutations(range);
   checkAllocationMutations(allocation);
+  checkViewObserverMutations(views);
   const auto source = readFixture("indexed_view_relay");
   const auto prefix = source.substr(0, source.find("int main()"));
   checkNegative(prefix, "std::string_view bad(){Records local{}; return "
@@ -269,5 +348,13 @@ int main() {
   checkNegative(prefix, "void bad(){mut Records records{}; std::string_view "
                         "held=records.at(std::size_t(0)); records.add(); "
                         "std::println(held);}");
+  // Direct observation does not relax view lifetimes or exclusivity.
+  checkNegative("#include <std/string>\n",
+                "std::size_t bad(){std::string_view held = "
+                "std::string(\"tmp\").view(); return held.size();}");
+  checkNegative("#include <std/string>\n",
+                "std::size_t bad(){mut std::string text = std::string(\"ab\"); "
+                "std::string_view held = text.view(); text.append(\"c\"); "
+                "return held.size();}");
   return failures == 0 ? 0 : 1;
 }

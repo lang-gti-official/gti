@@ -2,8 +2,8 @@
 
 [`127-operator-and-value-transport.gti`](127-operator-and-value-transport.gti)
 demonstrates an overloaded operator on a range element's field, a read-only
-view relayed through an indexed receiver, and allocation of existing passive
-and move-only values. Exact addresses, owner dependencies and copy/move policy
+view relayed through an indexed receiver and observed directly from that call,
+and allocation of existing passive and move-only values. Exact addresses, owner dependencies and copy/move policy
 remain compiler-checked; local/temporary view escapes remain invalid.
 
 [`123-native-c-scalars.gti`](123-native-c-scalars.gti) demonstrates target-correct
@@ -175,7 +175,7 @@ is a teaching helper, not a production server.
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
 | `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 | `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
-| `127-operator-and-value-transport.gti` | an overloaded operator on a range element's field, a read-only view relayed through an indexed receiver, and boxing existing passive and move-only values |
+| `127-operator-and-value-transport.gti` | an overloaded operator on a range element's field, a read-only view relayed through an indexed receiver and observed straight from the call, and boxing existing passive and move-only values |
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
