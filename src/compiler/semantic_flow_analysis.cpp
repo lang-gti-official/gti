@@ -1962,7 +1962,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
   if (const ResolvedOperatorInfo *resolved = semanticModel.findOperator(expr)) {
     const bool assignmentExpression =
         kind == ExprKind::Assign || kind == ExprKind::Set ||
-        kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet;
+        kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet ||
+        kind == ExprKind::PlaceSet;
     const bool loweredAssignmentCall =
         assignmentExpression &&
         (resolved->kind == OverloadedOperator::Assignment ||
@@ -2387,6 +2388,18 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
       addCompoundConversionFailure(operation, set->oper().kind, info.type,
                                    right, nullptr, set->value().get());
     }
+  } else if (kind == ExprKind::PlaceSet) {
+    const auto *set = static_cast<const PlaceSet *>(&expr);
+    if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
+      anchor(set->oper());
+      const SemanticType right = semanticModel.typeOf(*set->value());
+      const SemanticType intermediate = compoundIntermediateType(
+          set->oper().kind, info.type, right, nullptr, set->value().get());
+      addIntegerOperationFailures(operation, set->oper().kind, intermediate,
+                                  right);
+      addCompoundConversionFailure(operation, set->oper().kind, info.type,
+                                   right, nullptr, set->value().get());
+    }
   } else if (kind == ExprKind::DereferenceSet) {
     const auto *set = static_cast<const DereferenceSet *>(&expr);
     if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
@@ -2460,6 +2473,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     } else if (const auto *set = exprAs<IndexSet>(&expr)) {
       compound(set->oper().kind, set->value());
     } else if (const auto *set = exprAs<DereferenceSet>(&expr)) {
+      compound(set->oper().kind, set->value());
+    } else if (const auto *set = exprAs<PlaceSet>(&expr)) {
       compound(set->oper().kind, set->value());
     }
   }
@@ -2640,6 +2655,16 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     roles = OccurrenceRole::Reference | OccurrenceRole::Write;
     if (set.oper().kind != TokenKind::EQUAL) {
       roles |= OccurrenceRole::Read;
+    }
+  } else if (kind == ExprKind::PlaceSet) {
+    const PlaceSet &set = static_cast<const PlaceSet &>(expr);
+    roles = OccurrenceRole::Reference | OccurrenceRole::Write;
+    if (set.oper().kind != TokenKind::EQUAL)
+      roles |= OccurrenceRole::Read;
+    if (expressionPlace.root != nullptr) {
+      bindingKind = expressionPlace.root->bindingKind;
+      mutableBinding = expressionPlace.root->assignable;
+      symbolId = toolingSymbolFor(*expressionPlace.root);
     }
   }
   const FunctionDecl *functionItemDeclaration = nullptr;
@@ -6424,6 +6449,9 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
   if (kind == ExprKind::Set) {
     return semanticPlace(*static_cast<const Set *>(expression));
   }
+  if (kind == ExprKind::PlaceSet) {
+    return semanticPlace(static_cast<const PlaceSet *>(expression)->target());
+  }
   if (kind == ExprKind::Unary) {
     const auto *unary = static_cast<const Unary *>(expression);
     if (unary->oper().kind != TokenKind::STAR) {
@@ -6678,7 +6706,8 @@ auto SemanticVisitor::Impl::validateProjectedPlaceRead(const Expr &expression)
       exprAs<Assign>(&expression) != nullptr ||
       exprAs<Set>(&expression) != nullptr ||
       exprAs<IndexSet>(&expression) != nullptr ||
-      exprAs<DereferenceSet>(&expression) != nullptr) {
+      exprAs<DereferenceSet>(&expression) != nullptr ||
+      exprAs<PlaceSet>(&expression) != nullptr) {
     return;
   }
   SemanticPlace place = semanticPlace(&expression);
@@ -11281,6 +11310,8 @@ auto SemanticVisitor::Impl::expressionToken(const Expr &expression) -> Token {
     return static_cast<const DirectInitializer &>(expression).brace();
   case ExprKind::DereferenceSet:
     return static_cast<const DereferenceSet &>(expression).dereference();
+  case ExprKind::PlaceSet:
+    return static_cast<const PlaceSet &>(expression).oper();
   case ExprKind::Get:
     return static_cast<const Get &>(expression).name();
   case ExprKind::Grouping:

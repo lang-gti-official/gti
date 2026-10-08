@@ -1218,6 +1218,10 @@ comma-expression       = assignment-expression { "," assignment-expression } ;
 assignment-expression  = conditional-expression
                          [ assignment-operator initializer-expression ] ;
 
+(* Semantic analysis requires a mutable place on the left, including a
+   mutable-reference call result or a parenthesized mutable place. An owned
+   value result and a read-only reference are not assignment targets. *)
+
 assignment-operator    = "=" | "+=" | "-=" | "*=" | "/=" | "%="
                        | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 
