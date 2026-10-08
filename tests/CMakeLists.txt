@@ -827,6 +827,21 @@ add_test(NAME constructor_transport COMMAND gti_constructor_transport_tests)
 add_test(NAME generic_callable_transport_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_callable_transport_runtime_test.py" "$<TARGET_FILE:gti>")
 set_tests_properties(generic_callable_transport_runtime PROPERTIES TIMEOUT 360)
+add_test(NAME generic_branch_locals_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/generic_branch_locals_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+add_executable(gti_generic_initialization_tests generic_initialization_tests.cpp)
+target_link_libraries(gti_generic_initialization_tests PRIVATE gti_compiler)
+add_test(NAME generic_initialization COMMAND gti_generic_initialization_tests)
+add_executable(gti_generic_layout_tests generic_layout_tests.cpp)
+target_link_libraries(gti_generic_layout_tests PRIVATE gti_compiler)
+add_test(NAME generic_layout COMMAND gti_generic_layout_tests)
+add_test(NAME generic_instance_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/generic_instance_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(generic_instance_runtime PROPERTIES TIMEOUT 600)
 
 add_executable("gti_lowered_program_census"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_census.cpp"
@@ -928,7 +943,21 @@ add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
 add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
 target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend)
 add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
+add_executable(gti_conditional_class_publication_tests conditional_class_publication_tests.cpp)
+target_link_libraries(gti_conditional_class_publication_tests PRIVATE gti_cpp_backend)
+add_test(NAME conditional_class_publication COMMAND gti_conditional_class_publication_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME class_expression_publication_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_expression_publication_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(class_expression_publication_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME class_expression_consumers_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_expression_consumers_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}" --jobs 2)
+  set_tests_properties(class_expression_consumers_runtime
+    PROPERTIES TIMEOUT 600 PROCESSORS 2)
   add_test(NAME class_field_value_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"
@@ -2219,6 +2248,11 @@ if(Python3_Interpreter_FOUND)
       "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_runtime_test.py"
       "$<TARGET_FILE:gti>")
   set_tests_properties(operator_place_composition_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME coverage_composition_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/coverage_composition_runtime_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(coverage_composition_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME operator_place_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/operator_place_failure_runtime_test.py"
@@ -2839,6 +2873,14 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(temporary_constructor_argument_runtime
+                       PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME short_circuit_class_temporary_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/short_circuit_class_temporary_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(short_circuit_class_temporary_runtime
                        PROPERTIES TIMEOUT 300)
   add_test(
     NAME nested_reference_return_runtime

@@ -57,7 +57,8 @@ concept subscripts_to_mut<Iterator, T> =
     gti_internal::subscripts_to_mut_capability<Iterator, T>;
 
 // A sentinel whose distance is known without walking: the iterator provides
-// read-only `std::ptrdiff_t operator-(Sentinel&)` returning the signed
+// read-only `std::ptrdiff_t operator-(Sentinel&)` or a copyable by-value
+// `std::ptrdiff_t operator-(Sentinel)` returning the signed
 // number of increments from the iterator to the sentinel.
 concept sized_sentinel_for<Sentinel, Iterator> =
     std::sentinel_for<Sentinel, Iterator> &&

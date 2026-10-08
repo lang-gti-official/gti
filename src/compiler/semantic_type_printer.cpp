@@ -221,7 +221,22 @@ private:
     if (value.kind == CompileTimeValue::Parameter) {
       return genericParameter(value.parameterId, false);
     }
+    if (value.expression)
+      return valueExpression(*value.expression);
     return "unknown value";
+  }
+
+  [[nodiscard]] std::string
+  valueExpression(const GenericValueExpression &expression) const {
+    if (expression.kind == GenericValueExpression::UInt64)
+      return std::to_string(expression.value);
+    if (expression.kind == GenericValueExpression::Parameter)
+      return genericParameter(expression.parameterId, false);
+    if (!expression.left || !expression.right)
+      return "unknown value";
+    return '(' + valueExpression(*expression.left) + ' ' +
+           expression.token.lexeme + ' ' + valueExpression(*expression.right) +
+           ')';
   }
 
   [[nodiscard]] std::string genericParameter(GenericParameterId id,

@@ -103,6 +103,13 @@ a later borrow when no other loan conflicts. The current compiler still
 rejects the pair in either written order until the matching ordered MIR/backend
 family implements this distinction.
 
+Ordinary local value bindings require initialization at their declaration,
+including mutable scalar bindings. `mut` grants write access; it does not
+permit an uninitialized local followed by a later assignment. The compiler
+diagnoses a missing initializer before executable lowering and does not invent
+a zero value. Constructor-initialized instance fields and program-wide scalar
+data initialization retain their separate rules.
+
 Local `auto` infers one exact complete value type from its initializer. It does
 not infer globals, fields, parameters, returns, arrays, or untyped braced
 initializers. The range-for forms `auto&` and `mut auto&` infer element borrows;
@@ -357,6 +364,18 @@ also assignment-compatible with `float` or `double`, and `float` may widen to
 `double`. `double` never implicitly narrows to `float`, including through a
 compound assignment. These assignment compatibilities do not participate in
 call or constructor overload selection.
+
+Integer-to-floating assignment conversion is a rounding conversion, not a
+value-preserving widening guarantee. It uses the destination's IEEE binary32
+or binary64 precision and round-to-nearest, ties-to-even, at compile time and
+runtime. For example, `float value = 16777217` produces `16777216`, and a
+`uint64_t` value of `9007199254740993` assigned to `double` produces
+`9007199254740992`. All supported fixed-width integers fit the floating
+formats' finite exponent range; precision loss is not an out-of-range failure.
+An explicit conversion has the same rounding behavior. A call still requires
+its exact argument type: pass `float(integer)` to a `float` parameter. The
+existing checked floating-to-integer conversion does not restore lost bits;
+it truncates toward zero and fails for non-finite or out-of-range results.
 
 The binary equality, relational, arithmetic, modulo, and bitwise operators add
 one narrow operand context for integer literals. When exactly one operand is
@@ -912,11 +931,22 @@ does not suppress otherwise valid generated lifecycle operations.
 
 The exact declaration `Type() = default;` explicitly selects the generated
 zero-argument construction operation. It is valid only when every field has a
-declaration initializer and the state-bearing base has an accessible
+declaration initializer or is a nominal class/struct field whose exact type has
+an accessible zero-argument construction operation, and the state-bearing base has an accessible
 zero-argument constructor, which are the same conditions used when the
 declaration is omitted. It introduces no executable body, initializer list,
 generic parameters, or requirements. Its source access is the written member
 access. Ordinary-constructor `= delete` is not implemented.
+
+An omitted nominal field is default-constructed in declaration order, unless
+an explicit constructor initializer overrides it. This is a selected GTI
+construction operation, not implicit zeroing or a nullable empty state. Scalar,
+array, reference, raw-pointer, and native-function fields retain their existing
+explicit-initialization rules. Generic availability is checked again after
+substitution: `Layer<N - 1>` is a distinct concrete field type from `Layer<N>`,
+and a finite chain may end at an exact specialization. Exact cycles remain
+invalid; concrete layout/lifecycle exploration has a deterministic depth budget
+and reports `GTI-S2105` at the source when exhausted.
 
 A class or struct may declare at most one public exact copy policy
 `Type(Type&) = default|delete;` and one public exact move policy

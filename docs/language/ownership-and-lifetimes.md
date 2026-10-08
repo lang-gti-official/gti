@@ -333,6 +333,20 @@ generally bind to temporaries or outlive the storage they borrow. The bounded
 call-only read borrow below is not a local or stored reference binding and does
 not extend the temporary's lifetime.
 
+Assignment targets are checked by their resolved place category and access,
+not by whether they are spelled as a variable, subscript, or call. A stable
+mutable-reference result supports `owner.slot() = value` and compound updates
+such as `(owner.slot()) += value`. The target, including accessor calls, is
+evaluated exactly once before the right operand. Ordinary accessor calls
+complete at that point: their exclusive result loan remains live through the
+store, so an overlapping owner read or mutation in the right operand is
+rejected. This does not grant ordinary calls the two-phase reservation used
+by checked operator projections. Read-only results, owned value results,
+immutable owners, and temporary mutable receivers are not writable targets.
+This expression-target slice admits calls (including grouped calls) and
+grouping of existing variable, field, index and dereference targets. It does
+not add comma/conditional targets or whole-`this` replacement.
+
 References may be parameters and non-escaping local bindings. They require an
 addressable initializer, and mutable references require a mutable place.
 Method returns may use `T&` when the returned place is derived from `this`.
@@ -1342,7 +1356,8 @@ movement as it can in C++.
 
 The exact declarations `Type() = default;` and `~Type() = default;` make the
 compiler-derived default construction and destruction policy explicit. They do
-not create empty source bodies: declaration initializers, state-bearing base
+not create empty source bodies: declaration initializers, checked default
+construction of omitted nominal fields, state-bearing base
 construction, reverse field/base destruction, and nested cleanup remain the
 same as when the declarations are omitted. A defaulted destructor therefore
 does not make a type noncopyable or require an active-drop flag.

@@ -590,6 +590,14 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testPassiveStatusDefaultField",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testSelectedConstructorDefaultSchedule",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testExampleCorpusEmissionReadiness",
       "suite": "corpus"
     },

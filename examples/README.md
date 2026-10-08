@@ -57,7 +57,7 @@ is a teaching helper, not a production server.
 | `02-control-flow.gti` | conditions, `for`, `while`, `break`, and `continue` |
 | `03-functions.gti` | typed parameters, return values, and calls |
 | `04-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
-| `05-objects.gti` | structs, classes, constructors, state-bearing bases, declared cleanup, access, and mutable methods |
+| `05-objects.gti` | structs, classes, constructors, checked base arguments, state-bearing bases, declared cleanup, access, and mutable methods |
 | `06-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
@@ -66,7 +66,7 @@ is a teaching helper, not a production server.
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
 | `12-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
-| `14-operators.gti` | restricted member operators; self-read dereference stores, nested subscripts and once-formed compound targets |
+| `14-operators.gti` | restricted member operators; self-read dereference stores, named mutable-reference assignment, nested subscripts and once-formed compound targets |
 | `15-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
 | `16-move-generics.gti` | ownership-aware concrete generic instances |
 | `17-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
@@ -75,7 +75,7 @@ is a teaching helper, not a production server.
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
 | `21-scoped-enums.gti` | nominal scoped enums with optional `class` spelling, fixed backing types, aliases, and equality |
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
-| `23-direct-initialization.gti` | exact class construction, class field replacement, generated field defaults and omitted designated defaults |
+| `23-direct-initialization.gti` | exact construction, field replacement, generated and nominal-field defaults, designated defaults and finite value-generic layouts |
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
@@ -119,7 +119,7 @@ is a teaching helper, not a production server.
 | `64-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `65-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
 | `66-managed-threads.gti` | move-only `std::thread`, owned task transfer, explicit join, and mandatory autojoin |
-| `67-forward-iterators.gti` | copied owner-tied read cursors, `std::next`, and forward-iterator binary search |
+| `67-forward-iterators.gti` | copied owner-tied read cursors, temporary end-sentinel loops, `std::next`, and forward-iterator binary search |
 | `68-static-assertions.gti` | package, class-dependent, and block-scope compile-time assertions |
 | `69-mutable-field-groups.gti` | grouped mutable fields inside an otherwise immutable-by-default class |
 | `70-qualified-specializations.gti` | coherent exact specialization of a qualified generic class such as `std::hash<T>` |

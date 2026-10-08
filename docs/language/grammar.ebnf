@@ -647,7 +647,8 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    default when a constructor omits that field. All initialization runs before
    a body that cannot return.
    When no declared constructor is callable with zero explicit arguments, the
-   compiler generates `Type()` if every field has a declaration initializer,
+   compiler generates `Type()` if every field has a declaration initializer
+   or is a nominal field with an accessible exact default construction,
    even when other constructor overloads exist.
 
    The exact declaration `Type() = default;` explicitly selects that same
@@ -1216,6 +1217,10 @@ comma-expression       = assignment-expression { "," assignment-expression } ;
 
 assignment-expression  = conditional-expression
                          [ assignment-operator initializer-expression ] ;
+
+(* Semantic analysis requires a mutable place on the left, including a
+   mutable-reference call result or a parenthesized mutable place. An owned
+   value result and a read-only reference are not assignment targets. *)
 
 assignment-operator    = "=" | "+=" | "-=" | "*=" | "/=" | "%="
                        | "&=" | "|=" | "^=" | "<<=" | ">>=" ;

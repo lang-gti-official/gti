@@ -32,6 +32,25 @@ using HashCode = llvm::hash_code;
   std::uint64_t result = combine(seed, static_cast<std::uint64_t>(value.kind));
   result = combine(result, value.value);
   result = combine(result, value.parameterId);
+  const auto hashExpression = [&](const auto &self,
+                                  const GenericValueExpression &expression,
+                                  std::uint64_t seed) -> std::uint64_t {
+    seed = combine(seed, expression.kind);
+    seed = combine(seed, expression.value);
+    seed = combine(seed, expression.parameterId);
+    if (expression.kind == GenericValueExpression::Binary)
+      seed = combine(seed, static_cast<std::uint64_t>(expression.token.kind));
+    seed = combine(seed, expression.left != nullptr);
+    if (expression.left)
+      seed = self(self, *expression.left, seed);
+    seed = combine(seed, expression.right != nullptr);
+    if (expression.right)
+      seed = self(self, *expression.right, seed);
+    return seed;
+  };
+  result = combine(result, value.expression != nullptr);
+  if (value.expression)
+    result = hashExpression(hashExpression, *value.expression, result);
   return result;
 }
 

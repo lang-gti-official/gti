@@ -79,6 +79,7 @@ enum class HirValueKind {
   Conversion,
   DirectInitializer,
   DereferenceSet,
+  PlaceSet,
   ExpectedPropagation,
   MemberAccess,
   Grouping,
@@ -437,6 +438,12 @@ struct HirBaseInstance {
                          const HirBaseInstance &) = default;
 };
 
+struct HirClassTypeAlias {
+  TypeAliasId declaration = 0;
+  const TypeAliasDecl *source = nullptr;
+  SemanticType type = SemanticType::Unknown;
+};
+
 struct HirClassInstance {
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -473,6 +480,7 @@ struct HirClassInstance {
   SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
   SpecialMemberStatus destructorStatus = SpecialMemberStatus::Generated;
   std::vector<HirClassField> fields;
+  std::vector<HirClassTypeAlias> typeAliases;
   HirBody fieldInitializers;
   std::vector<HirClassField> staticFields;
   HirBody staticFieldInitializers;
@@ -710,6 +718,12 @@ public:
     return enums;
   }
 
+  // Semantic declarations created only by concrete body analysis (for example
+  // locals in a selected dependent constexpr arm), with request-wide IDs.
+  [[nodiscard]] const std::vector<SymbolRecord> &instanceSymbols() const {
+    return concreteSymbols;
+  }
+
   [[nodiscard]] const std::vector<HirFunctionInstance> &
   functionInstances() const {
     return functions;
@@ -801,6 +815,7 @@ private:
   ProgramKind programKind_ = ProgramKind::Executable;
   SemanticAnalysisSeal semanticAnalysisSeal;
   std::vector<HirEnum> enums;
+  std::vector<SymbolRecord> concreteSymbols;
   std::vector<HirClassInstance> classes;
   std::vector<HirFunctionInstance> functions;
   std::vector<HirNativeCallbackAdapter> nativeCallbacks;

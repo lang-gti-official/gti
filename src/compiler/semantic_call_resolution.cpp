@@ -3099,7 +3099,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
                               "matches its transferable result."));
         diagnostic.related.push_back(
             {tokenSpan(
-                 target->declaration->parameters()[declarationIndex].name),
+                 target->declaration->parameters()[declarationIndex]
+                     .sourceAnchor()),
              "Managed task parameter declared here."});
         diagnostic.hints.emplace_back(
             "Pass a fresh task value or std::move(task); captures must own "
@@ -3130,7 +3131,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
               std::to_string(contract.parameterIndex + 1) + " " + failure +
               ".");
       diagnostic.related.push_back(
-          {tokenSpan(target->declaration->parameters()[declarationIndex].name),
+          {tokenSpan(target->declaration->parameters()[declarationIndex]
+                         .sourceAnchor()),
            "Exact owned callable parameter declared here."});
       diagnostic.hints.emplace_back(
           "Move an exact movable callable whose stored state contains no "
@@ -3255,7 +3257,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableContracts() -> void {
               " cannot escape through the function return value.");
       if (parameter != nullptr) {
         diagnostic.related.push_back(
-            {tokenSpan(parameter->name),
+            {tokenSpan(parameter->sourceAnchor()),
              "Confined callable parameter declared here."});
       }
       diagnostic.hints.emplace_back(
@@ -3309,7 +3311,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableContracts() -> void {
             "is not proven confined.");
     if (sourceParameter != nullptr) {
       diagnostic.related.push_back(
-          {tokenSpan(sourceParameter->name),
+          {tokenSpan(sourceParameter->sourceAnchor()),
            "Confined callable parameter declared here."});
     }
     diagnostic.hints.emplace_back(
@@ -3420,12 +3422,12 @@ auto SemanticVisitor::Impl::validateOnceCallableForwardings() -> void {
             "' requires explicit ownership transfer.");
     if (sourceParameter != nullptr) {
       diagnostic.related.push_back(
-          {tokenSpan(sourceParameter->name),
+          {tokenSpan(sourceParameter->sourceAnchor()),
            "Confined callable parameter declared here."});
     }
     if (targetParameter != nullptr) {
       diagnostic.related.push_back(
-          {tokenSpan(targetParameter->name),
+          {tokenSpan(targetParameter->sourceAnchor()),
            "The selected confined target consumes this callable directly "
            "or through another forwarding edge."});
     }
@@ -3610,7 +3612,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                 (exactReturnTransport ? " and its final exact move."
                                       : " or proven confined forwarding."));
         diagnostic.related.push_back(
-            {tokenSpan(parameter.name),
+            {tokenSpan(parameter.sourceAnchor()),
              exactReturnTransport
                  ? "Exact-return callable parameter declared here."
                  : "Confined callable parameter declared here."});
@@ -3640,7 +3642,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                   parameter.name.lexeme +
                   "' cannot be captured or otherwise transported.");
           diagnostic.related.push_back(
-              {tokenSpan(parameter.name),
+              {tokenSpan(parameter.sourceAnchor()),
                exactReturnTransport
                    ? "Exact-return callable parameter declared here."
                    : "Confined callable parameter declared here."});
@@ -4811,6 +4813,29 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return selectStructuralOperator(iterator, OverloadedOperator::Dereference,
                                     {}, false);
   };
+  const auto selectedSentinelOperator = [&](const SemanticType &iterator,
+                                            OverloadedOperator operation,
+                                            const SemanticType &sentinel) {
+    const SemanticType reference =
+        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
+    auto borrowed = selectStructuralOperator(
+        iterator, operation, std::span<const SemanticType>(&reference, 1),
+        false);
+    auto copied = selectStructuralOperator(
+        iterator, operation, std::span<const SemanticType>(&sentinel, 1),
+        false);
+    // Both forms accept a named sentinel. The requirement must not claim
+    // a usable operation when that ordinary call would be ambiguous, or
+    // when its by-value parameter cannot copy the named argument.
+    if (borrowed &&
+        borrowed->receiverMutability != ReceiverMutability::ReadOnly)
+      borrowed.reset();
+    if (copied && copied->receiverMutability != ReceiverMutability::ReadOnly)
+      copied.reset();
+    if (borrowed && copied)
+      return std::optional<CallableCandidate>{};
+    return copied && typeTraits(sentinel).copyable ? copied : borrowed;
+  };
   const auto hasDereference = [&](const SemanticType &iterator,
                                   const SemanticType *referent) {
     const std::optional<CallableCandidate> candidate =
@@ -5096,12 +5121,9 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const SemanticType &sentinel = arguments[0];
     const SemanticType &iterator = arguments[1];
-    const SemanticType parameter =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
     const std::optional<CallableCandidate> comparison =
-        selectStructuralOperator(iterator, OverloadedOperator::NotEqual,
-                                 std::span<const SemanticType>(&parameter, 1),
-                                 false);
+        selectedSentinelOperator(iterator, OverloadedOperator::NotEqual,
+                                 sentinel);
     return comparison && comparison->returnType == SemanticType::Bool &&
            comparison->receiverMutability == ReceiverMutability::ReadOnly;
   }
@@ -5146,12 +5168,8 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const SemanticType &sentinel = arguments[0];
     const SemanticType &iterator = arguments[1];
-    const SemanticType parameter =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
     const std::optional<CallableCandidate> difference =
-        selectStructuralOperator(iterator, OverloadedOperator::Minus,
-                                 std::span<const SemanticType>(&parameter, 1),
-                                 false);
+        selectedSentinelOperator(iterator, OverloadedOperator::Minus, sentinel);
     return difference && difference->returnType == SemanticType::Int64 &&
            difference->receiverMutability == ReceiverMutability::ReadOnly;
   }

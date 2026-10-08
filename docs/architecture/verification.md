@@ -245,6 +245,113 @@ This is a focused, partially verified candidate; combined full-suite,
 census, installed-toolchain, Linux and Windows evidence belongs to the
 integration run.
 
+## Class expression publication regression gate
+
+`class_expression_publication_runtime` covers the grouped-construction and
+conditional-binding failures tracked by coverage findings S01/S02 in issue #103.
+The passive fixtures delete copying and omit default constructors. Both branch
+outcomes and repeated execution of the same binding exercise exact storage
+publication and rearming. Cleanup fixtures count constructions/destructions and
+check reverse cleanup order; constructor-failure fixtures require the original
+panic source, exit status 70, completed-field rollback, and enclosing-scope
+cleanup without destruction of the unpublished object.
+
+The gate runs C++20/C++23 at O0/O1/O3 with native optional elision disabled,
+followed by ASan/UBSan. Its `--case` selector is for focused development;
+`--emit-only` checks C++ admission only and is not runtime validation. This
+regression gate includes both grouped-construction and conditional cases.
+
+`conditional_class_publication` adds production C++ admission and malformed-MIR
+checks for the passive conditional repair, retaining an active-cleanup control.
+Its mutations rebuild use records before checking rejection of forged initial
+availability, borrowed traits, operand types, copies, lifecycle targets and
+forged constructor-success publication edges. The optimized macOS arm64
+checkpoint `98763e94` passes this gate (seven mutations) and all three
+conditional fixtures in six C++20/C++23 O0/O1/O3 no-elide modes plus ASan/UBSan.
+The original S02 binding reproducer also compiles and prints `1`. This is focused
+conditional-binding evidence, not completion of all S02 consumer positions,
+the grouped-expression repair, broader regressions or final release acceptance.
+
+Checkpoint `35c1a390` additionally passes the complete seven-fixture matrix
+with the optimized Mac mini arm64 Release compiler: C++20/C++23 O0/O1/O3,
+elision disabled, and ASan/UBSan. The passive conditional can now propagate a
+real constructor panic while preserving its outer guard cleanup and leaving
+the failed result unpublished. Grouped passive and cleanup-owning bindings,
+nested parentheses, loop re-entry, and constructor rollback also pass. The
+structural gate rejects seven malformed conditional schedules for each of two
+diamonds and four malformed identity schedules for each of three grouped
+bodies. This is focused evidence; the additional class-result producer matrix,
+all eight conditional consumer positions, broad gates and release integration
+remain outstanding.
+
+At `1891ce4e`, the expanded grouped fixture also passes all six modes and
+ASan/UBSan for operator, free-function and member-call producers with exact
+construction/destruction counts. The original S01 reproducer compiles and
+prints `4`. Backend preflight, text emission, lifecycle and the structural
+publication gate pass together (36.34 seconds). The explicit eight-consumer
+probe is a development inventory until all of its producer/consumer pairs are
+repaired; emission-only runs must not be reported as native execution coverage.
+
+At `1d7c5fd3`, grouped passive and cleanup-owning call arguments pass six native
+modes and ASan/UBSan; the owning argument is alive while the next argument runs
+and is destroyed exactly once by the callee. Structural rejection coverage now
+includes the grouped-argument body. The corrected eight-consumer development
+inventory admits 40 of 48 cases (three producers, eight consumers, both boolean
+values). Remaining failures are parenthesized conditional results consumed by
+binding initialization, a by-value argument, a relayed by-value argument, or
+container insertion. These eight failures remain open; passing emission alone
+does not establish native correctness for the other forty cases.
+
+At `bcb4799f`, parenthesized conditional bindings pass alongside unparenthesized
+bindings in both passive and cleanup-owning fixtures, across all six native
+modes and ASan/UBSan. The runtime loop test caught a moved-from shell left
+engaged through identity reparenting despite passing structural admission;
+retirement now follows the exact reparent chain. The emission inventory is
+42/48: conditional by-value arguments, relayed arguments and container insertion
+still fail for both branch outcomes. These six cases, broad validation and
+integration remain outstanding; no issue is closed on this focused evidence.
+
+Checkpoint `b96629c7` passes the complete eight-fixture publication matrix,
+including constructor failure, cleanup ordering and grouped call arguments,
+in the same six native modes and ASan/UBSan. Both conditional-binding branches
+also pass the separate consumer matrix in all six native modes. The structural
+gate passes (4.44 seconds) with three passive conditional diamonds and six
+grouped producer bodies; cleanup-owning identity mutations additionally remove
+the reparent or forge a self-transfer. This strengthens the binding repair's
+evidence without resolving the six remaining conditional argument cases.
+
+At `801adc7a`, all 48 class producer/consumer cases pass natively in C++20/C++23
+O0/O1/O3 with optional copy elision disabled. Conditional passive/owning argument
+fixtures also pass those modes and ASan/UBSan, including an unrelated mutable
+receiver, later primitive argument calls, repeated execution, and both branch
+outcomes. The later-argument panic fixture passes with status 70, its original
+source attribution, and exact argument-before-outer-guard cleanup. The structural
+gate passes (5.59 seconds) with six malformed schedules at each of seven argument
+stages. The initial tests exposed both a duplicate native construction and a
+fallback that admitted malformed prepared-argument schedules; both are repaired.
+`class_expression_consumers_runtime` now gates the 48-case matrix with two workers
+and a matching CTest PROCESSORS reservation. This is focused evidence, not yet
+full-suite or current-main integration acceptance.
+
+The handoff candidate `5e5e0ee8` passes all ten selected gates with the optimized
+Release/Ninja compiler on the Mac mini (macOS arm64, AppleClang 21, LLVM 22.1.8):
+`compiler_pipeline`, `cpp_mir_body_emitter_preflight`,
+`cpp_mir_body_emitter_text`, `cpp_mir_body_emitter_lifecycle`,
+`conditional_class_publication`, `constructor_argument_staging_runtime`,
+`temporary_constructor_argument_runtime`, `diagnostic_recovery_lsp`,
+`class_expression_consumers_runtime`, and `class_expression_publication_runtime`.
+The combined focused run takes 158.53 seconds; the consumer matrix passes all
+48 cases in six native modes, and all ten publication fixtures pass six native
+modes plus ASan/UBSan. The final source boundary admits only primitive scalar
+inputs across the frozen-receiver conditional argument path, not pointers or
+other types merely represented as native scalars. Pinned clang-format 22.1.8
+checks all 487 first-party C/C++ files, and patch whitespace checks pass.
+This is an implementation-complete handoff for S01/S02/S09, not final issue
+#103 acceptance: other findings, cross-branch reconciliation, the independent
+Claude-work audit, full combined validation and release are explicitly deferred
+to the owner's next integration goal. The branch and draft PR remain published
+without merging, closing issues or installing a toolchain.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
@@ -3051,6 +3158,42 @@ emitter tests reject missing/duplicate constructor initializer coverage, removed
 floating and enum publication stages, and forged cleanup/call targets. Generated
 constructor propagation remains a tracked limitation, not a tested success.
 
+The generic-instance runtime matrix also checks nominal defaults, finite
+value-generic layouts and exact aliases at C++20/C++23 O0/O1/O3. Its mixed
+reference/class/scalar constructor overrides a panicking declaration default;
+successful execution must produce no output from that unselected function.
+The selected-default emitter test mutates field coverage/order/types, MIR
+publication and full-expression endpoints, and the stored reference origin.
+Separate implicit/explicit default-failure cases check once-only reverse
+cleanup, while native status-field rollback tests retain child and later-body
+failure controls. Coverage alone never replaces empty-shell or rollback proof.
+
+The PR133 generic initialization/layout candidate reconciled through canonical
+`b08acfc8` passes all optimized production build targets, all six compiler
+partitions, the concrete query/layout/discovery and detached representation
+contracts, current definition-diagnostic CLI/LSP checks, complete lifecycle
+emitter checks, and the 42-cell generic-instance native matrix. The two complete
+125-example corpus gates pass before inventory promotion: all 19,926 lowered
+bodies are ready, all 11,996 applicable general emissions agree, and both native
+endpoints retain all 19,919 reviewed MIR identities with identical observations.
+The reviewed inventory adds fourteen declarations and twenty-four bodies:
+fifteen bodies in expanded example 23 and nine selected nominal defaults in
+seven existing examples. Generated-item counts are unchanged. Unused aliases
+remain metadata and do not demand layouts or introduce executable bodies.
+This is candidate evidence; the unfiltered full suite, final integration-bound
+validation and installed-consumer acceptance remain separate obligations.
+
+That frozen PR133 full-suite run completed all 535 gates: 521 passed and 14
+failed. Five HTTP/package/debugger failures passed unchanged permission-
+appropriate retries; the original failed results remain recorded. The remaining
+failures reduce to constrained-out field defaults, nullable-pointer selected
+publication, private optional-constructor alternate admission, concrete-empty
+signature-pack fields, and diagnostic expectations for the incoming selected
+callee span. Focused repair validation retains the original assertions and
+eight-mode native matrices; it is not a retrospective full-suite pass. Final
+cross-branch reconciliation and full combined acceptance are deferred to the
+owner's separate integration goal.
+
 The `native_packages` CTest runs offline preparation-safety and inventory
 checks without acquiring upstream code. After explicitly preparing the optional
 packages, `gti test` in `packages/examples/smoke` exercises real native bindings:
@@ -4051,6 +4194,26 @@ diagnostics through the shared frontend and should not implement separate
 ownership or entry-signature inference.
 
 ## Post-Cutover MIR Corpus Gates
+
+The base-constructor stage gate retains the existing generated-base, owning
+payload-argument and field-after-base ordering mutations. Checked/effectful
+scalar preparation additionally checks forged parameter, receiver, borrow,
+stage/CFG and selected target authority. Its focused native suite includes all
+five original A45 forms, unrelated resource-bearing inheritance, checked
+overflow before base entry, argument-order/parameter mutation, prefix/base/body
+failure and unchanged original cleanup records at C++20/C++23 O0/O1/O3 with
+no-elide, plus ASan/UBSan. These focused results do not establish the remaining
+owned/borrowed frame, generic carrier or inactive owning-base families and do
+not replace the separately deferred combined acceptance run.
+
+The isolated PR151 candidate passes the base-stage, lifecycle-emitter,
+detached lowered-program and representation-snapshot contracts using an
+optimized Release compiler. Its complete focused base runtime suite passes
+60 native cases, 48 intentional failure observations and nine sanitizer
+executions. Expanded example05 preserves its reviewed inventory exactly:
+41 MIR bodies and 154 lowered declarations/41 bodies/two generated items.
+No baseline counts are changed or auto-promoted. Cross-branch union and full
+combined validation remain the coordinating agent's separate integration goal.
 
 The old differential oracle was retired with the AST/HIR executable emitter.
 Keeping a no-MIR `CppEmitter` callable solely as a test control would recreate

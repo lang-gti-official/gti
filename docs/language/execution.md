@@ -215,7 +215,8 @@ in reverse obligation order; the array lifetime itself has not begun.
 
 A state-bearing base is initialized first. Instance fields are then
 initialized in field declaration order, using an explicit constructor
-initializer or that field's declaration initializer. Textual constructor
+initializer, that field's declaration initializer, or the checked default
+construction of an omitted nominal field. Textual constructor
 initializer order cannot change this sequence and is already required to match
 it. Each base or field initializer is a separate full-expression, so its
 transient obligations are discharged before the next subobject begins. The

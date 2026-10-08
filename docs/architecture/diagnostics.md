@@ -9,6 +9,14 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2000` rejects a mutable local value declaration without an initializer at
+the binding name, before executable lowering. Its hint explains that a later
+assignment does not initialize that declaration. No automatic fix chooses an
+initial value. Existing specific reference, pointer, array, class, enum and
+constexpr diagnostics retain priority; unresolved types do not receive a second
+speculative initializer error. CLI and LSP publish the same record, including
+the exact source range and clearing after an initializer is supplied.
+
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition
 in a closed executable/library or C++ representation request, before backend
 generation. The call token is primary and its bodyless declaration is related. Semantic
@@ -407,6 +415,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   C++ diagnostic is not a substitute for a language diagnostic.
 - Point the primary span at the token/range the user can act on. Use related
   diagnostics for conflicting declarations, includes, or instantiation sites.
+- An unnamed formal uses its written type token as the diagnostic/source
+  anchor. Related lifetime messages identify it by its one-based parameter
+  index, not an empty or generated name. Its physical semantic binding is
+  generated and source-anchored, while AST/Lowered public names remain empty;
+  it contributes no name occurrence to editor lookup, rename, or completion.
 - When a pre-analysis compiler configuration has no source token, anchor it at
   byte zero of the selected entry unit and put the actionable configuration
   change in a hint. `GTI-S2062` uses this form for an unsupported selected

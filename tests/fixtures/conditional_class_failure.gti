@@ -1,0 +1,28 @@
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+class Guard {
+  int number;
+public:
+  Guard(int initial) : number(initial) {}
+  ~Guard() { std::println(this.number); }
+};
+
+class Failing {
+  Guard field;
+public:
+  Failing(bool fail) : field(Guard(2)) {
+    if (fail) { std::panic("conditional construction failed"); } // failure-site
+  }
+  ~Failing() { std::println(99); }
+};
+
+int check(bool left) {
+  Guard earlier = Guard(1);
+  // Both selected arms fail; the runner exercises each branch independently.
+  Failing never_published = left ? Failing(true) : Failing(true);
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) { return check(argc == 1); }

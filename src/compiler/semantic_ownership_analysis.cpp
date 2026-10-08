@@ -76,8 +76,22 @@ auto SemanticVisitor::Impl::nonDecreasingNominalRecurrence(
   for (auto cursor = active.rbegin(); cursor != active.rend(); ++cursor) {
     if (cursor->kind != SemanticType::Class)
       continue;
-    if (cursor->classId == type.classId)
+    if (cursor->classId == type.classId) {
+      const bool concreteValues =
+          !type.valueArguments.empty() &&
+          std::all_of(type.valueArguments.begin(), type.valueArguments.end(),
+                      [](const auto &value) {
+                        return value.kind == CompileTimeValue::UInt64;
+                      }) &&
+          std::all_of(cursor->valueArguments.begin(),
+                      cursor->valueArguments.end(), [](const auto &value) {
+                        return value.kind == CompileTimeValue::UInt64;
+                      });
+      if (concreteValues && active.size() < 64 &&
+          semanticTypeComplexity(type) <= semanticTypeComplexity(*cursor))
+        return false;
       return semanticTypeComplexity(type) >= semanticTypeComplexity(*cursor);
+    }
     if (const ClassInfo *owner = classInfo(*cursor);
         owner != nullptr && owner->genericParameters.empty())
       return false;
@@ -1641,7 +1655,7 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
                   borrowAccess(parameter) == AccessMode::ReadOnly));
       if (eligible) {
         diagnostic.related.push_back(
-            {tokenSpan(function.parameters()[index].name),
+            {tokenSpan(function.parameters()[index].sourceAnchor()),
              "Eligible owner dependency source is here."});
       }
     }
@@ -3202,6 +3216,7 @@ auto SemanticVisitor::Impl::validateLoanPlaceAccess(const Expr &expression,
                 &expression) != suppressedProjectedPlaceReads.end() ||
       kind == ExprKind::Assign || kind == ExprKind::Set ||
       kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet ||
+      kind == ExprKind::PlaceSet ||
       (analyzingCallCallee && kind == ExprKind::Get)) {
     return;
   }
@@ -3501,6 +3516,8 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
     appendUniquePlace(places, loanPlace(semanticPlace(*set)));
   } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {
     appendUniquePlace(places, loanPlace(semanticPlace(*indexSet)));
+  } else if (const auto *set = exprAs<PlaceSet>(expression.get())) {
+    appendUniquePlace(places, transientLoanPlace(set->target()));
   } else if (const auto *dereferenceSet =
                  exprAs<DereferenceSet>(expression.get())) {
     SemanticPlace target = semanticPlace(dereferenceSet->object());
@@ -3646,6 +3663,9 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
                  exprAs<DereferenceSet>(expression.get())) {
     appendTransientMutationPlaces(dereferenceSet->object(), places);
     appendTransientMutationPlaces(dereferenceSet->value(), places);
+  } else if (const auto *set = exprAs<PlaceSet>(expression.get())) {
+    appendTransientMutationPlaces(set->target(), places);
+    appendTransientMutationPlaces(set->value(), places);
   } else if (const auto *member = exprAs<Get>(expression.get())) {
     appendTransientMutationPlaces(member->object(), places);
   } else if (const auto *grouping = exprAs<Grouping>(expression.get())) {
@@ -3805,6 +3825,9 @@ auto SemanticVisitor::Impl::appendTransientReadPlaces(
                  exprAs<DereferenceSet>(expression.get())) {
     appendTransientReadPlaces(dereferenceSet->object(), places, productions);
     appendTransientReadPlaces(dereferenceSet->value(), places, productions);
+  } else if (const auto *set = exprAs<PlaceSet>(expression.get())) {
+    appendTransientReadPlaces(set->target(), places, productions);
+    appendTransientReadPlaces(set->value(), places, productions);
   } else if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     appendTransientReadPlaces(grouping->expression(), places, productions);
   } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {
