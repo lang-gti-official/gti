@@ -2221,9 +2221,11 @@ cleanup. No public smart-pointer name is recognized.
 C-linkage declarations use the deterministic private C++ spelling
 `__gti_c_fn_<FunctionId>`, independently of the semantic external symbol.
 The declaration writer retains the exact native signature and binds that
-private identifier through an object-format link label. Darwin labels include
-the ABI's leading underscore; GNU-compatible ELF/COFF labels retain the symbol
-directly. Native MSVC uses a COFF alternative-name directive. Typed MIR calls,
+private identifier through the selected target's object-format link label:
+macOS (Mach-O) labels include the ABI's leading underscore, Linux (ELF) labels
+retain the symbol directly, and Windows (COFF) uses an alternative-name linker
+directive. The choice comes from the verified target, not host preprocessor
+checks, so the lowered program contains no unresolved target branch. Typed MIR calls,
 indirect-function values and hosted C-thread boundaries consume the same sealed
 private declaration identity. Runtime definitions, native bridge headers and
 embedding export symbols are not renamed. This is representation isolation,
