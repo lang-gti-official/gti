@@ -5050,6 +5050,16 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   copyable-error requirement. Owning enum and move-only-error result cleanup
   pass all eight native modes, including primary/secondary cleanup failures;
   the remaining full corpus and optimization gates are still outstanding.
+  The raw example scan reaches verified MIR for all 131 current sources
+  (26,048 ready bodies); this is not the native corpus oracle. Broader JSON
+  validation exposed repeated whole-CFG predecessor scans in cleanup-spine
+  verification and quadratic native body-template replacement. Verification
+  now indexes predecessor blocks once per invocation, with a 64-guard positive
+  and an extra-predecessor rejection. Template formatting uses append-only
+  passes with byte-identical comparison evidence. The formerly 300-second
+  MIR timeout completes locally in 12.38 seconds; the formerly 600-second
+  native timeout now builds, but full JSON/installed/performance acceptance
+  remains outstanding.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

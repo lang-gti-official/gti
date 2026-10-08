@@ -11087,8 +11087,18 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   }
   std::vector<std::size_t> failurePredecessorCounts(body.failureRecords.size(),
                                                     0);
+  // Cleanup spines repeatedly ask for a block's unique predecessor. Index
+  // those rows once after CFG shape validation; scanning the entire body at
+  // each step makes many fallible scope cleanups cubic in the body size.
+  // Count source blocks, not duplicate edges from one terminator, exactly as
+  // the cleanup-spine verifier's original per-block search did.
+  std::vector<std::vector<const MirBlock *>> predecessorBlocks(
+      body.blocks.size());
   for (const MirBlock &block : body.blocks) {
     for (const MirBlockId successor : successors(block.terminator)) {
+      auto &incoming = predecessorBlocks[successor - 1];
+      if (incoming.empty() || incoming.back() != &block)
+        incoming.push_back(&block);
       const MirBlock &target = body.blocks[successor - 1];
       const MirFailureRecordId parameter = target.failureParameter;
       const bool invokeFailure =
@@ -11309,23 +11319,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (cursorIndex != 0) {
         return std::nullopt;
       }
-      const MirBlock *predecessor = nullptr;
-      std::size_t predecessorCount = 0;
-      for (const MirBlock &candidate : body.blocks) {
-        const std::vector<MirBlockId> outgoing =
-            successors(candidate.terminator);
-        if (std::find(outgoing.begin(), outgoing.end(), cursor->id) ==
-            outgoing.end()) {
-          continue;
-        }
-        ++predecessorCount;
-        if (candidate.terminator.kind == MirTerminatorKind::Invoke &&
-            candidate.terminator.target == cursor->id &&
-            candidate.activeFailure == cursor->activeFailure) {
-          predecessor = &candidate;
-        }
-      }
-      if (predecessorCount != 1 || predecessor == nullptr) {
+      const auto &incoming = predecessorBlocks[cursor->id - 1];
+      const MirBlock *predecessor =
+          incoming.size() == 1 ? incoming.front() : nullptr;
+      if (predecessor == nullptr ||
+          predecessor->terminator.kind != MirTerminatorKind::Invoke ||
+          predecessor->terminator.target != cursor->id ||
+          predecessor->activeFailure != cursor->activeFailure) {
         return std::nullopt;
       }
       cursor = predecessor;
@@ -12456,23 +12456,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         reversed.push_back(&candidate);
         --cursorIndex;
       }
-      const MirBlock *predecessor = nullptr;
-      std::size_t predecessorCount = 0;
-      for (const MirBlock &candidate : body.blocks) {
-        const std::vector<MirBlockId> outgoing =
-            successors(candidate.terminator);
-        if (std::find(outgoing.begin(), outgoing.end(), cursor->id) ==
-            outgoing.end()) {
-          continue;
-        }
-        ++predecessorCount;
-        if (candidate.terminator.kind == MirTerminatorKind::Invoke &&
-            candidate.terminator.target == cursor->id &&
-            candidate.activeFailure == cursor->activeFailure) {
-          predecessor = &candidate;
-        }
-      }
-      if (predecessorCount != 1 || predecessor == nullptr) {
+      const auto &incoming = predecessorBlocks[cursor->id - 1];
+      const MirBlock *predecessor =
+          incoming.size() == 1 ? incoming.front() : nullptr;
+      if (predecessor == nullptr ||
+          predecessor->terminator.kind != MirTerminatorKind::Invoke ||
+          predecessor->terminator.target != cursor->id ||
+          predecessor->activeFailure != cursor->activeFailure) {
         break;
       }
       cursor = predecessor;

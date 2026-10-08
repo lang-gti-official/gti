@@ -269,6 +269,75 @@ int main() {
          "absolute paths");
 }
 
+void testCleanupSpinePredecessorIndex() {
+  std::string source = R"gti(
+class ScopeGuard {
+  int divisor;
+public:
+  ScopeGuard(int divisor) : divisor(divisor) {}
+  ~ScopeGuard() { int checked = 1 / this.divisor; }
+};
+int main() {
+)gti";
+  for (int index = 0; index != 64; ++index)
+    source += "  ScopeGuard guard" + std::to_string(index) + "{1};\n";
+  source += "  return 0;\n}\n";
+  const auto frontend =
+      lang::Frontend().analyze("cleanup-spine-predecessors.gti", source);
+  expect(frontend.canGenerateCode(),
+         "many ordinary fallible guards must retain verified cleanup spines");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "cleanup spine fixture must have an entry body");
+  if (entry == frontend.mir.functionInstances().end())
+    return;
+  expect(entry->body.blocks.size() > 64,
+         "the fixture must cross separate normal/secondary cleanup blocks");
+  lang::MirBlockId markerBlock = 0;
+  for (const auto &block : entry->body.blocks) {
+    if (block.activeFailure != 0 ||
+        std::none_of(block.instructions.begin(), block.instructions.end(),
+                     [](const auto &instruction) {
+                       return instruction.cleanupBoundaryEnd != 0;
+                     }))
+      continue;
+    if (std::any_of(entry->body.blocks.begin(), entry->body.blocks.end(),
+                    [&](const auto &predecessor) {
+                      return predecessor.terminator.kind ==
+                                 lang::MirTerminatorKind::Invoke &&
+                             predecessor.terminator.target == block.id;
+                    })) {
+      markerBlock = block.id;
+      break;
+    }
+  }
+  expect(markerBlock != 0,
+         "a scope boundary must follow an exact fallible cleanup spine");
+  if (markerBlock == 0)
+    return;
+  auto malformed = entry->body;
+  malformed.blocks.push_back(
+      {.id = malformed.blocks.size() + 1,
+       .activeFailure = malformed.findBlock(markerBlock)->activeFailure,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                      .target = markerBlock}});
+  lang::rebuildMirReachability(malformed);
+  (void)lang::rebuildMirValueUses(malformed);
+  const auto rejected = lang::verifyMirBody(malformed, entry->id);
+  expect(!rejected.valid() &&
+             hasVerificationError(rejected, "cleanup sequence"),
+         "even an unreachable second predecessor must not be cached as a "
+         "unique cleanup spine");
+}
+
 void testInvokeEdgesAndFailureCleanup() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("/tmp/gti-failure-control/main.gti", R"(
@@ -3541,9 +3610,20 @@ int main() { auto owner = std::make_unique<Derived>(); return owner->read(); }
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc == 3 && std::string_view(argv[1]) == "--test" &&
+      std::string_view(argv[2]) == "testCleanupSpinePredecessorIndex") {
+    testCleanupSpinePredecessorIndex();
+    return passed ? 0 : 1;
+  }
+  if (argc != 1) {
+    std::cerr << "usage: " << argv[0]
+              << " [--test testCleanupSpinePredecessorIndex]\n";
+    return 2;
+  }
   testCanonicalMetadataAndMirSites();
   testContainerContractChecks();
+  testCleanupSpinePredecessorIndex();
   testInvokeEdgesAndFailureCleanup();
   testEmptyDescriptorContract();
   testHostedProgramEntryMetadata();

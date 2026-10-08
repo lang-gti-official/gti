@@ -1929,6 +1929,18 @@ void testImmutableBodyPlanOutlivesAdmissionInputs() {
                  std::string::npos,
          "the formatting-only writer should remain deterministic after the "
          "MIR program and representation map have been destroyed");
+  const std::string nestedFamily =
+      "family<" + std::string(lang::cppMirBodyEmissionIndentationPlaceholder) +
+      ">" + std::string(lang::cppMirBodyEmissionFamilyPlaceholder);
+  const auto nested = lang::CppMirBodyTextWriter::write(
+      plan, lang::CppMirBodyTextForm::Plain, nestedFamily, 2);
+  expect(nested.emitted() &&
+             nested.text.find(
+                 "family<    >" +
+                 std::string(lang::cppMirBodyEmissionFamilyPlaceholder)) !=
+                 std::string::npos,
+         "linear rendering must preserve family-then-indentation order and "
+         "must not recursively replace markers inserted by the family");
 }
 
 void testHostedStartupOwnsRemainingAuthorityGap() {
