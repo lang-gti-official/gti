@@ -338,6 +338,17 @@ followed by ASan/UBSan. Its `--case` selector is for focused development;
 `--emit-only` checks C++ admission only and is not runtime validation. This
 regression gate includes both grouped-construction and conditional cases.
 
+The current `conditional_class_publication` gate also checks all six grouped
+producer/conditional fixtures at the owning HIR boundary. Each grouping source
+must alias the same concrete producer, with one MIR constructor, call or
+conditional-result move and no duplicate executable value or value-drop
+obligation. Seven independent mutations reject wrong alias types, missing
+source/value identities, erased producers, duplicate or retargeted aliases and
+an extra executable grouping value. The gate retains the independent MIR
+conditional-publication and prepared-argument mutation checks; these test the
+real storage and cleanup protocol rather than requiring obsolete source-grouping
+`Identity` instructions.
+
 `conditional_class_publication` adds production C++ admission and malformed-MIR
 checks for the passive conditional repair, retaining an active-cleanup control.
 Its mutations rebuild use records before checking rejection of forged initial
