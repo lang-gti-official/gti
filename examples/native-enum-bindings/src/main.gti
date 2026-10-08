@@ -1,0 +1,29 @@
+#include <flags/bindings>
+
+int main() {
+  auto request = native_flags::flags_make(
+    native_flags::ACCESS_HIGH, native_flags::WIDE_ALL, native_flags::OFFSET_MIN
+  );
+  if (native_flags::flags_validate(request) != 1) { return 1; }
+  if (native_flags::flags_echo(native_flags::WIDE_HIGH) != native_flags::WIDE_HIGH) {
+    return 2;
+  }
+  if (native_flags::flags_offset(native_flags::OFFSET_MIN) != native_flags::OFFSET_MIN) {
+    return 3;
+  }
+  if (uint64_t(native_flags::flags_request_size()) != sizeof(native_flags::FlagRequest)) {
+    return 4;
+  }
+  if (uint64_t(native_flags::flags_request_alignment()) != alignof(native_flags::FlagRequest)) {
+    return 5;
+  }
+  mut native_flags::WideFlags output = native_flags::WIDE_HIGH;
+  unsafe {
+    native_flags::flags_write(&output);
+    if (output != native_flags::WIDE_ALL) { return 6; }
+    auto transform = native_flags::flags_transform();
+    if (transform == nullptr) { return 7; }
+    if (transform(native_flags::WIDE_ALL) != native_flags::WIDE_ALL) { return 8; }
+  }
+  return 0;
+}

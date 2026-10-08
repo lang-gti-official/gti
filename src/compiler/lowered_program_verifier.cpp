@@ -1535,16 +1535,18 @@ verifyLoweredProgram(const LoweredProgram &program) {
 }
 
 std::optional<VerifiedLoweredProgram>
-verifiedLoweredProgram(const LoweredProgram &program,
+verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues) {
+  const auto snapshot =
+      std::make_shared<const LoweredProgram>(std::move(program));
   issues.clear();
-  if (!program.constructionSeal_ ||
-      *program.constructionSeal_ != constructionSeal(program)) {
+  if (!snapshot->constructionSeal_ ||
+      *snapshot->constructionSeal_ != constructionSeal(*snapshot)) {
     addIssue(issues, LoweredProgramIssueKind::InvalidConstructionSeal,
              "lowered program differs from its immutable construction seal");
     return std::nullopt;
   }
-  return VerifiedLoweredProgram(program);
+  return VerifiedLoweredProgram(snapshot);
 }
 
 } // namespace lang
