@@ -5015,7 +5015,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   retired private checked/unchecked read helpers. Their original positive
   bounds and element-envelope requirements remain acceptance failures, not
   silently changed to zero-discharge expectations: the optimized safety suite
-  currently reports seven unmet proofs/context requirements. Source access puts
+  currently reports six unmet proofs/context requirements. Source access puts
   its inner check in a selected reference-returning callee, so the positive
   query follows that exact borrowing call chain. Generic raw-memory/owned
   construction summaries must recover the warranted facts without restoring a
@@ -5029,7 +5029,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   implicit-receiver, nested-subobject and class-result summaries are recovered
   by a separate general prerequisite with unrelated record proofs and
   raw-write negatives. The raw initialized-element and allocation transfer
-  prerequisites, and the remaining seven source-owner requirements, remain open.
+  prerequisites, and the remaining six source-owner requirements, remain open.
   The combined unrelated record proof exposed 32 whole-program rounds consumed
   solely by fixed-summary propagation. Dependency-based scheduling now bounds
   each body to 32 analyses while retaining four-update widening and eight
@@ -5056,6 +5056,13 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   allocation-result cleanup precedes final prefix-field publication, recovering
   exact capacity and initial empty length without an allocation-freshness fact.
   Neither prerequisite supplies initialized raw-element coverage.
+  Operation-free prepared Value inputs now forward an already computed SSA
+  value without inheriting its source expression's unsafe classification.
+  Actual pointer computation, raw loads/writes and unsafe calls retain their
+  classification. This general staging correction recovers the original exact
+  public logical-bounds and matching source-read requirement, reducing seven
+  optimizer acceptance failures to six without changing those tests. Owning
+  argument and raw initialized-element transfer remain open prerequisites.
   A further general prerequisite distinguishes inert address arithmetic and
   typed pointer conversion from actual pointee/lifetime operations, and avoids
   repeating an operation at an empty full-expression marker. Selected unsafe

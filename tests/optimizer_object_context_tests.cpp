@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimizer.h"
 
@@ -302,6 +303,88 @@ int main() {
     }
     expect(rejectedStaleMoves == 2,
            "both scalar source reinitialization negatives exercise replay");
+  }
+  const auto stagePath =
+      sourcePath.parent_path() / "optimizer_value_staging.gti";
+  const std::ifstream stageFile(stagePath);
+  const std::string stageSource{
+      std::istreambuf_iterator<char>(stageFile.rdbuf()), {}};
+  const auto staged = lang::Frontend().analyze(stagePath, stageSource);
+  expect(staged.canGenerateCode(), "ordinary raw value staging must lower");
+  if (!staged.canGenerateCode())
+    for (const auto &diagnostic : staged.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (staged.canGenerateCode()) {
+    std::size_t neutralStages = 0;
+    bool actualArithmetic = false;
+    bool actualRead = false;
+    bool actualWrite = false;
+    bool actualUnsafeCall = false;
+    for (const auto &function : staged.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.callInputKind == lang::HirCallInputKind::Value) {
+            ++neutralStages;
+            const auto effect = lang::effects(instruction);
+            expect(instruction.unsafeOperation ==
+                           lang::UnsafeOperationKind::None &&
+                       !instruction.rawMemoryAccess &&
+                       !effect.readsUnknownMemory &&
+                       !effect.writesUnknownMemory && !effect.invokesUserCode &&
+                       !effect.maySynchronize,
+                   "SSA value staging does not repeat the producer's unsafe "
+                   "operation or memory effects");
+          }
+          actualArithmetic |=
+              instruction.operation == lang::MirOperation::PointerAdd &&
+              instruction.unsafeOperation ==
+                  lang::UnsafeOperationKind::PointerArithmetic;
+          actualRead |= instruction.kind == lang::MirInstructionKind::Load &&
+                        instruction.rawMemoryAccess;
+          actualWrite |= instruction.kind == lang::MirInstructionKind::Assign &&
+                         instruction.rawMemoryAccess;
+          actualUnsafeCall |=
+              instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.unsafeOperation ==
+                  lang::UnsafeOperationKind::DeclaredUnsafeCall;
+        }
+    expect(neutralStages == 4 && actualArithmetic && actualRead &&
+               actualWrite && actualUnsafeCall,
+           "neutral staging controls retain actual address/read/write/call "
+           "producers, not a bypass of unsafe operations");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = staged.hir, .mir = staged.mir, .level = level});
+      expect(optimized.valid(), "neutral staging proofs independently replay");
+      for (const auto &function : staged.hir.functionInstances()) {
+        if (!function.source)
+          continue;
+        const auto name = function.source->name().lexeme;
+        if (name != "after_stage" && name != "after_raw_read" &&
+            name != "after_raw_write" && name != "after_unsafe_call")
+          continue;
+        const auto *body = optimized.mir.findFunctionInstance(function.id);
+        std::size_t proved = 0;
+        if (body)
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              proved += std::count_if(
+                  instruction.safetyDischarges.begin(),
+                  instruction.safetyDischarges.end(), [](const auto &proof) {
+                    return proof.family ==
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                  });
+        expect(proved == (name == "after_stage" &&
+                                  level != lang::OptimizationLevel::O0
+                              ? 1
+                              : 0),
+               "neutral address staging preserves fields; actual raw reads, "
+               "writes and unsafe callee writes remain barriers");
+      }
+    }
   }
   const auto prefixPath =
       sourcePath.parent_path() / "optimizer_source_prefix_fields.gti";
