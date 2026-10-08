@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+from native_symbol_spelling import native_spelling
+
 
 FAILURE_CASES = {
     "bounds": (
@@ -189,8 +191,8 @@ def main() -> int:
                     encoding="utf-8"
                 )
                 required = (
-                    "gti_rt_native_size_max_v1(",
-                    "gti_rt_address_is_aligned_v1(",
+                    f"{native_spelling(generated, 'gti_rt_native_size_max_v1')}(",
+                    f"{native_spelling(generated, 'gti_rt_address_is_aligned_v1')}(",
                     "::gti_internal::backend::native_pointer_value(",
                 )
                 missing = [fragment for fragment in required if fragment not in generated]

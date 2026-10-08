@@ -9,6 +9,8 @@ import tempfile
 
 from sanitizer_support import thread_sanitizer_enabled
 
+from native_symbol_spelling import native_spelling
+
 
 def run(command, status=0):
     environment = os.environ.copy()
@@ -60,8 +62,10 @@ def main():
                 run([binary], 86 if fixture.endswith("destroy") else 0)
                 generated = binary.with_suffix(".gti.cpp").read_text()
                 if ("// GTI verified-MIR body:" not in generated or
-                        generated.count("gti_rt_mtx_lock_v1(") < 2 or
-                        generated.count("gti_rt_mtx_unlock_v1(") < 2):
+                        generated.count(
+                            f"{native_spelling(generated, 'gti_rt_mtx_lock_v1')}(") < 2 or
+                        generated.count(
+                            f"{native_spelling(generated, 'gti_rt_mtx_unlock_v1')}(") < 2):
                     raise AssertionError(f"{fixture} lost its MIR/native-call witness")
             print(f"C-thread mutex: {mode} passed", flush=True)
 
