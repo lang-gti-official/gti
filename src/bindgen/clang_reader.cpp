@@ -808,7 +808,7 @@ private:
         NativeType node;
         node.kind = NativeTypeKind::Pointer;
         node.constPointee = clang_isConstQualifiedType(pointee) != 0;
-        node.pointee = mapFunctionType(pointee);
+        node.pointee = mapType(pointee);
         return result_.model.addType(std::move(node));
       }
       NativeType node;
@@ -889,9 +889,7 @@ private:
     }
     case CXType_FunctionProto:
     case CXType_FunctionNoProto:
-      return makeUnsupported(owned(clang_getTypeSpelling(type)),
-                             "an unnamed function type is outside the bounded "
-                             "surface; name it with a typedef");
+      return mapFunctionType(type);
     case CXType_Unexposed:
     default: {
       const CXType canonical = clang_getCanonicalType(type);
@@ -917,6 +915,13 @@ private:
       written = clang_Type_getNamedType(written);
     }
     const CXType canonical = clang_getCanonicalType(written);
+    if (canonical.kind == CXType_FunctionProto ||
+        canonical.kind == CXType_FunctionNoProto) {
+      NativeType pointer;
+      pointer.kind = NativeTypeKind::Pointer;
+      pointer.pointee = mapType(written);
+      return result_.model.addType(std::move(pointer));
+    }
     if (canonical.kind == CXType_ConstantArray ||
         canonical.kind == CXType_IncompleteArray ||
         canonical.kind == CXType_VariableArray) {
@@ -1236,34 +1241,10 @@ private:
         return;
       }
     }
-    // `typedef ret (*Name)(params);` stores the function shape directly —
-    // the model convention the planner's callback policy expects.
-    if (canonical.kind == CXType_Pointer) {
-      const CXType pointee = clang_getPointeeType(canonical);
-      const CXType pointeeCanonical = clang_getCanonicalType(pointee);
-      if (pointeeCanonical.kind == CXType_FunctionProto ||
-          pointeeCanonical.kind == CXType_FunctionNoProto) {
-        CXType sugared = underlying;
-        while (sugared.kind == CXType_Elaborated) {
-          sugared = clang_Type_getNamedType(sugared);
-        }
-        const CXType shape = sugared.kind == CXType_Pointer
-                                 ? clang_getPointeeType(sugared)
-                                 : pointeeCanonical;
-        addTypedefDeclaration(name, mapFunctionType(shape), at, usr);
-        return;
-      }
-    }
-    if (canonical.kind == CXType_FunctionProto ||
-        canonical.kind == CXType_FunctionNoProto) {
-      addTypedefDeclaration(
-          name,
-          makeUnsupported(owned(clang_getTypeSpelling(underlying)),
-                          "a function typedef without a pointer declarator "
-                          "is outside the bounded surface"),
-          at, usr);
-      return;
-    }
+    // Preserve every C pointer level. A function type and a pointer to that
+    // function are distinct native facts, even though the latter becomes a
+    // named callback value in GTI. In particular Callback* is a writable slot,
+    // not another spelling of Callback.
     addTypedefDeclaration(name, mapType(underlying), at, usr);
   }
 
