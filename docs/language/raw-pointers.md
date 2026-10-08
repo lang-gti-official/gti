@@ -750,8 +750,9 @@ This feature does not add:
   typed-pointer reinterpretation;
 - general C arrays, unions, bit-fields, packing, or platform-layout imports;
 - direct C++ class ABI calls or exception passage;
-- source-level `new`, `delete`, placement construction, or manual object
-  lifetime;
+- source-level `new`, `delete`, or C++ placement-construction syntax (explicit
+  object lifetime is available through the typed construction, destruction and
+  relocation operations described above);
 - ownership inference or automatic destruction for raw pointers; or
 - a stable ABI for GTI-defined types.
 

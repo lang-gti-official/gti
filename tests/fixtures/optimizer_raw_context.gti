@@ -18,9 +18,19 @@ int after_raw(mut int& destination) {
   return destination + 1;
 }
 
+int stable_after_raw(mut int& destination, int input) {
+  int copy = input;
+  unsafe {
+    mut int* address = &destination;
+    *address = 2147483647;
+  }
+  return input + copy;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   mut int destination = 4;
   int result = before_raw(destination, 7);
+  if (stable_after_raw(destination, 7) != 14) { return 2; }
   std::println(result);
   std::println(destination);
   if (argc > 1) {

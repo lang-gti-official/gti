@@ -5036,7 +5036,13 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   each body to 32 analyses while retaining four-update widening and eight
   consumed-context-update rejection; rejected facts invalidate their callers.
   A 128-function ordinary chain proves every exact addition without increasing
-  that per-body cap. This does not make raw/unknown calls effect-closed.
+  that per-body cap. A separate 40-callee control exceeds the per-body budget,
+  withdraws its earlier contextual proof, rejects forged restoration and still
+  discovers the following independent client. Actual readonly scalar binding
+  copies now retain value facts across opaque/raw writes; references and mutable
+  memory do not. Eight-mode native controls preserve exact results and the
+  changed referent's overflow. This does not make raw/unknown calls effect-closed
+  or satisfy the ten remaining source-owner proof requirements.
   Full admission/corpus/performance coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.
@@ -5110,6 +5116,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 - **Accepted companion policy:** one object region per nonempty resource-vector
   reservation; zero reserves none. Public sparse storage still uses two. The
   owner explicitly approved the observable request-count revision.
+  The strengthened source provider checks original provider/region identity,
+  address, extent and alignment, rejects malformed/duplicate release before
+  freeing, and verifies no outstanding original descriptors during panic
+  cleanup. Its combined Release matrix passes 16 native builds, 88 exact native
+  observations and six audit-Off/Warn compile-rejection checks; this is focused
+  evidence, not full migration acceptance.
 - **Remaining acceptance:** preserve admitted element types and public APIs,
   exact ordered constructor arguments, loans/invalidation, first/secondary
   failure identity and exactly-once cleanup. Test unrelated source owners,

@@ -33,6 +33,12 @@ int after_raw(mut int& destination) {
   return destination + 1;
 }
 
+int stable_after_raw(mut int& destination, int input) {
+  int copy = input;
+  unsafe { int* address = &destination; *address = 2147483647; }
+  return input + copy;
+}
+
 int conflicting(mut int& destination, int input) {
   int result = input + 1;
   unsafe { mut int* address = &destination; *address = 0; }
@@ -55,6 +61,7 @@ int main() {
   mut int local = 4;
   int result = before_raw(local, 7);
   if (result != 8) return 1;
+  if (stable_after_raw(local, 7) != 14) return 2;
   int first = conflicting(local, 7);
   int second = conflicting(local, 2147483647);
   int changed = after_raw(local);
@@ -75,7 +82,8 @@ int main() {
   };
   const auto analysis = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
   expect(analysis.converged, "raw contextual safety must converge");
-  for (const auto name : {"before_raw", "after_raw", "after_call"}) {
+  for (const auto name :
+       {"before_raw", "after_raw", "after_call", "stable_after_raw"}) {
     const auto *body = analysis.find(
         {.kind = lang::MirBodyKind::Function, .owner = function(name)});
     expect(body && body->reached && !body->closed,
@@ -105,6 +113,9 @@ int main() {
     expect(discharges("before_raw") ==
                (level == lang::OptimizationLevel::O0 ? 0 : 1),
            "exact scalar input proves the arithmetic before raw access");
+    expect(discharges("stable_after_raw") ==
+               (level == lang::OptimizationLevel::O0 ? 0 : 1),
+           "readonly scalar copies retain their exact facts after raw writes");
     expect(discharges("after_raw") == 0 && discharges("after_call") == 0 &&
                discharges("conflicting") == 0 && discharges("unreached") == 0,
            "raw access and its invocation invalidate later mutable facts; "

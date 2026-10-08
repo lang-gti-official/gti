@@ -542,6 +542,15 @@ canonicalPlace(const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId place) {
   return place;
 }
 
+[[nodiscard]] bool immutableScalarBinding(const MirBody &body, MirPlaceId id) {
+  const auto *place = body.findPlace(id);
+  return place && place->root == MirPlaceRootKind::Binding &&
+         place->binding != 0 && place->projections.empty() &&
+         place->access == AccessMode::ReadOnly &&
+         !place->traits.containsBorrowedState &&
+         constantIntegerDomain(place->type).has_value();
+}
+
 [[nodiscard]] std::optional<IntegerFact>
 integerForOperand(const MirBody &body, const AbstractState &state,
                   const MirOperand &operand) {
@@ -1358,7 +1367,9 @@ void invalidatePlaceRoot(const MirBody &body,
                          AbstractState &state, MirPlaceId destination) {
   const MirPlace *written = body.findPlace(destination);
   if (written == nullptr) {
-    state.integerPlaces.clear();
+    std::erase_if(state.integerPlaces, [&](const auto &fact) {
+      return !immutableScalarBinding(body, fact.first);
+    });
     state.arrayElements.clear();
     state.aggregateElements.clear();
     state.aggregateElementIntegers.clear();
@@ -1389,8 +1400,12 @@ void invalidatePlaceRoot(const MirBody &body,
       implicitReceiver->elementIntegers.clear();
     }
   }
-  std::erase_if(state.integerPlaces,
-                [&](const auto &entry) { return overlaps(entry.first); });
+  std::erase_if(state.integerPlaces, [&](const auto &entry) {
+    const auto relation = aliases.relation(destination, entry.first);
+    return relation != MirAliasRelation::NoAlias &&
+           (relation == MirAliasRelation::MustAlias ||
+            !immutableScalarBinding(body, entry.first));
+  });
   std::erase_if(state.arrayElements,
                 [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.aggregateElements,
@@ -1632,7 +1647,7 @@ operandProtectedPlaces(const MirBody &body, const MirOperand &operand);
 operandMayAliasPlace(const MirBody &body,
                      const MirPlaceAliasEscapeAnalysis &aliases,
                      const MirOperand &operand, MirPlaceId tracked);
-void killUnknownMemory(AbstractState &state);
+void killUnknownMemory(const MirBody &body, AbstractState &state);
 
 void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 const MirPlaceAliasEscapeAnalysis &aliases,
@@ -1641,7 +1656,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 AbstractState &state) {
   const auto summary = exactMirInvocationSummary(program, body, instruction);
   if (!summary || (opaqueEffects && summary->traits.writesUnknownMemory)) {
-    killUnknownMemory(state);
+    killUnknownMemory(body, state);
     return;
   }
   const auto *function = target.kind == MirBodyKind::Function
@@ -1655,7 +1670,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                          : nullptr;
   if (parameters == nullptr ||
       parameters->size() != instruction.operands.size()) {
-    killUnknownMemory(state);
+    killUnknownMemory(body, state);
     return;
   }
 
@@ -1666,7 +1681,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   const auto invalidate = [&](const MirOperand &operand) {
     const auto sources = operandProtectedPlaces(body, operand);
     if (!sources) {
-      killUnknownMemory(state);
+      killUnknownMemory(body, state);
       return;
     }
     // MayAlias is not transitive: invalidate from actual sources, never from
@@ -1819,8 +1834,13 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   return true;
 }
 
-void killUnknownMemory(AbstractState &state) {
-  state.integerPlaces.clear();
+void killUnknownMemory(const MirBody &body, AbstractState &state) {
+  // Readonly scalar copies are actual immutable values, not readonly
+  // references to mutable storage. Valid unknown/raw effects cannot change
+  // them; exact reinitialization still invalidates their own place above.
+  std::erase_if(state.integerPlaces, [&](const auto &fact) {
+    return !immutableScalarBinding(body, fact.first);
+  });
   state.arrayElements.clear();
   state.aggregateElements.clear();
   state.aggregateElementIntegers.clear();
@@ -1843,7 +1863,7 @@ void applyInstruction(const MirBody &body,
   const MirProgram *program =
       closedCalls == nullptr ? nullptr : &closedCalls->program;
   const auto unknownEffectBarrier = [&] {
-    killUnknownMemory(state);
+    killUnknownMemory(body, state);
     state.hasOpaqueEffects = true;
   };
   if (instruction.rawMemoryAccess ||
@@ -2154,7 +2174,7 @@ void applyInstruction(const MirBody &body,
     } else if (effect.writesPlace) {
       // A default Initialize with no value operands still writes its exact
       // destination, but does not itself introduce unknown execution effects.
-      killUnknownMemory(state);
+      killUnknownMemory(body, state);
     }
     return;
   }
@@ -3640,7 +3660,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         round.incompleteBodies.insert(address);
       } else {
         if (initializers->second.hasOpaqueEffects) {
-          killUnknownMemory(entry);
+          killUnknownMemory(*body, entry);
           entry.hasOpaqueEffects = true;
         }
         if (initializers->second.constructed.observed) {

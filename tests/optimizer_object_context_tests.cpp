@@ -191,5 +191,86 @@ int main() {
              "unchanged");
     }
   }
+  // Each successive exact callee summary makes one more call reachable. This
+  // deliberately consumes the per-body analysis budget, after the first
+  // contextual arithmetic proof has already been observed.
+  std::string budget;
+  for (std::size_t index = 0; index < 40; ++index)
+    budget += "int child" + std::to_string(index) + "() { return 0; }\n";
+  budget += "int budget(int input) { int first = input + 1;\n";
+  for (std::size_t index = 0; index < 40; ++index)
+    budget += "[[discard]] child" + std::to_string(index) + "();\n";
+  budget += "return first; }\n"
+            "int independent(int input) { return input + 1; }\n"
+            "int main() { int first = budget(7); int second = independent(7); "
+            "return first == 8 && second == 8 ? 0 : 1; }\n";
+  const auto bounded =
+      lang::Frontend().analyze("object-summary-budget.gti", budget);
+  expect(bounded.canGenerateCode(), "the work-budget control must lower");
+  if (bounded.canGenerateCode()) {
+    lang::HirFunctionInstanceId budgetOwner = 0;
+    lang::HirFunctionInstanceId independentOwner = 0;
+    for (const auto &function : bounded.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      if (function.source->name().lexeme == "budget")
+        budgetOwner = function.id;
+      if (function.source->name().lexeme == "independent")
+        independentOwner = function.id;
+    }
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = budgetOwner};
+    const auto analysis = lang::analyzeMirClosedCallSafetyChecks(bounded.mir);
+    const auto *context = analysis.find(address);
+    expect(
+        analysis.converged && analysis.iterations <= 32 && context &&
+            !context->closed && context->safety.proofs.empty(),
+        "budget rejection withdraws earlier contextual proofs and converges");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = bounded.hir, .mir = bounded.mir, .level = level});
+      expect(optimized.valid(), "budget rejection must independently replay");
+      const auto countProofs = [&](lang::HirFunctionInstanceId owner) {
+        std::size_t count = 0;
+        const auto *body = optimized.mir.findFunctionInstance(owner);
+        if (body)
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              count += instruction.safetyDischarges.size();
+        return count;
+      };
+      expect(countProofs(budgetOwner) == 0 &&
+                 countProofs(independentOwner) ==
+                     (level == lang::OptimizationLevel::O0 ? 0 : 1),
+             "rejecting one body's work budget cannot keep its stale proof or "
+             "hide a subsequent independent exact client");
+    }
+    bool rejected = false;
+    if (const auto *body = lang::findMirBody(bounded.mir, address))
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto &outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto malformed = bounded.mir;
+              lang::MirEditor editor(malformed, "forged-rejected-budget-proof");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "the canonical editor rejects a withdrawn budget proof");
+              rejected = true;
+            }
+    expect(rejected, "budget rejection exercises canonical proof rejection");
+  }
   return failures == 0 ? 0 : 1;
 }
