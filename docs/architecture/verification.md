@@ -308,6 +308,25 @@ fallback that admitted malformed prepared-argument schedules; both are repaired.
 and a matching CTest PROCESSORS reservation. This is focused evidence, not yet
 full-suite or current-main integration acceptance.
 
+The handoff candidate `5e5e0ee8` passes all ten selected gates with the optimized
+Release/Ninja compiler on the Mac mini (macOS arm64, AppleClang 21, LLVM 22.1.8):
+`compiler_pipeline`, `cpp_mir_body_emitter_preflight`,
+`cpp_mir_body_emitter_text`, `cpp_mir_body_emitter_lifecycle`,
+`conditional_class_publication`, `constructor_argument_staging_runtime`,
+`temporary_constructor_argument_runtime`, `diagnostic_recovery_lsp`,
+`class_expression_consumers_runtime`, and `class_expression_publication_runtime`.
+The combined focused run takes 158.53 seconds; the consumer matrix passes all
+48 cases in six native modes, and all ten publication fixtures pass six native
+modes plus ASan/UBSan. The final source boundary admits only primitive scalar
+inputs across the frozen-receiver conditional argument path, not pointers or
+other types merely represented as native scalars. Pinned clang-format 22.1.8
+checks all 487 first-party C/C++ files, and patch whitespace checks pass.
+This is an implementation-complete handoff for S01/S02/S09, not final issue
+#103 acceptance: other findings, cross-branch reconciliation, the independent
+Claude-work audit, full combined validation and release are explicitly deferred
+to the owner's next integration goal. The branch and draft PR remain published
+without merging, closing issues or installing a toolchain.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
