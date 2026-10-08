@@ -846,8 +846,11 @@ move-only and cleanup-owning grouped constructors pass the six-mode native
 matrix and ASan/UBSan, including nesting, loop re-entry and failure rollback.
 Grouped operator, free-call and member-call results also pass, with exact
 construction/destruction counts. MIR identity links retain their lifecycle
-transfers while sharing one physical publication slot. Other consumer shapes
-remain under investigation together with S02; this is not closure of #103.
+transfers while sharing one physical publication slot. At `801adc7a`, the
+48-case constructor/operator/conditional matrix passes all six C++20/C++23
+O0/O1/O3 native modes with elision disabled. The eight consumers are binding,
+receiver, argument, relay, container insertion, operator, chained call and
+discard. Broader reconciliation remains required; this is not closure of #103.
 
 ## S02 — ICE: a ternary producing a class value
 
@@ -868,6 +871,16 @@ publication and success-edge mutations remain rejected. The historical matrix
 wraps its ternary in parentheses and exercises additional consumer positions;
 those remain part of the S01/S02 reconciliation, not implied passing coverage
 from the binding fix. Issue #103 remains open.
+
+The expanded repair at `801adc7a` passes all eight consumers in both branch
+outcomes, as part of the 48-case native matrix described under S01. Passive and
+cleanup-owning conditional arguments additionally pass the native/sanitizer
+matrix with repeated execution, frozen mutable receivers and later-argument
+evaluation. A later-argument panic preserves exact source attribution and
+destroys the prepared argument before its enclosing guard. Structural tests
+reject missing parameter obligations, missing/conditional activation, source
+aliasing, wrong operand types and forged copy transfers. Full-suite and
+current-main reconciliation remain required before integration.
 
 ## S03 — ICE: a method call directly on `std::move(x)`
 

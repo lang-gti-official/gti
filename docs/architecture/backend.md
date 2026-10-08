@@ -553,7 +553,14 @@ drop transfer back to the producer's activation, and requires adjacency to the
 argument stage. Admission and computation emission use the same publication
 query. The prepared argument remains live through later argument evaluation;
 its existing transfer and failure-cleanup schedule is unchanged. This does not
-admit an arbitrary Move from a conditional temporary as a constructor producer.
+admit arbitrary moves as constructor producers. An exact nonborrowed temporary
+Move may instead publish into its prepared argument slot: its source and target
+are distinct typed places, intervening identities are adjacent, and either the
+source's exact obligation reaches the prepared parameter by reparenting or both
+source and payload are cleanup-free. The original native shell is retired after
+the move. The materialized-input fallback does not construct the argument again,
+and incomplete temporary transfer schedules fail closed instead of falling
+back to deferred copying at the call.
 
 Local class-valued conditional publication uses one shared uninitialized
 temporary followed by the MIR move into its binding. The exact two-arm CFG,
@@ -572,6 +579,14 @@ final binding's immediate source obligation would miss retirement through
 parentheses and leave the slot engaged on loop re-entry. This retirement uses
 the already-validated identity links and does not execute an additional GTI
 destructor.
+The same conditional join may end in the exact prepared argument stage. A
+receiver staged before that diamond keeps its stable address while the arms
+construct and transfer their argument. The cross-branch proof admits only the
+matched arm publications, move/identity chain and argument stage, with primitive
+constructor inputs. A later source call producing a primitive argument is also
+permitted when its exact result stage feeds that same consuming call. Raw
+memory, pointers, borrowed carriers and unrelated stores are not admitted by
+this extension. Calls and their failure edges retain their original MIR order.
 The passive proof uses the class's generated destructor and active-cleanup
 facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
 without requiring an active cleanup operation. A constructor `Invoke` may
