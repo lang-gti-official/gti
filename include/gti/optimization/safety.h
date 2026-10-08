@@ -67,6 +67,7 @@ struct MirClosedCallBodyAnalysis {
 
 struct MirClosedCallSafetyAnalysis {
   bool converged = false;
+  // Maximum worklist analyses of any one body, not whole-program scans.
   std::size_t iterations = 0;
   std::vector<MirClosedCallBodyAnalysis> bodies;
 

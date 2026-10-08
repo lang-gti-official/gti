@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <compare>
+#include <deque>
 #include <limits>
 #include <map>
 #include <optional>
@@ -70,6 +71,9 @@ struct AbstractState {
   std::map<MirValueId, MirPlaceId> loadedOrigins;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
   std::map<MirPlaceId, IntegerFieldFacts> aggregateElementIntegers;
+  // Key zero is an analysis-only implicit This root. It carries ordinary
+  // receiver fields when MIR needs projected fields but no whole-object place;
+  // it is never published as a proof's place identity.
   std::map<MirPlaceId, ObjectFact> objects;
   std::map<MirValueId, MirPlaceId> aggregateOrigins;
   std::map<MirValueId, ObjectFact> objectValues;
@@ -966,37 +970,39 @@ aggregateRoot(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   const MirPlace *best = nullptr;
   for (const MirPlace &candidate : body.places) {
     if (!samePlaceRoot(candidate, *place) ||
-        !std::all_of(candidate.projections.begin(), candidate.projections.end(),
-                     [](const auto &projection) {
-                       return transparentRootProjection(projection.kind);
-                     })) {
+        candidate.projections.size() > place->projections.size() ||
+        !std::equal(candidate.projections.begin(), candidate.projections.end(),
+                    place->projections.begin())) {
       continue;
     }
     const SemanticType *type = &candidate.type;
     if (type->kind == SemanticType::Reference && type->arguments.size() == 1) {
       type = &type->arguments.front();
     }
-    if (type->kind != SemanticType::Class &&
-        place->type.kind != SemanticType::Class) {
+    if (type->kind != SemanticType::Class) {
       continue;
     }
     if (best == nullptr ||
-        candidate.projections.size() < best->projections.size()) {
+        candidate.projections.size() > best->projections.size()) {
       best = &candidate;
     }
   }
   return best == nullptr ? 0 : canonicalPlace(aliases, best->id);
 }
 
-[[nodiscard]] std::optional<FieldPath>
-fieldPath(const MirBody &body, MirPlaceId rootId, MirPlaceId placeId) {
-  const MirPlace *root = body.findPlace(rootId);
-  const MirPlace *place = body.findPlace(placeId);
-  if (root == nullptr || place == nullptr || !samePlaceRoot(*root, *place)) {
+[[nodiscard]] std::optional<FieldPath> fieldPath(const MirPlace &root,
+                                                 const MirPlace &place,
+                                                 bool includeRoot = false) {
+  if (!samePlaceRoot(root, place) ||
+      root.projections.size() > place.projections.size() ||
+      !std::equal(root.projections.begin(), root.projections.end(),
+                  place.projections.begin())) {
     return std::nullopt;
   }
   FieldPath result;
-  for (const MirPlaceProjection &projection : place->projections) {
+  for (auto iterator = place.projections.begin() + root.projections.size();
+       iterator != place.projections.end(); ++iterator) {
+    const MirPlaceProjection &projection = *iterator;
     if (transparentRootProjection(projection.kind)) {
       continue;
     }
@@ -1005,8 +1011,26 @@ fieldPath(const MirBody &body, MirPlaceId rootId, MirPlaceId placeId) {
     }
     result.push_back(projection.field);
   }
-  return result.empty() ? std::nullopt
-                        : std::optional<FieldPath>{std::move(result)};
+  return result.empty() && !includeRoot
+             ? std::nullopt
+             : std::optional<FieldPath>{std::move(result)};
+}
+
+[[nodiscard]] std::optional<FieldPath> fieldPath(const MirBody &body,
+                                                 MirPlaceId rootId,
+                                                 MirPlaceId placeId,
+                                                 bool includeRoot = false) {
+  if (rootId == 0) {
+    const MirPlace receiver{.root = MirPlaceRootKind::This};
+    const MirPlace *place = body.findPlace(placeId);
+    return place == nullptr ? std::nullopt
+                            : fieldPath(receiver, *place, includeRoot);
+  }
+  const MirPlace *root = body.findPlace(rootId);
+  const MirPlace *place = body.findPlace(placeId);
+  return root == nullptr || place == nullptr
+             ? std::nullopt
+             : fieldPath(*root, *place, includeRoot);
 }
 
 struct IndexedAggregateAccess {
@@ -1074,6 +1098,23 @@ extractObjectFact(const MirBody &body,
       object != state.objects.end()) {
     result = object->second;
   }
+  // Whole-object summaries use paths relative to that object's exact place.
+  // Project a retained ancestor's fields when an ordinary call selects a
+  // class subobject for which MIR has no descendant scalar places yet.
+  for (const auto &[parent, object] : state.objects) {
+    if (parent == root)
+      continue;
+    const auto prefix = fieldPath(body, parent, root, true);
+    if (!prefix)
+      continue;
+    for (const auto &[path, fact] : object.integers) {
+      if (path.size() <= prefix->size() ||
+          !std::equal(prefix->begin(), prefix->end(), path.begin()))
+        continue;
+      FieldPath suffix(path.begin() + prefix->size(), path.end());
+      result.integers.insert_or_assign(std::move(suffix), fact);
+    }
+  }
   bool observedElements = false;
   std::optional<IntegerFact> derivedElements;
   bool observedElementIntegers = false;
@@ -1104,6 +1145,14 @@ extractObjectFact(const MirBody &body,
     if (const auto integer = state.integerPlaces.find(source);
         integer != state.integerPlaces.end()) {
       result.integers.insert_or_assign(*path, integer->second);
+    }
+    if (const auto nested = state.objects.find(source);
+        source != root && nested != state.objects.end()) {
+      for (const auto &[suffix, fact] : nested->second.integers) {
+        FieldPath combined = *path;
+        combined.insert(combined.end(), suffix.begin(), suffix.end());
+        result.integers.insert_or_assign(std::move(combined), fact);
+      }
     }
   }
   if (const auto aggregateElements = state.aggregateElements.find(root);
@@ -1322,6 +1371,24 @@ void invalidatePlaceRoot(const MirBody &body,
   const auto overlaps = [&](MirPlaceId place) {
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
+  // Zero is an analysis-only implicit receiver root, not a MIR identity.
+  // A projected This write invalidates overlapping field paths; other writes
+  // have no alias proof for an unmaterialized root and conservatively kill it.
+  std::optional<ObjectFact> implicitReceiver;
+  const MirPlace receiver{.root = MirPlaceRootKind::This};
+  if (const auto path = fieldPath(receiver, *written)) {
+    if (const auto found = state.objects.find(0);
+        found != state.objects.end()) {
+      implicitReceiver = found->second;
+      std::erase_if(implicitReceiver->integers, [&](const auto &field) {
+        const auto prefix = std::min(path->size(), field.first.size());
+        return std::equal(path->begin(), path->begin() + prefix,
+                          field.first.begin());
+      });
+      implicitReceiver->elements.reset();
+      implicitReceiver->elementIntegers.clear();
+    }
+  }
   std::erase_if(state.integerPlaces,
                 [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.arrayElements,
@@ -1332,6 +1399,8 @@ void invalidatePlaceRoot(const MirBody &body,
                 [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.objects,
                 [&](const auto &entry) { return overlaps(entry.first); });
+  if (implicitReceiver)
+    state.objects.insert_or_assign(0, std::move(*implicitReceiver));
   std::erase_if(state.aggregateOrigins,
                 [&](const auto &entry) { return overlaps(entry.second); });
   std::erase_if(state.loadedOrigins,
@@ -1689,6 +1758,14 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       stabilize(object);
       state.objectValues[*instruction.result] = std::move(object);
     }
+  }
+  if (instruction.kind == MirInstructionKind::Construct &&
+      instruction.destination && summary.constructed.observed &&
+      summary.constructed.fact) {
+    ObjectFact object = *summary.constructed.fact;
+    stabilize(object);
+    invalidatePlaceRoot(body, aliases, state, *instruction.destination);
+    seedObjectFact(body, aliases, *instruction.destination, object, state);
   }
   if (instruction.loan && summary.result.observed) {
     for (const MirPlace &place : body.places) {
@@ -3436,22 +3513,20 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
   }
   if (context.receiver.observed && context.receiver.fact) {
     const MirPlaceId root = thisRoot(body);
-    if (root != 0) {
-      ObjectFact object = *context.receiver.fact;
-      if (address.kind == MirBodyKind::Function) {
-        const MirFunctionInstance *function =
-            program.findFunctionInstance(address.owner);
-        const MirClassInstance *owner =
-            function && function->owner
-                ? program.findClassInstance(*function->owner)
-                : nullptr;
-        if (owner != nullptr) {
-          sanitizeObject(program, owner->type, object);
-        }
+    ObjectFact object = *context.receiver.fact;
+    if (address.kind == MirBodyKind::Function) {
+      const MirFunctionInstance *function =
+          program.findFunctionInstance(address.owner);
+      const MirClassInstance *owner =
+          function && function->owner
+              ? program.findClassInstance(*function->owner)
+              : nullptr;
+      if (owner != nullptr) {
+        sanitizeObject(program, owner->type, object);
       }
-      stabilize(object);
-      seedObjectFact(body, aliases, root, object, entry);
     }
+    stabilize(object);
+    seedObjectFact(body, aliases, root, object, entry);
   }
   return entry;
 }
@@ -3571,7 +3646,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         if (initializers->second.constructed.observed) {
           initialFields = initializers->second.constructed.fact;
           const MirPlaceId root = thisRoot(*body);
-          if (root != 0 && initialFields) {
+          if (initialFields) {
             seedObjectFact(*body, aliases, root, *initialFields, entry);
           }
         }
@@ -3592,6 +3667,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
 
   std::vector<AbstractState> exits;
   std::vector<std::optional<IntegerFact>> returnFacts;
+  std::vector<std::optional<ObjectFact>> returnObjects;
   for (const MirBlock &block : body->blocks) {
     const bool successfulExit =
         block.terminator.kind == MirTerminatorKind::Return ||
@@ -3613,6 +3689,13 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       std::optional<IntegerFact> fact =
           integerForOperand(*body, transferred.output, *block.terminator.value);
       returnFacts.push_back(std::move(fact));
+      if (body->returnType.kind == SemanticType::Class) {
+        auto object = objectForOperand(*body, aliases, transferred.output,
+                                       *block.terminator.value);
+        if (object)
+          sanitizeObject(program, body->returnType, *object);
+        returnObjects.push_back(std::move(object));
+      }
     }
     exits.push_back(std::move(transferred.output));
   }
@@ -3637,6 +3720,19 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
               ? std::optional<IntegerFact>{joinedInteger(
                     *result.summary.result.fact, *fact, false)}
               : fact;
+    }
+  }
+  if (!returnObjects.empty()) {
+    result.summary.constructed.observed = true;
+    for (const auto &object : returnObjects) {
+      if (!object) {
+        result.summary.constructed.fact.reset();
+        break;
+      }
+      if (!result.summary.constructed.fact)
+        result.summary.constructed.fact = *object;
+      else
+        (void)mergeObject(*result.summary.constructed.fact, *object, false);
     }
   }
 
@@ -3665,7 +3761,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
             ? program.findClassInstance(*function->owner)
             : nullptr;
     const MirPlaceId root = thisRoot(*body);
-    if (owner != nullptr && root != 0) {
+    if (owner != nullptr) {
       result.summary.receiver =
           objectAtExits(program, *body, aliases, exits, root, owner->type);
     }
@@ -3678,12 +3774,9 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     }
   } else if (address.kind == MirBodyKind::Constructor) {
     const MirPlaceId root = thisRoot(*body);
-    if (constructorOwner != nullptr && root != 0) {
+    if (constructorOwner != nullptr) {
       result.summary.constructed = objectAtExits(program, *body, aliases, exits,
                                                  root, constructorOwner->type);
-    } else if (constructorOwner != nullptr) {
-      result.summary.constructed.observed = true;
-      result.summary.constructed.fact = std::move(initialFields);
     }
   }
   return result;
@@ -3838,7 +3931,7 @@ MirClosedCallSafetyAnalysis::find(MirBodyAddress body) const {
 
 MirClosedCallSafetyAnalysis
 analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
-  constexpr std::size_t kMaximumIterations = 32;
+  constexpr std::size_t kMaximumBodyAnalyses = 32;
   constexpr std::size_t kWidenAfterContextUpdates = 4;
   constexpr std::size_t kMaximumContextUpdates = 8;
 
@@ -3858,64 +3951,91 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
   std::map<MirBodyAddress, ClosedCallSummary, MirBodyAddressLess> summaries;
   std::map<MirBodyAddress, MirSafetyAnalysis, MirBodyAddressLess>
       contextualSafety;
+  std::map<MirBodyAddress, std::set<MirBodyAddress, MirBodyAddressLess>,
+           MirBodyAddressLess>
+      dependents;
+  for (const auto address : addresses) {
+    for (const auto &block : findMirBody(program, address)->blocks)
+      for (const auto &instruction : block.instructions)
+        if (const auto target = closedCallTarget(program, instruction))
+          dependents[*target].insert(address);
+    if (address.kind == MirBodyKind::Constructor) {
+      const auto *constructor = program.findConstructorInstance(address.owner);
+      if (constructor)
+        dependents[{.kind = MirBodyKind::FieldInitializers,
+                    .owner = constructor->owner}]
+            .insert(address);
+    }
+  }
+
+  std::deque<MirBodyAddress> work;
+  std::set<MirBodyAddress, MirBodyAddressLess> pending, changedContexts;
+  std::map<MirBodyAddress, std::size_t, MirBodyAddressLess> analyses;
+  const auto enqueue = [&](MirBodyAddress address) {
+    const auto context = contexts.find(address);
+    if (!rejected.contains(address) && context != contexts.end() &&
+        context->second.reached && pending.insert(address).second)
+      work.push_back(address);
+  };
+  for (const auto &[address, context] : contexts) {
+    (void)context;
+    enqueue(address);
+  }
 
   MirClosedCallSafetyAnalysis result;
-  for (std::size_t iteration = 0; iteration < kMaximumIterations; ++iteration) {
+  while (!work.empty()) {
+    const auto address = work.front();
+    work.pop_front();
+    pending.erase(address);
+    if (rejected.contains(address))
+      continue;
+    const bool updatedContext = changedContexts.erase(address) != 0;
+    // Count coalesced context changes only when the callee consumes them.
+    // A growing program must not exhaust a global round budget merely to
+    // propagate fixed facts along a longer, otherwise ordinary source chain.
+    if (analyses[address] == kMaximumBodyAnalyses ||
+        (updatedContext &&
+         ++contextUpdates[address] > kMaximumContextUpdates)) {
+      rejected.insert(address);
+      contexts.erase(address);
+      summaries.erase(address);
+      contextualSafety.erase(address);
+      for (const auto caller : dependents[address])
+        enqueue(caller);
+      continue;
+    }
+    result.iterations = std::max(result.iterations, ++analyses[address]);
     ClosedCallRound round{
         .program = program, .summaries = summaries, .rejected = rejected};
-    std::map<MirBodyAddress, ClosedCallSummary, MirBodyAddressLess>
-        nextSummaries;
-    std::map<MirBodyAddress, MirSafetyAnalysis, MirBodyAddressLess> nextSafety;
-    for (const auto &[address, context] : contexts) {
-      if (!context.reached || rejected.contains(address)) {
-        continue;
-      }
-      ContextualBodyResult body =
-          analyzeContextualBody(program, address, context, round);
-      nextSafety.emplace(address, std::move(body.safety));
-      if (!body.summary.complete) {
-        continue;
-      }
-      nextSummaries.emplace(address, std::move(body.summary));
-    }
+    auto body =
+        analyzeContextualBody(program, address, contexts.at(address), round);
+    contextualSafety.insert_or_assign(address, std::move(body.safety));
+    const auto previous = summaries.find(address);
+    const bool changed =
+        body.summary.complete
+            ? previous == summaries.end() || previous->second != body.summary
+            : previous != summaries.end();
+    if (body.summary.complete)
+      summaries.insert_or_assign(address, std::move(body.summary));
+    else
+      summaries.erase(address);
+    if (changed)
+      for (const auto caller : dependents[address])
+        enqueue(caller);
 
     std::stable_sort(round.discovered.begin(), round.discovered.end(),
                      [](const auto &left, const auto &right) {
                        return MirBodyAddressLess{}(left.first, right.first);
                      });
-    auto nextContexts = contexts;
-    std::set<MirBodyAddress, MirBodyAddressLess> changedContexts;
-    for (const auto &[address, context] : round.discovered) {
-      if (!rejected.contains(address) &&
-          mergeContext(nextContexts[address], context,
-                       contextUpdates[address] >= kWidenAfterContextUpdates)) {
-        changedContexts.insert(address);
+    for (const auto &[target, context] : round.discovered)
+      if (!rejected.contains(target) &&
+          mergeContext(contexts[target], context,
+                       contextUpdates[target] >= kWidenAfterContextUpdates)) {
+        changedContexts.insert(target);
+        enqueue(target);
       }
-    }
-    for (const MirBodyAddress address : changedContexts) {
-      if (++contextUpdates[address] <= kMaximumContextUpdates) {
-        continue;
-      }
-      // A mutable summary can feed a wider post-call fact back into a later
-      // call to the same body even when the static call graph is acyclic.
-      // Bound that contextual chain per callee so one unstable family cannot
-      // consume the whole-program budget or suppress independent proofs.
-      rejected.insert(address);
-      nextContexts.erase(address);
-      nextSummaries.erase(address);
-      nextSafety.erase(address);
-    }
-
-    const bool stable = nextContexts == contexts && nextSummaries == summaries;
-    contexts = std::move(nextContexts);
-    summaries = std::move(nextSummaries);
-    contextualSafety = std::move(nextSafety);
-    result.iterations = iteration + 1;
-    if (stable) {
-      result.converged = true;
-      break;
-    }
   }
+  result.converged = true;
 
   result.bodies.reserve(addresses.size());
   for (const MirBodyAddress address : addresses) {

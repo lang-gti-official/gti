@@ -289,7 +289,7 @@ int32_t main() {
   expect(
       closed.converged,
       "closed-call mutable-input analysis must converge within its budget: " +
-          std::to_string(closed.iterations) + " rounds");
+          std::to_string(closed.iterations) + " maximum per-body analyses");
   for (const std::string_view name :
        {"direct", "forwarded", "projected", "carrier", "carrier_shell",
         "local_reference", "global", "global_loop", "unrelated", "readonly",
