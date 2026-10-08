@@ -1,0 +1,3 @@
+// Module std.resource: the public surface of <std/resource>.
+export module resource;
+export #include <std/resource>

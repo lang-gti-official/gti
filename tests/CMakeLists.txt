@@ -1678,6 +1678,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
+    NAME stdlib_modules
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/stdlib_modules_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
+  add_test(
     NAME generic_algorithm_breadth
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"

@@ -47,6 +47,7 @@ if(Python3_Interpreter_FOUND)
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
     uninitialized_carrier_runtime
+    stdlib_modules
     stdlib_surface
   )
   foreach(suite IN LISTS gti_parallel_case_suites)

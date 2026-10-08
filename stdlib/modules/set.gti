@@ -1,0 +1,3 @@
+// Module std.set: the public surface of <std/set>.
+export module set;
+export #include <std/set>

@@ -988,7 +988,8 @@ main = "src/api.gti"
 geometry = "src/geometry_api.gti"
 ```
 
-Each key is one non-reserved GTI identifier. Each value is a package-relative
+Each key is one non-reserved GTI identifier other than `std`, which names the
+standard library's modules (`import std.vector;`). Each value is a package-relative
 path to an existing regular `.gti` interface. Canonical paths must remain inside
 the package, including through symlinks. Duplicate physical files, portable
 case-fold name collisions, invalid names/types and missing paths are rejected

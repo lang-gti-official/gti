@@ -1,0 +1,3 @@
+// Module std.deque: the public surface of <std/deque>.
+export module deque;
+export #include <std/deque>

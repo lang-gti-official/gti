@@ -144,7 +144,8 @@ A source unit can name declarations from:
 
 - itself;
 - its direct includes;
-- exported declarations of its imports and their explicit re-exports; and
+- exported declarations of its imports and their explicit re-exports,
+  including the legacy units those interfaces republish; and
 - the implicit standard prelude.
 
 An included unit does not re-export its own dependencies. Only the entry source
@@ -193,14 +194,39 @@ and multiple interface files declaring the same name in one package are errors.
 All three declarations require their terminating semicolon.
 
 An interface cannot be loaded with `#include`, and a legacy include unit cannot
-be loaded with `import`. Existing includes keep their original behavior.
+be loaded with `import`. Existing includes keep their original behavior. An
+interface can instead republish one legacy unit with `export #include`:
+
+```gti
+// src/geometry.gti
+export module geometry;
+export #include "legacy_geometry.gti"
+```
+
+The directive includes the unit exactly as `#include` does, then publishes all
+of that unit's declarations to the interface's importers, as if each were
+exported. The unit's own includes are not republished, matching include
+visibility. `export #include` outside an interface, or naming an interface, is
+an error; an interface is re-exported with `export import`. Republishing lets
+a library offer an import before its implementation is migrated to explicit
+exports.
+
+The name `std` is reserved for the standard library, in direct and project
+compilation alike. Every public `<std/name>` unit is also the module
+`std.name`, whose interface republishes that unit, so `import std.vector;`
+makes the declarations of `<std/vector>` visible. See
+[standard-library modules](standard-library.md#standard-library-modules).
+There is no aggregate `import std;`. A package cannot register a module named
+`std`, and a dependency alias cannot be `std`.
+
 Source-local configuration flags neither enter nor escape imported modules;
 compiler-supplied flags still apply. A legacy include processes its flag
 directives once in each module, including directives in its nested includes.
 Repeating an include within that module does not reapply a previous definition
-after an `#undef`. Sharing a legacy include across module boundaries requires
-matching incoming flags and selected syntax; incompatible include ordering or
-configuration is diagnosed.
+after an `#undef`. A legacy include can be shared across module boundaries even
+when the incoming source-local flags differ. Sharing is diagnosed only when a
+module's flags select different syntax in that unit or one of its nested
+includes, for example an `#ifdef` on a flag that one module defines.
 
 This initial implementation controls visibility, not separate compilation or
 module linkage. Program-wide qualified-name uniqueness still applies, including

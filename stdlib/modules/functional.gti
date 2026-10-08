@@ -1,0 +1,3 @@
+// Module std.functional: the public surface of <std/functional>.
+export module functional;
+export #include <std/functional>
