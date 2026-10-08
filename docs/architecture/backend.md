@@ -1830,6 +1830,23 @@ default exactly once. Explicit overrides suppress the corresponding default;
 failure unwinds completed fields before constructor parameters and caller
 values, without beginning the enclosing object's lifetime.
 
+Native field-prefix proofs consume this selected constructor schedule, not
+the passivity of the unselected catalog defaults. Exact field identities and
+declaration order, child input preparation, original Invoke outcomes, and
+publication/rollback identities still require proof. An observable or panicking
+default that the selected constructor overrides must never execute.
+
+A cleanup-free, zero-input, single-field constructor can retain a child's
+status-tag native construction when that child has no ordinary constructor
+representation. The proof covers the complete parent body: one selected
+Construct/Invoke, immediate success-field Initialize and full-expression end,
+Return, and exact failure propagation, with no loans or drop obligations. It
+independently proves the entire selected child non-failing, including an exact
+InitializeBase target and success activation; neither abstract-base spelling
+nor a conservative effect summary supplies that proof. Fallible children,
+multiple fields, owning cleanup, and additional body work are not admitted by
+this bounded matcher and require their existing independently proved routes.
+
 An owning field-result call can itself consume prepared owning arguments.
 Calls and constructors share the same exact input-transfer proof: every
 unconditional `TransferOut` names one operand's prepared-parameter obligation,

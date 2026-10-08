@@ -582,6 +582,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testPassiveStatusDefaultField",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testExampleCorpusEmissionReadiness",
       "suite": "corpus"
     },
