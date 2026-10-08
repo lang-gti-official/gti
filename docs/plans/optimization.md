@@ -11,6 +11,11 @@ exclusive runtime-performance campaign and every follow-on optimizer row are
 sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
 
+Audit update (2026-10-08): a measured
+[runtime optimization audit](#runtime-optimization-audit-2026-10-08) records
+findings RT-1 through RT-10 and the release-check boundary. None of them is
+implemented or scheduled.
+
 Implementation update (2026-10-01): the exhaustive optimizer language-growth
 gate is reconciled at `72a8087a`. The measured follow-up implements one bounded
 body-local exact-receiver dispatch refinement, with canonical replay and
@@ -125,6 +130,393 @@ The implemented pipeline and current IR structures are documented in
 timings, optimization remarks, IR dumps, and safety-operation reports are
 specified separately in
 [`docs/plans/performance-tooling.md`](performance-tooling.md).
+
+## Runtime Optimization Audit (2026-10-08)
+
+Status: audit findings only. Nothing in this section is implemented,
+scheduled, or a claim about current behavior. Each finding names the GTI rule
+it must preserve and the evidence a first slice would need. Rows enter
+[`implementation-sequence.md`](implementation-sequence.md) only by the usual
+selection process; the 2026-10-08 stabilization reset currently pauses new
+campaign work.
+
+The audit asked which established compiler techniques could make ordinary GTI
+programs faster without weakening GTI safety or semantics, including removing
+checks in release builds where a provable boundary allows it. Unlike the
+earlier campaigns, which tuned named workloads to parity, it screened 14 new
+everyday probes against idiomatic C++ twins. It then attributed each gap with
+native inlining remarks, sampled profiles, disassembly, GTI optimization
+remarks, and measurement-only ceiling variants of the emitted C++. Probes and
+the reproducible screen live in
+[`benchmarks/probes/runtime-audit`](../../benchmarks/probes/runtime-audit/README.md);
+method, machine, and raw medians are recorded in [performance
+tooling](performance-tooling.md#rt-audit-01-runtime-optimization-screen-2026-10-08).
+
+### Safety boundary for "removing checks in release"
+
+GTI has two different kinds of runtime check, and only one of them may differ
+between build profiles:
+
+1. **GTI-observable checks** are language semantics: integer overflow, bounds,
+   conversion range, division, shift count, owner access, expected access,
+   storage state, and the other defined failures. Such a check may disappear
+   only through a replayable proof that it cannot fail, or through a
+   restructuring whose fallback reproduces the exact first failure, its order,
+   cleanup, and partial effects (for example loop versioning). An optimization
+   level, release profile, or user flag must never remove one unproved. An
+   unchecked release mode would change program meaning and is not recommended.
+2. **Backend representation self-checks** assert invariants that verified MIR
+   has already proved. Examples are the lifetime-slot `engaged_` assertions
+   ("verified MIR lifetime slot was read while empty"), double-construction
+   checks, and cleanup-scope consistency aborts in the generated preamble.
+   They are not GTI semantics. A release profile may omit them where the MIR
+   verifier is the proof authority, keeping them in debug and verification
+   builds. This is the only category that "dropping checks in release" can
+   safely mean.
+
+### Screen summary
+
+Medians, GTI `-O2` against idiomatic C++ `-O2` under the same strict
+floating-point policy (`GTI/C++` ratio; see the performance record for
+samples):
+
+| Probe | Ratio | Dominant cause found |
+| --- | ---: | --- |
+| `sort` | 8.66x | heapsort algorithm (RT-9) plus bounds checks in non-inlined helpers (RT-1, RT-5) |
+| `vector-push` | 6.11x | `push_back` never inlined (RT-1, RT-9); checked sum blocks vectorization (RT-7) |
+| `matrix` | 4.01x | two retained bounds checks per inner iteration block vectorization (RT-5, RT-6) |
+| `lambda` | 3.58x | checked `count_if` counter blocks vectorization (RT-7) |
+| `conversions` | 2.98x | conversion family never discharged (RT-3); checked accumulator (RT-7) |
+| `strings` | 2.29x | `push_back`/`find` not inlined (RT-1); redundant bounds check (RT-5) |
+| `hashmap` | 2.27x | lookup helpers not inlined (RT-1); invariant checks in node chains (RT-9) |
+| `division` | 1.40x | division family never discharged (RT-3); division cost dominates |
+| `calls` | 1.31x | loop-carried context loses the proof (RT-2) |
+| `expected` | 1.09x | near parity |
+| `particles` | 1.04x | near parity |
+| `dispatch` | 1.04x | parity |
+| `shifts` | 1.03x | parity; literal and masked counts already cheap |
+
+`sort-heap` runs the same GTI program against a C++ twin of GTI's exact
+heapsort: GTI is 3.13x that twin, while the heapsort twin itself is 2.63x
+libc++'s introsort (539.2 versus 204.9 ms). The algorithm and the compiler
+overhead are separate costs.
+
+### Findings in recommended order
+
+The order weighs measured headroom against risk and size. RT-1 and RT-9 are
+representation and library changes with no new proof obligations; RT-2 to
+RT-4 extend existing analyses; RT-5 to RT-7 are the larger analysis and
+transform investments. RT-8 defines the release boundary but showed no
+measurable runtime value in this screen. RT-10 is enabling infrastructure.
+
+#### RT-1: generated failure-ABI functions defeat native inlining
+
+**Evidence.** Raising the native inline threshold on unchanged emitted C++
+recovers most of several gaps. Minimum of seven samples:
+
+| Probe | Default | Raised threshold | Reference |
+| --- | ---: | ---: | ---: |
+| `vector-push` | 255.9 ms | 94.1 ms | 40.2 ms C++ |
+| `strings` | 107.0 ms | 33.1 ms | 81.0 ms C++ |
+| `hashmap` | 437.8 ms | 233.2 ms | 212.2 ms C++ |
+| `sort-heap` | 1421.9 ms | 666.4 ms | 539.2 ms heapsort twin |
+| `calls` | 1233.7 ms | 922.8 ms | 934.3 ms C++ |
+
+Clang's remarks show why: the two-line `vector::push_back` is costed at 370
+against the default threshold of 225, `ensure_capacity_for_one` at 530, and
+`string::push_back`, whose growth path is written inline, at 720. Every
+failure-capable body is a `bool` failure sibling with an out-pointer result and
+failure-record pointer. Its cold blocks construct
+`mir_failure_cleanup_scope_v1` objects, read a `thread_local` context, call
+`std::abort` paths, and assign a 568-byte `gti_failure_record_v2` (including
+its 512-byte message buffer) at each site. None of these paths are marked
+unlikely or cold, so the inliner charges them at full weight. The sampled
+`sort` profile is dominated by the out-of-line `sort_less_at`, `swap_elements`,
+and `sort` siblings. The `vector-push` push loop is one `bl
+push_back__gti_mir_failure` per element.
+
+Measurement-only experiments on the emitted C++ bound the fixes:
+
+- marking the failure-only helpers `cold, noinline` recovers part of the gap
+  (`vector-push` 255.9 to 189.5 ms, `strings` 107.0 to 76.4 ms, `hashmap`
+  437.8 to 268.4 ms, `sort-heap` 1421.9 to 1159.8 ms; no gain for `calls`);
+- outlining failure-record construction adds nothing beyond that;
+- `noexcept` lowers inline cost (`ensure_capacity_for_one` 530 to 420,
+  `push_back` 370 to 335) but not below the threshold;
+- forcing `always_inline` on short siblings shrinks binaries but is not
+  uniformly faster. A blanket native hint is not a substitute for a GTI-owned
+  decision.
+
+**Theory.** Hot/cold splitting of exceptional paths, and inlining decisions
+made where the compiler knows which edges are exceptional. GTI's MIR already
+identifies every failure edge exactly, but that knowledge is lost when it
+reaches the native cost model.
+
+**Safety.** Representation only. The same checks, failure records, cleanup
+order, and propagation remain.
+
+**First slice.**
+
+- Emit failure-edge branches as unlikely and keep failure-record construction,
+  incoming-cleanup checks, and cleanup scopes in outlined cold code.
+- Compute an inline hint, or a GTI-side inline decision, from the MIR
+  success-path size, excluding failure edges.
+
+Measure with the `attribute` screen and code size. A full MIR inliner is
+RT-10. `noexcept` is a separate, gated sub-item: the managed-thread runtime
+unwinds a worker's native frames with `throw worker_failure_handoff{}`
+(`runtime/src/thread.cpp`), so generated frames must stay
+exception-transparent. Only bodies proved unreachable from a managed worker
+entry may be `noexcept`, unless that terminal handoff moves onto the existing
+status channel.
+
+#### RT-2: interprocedural contexts lack narrowing
+
+**Evidence.** In `calls`, `step(x, k)` returns `(x * 3 + k) % 1000003`. One
+direct call discharges both checks in `step`. The same call inside a loop that
+feeds its result back retains both ("canonical MIR facts do not prove
+arithmetic-overflow safety"), although the remainder bounds every return to
+±1000002 whatever `x` is. The cause is in
+`analyzeMirClosedCallSafetyChecks` (`src/compiler/optimization/safety.cpp`).
+Contexts only grow through `mergeContext`, are widened after four updates,
+and reject the body after eight. No descending pass follows convergence, so
+the widened argument context is never re-tightened from the converged return
+summary. The arithmetic ceiling variant puts this probe's remaining gap at
+1233.7 to 940.1 ms, against 934.3 ms for C++.
+
+**Theory.** Abstract interpretation's narrowing (descending) iterations after
+a widened post-fixpoint (Cousot & Cousot, POPL 1977), or widening with
+thresholds taken from callee return summaries.
+
+**Safety.** Proof precision only; the existing proof and replay rules apply
+unchanged.
+
+**First slice.**
+
+- After convergence, rerun bounded context rounds that recompute each context
+  from converged summaries without widening, keeping the eight-update budget
+  as a fail-closed limit.
+- Report "rejected after context budget" separately from the generic
+  missed-proof remark.
+
+#### RT-3: missing discharge families for conversion, division, and shift
+
+**Evidence.** Remarks show `check retained: unsupported failure discharge
+family numeric_conversion_out_of_range/numeric_cast` for every conversion,
+including `uint8_t(narrow & 255)`, whose interval the existing mask transfer
+already proves to be `[0, 255]`. The architecture lists division,
+dynamic-divisor remainder, and shifts as always checked. The conversion ceiling
+variant shows `conversions` falling from 201.6 to 163.5 ms on its own, and to
+59.2 ms with every ceiling combined (C++: 81.5 ms).
+
+**Theory.** These use the same interval facts already used for add, subtract,
+multiply, and remainder:
+
+- **conversion:** the source interval lies inside the destination domain;
+- **division:** the divisor interval excludes zero, and either the dividend
+  excludes the signed minimum or the divisor excludes `-1`;
+- **shift:** the count interval lies in `[0, width)`.
+
+**Safety.** Each removes one exact failure outcome by proof. Division keeps
+GTI's defined helpers wherever native C++ has undefined behavior.
+
+**First slice.** Conversion first: it is the most common in byte and text
+code and needs no new representation. Division and shift follow with
+near-miss tests at every domain edge.
+
+#### RT-4: infallibility is not refreshed after discharge
+
+**Evidence.** `MirFunctionInstance::mayRaiseDefinedFailure` is computed once
+during MIR lowering (`src/compiler/mir_lowering.cpp`) from pre-optimization
+semantic effects and never recomputed. With every check in `step`
+discharged, the emitted body is still a failure sibling with an out-pointer
+result. Its dead failure blocks remain, and every caller keeps an `Invoke`,
+a success test, and its failure edge. Failure edges also block GTI's own
+scalar promotion ("not promoted: body has failure-sensitive control flow").
+
+**Theory.** Recompute the least defined-failure summary on optimized MIR, the
+same monotone call-graph fixpoint as `deriveMirProgramEffectSummaries`, then
+demote callers' invokes of now-infallible targets to plain calls.
+
+**Safety.** The demotion is a proof that no failure outcome remains in the
+callee. It must be replayed independently, like other transformation records.
+
+**First slice.** An analysis plus one editor transform, `invoke-to-call`, with
+replay. It also feeds RT-1 and helps O-MIR-08's scalar-promotion prerequisite.
+
+#### RT-5: no relational facts between indices and lengths
+
+**Evidence.**
+
+- In `matrix`, the `i * n + j` arithmetic is fully discharged, but the public
+  `index_bounds_check(index, live)` inside `vector::operator[]` is retained.
+  The inner loop keeps two `cmp`/`csel`/`tst`/`b.ne` checks per element and is
+  not vectorized. The bounds ceiling variant shows 85.8 to 24.5 ms against 22.7
+  ms for C++: the retained bounds checks are the entire gap.
+- `string::find(char)` iterates `index < this.count` and then indexes with
+  `this[index]`, whose check is the same comparison.
+- The heapsort's `root < end / 2` and `child + 1 < end` guarantee its index
+  checks.
+
+The interval domain cannot express `index < length` for a runtime length, and
+the check sits in a callee.
+
+**Theory.**
+
+- Weakly relational domains: Pentagons, which add strict upper bounds `x < y`
+  to intervals (Logozzo & Fähndrich, SAC 2008); or octagons on small variable
+  packs (Miné, HOSC 2006).
+- Demand-driven inequality-graph elimination on SSA with branch-refined names
+  (ABCD; Bodík, Gupta & Sarkar, PLDI 2000).
+
+GTI MIR already has dominance, branch predicates, and exact length-changing
+effects, so a loop condition `i < v.size()` can dominate `v[i]` while MIR
+effects prove the length invariant. Crossing the accessor needs either RT-10
+inlining, or a callee *check precondition* summary (`index < receiver.length`)
+discharged at the call site and paired with a specialized unchecked body.
+
+**Safety.** Proof-carrying discharge with the existing replay; mutation,
+aliasing, and opaque calls invalidate relations exactly as they invalidate
+intervals today.
+
+**First slice.** A body-local strict-upper-bound relation between scalar
+places and prefix-storage length, consumed by the existing public
+logical-size-check discharge.
+
+#### RT-6: loop versioning for affine accesses
+
+**Evidence.** In the `matrix` inner loop, both indices are affine in `j` over
+loop-invariant vectors whose length is unknown statically. Relational facts
+alone cannot prove them when the sizes are unrelated to `n`.
+
+**Theory.** Range-check elimination by loop versioning, or check hoisting.
+Before the loop, check the extreme affine index against the loop-invariant
+length. Run an unchecked copy when it passes and the original checked loop
+otherwise (Gupta, LOPLAS 1993; Würthinger, Wimmer & Mössenböck, PPPJ 2007).
+
+**Safety.** The fallback is the unchanged checked loop, so failure origin,
+order, cleanup, and partial effects match exactly. This is the
+"side-effect-free preflight with an exactly equivalent fallback" that
+Milestone 5 already permits. The preflight itself may not fail, allocate, or
+observe anything.
+
+**First slice.** One reducible single-latch loop, with affine indices from
+O-MIR-06 induction facts and a length-invariance proof from MIR effects.
+
+#### RT-7: counters and reductions in iterator loops
+
+**Evidence.** `count_if`'s `result++` is a checked `ptrdiff_t` increment, a
+compare against `INT64_MAX` plus a branch per taken element. That stops the
+vectorization the C++ twin gets; the arithmetic ceiling variant shows 51.3 ms
+against 63.5 ms for C++, from a 227.2 ms screen median. `vector-push`'s
+`checksum += uint64_t(value)` and the `conversions` accumulator behave the same
+way. The implemented accumulator family needs a literal integer loop bound, and
+iterator loops have none.
+
+**Theory.**
+
+- **Trip-count bounds:** a loop over a container executes at most `length`
+  iterations, and prefix-storage length is bounded by its allocation, so a
+  counter incremented at most once per iteration from zero cannot overflow.
+- **Wide speculation with exact replay:** for sums whose element envelope is
+  unknown, compute in a wider or wrapping accumulator with a sticky overflow
+  flag. On overflow, discard it and rerun the original checked loop from the
+  saved entry state.
+
+**Safety.** The replay variant is admissible only when the body's effects are
+confined to non-escaping locals that the replay restores. The failure is then
+reported at the identical iteration and site, and no partial effect is
+observable. This is the general form of the guardrail in Milestone 5. It must
+not be applied to a body with stores, calls, or cleanup.
+
+**First slice.** The counter rule on range-`for` loops, which needs no
+speculation.
+
+#### RT-8: representation self-checks and dynamic drop flags
+
+**Evidence.** Every generated class-typed local is a `mir_lifetime_slot` with a
+dynamic `engaged_` byte. Each `get()` checks it and calls `storage_error`;
+construction and drop check it too. The `vector-push` push loop reloads the
+slot byte on every iteration. The slots ceiling variant shows no change
+distinguishable from noise in any probe (for example `vector-push` 255.9
+against 267.5 ms, `strings` 107.0 against 103.2 ms).
+
+**Theory.** Static drop elaboration in the style of Rust MIR: where verified
+MIR knows a place's initialization state at every point, emit a static drop
+and no flag. Keep dynamic flags only for conditionally initialized places.
+
+**Safety.** Category 2 above. These invariants are already proved by MIR
+verification, so the release profile may omit them while debug and
+verification builds keep them. GTI-observable behavior is unchanged.
+
+**Priority.** Low until measured. The screen shows no runtime value at its
+noise level, so this finding defines the release boundary rather than a
+demonstrated speedup. Measure it first on cleanup-heavy code (many class-typed
+locals and early exits) before scheduling.
+
+**First slice.** Omit the read-while-empty assertion in optimized builds
+where MIR verification proves definite initialization. Then elaborate drops
+statically for unconditionally initialized locals.
+
+#### RT-9: library algorithm and data-structure choices
+
+These are library changes with ordinary tests, not compiler work, but the
+screen shows they are among the largest single wins.
+
+- **Sort.** `std::sort` is iterative heapsort. On identical C++ the heapsort
+  costs 2.63x libc++'s introsort. Introsort (or pattern-defeating
+  quicksort) keeps the contract: in place, unstable, O(n log n) worst case,
+  strict weak order required. An inconsistent comparator still cannot cause
+  out-of-bounds access, because every access stays checked or proved.
+- **Growth fast path.** `vector::push_back` calls `ensure_capacity_for_one`,
+  whose growth path (`reserve`, allocation, relocation) inflates the hot
+  function. The append then rechecks capacity that the caller just ensured.
+  Split growth into a separate, cold function, as C++ libraries do, and let
+  the closed-call prefix-capacity facts discharge the recheck. `string`
+  follows the same pattern.
+- **Hash map nodes.** Each `unordered_map` probe step pays a vector bounds
+  check, a checked `node - 1`, a non-empty owner check, and a remainder zero
+  check. Those follow from container invariants that no local analysis sees.
+  An open-addressing or flat layout would remove the indirection and most
+  checks. The existing ledger already requires allocation, cache, and address
+  evidence before any representation change, and this screen supplies the
+  first such evidence.
+
+#### RT-10: MIR inlining as the enabling transform
+
+Milestone 6 lists inlining as unimplemented. RT-1 shows the native compiler
+will not reliably inline GTI's small accessors. RT-5 shows the checks that
+matter live inside those accessors (`operator[]`, `sort_less_at`,
+`swap_elements`). A bounded MIR inliner for small, non-recursive, exact
+static targets would let GTI's existing proofs see caller facts. It is the
+largest investment here and requires the gates the plan already names:
+provenance composition, cleanup and temporary lifetime correctness, failure
+edge splicing, a cost model, and replay. A measured precursor is RT-1's
+emission-level hint, which captures much of the native benefit without the
+proof benefit.
+
+### Not recommended
+
+- **An unchecked release mode for GTI-observable checks.** It changes
+  program meaning. Category 1 checks leave only by proof or exact fallback.
+- **A higher global native inline threshold or blanket `always_inline`.** The
+  threshold experiment is a measurement ceiling (code size grows about 12%),
+  and forced inlining was not uniformly faster. GTI should decide from MIR
+  facts (RT-1, RT-10).
+- **`-fno-exceptions` or blanket `noexcept`.** The backend contains native
+  exceptions with `try`/`catch`, and worker handoff unwinds by exception;
+  see RT-1.
+- **Fast-math or contraction.** GTI floating-point semantics forbid
+  reassociation and contraction.
+
+### Code size note
+
+Each probe executable is about 400 KB against about 35 KB for its C++ twin,
+because the emitted program carries the whole reachable stdlib and support
+preamble (about 40,000 C++ lines). This is not a measured runtime cost here.
+Closed-world MIR reachability for executables would reduce instruction-cache
+footprint and native compile time; the plan already treats reachability as
+removal authority as a gate.
 
 ## Decision Summary
 
