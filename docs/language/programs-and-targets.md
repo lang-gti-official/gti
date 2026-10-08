@@ -31,15 +31,19 @@ its entry source unit; a global `main` may forward to a namespaced function.
 Missing entry definitions are diagnosed as `GTI-S2094` before backend/native
 compilation. Library analysis and emit-only requests do not require an entry.
 
-A closed executable request also requires a definition for each selected
-ordinary GTI call target, including calls discovered by concrete generic
+A closed executable/library request or C++ emission also requires a definition
+for each selected ordinary GTI call target, including calls discovered by concrete generic
 analysis and overloaded operators. Calls to bodyless ordinary declarations
-are diagnosed as `GTI-S2106` at the call, with the declaration related. Unused
+are diagnosed as `GTI-S2106` at the call, with the declaration related. A missing
+definition discovered through a concrete generic instance points at its outer
+requesting call and relates the internal call and declaration. Unused
 declarations and abstract virtual contracts remain valid. Foreign C declarations,
 registered runtime bindings and compiler intrinsic declarations have their own
 implementation contracts and do not require GTI bodies. Fragment analysis may
 resolve bodyless signatures without claiming that the fragment is executable;
 it does not authorize a native artifact with unresolved GTI calls.
+MIR-only inspection preserves this open-fragment behavior; C++ emission checks
+definition closure without requiring `main`.
 
 The parameter names are not significant, and either by-value binding may use
 ordinary `mut`. Aliases that resolve to the exact signature types are valid.
