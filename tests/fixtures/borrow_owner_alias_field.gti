@@ -1,0 +1,26 @@
+struct Child {
+  int32_t value;
+  Child(int32_t input) : value(input) {}
+};
+
+class Node {
+  int32_t sentinel_;
+  Child child_;
+public:
+  Node() : sentinel_(71), child_(Child(29)) {}
+  Child& operator*() { return this.child_; }
+};
+
+struct Root {
+  int32_t sentinel;
+  Node node;
+  Root() : sentinel(83), node(Node()) {}
+};
+
+int main() {
+  Root root{};
+  Root& source = root;
+  Child& selected = *source.node;
+  Child& alias = selected;
+  return alias.value == 29 ? 0 : 1;
+}

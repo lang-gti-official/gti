@@ -31,6 +31,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   nextLambdaId = 1;
   nextSemanticLoanId = 1;
   nextPlaceSelectionId = 1;
+  instanceSymbolCeiling = 0;
+  requestSession.invalidOrdinaryLayouts.clear();
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
@@ -67,6 +69,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentFunctionDeclaration = nullptr;
   currentProgramEffectOwner = {};
   programEffects.clear();
+  requestSession.programConcreteEffects =
+      std::make_shared<ProgramConcreteEffectState>();
   requestSession.cThreadCallUses.clear();
   requestSession.rawBorrowCallUses.clear();
   requestSession.rawResultQueries.reset();
@@ -482,6 +486,33 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
     return scope.finish();
   }
   analyzeConcreteClassStaticAssertions(classType->declaration->members());
+  if (const auto *primary =
+          semanticModel.findClassLifecycle(*classType->declaration)) {
+    auto concrete = *primary;
+    const SemanticType concreteType = SemanticType::classType(
+        classId, classTypeArguments, classValueArguments);
+    concrete.traits = typeTraits(concreteType);
+    if (concrete.defaultConstructor == SpecialMemberStatus::Generated)
+      concrete.defaultConstructor =
+          classCanUseStructuralDefaultConstruction(concreteType)
+              ? SpecialMemberStatus::Generated
+              : SpecialMemberStatus::Deleted;
+    // Absence of an open-primary operation is not an explicit '= delete'.
+    // The ordinary concrete structural trait query owns availability.
+    concrete.copyConstructor = concrete.traits.copyable
+                                   ? SpecialMemberStatus::Generated
+                                   : SpecialMemberStatus::Deleted;
+    concrete.moveConstructor = concrete.traits.movable
+                                   ? SpecialMemberStatus::Generated
+                                   : SpecialMemberStatus::Deleted;
+    concrete.copyAssignment = concrete.traits.copyAssignable
+                                  ? SpecialMemberStatus::Generated
+                                  : SpecialMemberStatus::Deleted;
+    concrete.moveAssignment = concrete.traits.moveAssignable
+                                  ? SpecialMemberStatus::Generated
+                                  : SpecialMemberStatus::Deleted;
+    semanticModel.record(*classType->declaration, std::move(concrete));
+  }
   // Substitution can make aliases and class-owned method packs ill-formed
   // even when no method is called. Validate their types in the concrete
   // owner scope rather than deferring object-position errors to C++ emission.
@@ -494,6 +525,12 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
         }
       } else if (const auto *alias = stmtAs<TypeAliasDecl>(member.get())) {
         validateType(alias->target());
+        if (const TypeAliasInfo *primary =
+                semanticModel.findTypeAlias(*alias)) {
+          TypeAliasInfo concrete = *primary;
+          concrete.type = typeOf(alias->target());
+          semanticModel.record(*alias, std::move(concrete));
+        }
       } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
                  function != nullptr && !function->parameters().empty() &&
                  function->parameters().back().pack) {
@@ -696,7 +733,12 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
       const bool storedReference =
           member != info.members.end() &&
           member->second.symbol.type.kind == SemanticType::Reference;
-      if (!field.declaration->initializer() && !storedReference) {
+      const bool nominalDefault =
+          member != info.members.end() &&
+          member->second.symbol.type.kind == SemanticType::Class &&
+          isDefaultInitializable(member->second.symbol.type, true);
+      if (!field.declaration->initializer() && !storedReference &&
+          !nominalDefault) {
         report(field.declaration->name(),
                "Class and struct fields must have an initializer or be "
                "initialized by a constructor.");
@@ -716,8 +758,7 @@ auto SemanticVisitor::Impl::visitClassDecl(const ClassDecl &stmt) -> void {
       const Parameter &parameter = constructor.declaration->parameters()[i];
       const SemanticType &type = constructor.parameterTypes[i];
       BindingInfo binding = bindingInfo(type, AccessMode::ReadOnly);
-      binding.symbol = recordBindingOccurrence(parameter.name, type, false,
-                                               SemanticBindingKind::Parameter);
+      binding.symbol = recordParameterBinding(parameter, type);
       semanticModel.record(parameter, std::move(binding));
     }
   }
@@ -873,15 +914,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
          constructorInfo->kind == ConstructorKind::Move);
     if (nestsBorrowedState(parameterType) && !trustedGuardSpecialMember &&
         !isBorrowedCarrierReference(parameterType)) {
-      report(parameter.name,
+      report(parameter.sourceAnchor(),
              "Constructor parameters cannot nest borrowed state in the "
              "current lifetime model.",
              "GTI-S2045");
     }
     const SymbolId parameterSymbol =
-        recordBindingOccurrence(parameter.name, parameterType,
-                                parameter.mutability == Mutability::Mutable,
-                                SemanticBindingKind::Parameter);
+        recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
@@ -1117,7 +1156,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       valueType = field == nullptr
                       ? analyze(initializer.arguments.front())
                       : analyzeInitializer(initializer.arguments.front(),
-                                           initializerTarget);
+                                           initializerTarget, true);
     }
     analyzingConstructorInitializer = enclosingConstructorInitializer;
     if (field != nullptr && initializer.arguments.size() == 1 &&
@@ -1254,7 +1293,12 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   }
 
   for (const FieldInfo &field : owner.fields) {
-    if (!field.declaration->initializer() &&
+    const SemanticType fieldType = typeOf(field.declaration->type());
+    const bool nominalDefault =
+        semanticModel.implicitFieldInitializer(*field.declaration) &&
+        fieldType.kind == SemanticType::Class &&
+        isDefaultInitializable(fieldType, true);
+    if (!field.declaration->initializer() && !nominalDefault &&
         !initializedFields.contains(field.declaration->name().lexeme)) {
       report(field.declaration->name(),
              "Field must be initialized by this constructor.");
@@ -1937,15 +1981,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         directOwningPayloadTransport);
     if (nestsBorrowedState(parameterType) &&
         !isBorrowedCarrierReference(parameterType)) {
-      report(parameter.name,
+      report(parameter.sourceAnchor(),
              "Function parameters cannot nest borrowed state in the "
              "current lifetime model.",
              "GTI-S2045");
     }
     const SymbolId parameterSymbol =
-        recordBindingOccurrence(parameter.name, parameterType,
-                                parameter.mutability == Mutability::Mutable,
-                                SemanticBindingKind::Parameter);
+        recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
@@ -3069,12 +3111,11 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
          .name = stmt.typeParameters()[index].lexeme});
   }
 }
-
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
-  semanticModel.recordFullExpression(stmt, stmt.initializer());
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   if (stmt.type().name.last().kind == TokenKind::AUTO) {
+    semanticModel.recordFullExpression(stmt, stmt.initializer());
     analyzeInferredVariable(stmt);
     return;
   }
@@ -3096,6 +3137,17 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const SemanticType declaredType =
       typeOf(stmt.type(),
              stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
+  const bool openField = declaredType.kind == SemanticType::Class &&
+                         !isConcreteExactSpecializationType(declaredType);
+  const ExprPtr &initializer =
+      !stmt.initializer() && instanceField && !openField &&
+              declaredType.kind == SemanticType::Class &&
+              isDefaultInitializable(declaredType, true)
+          ? semanticModel.implicitFieldInitializer(stmt)
+          : stmt.initializer();
+  semanticModel.recordFullExpression(stmt, initializer);
+  if (catalog.sealed)
+    validateOrdinaryClassLayout(declaredType);
   if (declaredType.kind == SemanticType::Array &&
       containsOwningPayloadEnum(declaredType)) {
     Diagnostic diagnostic = makeDiagnostic(
@@ -3143,9 +3195,6 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         "value has an explicit structural lifecycle.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  if (functionDepth > 0) {
-    recordProgramCleanupEffects(declaredType, tokenSpan(stmt.name()));
-  }
   const SemanticBindingKind bindingKind =
       currentClass && functionDepth == 0
           ? (stmt.isStatic() ? SemanticBindingKind::StaticField
@@ -3174,6 +3223,15 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   info.staticStorage = stmt.isStatic();
   info.internalLinkage = internalLinkage;
   semanticModel.record(stmt, std::move(info));
+  if (std::find(requestSession.invalidOrdinaryLayouts.begin(),
+                requestSession.invalidOrdinaryLayouts.end(),
+                declaredType) != requestSession.invalidOrdinaryLayouts.end()) {
+    // Preserve declaration identity for recovery, but do not attempt lifecycle
+    // construction of a type whose owning layout proof already failed.
+    return;
+  }
+  if (functionDepth > 0)
+    recordProgramCleanupEffects(declaredType, tokenSpan(stmt.name()));
   const bool globalStorage =
       functionDepth == 0 && (!currentClass || stmt.isStatic());
   SemanticType initializerType = SemanticType::Unknown;
@@ -3191,13 +3249,12 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "class field.",
            "GTI-S2019");
   } else if (declaredType.kind == SemanticType::PrefixStorage &&
-             functionDepth > 0 && !stmt.initializer()) {
+             functionDepth > 0 && !initializer) {
     report(stmt.name(),
            "Compiler-private storage bindings require an allocation "
            "initializer.",
            "GTI-S2019");
-  } else if (declaredType.kind == SemanticType::UniqueOwner &&
-             !stmt.initializer()) {
+  } else if (declaredType.kind == SemanticType::UniqueOwner && !initializer) {
     report(stmt.name(),
            "Compiler-private unique owner bindings require an initializer.",
            "GTI-S2018");
@@ -3249,11 +3306,11 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              "carriers cannot be stored as fields.",
              "GTI-S2045");
     }
-  } else if (declaredType.kind == SemanticType::Reference &&
-             !stmt.initializer() && !instanceField) {
+  } else if (declaredType.kind == SemanticType::Reference && !initializer &&
+             !instanceField) {
     report(stmt.name(), "Reference bindings require an initializer.",
            "GTI-S2017");
-  } else if (!stmt.initializer()) {
+  } else if (!initializer) {
     const bool field = currentClass && functionDepth == 0 && !stmt.isStatic();
     const bool passiveStorageField =
         field && currentClass &&
@@ -3294,9 +3351,19 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              "GTI-S2036");
     } else if (!field && !stmt.isMutable()) {
       report(stmt.name(), "Immutable variable must have an initializer.");
+    } else if (!field && !globalStorage && !stmt.isRangeBinding() &&
+               declaredType.kind != SemanticType::Unknown) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2000", DiagnosticPhase::Semantics, stmt.name(),
+                         "Mutable local variable '" + stmt.name().lexeme +
+                             "' requires an initializer.");
+      diagnostic.hints.emplace_back(
+          "Initialize the binding where it is declared. A later assignment "
+          "does not initialize an otherwise uninitialized local declaration.");
+      diagnostics.emplace_back(std::move(diagnostic));
     }
   }
-  if (stmt.initializer()) {
+  if (initializer) {
     const bool enclosingFieldInitializer = analyzingFieldInitializer;
     const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
     if (globalStorage && symbol != 0) {
@@ -3309,7 +3376,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     }
     analyzingFieldInitializer = currentClass && functionDepth == 0;
     const bool directInitializer =
-        exprAs<DirectInitializer>(stmt.initializer().get()) != nullptr;
+        exprAs<DirectInitializer>(initializer.get()) != nullptr;
     const bool establishesLoan =
         !directInitializer && (declaredType.kind == SemanticType::Reference ||
                                typeTraits(declaredType).containsBorrowedState);
@@ -3317,11 +3384,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       ++suppressLoanPlaceAccessDepth;
       ++programStoragePlaceUseDepth;
     }
-    initializerType =
-        analyzeInitializer(stmt.initializer(), declaredType, true);
+    initializerType = analyzeInitializer(initializer, declaredType, true);
     if (declaredType.kind == SemanticType::Reference &&
         declaredType.referenceAccess == AccessMode::Mutable) {
-      recordMutableBindingUse(stmt.initializer());
+      recordMutableBindingUse(initializer);
     }
     if (establishesLoan) {
       --suppressLoanPlaceAccessDepth;
@@ -3332,8 +3398,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   }
 
   const ExpressionInfo *initializerInfo =
-      stmt.initializer() ? semanticModel.findExpression(*stmt.initializer())
-                         : nullptr;
+      initializer ? semanticModel.findExpression(*initializer) : nullptr;
   const bool ownerDependentText =
       (declaredType.kind == SemanticType::StringView ||
        declaredType.kind == SemanticType::CString) &&
@@ -3365,8 +3430,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   }
 
   const bool initializerAssignable =
-      !stmt.initializer() ||
-      isOwnershipAssignable(declaredType, initializerType, stmt.initializer());
+      !initializer ||
+      isOwnershipAssignable(declaredType, initializerType, initializer);
   const std::optional<ConstantValue> constant =
       constexprBindingValue(stmt, declaredType,
                             diagnostics.size() == declarationDiagnosticStart &&
@@ -3378,10 +3443,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   }
 
   const auto rawOrigins = declaredType.kind == SemanticType::RawPointer
-                              ? rawPointerOrigins(stmt.initializer())
+                              ? rawPointerOrigins(initializer)
                               : std::vector<RawPointerOrigin>{};
   const auto rawFields = declaredType.kind != SemanticType::RawPointer
-                             ? rawPointerFields(stmt.initializer().get())
+                             ? rawPointerFields(initializer.get())
                              : std::vector<ProjectedRawPointerOrigins>{};
   if (!predeclaredVariables.contains(&stmt)) {
     if (functionDepth == 0 && !currentClass) {
@@ -3402,23 +3467,23 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
   }
-  if (stmt.initializer() && declaredType.kind == SemanticType::Reference &&
-      exprAs<DirectInitializer>(stmt.initializer().get()) == nullptr) {
-    validateReferenceBinding(declaredType, initializerType, stmt.initializer());
+  if (initializer && declaredType.kind == SemanticType::Reference &&
+      exprAs<DirectInitializer>(initializer.get()) == nullptr) {
+    validateReferenceBinding(declaredType, initializerType, initializer);
     if (declaredType.arguments.size() == 1 &&
         !isDirectOwnerType(declaredType.arguments[0])) {
-      recordRetainedBorrow(stmt, stmt.initializer());
+      recordRetainedBorrow(stmt, initializer);
     }
-  } else if (stmt.initializer()) {
+  } else if (initializer) {
     if (initializerType != SemanticType::Unknown &&
         (typeTraits(declaredType).containsBorrowedState ||
          ownerDependentText)) {
-      validateStoredBorrowInitialization(declaredType, stmt.initializer());
-      recordRetainedBorrow(stmt, stmt.initializer());
+      validateStoredBorrowInitialization(declaredType, initializer);
+      recordRetainedBorrow(stmt, initializer);
     }
     if (!initializerAssignable && declaredType != SemanticType::Unknown &&
         initializerType != SemanticType::Unknown) {
-      report(expressionToken(stmt.initializer()),
+      report(expressionToken(initializer),
              "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
                  typeSpelling(declaredType) + "' with a value of type '" +
                  typeSpelling(initializerType) + "'.",
@@ -3432,7 +3497,6 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     }
   }
 }
-
 auto SemanticVisitor::Impl::visitWhileStmt(const WhileStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.condition());
   noteUnsupportedNestedLoanControlFlow();
@@ -3945,8 +4009,7 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
     // A multidimensional array element is itself a fixed array; the
     // construction that must be resolved is the leaf class element's.
     if (std::optional<ResolvedConstructionInfo> construction =
-            resolveArrayElementDefaultConstruction(
-                fixedArrayClassLeafType(elementType))) {
+            resolveDefaultConstruction(fixedArrayClassLeafType(elementType))) {
       recordDefaultArgumentDependencies(construction->defaultArguments);
       semanticModel.recordArrayElementConstruction(expr,
                                                    std::move(*construction));
@@ -4049,12 +4112,12 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
     if (selected && *sourceOperator == OverloadedOperator::NotEqual &&
         expr.oper().generated &&
         (selected->parameterTypes.size() != 1 ||
-         selected->parameterTypes.front().kind != SemanticType::Reference ||
-         selected->parameterTypes.front().referenceAccess !=
-             AccessMode::ReadOnly)) {
+         (selected->parameterTypes.front() != rightType &&
+          selected->parameterTypes.front() !=
+              SemanticType::referenceTo(rightType, AccessMode::ReadOnly)))) {
       report(expr.oper(),
              "Range iterator operator!= must accept its sentinel by "
-             "read-only reference.",
+             "value or read-only reference.",
              "GTI-S2022");
     }
     currentType = selected ? callExpressionType(selected->returnType)
@@ -4300,12 +4363,27 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
   if (deferredCalleeType.kind == SemanticType::TypeParameter) {
     if (argumentAnalysis.hasDeferred()) {
-      report(expr.paren(),
-             "A brace argument requires a callable with a concrete fixed-"
-             "array parameter signature.",
-             "GTI-S2015");
-      currentType = SemanticType::Unknown;
-      return;
+      for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+        if (!argumentAnalysis.deferred[index])
+          continue;
+        const ExprPtr &argument = expr.arguments()[index];
+        if (isContextualArrayArgument(argument)) {
+          report(expressionToken(argument),
+                 "A brace argument requires a callable with a concrete fixed-"
+                 "array parameter signature.",
+                 "GTI-S2015");
+          currentType = SemanticType::Unknown;
+          return;
+        }
+        // The open receiver does not supply an argument type. Record a
+        // result-inference obligation for direct nested callable producers,
+        // then resolve the complete composition in concrete semantics. Do
+        // not guess the inner result from the enclosing return type.
+        argumentTypes[index] = isContextualCallableResultArgument(argument)
+                                   ? analyzeExpectedCallableResult(
+                                         argument, SemanticType::Unknown, true)
+                                   : analyze(argument);
+      }
     }
     analyzeDeferredCallableCall(expr, deferredCalleeType, argumentTypes);
     return;
@@ -5362,6 +5440,22 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
           : SemanticType::Unknown;
   const ClassInfo *owner =
       target.kind == SemanticType::Class ? classInfo(target) : nullptr;
+  // An enclosing return/call's scalar expectation is not a struct destination
+  // for this list. Refine the existing rejection without changing acceptance
+  // of eligible contextual construction, including nested designated fields.
+  if (owner == nullptr && (target == SemanticType::Unknown ||
+                           contextualInitializerExpression != &expr)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2091", DiagnosticPhase::Semantics, expr.brace(),
+        "A designated initializer requires a destination struct type; this "
+        "expression has no contextual destination type.");
+    diagnostic.hints.emplace_back(
+        "Initialize a binding with an explicit struct type using this list, "
+        "then use that value in the expression.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (owner == nullptr || owner->kind != ClassKind::Struct ||
       !owner->designatedConstructor) {
     report(
@@ -5683,6 +5777,88 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
     assignRawPointerFields(targetPlace, expr.value().get());
   }
   currentType = valueTarget;
+}
+
+auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
+  const SemanticType targetType = analyzeProjectionBase(expr.target());
+  const ExpressionInfo *target = semanticModel.findExpression(*expr.target());
+  const bool mutableTarget = target != nullptr &&
+                             target->category == ValueCategory::Place &&
+                             target->access == AccessMode::Mutable;
+  const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
+  const SemanticType valueType =
+      simpleAssignment ? analyzeInitializer(expr.value(), targetType)
+                       : analyze(expr.value());
+  if (targetType == SemanticType::Unknown) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (!mutableTarget) {
+    report(expr.oper(),
+           "Assignment requires a mutable place; an owned call result or "
+           "read-only reference is not writable.",
+           "GTI-S2002");
+    currentType = targetType;
+    return;
+  }
+
+  const SemanticPlace targetPlace = semanticPlace(expr.target());
+  if (targetPlace.root != nullptr) {
+    reportLoanPlaceConflict(expr.oper(), targetPlace, AccessMode::Mutable,
+                            "Cannot write while an overlapping borrow may "
+                            "still be live.");
+  }
+  // Unlike a source operator's reserved projection, an ordinary accessor
+  // executes fully before the right operand. Its mutable result remains
+  // borrowed until the store, so later operands cannot access that owner.
+  if (const auto production = transientBorrowProduction(expr.target());
+      production && production->access == AccessMode::Mutable) {
+    std::vector<SemanticLoanPlace> reads;
+    std::vector<TransientBorrowProduction> productions;
+    appendTransientReadPlaces(expr.value(), reads, productions);
+    std::vector<SemanticLoanPlace> mutations;
+    appendTransientMutationPlaces(expr.value(), mutations);
+    const auto overlaps = [&](const SemanticLoanPlace &place) {
+      return loanPlacesOverlap(production->place, place);
+    };
+    if (std::any_of(reads.begin(), reads.end(), overlaps) ||
+        std::any_of(mutations.begin(), mutations.end(), overlaps)) {
+      report(expr.oper(),
+             "The right operand accesses storage still mutably borrowed "
+             "by the assignment target.",
+             "GTI-S2017");
+      diagnostics.back().related.push_back(
+          {tokenSpan(expressionToken(expr.target())),
+           "This target produces the mutable reference before the right "
+           "operand is evaluated."});
+    }
+  }
+  const auto mutationOperator = compoundOperator(expr.oper().kind);
+  if (!simpleAssignment && mutationOperator &&
+      targetType.kind == SemanticType::Class) {
+    const auto selected = resolveOperator(
+        expr, *mutationOperator, expr.target(), targetType, expr.oper(),
+        std::span<const SemanticType>(&valueType, 1),
+        std::span<const ExprPtr>(&expr.value(), 1));
+    currentType = selected ? callExpressionType(selected->returnType)
+                           : SemanticType::Unknown;
+    return;
+  }
+  if (simpleAssignment &&
+      !isOwnershipAssignment(targetType, valueType, expr.value())) {
+    report(expressionToken(expr.value()),
+           "Cannot assign a value of type '" + typeSpelling(valueType) +
+               "' to a mutable place of type '" + typeSpelling(targetType) +
+               "'.",
+           "GTI-S2003");
+  } else if (simpleAssignment && targetPlace.root != nullptr) {
+    reinitializePlace(targetPlace);
+    assignRawPointerFields(targetPlace, expr.value().get());
+  } else if (!simpleAssignment) {
+    validateCompoundAssignment(expr.oper(), targetType, valueType,
+                               expr.value().get());
+  }
+  currentType = targetType;
 }
 
 auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
@@ -6160,9 +6336,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         parameterType, parameter.type.name.last(), "lambda parameter",
         directOwningPayloadTransport);
     const SymbolId parameterSymbol =
-        recordBindingOccurrence(parameter.name, parameterType,
-                                parameter.mutability == Mutability::Mutable,
-                                SemanticBindingKind::Parameter);
+        recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
         bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                        ? AccessMode::Mutable
@@ -8574,7 +8748,7 @@ auto SemanticVisitor::Impl::validateConstexprFunction(
          parameter.mutability == Mutability::Mutable) ||
         (!instanceAnalysisActive && parameterType != SemanticType::Unknown &&
          !isSupportedConstexprType(observedType(parameterType), true))) {
-      reject(parameter.name,
+      reject(parameter.sourceAnchor(),
              "Constexpr function parameters must be non-pack supported "
              "values or read-only references to supported values.");
     }
@@ -8824,6 +8998,14 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     const Expr &source, const ResolvedConstructionInfo &resolved,
     const ExprList &explicitArguments, const Token &callSite,
     ConstexprInterpreter &context) -> ConstexprEvaluation {
+  if (resolved.directInitialization) {
+    if (explicitArguments.size() != 1)
+      return constexprFailure(callSite,
+                              ConstantEvaluationFailure::InvalidOperands);
+    // No execution rule is added here: the already-supported producer (which
+    // may stage verified MIR) alone determines the value and consumes budget.
+    return evaluateConstexprExpression(explicitArguments.front(), context);
+  }
   const ConstructorDecl *declaration = resolved.declaration;
   if (resolved.generatedDefault || declaration == nullptr ||
       !declaration->isConstexpr() ||
@@ -10409,6 +10591,10 @@ auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
   }
   if (const auto *assignment = exprAs<DereferenceSet>(expression)) {
     return expressionNeverReturns(assignment->object().get()) ||
+           expressionNeverReturns(assignment->value().get());
+  }
+  if (const auto *assignment = exprAs<PlaceSet>(expression)) {
+    return expressionNeverReturns(assignment->target().get()) ||
            expressionNeverReturns(assignment->value().get());
   }
   if (const auto *initializer = exprAs<DirectInitializer>(expression)) {

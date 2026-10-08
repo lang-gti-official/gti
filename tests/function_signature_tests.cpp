@@ -825,7 +825,11 @@ void invalidClassTypePacks() {
        "return 0; }",
        "GTI-S2017"},
       {"void bad<T>() { mut T local; } int main() { bad<int&>(); return 0; }",
-       "GTI-S2017"},
+       // Uniform local initialization rejects the generic definition before
+       // substituting T = int&. Concrete uninitialized references retain their
+       // dedicated reference diagnostic below.
+       "GTI-S2000"},
+      {"int main() { mut int& local; return 0; }", "GTI-S2017"},
   };
   for (const auto &[source, code] : cases) {
     const auto result =

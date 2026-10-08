@@ -133,6 +133,12 @@ public:
   [[nodiscard]] bool supportsFailureText() const {
     return ready() && !failureTextTemplate_.empty();
   }
+  [[nodiscard]] bool supportsBaseGateText() const {
+    return ready() && !baseGateTextTemplate_.empty();
+  }
+  [[nodiscard]] bool supportsBasePreparationText() const {
+    return ready() && !basePreparationTextTemplate_.empty();
+  }
   [[nodiscard]] bool boundaryDeclaration() const {
     return ready() && boundaryDeclaration_;
   }
@@ -158,6 +164,8 @@ private:
   std::string plainDeducedCallableTextTemplate_;
   std::string failureTextTemplate_;
   std::string failureDeducedCallableTextTemplate_;
+  std::string baseGateTextTemplate_;
+  std::string basePreparationTextTemplate_;
   bool boundaryDeclaration_ = false;
   bool initializerSchedule_ = false;
   std::vector<CppMirFieldInitializerSpelling> initializerFields_;

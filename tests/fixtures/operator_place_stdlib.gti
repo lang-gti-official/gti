@@ -1,5 +1,8 @@
 #include <std/memory>
 #include <std/optional>
+#include <std/vector>
+#include <std/array>
+#include <std/string>
 
 class Row {
   mut int32_t cells[2] = {};
@@ -7,6 +10,23 @@ public:
   Row() {}
   int32_t& operator[](std::size_t i) { return this.cells[i]; }
   mut int32_t& operator[](std::size_t i) mut { return this.cells[i]; }
+};
+mut int32_t& first_element(mut Row& row) {
+  return row[std::size_t(0)];
+}
+class Counter {
+  mut int32_t count = 0;
+public:
+  Counter() {}
+  void operator+=(int32_t amount) mut { this.count += amount; }
+  int32_t read() { return this.count; }
+};
+class CounterBox {
+  mut Counter counter{};
+public:
+  CounterBox() {}
+  mut Counter& slot() mut { return this.counter; }
+  int32_t read() { return this.counter.read(); }
 };
 int main() {
   mut auto owned = std::make_unique<int32_t>(1);
@@ -20,5 +40,25 @@ int main() {
   mut auto row = std::make_unique<Row>();
   (*row)[std::size_t(0)] += 7;
   if ((*row)[std::size_t(0)] != 7) { return 3; }
+  optional.value() = 12;
+  optional.value() += 2;
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});
+  values.at(std::size_t(0)) = 3;
+  values.front() += 1;
+  values.back() = 5;
+  mut std::array<int32_t, 2> fixed = std::array<int32_t, 2>({6, 7});
+  fixed.at(std::size_t(1)) = 8;
+  if (*optional != 14 || values[std::size_t(0)] != 4 ||
+      values[std::size_t(1)] != 5 || fixed[std::size_t(1)] != 8) { return 4; }
+  mut Row ordinary{};
+  first_element(ordinary) = 13;
+  mut CounterBox counter{};
+  counter.slot() += 4;
+  if (ordinary[std::size_t(0)] != 13 || counter.read() != 4) { return 5; }
+  mut std::vector<std::string> words{};
+  words.push_back(std::string("a"));
+  words.front().append("b");
+  words.back() = std::string("c");
+  if (words[std::size_t(0)].view() != "c") { return 6; }
   return 0;
 }

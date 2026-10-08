@@ -307,16 +307,13 @@
       ]
     },
     "c52_higher_order_lambdas": {
-      "code": "GTI-S2015",
-      "finding": "F14",
       "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "5 12 5 42 33\n", "stderr": "^$"}]
     },
     "c55_iterator_utilities": {
-      "code": "GTI-S2022",
-      "finding": "F16",
-      "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "9 15 15 3\n", "stderr": "^$"}]
     }
   },
   "projects": {
@@ -1679,25 +1676,20 @@
   },
   "reproducers": {
     "a01-call-result-into-field": {
-      "finding": "A01",
       "issue": 53,
       "outcome": "pass"
     },
     "a01-class-value-into-field": {
-      "finding": "A01",
       "issue": 53,
       "outcome": "pass"
     },
     "a01-field-assign-from-call-result-method": {
-      "finding": "A01",
       "issue": 53,
       "outcome": "pass"
     },
     "a03-generic-call-in-global-initializer": {
-      "code": "GTI-S2068",
-      "finding": "A03",
       "issue": 55,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a05-string-view-help-suggests-invalid-form": {
       "code": "GTI-S2003",
@@ -1757,14 +1749,11 @@
       "runs": 20
     },
     "a14-generated-ctor-field-in-user-ctor": {
-      "finding": "A14",
       "issue": 60,
       "outcome": "pass"
     },
     "a15-dependent-if-constexpr-local": {
-      "finding": "A15",
-      "issue": 61,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a16-relay-copyable-lambda": {
       "issue": 62,
@@ -1804,10 +1793,8 @@
       "outcome": "rejected"
     },
     "a23-recursive-value-generic-layout": {
-      "code": "GTI-S2082",
-      "finding": "A23",
       "issue": 67,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a24-unreachable-warning-per-instance": {
       "forbid": [
@@ -1817,14 +1804,12 @@
       "outcome": "pass"
     },
     "a25-expected-ref-relay-wrong-referent": {
-      "finding": "A25",
       "issue": 70,
-      "outcome": "runtime"
+      "outcome": "pass"
     },
     "a25-ref-return-from-expected-value": {
-      "finding": "A25",
       "issue": 70,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a26-overloaded-deref-store-reads-owner": {
       "issue": 71,
@@ -1835,37 +1820,30 @@
       "outcome": "pass"
     },
     "a28-map-range-for-key-view": {
-      "finding": "A28",
       "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-range-element-field-overloaded-operator": {
-      "finding": "A28",
       "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-range-element-field-ref-method": {
-      "finding": "A28",
       "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a29-method-on-returned-string-view": {
-      "finding": "A29",
       "issue": 74,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a29-string-view-size-on-dynamic-view": {
-      "finding": "A29",
       "issue": 74,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a30-assign-consuming-call-result": {
-      "finding": "A30",
       "issue": 75,
       "outcome": "pass"
     },
     "a31-move-on-break-path-then-reinit": {
-      "finding": "A31",
       "issue": 76,
       "outcome": "pass"
     },
@@ -1885,10 +1863,8 @@
       "outcome": "pass"
     },
     "a34-view-relay-through-subscript": {
-      "code": "GTI-S2045",
-      "finding": "A34",
       "issue": 78,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a35-expected-ref-field-stale-message": {
       "code": "GTI-S2045",
@@ -1901,53 +1877,43 @@
       "outcome": "rejected"
     },
     "a36-unique-ptr-member-init-nullptr": {
-      "code": "GTI-S2003",
-      "finding": "A36",
       "issue": 79,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a37-libc-qsort-link-name-conflict": {
-      "finding": "A37",
       "issue": 80,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a37-libc-strlen-prototype-conflict": {
-      "finding": "A37",
       "issue": 80,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a38-return-call-value-class": {
-      "finding": "A38",
       "issue": 81,
       "outcome": "pass"
     },
     "a38-return-expected-value-class": {
-      "finding": "A38",
       "issue": 81,
       "outcome": "pass"
     },
     "a39-ctor-address-of-struct-field": {
-      "finding": "A39",
       "issue": 82,
       "outcome": "pass"
     },
     "a40-c-abi-record-pointer-array-field": {
-      "finding": "A40",
       "issue": 83,
-      "outcome": "ice"
+      "native_sources": ["native/projection_records.c"],
+      "outcome": "pass"
     },
     "a40-raw-pointer-fixed-array-field-index": {
-      "finding": "A40",
       "issue": 83,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a41-storage-emplace-fixed-array-silent": {
-      "finding": "A41",
       "issue": 84,
       "outcome": "pass"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
-      "finding": "A41",
       "issue": 84,
       "outcome": "pass"
     },
@@ -1981,27 +1947,22 @@
       "outcome": "pass"
     },
     "a45-base-plus-string-field-unsupported": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-base-state-rollback-unsupported": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-derived-destructor-explicit-base": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-derived-destructor-generated-ctor": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-literal-base-argument": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
@@ -2014,34 +1975,28 @@
       "outcome": "pass"
     },
     "a47-mut-payload-binding-through-mut-ref": {
-      "finding": "A47",
       "issue": 88,
       "outcome": "pass"
     },
     "a48-switch-on-owning-enum-field": {
-      "finding": "A48",
       "issue": 89,
       "outcome": "pass"
     },
     "a49-owning-enum-call-result-argument": {
-      "finding": "A49",
       "issue": 90,
       "outcome": "pass"
     },
     "a50-designated-omitted-brace-default": {
-      "finding": "A50",
       "issue": 91,
       "outcome": "pass"
     },
     "a51-binding-over-class-array": {
-      "finding": "A51",
       "issue": 92,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a51-binding-over-class-array-invalid-cpp": {
-      "finding": "A51",
       "issue": 92,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a52-struct-with-union-array": {
       "issue": 93,
@@ -2053,12 +2008,11 @@
     },
     "a53-operator-temporary-ref-diagnostic": {
       "code": "GTI-S2022",
-      "finding": "A53",
       "forbid": [
         "convert the operand explicitly"
       ],
       "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a54-alias-constrained-generic-class-argument": {
       "outcome": "pass"
@@ -2067,24 +2021,20 @@
       "outcome": "pass"
     },
     "a55-ctor-pack-move-only-field-init": {
-      "finding": "A55",
       "issue": 96,
       "outcome": "pass"
     },
     "a55-list-emplace-move-only-argument": {
-      "finding": "A55",
       "issue": 96,
       "outcome": "pass"
     },
     "a56-make-unique-same-type": {
-      "finding": "A56",
       "issue": 97,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a56-make-unique-string-from-string": {
-      "finding": "A56",
       "issue": 97,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a57-generic-member-field-range-for-silent": {
       "outcome": "pass"
@@ -2093,36 +2043,35 @@
       "outcome": "pass"
     },
     "a58-map-unique-ptr-value-deref": {
-      "finding": "A58",
-      "issue": 99,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a58-ref-to-owner-field-pointee-via-local-ref": {
-      "finding": "A58",
-      "issue": 99,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a59-map-at-then-element-ref": {
-      "finding": "A59",
-      "issue": 100,
-      "outcome": "ice"
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "<std/map>:[0-9]+: runtime error\\[GTI-R0015\\]: key_not_found in key_lookup\\n",
+          "stdout": ""
+        }
+      ],
+      "outcome": "pass"
     },
     "a59-readonly-ref-into-mut-nested-container": {
-      "finding": "A59",
-      "issue": 100,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a60-println-format-missing-include": {
-      "finding": "A60",
+      "code": "GTI-S2089",
       "forbid": [
         "convert"
       ],
       "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a61-designated-argument-diagnostic": {
       "code": "GTI-S2091",
-      "finding": "A61",
+      "forbid": ["no declared constructors"],
       "issue": 69,
       "outcome": "rejected"
     },
@@ -2130,10 +2079,8 @@
       "outcome": "pass"
     },
     "f10-assign-through-mut-ref-method": {
-      "code": "GTI-P0001",
-      "finding": "F10",
-      "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "4\n", "stderr": "^$"}]
     },
     "f11-pair-nested-in-pair": {
       "outcome": "pass"
@@ -2145,25 +2092,21 @@
       "outcome": "pass"
     },
     "f14-nested-callable-invocation": {
-      "code": "GTI-S2015",
-      "finding": "F14",
       "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "12\n", "stderr": "^$"}]
     },
     "f15-method-on-operator-result": {
       "outcome": "pass"
     },
     "f16-canonical-iterator-loop": {
-      "code": "GTI-S2022",
-      "finding": "F16",
-      "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "1\n", "stderr": "^$"}]
     },
     "f17-unnamed-parameter-bad-span": {
       "code": "GTI-S2045",
-      "finding": "F17",
       "issue": 103,
-      "outcome": "bad-location"
+      "outcome": "rejected"
     },
     "f2-generic-callable-by-reference": {
       "outcome": "pass"
@@ -2202,31 +2145,27 @@
       "outcome": "pass"
     },
     "s01-parenthesized-constructor": {
-      "finding": "S01",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "s02-ternary-class-value": {
-      "finding": "S02",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "s03-method-on-moved-value": {
       "outcome": "pass"
     },
     "s04-bodyless-decl-unnamed-param": {
-      "finding": "S04",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "s05-owning-enum-assign-invalid-cpp": {
       "outcome": "pass"
     },
     "s06-constexpr-unnamed-param-no-span": {
       "code": "GTI-S2057",
-      "finding": "S06",
       "issue": 103,
-      "outcome": "bad-location"
+      "outcome": "rejected"
     },
     "s07-alias-as-scope-qualifier": {
       "outcome": "pass"
@@ -2235,9 +2174,10 @@
       "outcome": "pass"
     },
     "s09-uninitialized-mut-scalar": {
-      "finding": "S09",
-      "issue": 103,
-      "outcome": "ice"
+      "code": "GTI-S2000",
+      "forbid": ["GTI-B0001", "native C++ compiler"],
+      "at_most": {"error[GTI-S2000]": 1},
+      "outcome": "rejected"
     },
     "s10-ctor-by-value-copy": {
       "outcome": "pass"
@@ -2246,12 +2186,10 @@
       "outcome": "pass"
     },
     "s12-lossy-implicit-int-to-float": {
-      "finding": "S12",
-      "issue": 103,
-      "outcome": "pass"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "16777217 16777216\n", "stderr": "^$"}]
     },
     "s15-payload-enum-plain-class": {
-      "finding": "S15",
       "issue": 103,
       "outcome": "pass"
     }

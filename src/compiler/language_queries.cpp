@@ -731,6 +731,10 @@ public:
           semantics.findClassType(selected.constructedType.classId);
       if (owner != nullptr) {
         result.signature = signatures.constructor(*owner, selected);
+        if (selected.directInitialization)
+          result.notes.emplace_back(
+              "direct initialization from a fresh same-type result; no "
+              "additional copy, move, or temporary lifetime");
       }
       break;
     }
@@ -1386,6 +1390,7 @@ private:
 
       std::vector<std::string> renderedSignatures;
       renderedSignatures.reserve(contract->signatures.size());
+      bool deferredSignature = false;
       for (const CallableSignatureRequirement &signature :
            contract->signatures) {
         std::string rendered;
@@ -1405,11 +1410,19 @@ private:
           if (index != 0) {
             rendered += ", ";
           }
-          rendered += types.print(substituteSelectedCallType(
-              signature.parameterTypes[index], substitution));
+          const SemanticType parameter = substituteSelectedCallType(
+              signature.parameterTypes[index], substitution);
+          deferredSignature |= parameter == SemanticType::Unknown;
+          rendered += parameter == SemanticType::Unknown
+                          ? "resolved on instantiation"
+                          : types.print(parameter);
         }
-        rendered += ") -> " + types.print(substituteSelectedCallType(
-                                  signature.returnType, substitution));
+        deferredSignature |= signature.inferResultFromInstantiation;
+        rendered += ") -> ";
+        rendered += signature.inferResultFromInstantiation
+                        ? "result from selected callable"
+                        : types.print(substituteSelectedCallType(
+                              signature.returnType, substitution));
         if (std::find(renderedSignatures.begin(), renderedSignatures.end(),
                       rendered) == renderedSignatures.end()) {
           renderedSignatures.push_back(std::move(rendered));
@@ -1435,8 +1448,13 @@ private:
                     ? "; no direct invocation signature"
                     : "; forwarded only";
       } else {
-        note += renderedSignatures.size() == 1 ? ", exact signature: "
-                                               : ", exact signatures: ";
+        if (deferredSignature)
+          note += renderedSignatures.size() == 1
+                      ? ", invocation requirement: "
+                      : ", invocation requirements: ";
+        else
+          note += renderedSignatures.size() == 1 ? ", exact signature: "
+                                                 : ", exact signatures: ";
         for (std::size_t index = 0; index < renderedSignatures.size();
              ++index) {
           if (index != 0) {

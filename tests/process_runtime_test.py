@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+from native_symbol_spelling import native_spelling
+
 
 def run(command: list[str], environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
@@ -74,7 +76,7 @@ def main() -> int:
                 generated = binary.with_suffix(".gti.cpp").read_text(
                     encoding="utf-8"
                 )
-                if "gti_rt_process_run_v1(" not in generated:
+                if f"{native_spelling(generated, 'gti_rt_process_run_v1')}(" not in generated:
                     raise AssertionError("missing versioned process runtime call")
                 if "// GTI verified-MIR body:" not in generated:
                     raise AssertionError("missing verified-MIR emission witness")

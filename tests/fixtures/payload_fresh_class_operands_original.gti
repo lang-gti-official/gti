@@ -1,0 +1,23 @@
+enum Event<T> { item(T value) };
+class Inner {
+public:
+  Event<int32_t> data;
+  Inner(Event<int32_t> data) : data(data) {}
+};
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+int main() {
+  Pair<Inner> pair = Pair<Inner>::items(
+      Inner(Event<int32_t>::item(1)), Inner(Event<int32_t>::item(2)));
+  switch (pair) {
+    case Pair<Inner>::items(auto& first, second):
+      switch (first.data) {
+        case Event<int32_t>::item(auto& value):
+          if (value != 1) { return 1; }
+          break;
+      }
+      switch (second.data) {
+        case Event<int32_t>::item(value): return value - 2;
+      }
+    case Pair<Inner>::other: return 3;
+  }
+}

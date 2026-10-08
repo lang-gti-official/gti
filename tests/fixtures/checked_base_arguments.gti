@@ -1,0 +1,23 @@
+#include <std/string>
+#include <std/vector>
+
+class Base {
+  int value;
+public:
+  Base(int value) : value(value) { std::println(10); }
+  int get() { return value; }
+};
+class Derived : public Base {
+public:
+  Derived(int value) : Base(value + 1) { std::println(20); }
+};
+class Extreme : public Base {
+public:
+  Extreme(int value) : Base(-2147483648 + value) {}
+};
+int main(int argc, std::vector<std::string> argv) {
+  int initial = argc == 1 ? 49 : 2147483647;
+  Derived value = Derived(initial);
+  Extreme extreme = Extreme(1);
+  return value.get() - 50 + (extreme.get() == -2147483647 ? 0 : 1);
+}

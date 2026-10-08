@@ -1,0 +1,39 @@
+struct Cell { mut int32_t value = 7; };
+struct Frame {
+  mut int32_t slots[4] = {1, 2, 3, 4};
+  mut Cell cells[2] = {};
+};
+
+class Receiver {
+  Cell cells[2] = {};
+public:
+  int sum() { return this.cells[0].value + this.cells[1].value; }
+};
+
+int next_index(mut int& evaluations) {
+  evaluations += 1;
+  return evaluations - 1;
+}
+
+int main() {
+  mut Frame frame{};
+  Frame* pointer = &frame;
+  Receiver receiver{};
+  if (receiver.sum() != 14) { return 1; }
+  unsafe {
+    mut int evaluations = 0;
+    int first = pointer->slots[next_index(evaluations)];
+    if (first != 1 || evaluations != 1) { return 2; }
+    int second = (*pointer).slots[next_index(evaluations)];
+    if (second != 2 || evaluations != 2) { return 3; }
+    pointer->slots[2] = 9;
+    int32_t* address = &pointer->slots[next_index(evaluations)];
+    if (evaluations != 3) { return 6; }
+    *address = 11;
+    if (pointer[0].slots[2] != 11) { return 4; }
+    int32_t* cell_address = &pointer->cells[0].value;
+    *cell_address = 8;
+    if (pointer->cells[0].value != 8) { return 5; }
+  }
+  return 0;
+}

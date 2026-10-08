@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from case_jobs import configured_jobs, positive_jobs, run_cases
+
 
 def run(command):
     return subprocess.run(command, text=True, capture_output=True, check=False)
@@ -16,6 +18,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("compiler", type=pathlib.Path)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs(),
+                        help="Concurrent compilations; executions stay ordered. Default: serial outside CTest.")
     args = parser.parse_args()
     compiler = args.compiler.resolve()
     source = (pathlib.Path(__file__).parent / "fixtures" /
@@ -247,33 +251,44 @@ int main() {
             sys.stderr.write("construction-only enum must remain nonassignable\n" +
                              rejected.stdout + rejected.stderr)
             return 1
+        plan = []
         for name, (text, expected_exit, expected_output) in cases.items():
             path = root / (name + ".gti")
             path.write_text(text)
             for index, (standard, optimization, flags) in enumerate(modes):
-                binary = root / f"{name}-{index}"
-                command = [str(compiler), str(path), "--std", standard,
-                           "-" + optimization, "-o", str(binary)]
-                if flags:
-                    command += ["--", *flags]
-                compiled = run(command)
-                if compiled.returncode:
-                    sys.stderr.write(f"{name} {standard} {optimization}: compile failed\n" +
+                plan.append((f"{name}/{index}-{standard}-{optimization}",
+                             (name, index, standard, optimization, flags,
+                              expected_exit, expected_output, exact_stderr.get(name))))
+
+        def compile_case(case):
+            name, index, standard, optimization, flags, *_ = case
+            binary = root / f"{name}-{index}"
+            command = [str(compiler), str(root / (name + ".gti")), "--std", standard,
+                       "-" + optimization, "-o", str(binary)]
+            if flags:
+                command += ["--", *flags]
+            compiled = run(command)
+            if compiled.returncode:
+                raise AssertionError(f"{name} {standard} {optimization}: compile failed\n" +
                                      compiled.stdout + compiled.stderr)
-                    return 1
-                executed = run([str(binary)])
-                if (executed.returncode != expected_exit or
-                        executed.stdout != expected_output or
-                        (name in exact_stderr and
-                         executed.stderr != exact_stderr[name]) or
-                        (name not in exact_stderr and expected_exit == 70 and
-                         "division_by_zero" not in executed.stderr) or
-                        "AddressSanitizer" in executed.stderr or
-                        "runtime error:" in executed.stderr):
-                    sys.stderr.write(f"{name} {standard} {optimization}: "
+            return case, binary
+
+        def execute_case(compiled):
+            case, binary = compiled
+            name, _, standard, optimization, _, expected_exit, expected_output, stderr = case
+            executed = run([str(binary)])
+            if (executed.returncode != expected_exit or
+                    executed.stdout != expected_output or
+                    (stderr is not None and executed.stderr != stderr) or
+                    (stderr is None and expected_exit == 70 and
+                     "division_by_zero" not in executed.stderr) or
+                    "AddressSanitizer" in executed.stderr or
+                    "runtime error:" in executed.stderr):
+                raise AssertionError(f"{name} {standard} {optimization}: "
                                      f"exit={executed.returncode} stdout={executed.stdout!r} "
                                      f"stderr={executed.stderr!r}\n")
-                    return 1
+
+        run_cases(plan, compile_case, args.jobs, execute_case)
     print(f"Generic payload sums: {len(cases) * len(modes)} native outcomes passed")
     return 0
 

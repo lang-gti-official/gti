@@ -8,6 +8,8 @@ import tempfile
 
 from sanitizer_support import thread_sanitizer_enabled
 
+from native_symbol_spelling import native_spelling
+
 
 def execute(command, *, quiet=False):
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -72,10 +74,12 @@ def main():
                 emitted = binary.with_suffix(".gti.cpp").read_text()
                 if "// GTI verified-MIR body:" not in emitted:
                     raise AssertionError("missing verified-MIR production witness")
-                if emitted.count("gti_rt_cthread_yield_v1(") < 2:
+                yield_call = native_spelling(emitted, "gti_rt_cthread_yield_v1")
+                if emitted.count(f"{yield_call}(") < 2:
                     raise AssertionError("yield lost its native call or declaration")
                 if fixture.startswith("cthread_identity"):
-                    if emitted.count("gti_rt_cthread_current_v1(") < 2:
+                    current_call = native_spelling(emitted, "gti_rt_cthread_current_v1")
+                    if emitted.count(f"{current_call}(") < 2:
                         raise AssertionError("identity lost its native call or declaration")
             print(f"cthread yield/identity: {name} passed", flush=True)
 

@@ -1,0 +1,39 @@
+#include <std/string>
+#include <std/vector>
+
+class Part {
+  int id;
+public:
+  Part(int id) : id(id) {}
+  ~Part() { std::println(200 + this.id); }
+};
+
+class Anchor {
+  Part part;
+  std::string label;
+  int value;
+  mut const int* original = nullptr;
+public:
+  Anchor(int value, int divisor)
+      : part(Part(value)), label(std::string("owned")), value(value) {
+    this.original = &this.value;
+    int checked = 1 / divisor;
+  }
+  Anchor(Anchor& other) = delete;
+  Anchor(Anchor&& other) = delete;
+  bool stable() { return this.original == &this.value; }
+  ~Anchor() { std::println(this.value); }
+};
+
+class Tail { public: ~Tail() { std::println(99); } };
+
+Anchor make_anchor(int divisor) { return Anchor(1, divisor); }
+Anchor relay(int divisor) { return Anchor(Anchor((make_anchor(divisor)))); }
+
+int main(int argc, std::vector<std::string> argv) {
+  Tail tail{};
+  Anchor result = Anchor((relay(argc == 1 ? 1 : 0)));
+  if (!result.stable()) { return 1; }
+  std::println(7);
+  return 0;
+}

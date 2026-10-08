@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "native_symbol_spelling.h"
 
 namespace {
 
@@ -977,16 +978,18 @@ void testStandardLibraryImports() {
          "the POSIX std::tcp owner should provide typed open and close");
   const std::string tcpCpp =
       gti_test::emitCppText(tcp, lang::CppStandard::Cpp23, linuxTarget);
-  expect(tcpCpp.find("class socket") != std::string::npos &&
-             tcpCpp.find("runtime::socket(") != std::string::npos &&
-             tcpCpp.find("open__gti_mir_failure(std::expected") !=
-                 std::string::npos &&
-             tcpCpp.find("runtime::close(") != std::string::npos &&
-             tcpCpp.find("socket(socket &&other) noexcept") !=
-                 std::string::npos &&
-             tcpCpp.find("// GTI verified-MIR body:") != std::string::npos,
-         "the tcp owner should retain private POSIX acquisition and generated "
-         "move cleanup");
+  expect(
+      tcpCpp.find("class socket") != std::string::npos &&
+          tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "socket") +
+                      "(") != std::string::npos &&
+          tcpCpp.find("open__gti_mir_failure(std::expected") !=
+              std::string::npos &&
+          tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "close") +
+                      "(") != std::string::npos &&
+          tcpCpp.find("socket(socket &&other) noexcept") != std::string::npos &&
+          tcpCpp.find("// GTI verified-MIR body:") != std::string::npos,
+      "the tcp owner should retain private POSIX acquisition and generated "
+      "move cleanup");
 
   const lang::FrontendResult copiedTcp =
       lang::Frontend(linuxOptions)

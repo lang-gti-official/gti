@@ -8,6 +8,12 @@ T map_twice<T, Operation>(T value, Operation operation) {
   return std::move(result);
 }
 
+// Direct nesting also resolves the inner result from the concrete callable.
+// It need not match the outer function's result type.
+int compose<Outer, Inner>(int value, Outer outer, Inner inner) {
+  return outer(inner(value));
+}
+
 class Increment {
 public:
   int operator()(int value) { return value + 1; }
@@ -39,5 +45,9 @@ int main() {
   Advance advance = Advance();
   Counter advanced = map_value(Counter(6), advance);
 
-  return doubled_twice + incremented + advanced.read() - 24;
+  auto widen = [](int value) -> double { return double(value) + 0.5; };
+  auto narrow = [](double value) -> int { return int(value); };
+  int composed = compose(8, narrow, widen);
+
+  return doubled_twice + incremented + advanced.read() + composed - 32;
 }

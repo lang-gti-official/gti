@@ -17,9 +17,36 @@ access to that accessor's private storage.
 
 ## Inputs And Outputs
 
+Expression-valued assignments retain their complete written target in the AST
+`PlaceSet` node. Semantics checks its ordinary mutable-place authority and
+active result-loan conflicts. HIR `PlaceSet` retains the exact typed target
+and right operand; an overloaded compound operation instead retains its
+selected ordinary call. MIR evaluates the target dependencies once, then
+assigns through that resolved place or returned loan using ordinary store,
+failure, replacement-cleanup, and full-expression loan endpoints. The backend
+does not infer writability from a native C++ call result or inline an accessor
+into its private field.
+
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
 `SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
 Concrete generic validity is obtained through semantic instance reanalysis.
+Concrete class fields retain that analysis's exact binding type, traits and
+selected initializer, including checked owned value-expression substitution and
+nominal-field defaults. Open-primary lifecycle unavailability is not an explicit
+source `= delete`: the concrete structural trait query determines copy/move
+availability while preserving written policy. HIR does not ask a backend to
+evaluate generic arithmetic or synthesize missing field initialization.
+`HirProgram::instanceSymbols` retains the exact ordered semantic symbol records
+introduced only by those concrete analyses. Their request-wide IDs are disjoint
+from primary and other instance symbols. HIR checks concrete binding types and
+access against these records; lowered-program construction copies them into the
+ordinary symbol inventory. The backend never discovers missing locals from AST
+or fabricates their types. Different substitutions and shadowed branch locals
+retain independent source/type identities; discarded arms contribute no facts.
+Generated default construction retains the already-admitted concrete owner's
+discovery depth: its field schedule is not a second source-instantiation edge.
+Each distinct generic constructor still consumes the request's instance budget;
+ordinary constructor bodies and all other discovery limits remain unchanged.
 Every reanalyzed body has its own loan-number domain, including a range whose
 types do not depend on generic parameters. Plan verification retains exact
 non-dependent range types and selected protocol operations, compares loan
@@ -93,12 +120,26 @@ concrete class/enum dependencies, including alternatives never constructed in
 source. This permits finite recursive owning sums without inventing a second
 generic type system or omitting an unused alternative from layout.
 
-Type aliases discover exact enum identities separately from class layouts.
+Namespace and member type aliases discover exact enum identities separately
+from class layouts.
 Walking an alias's type arguments may register enum rows, but a class appearing
 only in that metadata retains a forward identity rather than an executable
 class instance. An enum's actual alternative fields still discover the class
 layouts their representation requires. Semantic alias validation is unchanged;
 validating a type is not authority to instantiate its construction or cleanup.
+
+Class instances retain an ordered type-alias catalog pairing the primary
+semantic `TypeAliasId` with the exact owner-substituted type. Semantic instance
+analysis resolves aliases, including checked value-generic expressions and
+exact nominal specializations; HIR verifies the declaration order and closed
+types against the primary semantic catalog. MIR preserves these rows without
+source pointers. Detached lowering checks them independently against the
+resolved declaration inventory. Retaining this catalog does not itself enqueue
+class layouts; executable fields, calls and signatures discover the concrete
+instances they need. The C++ representation planner can therefore publish
+ordinary concrete classes containing aliases without substituting a
+representative instantiation's field type or construction operation into a
+source template.
 
 Consuming `expected<T, E>` combinators receive their exact operation, mapper
 identity, and result type from semantics. `transform_error`, `transform`, and
@@ -499,6 +540,32 @@ does not erase the task, invent a native entry point, reopen `operator()`
 selection, or recognize the source-defined `std::thread` wrapper.
 
 ## Executable Values
+
+Same-type fresh-result construction and class-value grouping are non-executing
+source aliases. `HirDirectInitialization` retains each wrapper's source,
+immediate producer, exact concrete type and shared `HirValueId`. A construction
+also retains immutable provenance issued by its selected concrete semantic
+model, binding the source, immediate producer, exact type, and program snapshot;
+grouping has no construction proof. A class-instance ID alone is not evidence
+that an expression denotes construction. Lowering returns
+the producer's existing value rather than adding an Identity/Construct value
+and competing drop obligation. Full-expression roots, initialization plans and
+range plans resolve these aliases with `HirBody::valueForSource`; the public
+source-value index also retains every wrapper. HIR verification rejects a
+missing/retyped producer, a forged selected-construction decision, a transfer
+disguised as fresh construction, and a mismatched shared value identity. An
+ordinary/lambda/deferred invocation or executable outer value cannot be erased
+by adding an alias, even when its result and argument have the same class type.
+This includes nominal call operators and dependent branches whose primary model
+has no selected-call record: concrete construction provenance remains required.
+Grouping an explicit move stays transparent without making that move fresh.
+
+MIR consequently receives the same actual producer and initialization/loan/drop
+schedule as the unwrapped expression. It verifies those executable operations
+and failure/publication edges normally. There is no new backend elision choice
+or source-only executable path. The constexpr compatibility adapter likewise
+forwards to the existing producer evaluator; staged MIR erases the wrapper
+before execution, rather than implementing another constructor rule.
 
 HIR bodies retain source operand vectors and attach semantic type/category,
 access, ownership, selected call/operator/constructor, intrinsic,

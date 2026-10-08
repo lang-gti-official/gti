@@ -35,7 +35,7 @@ namespace std {
 
       T& operator*();
       void operator++() mut;
-      bool operator!=(forward_list_sentinel<T>& sentinel);
+      bool operator!=(forward_list_sentinel<T> sentinel);
     };
   }
 
