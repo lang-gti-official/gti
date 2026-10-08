@@ -642,6 +642,40 @@ census.
 
 ## Native scalar, recursive pointer and callable integration
 
+### Native enum importer follow-up
+
+The native enum binding slice is validated with an optimized Release/Ninja
+compiler on macOS arm64 (LLVM/libclang 22.1.8). `bindgen_pipeline` covers high-bit
+unsigned flags, signed minima and unsigned maxima through 64 bits, fixed
+underlying types through typedefs, anonymous and filtered/system enums, native
+records/callbacks/nested pointers, compatible packed enums, independent alignment
+rejection, invalid emitted names, and unsupported 128-bit enum integers. CLI
+checks select both LP64 Unix and LLP64 MSVC-compatible profiles; those are
+cross-profile generation checks, not Windows runtime evidence.
+
+`native_enum_bindgen` generates bindings for the runnable
+`examples/native-enum-bindings` project, builds/runs it, checks cache reuse and
+byte-stable regeneration, then links independently compiled C17 in six
+C++20/C++23 O0/O1/O3 modes and one ASan/UBSan mode. No-elide construction is
+enabled throughout the direct matrix. Native C validates the values transported
+in records and supplies their size/alignment; pointer writeback and a native
+function pointer round-trip the same enum representations.
+
+The native-record/header/callback pipelines and runtime oracles, compiler/backend/
+driver library boundaries, LLVM link-policy checks, complete CLI/project
+workflows and relocated installed macOS toolchain check also pass. Formatting
+checks the curated first-party C/C++ surface. This is selected local evidence,
+not a full repository-suite run or Linux/Windows runtime certification.
+
+No GTI syntax, borrow contract, HIR/MIR operation, runtime capability or LSP
+publication rule changes: generated bindings are ordinary source. The project
+has its own CTest gate and example-index entry; it is not part of the numbered
+top-level `.gti` body census, whose expectations are unchanged. Existing CLI
+fixture expectations now require native-typed enum constants and an explicit
+conversion when passing one to a separately declared `int` parameter.
+
+### Earlier scalar and pointer integration
+
 The combined candidate uses a Release compiler on macOS arm64 with LLVM
 22.1.8. Focused scalar checks cover six selected target profiles, including
 native callback signatures and forged scalar identity in callee metadata.
