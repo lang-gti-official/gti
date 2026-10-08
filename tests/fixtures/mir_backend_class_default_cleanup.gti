@@ -77,5 +77,20 @@ int main() {
   if (second != 1 or cleanup_trace != 1) {
     return 2;
   }
+  // These bodies are part of the lifecycle emission/runtime contract, so
+  // exercise them rather than relying on emission of unreachable functions.
+  if (compatibility_declared_constructor() != 0 or
+      compatibility_field_owner() != 0) {
+    return 3;
+  }
+  compatibility_nested_scope();
+  if (cleanup_trace != 1 or compatibility_branch(true) != 0 or
+      cleanup_trace != 2) {
+    return 4;
+  }
+  compatibility_checked_cleanup();
+  if (cleanup_trace != 3) {
+    return 5;
+  }
   return 0;
 }

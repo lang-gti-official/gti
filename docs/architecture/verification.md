@@ -4783,6 +4783,7 @@ standard unit shared with a module domain whose source-local flags differ.
 
 Reachable executable lowering is owned by `testReachableExecutableLowering` in
 `compiler_frontend`. It covers:
+
 - the hosted root's closure;
 - that unreferenced functions, methods, and classes are omitted;
 - that C declarations and records are kept;
@@ -4791,6 +4792,7 @@ Reachable executable lowering is owned by `testReachableExecutableLowering` in
   reported.
 
 The census gates measure the reduced artifact inventory:
+
 - `lowered_program_corpus_census` builds with the same option as artifact
   builds;
 - `mir_census_regression` drives the CLI.
@@ -4800,6 +4802,15 @@ the previous and the pruning compiler, and their exit status and output
 matched. `mir_cutover_corpus_oracle`, `cpp_mir_body_emitter_corpus`,
 `stdlib_surface`, `practical_examples`, and the native-header, callback,
 record, embedding, and C-oracle gates exercise the pruned artifacts.
+The scalar-family CLI tests count only reachable user bodies and explicitly
+reject unused prelude/output and uncalled scalar bodies. Full-program unit
+tests separately retain emission coverage for uncalled declarations. The
+failure-descriptor and default-cleanup fixtures actually call the operations
+whose descriptors and lifecycle helpers they inspect; optimized descriptor
+emission carries the original transform records through independent replay.
+C-thread terminal fixtures check their actual destroy calls, not unused
+unlock/wait wrappers. Their exit-status, C++20/C++23, optimization and sanitizer
+matrices remain unchanged.
 `source_modules_runtime` covers imported globals, private helper bodies,
 re-exported classes and constrained generics at O0/O1/O3 with C++20/C++23,
 then project imports, build-report edges, cache hits, export revocation and
