@@ -841,6 +841,14 @@ parenthesizing a built-in operator result is fine.
 
 This is what F15 actually was.
 
+The binding reproducer is repaired at `1891ce4e` and prints `4`. Passive
+move-only and cleanup-owning grouped constructors pass the six-mode native
+matrix and ASan/UBSan, including nesting, loop re-entry and failure rollback.
+Grouped operator, free-call and member-call results also pass, with exact
+construction/destruction counts. MIR identity links retain their lifecycle
+transfers while sharing one physical publication slot. Other consumer shapes
+remain under investigation together with S02; this is not closure of #103.
+
 ## S02 — ICE: a ternary producing a class value
 
 `reproducers/s02-ternary-class-value.gti`
