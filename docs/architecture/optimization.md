@@ -301,6 +301,18 @@ or virtual calls, owning-argument transfers, synchronization, raw/unsafe
 memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
 
+A concrete source body containing raw/unsafe instructions can now receive its
+ordinary closed-call input context. The raw instruction itself is still an
+opaque barrier: every such instruction clears mutable-memory facts and marks
+the path opaque before any ordinary load/store transfer can interpret it.
+This permits replayable proofs before the operation without granting raw
+memory a scalar transfer rule or declaring the body effect-closed. Earlier
+immutable SSA results remain immutable; later referent/global reads receive no
+stale facts. Foreign/open calls, owning transfers, synchronization and recursive
+families retain their separate admission boundaries. An unrelated source
+function proves a bounded scalar addition before writing through a raw pointer;
+arithmetic on the changed referent and in its caller remains checked.
+
 Context discovery is also bounded by complete summaries: an earlier
 source-allocation or raw object-lifetime call can prevent completion of a
 required closed-call summary, leaving later call contexts on that path

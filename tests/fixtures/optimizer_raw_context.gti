@@ -1,0 +1,30 @@
+#include <std/string>
+#include <std/vector>
+
+int before_raw(mut int& destination, int input) {
+  int result = input + 1;
+  unsafe {
+    mut int* address = &destination;
+    *address = 2147483647;
+  }
+  return result;
+}
+
+int after_raw(mut int& destination) {
+  unsafe {
+    mut int* address = &destination;
+    *address = 2147483647;
+  }
+  return destination + 1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int destination = 4;
+  int result = before_raw(destination, 7);
+  std::println(result);
+  std::println(destination);
+  if (argc > 1) {
+    [[discard]] after_raw(destination);
+  }
+  return result == 8 && destination == 2147483647 ? 0 : 1;
+}
