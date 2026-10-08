@@ -5004,8 +5004,24 @@ private:
         ((inputKind == HirCallInputKind::ReadBorrow ||
           inputKind == HirCallInputKind::MutableBorrow) &&
          input.operands.front().kind != MirOperandKind::Loan);
+    // The source selection has already completed at its checked AddressOf
+    // prefix, before this prepared copy/borrow is published. Do not attach
+    // that same selection failure to a second operation with no Invoke edge.
     if (materializesCheckedPlace) {
       input.definedFailure = localDefinedFailure(sourceValueInfo);
+      if (checkedPlacePrefixes.contains(sourceValue)) {
+        // Membership is recorded only after emitting this exact Index's
+        // AddressOf with localDefinedFailure(sourceValueInfo). Retain every
+        // other origin/propagation family rather than erasing arbitrary
+        // operation failures when this source shape grows.
+        std::erase_if(input.definedFailure.localOrigins,
+                      [](const auto &origin) {
+                        return origin.outcomes ==
+                               std::vector<DefinedFailureOutcome>{
+                                   {DefinedFailureCode::IndexOutOfBounds,
+                                    DefinedFailureDetail::FixedArray}};
+                      });
+      }
     }
     MirDropObligationId parameterDrop = 0;
     const std::optional<MirDropType> dropType =

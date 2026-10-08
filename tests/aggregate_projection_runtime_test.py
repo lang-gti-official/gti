@@ -20,7 +20,8 @@ def main():
     sources = [repository / f"tests/fixtures/{name}.gti" for name in
                ("array_field_projections", "class_array_decomposition",
                 "owning_class_array_decomposition", "constructor_struct_field_address",
-                "class_array_arguments", "array_element_references")] + [
+                "class_array_arguments", "array_element_references",
+                "checked_class_copy_arguments")] + [
         repository / f"tests/coverage/reproducers/{name}.gti"
         for name in ("a39-ctor-address-of-struct-field", "a40-raw-pointer-fixed-array-field-index",
                      "a40-c-abi-record-pointer-array-field",
@@ -42,7 +43,7 @@ def main():
                     expected_output = ("structured bindings worked\n" if source.name.startswith("32-") else
                                        "fixed arrays keep their bounds\n" if source.name.startswith("12-") else "")
                     assert executed.stdout == expected_output and executed.stderr == "", executed
-        for source in sources[:6]:
+        for source in sources[:7]:
             executable = scratch / f"{source.stem}-sanitized"
             run([str(compiler), str(source), "-O1", "--progress", "never", "-o", str(executable),
                  "--", str(native), "-fsanitize=address,undefined", "-fno-elide-constructors"])
