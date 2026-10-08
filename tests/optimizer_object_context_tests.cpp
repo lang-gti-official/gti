@@ -87,6 +87,9 @@ int main() {
     expect(count(optimized, "read", "Gauge") == expected,
            "parameterized constructor and owned result fields reach an "
            "implicit receiver");
+    expect(count(optimized, "after_address", "Gauge") == expected,
+           "inert pointer arithmetic must preserve unrelated field facts "
+           "without proving any pointee or address invariant");
     expect(count(optimized, "bump", "Gauge") == 2 * expected,
            "a field mutation retains an independent declaration-default field");
     expect(count(optimized, "read", "Leaf") == expected,
@@ -153,6 +156,42 @@ int main() {
   }
   expect(testedForgery,
          "the raw-field negative must exercise canonical rejection");
+  for (const auto name : {"optimizer_nested_write", "optimizer_reference_write",
+                          "optimizer_nested_raw"}) {
+    const auto path = sourcePath.parent_path() / (std::string(name) + ".gti");
+    const std::ifstream file(path);
+    const std::string text{std::istreambuf_iterator<char>(file.rdbuf()), {}};
+    const auto changed = lang::Frontend().analyze(path, text);
+    expect(changed.canGenerateCode(),
+           "nested and reference-field mutation controls must lower");
+    if (!changed.canGenerateCode())
+      continue;
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = changed.hir, .mir = changed.mir, .level = level});
+      expect(optimized.valid(), "nested mutation controls must replay");
+      for (const auto &function : changed.hir.functionInstances()) {
+        if (!function.source || function.source->name().lexeme != "read")
+          continue;
+        const auto *body = optimized.mir.findFunctionInstance(function.id);
+        bool proved = false;
+        if (body)
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              proved |= std::any_of(
+                  instruction.safetyDischarges.begin(),
+                  instruction.safetyDischarges.end(), [](const auto &proof) {
+                    return proof.family ==
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                  });
+        expect(!proved,
+               "nested, returned and borrowed-field aliases cannot retain "
+               "stale constructor envelopes after mutation");
+      }
+    }
+  }
   constexpr std::size_t chainLength = 128;
   std::string chain;
   for (std::size_t index = chainLength; index-- > 0;) {

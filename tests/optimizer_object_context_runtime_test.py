@@ -73,4 +73,14 @@ if __name__ == "__main__":
         path.write_text("\n".join(budget))
         paths["object_budget"] = path
         cases["object_budget"] = [((), (0, "", ""))]
+        for name in ("optimizer_nested_write", "optimizer_reference_write",
+                     "optimizer_nested_raw"):
+            path = fixture.parent / f"{name}.gti"
+            sites = [index for index, text in enumerate(path.read_text().splitlines(), 1)
+                     if "int read() { return this.value + 1; }" in text]
+            assert len(sites) == 1, name
+            error = (f"{path.name}:{sites[0]}: runtime error[GTI-R0001]: "
+                     "integer_overflow in addition\n")
+            paths[name] = path
+            cases[name] = [((), (70, "", error))]
         main(names=tuple(paths), cases=cases, fixture_paths=paths)
