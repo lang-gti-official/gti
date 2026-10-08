@@ -438,6 +438,66 @@ private:
            (type.bitWidth == 32 || type.bitWidth == 64);
   }
 
+  [[nodiscard]] MappedType
+  enumIntegerMapping(const NativeDeclaration &declaration) const {
+    const NativeType *integer = canonical(declaration.enumIntegerType);
+    if (integer == nullptr || integer->kind != NativeTypeKind::Integer ||
+        !admittedScalar(*integer)) {
+      return unsupportedType(
+          "enum '" + declaration.name +
+          "' has no supported native integer representation");
+    }
+    if (!declaration.enumLayoutMatchesInteger) {
+      return unsupportedType(
+          "enum '" + declaration.name +
+          "' has a layout different from its native integer");
+    }
+    for (const NativeEnumerator &enumerator : declaration.enumerators) {
+      bool fits = false;
+      if (integer->isSigned) {
+        if (const auto *value = std::get_if<std::int64_t>(&enumerator.value)) {
+          fits = integer->bitWidth == 64 ||
+                 (*value >= -(std::int64_t(1) << (integer->bitWidth - 1)) &&
+                  *value < (std::int64_t(1) << (integer->bitWidth - 1)));
+        }
+      } else if (const auto *value =
+                     std::get_if<std::uint64_t>(&enumerator.value)) {
+        fits = integer->bitWidth == 64 ||
+               *value < (std::uint64_t(1) << integer->bitWidth);
+      }
+      if (!fits) {
+        return unsupportedType(
+            "enumerator '" + enumerator.name +
+            "' does not fit its native integer representation");
+      }
+    }
+    return supportedType(scalarSpelling(*integer));
+  }
+
+  [[nodiscard]] MappedType mapEnum(const NativeDeclaration &declaration) const {
+    const MappedType integer = enumIntegerMapping(declaration);
+    if (!integer.supported) {
+      return integer;
+    }
+    // Excluded/system enums still have a known compatible integer. Never
+    // reference an alias the import policy deliberately does not emit.
+    if (!admitted(declaration)) {
+      return integer;
+    }
+    if (!declaration.name.empty()) {
+      if (const auto problem = identifierProblem(spelled(declaration), false)) {
+        return unsupportedType("enum " + *problem);
+      }
+    }
+    for (const NativeEnumerator &enumerator : declaration.enumerators) {
+      if (const auto problem = identifierProblem(enumerator.name, false)) {
+        return unsupportedType("enumerator " + *problem);
+      }
+    }
+    return declaration.name.empty() ? integer
+                                    : supportedType(spelled(declaration));
+  }
+
   // Maps one native type use to its GTI spelling under the bounded C ABI.
   // `pointerDepth` tracks how many pointer levels wrap this use.
   [[nodiscard]] MappedType mapType(NativeTypeId id, bool allowVoid,
@@ -522,11 +582,7 @@ private:
       if (target == nullptr) {
         return unsupportedType("the enum reference is invalid");
       }
-      if (!admitted(*target)) {
-        return unsupportedType("enum '" + target->name +
-                               "' is outside the import policy");
-      }
-      return supportedType(spelled(*target));
+      return mapEnum(*target);
     }
     case NativeTypeKind::Function:
       return unsupportedType(
@@ -612,7 +668,9 @@ private:
       if (target == nullptr) {
         return unsupportedType("the pointee enum reference is invalid");
       }
-      return supportedType(qualifier + spelled(*target) + "*");
+      const MappedType mapped = mapEnum(*target);
+      return mapped.supported ? supportedType(qualifier + mapped.spelling + "*")
+                              : mapped;
     }
     return unsupportedType("this pointee type is outside the bounded GTI C "
                            "ABI pointer surface");
@@ -841,27 +899,16 @@ private:
     BindingItem item;
     item.name = spelled(declaration);
     item.origin = declaration.origin;
-    // An anonymous enum is a pure constant list: C cannot name it in a later
-    // declaration, and GTI needs only the `constexpr int32_t` constants.
-    if (!declaration.name.empty()) {
-      if (const std::optional<std::string> problem =
-              identifierProblem(item.name, false)) {
-        return skipped(declaration, *problem);
-      }
+    const MappedType mapped = mapEnum(declaration);
+    if (!mapped.supported) {
+      return skipped(declaration, mapped.reason);
     }
+    item.aliasSpelling = enumIntegerMapping(declaration).spelling;
     for (const NativeEnumerator &enumerator : declaration.enumerators) {
-      if (const std::optional<std::string> problem =
-              identifierProblem(enumerator.name, false)) {
-        return skipped(declaration, "enumerator " + *problem);
-      }
-      if (enumerator.value < std::numeric_limits<std::int32_t>::min() ||
-          enumerator.value > std::numeric_limits<std::int32_t>::max()) {
-        return skipped(declaration,
-                       "enumerator '" + enumerator.name +
-                           "' is outside the int32_t range the C enum "
-                           "mapping uses");
-      }
-      item.constants.push_back({enumerator.name, enumerator.value});
+      item.constants.push_back(
+          {enumerator.name,
+           std::visit([](auto value) { return std::to_string(value); },
+                      enumerator.value)});
     }
     item.kind = BindingItemKind::Enum;
     return item;
