@@ -7391,6 +7391,7 @@ struct ConditionalClassBindingJoinArm {
   const MirInstruction *construct = nullptr;
   const MirInstruction *initialize = nullptr;
   const MirBlock *block = nullptr;
+  const MirBlock *publicationBlock = nullptr;
   const MirPlace *valuePlace = nullptr;
   const MirDropObligation *valueDrop = nullptr;
   const MirPlace *slot = nullptr;
@@ -7444,6 +7445,12 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
       passive != nullptr && !passive->traits.containsBorrowedState &&
       passive->moveConstructor == SpecialMemberStatus::Generated &&
       mirTypeMoveIsDefinedFailureFree(program, value->info.type);
+  const bool conservativeInvoke =
+      representationOnly && construct->constructorTarget &&
+      construct->definedFailure.localOrigins.empty() &&
+      construct->definedFailure.propagation ==
+          FailurePropagationKind::Constructor &&
+      cppMirConstructorStatusCannotFail(program, *construct->constructorTarget);
   if ((!representationOnly && value->info.traits.drop != DropKind::Lexical) ||
       !construct->result || *construct->result != valueId ||
       construct->destination || construct->receiver ||
@@ -7453,8 +7460,8 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
       construct->intrinsic != IntrinsicKind::None ||
       construct->constructorKind != ConstructorKind::Ordinary ||
       !construct->localFailureSites.empty() ||
-      !construct->definedFailure.empty() || construct->successResultDrop ||
-      construct->successResultDestination ||
+      (!construct->definedFailure.empty() && !conservativeInvoke) ||
+      construct->successResultDrop || construct->successResultDestination ||
       !hasCompleteCallInputSchedule(body, *construct)) {
     return {};
   }
@@ -7545,21 +7552,51 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
     }
   }
   const MirBlock *block = body.findBlock(value->definitionBlock);
-  if (block == nullptr || initializeUse->block != block->id) {
+  if (block == nullptr) {
     return {};
   }
-  for (std::size_t index = 0; index + 1 < block->instructions.size(); ++index) {
-    if (block->instructions[index].id == construct->id &&
-        block->instructions[index + 1].id == initialize->id) {
-      return ConditionalClassBindingJoinArm{.value = value,
-                                            .construct = construct,
-                                            .initialize = initialize,
-                                            .block = block,
-                                            .valuePlace = valuePlace,
-                                            .valueDrop = valueDrop,
-                                            .slot = slot,
-                                            .slotDrop = slotDrop};
+  const MirBlock *publicationBlock = body.findBlock(initializeUse->block);
+  bool adjacent = false;
+  if (publicationBlock == block) {
+    for (std::size_t index = 0; index + 1 < block->instructions.size(); ++index)
+      adjacent |= block->instructions[index].id == construct->id &&
+                  block->instructions[index + 1].id == initialize->id;
+  } else if (conservativeInvoke && publicationBlock != nullptr &&
+             !block->instructions.empty() &&
+             block->instructions.back().id == construct->id &&
+             block->terminator.kind == MirTerminatorKind::Invoke &&
+             block->terminator.invokeInstruction == construct->id &&
+             block->terminator.target == publicationBlock->id &&
+             block->terminator.targetArguments.empty() &&
+             block->terminator.successLifecycle.empty() &&
+             publicationBlock->id != body.entry &&
+             publicationBlock->parameters.empty() &&
+             publicationBlock->failureParameter == 0 &&
+             publicationBlock->activeFailure == 0 &&
+             publicationBlock->instructions.size() == 1 &&
+             publicationBlock->instructions.front().id == initialize->id) {
+    // Lowering retains a conservative Invoke even when the selected
+    // constructor cannot fail. Only its unique, work-free success path may
+    // separate construction from publication; never fuse across a join.
+    std::size_t incoming = 0;
+    for (const MirBlock &candidate : body.blocks) {
+      incoming += candidate.terminator.target == publicationBlock->id;
+      incoming += candidate.terminator.elseTarget == publicationBlock->id;
+      for (const auto &target : candidate.terminator.switchTargets)
+        incoming += target.target == publicationBlock->id;
     }
+    adjacent = incoming == 1;
+  }
+  if (adjacent) {
+    return ConditionalClassBindingJoinArm{.value = value,
+                                          .construct = construct,
+                                          .initialize = initialize,
+                                          .block = block,
+                                          .publicationBlock = publicationBlock,
+                                          .valuePlace = valuePlace,
+                                          .valueDrop = valueDrop,
+                                          .slot = slot,
+                                          .slotDrop = slotDrop};
   }
   return {};
 }
@@ -7595,15 +7632,17 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
   if (result.arms.size() != 2 ||
       result.arms[0].slotDrop != result.arms[1].slotDrop ||
       result.arms[0].block == result.arms[1].block ||
-      result.arms[0].block->terminator.kind != MirTerminatorKind::Goto ||
-      result.arms[1].block->terminator.kind != MirTerminatorKind::Goto ||
-      result.arms[0].block->terminator.target == 0 ||
-      result.arms[0].block->terminator.target !=
-          result.arms[1].block->terminator.target) {
+      result.arms[0].publicationBlock->terminator.kind !=
+          MirTerminatorKind::Goto ||
+      result.arms[1].publicationBlock->terminator.kind !=
+          MirTerminatorKind::Goto ||
+      result.arms[0].publicationBlock->terminator.target == 0 ||
+      result.arms[0].publicationBlock->terminator.target !=
+          result.arms[1].publicationBlock->terminator.target) {
     return {};
   }
 
-  const MirBlockId joinId = result.arms[0].block->terminator.target;
+  const MirBlockId joinId = result.arms[0].publicationBlock->terminator.target;
   const MirBlock *branch = nullptr;
   for (const MirBlock &candidate : body.blocks) {
     const bool exactDiamond =
@@ -7636,8 +7675,8 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
     if (!reachesJoin) {
       continue;
     }
-    if (candidate.id != result.arms[0].block->id &&
-        candidate.id != result.arms[1].block->id) {
+    if (candidate.id != result.arms[0].publicationBlock->id &&
+        candidate.id != result.arms[1].publicationBlock->id) {
       return {};
     }
     ++joinPredecessors;
