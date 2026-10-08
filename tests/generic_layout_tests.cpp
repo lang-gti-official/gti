@@ -1,6 +1,7 @@
 #include "gti/frontend.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -9,9 +10,17 @@
 namespace {
 int failures = 0;
 void check(std::string_view source, bool valid, std::string_view label,
-           std::string_view code = {}) {
-  auto result =
-      lang::Frontend().analyze("generic-layout.gti", std::string(source));
+           std::string_view code = {}, bool standardPrelude = false) {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  auto result = lang::Frontend().analyze(
+      "generic-layout.gti", std::string(source),
+      standardPrelude
+          ? std::vector<std::filesystem::path>{library / "prelude.gti"}
+          : std::vector<std::filesystem::path>{},
+      {},
+      standardPrelude ? std::vector<std::filesystem::path>{library}
+                      : std::vector<std::filesystem::path>{});
   const bool diagnostic = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
         return d.code == code && d.primary.end > d.primary.start &&
@@ -103,7 +112,8 @@ int main() { Wrapper<int> object{}; return 0; }
 )gti",
         true,
         "open nominal field defers constructor requirements until concrete "
-        "selection");
+        "selection",
+        {}, true);
   check(R"gti(
 class NoDefault { public: NoDefault(int value) {} };
 class Leaf<T> {
@@ -118,7 +128,7 @@ public:
 int main() { Wrapper<NoDefault> object{}; return 0; }
 )gti",
         false, "deferred nominal defaults still enforce concrete requirements",
-        "GTI-S2029");
+        "GTI-S2029", true);
   check(R"gti(
 class Inner { int field; public: Inner(int value) : field(value) {} };
 class Outer { public: Outer(Inner value) : inner(value) {} private: Inner inner; };

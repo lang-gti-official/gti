@@ -690,6 +690,10 @@ retained across snapshots and deltas. Ordinary contextual construction analysis
 publishes the exact selected operation and effects; HIR lowers that typed field
 initializer, and MIR owns final-address construction, stage activation, ordering,
 and rollback. Other omitted field categories do not gain an implicit initializer.
+An open nominal field defers construction until concrete analysis; recursively
+unresolved type arguments, value expressions, and extents are not an invitation
+to check a constructor requirement outside its selected constructor's context.
+Concrete selection still enforces every zero-argument operation and requirement.
 
 `SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
 active-statement preorder, and exact ordered source-graph/prelude provenance.
