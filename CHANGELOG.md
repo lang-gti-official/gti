@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.387.0 — Standard-library modules
+
+- Import the standard library instead of including it: `import std.vector;`
+  makes `<std/vector>` visible, in direct compilation and in projects alike.
+  Each public `<std/name>` unit is the module `std.name`, and an import exposes
+  exactly what the include does. Existing `#include <std/...>` code is
+  unchanged, and both spellings can be mixed. There is no aggregate
+  `import std;` yet.
+- A module interface can republish one legacy unit with
+  `export #include "legacy.gti"`. A library can then offer an import before
+  its sources are converted to explicit exports.
+- A `#define` before an include no longer prevents that unit from being shared
+  with a module. Sharing is rejected only when the flag selects different
+  code in the shared unit.
+- `std` can no longer be registered as a `[modules]` name.
+- The compiler's own work, before the native C++ compiler runs, takes about
+  20–30% less time. The lowered program is now verified once instead of once
+  per backend stage, and declaration lookups no longer scan the whole program.
+  Programs that use much of the standard library gain the most.
+
 ## 0.384.0 — Program installation and quieter builds
 
 - Install a project's executable with `gti install` and remove it with

@@ -1,0 +1,3 @@
+// Module std.list: the public surface of <std/list>.
+export module list;
+export #include <std/list>

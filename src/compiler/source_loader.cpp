@@ -326,6 +326,23 @@ std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
   return std::nullopt;
 }
 
+std::optional<std::string> SourceLoader::standardModuleNameForExistingPath(
+    const std::filesystem::path &path) const {
+  for (const std::filesystem::path &root : standardLibraryRoots) {
+    const std::filesystem::path directory = canonicalPath(root / "modules");
+    if (path.parent_path() != directory || path.extension() != ".gti" ||
+        !isImportPathSegment(path.stem().string())) {
+      continue;
+    }
+    std::error_code error;
+    if (std::filesystem::is_regular_file(path, error) ||
+        sourceOverrides->contains(path.string())) {
+      return "modules/" + path.stem().string();
+    }
+  }
+  return std::nullopt;
+}
+
 SourceUnitId
 SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                        bool isPrelude, const Token *includeToken,
@@ -351,20 +368,16 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       if (standardLibraryName) {
         unit->standardLibraryName = std::move(standardLibraryName);
       }
+      // A new module domain replays the unit's directives under its own
+      // flags. Incoming flags may differ when the unit never observes them;
+      // the canonical-syntax comparison after replay rejects any difference
+      // that selects other tokens, here or in a nested include.
       if (!unit->moduleDeclaration && includeToken != nullptr &&
           state->second.state == LoadState::Loaded &&
           !state->second.configurationDomains.contains(configurationDomain)) {
-        if (state->second.inputFlags != activeFlags) {
-          report(*includeToken,
-                 "A legacy source unit cannot be shared across module "
-                 "boundaries with different source-local configuration "
-                 "flags; use common build flags or separate interfaces.",
-                 "GTI-I0012");
-        } else {
-          replayConfiguration = true;
-          state->second.state = LoadState::Visiting;
-          state->second.configurationDomains.insert(configurationDomain);
-        }
+        replayConfiguration = true;
+        state->second.state = LoadState::Visiting;
+        state->second.configurationDomains.insert(configurationDomain);
       }
     }
     if (isEntry) {
@@ -386,10 +399,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     unitId = graph.addUnit(
         path, isEntry, isPrelude, std::move(standardLibraryName), role,
         std::move(packageIdentity), std::move(packageRelativePath));
-    states.emplace(key, FileState{.state = LoadState::Visiting,
-                                  .unit = unitId,
-                                  .configurationDomains = {configurationDomain},
-                                  .inputFlags = activeFlags});
+    states.emplace(key,
+                   FileState{.state = LoadState::Visiting,
+                             .unit = unitId,
+                             .configurationDomains = {configurationDomain}});
   }
   std::optional<std::string_view> exactSource;
   std::optional<std::size_t> unitCompletionOffset;
@@ -464,9 +477,17 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     importerFlags = activeFlags;
     activeFlags = initialFlags;
     configurationDomain = unitId;
+    // Module names are owned by one package, the standard library, or the
+    // direct-compilation application; the standard library's `vector` does
+    // not collide with an application's interface of that name.
+    const SourceUnit &interfaceUnit = *graph.findUnit(unitId);
+    const auto standardOwned = [](const SourceUnit &unit) {
+      return unit.role == SourceUnitRole::StandardLibrary;
+    };
     for (const SourceUnit &other : graph.sourceUnits()) {
       if (other.id != unitId && other.moduleDeclaration &&
-          other.packageIdentity == graph.findUnit(unitId)->packageIdentity &&
+          other.packageIdentity == interfaceUnit.packageIdentity &&
+          standardOwned(other) == standardOwned(interfaceUnit) &&
           other.moduleDeclaration->lexeme == fileTokens[2].lexeme) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-I0012", DiagnosticPhase::SourceLoading, fileTokens[2],
@@ -578,24 +599,42 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       continue;
     }
 
-    if (token.kind == TokenKind::HASH_INCLUDE) {
+    // `export #include` keeps include resolution and direct visibility for
+    // this interface, then deliberately republishes that one legacy unit to
+    // importers. The unit's own nested includes are not republished.
+    const bool exportInclude =
+        token.kind == TokenKind::EXPORT && index + 1 < fileTokens.size() &&
+        fileTokens[index + 1].kind == TokenKind::HASH_INCLUDE;
+    if (exportInclude && !moduleInterface) {
+      report(token,
+             "Republishing an include requires an 'export module name;' "
+             "interface.",
+             "GTI-I0012");
+    }
+    if (token.kind == TokenKind::HASH_INCLUDE || exportInclude) {
+      const Token &includeToken = fileTokens[index + (exportInclude ? 1 : 0)];
       const std::size_t occurrence = includeOccurrence++;
       const ResolvedInclude include =
-          resolveInclude(fileTokens, index, path, braceDepth,
-                         directiveProcessor.conditionalDepth());
+          resolveInclude(fileTokens, index + (exportInclude ? 1 : 0), path,
+                         braceDepth, directiveProcessor.conditionalDepth());
       index = include.directiveEnd;
       if (include.dependency != 0) {
         if (graph.findUnit(include.dependency)->moduleDeclaration) {
-          report(token,
-                 "A module interface must be imported, not included; use "
-                 "'import' to respect its exports.",
+          report(includeToken,
+                 exportInclude
+                     ? "A module interface is republished with 'export "
+                       "import', not 'export #include'."
+                     : "A module interface must be imported, not included; "
+                       "use 'import' to respect its exports.",
                  "GTI-I0012");
         }
         if (!replayConfiguration) {
           graph.addDependency({.source = unitId,
                                .target = include.dependency,
-                               .kind = include.kind,
-                               .directive = tokenSpan(token),
+                               .kind = exportInclude && moduleInterface
+                                           ? SourceDependencyKind::ExportInclude
+                                           : include.kind,
+                               .directive = tokenSpan(includeToken),
                                .includeSpelling = include.includeSpelling,
                                .includeOccurrence = occurrence});
         }
@@ -970,7 +1009,40 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   const PackageSourceRoot *owner = packageForPath(includingFile);
   std::filesystem::path path;
   std::optional<std::string> expectedName;
-  if (quoted) {
+  std::optional<std::string> standardModule;
+  if (!quoted && names.front() == "std") {
+    // The configured standard library owns the reserved `std` module
+    // namespace in direct and project compilation alike. Its interfaces have
+    // one fixed location beneath each root, so a name never triggers search.
+    if (names.size() == 1) {
+      // Every interface adds its whole unit to lowering and emission, so an
+      // aggregate would make each importer pay for the entire library.
+      return reject("The standard library has no aggregate module; import "
+                    "each unit you use, such as 'import std.vector;'.");
+    }
+    const std::string &name = names[1];
+    for (const std::filesystem::path &root : standardLibraryRoots) {
+      const std::filesystem::path candidate =
+          canonicalPath(root / "modules" / (name + ".gti"));
+      std::error_code error;
+      if (std::filesystem::is_regular_file(candidate, error) ||
+          sourceOverrides->contains(candidate.string())) {
+        path = candidate;
+        break;
+      }
+    }
+    if (path.empty()) {
+      return reject(
+          standardLibraryRoots.empty()
+              ? "Cannot resolve standard-library module because no standard "
+                "library root is configured."
+              : "Standard-library module 'std." + name +
+                    "' was not found; each public <std/name> unit is "
+                    "imported as 'std.name'.");
+    }
+    expectedName = name;
+    standardModule = standardModuleNameForExistingPath(path);
+  } else if (quoted) {
     const auto *spelling = std::get_if<std::string>(&tokens[index + 1].literal);
     if (spelling == nullptr || spelling->empty() ||
         spelling->find('\0') != std::string::npos) {
@@ -986,6 +1058,7 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
       return reject("A quoted import cannot cross a package boundary; use a "
                     "declared dependency alias.");
     }
+    standardModule = standardModuleNameForExistingPath(path);
   } else {
     if (owner == nullptr) {
       return reject("Named module imports require an owning package graph; "
@@ -1038,7 +1111,10 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
       !sourceOverrides->contains(path.string())) {
     return reject("Module interface '" + path.string() + "' was not found.");
   }
-  const SourceUnitId loaded = loadFile(path, false, false, &keyword);
+  const SourceUnitId loaded =
+      loadFile(path, false, false, &keyword, standardModule,
+               standardModule ? SourceUnitRole::StandardLibrary
+                              : SourceUnitRole::Application);
   const SourceUnit *unit = graph.findUnit(loaded);
   if (unit == nullptr || !unit->moduleDeclaration) {
     return reject("An import must name an explicit 'export module name;' "

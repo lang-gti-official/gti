@@ -2284,6 +2284,19 @@ namespace active {
              lang::Formatter().format(formatted) == formatted,
          "module syntax should format without token resplitting and remain "
          "idempotent");
+  for (const std::string &source :
+       {std::string("export module vector;\nexport #include <std/vector>\n"
+                    "import std.span;\n"),
+        std::string("export module vector;\nexport   #include <std/vector>\n"
+                    "import std.span;\n"),
+        std::string("export module vector;\nexport\n#include <std/vector>\n"
+                    "import std.span;\n")}) {
+    const std::string republished = lang::Formatter().format(source);
+    expect(republished == "export module vector;\nexport #include "
+                          "<std/vector>\nimport std.span;\n",
+           "export #include keeps its prefix on the directive line: " +
+               republished);
+  }
 }
 
 void testSourceModuleResolution() {
@@ -2566,12 +2579,24 @@ int configured_value() { return 1; }
 #include "parent.gti"
 export int second_value() { return 1; }
 )";
-  const auto incompatible = analyze(consumer(false));
-  expect(
-      !incompatible.sourceValid &&
-          hasDiagnostic(incompatible.diagnostics,
-                        "different source-local configuration flags"),
-      "first inclusion in a new domain retains canonical input compatibility");
+  for (const bool reverse : {false, true}) {
+    expect(analyze(consumer(reverse)).canGenerateCode(),
+           "a shared unit replays under different incoming flags when it "
+           "selects the same canonical syntax");
+  }
+  sources[parent.string()] = R"(#include "flags.gti"
+#ifdef SECOND_ONLY
+int second_only_value() { return 1; }
+#endif
+)";
+  for (const bool reverse : {false, true}) {
+    const auto observed = analyze(consumer(reverse));
+    expect(!observed.sourceValid &&
+               hasDiagnostic(observed.diagnostics, "selects different syntax"),
+           "a differing incoming flag the shared unit observes is still "
+           "rejected in either import order");
+  }
+  sources[parent.string()] = "#include \"flags.gti\"\n";
 
   // These sources are overlays. Mutating an overlay and analyzing again with
   // the same cache must replay the new bytes rather than a previous flag set.
@@ -2588,6 +2613,185 @@ export int second_value() { return 1; }
   expect(!cycle.sourceValid &&
              hasDiagnosticCode(cycle.diagnostics, "GTI-I0001"),
          "per-domain include replay must preserve cycle rejection");
+}
+
+void testStandardLibraryModules() {
+  const auto root = std::filesystem::weakly_canonical(
+      std::filesystem::temp_directory_path() / "gti-standard-modules");
+  const auto entry = root / "main.gti";
+  const auto facade = root / "facade.gti";
+  const auto legacy = root / "legacy.gti";
+  const auto nested = root / "nested.gti";
+  const auto local = root / "vector.gti";
+  std::unordered_map<std::string, std::string> sources{
+      {facade.string(), "export module facade;\nexport import std.vector;\n"
+                        "export #include \"legacy.gti\"\n"},
+      {legacy.string(),
+       "#include \"nested.gti\"\nnamespace old { int answer() { return "
+       "hidden() + 2; } }\n"},
+      {nested.string(), "int hidden() { return 40; }\n"},
+      {local.string(),
+       "export module vector;\nexport int local_vector() { return 1; }\n"}};
+  const auto analyze =
+      [&](const std::string &source,
+          const std::vector<lang::PackageSourceRoot> &packages = {}) {
+        return lang::Frontend().analyze(entry, source,
+                                        {standardLibraryPrelude()}, sources,
+                                        {standardLibraryRoot()}, packages);
+      };
+  const auto report = [](const lang::FrontendResult &result) {
+    for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  };
+
+  const auto imported = analyze(R"(import std.vector;
+import std.string;
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(42);
+  std::string text = std::string("ready");
+  return values[std::size_t(0)] == 42 && text.size() == std::size_t(5) ? 0
+                                                                       : 1;
+}
+)");
+  if (!imported.canGenerateCode()) {
+    report(imported);
+  }
+  expect(imported.canGenerateCode(),
+         "direct compilation imports standard-library modules by name");
+  const lang::SourceUnit *bridge = nullptr;
+  const lang::SourceUnit *vectorUnit = nullptr;
+  for (const lang::SourceUnit &unit : imported.sourceGraph.sourceUnits()) {
+    if (unit.standardLibraryName == "modules/vector") {
+      bridge = &unit;
+    } else if (unit.standardLibraryName == "std/vector") {
+      vectorUnit = &unit;
+    }
+  }
+  bool importEdge = false;
+  bool republishEdge = false;
+  for (const lang::SourceDependency &dependency :
+       imported.sourceGraph.dependencyEdges()) {
+    importEdge =
+        importEdge || (bridge != nullptr &&
+                       dependency.source == imported.sourceGraph.entryUnit() &&
+                       dependency.target == bridge->id &&
+                       dependency.kind == lang::SourceDependencyKind::Import);
+    republishEdge =
+        republishEdge ||
+        (bridge != nullptr && vectorUnit != nullptr &&
+         dependency.source == bridge->id &&
+         dependency.target == vectorUnit->id &&
+         dependency.kind == lang::SourceDependencyKind::ExportInclude);
+  }
+  expect(bridge != nullptr && vectorUnit != nullptr &&
+             bridge->role == lang::SourceUnitRole::StandardLibrary &&
+             bridge->moduleDeclaration &&
+             bridge->moduleDeclaration->lexeme == "vector" &&
+             vectorUnit->role == lang::SourceUnitRole::StandardLibrary &&
+             importEdge && republishEdge,
+         "std.vector is a standard-library interface that republishes the "
+         "trusted <std/vector> unit");
+
+  const auto nestedHidden =
+      analyze("import std.vector;\nint main() { std::span<int32_t> view = "
+              "std::span<int32_t>(); return int32_t(view.size()); }\n");
+  expect(!nestedHidden.semanticValid &&
+             hasDiagnosticCode(nestedHidden.diagnostics, "GTI-S2024"),
+         "a republished unit does not republish its own nested includes");
+
+  const auto aggregate = analyze("import std;\nint main() { return 0; }\n");
+  expect(!aggregate.sourceValid &&
+             hasDiagnostic(aggregate.diagnostics, "no aggregate module"),
+         "the standard library has no aggregate module");
+  const auto missing =
+      analyze("import std.missing;\nint main() { return 0; }\n");
+  expect(!missing.sourceValid &&
+             hasDiagnostic(missing.diagnostics,
+                           "Standard-library module 'std.missing' was not "
+                           "found"),
+         "an unknown standard-library module is a source-loading error");
+
+  const auto throughFacade = analyze(R"(import "facade.gti";
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(old::answer());
+  return values[std::size_t(0)] == 42 ? 0 : 1;
+}
+)");
+  if (!throughFacade.canGenerateCode()) {
+    report(throughFacade);
+  }
+  expect(throughFacade.canGenerateCode(),
+         "an application interface re-exports a standard module and "
+         "republishes its own legacy unit");
+  const auto facadeNested =
+      analyze("import \"facade.gti\";\nint main() { return hidden(); }\n");
+  expect(!facadeNested.semanticValid &&
+             hasDiagnosticCode(facadeNested.diagnostics, "GTI-S2024"),
+         "export #include republishes exactly one legacy unit");
+
+  sources[legacy.string()] = "export #include \"nested.gti\"\n";
+  const auto outsideInterface =
+      analyze("#include \"legacy.gti\"\nint main() { return hidden(); }\n");
+  expect(!outsideInterface.sourceValid &&
+             hasDiagnostic(outsideInterface.diagnostics,
+                           "Republishing an include requires"),
+         "export #include is valid only in an interface");
+  sources[facade.string()] =
+      "export module facade;\nexport #include \"vector.gti\"\n";
+  const auto republishedInterface =
+      analyze("import \"facade.gti\";\nint main() { return 0; }\n");
+  expect(!republishedInterface.sourceValid &&
+             hasDiagnostic(republishedInterface.diagnostics,
+                           "republished with 'export import'"),
+         "an interface is re-exported with export import, never "
+         "republished as an include");
+
+  const auto sameName = analyze(R"(import std.vector;
+import "vector.gti";
+int main() {
+  std::vector<int32_t> values{};
+  return int32_t(values.size()) + local_vector() - 1;
+}
+)");
+  if (!sameName.canGenerateCode()) {
+    report(sameName);
+  }
+  expect(sameName.canGenerateCode(),
+         "an application module may share a standard-library module name");
+
+  const auto mixed = analyze(R"(#define APPLICATION_FLAG
+#include <std/vector>
+import std.vector;
+import std.string;
+int main() {
+  std::vector<int32_t> values{};
+  return int32_t(values.size());
+}
+)");
+  if (!mixed.canGenerateCode()) {
+    report(mixed);
+  }
+  expect(mixed.canGenerateCode(),
+         "a legacy standard unit is shared with a module domain whose "
+         "source-local flags it never observes");
+
+  std::vector<lang::PackageSourceRoot> packages{{.identity = "app",
+                                                 .name = "app",
+                                                 .packageRoot = root,
+                                                 .sourceRoot = root}};
+  const auto project =
+      analyze("import std.vector;\nint main() { std::vector<int32_t> values{}; "
+              "return int32_t(values.size()); }\n",
+              packages);
+  if (!project.canGenerateCode()) {
+    report(project);
+  }
+  expect(project.canGenerateCode(),
+         "project compilation resolves the reserved std module owner before "
+         "package aliases");
 }
 
 void testSupportFacilities() {
@@ -2608,6 +2812,7 @@ constexpr NamedTest kTests[] = {
     {"testSourceModuleConfigurationDomains",
      testSourceModuleConfigurationDomains},
     {"testStandardLibraryImports", testStandardLibraryImports},
+    {"testStandardLibraryModules", testStandardLibraryModules},
     {"testPackageImports", testPackageImports},
     {"testLoopControlStatements", testLoopControlStatements},
     {"testDoWhileStatements", testDoWhileStatements},

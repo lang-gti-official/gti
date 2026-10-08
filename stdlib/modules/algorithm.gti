@@ -1,0 +1,3 @@
+// Module std.algorithm: the public surface of <std/algorithm>.
+export module algorithm;
+export #include <std/algorithm>

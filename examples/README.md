@@ -25,6 +25,7 @@ You do not need to read the entire sequence to find an API pattern:
 
 | I want to… | Start here |
 | --- | --- |
+| Use the standard library through imports instead of includes | [131: standard-library modules](131-standard-library-modules.gti) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
@@ -179,6 +180,7 @@ is a teaching helper, not a production server.
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
+| `131-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
