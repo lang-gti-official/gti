@@ -1410,6 +1410,14 @@ in the caller's value-rooted slot. The paired success edge arms that slot;
 failure leaves it empty and retains MIR's cleanup order. Representation-only
 moved-from shells are destroyed immediately after their verified transfer.
 Constructor arguments use the same proof, including fresh unit variants.
+A fresh cleanup-free class construction that is one alternative field fuses
+into the variant braces only when it is adjacent to its `PayloadConstruct`.
+Otherwise, when its constructor ends the block at an Invoke or sibling field
+arguments are prepared after it, the construction runs at its MIR position in
+representation-only storage. Its success edge must dominate the sole
+`PayloadConstruct` use, the class must move without defined failure, and MIR
+must record no value-rooted place or drop for it. The alternative moves the
+completed value, and the moved-from shell is destroyed immediately afterward.
 
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
@@ -2209,6 +2217,17 @@ The loan keeps that owner stable between the check and publication. This path
 does not call the legacy terminal `owner_access` helper, and a missing failure
 edge or plain-body representation is rejected rather than bypassing caller
 cleanup. No public smart-pointer name is recognized.
+
+C-linkage declarations use the deterministic private C++ spelling
+`__gti_c_fn_<FunctionId>`, independently of the semantic external symbol.
+The declaration writer retains the exact native signature and binds that
+private identifier through an object-format link label. Darwin labels include
+the ABI's leading underscore; GNU-compatible ELF/COFF labels retain the symbol
+directly. Native MSVC uses a COFF alternative-name directive. Typed MIR calls,
+indirect-function values and hosted C-thread boundaries consume the same sealed
+private declaration identity. Runtime definitions, native bridge headers and
+embedding export symbols are not renamed. This is representation isolation,
+not a libc-name exception or a type conversion.
 
 Each native callback item produces one typed `extern "C" noexcept` thunk. A
 non-failing target is called directly. A failure-capable target uses its

@@ -58,6 +58,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testFreshClassPayloadOperandStaging",
+      "suite": "preflight"
+    },
+    {
       "name": "testDischargedCompoundOperatorVocabulary",
       "suite": "preflight"
     },
