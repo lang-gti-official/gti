@@ -134,7 +134,7 @@ reinterpreted as larger records.
 `include/gti/backend.h` defines one executable-backend operation:
 
 ```cpp
-BackendArtifact generate(const LoweredProgram &program);
+BackendArtifact generate(LoweredProgram program);
 ```
 
 Backend policy is explicit state of the selected backend. For example,
@@ -352,6 +352,60 @@ contains:
 or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
 provides deterministic full text for comparison and independent tooling.
 
+The builder runs every inventory check and seals the value only if they all
+pass; it never re-checks a seal it has just computed. Each consumer verifies
+the complete inventory and seal once. `verifiedLoweredProgram` returns a
+`VerifiedLoweredProgram`, owning evidence about that exact immutable value.
+A seal match alone is insufficient: the deterministic inspection print is not
+an exhaustive serialization of every verified invariant. For example, changing
+the independent program kind without its embedding plan must be rejected even
+if the print is unchanged. The C++, MIR, and native-header backends all use
+this admission boundary. `CppBackend` hands the
+evidence to the emitter, emission planner, and representation snapshot, so no
+stage checks again. The `LoweredProgram` overloads of those stages still check
+first, so a direct or test caller cannot bypass rejection. `verifyLoweredProgram`
+is also available for independent tooling and tests. The PR #176 audit
+therefore retains streamed hashing and shared evidence, but rejects its
+seal-only admission shortcut.
+
+Evidence owns a const snapshot, shared between consumer stages. Acquiring it
+copies an lvalue program or moves an rvalue program. `Backend::generate`
+accepts a value, and the driver moves its finished program into this boundary;
+C++ emission moves that value into the proof without another full-program
+copy. Callers that need to retain their input can still pass an lvalue. Later
+assignment, movement or destruction of the caller's original value cannot
+detach the proof from the checked contents. Merely holding a const pointer to
+a caller-owned program would not establish this, because `LoweredProgram`
+itself remains an assignable value.
+
+The seal is a 64-bit hash of the deterministic print. Both printers write to a
+stream, and the seal hashes the text as it arrives, eight bytes at a time,
+without materializing it; a large program's print is around 100 MB. Seals
+are compared only with seals of the same compiler, so the hash is not a stable
+external format.
+
+Lookups by class, function, constructor, storage, symbol, enum, or generic
+parameter identity use row hints built at construction. A hint is used only
+after its row is confirmed to still carry that identity; otherwise the lookup
+scans, so mutated test values keep their exact behavior. The hints are derived
+data and are not part of the printed contract.
+
+Several C++ representation facts depend on the whole program rather than on
+the type being spelled:
+
+- the closure of classes that keep a native template representation;
+- whether any lexical closure forces the shared template carrier;
+- whether a class supports direct representation, which depends on its
+  member rows;
+- the conditional class-return arms of a MIR body.
+
+`CppRepresentationScope` is opened by the emission planner and the
+representation snapshot once they hold verification evidence. While it is
+open on a thread, queries about that exact program compute each such fact
+once. A nested stage of the same consumer reuses the open scope. Queries about
+any other value, and every query outside a scope, compute the same answers
+directly.
+
 ## Generated Items
 
 Every generated family has a target-independent contract:
@@ -454,12 +508,27 @@ identical.
 
 Generated support is likewise a compiled backend component rather than a
 mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
-selected C++ standard and exact Expected, storage, managed-thread,
-atomic, defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
+selected C++ standard and exact Expected, storage, managed-thread, C-thread,
+atomic, mutex, SIMD, defined-failure, runtime-binding, and C-ABI text-view
+needs. The preamble and
 failure-support writers receive those explicit values and an output sink;
 they do not query program meaning. Storage and defined-failure support remain
 universal only because that is the current artifact contract, not because the
 writers infer their use.
+
+Capability support has two levels. A lowered class declaration whose
+compiler capability kind is shared owner, atomic storage, mutex storage, or
+mutex lock token selects only a forward declaration of the backend class
+template that represents it. Declarations retained without an instance, such
+as the generic library classes left by an unused `#include`, still emit
+uninstantiated C++ class templates whose members spell those qualified
+template names, and C++ resolves a qualified template name where the
+template is defined. The complete definitions and their native headers
+(`<atomic>`, `<mutex>`) require a concrete MIR capability instance or a
+verified capability operation. The managed-thread handle representation is
+not a template, so a retained thread-handle declaration selects its complete
+support. `dormant_capability_runtime` builds and runs each family's
+include-only program natively.
 
 ### Executable Bodies
 

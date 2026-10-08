@@ -1,0 +1,3 @@
+// Module std.filesystem: the public surface of <std/filesystem>.
+export module filesystem;
+export #include <std/filesystem>

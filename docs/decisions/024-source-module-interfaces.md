@@ -1,7 +1,9 @@
 # 024: Explicit Source Module Interfaces
 
 Status: Accepted and implemented in 0.362.0, with combined release validation.
-Separate compilation and independent module linkage remain outside this decision.
+Revised in 0.393.0: republished includes, standard-library modules, and
+configuration sharing by replay. Separate compilation and independent module
+linkage remain outside this decision.
 
 ## Outcome
 
@@ -34,8 +36,16 @@ Modules are GTI language boundaries, not C++ modules or binary distributions.
   external modules. A named import requires the supplied package graph.
 - `#include` continues to load legacy source units with exactly its existing
   direct-visibility semantics. Including an explicit module interface is an
-  error: it cannot bypass export visibility. Importing or re-exporting a legacy
-  include unit is an error; migration is explicit, not an implicit header unit.
+  error: it cannot bypass export visibility. Importing a legacy include unit is
+  an error; migration is explicit, not an implicit header unit. An interface
+  may deliberately republish one legacy unit with `export #include`, which
+  exposes that unit's declarations, but not its nested includes, to the
+  interface's importers.
+- `std` names the configured standard library in direct and project
+  compilation. `import std.name;` selects the compiler-shipped interface
+  `modules/name.gti` beneath a standard-library root. Each such interface
+  republishes `<std/name>`. There is no aggregate `std` module, and packages
+  cannot register `std` as a module name or dependency alias.
 - Compiler-supplied configuration flags apply to modules. Source-local flag
   mutations in an importer do not configure the imported module, and module
   flag mutations do not escape into the importer. Legacy includes inside each
@@ -74,8 +84,33 @@ independently owned modules needs a later identity/lowering slice, not backend
 name mangling that invents different GTI types.
 
 A legacy included unit still has one canonical configuration in a compilation.
-Sharing it across module configuration domains with different active flags is
-diagnosed rather than silently reusing whichever configuration loaded first.
+Each module configuration domain replays its directives, so nothing is
+silently reused from whichever domain loaded it first. Sharing is diagnosed
+when a replay selects different syntax. As of 0.393.0, different incoming
+flags alone are no longer diagnosed.
+
+## Revision: Standard-Library Modules (0.393.0)
+
+The standard library is the first library that every program uses, and
+converting its 43 units to interfaces with private details would break every
+existing `#include <std/...>`. That is because an interface cannot be
+included. Each unit therefore keeps its legacy source, and the library adds
+one interface per unit that republishes it. `export #include` is the explicit,
+interface-authored form of that migration; it is not an implicit header unit,
+because a consumer still cannot import a legacy unit. When a unit later
+migrates to real exports, its interface can replace the republished include
+without changing importers.
+
+The original incoming-flag equality check rejected any program that wrote a
+`#define` before an include that a standard module also loaded, even though
+the standard library observes no application flags. Replay under each domain's
+flags with canonical-syntax comparison is the actual invariant, and it already
+caught the cases flag equality missed.
+
+An aggregate `import std;` is deferred. Every imported unit is lowered and
+emitted in full whether or not the program uses it, and the whole library
+costs several seconds per compile. An aggregate becomes reasonable once
+unreferenced library declarations need not reach lowering.
 
 `import` and `module` become reserved GTI keywords; `export` was already a
 reserved C++ keyword. A minor-version migration must call out the two newly

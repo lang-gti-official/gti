@@ -27,6 +27,8 @@ enum class SourceDependencyKind {
   Package,
   Import,
   ExportImport,
+  // An interface's deliberate republication of one legacy include unit.
+  ExportInclude,
 };
 
 enum class SourceUnitRole {

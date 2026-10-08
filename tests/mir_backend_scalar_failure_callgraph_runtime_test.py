@@ -55,6 +55,11 @@ def validate_emission(
     optimization: str,
     standard: str,
 ) -> bool:
+    if label == "unused-owning-array-parameter" and re.search(
+        r"_compatibility_array_user(?:__gti_mir_failure)?\(", generated
+    ):
+        sys.stderr.write(f"{optimization}/{standard} emitted the unreachable array consumer\n")
+        return False
     if generated.count(MARKER) != expected_bodies:
         sys.stderr.write(
             f"{label} {optimization}/{standard} did not select the exact "
@@ -213,7 +218,10 @@ def main() -> int:
     success_cases = (
         ("lifecycle-success", pathlib.Path(argv[2]).resolve(), 3),
         ("all-operations-success", pathlib.Path(argv[3]).resolve(), 2),
-        ("owning-array-parameter", pathlib.Path(argv[20]).resolve(), 3),
+        # The full-program unit test covers the array parameter's hidden ABI.
+        # This CLI fixture never calls it, so only checked_increment and the
+        # hosted entry belong to the reachable failure component.
+        ("unused-owning-array-parameter", pathlib.Path(argv[20]).resolve(), 2),
     )
     failure_cases = (
         (

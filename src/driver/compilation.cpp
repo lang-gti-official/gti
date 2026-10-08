@@ -32,6 +32,8 @@ FrontendResult analyze(const CompilationRequest &request,
       .progress = progress};
   options.rawPointerAudit = request.rawPointerAudit();
   options.program = request.program();
+  // Artifacts contain only code the program roots reach.
+  options.lowerReachableOnly = true;
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);
@@ -158,7 +160,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
   LoweredProgram loweredProgram = std::move(*loweredBuild.program);
 
   try {
-    result.artifact = backend.generate(loweredProgram);
+    result.artifact = backend.generate(std::move(loweredProgram));
   } catch (const BackendUnsupportedError &exception) {
     return backendLimitation(exception.what());
   } catch (const std::exception &exception) {

@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <sstream>
@@ -7507,6 +7508,44 @@ conditionalClassReturnJoinArm(const MirBody &body, MirValueId valueId) {
 // function result, and the explicit TransferOut ends the moved-from C++
 // object's lifetime. Requiring the whole diamond prevents a generic
 // class-phi heuristic from inventing initialization or cleanup policy.
+// Every conditional arm in one body, grouped by its shared slot in value
+// order. Join queries run for many candidate slots and transfers; building the
+// grouping once per body avoids re-deriving every value's arm for each query.
+using ConditionalClassReturnJoinArms =
+    std::unordered_map<MirPlaceId, std::vector<ConditionalClassReturnJoinArm>>;
+
+[[nodiscard]] ConditionalClassReturnJoinArms
+collectConditionalClassReturnJoinArms(const MirBody &body) {
+  ConditionalClassReturnJoinArms result;
+  for (const MirValue &value : body.values) {
+    ConditionalClassReturnJoinArm arm =
+        conditionalClassReturnJoinArm(body, value.id);
+    if (arm.slot != nullptr) {
+      result[arm.slot->id].push_back(arm);
+    }
+  }
+  return result;
+}
+
+[[nodiscard]] std::vector<ConditionalClassReturnJoinArm>
+conditionalClassReturnJoinArmsFor(const MirBody &body, MirPlaceId slot) {
+  ConditionalClassReturnJoinArms uncached;
+  const ConditionalClassReturnJoinArms *arms = &uncached;
+  if (std::shared_ptr<void> *stored =
+          cppScopedBodyAnalysis(body, "conditional-class-return-join-arms")) {
+    if (!*stored) {
+      *stored = std::make_shared<ConditionalClassReturnJoinArms>(
+          collectConditionalClassReturnJoinArms(body));
+    }
+    arms = static_cast<const ConditionalClassReturnJoinArms *>(stored->get());
+  } else {
+    uncached = collectConditionalClassReturnJoinArms(body);
+  }
+  const auto found = arms->find(slot);
+  return found == arms->end() ? std::vector<ConditionalClassReturnJoinArm>{}
+                              : found->second;
+}
+
 [[nodiscard]] ConditionalClassReturnJoin
 conditionalClassReturnJoin(const MirBody &body, const MirPlace &slot) {
   if (slot.root != MirPlaceRootKind::Temporary || slot.temporary == 0 ||
@@ -7516,12 +7555,8 @@ conditionalClassReturnJoin(const MirBody &body, const MirPlace &slot) {
   }
 
   ConditionalClassReturnJoin result;
-  for (const MirValue &value : body.values) {
-    ConditionalClassReturnJoinArm arm =
-        conditionalClassReturnJoinArm(body, value.id);
-    if (arm.slot == nullptr || arm.slot->id != slot.id) {
-      continue;
-    }
+  for (const ConditionalClassReturnJoinArm &arm :
+       conditionalClassReturnJoinArmsFor(body, slot.id)) {
     if (result.slotDrop != nullptr && result.slotDrop != arm.slotDrop) {
       return {};
     }

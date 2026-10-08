@@ -1,0 +1,3 @@
+// Module std.simd: the public surface of <std/simd>.
+export module simd;
+export #include <std/simd>

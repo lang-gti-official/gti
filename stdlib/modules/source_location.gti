@@ -1,0 +1,3 @@
+// Module std.source_location: the public surface of <std/source_location>.
+export module source_location;
+export #include <std/source_location>

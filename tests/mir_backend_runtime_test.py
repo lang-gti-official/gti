@@ -79,20 +79,19 @@ def main() -> int:
                 generated = emitted.read_text(encoding="utf8")
                 if (
                     generated.count(f"{marker} field-initializers-instance")
-                    != 2
+                    != 0
                     or generated.count(
                         f"{marker} static-field-initializers-instance"
                     )
-                    != 2
+                    != 0
                     or generated.count(f"{marker} module-instance") != 1
                     or generated.count(
                         "// GTI verified-MIR body: native-boundary-v1 "
                         "function-instance"
                     )
-                    # Twelve declaration-bound prelude operations (including
-                    # the five source-storage state/relocation checks) and two
-                    # native stdout declarations retain verified boundaries.
-                    != 14
+                    # Only the two native stdout declarations are roots. The
+                    # unused prelude capabilities/classes are not lowered.
+                    != 2
                 ):
                     sys.stderr.write(
                         "generated C++ lost the verified prelude initializer, "
@@ -115,8 +114,6 @@ def main() -> int:
                     "checked_leaf",
                     "checked_caller",
                     "entry",
-                    "print",
-                    "println",
                 ):
                     failure_body = function_definition(
                         generated, f"{failure_name}__gti_mir_failure"

@@ -9,6 +9,47 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.393.0 — Standard-library modules and reachable compilation
+
+- Builds lower, optimize and natively compile only code reachable from the
+  program: its entry point, library exports, global initialization and the C
+  boundary, plus everything those reach. Every declaration is still checked,
+  so an error in unused code, including in a generic it instantiates, is
+  still reported. Including or importing a large library avoids MIR,
+  optimization and native compilation work for unused bodies; parsing and
+  semantic analysis still cover the imported source.
+- `extern "C"` declarations and C records stay in the generated native header
+  and layout checks whether or not GTI code uses them.
+- Less compiler work per build: whole-program C++ representation facts are
+  computed once per build, the lowered program's seal is hashed as it is
+  printed, consumer stages share owning verification evidence, and the
+  remaining declaration lookups no longer scan the whole program. Backend
+  admission retains full verification rather than relying on the seal alone.
+
+### Standard-library modules
+
+- Import the standard library instead of including it: `import std.vector;`
+  makes `<std/vector>` visible, in direct compilation and in projects alike.
+  Each public `<std/name>` unit is the module `std.name`, and an import exposes
+  exactly what the include does. Existing `#include <std/...>` code is
+  unchanged, and both spellings can be mixed. There is no aggregate
+  `import std;` yet.
+- A module interface can republish one legacy unit with
+  `export #include "legacy.gti"`. A library can then offer an import before
+  its sources are converted to explicit exports.
+- A `#define` before an include no longer prevents that unit from being shared
+  with a module. Sharing is rejected only when the flag selects different
+  code in the shared unit.
+- `std` can no longer be registered as a `[modules]` name.
+- Backend stages share owning verification evidence for the exact accepted
+  lowered program instead of repeating full checks. The driver transfers this
+  value without a full-program copy, and common declaration lookups use
+  identity-checked indices. These reduce compiler work without changing GTI
+  checks or the generated program; gains depend on the imported workload.
+- Fix native build failures when a program includes `<std/atomic>` or
+  `<std/mutex>` without using their types, in either execution profile. Such
+  includes still add no native atomic or mutex support to the executable.
+
 ## 0.390.0 — Target and profile configuration flags
 
 - Set `defines` in individual `gti.toml` targets and profiles. Build, check,

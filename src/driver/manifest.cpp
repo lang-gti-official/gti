@@ -2222,6 +2222,12 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               "Module names must be ordinary ASCII GTI identifiers."));
           continue;
         }
+        if (name == "std") {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1005", sourceSpan(sourceName, source, moduleKey),
+              "The module name 'std' is reserved for the standard library."));
+          continue;
+        }
         const auto spelling = pathNode.value<std::string>();
         if (!spelling) {
           result.diagnostics.push_back(

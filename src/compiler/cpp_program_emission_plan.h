@@ -8,6 +8,7 @@
 namespace lang {
 
 class LoweredProgram;
+class VerifiedLoweredProgram;
 class CppProgramEmissionPlanner;
 
 enum class CppProgramTextRole {
@@ -41,8 +42,13 @@ private:
   friend class CppProgramEmissionPlanner;
 };
 
+// Verifies `program` first and throws std::logic_error when it is invalid.
 [[nodiscard]] CppProgramEmissionPlan
 buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
                             bool debugInfo = false);
+
+[[nodiscard]] CppProgramEmissionPlan
+buildCppProgramEmissionPlan(const VerifiedLoweredProgram &program,
+                            CppStandard standard, bool debugInfo = false);
 
 } // namespace lang

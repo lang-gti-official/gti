@@ -1,0 +1,3 @@
+// Module std.atomic: the public surface of <std/atomic>.
+export module atomic;
+export #include <std/atomic>
