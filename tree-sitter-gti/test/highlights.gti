@@ -308,3 +308,8 @@ concept snapshot_highlight<T> =
     requires(T& item) { { item.snapshot() } -> T; };
 
 namespace qualified_outer::qualified_inner::qualified_leaf {}
+
+using SpecializedHighlight = Box<Box<int>>::nested::value_type;
+Box<int>::value_type qualified_member_highlight(Box<int>::value_type value) {
+  return value;
+}

@@ -158,7 +158,11 @@ type position asks semantic analysis for the accessible direct aliases of the
 qualified class; the protocol adapter does not infer class membership from the
 written `::` path. Tree-sitter accepts the alias as a class member and supplies
 the syntax-level type-definition capture while semantic tokens retain the exact
-class-versus-namespace meaning.
+class-versus-namespace meaning. Specialized owners such as `Box<int>::value_type`
+retain their type arguments in the compiler AST. Completion uses that resolved
+owner for alias substitution, and hover/definition/references/tokens keep the
+alias declaration identity at every qualifier step. Incomplete specialized
+paths use the existing completion-marker and parser recovery paths.
 
 Conditional unsafe class capability assertions use the same generic-parameter
 symbol as their declaration. Navigation, references and rename therefore cover
