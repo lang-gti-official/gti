@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-region source prefix ownership preserves resource/failure contracts."""
+"""One-region ownership preserves exact provider descriptors and failures."""
 
 import pathlib
 import re
@@ -16,10 +16,27 @@ if __name__ == "__main__":
                 if "1 / this.divisor" in text)
     failure = (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                "division_by_zero in integer_division\n")
+    policy = fixture.parent / "source_resource_prefix_policy.gti"
+    policy_lines = policy.read_text().splitlines()
+    def rejected_release(marker, message):
+        sites = [index for index, text in enumerate(policy_lines, 1)
+                 if text.endswith("// " + marker)]
+        assert len(sites) == 1, marker
+        return (70, "", f'{policy.name}:{sites[0]}: runtime error[GTI-R0017]: '
+                f'panic: "{message}"\n')
+    policy_cases = [((), (0, "", ""))]
+    for argument, marker, message in (
+            ("wrong-provider", "wrong-provider", "wrong resource provider"),
+            ("address", "descriptor-mismatch", "mismatched resource descriptor"),
+            ("extent", "descriptor-mismatch", "mismatched resource descriptor"),
+            ("alignment", "descriptor-mismatch", "mismatched resource descriptor"),
+            ("identity", "wrong-region", "wrong resource region identity"),
+            ("duplicate", "duplicate-release", "duplicate resource release")):
+        policy_cases.append(((argument,), rejected_release(marker, message)))
     run_runtime_matrix(
         names=("source_resource_prefix_policy", "source_resource_prefix_cleanup"),
         cases={
-            "source_resource_prefix_policy": [((), (0, "", ""))],
+            "source_resource_prefix_policy": policy_cases,
             "source_resource_prefix_cleanup": [
                 ((), (0, "2\n1\n900\n901\n", "")),
                 (("fail",), (70, "2\n1\n900\n901\n", failure)),

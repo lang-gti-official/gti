@@ -3,6 +3,8 @@
 #include <std/memory>
 #include <std/numeric>
 #include <std/string>
+#include <std/vector>
+#include <std/panic>
 
 mut int live_items = 0;
 mut int destroyed_items = 0;
@@ -28,6 +30,11 @@ struct Counts {
   mut uint64_t first_bytes = 0;
   mut uint64_t second_alignment = 0;
   mut int live_at_release = 0;
+  mut void* addresses[8] = {};
+  mut uint64_t extents[8] = {};
+  mut uint64_t alignments[8] = {};
+  mut uint64_t native_ids[8] = {};
+  mut uint64_t live_regions = 0;
 };
 
 // A source-defined resource makes the exact region policy observable. Its
@@ -36,11 +43,12 @@ struct Counts {
 class RecordingResource {
   std::process_resource process{};
   uint64_t budget;
+  uint64_t identity;
   mut std::unique_ptr<Counts> counts;
   mut Counts* state = nullptr;
 public:
-  RecordingResource(uint64_t budget)
-      : budget(budget), counts(std::make_unique<Counts>()) {
+  RecordingResource(uint64_t budget, uint64_t identity)
+      : budget(budget), identity(identity), counts(std::make_unique<Counts>()) {
     this.state = &*this.counts;
   }
   unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
@@ -57,16 +65,49 @@ public:
       }
       mut uint64_t alignment = request.alignment;
       if (alignment < uint64_t(64)) { alignment = uint64_t(64); }
+      uint64_t index = this.state->acquisitions;
+      if (index >= uint64_t(8)) { std::panic("unexpected resource allocation"); }
       auto allocated = this.process.allocate(std::layout(request.bytes, alignment));
-      if (allocated) { this.state->acquisitions++; }
-      return std::move(allocated);
+      if (!allocated) { return unexpected(allocated.error()); }
+      std::raw_allocation actual = std::move(allocated).value();
+      this.state->addresses[index] = actual.address;
+      this.state->extents[index] = actual.bytes;
+      this.state->alignments[index] = actual.alignment;
+      this.state->native_ids[index] = actual.id;
+      this.state->live_regions |= uint64_t(1) << index;
+      this.state->acquisitions++;
+      // Provider identity and region identity are both visible to the owner.
+      // Release must preserve this full returned descriptor, not just counts.
+      uint64_t id = this.identity * uint64_t(16) + index + uint64_t(1);
+      return std::raw_allocation(actual.address, actual.bytes, actual.alignment, id);
     }
   }
   unsafe void release(std::raw_allocation allocation) {
     unsafe {
+      if (allocation.id / uint64_t(16) != this.identity) {
+        std::panic("wrong resource provider"); // wrong-provider
+      }
+      uint64_t region = allocation.id % uint64_t(16);
+      if (region == uint64_t(0) || region > this.state->acquisitions) {
+        std::panic("wrong resource region identity"); // wrong-region
+      }
+      uint64_t index = region - uint64_t(1);
+      uint64_t bit = uint64_t(1) << index;
+      if ((this.state->live_regions & bit) == uint64_t(0)) {
+        std::panic("duplicate resource release"); // duplicate-release
+      }
+      if (allocation.address != this.state->addresses[index] ||
+          allocation.bytes != this.state->extents[index] ||
+          allocation.alignment != this.state->alignments[index]) {
+        std::panic("mismatched resource descriptor"); // descriptor-mismatch
+      }
+      // Mark retirement before the native release; a repeated descriptor can
+      // never be accepted even if the native allocator reuses its address.
+      this.state->live_regions &= ~bit;
       this.state->releases++;
       this.state->live_at_release = live_items;
-      this.process.release(allocation);
+      this.process.release(std::raw_allocation(allocation.address,
+          allocation.bytes, allocation.alignment, this.state->native_ids[index]));
     }
   }
   uint64_t attempts() { unsafe { return this.state->attempts; } }
@@ -75,6 +116,22 @@ public:
   uint64_t first_bytes() { unsafe { return this.state->first_bytes; } }
   uint64_t second_alignment() { unsafe { return this.state->second_alignment; } }
   int live_at_release() { unsafe { return this.state->live_at_release; } }
+  std::raw_allocation descriptor(uint64_t index) {
+    unsafe {
+      if (index >= this.state->acquisitions) { std::panic("missing resource region"); }
+      uint64_t id = this.identity * uint64_t(16) + index + uint64_t(1);
+      return std::raw_allocation(this.state->addresses[index],
+          this.state->extents[index], this.state->alignments[index], id);
+    }
+  }
+  ~RecordingResource() {
+    unsafe {
+      if (this.state->live_regions != uint64_t(0) ||
+          this.state->acquisitions != this.state->releases) {
+        std::panic("resource descriptor leaked");
+      }
+    }
+  }
 };
 
 int failed_growth(std::resource_ref<RecordingResource> resource) {
@@ -129,9 +186,46 @@ int growth_and_reuse(std::resource_ref<RecordingResource> resource) {
   return 0;
 }
 
-int main() {
+// Exercise the observation guard itself. These deliberately malformed unsafe
+// release attempts must panic before returning any native bytes. Both vectors
+// then clean up their original descriptors through their original providers;
+// their destructors verify this even on the terminal-failure path.
+int reject_descriptor(std::string_view mode) {
+  RecordingResource first{uint64_t(1), uint64_t(5)};
+  RecordingResource second{uint64_t(1), uint64_t(6)};
+  unsafe {
+    auto first_binding = std::bind_resource(first);
+    auto second_binding = std::bind_resource(second);
+    mut std::resource_vector<int, RecordingResource> left{first_binding};
+    mut std::resource_vector<int, RecordingResource> right{second_binding};
+    left.push_back(7);
+    right.push_back(9);
+    std::raw_allocation original = first.descriptor(uint64_t(0));
+    if (mode == "wrong-provider") { second.release(original); }
+    if (mode == "address") {
+      first.release(std::raw_allocation(nullptr, original.bytes, original.alignment, original.id));
+    }
+    if (mode == "extent") {
+      first.release(std::raw_allocation(original.address, original.bytes + uint64_t(1), original.alignment, original.id));
+    }
+    if (mode == "alignment") {
+      first.release(std::raw_allocation(original.address, original.bytes, original.alignment * uint64_t(2), original.id));
+    }
+    if (mode == "identity") {
+      first.release(std::raw_allocation(original.address, original.bytes, original.alignment, original.id + uint64_t(1)));
+    }
+    if (mode == "duplicate") {
+      left.release();
+      first.release(original);
+    }
+  }
+  return 99;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 1) { return reject_descriptor(argv[std::size_t(1)].view()); }
   {
-    RecordingResource resource{uint64_t(1)};
+    RecordingResource resource{uint64_t(1), uint64_t(1)};
     unsafe {
       auto binding = std::bind_resource(resource);
       int status = failed_growth(binding);
@@ -143,7 +237,7 @@ int main() {
   destroyed_items = 0;
   destruction_order = 0;
   {
-    RecordingResource resource{uint64_t(3)};
+    RecordingResource resource{uint64_t(3), uint64_t(2)};
     unsafe {
       auto binding = std::bind_resource(resource);
       int status = growth_and_reuse(binding);
@@ -153,8 +247,8 @@ int main() {
         resource.releases() != 3 || resource.live_at_release() != 0) { return 16; }
   }
   {
-    RecordingResource first{uint64_t(1)};
-    RecordingResource second{uint64_t(1)};
+    RecordingResource first{uint64_t(1), uint64_t(3)};
+    RecordingResource second{uint64_t(1), uint64_t(4)};
     unsafe {
       auto first_binding = std::bind_resource(first);
       auto second_binding = std::bind_resource(second);

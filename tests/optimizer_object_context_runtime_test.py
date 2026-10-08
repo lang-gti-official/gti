@@ -62,4 +62,15 @@ if __name__ == "__main__":
         path.write_text("\n".join(chain))
         paths["object_chain"] = path
         cases["object_chain"] = [((), (0, "", ""))]
+        budget = [f"int child{index}() {{ return 0; }}" for index in range(40)]
+        budget.append("int budget(int input) { int first = input + 1;")
+        budget.extend(f"[[discard]] child{index}();" for index in range(40))
+        budget.append("return first; }")
+        budget.append("int independent(int input) { return input + 1; }")
+        budget.append("int main() { int first = budget(7); int second = independent(7); "
+                      "return first == 8 && second == 8 ? 0 : 1; }")
+        path = pathlib.Path(temporary) / "object_budget.gti"
+        path.write_text("\n".join(budget))
+        paths["object_budget"] = path
+        cases["object_budget"] = [((), (0, "", ""))]
         main(names=tuple(paths), cases=cases, fixture_paths=paths)

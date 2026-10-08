@@ -296,7 +296,9 @@ including each constructor's exact declaration-field initializer dependency.
 Every body has a 32-analysis limit and an eight-consumed-context-update limit;
 exceeding either rejects that body's contextual facts and invalidates its
 callers. These are fail-closed budgets over the finite body inventory, not an
-unbounded scan. Long ordinary source chains no longer exhaust 32 whole-program
+unbounded scan. A rejected body withdraws all its earlier contextual proofs;
+canonical replay cannot resurrect them. Rejection does not hide subsequent
+independent clients. Long ordinary source chains no longer exhaust 32 whole-program
 rounds merely to propagate already fixed facts. The reported iteration count
 is the maximum work performed for any one body. Proofs are published only
 after the dependency worklist is stable. A body may retain contextual proofs
@@ -313,8 +315,11 @@ opaque barrier: every such instruction clears mutable-memory facts and marks
 the path opaque before any ordinary load/store transfer can interpret it.
 This permits replayable proofs before the operation without granting raw
 memory a scalar transfer rule or declaring the body effect-closed. Earlier
-immutable SSA results remain immutable; later referent/global reads receive no
-stale facts. Foreign/open calls, owning transfers, synchronization and recursive
+immutable SSA results and actual readonly scalar binding copies remain
+immutable; later referent/global reads receive no stale facts. This preservation
+does not apply to readonly reference carriers, projected fields, arrays or
+borrowed state. Exact initialization/replacement still invalidates its own
+destination. Foreign/open calls, owning transfers, synchronization and recursive
 families retain their separate admission boundaries. An unrelated source
 function proves a bounded scalar addition before writing through a raw pointer;
 arithmetic on the changed referent and in its caller remains checked.
