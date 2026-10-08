@@ -1,0 +1,86 @@
+#include <std/string>
+#include <std/memory>
+
+struct Point {
+  mut int32_t value;
+  Point(int32_t value) : value(value) {}
+};
+
+void fresh(mut Point& target) { target = Point(3); }
+void copied(mut Point& target, Point source) { target = source; }
+void moved(mut Point& target, Point source) { target = std::move(source); }
+Point make_point() { return Point(8); }
+void returned(mut Point& target) { target = make_point(); }
+
+void text(mut std::string& target) { target = std::string("new"); }
+void moved_text(mut std::string& target, std::string source) {
+  target = std::move(source);
+}
+std::string make_text() { return std::string("returned"); }
+void returned_text(mut std::string& target) { target = make_text(); }
+
+mut int32_t drops = 0;
+mut int32_t sum = 0;
+class Tracked {
+  int32_t value;
+public:
+  Tracked(int32_t value) : value(value) {}
+  ~Tracked() { drops += 1; sum += this.value; }
+  int32_t get() { return this.value; }
+};
+void replace_tracked(mut Tracked& target) { target = Tracked(7); }
+
+class Owner {
+  std::unique_ptr<int32_t> value;
+public:
+  Owner(int32_t value) : value(std::make_unique<int32_t>(value)) {}
+  int32_t get() { return *this.value; }
+};
+void replace_owner(mut Owner& target) { target = Owner(11); }
+
+int main() {
+  mut Point point{1};
+  fresh(point);
+  if (point.value != 3) return 1;
+  copied(point, Point(4));
+  if (point.value != 4) return 2;
+  moved(point, Point(5));
+  if (point.value != 5) return 3;
+  returned(point);
+  if (point.value != 8) return 4;
+  {
+    mut Point& alias = point;
+    alias = Point(9);
+    if (alias.value != 9) return 5;
+  }
+  if (point.value != 9) return 6;
+  mut std::string name{"old"};
+  text(name);
+  if (name != "new") return 7;
+  moved_text(name, std::string("moved"));
+  if (name != "moved") return 8;
+  returned_text(name);
+  if (name != "returned") return 9;
+  {
+    mut std::string& alias = name;
+    alias = std::string("alias");
+    if (alias != "alias") return 10;
+  }
+  mut std::string names[2] = {std::string("first"), std::string("second")};
+  {
+    mut std::string& element = names[0];
+    element = std::string("changed");
+    if (element != "changed") return 11;
+  }
+  if (names[0] != "changed" || names[1] != "second") return 12;
+  {
+    mut Tracked tracked{2};
+    replace_tracked(tracked);
+    if (tracked.get() != 7 || drops != 1 || sum != 2) return 13;
+  }
+  if (drops != 2 || sum != 9) return 14;
+  mut Owner owned{10};
+  replace_owner(owned);
+  if (owned.get() != 11) return 15;
+  return 0;
+}

@@ -2318,6 +2318,36 @@ passiveGeneratedDestructorClass(const MirProgram &program,
   return exactPassiveClassField(program, body, destination, true);
 }
 
+[[nodiscard]] const MirPlace *directReferenceCarrier(const MirBody &body,
+                                                     const MirPlace &place);
+
+// A checked reference is a pointer carrier, not a second owner of its referent.
+// Its binding can itself be read-only while its reference type grants mutable
+// access. Reuse the exact carrier recognizer used by lvalue spelling; verified
+// MIR remains responsible for the loan's live interval and alias exclusions.
+[[nodiscard]] bool exactMutableReferenceDestination(const MirBody &body,
+                                                    const MirPlace &place) {
+  const MirPlace *carrier = directReferenceCarrier(body, place);
+  if (carrier == nullptr ||
+      carrier->type.referenceAccess != AccessMode::Mutable ||
+      carrier->symbol != place.symbol ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.place == place.id;
+                  }))
+    return false;
+  bool hasLoan = false;
+  for (const MirLoan &loan : body.loans) {
+    if (std::find(loan.carriers.begin(), loan.carriers.end(),
+                  carrier->binding) == loan.carriers.end())
+      continue;
+    if (loan.access != AccessMode::Mutable)
+      return false;
+    hasLoan = true;
+  }
+  return hasLoan;
+}
+
 // A failure-free class Move consumed immediately by one fixed-array Assign has
 // no independent MIR storage or drop identity. Preserve the exact schedule by
 // staging the source into the checked-write helper's by-value parameter. That
@@ -2430,7 +2460,8 @@ classMoveAssignmentFusion(const MirProgram &program, const MirBody &body,
         destination->projections.empty())
       return destination->binding != 0 && destination->projections.empty() &&
              destination->access == AccessMode::Mutable;
-    return exactMutablePassiveClassField(program, body, *destination);
+    return exactMutablePassiveClassField(program, body, *destination) ||
+           exactMutableReferenceDestination(body, *destination);
   };
   if (assignment == nullptr || destination == nullptr ||
       assignmentResult == nullptr ||
@@ -2542,7 +2573,8 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
       passiveGeneratedDestructorClass(program, source->type);
   const bool receiverDestination =
       destination != nullptr && copiedClass != nullptr &&
-      exactMutablePassiveClassField(program, body, *destination) &&
+      (exactMutablePassiveClassField(program, body, *destination) ||
+       exactMutableReferenceDestination(body, *destination)) &&
       !copiedClass->traits.containsBorrowedState &&
       copiedClass->copyConstructor == SpecialMemberStatus::Generated &&
       copiedClass->copyAssignment == SpecialMemberStatus::Generated &&
@@ -2745,7 +2777,8 @@ classCopyAssignmentFusion(const MirProgram &program, const MirBody &body,
                                destination->access == AccessMode::Mutable;
   const bool receiverDestination =
       destination != nullptr &&
-      exactMutablePassiveClassField(program, body, *destination) &&
+      (exactMutablePassiveClassField(program, body, *destination) ||
+       exactMutableReferenceDestination(body, *destination)) &&
       passiveGeneratedDestructorClass(program, value->info.type) == owner &&
       owner->moveConstructor == SpecialMemberStatus::Generated &&
       owner->moveAssignment == SpecialMemberStatus::Generated &&
@@ -18728,6 +18761,7 @@ valueRootedClassCallResultSlot(const MirProgram &program,
         program, representations, body, *value, *destination);
     receiverFieldTransfer =
         receiverFieldTransfer ||
+        exactMutableReferenceDestination(body, *destination) ||
         (consumer->replacementPair != 0 &&
          checkedArrayElementDestination(body, *destination));
     if ((!bindingDestination && !receiverFieldTransfer) ||
@@ -24881,7 +24915,8 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
                   });
   const bool ownedFieldDestination =
       destination != nullptr &&
-      (moveOnlyOwnedFieldDestination(program, representations, body, *value,
+      (exactMutableReferenceDestination(body, *destination) ||
+       moveOnlyOwnedFieldDestination(program, representations, body, *value,
                                      *destination) ||
        (consumer != nullptr && consumer->replacementPair != 0 &&
         checkedArrayElementDestination(body, *destination)));
@@ -25277,8 +25312,9 @@ valueRootedClassPrvalueAssignmentSlot(
                                destinationLoan->access == AccessMode::Mutable;
   const bool fieldDestination =
       destination != nullptr &&
-      moveOnlyOwnedFieldDestination(program, representations, body, *value,
-                                    *destination);
+      (exactMutableReferenceDestination(body, *destination) ||
+       moveOnlyOwnedFieldDestination(program, representations, body, *value,
+                                     *destination));
   if (consumer == nullptr || destination == nullptr ||
       assignmentResult == nullptr ||
       consumer->kind != MirInstructionKind::Assign ||
@@ -26563,7 +26599,8 @@ classSsaLifetimeSlot(const MirProgram &program,
         !body.usesOf(result->id).empty() || destination == nullptr ||
         !((destination->root == MirPlaceRootKind::Binding &&
            destination->projections.empty()) ||
-          exactMutablePassiveClassField(program, body, *destination)) ||
+          exactMutablePassiveClassField(program, body, *destination) ||
+          exactMutableReferenceDestination(body, *destination)) ||
         destination->type != value->info.type ||
         (destination->projections.empty() &&
          destination->access != AccessMode::Mutable) ||
@@ -32573,7 +32610,8 @@ private:
                   : nullptr;
           const bool receiverField =
               destination != nullptr &&
-              (moveOnlyOwnedFieldDestination(program, representations,
+              (exactMutableReferenceDestination(facts.body, *destination) ||
+               moveOnlyOwnedFieldDestination(program, representations,
                                              facts.body, *resultSlot.value,
                                              *destination) ||
                (instruction.replacementPair != 0 &&
