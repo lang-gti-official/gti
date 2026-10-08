@@ -1857,14 +1857,18 @@ public:
           cppFunctionSpelling(*function, declaration->name);
       // Source semantics admits only portable ASCII C identifiers here, so no
       // source-provided quote, escape or directive can enter the link label.
-      // GNU-compatible compilers consume an exact object-format symbol name.
-      // Native MSVC instead transports its C-name alias in the COFF directive.
-      output << "\n#if defined(_MSC_VER) && !defined(__clang__)\n;\n"
-             << "#pragma comment(linker, \"/alternatename:" << name << '='
-             << symbol << "\")\n"
-             << "#elif defined(__APPLE__)\n"
-             << " __asm__(\"_" << symbol << "\");\n"
-             << "#else\n __asm__(\"" << symbol << "\");\n#endif\n";
+      // The selected target fixes the object format: Mach-O symbols carry a
+      // leading underscore, ELF symbols do not, and COFF transports the C-name
+      // alias in a linker directive. Host preprocessor checks would leave an
+      // unresolved target branch in the lowered program.
+      const std::string &os = loweredProgram.target().os;
+      if (os == "windows") {
+        output << ";\n#pragma comment(linker, \"/alternatename:" << name << '='
+               << symbol << "\")\n";
+      } else {
+        output << " __asm__(\"" << (os == "macos" ? "_" : "") << symbol
+               << "\");\n";
+      }
       emitLoweredBoundaryMarkers(*declaration, *function);
     }
     --indentation;
