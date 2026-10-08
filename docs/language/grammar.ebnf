@@ -865,8 +865,11 @@ base-type              = primitive-type
 (* `auto` is accepted only on an initialized local variable declaration,
    including either form of for-loop binding. It infers the initializer's
    complete type without implicit conversion and is immutable unless preceded
-   by `mut`. The `auto&` and `mut auto&` reference forms are valid only for a
-   range-for element declaration. It is not valid for globals, fields,
+   by `mut`. The `auto&` and `mut auto&` reference forms infer checked references
+   in initialized ordinary locals and range-for element declarations, using
+   the same referent and lifetime rules as explicit references. They do not
+   extend temporary lifetimes or introduce reference-to-reference types.
+   `auto&&` is not supported. Inference is not valid for globals, fields,
    parameters, return types, or array declarators. Plain `auto` never silently
    infers a reference. A braced initializer does not provide a type by itself.
    Inferred values retain their ownership traits, so move-only lvalues still
