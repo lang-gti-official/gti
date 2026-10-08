@@ -534,26 +534,34 @@ publication classifier and the proof that no MIR `Drop` governs the slot. It
 does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
 cleanup-owning slot replace or conceal a missing `Drop`.
 
-Grouping a class value does not construct another object. For a nonborrowed
-class value immediately published into a binding, the backend follows exact
-MIR `Identity` links to the original producer and uses one destination slot.
+Grouping a class value does not construct another object. HIR records the
+grouping source as a non-executing alias of the exact producer value, preserving
+its type, source identity and lifetime rather than introducing another value or
+drop obligation. The alias verifier rejects erased producers, extra executable
+grouping values and inconsistent source/type identities before MIR lowering.
+MIR and the backend consume the original constructor, call or conditional-result
+move;
+parentheses do not create class `Identity` instructions or another publication.
+
+Separately, the backend's exact MIR `Identity`-link publication classifier can
+follow an existing nonborrowed class value to one binding destination slot.
+This representation proof is not the lowering rule for source grouping.
 Each link must have the same complete expression facts, a unique executable
 consumer, and either no value obligations or the exact same-type `Reparent`.
 Links are adjacent instructions or the first instruction on a unique Invoke
 success edge; the last link is adjacent to binding initialization. MIR source
 identities, failure edges, and lifecycle events remain present and execute in
-order. No copy, default constructor, extra move, or cleanup is inferred from
-parentheses. This binding-publication proof does not by itself cover grouped
-borrowed carriers or other consumer shapes.
+order. This binding-publication proof does not by itself cover borrowed carriers
+or other consumer shapes.
 
 The same identity-link proof also composes with the existing prepared-argument
 slot protocol. It distinguishes the original call/constructor producer from the
-terminal grouped value consumed by `CallInput`, validates every intervening
-drop transfer back to the producer's activation, and requires adjacency to the
-argument stage. Admission and computation emission use the same publication
-query. The prepared argument remains live through later argument evaluation;
-its existing transfer and failure-cleanup schedule is unchanged. This does not
-admit arbitrary moves as constructor producers. An exact nonborrowed temporary
+terminal identity-linked value consumed by `CallInput`, validates every
+intervening drop transfer back to the producer's activation, and requires
+adjacency to the argument stage. Admission and computation emission use the same
+publication query. The prepared argument remains live through later argument
+evaluation; its existing transfer and failure-cleanup schedule is unchanged.
+This does not admit arbitrary moves as constructor producers. An exact nonborrowed temporary
 Move may instead publish into its prepared argument slot: its source and target
 are distinct typed places, intervening identities are adjacent, and either the
 source's exact obligation reaches the prepared parameter by reparenting or both
@@ -576,7 +584,7 @@ Transparent identity links between the conditional move and binding publication
 retain the same storage and exact drop-reparent chain. Moved-from shell retirement
 traces that chain back to the original move's obligation; comparing only the
 final binding's immediate source obligation would miss retirement through
-parentheses and leave the slot engaged on loop re-entry. This retirement uses
+those links and leave the slot engaged on loop re-entry. This retirement uses
 the already-validated identity links and does not execute an additional GTI
 destructor.
 The same conditional join may end in the exact prepared argument stage. A
