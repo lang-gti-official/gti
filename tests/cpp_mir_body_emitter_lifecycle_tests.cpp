@@ -105,7 +105,8 @@ void testCheckedReferenceClassAssignment() {
                      std::to_string(mutation));
           if (mutation >= 6)
             expect(!lang::verifyMirProgram(malformed).valid(),
-                   "MIR independently rejects forged replacement ownership");
+                   "MIR independently rejects forged replacement ownership " +
+                       std::to_string(mutation));
         }
       }
     }
@@ -114,11 +115,16 @@ void testCheckedReferenceClassAssignment() {
       passive && owning,
       "fixture exercises both cleanup-free and owning reference replacement");
   const auto readonly = analyze("readonly-reference-assignment.gti", R"(
-struct Point { int value; Point(int value) : value(value) {} };
+struct Point { mut int value; Point(int value) : value(value) {} };
 void replace(Point& target) { target = Point(2); }
 int main() { return 0; }
 )");
-  expect(!readonly.canGenerateCode(),
+  expect(!readonly.canGenerateCode() &&
+             std::any_of(readonly.diagnostics.begin(),
+                         readonly.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2002";
+                         }),
          "read-only references cannot replace their referents");
 }
 
