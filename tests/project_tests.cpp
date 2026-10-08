@@ -710,7 +710,9 @@ void testDependencyConfigurationFlags() {
              writeFile(app / "src/main.gti", "int main() { return 0; }\n") &&
              writeFile(root / "other/src/main.gti",
                        "int main() { return 0; }\n") &&
-             writeFile(root / "left/src/api.gti", "namespace left {}\n") &&
+             writeFile(root / "left/src/api.gti",
+                       "namespace left { int api() { return 0; } }\n"
+                       "int main() { return left::api(); }\n") &&
              writeFile(root / "right/src/api.gti", "namespace right {}\n") &&
              writeFile(root / "leaf/src/api.gti", "namespace leaf {}\n"),
          "dependency configuration sources should be writable");
@@ -741,7 +743,7 @@ void testDependencyConfigurationFlags() {
                   "[build]\ndefines = [\"LEFT\", \"COMMON\"]\n"
                   "[dependencies]\nleaf = { path = \"../leaf\" }\n"
                   "[profiles.dev]\ndefines = [\"DEPENDENCY_PROFILE\"]\n"
-                  "[targets.left]\nkind = \"library\"\nroot = \"src/api.gti\"\n"
+                  "[targets.left]\nkind = \"test\"\nroot = \"src/api.gti\"\n"
                   "defines = [\"DEPENDENCY_TARGET\"]\n")) &&
           writeFile(
               root / "right/gti.toml",
@@ -752,6 +754,11 @@ void testDependencyConfigurationFlags() {
               root / "leaf/gti.toml",
               package("leaf", "[build]\ndefines = [\"LEAF\", \"COMMON\"]\n")),
       "dependency configuration manifests should be writable");
+  const auto dependencyManifest =
+      lang::driver::loadProjectManifest(root / "left/gti.toml");
+  expect(
+      dependencyManifest.succeeded(),
+      "the dependency test-target fixture must satisfy the manifest contract");
   const auto facts = lang::driver::resolveProjectFacts(app);
   const lang::ConfigurationFlags expected{"APP", "COMMON", "LEAF", "LEFT",
                                           "RIGHT"};
