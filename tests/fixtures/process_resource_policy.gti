@@ -8,6 +8,11 @@ extern "C" {
   void free(void* address);
   int32_t provider_test_region(void* address, uint64_t bytes, uint64_t alignment);
 }
+#if target.os != "windows"
+extern "C" {
+  c_int posix_memalign(void** address, c_size_t alignment, c_size_t bytes);
+}
+#endif
 
 int main() {
   std::process_resource provider{};
