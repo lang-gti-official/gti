@@ -21,7 +21,7 @@ public:
   }
 };
 
-expected<Result, int> make(Guard guard, int payload_divisor) {
+expected<Result, std::string> make(Guard guard, int payload_divisor) {
   return Result(payload_divisor);
 }
 

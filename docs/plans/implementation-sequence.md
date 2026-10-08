@@ -5034,10 +5034,13 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   acceptance gates, not consequences of those focused proofs.
   Corpus iteration also found an unconstrained `std::json::decode_array`
   definition: it now explicitly requires the vector's structural element
-  contract. The affected JSON example reaches verified MIR again. Native
-  acceptance still rejects a reduced owning payload-enum receiver-field
-  move/restore/return profile; that rejection remains a required repair, not
-  permission to reintroduce private storage or skip the example.
+  contract. The affected JSON example now compiles and runs natively. Its
+  reduced owning payload-enum receiver-field move/restore/return regression
+  required admitting the exact existing unpublished-result cleanup recipe,
+  and success-alternative rollback must not import native Expected's
+  copyable-error requirement. Owning enum and move-only-error result cleanup
+  pass all eight native modes, including primary/secondary cleanup failures;
+  the remaining full corpus and optimization gates are still outstanding.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

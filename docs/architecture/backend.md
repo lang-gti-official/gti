@@ -27,6 +27,10 @@ exact cleanup under the original failure context before terminal containment.
 Similarly, an unpublished complete `expected<Class, E>` result retains its
 exact alternative cleanup recipe if another scope destructor fails after the
 result-producing call. No hidden native unwinding replaces either MIR schedule.
+Owning payload-enum returns use the same exact unpublished-result recipe,
+including a secondary failure during rollback. A proven success-alternative
+cleanup uses unchecked representation access; it must not impose a native
+`expected::value()` exception or copyable-error requirement on GTI errors.
 
 The phase direction is:
 

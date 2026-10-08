@@ -32895,10 +32895,14 @@ private:
             pendingPlace != nullptr &&
             expectedPayloadReturnSlot(program, representations, facts.body,
                                       pendingPlace->value);
+        // This rollback recipe names the already constructed success
+        // alternative. Unchecked representation access preserves that MIR
+        // fact without introducing native expected::value()'s exception or
+        // copy-constructible-error requirements.
         const std::string payloadValue =
             payloadSlot ? "__gti_mir_v_" + std::to_string(pendingPlace->value) +
                               ".get()"
-                        : "__gti_mir_out_result->value()";
+                        : "**__gti_mir_out_result";
         const bool fallible = failureDestructorTarget(program, facts.body,
                                                       instruction) != nullptr;
         if (fallible) {
@@ -49125,6 +49129,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return false;
             continue;
           }
+          // A moved owning enum has the same exact unpublished-result
+          // obligation as classes and arrays when later cleanup can fail.
+          // Keep the complete cleanup recipe and placement-result proof;
+          // its payload destructor may still fail on the rollback edge.
           if (!failureForm || place == nullptr ||
               !(drop->dropType.classInstance || drop->dropType.lambdaInstance ||
                 (drop->dropType.type == body.returnType &&
@@ -49134,8 +49142,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                      drop->dropType) ||
                 (drop->dropType.fixedArray &&
                  drop->dropType.type == body.returnType &&
-                 cppMirOwningArrayPlacementResult(program_,
-                                                  body.returnType))) ||
+                 cppMirOwningArrayPlacementResult(program_, body.returnType)) ||
+                (drop->dropType.type == body.returnType &&
+                 cppMirOwningPayloadEnumPlacementResult(
+                     program_, representations_, body.returnType) &&
+                 mirUniqueCleanupType(program_, body.returnType) ==
+                     drop->dropType)) ||
               (placementDirectReturnCall(program_, representations_, body,
                                          place->value) == nullptr &&
                returnMoveDefinition(body, place->value) == nullptr &&

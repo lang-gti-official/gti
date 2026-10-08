@@ -34,8 +34,8 @@ public:
   ~Caller() { std::println(9); }
 };
 
-expected<ResultOwner, int> produce() { return ResultOwner(3); }
-expected<ResultOwner, int> forward() {
+expected<ResultOwner, std::string> produce() { return ResultOwner(3); }
+expected<ResultOwner, std::string> forward() {
   BeforePublication pending{};
   return produce();
 }
