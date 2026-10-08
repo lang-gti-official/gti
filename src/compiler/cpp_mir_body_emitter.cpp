@@ -33432,13 +33432,34 @@ private:
                 movedRepresentationDrop = &drop;
               }
             }
+            MirDropObligationId publicationSource =
+                instruction.lifecycle.size() == 1
+                    ? instruction.lifecycle.front().source
+                    : 0;
+            const MirInstruction *publicationLink = sourceDefinition;
+            for (std::size_t depth = 0; publicationLink != directDefinition &&
+                                        depth < facts.body.values.size();
+                 ++depth) {
+              const MirValue *input = publicationLink == nullptr
+                                          ? nullptr
+                                          : classPublicationIdentityInput(
+                                                facts.body, *publicationLink);
+              if (input == nullptr || publicationLink->lifecycle.size() != 1 ||
+                  publicationLink->lifecycle.front().target !=
+                      publicationSource) {
+                publicationSource = 0;
+                break;
+              }
+              publicationSource = publicationLink->lifecycle.front().source;
+              publicationLink = findInstruction(facts.body, input->definition);
+            }
             const bool endsMovedRepresentation =
                 movedRepresentationDrop != nullptr &&
+                publicationLink == directDefinition &&
                 instruction.lifecycle.size() == 1 &&
                 instruction.lifecycle.front().kind ==
                     MirLifecycleEventKind::Reparent &&
-                instruction.lifecycle.front().source ==
-                    movedRepresentationDrop->id &&
+                publicationSource == movedRepresentationDrop->id &&
                 !instruction.lifecycle.front().conditional &&
                 !instruction.lifecycle.front().failureCleanup;
             if (endsMovedRepresentation) {
