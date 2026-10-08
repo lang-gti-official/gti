@@ -281,16 +281,61 @@ flow. This user-visible compiler fix accounts for the patch-version advance.
 Raw full-suite and installed-consumer reports are retained locally at
 `/private/tmp/gti-source-process-allocation-final.xml` and
 `/private/tmp/gti-source-process-allocation-installed-final.xml`. Subsequent
-completion-report edits must leave the tested implementation and test sources
-unchanged from `fa72b523`. The fresh allocation-cost comparison remains pending
-until concurrent compiler/test workloads finish; the historical figures below
-are not substituted for that final measurement.
+completion-report edits leave the tested implementation and test sources
+unchanged from `fa72b523`.
 
 Native execution evidence is macOS arm64. Linux native CI is queued without an
 available runner; native Windows execution is unavailable. The full local suite
 retains the Linux/Windows provider selection and target ABI contracts, but
 neither is a claim of execution on those hosts. Completion reporting must keep
 this platform limitation explicit.
+
+### Final cost comparison and open performance follow-up
+
+After the other agents' compiler/test workers exited, the same-host frozen
+snapshot comparison measured baseline `229f095f` against clean `fa72b523`.
+Both use C++23/O2; five interleaved compilation samples and nine runtime samples
+follow warmups. The candidate repository checkpoint `964fc6e9` changes only
+completion documentation relative to the tested compiler. Raw commands,
+snapshots, hashes, build/optimization reports, individual samples and complete
+outputs are retained in
+`/private/tmp/gti-source-process-allocation-cost-final-20261008/report.json`.
+
+| Operation | Baseline median | Final candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Emit C++ | 1,828.34 ms | 2,214.24 ms | +21.1% |
+| Full direct compilation | 3,067.85 ms | 3,798.82 ms | +23.8% |
+| Process-storage workload | 27.84 ms | 102.57 ms | +268.4% |
+| Resource-storage workload | 52.80 ms | 112.10 ms | +112.3% |
+
+This is a material regression, not performance parity: process samples range
+27.75–28.15 ms versus 101.82–103.91 ms, and resource samples 52.69–53.31 ms
+versus 111.43–113.25 ms. Generated C++ grows 2,424,838→3,098,270 bytes and the
+executable 461,784→537,928 bytes. Scalar/destructor observations are identical
+to the oracle below. Explicit resource acquisitions/releases grow
+50,000→100,000, as required by the separate same-provider metadata policy;
+process-mode zero resource counters are not a claim of zero allocation.
+
+The comparison includes later general compiler changes as well as source
+storage migration; it does not isolate the cost of libc or the #165 fix.
+Inspection finds a concrete additional lead: the baseline process loop inlines
+emplacement and reads, while the final loop calls source storage methods and
+read wrappers call another checked method. ARM64 `sparse_slots::read_mut`
+reserves a 0x480-byte local frame for cold failure handling; process `exercise`
+reserves 0x4a0 versus baseline 0x80. The baseline report discharges zero
+storage-state checks, so loss of an applied initialized-set optimization does
+not explain the measured change. These code observations and the additional
+allocation explain what changed, not each factor's measured causal share.
+
+[Issue #169](https://git.internal.howetotech.dev/gti-lang/gti/issues/169) records
+reproduction and the follow-up to profile/bisect allocation, access, general
+failure-path code size and host inlining separately. Any optimization must
+preserve cleanup/failure identity and source-owned policy, rather than remove
+safety checks or restore a nominal sparse-storage compiler exception. The
+S-ALLOC-07 migration/measurement gates are complete with this performance
+follow-up explicitly open; the phase never specified a timing-parity threshold.
+Neither these bounded local observations nor the historical samples below are
+a general or cross-platform performance guarantee.
 
 ### Historical pre-reconciliation measurement and provider checkpoint
 

@@ -4624,12 +4624,14 @@ unless requested.
 
 ### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
 
-- **State/role:** implementation integrated through PR #94 and the issue
-  reconciliation release; final campaign acceptance is underway in PR #162.
+- **State/role:** source-provider migration and completion acceptance are done
+  through PR #94, the issue reconciliation release and PR #162. The final local
+  gates pass; unavailable native-platform evidence and the measured performance
+  regression remain explicitly reported below and in follow-up #169.
   Process request validation, native-size/zero handling, target selection and
   failure mapping are GTI source policy over POSIX/CRT forwarding adapters.
   Default sparse storage and its metadata both use that provider; generated
-  sparse allocation is retired. The completion audit below owns the remaining
+  sparse allocation is retired. The completion audit below records the
   evidence. This does not claim every allocation client has migrated or every
   ABI adapter is removable.
 - **Outcome:** the default typed-storage and process-resource paths acquire
@@ -4643,9 +4645,11 @@ unless requested.
 #### Completion Audit (2026-10-08)
 
 The audit starts from canonical main `f0ba8383`, after the issue campaign was
-integrated. The implementation already satisfies the named source-provider
-migration; remaining work is acceptance evidence and correcting stale boundary
-descriptions, not a second allocator implementation.
+integrated. The implementation already satisfied the named source-provider
+migration. PR #162 completes its acceptance evidence and corrects stale boundary
+descriptions, rather than introducing a second allocator implementation. It also
+fixes the general checked-numeric-argument admission defect exposed by the final
+cleanup fixture (#165); the fully tested implementation revision is `fa72b523`.
 
 | Required outcome | Owning implementation and evidence |
 | --- | --- |
@@ -4654,7 +4658,7 @@ descriptions, not a second allocator implementation.
 | Existing custom resources and checked safety | `resource_protocol_contract`, `programmable_allocators_runtime`, `storage_adoption_contract`, source-storage/lifetime matrices and allocator Off/Warn parity retain resource/element borrow rejection, malformed descriptor checks, failed growth, constructor/destructor failure and original release authority. |
 | Retired and remaining mechanisms | Production `include`, `src`, `stdlib` and `runtime` contain no old `gti_rt_memory_allocate_v1`/`release_v1`, sparse capability or sparse backend allocator. The [allocation inventory](../architecture/standard-library-and-runtime.md#allocation-inventory-and-remaining-boundaries) identifies remaining prefix, unique/shared and host-service families. |
 | Installed and runnable clients | The provider matrix has an explicit installed mode that rejects missing stage resources and pins their exact paths, preventing build-tree fallback. CI and release staging run it; the installed library smoke links the native memory boundary. Examples 119–121, 125–126, 128–129 and `libc-region-provider` exercise the existing public APIs. Their source, example index and census identities are unchanged. |
-| Broad, platform and performance acceptance | The clean optimized `fa72b523` candidate passes the full 558-test production/tooling suite, 13 installed consumers, both native/installed provider matrices and 14 staged example executions. The fresh cost comparison awaits a quiet host; see the [completion evidence](../architecture/verification.md#completion-acceptance-2026-10-08). Local execution is macOS arm64; Linux native CI is queued without a runner and Windows native execution is unavailable. Target/ABI checks are retained without claiming native execution on those platforms. |
+| Broad, platform and performance acceptance | The clean optimized `fa72b523` candidate passes the full 558-test production/tooling suite, 13 installed consumers, both native/installed provider matrices and 14 staged example executions. A quiet-host frozen comparison records a material runtime regression (process 3.68×, resource 2.12× baseline), unchanged scalar/destructor state and the deliberate doubling of resource acquisitions for source metadata. [Completion evidence](../architecture/verification.md#completion-acceptance-2026-10-08) includes the investigation and [performance follow-up #169](https://git.internal.howetotech.dev/gti-lang/gti/issues/169). Local execution is macOS arm64; Linux native CI is queued without a runner and Windows native execution is unavailable. Target/ABI checks are retained without claiming native execution on those platforms. |
 
 The ABI-adapter rationale is revised explicitly in ADR 022: native `c_size_t`
 and nested `void**` are now supported. Unique forwarding symbols still avoid
