@@ -1803,8 +1803,9 @@ construction, retires an element before potentially failing destruction, and
 uses source drain guards to preserve first/secondary failure cleanup. A process
 or resource lease releases bytes after the live prefix has been drained. Sparse
 storage remains a distinct policy for arbitrary initialized-slot patterns.
-The prelude no longer declares a private prefix-storage type or operations;
-remaining internal IR/test retirement is tracked by S-ALLOC-08.
+The private prefix-storage type, operations, construction-preflight instruction
+and optimizer model are retired. Remaining regression migration and full
+admission/performance acceptance are tracked by S-ALLOC-08.
 
 ## Source-Defined Vector
 

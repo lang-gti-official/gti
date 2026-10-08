@@ -166,8 +166,8 @@ int main() {
       frontend, [](auto &i) { i.borrowArgument = 1; },
       "unrelated borrowed authority rejected");
   forged(
-      frontend, [](auto &i) { i.storagePreflight = i.id; },
-      "container preflight authority rejected");
+      frontend, [](auto &i) { i.objectAllocation = i.id; },
+      "allocation authority rejected");
   forged(
       frontend, [](auto &i) { i.neverReturns = true; },
       "unrelated terminal authority rejected");
@@ -251,8 +251,7 @@ int main() {
             expect(effect.writesUnknownMemory && effect.initializesValue &&
                        !effect.removableWhenUnused && !effect.allocates,
                    "construction initializes caller bytes, not new allocation");
-            expect(instruction.storagePreflight == 0 &&
-                       instruction.localFailureSites.empty() &&
+            expect(instruction.localFailureSites.empty() &&
                        instruction.unsafeOperation ==
                            lang::UnsafeOperationKind::ObjectLifetime,
                    "raw construction does not invent storage occupancy proof");
@@ -287,7 +286,7 @@ int main() {
               i.definedFailure = {};
               break;
             case 3:
-              i.storagePreflight = i.id;
+              i.objectAllocation = i.id;
               break;
             case 4:
               i.borrowArgument = 1;

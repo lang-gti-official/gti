@@ -4986,9 +4986,13 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   The native prefix engine and trusted prelude type/operation declarations
   have been removed, together with prefix-specific native emission and private
   handle cleanup shortcuts. Regression fixtures now exercise general lifetime
-  and borrowing operations. Removal of residual prefix-specific IR/type and
-  optimizer paths, full admission/corpus/performance coverage and final
-  acceptance remain required. Complete retirement is not yet claimed.
+  and borrowing operations. The prefix-specific semantic type, 12 intrinsic
+  tags, construction-preflight instruction and metadata, effect/name tables,
+  representation row and private optimizer facts are now removed as well.
+  General scalar, fixed-array and direct-index aggregate analysis remains.
+  Legacy optimizer fixtures and full admission/corpus/performance coverage
+  still need migration and acceptance; no performance-parity claim follows
+  from retiring the private proof model.
   The `source_prefix_complete_elements` composition probe remains unaccepted:
   its owning-payload/expected-vector native entry profile fails with both the
   baseline and source-owner implementations. Preserve that reduction while
@@ -5006,7 +5010,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   helper spellings. The optimized ownership, frontend, declaration, backend
   preflight and lifecycle suites pass on the task branch; the source-prefix
   runtime and native prefix evidence also pass. Complete corpus admission,
-  optimizer retirement, performance and installed-consumer evidence remain
+  optimizer regression migration, performance and installed-consumer evidence remain
   acceptance gates, not consequences of those focused proofs.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.

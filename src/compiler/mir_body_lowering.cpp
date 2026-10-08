@@ -921,9 +921,7 @@ private:
       result.requiresActiveCleanup = !result.aggregate.empty();
       return result;
     }
-    if ((type.kind == SemanticType::UniqueOwner ||
-         type.kind == SemanticType::PrefixStorage) &&
-        type.arguments.size() == 1) {
+    if (type.kind == SemanticType::UniqueOwner && type.arguments.size() == 1) {
       const auto &value = type.arguments.front();
       if ((value.kind >= SemanticType::Int8 &&
            value.kind <= SemanticType::Char) ||
@@ -939,14 +937,6 @@ private:
                           return item.type == value && item.payload;
                         }))) {
         return MirDropType{.type = type, .requiresActiveCleanup = true};
-      }
-      if (type.kind == SemanticType::PrefixStorage) {
-        auto element = uniqueCleanupType(value, visiting);
-        if (!element)
-          return std::nullopt;
-        return MirDropType{.type = type,
-                           .aggregate = {*element},
-                           .requiresActiveCleanup = true};
       }
       if (value.kind != SemanticType::Class)
         return std::nullopt;
@@ -5188,8 +5178,7 @@ private:
                                 ? FailurePropagationKind::VirtualCall
                                 : FailurePropagationKind::DirectCall;
     }
-    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
-         value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
+    if (value.intrinsic == IntrinsicKind::ObjectConstruct &&
         failure.propagation == FailurePropagationKind::Constructor &&
         value.constructorTarget) {
       // Semantics selected this constructor protocol from its exact signature.
@@ -5407,12 +5396,7 @@ private:
         const auto enclosingFailure = beginPreparedArgumentFailure(
             argument.value, argument.kind, argument.parameterType);
         MirOperand sourceArgument =
-            value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
-                    argument.parameterIndex == 0 &&
-                    argument.kind == HirCallInputKind::MutableBorrow &&
-                    argument.parameterType.kind == SemanticType::PrefixStorage
-                ? receiverOperand(argument.value, AccessMode::Mutable)
-            : argument.kind == HirCallInputKind::ReadTemporaryBorrow
+            argument.kind == HirCallInputKind::ReadTemporaryBorrow
                 ? temporaryBorrowOperand(argument.value, AccessMode::ReadOnly,
                                          argument.parameterType)
             : argument.kind == HirCallInputKind::CopyValue
@@ -5535,11 +5519,8 @@ private:
           const bool mutableStorageInput =
               index == 0 && input->info.category == ValueCategory::Place &&
               input->info.type == parameter &&
-              (value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-               value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
-               value.intrinsic == IntrinsicKind::OptionalStorageConstruct) &&
-              (parameter.kind == SemanticType::PrefixStorage ||
-               parameter.kind == SemanticType::Class);
+              value.intrinsic == IntrinsicKind::OptionalStorageConstruct &&
+              parameter.kind == SemanticType::Class;
           const std::optional<HirCallInputKind> kind =
               mutableStorageInput
                   ? std::optional<
@@ -6054,8 +6035,6 @@ private:
       }
     }
     if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
-         value.intrinsic == IntrinsicKind::PrefixStoragePop ||
-         value.intrinsic == IntrinsicKind::PrefixStorageErase ||
          value.intrinsic == IntrinsicKind::OptionalStorageReset) &&
         !call.operands.empty()) {
       const SemanticType &parameter = call.operands.front().type;
@@ -6101,47 +6080,6 @@ private:
                                         FailurePropagationKind::Constructor,
                                         value.constructorTarget)
                                   : FailurePropagationKind::None;
-    }
-    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
-        value.definedFailure.propagation ==
-            FailurePropagationKind::Constructor &&
-        value.constructorTarget &&
-        value.constructorKind == ConstructorKind::Ordinary) {
-      const std::size_t preflightOperands = 1;
-      if (call.operands.size() < preflightOperands || call.callSite == 0) {
-        valid = false;
-        return;
-      }
-      DefinedFailureOperation preflightFailure;
-      for (auto &origin : call.definedFailure.localOrigins) {
-        DefinedFailureOrigin check = origin;
-        const auto isPreflightOutcome = [](DefinedFailureOutcome outcome) {
-          return outcome == DefinedFailureOutcome{
-                                DefinedFailureCode::InvalidStorageState,
-                                DefinedFailureDetail::RelocationCapacity};
-        };
-        std::erase_if(check.outcomes, [&](DefinedFailureOutcome outcome) {
-          return !isPreflightOutcome(outcome);
-        });
-        if (!check.outcomes.empty())
-          preflightFailure.localOrigins.push_back(std::move(check));
-        std::erase_if(origin.outcomes, isPreflightOutcome);
-      }
-      std::erase_if(call.definedFailure.localOrigins,
-                    [](const DefinedFailureOrigin &origin) {
-                      return origin.outcomes.empty();
-                    });
-      // No parameter has transferred yet. Failure here drains every prepared
-      // owner; only the success edge reaches the constructor handoff below.
-      call.storagePreflight = appendInstruction(
-          {.kind = MirInstructionKind::StorageConstructPreflight,
-           .hirValue = value.id,
-           .callSite = call.callSite,
-           .operands = {call.operands.begin(),
-                        call.operands.begin() + preflightOperands},
-           .definedFailure = std::move(preflightFailure),
-           .info = {.type = SemanticType::Void}},
-          false);
     }
     if (!value.callPlan && !expandsPack) {
       for (std::size_t index = 0; index < arguments.size(); ++index) {

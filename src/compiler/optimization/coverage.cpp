@@ -62,9 +62,6 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
     return barrier("exact body effects; no contextual range transfer");
   case MirInstructionKind::AllocateObject:
     return barrier("allocation, failure and rollback effects");
-  case MirInstructionKind::StorageConstructPreflight:
-    return barrier(
-        "capacity preflight before prepared-parameter ownership transfer");
   case MirInstructionKind::Count:
     break;
   }
@@ -164,15 +161,6 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::RawPointerConversion:
   case IntrinsicKind::EnumUnderlyingValue:
   case IntrinsicKind::StorageBoundsCheck:
-  case IntrinsicKind::AllocatePrefixStorage:
-  case IntrinsicKind::PrefixStorageAppend:
-  case IntrinsicKind::PrefixStoragePop:
-  case IntrinsicKind::PrefixStorageRead:
-  case IntrinsicKind::PrefixStorageReadMut:
-  case IntrinsicKind::PrefixStorageLength:
-  case IntrinsicKind::PrefixStorageRelocate:
-  case IntrinsicKind::PrefixStorageInsert:
-  case IntrinsicKind::PrefixStorageErase:
     return supported(
         "effects and bounded safety transfer; exact outcome replay");
   case IntrinsicKind::DefaultTypeParameterConstruction:
@@ -192,9 +180,6 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::IntegerCheckedAdd:
   case IntrinsicKind::IntegerCheckedSubtract:
   case IntrinsicKind::IntegerCheckedMultiply:
-  case IntrinsicKind::PrefixStorageTextView:
-  case IntrinsicKind::PrefixStorageCString:
-  case IntrinsicKind::PrefixStorageTryCString:
   case IntrinsicKind::TextViewFromAddress:
   case IntrinsicKind::CStringFromAddress:
   case IntrinsicKind::OptionalStorageHasValue:

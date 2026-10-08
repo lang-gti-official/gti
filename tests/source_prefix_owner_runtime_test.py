@@ -28,12 +28,14 @@ if __name__ == "__main__":
                            f"{forwarded.name}:{primary_line}; secondary [GTI-R0002]\n")
     runtime_matrix(
         names=("source_prefix_owner", "source_prefix_vector", "source_prefix_expected_range", "generic_payload_enum",
+               "raw_text_owner_example",
                "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup"),
         cases={
             "source_prefix_owner": [((), (0, "2\n1\n4\n3\n", ""))],
             "source_prefix_vector": [((), (0, "", ""))],
             "source_prefix_expected_range": [((), (0, "", ""))],
             "generic_payload_enum": [((), (0, "1\n4\n3\n2\n", ""))],
+            "raw_text_owner_example": [((), (0, "hello\nHello\n", ""))],
             "source_prefix_drain_failure": [
                 ((), (0, "3\n2\n1\n9\n", "")),
                 (("clear",), (70, "3\n2\n1\n9\n", primary)),
@@ -47,4 +49,7 @@ if __name__ == "__main__":
                 (("primary",), (70, "7\n8\n9\n", forwarded_primary)),
                 (("primary", "secondary"), (70, "7\n8\n", forwarded_secondary)),
             ],
-        })
+        },
+        fixture_paths={"raw_text_owner_example":
+                       Path(__file__).resolve().parent.parent /
+                       "examples/133-raw-text-owner-views.gti"})

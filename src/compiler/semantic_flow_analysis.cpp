@@ -582,10 +582,6 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
     }
     finish();
     return;
-  case SemanticType::PrefixStorage:
-    // Compiler-private raw storage cleanup cannot execute a GTI body.
-    finish();
-    return;
   case SemanticType::Class:
     break;
   default:
@@ -2072,22 +2068,6 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
                             DefinedFailureDetail::PrivateStorage);
           break;
-        // Transitional IR tags have no trusted source declarations after the
-        // prefix cutover. Keep this exhaustive switch fail-closed until those
-        // tags and their remaining IR consumers are removed together.
-        case IntrinsicKind::AllocatePrefixStorage:
-        case IntrinsicKind::PrefixStorageAppend:
-        case IntrinsicKind::PrefixStoragePop:
-        case IntrinsicKind::PrefixStorageRead:
-        case IntrinsicKind::PrefixStorageReadMut:
-        case IntrinsicKind::PrefixStorageLength:
-        case IntrinsicKind::PrefixStorageRelocate:
-        case IntrinsicKind::PrefixStorageInsert:
-        case IntrinsicKind::PrefixStorageErase:
-        case IntrinsicKind::PrefixStorageTextView:
-        case IntrinsicKind::PrefixStorageCString:
-        case IntrinsicKind::PrefixStorageTryCString:
-          throw std::logic_error("retired prefix intrinsic reached semantics");
         case IntrinsicKind::OptionalStorageConstruct:
           anchor(token);
           addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
@@ -8986,7 +8966,6 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
     // compiler-owned resource mutation can replace objects or backing storage.
     if (!key.valid() ||
         (type.kind != SemanticType::Class && type.kind != SemanticType::Array &&
-         type.kind != SemanticType::PrefixStorage &&
          type.kind != SemanticType::UniqueOwner &&
          type.kind != SemanticType::SharedPointer))
       return;

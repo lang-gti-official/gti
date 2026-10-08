@@ -41,7 +41,6 @@ enum class CppMirTypeRepresentationKind {
   Lambda,
   UniqueOwner,
   SharedPointer,
-  Storage,
   Expected,
   Unexpected,
   Meta,

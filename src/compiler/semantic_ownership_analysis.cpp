@@ -146,7 +146,6 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   switch (type.kind) {
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::PrefixStorage:
     return true;
   case SemanticType::Array:
   case SemanticType::Unexpected:
@@ -361,7 +360,6 @@ auto SemanticVisitor::Impl::typeCapabilities(
   }
   case SemanticType::Array:
   case SemanticType::UniqueOwner:
-  case SemanticType::PrefixStorage:
     if (type.arguments.size() == 1) {
       return typeCapabilities(type.arguments.front(), visiting);
     }
@@ -8358,7 +8356,6 @@ auto SemanticVisitor::Impl::isStorageElementType(const SemanticType &type)
   case SemanticType::Reference:
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::PrefixStorage:
   case SemanticType::TypeName:
   case SemanticType::Function:
   case SemanticType::FunctionSignature:

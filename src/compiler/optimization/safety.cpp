@@ -46,35 +46,8 @@ struct IntegerFact {
 using FieldPath = std::vector<SymbolId>;
 using IntegerFieldFacts = std::map<FieldPath, IntegerFact>;
 
-struct StorageFact {
-  IntegerFact capacity;
-  std::optional<IntegerFact> length;
-  std::optional<IntegerFact> elements;
-  IntegerFieldFacts elementIntegers;
-  bool elementsUnknown = false;
-  Evidence evidence;
-
-  friend bool operator==(const StorageFact &, const StorageFact &) = default;
-};
-
-struct PrefixLengthFact {
-  MirPlaceId storage = 0;
-  Evidence evidence;
-
-  friend bool operator==(const PrefixLengthFact &,
-                         const PrefixLengthFact &) = default;
-};
-
-struct ScalarOrigin {
-  MirPlaceId place = 0;
-  MirValueId value = 0;
-
-  friend auto operator<=>(const ScalarOrigin &, const ScalarOrigin &) = default;
-};
-
 struct ObjectFact {
   std::map<FieldPath, IntegerFact> integers;
-  std::map<FieldPath, StorageFact> storages;
   std::optional<IntegerFact> elements;
   IntegerFieldFacts elementIntegers;
 
@@ -95,12 +68,6 @@ struct AbstractState {
   std::map<MirValueId, IntegerFact> arrayValues;
   std::map<MirPlaceId, IntegerFact> arrayElements;
   std::map<MirValueId, MirPlaceId> loadedOrigins;
-  std::map<MirValueId, StorageFact> storageValues;
-  std::map<MirValueId, MirPlaceId> storageOrigins;
-  std::map<MirPlaceId, StorageFact> storages;
-  std::map<MirValueId, PrefixLengthFact> prefixLengthValues;
-  std::map<MirPlaceId, PrefixLengthFact> prefixLengthPlaces;
-  std::map<std::pair<MirPlaceId, ScalarOrigin>, Evidence> checkedPrefixBounds;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
   std::map<MirPlaceId, IntegerFieldFacts> aggregateElementIntegers;
   std::map<MirPlaceId, ObjectFact> objects;
@@ -590,65 +557,14 @@ integerForOperand(const MirBody &body, const AbstractState &state,
   return fact.lower == fact.upper;
 }
 
-[[nodiscard]] std::optional<IntegerFact>
-boundedStorageLength(const StorageFact &storage) {
-  const CheckedIntegerValue zero;
-  if (storage.capacity.domain.signedValue ||
-      normalizeCheckedInteger(storage.capacity.upper).negative) {
-    return std::nullopt;
-  }
-  IntegerFact result = storage.length
-                           ? *storage.length
-                           : IntegerFact{.domain = storage.capacity.domain,
-                                         .lower = zero,
-                                         .upper = storage.capacity.upper};
-  if (result.domain != storage.capacity.domain) {
-    return std::nullopt;
-  }
-  if (compare(result.lower, zero) < 0) {
-    result.lower = zero;
-  }
-  if (compare(result.upper, storage.capacity.upper) > 0) {
-    result.upper = storage.capacity.upper;
-  }
-  if (compare(result.lower, result.upper) > 0) {
-    return std::nullopt;
-  }
-  result.wideningEnvelope = std::pair{zero, storage.capacity.upper};
-  result.evidence =
-      merged(std::move(result.evidence), storage.capacity.evidence);
-  return result;
-}
-
 void stabilize(IntegerFact &fact) {
   fact.wideningEnvelope = std::pair{fact.lower, fact.upper};
-}
-
-void stabilize(StorageFact &storage) {
-  stabilize(storage.capacity);
-  if (storage.length) {
-    storage.length = boundedStorageLength(storage);
-    if (storage.length) {
-      stabilize(*storage.length);
-    }
-  }
-  if (storage.elements) {
-    stabilize(*storage.elements);
-  }
-  for (auto &[path, fact] : storage.elementIntegers) {
-    (void)path;
-    stabilize(fact);
-  }
 }
 
 void stabilize(ObjectFact &object) {
   for (auto &[path, fact] : object.integers) {
     (void)path;
     stabilize(fact);
-  }
-  for (auto &[path, storage] : object.storages) {
-    (void)path;
-    stabilize(storage);
   }
   if (object.elements) {
     stabilize(*object.elements);
@@ -687,13 +603,6 @@ void stabilize(ObjectFact &object) {
                     ? existingEnvelope.second
                     : incomingEnvelope->second};
   return result;
-}
-
-[[nodiscard]] std::optional<std::uint64_t>
-nonnegativeSingleton(const IntegerFact &fact) {
-  return singleton(fact) && !normalizeCheckedInteger(fact.lower).negative
-             ? std::optional<std::uint64_t>{fact.lower.magnitude}
-             : std::nullopt;
 }
 
 [[nodiscard]] std::optional<CheckedIntegerValue>
@@ -869,23 +778,6 @@ void refineBranch(const MirBody &body, const MirBlock &block,
     variableFact->wideningEnvelope = branchEnvelope;
   }
   state.integers[variable->value] = *variableFact;
-  const auto prefixLength = state.prefixLengthValues.find(variable->value);
-  if (prefixLength != state.prefixLengthValues.end()) {
-    const auto storage = state.storages.find(prefixLength->second.storage);
-    if (storage != state.storages.end() && storage->second.length) {
-      IntegerFact length = *storage->second.length;
-      if (!intersect(length, lower, upper, evidence)) {
-        state.reachable = false;
-        return;
-      }
-      storage->second.length = std::move(length);
-      storage->second.length = boundedStorageLength(storage->second);
-      if (!storage->second.length) {
-        state.reachable = false;
-        return;
-      }
-    }
-  }
   const auto loadedOrigin = state.loadedOrigins.find(variable->value);
   if (loadedOrigin != state.loadedOrigins.end()) {
     const MirPlaceId place = loadedOrigin->second;
@@ -1138,30 +1030,6 @@ indexedAggregateAccess(const MirProgram *program, const MirBody &body,
   return fact;
 }
 
-[[nodiscard]] StorageFact rebased(StorageFact fact, MirBlockId block = 0,
-                                  MirInstructionId instruction = 0,
-                                  MirPlaceId place = 0) {
-  fact.capacity =
-      rebased(std::move(fact.capacity), block, instruction, 0, place);
-  if (fact.length) {
-    fact.length =
-        rebased(std::move(*fact.length), block, instruction, 0, place);
-  }
-  if (fact.elements) {
-    fact.elements =
-        rebased(std::move(*fact.elements), block, instruction, 0, place);
-  }
-  for (auto &[path, element] : fact.elementIntegers) {
-    (void)path;
-    element = rebased(std::move(element), block, instruction, 0, place);
-  }
-  fact.evidence = {};
-  add(fact.evidence, block);
-  addInstruction(fact.evidence, instruction);
-  addPlace(fact.evidence, place);
-  return fact;
-}
-
 void seedObjectFact(const MirBody &body,
                     const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId root,
                     const ObjectFact &object, AbstractState &state) {
@@ -1177,10 +1045,6 @@ void seedObjectFact(const MirBody &body,
         integer != object.integers.end()) {
       state.integerPlaces[destination] =
           rebased(integer->second, 0, 0, 0, destination);
-    }
-    if (const auto storage = object.storages.find(*path);
-        storage != object.storages.end()) {
-      state.storages[destination] = rebased(storage->second, 0, 0, destination);
     }
   }
   if (object.elements) {
@@ -1211,7 +1075,6 @@ extractObjectFact(const MirBody &body,
     result = object->second;
   }
   bool observedElements = false;
-  bool unknownElements = false;
   std::optional<IntegerFact> derivedElements;
   bool observedElementIntegers = false;
   IntegerFieldFacts derivedElementIntegers;
@@ -1242,21 +1105,6 @@ extractObjectFact(const MirBody &body,
         integer != state.integerPlaces.end()) {
       result.integers.insert_or_assign(*path, integer->second);
     }
-    if (const auto storage = state.storages.find(source);
-        storage != state.storages.end()) {
-      result.storages.insert_or_assign(*path, storage->second);
-      observedElements = true;
-      if (storage->second.elementsUnknown) {
-        unknownElements = true;
-      }
-      if (storage->second.elements) {
-        derivedElements =
-            derivedElements ? std::optional<IntegerFact>{joinedElementFact(
-                                  *derivedElements, *storage->second.elements)}
-                            : storage->second.elements;
-      }
-      mergeElementIntegers(storage->second.elementIntegers);
-    }
   }
   if (const auto aggregateElements = state.aggregateElements.find(root);
       aggregateElements != state.aggregateElements.end()) {
@@ -1272,13 +1120,10 @@ extractObjectFact(const MirBody &body,
     mergeElementIntegers(aggregateFields->second);
   }
   if (observedElements) {
-    result.elements =
-        unknownElements ? std::nullopt : std::move(derivedElements);
-    result.elementIntegers = unknownElements
-                                 ? IntegerFieldFacts{}
-                                 : std::move(derivedElementIntegers);
+    result.elements = std::move(derivedElements);
+    result.elementIntegers = std::move(derivedElementIntegers);
   }
-  if (result.integers.empty() && result.storages.empty() && !result.elements &&
+  if (result.integers.empty() && !result.elements &&
       result.elementIntegers.empty()) {
     return std::nullopt;
   }
@@ -1470,12 +1315,6 @@ void invalidatePlaceRoot(const MirBody &body,
     state.aggregateElementIntegers.clear();
     state.objects.clear();
     state.loadedOrigins.clear();
-    state.storageValues.clear();
-    state.storageOrigins.clear();
-    state.storages.clear();
-    state.prefixLengthValues.clear();
-    state.prefixLengthPlaces.clear();
-    state.checkedPrefixBounds.clear();
     state.aggregateOrigins.clear();
     state.objectValues.clear();
     return;
@@ -1497,27 +1336,6 @@ void invalidatePlaceRoot(const MirBody &body,
                 [&](const auto &entry) { return overlaps(entry.second); });
   std::erase_if(state.loadedOrigins,
                 [&](const auto &entry) { return overlaps(entry.second); });
-  std::erase_if(state.storages,
-                [&](const auto &entry) { return overlaps(entry.first); });
-  std::erase_if(state.prefixLengthValues, [&](const auto &entry) {
-    return overlaps(entry.second.storage);
-  });
-  std::erase_if(state.prefixLengthPlaces, [&](const auto &entry) {
-    return overlaps(entry.first) || overlaps(entry.second.storage);
-  });
-  std::erase_if(state.checkedPrefixBounds, [&](const auto &entry) {
-    return overlaps(entry.first.first) || (entry.first.second.place != 0 &&
-                                           overlaps(entry.first.second.place));
-  });
-  for (auto iterator = state.storageOrigins.begin();
-       iterator != state.storageOrigins.end();) {
-    if (!overlaps(iterator->second)) {
-      ++iterator;
-      continue;
-    }
-    state.storageValues.erase(iterator->first);
-    iterator = state.storageOrigins.erase(iterator);
-  }
 }
 
 [[nodiscard]] bool
@@ -1653,159 +1471,6 @@ fixedArrayIndex(const MirBody &body, const AbstractState &state,
          compare(index.upper, capacity.lower) < 0;
 }
 
-[[nodiscard]] std::optional<StorageFact>
-storageForOperand(const AbstractState &state,
-                  const MirPlaceAliasEscapeAnalysis &aliases,
-                  const MirOperand &operand) {
-  if (operand.value != 0) {
-    const auto origin = state.storageOrigins.find(operand.value);
-    if (origin != state.storageOrigins.end()) {
-      const auto storage = state.storages.find(origin->second);
-      if (storage != state.storages.end()) {
-        return storage->second;
-      }
-      return std::nullopt;
-    }
-    const auto value = state.storageValues.find(operand.value);
-    if (value != state.storageValues.end()) {
-      return value->second;
-    }
-  }
-  if (operand.place != 0) {
-    const auto storage =
-        state.storages.find(canonicalPlace(aliases, operand.place));
-    if (storage != state.storages.end()) {
-      return storage->second;
-    }
-  }
-  return std::nullopt;
-}
-
-[[nodiscard]] std::optional<MirPlaceId>
-storageOriginForOperand(const AbstractState &state,
-                        const MirPlaceAliasEscapeAnalysis &aliases,
-                        const MirOperand &operand) {
-  const MirPlaceId place = canonicalPlace(aliases, operand.place);
-  if (place != 0 && state.storages.contains(place)) {
-    return place;
-  }
-  const auto origin = state.storageOrigins.find(operand.value);
-  return origin == state.storageOrigins.end()
-             ? std::nullopt
-             : std::optional<MirPlaceId>{origin->second};
-}
-
-[[nodiscard]] std::optional<MirPlaceId>
-stableStorageOriginForOperand(const AbstractState &state,
-                              const MirPlaceAliasEscapeAnalysis &aliases,
-                              const MirOperand &operand) {
-  const SemanticType *type = &operand.type;
-  if (type->kind == SemanticType::Reference && type->arguments.size() == 1) {
-    type = &type->arguments.front();
-  }
-  if (type->kind != SemanticType::PrefixStorage) {
-    return std::nullopt;
-  }
-  if (const std::optional<MirPlaceId> tracked =
-          storageOriginForOperand(state, aliases, operand)) {
-    return tracked;
-  }
-  const MirPlaceId place = canonicalPlace(aliases, operand.place);
-  return place == 0 ? std::nullopt : std::optional<MirPlaceId>{place};
-}
-
-[[nodiscard]] std::optional<ScalarOrigin>
-scalarOriginForOperand(const AbstractState &state,
-                       const MirPlaceAliasEscapeAnalysis &aliases,
-                       const MirOperand &operand) {
-  if (operand.literal) {
-    return std::nullopt;
-  }
-  if (operand.value != 0) {
-    if (const auto loaded = state.loadedOrigins.find(operand.value);
-        loaded != state.loadedOrigins.end()) {
-      return ScalarOrigin{.place = canonicalPlace(aliases, loaded->second)};
-    }
-    return ScalarOrigin{.value = operand.value};
-  }
-  const MirPlaceId place = canonicalPlace(aliases, operand.place);
-  return place == 0 ? std::nullopt
-                    : std::optional<ScalarOrigin>{ScalarOrigin{.place = place}};
-}
-
-[[nodiscard]] std::optional<PrefixLengthFact>
-prefixLengthForOperand(const AbstractState &state,
-                       const MirPlaceAliasEscapeAnalysis &aliases,
-                       const MirOperand &operand) {
-  if (operand.value != 0) {
-    if (const auto value = state.prefixLengthValues.find(operand.value);
-        value != state.prefixLengthValues.end()) {
-      return value->second;
-    }
-  }
-  const MirPlaceId place = canonicalPlace(aliases, operand.place);
-  if (place != 0) {
-    if (const auto stored = state.prefixLengthPlaces.find(place);
-        stored != state.prefixLengthPlaces.end()) {
-      return stored->second;
-    }
-  }
-  return std::nullopt;
-}
-
-void invalidatePrefixStorageRelations(
-    AbstractState &state, const MirPlaceAliasEscapeAnalysis &aliases,
-    MirPlaceId storage) {
-  storage = canonicalPlace(aliases, storage);
-  if (storage == 0) {
-    state.prefixLengthValues.clear();
-    state.prefixLengthPlaces.clear();
-    state.checkedPrefixBounds.clear();
-    return;
-  }
-  const auto overlaps = [&](MirPlaceId candidate) {
-    return candidate != 0 &&
-           aliases.relation(storage, candidate) != MirAliasRelation::NoAlias;
-  };
-  std::erase_if(state.prefixLengthValues, [&](const auto &entry) {
-    return overlaps(entry.second.storage);
-  });
-  std::erase_if(state.prefixLengthPlaces, [&](const auto &entry) {
-    return overlaps(entry.second.storage);
-  });
-  std::erase_if(state.checkedPrefixBounds,
-                [&](const auto &entry) { return overlaps(entry.first.first); });
-}
-
-void updateStorageOperand(AbstractState &state,
-                          const MirPlaceAliasEscapeAnalysis &aliases,
-                          const MirOperand &operand, StorageFact storage) {
-  if (storage.length) {
-    storage.length = boundedStorageLength(storage);
-  }
-  if (const std::optional<MirPlaceId> origin =
-          storageOriginForOperand(state, aliases, operand)) {
-    state.storages.insert_or_assign(*origin, std::move(storage));
-    return;
-  }
-  if (operand.value != 0) {
-    state.storageValues.insert_or_assign(operand.value, std::move(storage));
-  }
-}
-
-[[nodiscard]] std::optional<SemanticType>
-prefixElementType(const MirOperand &storage) {
-  const SemanticType *type = &storage.type;
-  if (type->kind == SemanticType::Reference && type->arguments.size() == 1) {
-    type = &type->arguments.front();
-  }
-  if (type->kind != SemanticType::PrefixStorage ||
-      type->arguments.size() != 1) {
-    return std::nullopt;
-  }
-  return type->arguments.front();
-}
-
 [[nodiscard]] std::optional<MirBodyAddress>
 closedCallTarget(const MirProgram &program, const MirInstruction &instruction) {
   if (instruction.dispatch != CallDispatch::Static ||
@@ -1849,8 +1514,7 @@ closedCallTarget(const MirProgram &program, const MirInstruction &instruction) {
   const bool owningType = operand.type.kind == SemanticType::Class ||
                           operand.type.kind == SemanticType::UniqueOwner ||
                           operand.type.kind == SemanticType::SharedPointer ||
-                          operand.type.kind == SemanticType::Expected ||
-                          operand.type.kind == SemanticType::PrefixStorage;
+                          operand.type.kind == SemanticType::Expected;
   return owningType &&
          (input->callInputKind == HirCallInputKind::CopyValue ||
           input->callInputKind == HirCallInputKind::MoveValue ||
@@ -1878,68 +1542,6 @@ contextForCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         objectForOperand(body, aliases, state, instruction.operands[index]);
   }
   return result;
-}
-
-struct ClosedElementConstruction {
-  bool pending = false;
-  bool hasOpaqueEffects = false;
-  std::optional<ObjectFact> object;
-};
-
-[[nodiscard]] ClosedElementConstruction closedElementConstruction(
-    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
-    const MirInstruction &instruction, std::size_t firstArgument,
-    const AbstractState &state, ClosedCallRound *closedCalls,
-    MirBodyAddress address) {
-  if (closedCalls == nullptr || !instruction.constructorTarget) {
-    return {};
-  }
-  const MirConstructorInstance *target =
-      closedCalls->program.findConstructorInstance(
-          *instruction.constructorTarget);
-  const MirBodyAddress targetAddress{.kind = MirBodyKind::Constructor,
-                                     .owner = *instruction.constructorTarget};
-  if (instruction.dispatch != CallDispatch::Static ||
-      instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
-      instruction.lambdaTarget || target == nullptr ||
-      target->definitionKind != MirDefinitionKind::Source ||
-      closedCalls->rejected.contains(targetAddress) ||
-      firstArgument > instruction.operands.size() ||
-      target->parameterTypes.size() !=
-          instruction.operands.size() - firstArgument) {
-    return {};
-  }
-  if (std::any_of(instruction.operands.begin() +
-                      static_cast<std::ptrdiff_t>(firstArgument),
-                  instruction.operands.end(), [&](const MirOperand &operand) {
-                    return owningCallOperand(body, operand);
-                  })) {
-    return {};
-  }
-
-  ClosedCallContext context;
-  context.reached = true;
-  context.arguments.resize(target->parameterTypes.size());
-  context.argumentObjects.resize(target->parameterTypes.size());
-  for (std::size_t index = 0; index < target->parameterTypes.size(); ++index) {
-    const MirOperand &operand = instruction.operands[firstArgument + index];
-    context.arguments[index].observed = true;
-    context.arguments[index].fact = integerForOperand(body, state, operand);
-    context.argumentObjects[index].observed = true;
-    context.argumentObjects[index].fact =
-        objectForOperand(body, aliases, state, operand);
-  }
-  closedCalls->discovered.emplace_back(targetAddress, std::move(context));
-
-  const auto summary = closedCalls->summaries.find(targetAddress);
-  if (summary == closedCalls->summaries.end() || !summary->second.complete) {
-    closedCalls->incompleteBodies.insert(address);
-    return {.pending = true};
-  }
-  return {.hasOpaqueEffects = summary->second.hasOpaqueEffects,
-          .object = summary->second.constructed.observed
-                        ? summary->second.constructed.fact
-                        : std::nullopt};
 }
 
 void invalidateObjectOperand(const MirBody &body,
@@ -2073,13 +1675,6 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     // authority. The exact effect summary above governs caller invalidation.
     state.hasOpaqueEffects = true;
   }
-  // Closed calls transport scalar/object summaries, but not relational
-  // identity between a prior logical-size check and private prefix storage.
-  // Drop those relations at the call boundary until exact effect summaries
-  // can prove that every referenced storage and index origin is unchanged.
-  state.prefixLengthValues.clear();
-  state.prefixLengthPlaces.clear();
-  state.checkedPrefixBounds.clear();
   if (instruction.result) {
     if (summary.result.observed && summary.result.fact) {
       IntegerFact fact = *summary.result.fact;
@@ -2154,12 +1749,6 @@ void killUnknownMemory(AbstractState &state) {
   state.aggregateElementIntegers.clear();
   state.objects.clear();
   state.loadedOrigins.clear();
-  state.storageValues.clear();
-  state.storages.clear();
-  state.storageOrigins.clear();
-  state.prefixLengthValues.clear();
-  state.prefixLengthPlaces.clear();
-  state.checkedPrefixBounds.clear();
   state.aggregateOrigins.clear();
   state.objectValues.clear();
 }
@@ -2223,11 +1812,6 @@ void applyInstruction(const MirBody &body,
       if (object != state.objectValues.end()) {
         state.objectValues[*instruction.result] = object->second;
       }
-      if (const auto length =
-              state.prefixLengthValues.find(instruction.operands.front().value);
-          length != state.prefixLengthValues.end()) {
-        state.prefixLengthValues[*instruction.result] = length->second;
-      }
     }
     return;
   }
@@ -2256,22 +1840,6 @@ void applyInstruction(const MirBody &body,
     if (const std::optional<ObjectFact> object =
             objectForOperand(body, aliases, state, source)) {
       state.objectValues[*instruction.result] = *object;
-    }
-    if (const std::optional<StorageFact> storage =
-            storageForOperand(state, aliases, source)) {
-      state.storageValues[*instruction.result] = *storage;
-    }
-    if (const std::optional<MirPlaceId> origin =
-            stableStorageOriginForOperand(state, aliases, source)) {
-      state.storageOrigins[*instruction.result] = *origin;
-    }
-    if (const std::optional<PrefixLengthFact> length =
-            prefixLengthForOperand(state, aliases, source)) {
-      PrefixLengthFact copied = *length;
-      add(copied.evidence, block.id);
-      addInstruction(copied.evidence, instruction.id);
-      addValue(copied.evidence, *instruction.result);
-      state.prefixLengthValues[*instruction.result] = std::move(copied);
     }
     return;
   }
@@ -2329,13 +1897,6 @@ void applyInstruction(const MirBody &body,
         addPlace(loaded.evidence, source.place);
         state.arrayValues[*instruction.result] = std::move(loaded);
       }
-      const auto storage = state.storages.find(sourcePlace);
-      if (storage != state.storages.end()) {
-        state.storageValues[*instruction.result] = storage->second;
-      }
-      if (source.type.kind == SemanticType::PrefixStorage) {
-        state.storageOrigins[*instruction.result] = sourcePlace;
-      }
       const MirPlaceId objectRoot = aggregateRoot(body, aliases, source.place);
       if (objectRoot != 0) {
         state.aggregateOrigins[*instruction.result] = objectRoot;
@@ -2343,15 +1904,6 @@ void applyInstruction(const MirBody &body,
                 extractObjectFact(body, aliases, objectRoot, state)) {
           state.objectValues[*instruction.result] = *object;
         }
-      }
-      if (const auto length = state.prefixLengthPlaces.find(sourcePlace);
-          length != state.prefixLengthPlaces.end()) {
-        PrefixLengthFact loaded = length->second;
-        add(loaded.evidence, block.id);
-        addInstruction(loaded.evidence, instruction.id);
-        addValue(loaded.evidence, *instruction.result);
-        addPlace(loaded.evidence, sourcePlace);
-        state.prefixLengthValues[*instruction.result] = std::move(loaded);
       }
     }
     return;
@@ -2403,14 +1955,10 @@ void applyInstruction(const MirBody &body,
     if (compoundCheckedOperation(instruction.operation)) {
       fact = compoundIntegerFact(body, program, aliases, state, instruction);
     }
-    const std::optional<StorageFact> storage =
-        storageForOperand(state, aliases, source);
     const std::optional<IntegerFact> sourceArray =
         arrayForOperand(state, aliases, source);
     const std::optional<ObjectFact> sourceObject =
         objectForOperand(body, aliases, state, source);
-    const std::optional<PrefixLengthFact> sourcePrefixLength =
-        prefixLengthForOperand(state, aliases, source);
     if (!referenceCarrierInitialization &&
         (!indexed || (!previousAggregateElements && !previousAggregateField))) {
       invalidatePlaceRoot(body, aliases, state, destination);
@@ -2485,26 +2033,8 @@ void applyInstruction(const MirBody &body,
             state.aggregateElementIntegers[indexed->root].at(indexed->field));
       }
     }
-    if (storage) {
-      StorageFact stored = *storage;
-      add(stored.evidence, block.id);
-      addInstruction(stored.evidence, instruction.id);
-      addPlace(stored.evidence, destination);
-      state.storages[destination] = std::move(stored);
-    } else if (const MirPlace *place = body.findPlace(destination);
-               place != nullptr &&
-               place->type.kind == SemanticType::PrefixStorage) {
-      state.storages.erase(destination);
-    }
     if (sourceObject) {
       seedObjectFact(body, aliases, destination, *sourceObject, state);
-    }
-    if (sourcePrefixLength) {
-      PrefixLengthFact stored = *sourcePrefixLength;
-      add(stored.evidence, block.id);
-      addInstruction(stored.evidence, instruction.id);
-      addPlace(stored.evidence, destination);
-      state.prefixLengthPlaces[destination] = std::move(stored);
     }
     return;
   }
@@ -2540,57 +2070,6 @@ void applyInstruction(const MirBody &body,
     return;
   }
 
-  if (instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage &&
-      instruction.result && !instruction.operands.empty()) {
-    const std::optional<IntegerFact> capacity =
-        integerForOperand(body, state, instruction.operands.front());
-    if (capacity) {
-      Evidence evidence = capacity->evidence;
-      add(evidence, block.id);
-      addInstruction(evidence, instruction.id);
-      addValue(evidence, *instruction.result);
-      const std::optional<CheckedIntegerDomain> lengthDomain =
-          constantIntegerDomain(SemanticType::UInt64);
-      state.storageValues[*instruction.result] = {
-          .capacity = *capacity,
-          .length = lengthDomain ? std::optional<IntegerFact>{IntegerFact{
-                                       .domain = *lengthDomain,
-                                       .lower = {},
-                                       .upper = {},
-                                       .evidence = evidence}}
-                                 : std::nullopt,
-          .evidence = std::move(evidence)};
-    }
-    return;
-  }
-
-  if (instruction.intrinsic == IntrinsicKind::StorageBoundsCheck) {
-    if (instruction.operands.size() == 2) {
-      const std::optional<ScalarOrigin> index =
-          scalarOriginForOperand(state, aliases, instruction.operands[0]);
-      const std::optional<PrefixLengthFact> length =
-          prefixLengthForOperand(state, aliases, instruction.operands[1]);
-      if (index && length && length->storage != 0) {
-        Evidence evidence = length->evidence;
-        if (const std::optional<IntegerFact> indexFact =
-                integerForOperand(body, state, instruction.operands[0])) {
-          evidence = merged(std::move(evidence), indexFact->evidence);
-        }
-        add(evidence, block.id);
-        addInstruction(evidence, instruction.id);
-        addPlace(evidence, length->storage);
-        if (index->place != 0) {
-          addPlace(evidence, index->place);
-        } else {
-          addValue(evidence, index->value);
-        }
-        state.checkedPrefixBounds.insert_or_assign(
-            std::pair{length->storage, *index}, std::move(evidence));
-      }
-    }
-    return;
-  }
-
   if ((instruction.intrinsic == IntrinsicKind::NumericTypeParameterConversion ||
        instruction.intrinsic == IntrinsicKind::NumericAliasConversion) &&
       instruction.result && instruction.operands.size() == 1) {
@@ -2608,180 +2087,12 @@ void applyInstruction(const MirBody &body,
     return;
   }
 
-  const bool prefixOperation =
-      instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-      instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
-      instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
-      instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut ||
-      instruction.intrinsic == IntrinsicKind::PrefixStorageLength ||
-      instruction.intrinsic == IntrinsicKind::PrefixStorageRelocate ||
-      instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ||
-      instruction.intrinsic == IntrinsicKind::PrefixStorageErase;
-  if (prefixOperation && !instruction.operands.empty()) {
-    const std::optional<SemanticType> elementType =
-        prefixElementType(instruction.operands.front());
-    const std::optional<MirPlaceId> origin = stableStorageOriginForOperand(
-        state, aliases, instruction.operands.front());
-    std::optional<StorageFact> storage =
-        storageForOperand(state, aliases, instruction.operands.front());
-    if (!elementType) {
-      killUnknownMemory(state);
-      return;
-    }
-    if (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
-        instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) {
-      if (instruction.result && storage && storage->elements) {
-        state.integers[*instruction.result] = rebased(
-            *storage->elements, block.id, instruction.id, *instruction.result);
-      }
-      return;
-    }
-    if (instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
-      const std::optional<IntegerFact> length =
-          storage ? boundedStorageLength(*storage) : std::nullopt;
-      if (instruction.result && length) {
-        state.integers[*instruction.result] =
-            rebased(*length, block.id, instruction.id, *instruction.result);
-      }
-      if (instruction.result && origin) {
-        Evidence evidence = storage ? storage->evidence : Evidence{};
-        add(evidence, block.id);
-        addInstruction(evidence, instruction.id);
-        addValue(evidence, *instruction.result);
-        addPlace(evidence, *origin);
-        state.prefixLengthValues[*instruction.result] = {
-            .storage = *origin, .evidence = std::move(evidence)};
-      }
-      return;
-    }
-    if (!storage) {
-      killUnknownMemory(state);
-      return;
-    }
-    add(storage->evidence, block.id);
-    addInstruction(storage->evidence, instruction.id);
-    if (instruction.intrinsic == IntrinsicKind::PrefixStorageRelocate) {
-      if (instruction.operands.size() != 2) {
-        killUnknownMemory(state);
-        return;
-      }
-      const std::optional<MirPlaceId> destinationOrigin =
-          stableStorageOriginForOperand(state, aliases,
-                                        instruction.operands[1]);
-      invalidatePrefixStorageRelations(state, aliases, origin.value_or(0));
-      invalidatePrefixStorageRelations(state, aliases,
-                                       destinationOrigin.value_or(0));
-      updateStorageOperand(state, aliases, instruction.operands[1], *storage);
-      const std::optional<CheckedIntegerDomain> lengthDomain =
-          constantIntegerDomain(SemanticType::UInt64);
-      if (lengthDomain) {
-        storage->length =
-            IntegerFact{.domain = *lengthDomain, .lower = {}, .upper = {}};
-      } else {
-        storage->length.reset();
-      }
-      storage->elements.reset();
-      storage->elementIntegers.clear();
-      storage->elementsUnknown = false;
-      updateStorageOperand(state, aliases, instruction.operands.front(),
-                           std::move(*storage));
-      return;
-    }
-    if (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-        instruction.intrinsic == IntrinsicKind::PrefixStorageInsert) {
-      invalidatePrefixStorageRelations(state, aliases, origin.value_or(0));
-      const std::size_t valueIndex =
-          instruction.intrinsic == IntrinsicKind::PrefixStorageInsert ? 2 : 1;
-      const bool storageWasEmpty =
-          storage->length && nonnegativeSingleton(*storage->length) == 0;
-      std::optional<IntegerFact> value;
-      std::optional<ObjectFact> object;
-      if (constantIntegerDomain(*elementType) &&
-          instruction.operands.size() > valueIndex) {
-        value =
-            integerForOperand(body, state, instruction.operands[valueIndex]);
-      } else if (const std::optional<CheckedIntegerDomain> domain =
-                     constantIntegerDomain(*elementType)) {
-        value = IntegerFact{.domain = *domain, .lower = {}, .upper = {}};
-      } else {
-        const ClosedElementConstruction construction =
-            closedElementConstruction(body, aliases, instruction, valueIndex,
-                                      state, closedCalls, address);
-        if (construction.pending) {
-          state.reachable = false;
-          return;
-        }
-        if (construction.hasOpaqueEffects) {
-          // The saved prefix state predates the constructor. Do not republish
-          // it across effects outside the supported construction profile.
-          unknownEffectBarrier();
-          return;
-        }
-        object = construction.object;
-        if (!object && instruction.operands.size() > valueIndex) {
-          object = objectForOperand(body, aliases, state,
-                                    instruction.operands[valueIndex]);
-        }
-      }
-      if (!value && !object) {
-        storage->elements.reset();
-        storage->elementIntegers.clear();
-        storage->elementsUnknown = true;
-      } else if (value && !storage->elementsUnknown) {
-        storage->elements = storage->elements
-                                ? std::optional<IntegerFact>{joinedElementFact(
-                                      *storage->elements, *value)}
-                                : value;
-      } else if (object && !storage->elementsUnknown) {
-        if (storageWasEmpty) {
-          storage->elementIntegers = object->integers;
-        } else {
-          for (auto iterator = storage->elementIntegers.begin();
-               iterator != storage->elementIntegers.end();) {
-            const auto found = object->integers.find(iterator->first);
-            if (found == object->integers.end()) {
-              iterator = storage->elementIntegers.erase(iterator);
-              continue;
-            }
-            iterator->second =
-                joinedElementFact(iterator->second, found->second);
-            ++iterator;
-          }
-        }
-      }
-      if (storage->length) {
-        const IntegerFact one{.domain = storage->length->domain,
-                              .lower = {.magnitude = 1},
-                              .upper = {.magnitude = 1}};
-        storage->length =
-            binaryFact(CheckedIntegerOperation::Add, *storage->length, one);
-      }
-      updateStorageOperand(state, aliases, instruction.operands.front(),
-                           std::move(*storage));
-      return;
-    }
-    if (instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
-        instruction.intrinsic == IntrinsicKind::PrefixStorageErase) {
-      invalidatePrefixStorageRelations(state, aliases, origin.value_or(0));
-      if (storage->length) {
-        const IntegerFact one{.domain = storage->length->domain,
-                              .lower = {.magnitude = 1},
-                              .upper = {.magnitude = 1}};
-        storage->length = binaryFact(CheckedIntegerOperation::Subtract,
-                                     *storage->length, one);
-      }
-      updateStorageOperand(state, aliases, instruction.operands.front(),
-                           std::move(*storage));
-      return;
-    }
-  }
-
   if (applyClosedCall(body, aliases, block, instruction, state, closedCalls,
                       address)) {
     return;
   }
 
-  // Calls outside the admitted prefix-storage vocabulary may mutate any
+  // Calls outside the admitted closed-call vocabulary may mutate any
   // reachable place through a reference or opaque host boundary. Value facts
   // remain valid because MIR values are immutable.
   unknownEffectBarrier();
@@ -2880,65 +2191,6 @@ void joinOptionalInteger(std::optional<IntegerFact> &target,
   target = joinedInteger(*target, *incoming, widen);
 }
 
-void joinStorageFact(StorageFact &target, const StorageFact &incoming,
-                     bool widen) {
-  const bool targetEmpty =
-      target.length && nonnegativeSingleton(*target.length) == 0;
-  const bool incomingEmpty =
-      incoming.length && nonnegativeSingleton(*incoming.length) == 0;
-  target.capacity = joinedInteger(target.capacity, incoming.capacity, widen);
-  joinOptionalInteger(target.length, incoming.length, widen);
-  if (target.length) {
-    target.length = boundedStorageLength(target);
-  }
-  if (target.elementsUnknown || incoming.elementsUnknown) {
-    target.elements.reset();
-    target.elementIntegers.clear();
-    target.elementsUnknown = true;
-  } else if (target.elements && incoming.elements) {
-    target.elements =
-        joinedInteger(*target.elements, *incoming.elements, widen);
-  } else if (!target.elements && incoming.elements) {
-    target.elements = incoming.elements;
-  }
-  if (!target.elementsUnknown) {
-    if (targetEmpty) {
-      target.elementIntegers = incoming.elementIntegers;
-    } else if (!incomingEmpty) {
-      joinIntegers(target.elementIntegers, incoming.elementIntegers, widen);
-    }
-  }
-  target.evidence = merged(target.evidence, incoming.evidence);
-}
-
-void joinStorageFacts(std::map<MirPlaceId, StorageFact> &target,
-                      const std::map<MirPlaceId, StorageFact> &incoming,
-                      bool widen) {
-  for (auto iterator = target.begin(); iterator != target.end();) {
-    const auto found = incoming.find(iterator->first);
-    if (found == incoming.end()) {
-      iterator = target.erase(iterator);
-      continue;
-    }
-    joinStorageFact(iterator->second, found->second, widen);
-    ++iterator;
-  }
-}
-
-void joinStorageValues(std::map<MirValueId, StorageFact> &target,
-                       const std::map<MirValueId, StorageFact> &incoming,
-                       bool widen) {
-  for (auto iterator = target.begin(); iterator != target.end();) {
-    const auto found = incoming.find(iterator->first);
-    if (found == incoming.end()) {
-      iterator = target.erase(iterator);
-      continue;
-    }
-    joinStorageFact(iterator->second, found->second, widen);
-    ++iterator;
-  }
-}
-
 void joinObjectFacts(std::map<MirPlaceId, ObjectFact> &target,
                      const std::map<MirPlaceId, ObjectFact> &incoming,
                      bool widen) {
@@ -3016,49 +2268,10 @@ void joinAggregateElementIntegers(
       ++iterator;
     }
   }
-  joinStorageValues(target.storageValues, incoming.storageValues, widen);
-  joinStorageFacts(target.storages, incoming.storages, widen);
-  const auto joinPrefixLengths = [](auto &left, const auto &right) {
-    for (auto iterator = left.begin(); iterator != left.end();) {
-      const auto found = right.find(iterator->first);
-      if (found == right.end() ||
-          found->second.storage != iterator->second.storage) {
-        iterator = left.erase(iterator);
-        continue;
-      }
-      iterator->second.evidence =
-          merged(std::move(iterator->second.evidence), found->second.evidence);
-      ++iterator;
-    }
-  };
-  joinPrefixLengths(target.prefixLengthValues, incoming.prefixLengthValues);
-  joinPrefixLengths(target.prefixLengthPlaces, incoming.prefixLengthPlaces);
-  for (auto iterator = target.checkedPrefixBounds.begin();
-       iterator != target.checkedPrefixBounds.end();) {
-    const auto found = incoming.checkedPrefixBounds.find(iterator->first);
-    if (found == incoming.checkedPrefixBounds.end()) {
-      iterator = target.checkedPrefixBounds.erase(iterator);
-      continue;
-    }
-    iterator->second = merged(std::move(iterator->second), found->second);
-    ++iterator;
-  }
-  for (auto iterator = target.storageOrigins.begin();
-       iterator != target.storageOrigins.end();) {
-    const auto found = incoming.storageOrigins.find(iterator->first);
-    if (found == incoming.storageOrigins.end() ||
-        found->second != iterator->second) {
-      iterator = target.storageOrigins.erase(iterator);
-    } else {
-      ++iterator;
-    }
-  }
   return target != before;
 }
 
-void bindEdgeArguments(const MirBody &body,
-                       const MirPlaceAliasEscapeAnalysis &aliases,
-                       MirBlockId target,
+void bindEdgeArguments(const MirBody &body, MirBlockId target,
                        const std::vector<MirOperand> &arguments,
                        AbstractState &state) {
   const MirBlock *block = body.findBlock(target);
@@ -3068,10 +2281,6 @@ void bindEdgeArguments(const MirBody &body,
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const MirValueId parameter = block->parameters[index].value;
     const MirOperand &argument = arguments[index];
-    const std::optional<PrefixLengthFact> prefixLength =
-        prefixLengthForOperand(state, aliases, argument);
-    const std::optional<ScalarOrigin> scalar =
-        scalarOriginForOperand(state, aliases, argument);
     if (const std::optional<IntegerFact> fact =
             integerForOperand(body, state, argument)) {
       IntegerFact bound = *fact;
@@ -3088,30 +2297,6 @@ void bindEdgeArguments(const MirBody &body,
     } else {
       state.loadedOrigins.erase(parameter);
     }
-    if (prefixLength) {
-      PrefixLengthFact rebound = *prefixLength;
-      addValue(rebound.evidence, parameter);
-      state.prefixLengthValues[parameter] = std::move(rebound);
-    } else {
-      state.prefixLengthValues.erase(parameter);
-    }
-    if (scalar) {
-      std::vector<std::pair<std::pair<MirPlaceId, ScalarOrigin>, Evidence>>
-          reboundBounds;
-      for (const auto &[key, evidence] : state.checkedPrefixBounds) {
-        if (key.second != *scalar) {
-          continue;
-        }
-        Evidence rebound = evidence;
-        addValue(rebound, parameter);
-        reboundBounds.emplace_back(
-            std::pair{key.first, ScalarOrigin{.value = parameter}},
-            std::move(rebound));
-      }
-      for (auto &[key, evidence] : reboundBounds) {
-        state.checkedPrefixBounds.insert_or_assign(key, std::move(evidence));
-      }
-    }
   }
 }
 
@@ -3121,9 +2306,9 @@ struct Edge {
   AbstractState state;
 };
 
-[[nodiscard]] std::vector<Edge>
-outgoingEdges(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
-              const MirBlock &block, const BlockTransfer &transfer) {
+[[nodiscard]] std::vector<Edge> outgoingEdges(const MirBody &body,
+                                              const MirBlock &block,
+                                              const BlockTransfer &transfer) {
   const MirTerminator &terminator = block.terminator;
   std::vector<Edge> result;
   const auto append = [&](MirBlockId target,
@@ -3139,7 +2324,7 @@ outgoingEdges(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     if (!state.reachable) {
       return;
     }
-    bindEdgeArguments(body, aliases, target, arguments, state);
+    bindEdgeArguments(body, target, arguments, state);
     result.push_back(
         {.target = target, .ordinal = ordinal, .state = std::move(state)});
   };
@@ -3241,7 +2426,6 @@ loadedPlace(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   case SemanticType::RawPointer:
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::PrefixStorage:
   case SemanticType::Class:
     return true;
   default:
@@ -3789,7 +2973,7 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         const BlockTransfer transfer = transferBlock(
             body, aliases, block, incoming, thresholds, closedCalls, address);
         std::vector<MirForwardDataflowEdge<AbstractState>> result;
-        for (Edge &edge : outgoingEdges(body, aliases, block, transfer)) {
+        for (Edge &edge : outgoingEdges(body, block, transfer)) {
           result.push_back({.target = edge.target,
                             .ordinal = edge.ordinal,
                             .state = std::move(edge.state)});
@@ -3976,45 +3160,6 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
         }
       }
 
-      const bool prefixStorageRead =
-          instruction.kind == MirInstructionKind::Call &&
-          (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
-           instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut) &&
-          instruction.operands.size() >= 2;
-      if (prefixStorageRead) {
-        const std::optional<StorageFact> storage =
-            storageForOperand(state, aliases, instruction.operands[0]);
-        const std::optional<MirPlaceId> origin = stableStorageOriginForOperand(
-            state, aliases, instruction.operands[0]);
-        const std::optional<IntegerFact> index =
-            integerForOperand(body, state, instruction.operands[1]);
-        std::optional<Evidence> boundsEvidence;
-        if (storage && index && storage->length &&
-            within(*index, *storage->length)) {
-          boundsEvidence = merged(storage->evidence, index->evidence);
-        } else if (origin) {
-          const std::optional<ScalarOrigin> scalar =
-              scalarOriginForOperand(state, aliases, instruction.operands[1]);
-          if (scalar) {
-            const auto checked =
-                state.checkedPrefixBounds.find(std::pair{*origin, *scalar});
-            if (checked != state.checkedPrefixBounds.end()) {
-              boundsEvidence = checked->second;
-            }
-          }
-        }
-        if (boundsEvidence) {
-          Evidence evidence = std::move(*boundsEvidence);
-          if (origin) {
-            addPlace(evidence, *origin);
-          }
-          appendProof(analysis, address, block, instruction,
-                      MirSafetyCheckFamily::Bounds,
-                      {.code = DefinedFailureCode::IndexOutOfBounds,
-                       .detail = DefinedFailureDetail::PrivateStorage},
-                      std::move(evidence));
-        }
-      }
       applyInstruction(body, aliases, block, instruction, state, nullptr,
                        closedCalls, address);
     }
@@ -4076,146 +3221,6 @@ void collectProofs(MirBodyAddress address, const MirBody &body,
   return found == body.places.end() ? 0 : found->id;
 }
 
-[[nodiscard]] const MirClassInstance *classForType(const MirProgram &program,
-                                                   const SemanticType &type) {
-  const SemanticType *referent = &type;
-  if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
-    referent = &type.arguments.front();
-  }
-  const auto found = std::find_if(program.classInstances().begin(),
-                                  program.classInstances().end(),
-                                  [&](const MirClassInstance &instance) {
-                                    return instance.type == *referent;
-                                  });
-  return found == program.classInstances().end() ? nullptr : &*found;
-}
-
-[[nodiscard]] std::optional<FieldPath>
-indexedElementBorrowPath(const MirBody &body, AccessMode access) {
-  for (const MirBlock &block : body.blocks) {
-    for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.tombstone) {
-        continue;
-      }
-      if (instruction.rawMemoryAccess ||
-          instruction.unsafeOperation != UnsafeOperationKind::None ||
-          instruction.synchronization.kind !=
-              SynchronizationOperationKind::None ||
-          instruction.kind == MirInstructionKind::Construct ||
-          instruction.kind == MirInstructionKind::Drop ||
-          instruction.kind == MirInstructionKind::Modify ||
-          instruction.kind == MirInstructionKind::Assign) {
-        return std::nullopt;
-      }
-      if (instruction.kind != MirInstructionKind::Call) {
-        continue;
-      }
-      if (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
-          instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut ||
-          instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
-        continue;
-      }
-      if (instruction.intrinsic != IntrinsicKind::StorageBoundsCheck) {
-        return std::nullopt;
-      }
-    }
-  }
-
-  const MirPlaceId root = thisRoot(body);
-  if (root == 0) {
-    return std::nullopt;
-  }
-  std::optional<FieldPath> result;
-  for (const MirBlock &block : body.blocks) {
-    if (block.terminator.kind != MirTerminatorKind::Return) {
-      continue;
-    }
-    if (!block.terminator.returnLoan) {
-      return std::nullopt;
-    }
-    const MirLoan *returned = body.findLoan(*block.terminator.returnLoan);
-    const MirPlace *source =
-        returned == nullptr ? nullptr : body.findPlace(returned->source);
-    if (returned == nullptr || returned->kind != MirLoanKind::Return ||
-        returned->parent != 0 || returned->source == 0 ||
-        returned->access != access || returned->producedBy == 0 ||
-        !returned->carriers.empty() || returned->entry || !returned->escapes ||
-        source == nullptr || source->root != MirPlaceRootKind::This ||
-        source->type.kind != SemanticType::PrefixStorage) {
-      return std::nullopt;
-    }
-    const std::optional<FieldPath> path =
-        fieldPath(body, root, returned->source);
-    if (!path || (result && *result != *path)) {
-      return std::nullopt;
-    }
-
-    const MirInstruction *producer = nullptr;
-    for (const MirBlock &candidateBlock : body.blocks) {
-      for (const MirInstruction &instruction : candidateBlock.instructions) {
-        if (instruction.tombstone ||
-            instruction.hirValue != returned->producedBy ||
-            instruction.kind != MirInstructionKind::Call ||
-            instruction.intrinsic != (access == AccessMode::Mutable
-                                          ? IntrinsicKind::PrefixStorageReadMut
-                                          : IntrinsicKind::PrefixStorageRead) ||
-            !instruction.loan || instruction.operands.size() < 2) {
-          continue;
-        }
-        if (producer != nullptr) {
-          return std::nullopt;
-        }
-        producer = &instruction;
-      }
-    }
-    const MirLoan *produced =
-        producer == nullptr ? nullptr : body.findLoan(*producer->loan);
-    const MirInstruction *storageLoad =
-        producer != nullptr && producer->operands.front().value != 0
-            ? definingInstruction(body, producer->operands.front().value)
-            : nullptr;
-    if (producer == nullptr || producer->borrowAccess != access ||
-        produced == nullptr || produced->kind != MirLoanKind::CallResult ||
-        produced->source != returned->source || produced->access != access ||
-        produced->producedBy != returned->producedBy || produced->escapes ||
-        storageLoad == nullptr ||
-        storageLoad->kind != MirInstructionKind::Load ||
-        storageLoad->operands.size() != 1 ||
-        storageLoad->operands.front().place != returned->source) {
-      return std::nullopt;
-    }
-    result = *path;
-  }
-  return result;
-}
-
-[[nodiscard]] std::optional<FieldPath>
-indexedElementStoragePath(const MirProgram &program, const SemanticType &type) {
-  const MirClassInstance *owner = classForType(program, type);
-  if (owner == nullptr) {
-    return std::nullopt;
-  }
-  std::optional<FieldPath> result;
-  for (const MirFunctionInstance &function : program.functionInstances()) {
-    if (function.owner != owner->id ||
-        function.overloadedOperator != OverloadedOperator::Subscript) {
-      continue;
-    }
-    const std::optional<FieldPath> path =
-        indexedElementBorrowPath(function.body, function.returnBorrowAccess);
-    if (function.definitionKind != MirDefinitionKind::Source ||
-        function.virtualMethod || function.pureVirtual ||
-        function.returnBorrowOrigin != BorrowOriginKind::Receiver ||
-        function.returnType.kind != SemanticType::Reference ||
-        function.returnType.arguments.size() != 1 || !path ||
-        (result && *result != *path)) {
-      return std::nullopt;
-    }
-    result = *path;
-  }
-  return result;
-}
-
 [[nodiscard]] std::optional<IndexedAggregateAccess>
 indexedAggregateAccess(const MirProgram *program, const MirBody &body,
                        const MirPlaceAliasEscapeAnalysis &aliases,
@@ -4253,192 +3258,26 @@ indexedAggregateAccess(const MirProgram *program, const MirBody &body,
                            {.root = root, .field = std::move(field)}};
   }
 
-  const MirLoan *loan = nullptr;
-  const MirLoan *carrierLoan = nullptr;
-  const MirPlace *element = nullptr;
-  std::size_t projection = 0;
-  if (place->root == MirPlaceRootKind::Loan && place->loan != 0) {
-    loan = body.findLoan(place->loan);
-    const auto found = std::find_if(
-        body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
-          return candidate.root == MirPlaceRootKind::Loan &&
-                 candidate.loan == place->loan && candidate.projections.empty();
-        });
-    element = found == body.places.end() ? nullptr : &*found;
-  } else if (place->root == MirPlaceRootKind::Binding && place->binding != 0 &&
-             !place->projections.empty() &&
-             place->projections.front().kind ==
-                 MirProjectionKind::Dereference) {
-    projection = 1;
-    for (const MirLoan &candidate : body.loans) {
-      if (std::find(candidate.carriers.begin(), candidate.carriers.end(),
-                    place->binding) == candidate.carriers.end()) {
-        continue;
-      }
-      if (carrierLoan != nullptr) {
-        return std::nullopt;
-      }
-      carrierLoan = &candidate;
-    }
-    if (carrierLoan != nullptr) {
-      if (carrierLoan->kind == MirLoanKind::CallResult) {
-        loan = carrierLoan;
-      } else if (carrierLoan->kind == MirLoanKind::Local) {
-        const MirPlace *carrierSource = body.findPlace(carrierLoan->source);
-        if (carrierSource == nullptr ||
-            carrierSource->root != MirPlaceRootKind::Loan ||
-            carrierSource->loan == 0) {
-          return std::nullopt;
-        }
-        loan = body.findLoan(carrierSource->loan);
-        if (loan == nullptr) {
-          return std::nullopt;
-        }
-      } else {
-        return std::nullopt;
-      }
-      const auto found =
-          std::find_if(body.places.begin(), body.places.end(),
-                       [&](const MirPlace &candidate) {
-                         return candidate.root == MirPlaceRootKind::Loan &&
-                                candidate.loan == loan->id &&
-                                candidate.projections.empty();
-                       });
-      element = found == body.places.end() ? nullptr : &*found;
-    }
-  }
-
-  FieldPath field;
-  for (; projection < place->projections.size(); ++projection) {
-    const MirPlaceProjection &current = place->projections[projection];
-    if (current.kind != MirProjectionKind::Field || current.field == 0) {
-      return std::nullopt;
-    }
-    field.push_back(current.field);
-  }
-
-  const MirLoan *parentLoan = loan != nullptr && loan->parent != 0
-                                  ? body.findLoan(loan->parent)
-                                  : nullptr;
-  const bool directCarrier = carrierLoan != nullptr && carrierLoan == loan;
-  if (loan == nullptr || loan->kind != MirLoanKind::CallResult ||
-      loan->source == 0 || loan->producedBy == 0 || loan->entry ||
-      loan->storedDependency != 0 || !loan->additionalSources().empty() ||
-      loan->escapes || element == nullptr ||
-      (place->root == MirPlaceRootKind::Loan && !loan->carriers.empty()) ||
-      (loan->parent != 0 &&
-       (parentLoan == nullptr || parentLoan->kind != MirLoanKind::Parameter ||
-        !parentLoan->entry || parentLoan->source != loan->source ||
-        parentLoan->access != loan->access)) ||
-      (place->root == MirPlaceRootKind::Binding &&
-       (carrierLoan == nullptr || carrierLoan->entry || carrierLoan->escapes ||
-        carrierLoan->storedDependency != 0 ||
-        carrierLoan->carriers.size() != 1 ||
-        carrierLoan->carriers.front() != place->binding ||
-        (directCarrier ? carrierLoan->kind != MirLoanKind::CallResult
-                       : (carrierLoan->kind != MirLoanKind::Local ||
-                          !loan->carriers.empty() ||
-                          carrierLoan->parent != loan->parent ||
-                          carrierLoan->source != element->id ||
-                          carrierLoan->access != loan->access ||
-                          carrierLoan->producedBy != loan->producedBy))))) {
-    return std::nullopt;
-  }
-  const MirPlaceId aggregateRootId = aggregateRoot(body, aliases, loan->source);
-  if (aggregateRootId == 0) {
-    return std::nullopt;
-  }
-
-  const MirInstruction *producer = nullptr;
-  for (const MirBlock &block : body.blocks) {
-    for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.tombstone ||
-          instruction.kind != MirInstructionKind::Call ||
-          instruction.hirValue != loan->producedBy || !instruction.loan ||
-          *instruction.loan != loan->id) {
-        continue;
-      }
-      if (producer != nullptr) {
-        return std::nullopt;
-      }
-      producer = &instruction;
-    }
-  }
-  if (producer == nullptr || !producer->functionTarget || !producer->receiver ||
-      producer->receiver->place == 0 ||
-      aggregateRoot(body, aliases, producer->receiver->place) !=
-          aggregateRootId ||
-      producer->operands.size() != 1 ||
-      producer->borrowOrigin != BorrowOriginKind::Receiver ||
-      producer->borrowAccess != loan->access ||
-      producer->info.type != element->type) {
-    return std::nullopt;
-  }
-
-  const MirFunctionInstance *target =
-      program->findFunctionInstance(*producer->functionTarget);
-  const MirPlace *root = body.findPlace(aggregateRootId);
-  const MirClassInstance *owner =
-      root == nullptr ? nullptr : classForType(*program, root->type);
-  if (target == nullptr || owner == nullptr || !target->owner ||
-      *target->owner != owner->id ||
-      target->definitionKind != MirDefinitionKind::Source ||
-      target->linkage != LanguageLinkage::Gti || target->virtualMethod ||
-      target->pureVirtual ||
-      target->overloadedOperator != OverloadedOperator::Subscript ||
-      target->parameterTypes.size() != 1 ||
-      target->returnBorrowOrigin != BorrowOriginKind::Receiver ||
-      target->returnBorrowAccess != loan->access ||
-      target->returnType.kind != SemanticType::Reference ||
-      target->returnType.arguments.size() != 1 ||
-      target->returnType.arguments.front() != element->type ||
-      (loan->access == AccessMode::Mutable
-           ? target->receiverMutability != ReceiverMutability::Mutable
-           : target->receiverMutability != ReceiverMutability::ReadOnly) ||
-      !indexedElementBorrowPath(target->body, loan->access)) {
-    return std::nullopt;
-  }
-  return IndexedAggregateAccess{.root = aggregateRootId,
-                                .field = std::move(field)};
+  // Source-defined owners use general raw lifetime operations. No private
+  // prefix-container accessor supplies an implicit element-value summary.
+  return std::nullopt;
 }
 
-void sanitizeObject(const MirProgram &program, const SemanticType &type,
+void sanitizeObject(const MirProgram &, const SemanticType &type,
                     ObjectFact &object) {
-  const std::optional<FieldPath> storagePath =
-      indexedElementStoragePath(program, type);
-  if (!storagePath) {
+  const SemanticType &valueType =
+      type.kind == SemanticType::Reference && type.arguments.size() == 1
+          ? type.arguments.front()
+          : type;
+  if (valueType.kind != SemanticType::Array) {
     object.elements.reset();
     object.elementIntegers.clear();
-    return;
-  }
-  const auto storage = object.storages.find(*storagePath);
-  if (storage == object.storages.end() || storage->second.elementsUnknown) {
-    object.elements.reset();
-    object.elementIntegers.clear();
-    return;
-  }
-  if (object.elements) {
-    storage->second.elements = object.elements;
-  }
-  if (!object.elementIntegers.empty()) {
-    storage->second.elementIntegers = object.elementIntegers;
   }
 }
-
 [[nodiscard]] bool mergeObject(ObjectFact &target, const ObjectFact &incoming,
                                bool widen) {
   const ObjectFact before = target;
   joinIntegers(target.integers, incoming.integers, widen);
-  for (auto iterator = target.storages.begin();
-       iterator != target.storages.end();) {
-    const auto found = incoming.storages.find(iterator->first);
-    if (found == incoming.storages.end()) {
-      iterator = target.storages.erase(iterator);
-      continue;
-    }
-    joinStorageFact(iterator->second, found->second, widen);
-    ++iterator;
-  }
   joinOptionalInteger(target.elements, incoming.elements, widen);
   joinIntegers(target.elementIntegers, incoming.elementIntegers, widen);
   return target != before;
@@ -4649,20 +3488,11 @@ objectAtExits(const MirProgram &program, const MirBody &body,
         object.integers.insert_or_assign(FieldPath{field.symbol},
                                          integer->second);
       }
-      if (const auto storage = state.storages.find(root);
-          storage != state.storages.end()) {
-        object.storages.insert_or_assign(FieldPath{field.symbol},
-                                         storage->second);
-      }
       if (const std::optional<ObjectFact> nested =
               extractObjectFact(body, aliases, root, state)) {
         for (const auto &[path, fact] : nested->integers) {
           object.integers.insert_or_assign(
               prefixedFieldPath(field.symbol, path), fact);
-        }
-        for (const auto &[path, storage] : nested->storages) {
-          object.storages.insert_or_assign(
-              prefixedFieldPath(field.symbol, path), storage);
         }
       }
     }
@@ -4679,50 +3509,6 @@ struct ContextualBodyResult {
   ClosedCallSummary summary;
   MirSafetyAnalysis safety;
 };
-
-[[nodiscard]] std::optional<IntegerFact>
-returnedBorrowFact(const MirBody &body, const MirTerminator &terminator,
-                   const AbstractState &state) {
-  if (!terminator.returnLoan || !terminator.value ||
-      terminator.value->kind != MirOperandKind::Loan ||
-      terminator.value->loan != *terminator.returnLoan) {
-    return std::nullopt;
-  }
-  const MirLoan *returned = body.findLoan(*terminator.returnLoan);
-  if (returned == nullptr || returned->kind != MirLoanKind::Return ||
-      returned->source == 0 || returned->producedBy == 0 ||
-      !returned->escapes) {
-    return std::nullopt;
-  }
-
-  const MirInstruction *producer = nullptr;
-  for (const MirBlock &block : body.blocks) {
-    for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.hirValue != returned->producedBy ||
-          (instruction.intrinsic != IntrinsicKind::PrefixStorageRead &&
-           instruction.intrinsic != IntrinsicKind::PrefixStorageReadMut)) {
-        continue;
-      }
-      const MirLoan *produced =
-          instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
-      if (producer != nullptr || instruction.kind != MirInstructionKind::Call ||
-          !instruction.result || produced == nullptr ||
-          produced->kind != MirLoanKind::CallResult ||
-          produced->source != returned->source ||
-          produced->access != returned->access) {
-        return std::nullopt;
-      }
-      producer = &instruction;
-    }
-  }
-  if (producer == nullptr) {
-    return std::nullopt;
-  }
-  const auto fact = state.integers.find(*producer->result);
-  return fact == state.integers.end()
-             ? std::nullopt
-             : std::optional<IntegerFact>{fact->second};
-}
 
 [[nodiscard]] ContextualBodyResult
 analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
@@ -4802,9 +3588,6 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         block.terminator.value) {
       std::optional<IntegerFact> fact =
           integerForOperand(*body, transferred.output, *block.terminator.value);
-      if (!fact) {
-        fact = returnedBorrowFact(*body, block.terminator, transferred.output);
-      }
       returnFacts.push_back(std::move(fact));
     }
     exits.push_back(std::move(transferred.output));

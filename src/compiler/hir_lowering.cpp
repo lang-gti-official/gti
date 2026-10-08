@@ -5442,8 +5442,6 @@ private:
       value.designatedConstruction = !construction->designatedArguments.empty();
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
-          value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-          value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
       if (!inPlaceStorageConstruction) {
         value.parameterTypes = construction->parameterTypes;
@@ -5746,8 +5744,7 @@ private:
       else
         lifecycleValid = false;
     }
-    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
-         value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
+    if (value.intrinsic == IntrinsicKind::ObjectConstruct &&
         ((value.constructorTarget &&
           value.constructorKind == ConstructorKind::Ordinary) ||
          (!value.constructorTarget &&
@@ -5764,9 +5761,6 @@ private:
               static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
           value.operands.end());
       std::vector<SemanticType> roles = value.parameterTypes;
-      if (value.intrinsic != IntrinsicKind::ObjectConstruct)
-        roles.front() =
-            SemanticType::referenceTo(roles.front(), AccessMode::Mutable);
       if (auto planned = orderedArguments(arguments, roles, body)) {
         // Storage is a capability-place input, not a source reference formal.
         planned->front().parameterType = value.parameterTypes.front();
