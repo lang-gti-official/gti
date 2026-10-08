@@ -14,6 +14,11 @@ target_link_libraries(gti_installed_charconv_smoke PRIVATE GTI::runtime)
 target_compile_features(gti_installed_charconv_smoke PRIVATE cxx_std_20)
 add_test(NAME installed_charconv_boundary COMMAND gti_installed_charconv_smoke)
 
+add_executable(gti_installed_memory_smoke ../resource_memory_runtime_tests.cpp)
+target_link_libraries(gti_installed_memory_smoke PRIVATE GTI::runtime)
+target_compile_features(gti_installed_memory_smoke PRIVATE cxx_std_20)
+add_test(NAME installed_memory_boundary COMMAND gti_installed_memory_smoke)
+
 add_executable(gti_installed_filesystem_smoke ../runtime_filesystem_tests.cpp)
 target_link_libraries(gti_installed_filesystem_smoke PRIVATE GTI::runtime)
 target_compile_features(gti_installed_filesystem_smoke PRIVATE cxx_std_20)
