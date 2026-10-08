@@ -1,0 +1,48 @@
+#include <std/string>
+#include <std/vector>
+
+class Record {
+  std::string text_;
+public:
+  Record(std::string_view text) : text_(std::string(text)) {}
+  std::string_view text() { return this.text_.view(); }
+};
+class Records {
+  mut std::vector<Record> records_{};
+public:
+  Records() {
+    this.records_.push_back(Record("alpha"));
+    this.records_.push_back(Record("beta"));
+  }
+  Record& operator[](std::size_t index) { return this.records_[index]; }
+  void add() mut { this.records_.push_back(Record("extra")); }
+  std::string_view at(std::size_t index) { return this.records_[index].text(); }
+};
+class FixedRecords {
+  Record records_[2] = {Record("gamma"), Record("delta")};
+public:
+  FixedRecords() {}
+  Record& operator[](std::size_t index) { return this.records_[index]; }
+  std::string_view at(std::size_t index) { return this.records_[index].text(); }
+};
+
+std::string_view relay(Records& records, std::size_t index) {
+  return records[index].text();
+}
+std::string_view relay(FixedRecords& records, std::size_t index) {
+  return records[index].text();
+}
+
+int main() {
+  Records dynamic{};
+  FixedRecords fixed{};
+  std::string_view first = dynamic.at(std::size_t(0));
+  std::string_view second = relay(dynamic, std::size_t(1));
+  std::string_view third = fixed.at(std::size_t(0));
+  std::string_view fourth = relay(fixed, std::size_t(1));
+  std::println(first);
+  std::println(second);
+  std::println(third);
+  std::println(fourth);
+  return first[std::size_t(0)] == 'a' && fourth[std::size_t(0)] == 'd' ? 0 : 1;
+}

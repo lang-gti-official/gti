@@ -323,7 +323,9 @@ int main() {
         "coverage/reproducers/a45-literal-base-argument.gti",
         "coverage/reproducers/a45-derived-destructor-explicit-base.gti",
         "coverage/reproducers/a45-derived-destructor-generated-ctor.gti",
-        "fixtures/base_constructor_stages.gti"}) {
+        "fixtures/base_constructor_stages.gti",
+        "fixtures/checked_base_arguments.gti",
+        "fixtures/effectful_base_arguments.gti"}) {
     const auto path = fixtures / name;
     std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};
@@ -341,6 +343,45 @@ int main() {
           base |= instruction.kind == lang::MirInstructionKind::InitializeBase;
       if (!base)
         continue;
+      if (std::string_view(name) == "fixtures/checked_base_arguments.gti" ||
+          std::string_view(name) == "fixtures/effectful_base_arguments.gti") {
+        const auto preparation =
+            lang::cppMirBasePreparation(frontend.mir, constructor);
+        expect(
+            preparation.has_value(),
+            "computed base arguments retain an exact executable MIR partition");
+        const auto plan =
+            emitter.buildPlan({lang::MirBodyKind::Constructor, constructor.id});
+        expect(plan.supportsBasePreparationText(),
+               "preparation text is admitted in the immutable body plan");
+        if (preparation) {
+          for (int mutation = 0; mutation < 5; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirConstructorInstance *>(
+                malformed.findConstructorInstance(constructor.id));
+            if (mutation == 0)
+              changed->parameterTypes.front() = lang::SemanticType::StringView;
+            else if (mutation == 1)
+              changed->body.places[preparation->places.front() - 1].root =
+                  lang::MirPlaceRootKind::This;
+            else if (mutation == 2)
+              changed->body.values[preparation->values.front() - 1]
+                  .info.traits.containsBorrowedState = true;
+            else if (mutation == 3)
+              changed->body.blocks[changed->body.entry - 1].terminator.target =
+                  999999;
+            else
+              changed->initializers.front().base.reset();
+            expect(!lang::cppMirBasePreparation(malformed, *changed),
+                   "preparation rejects forged parameter, receiver, borrow and "
+                   "CFG authority");
+            expect(!lang::CppMirBodyEmitter(malformed, map)
+                        .analyzeProgram()
+                        .ready(),
+                   "malformed preparation never reaches native emission");
+          }
+        }
+      }
       for (const auto &block : constructor.body.blocks) {
         for (const auto &instruction : block.instructions) {
           if (instruction.kind != lang::MirInstructionKind::InitializeBase)

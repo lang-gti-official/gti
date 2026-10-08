@@ -1,0 +1,24 @@
+class Plain {
+public:
+  mut int value;
+  Plain(int value) : value(value) {}
+};
+
+struct Frame {
+  mut Plain values[2] = {Plain(11), Plain(13)};
+};
+
+int index() { return 0; }
+int copy_value(Plain value, int later) { return value.value; }
+int change(mut Plain& source) { source.value = 99; return 0; }
+
+int main() {
+  mut Plain values[2][2] = {{Plain(3), Plain(5)}, {Plain(7), Plain(9)}};
+  // The checked copy completes before a later argument mutates its source.
+  int first = copy_value(values[index()][index()], change(values[0][0]));
+  if (first != 3 || values[0][0].value != 99) { return 1; }
+  mut Frame frame{};
+  int second = copy_value(frame.values[index()], change(frame.values[0]));
+  if (second != 11 || frame.values[0].value != 99) { return 2; }
+  return 0;
+}

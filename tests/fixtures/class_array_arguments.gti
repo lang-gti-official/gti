@@ -1,0 +1,62 @@
+// By-value fixed-array arguments copied from named passive class arrays.
+// The element class has no default constructor, so every copy must be an
+// element-wise copy, never a default construction followed by assignment.
+extern "C" {
+  void mark_constructor();
+  int32_t constructed_count();
+}
+
+struct Value {
+  mut int32_t n;
+  Value(int32_t n) : n(n) { mark_constructor(); }
+};
+
+int32_t sum(Value values[2], int32_t extra) {
+  return values[0].n + values[1].n + extra;
+}
+
+int32_t pair(Value left[2], Value right[2]) { return left[0].n + right[1].n; }
+
+// The parameter is an independent copy of the caller's array.
+int32_t edit(mut Value values[2]) {
+  values[0].n = 100;
+  return values[0].n;
+}
+
+int32_t corner(Value grid[2][2]) { return grid[1][0].n; }
+
+class Scale {
+public:
+  int32_t base;
+  Scale(int32_t base) : base(base) {}
+  int32_t add(Value values[2]) { return this.base + values[1].n; }
+};
+
+class Snapshot {
+  Value values[2];
+public:
+  Snapshot(Value input[2]) : values(input) {}
+  int32_t first() { return this.values[0].n; }
+};
+
+int main() {
+  mut Value values[2] = {Value(1), Value(2)};
+  Value grid[2][2] = {{Value(5), Value(6)}, {Value(7), Value(8)}};
+  if (sum(values, 10) != 13) { return 1; }
+  if (pair(values, values) != 3) { return 2; }
+  if (edit(values) != 100 || values[0].n != 1) { return 3; }
+  Scale scale{5};
+  if (scale.add(values) != 7 || corner(grid) != 7) { return 4; }
+  Snapshot snapshot{values};
+  values[0].n = 50;
+  if (snapshot.first() != 1) { return 5; }
+  // Each iteration copies the current element values in argument order.
+  mut int32_t total = 0;
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    values[1].n = i;
+    total += sum(values, 0);
+  }
+  if (total != 153) { return 6; }
+  // Only the six source constructions ran; copies invented none.
+  return constructed_count() == 6 ? 0 : 7;
+}

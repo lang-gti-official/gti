@@ -31,14 +31,37 @@ metadata is not a by-value containment edge.
 ## Exact-owner construction
 
 For one completed value of a class's exact owner type, semantic construction
-selects that owner's copy or move lifecycle according to the analyzed value
-category. A generic by-value converting constructor instantiated with that
+first distinguishes a fresh produced result from a transfer of an existing
+place. `SemanticModel::isFreshClassResult` uses the selected construction/call
+identities and return type; grouping preserves that fact, but the Move
+intrinsic does not acquire it merely from `ValueCategory::Value`. An exact
+one-source class construction around a fresh result records
+`ResolvedConstructionInfo::directInitialization` before overload selection.
+It selects no extra constructor or lifetime and does not require a move
+constructor. Compiler-private placement/storage calls are not one-source class
+construction expressions and retain their selected lifecycle protocol.
+
+`SemanticModel::directInitializationProof` issues an immutable, source-bound
+construction proof only for that selected exact fresh-result rule. It binds the
+immediate producer, concrete type and program snapshot; consumers cannot create
+a proof for an ordinary invocation by presenting a matching class ID. HIR keeps
+the concrete proof when symbolic primary analysis skipped a dependent branch,
+without retaining or copying the entire concrete semantic model.
+
+For a named source or explicit transfer, construction still selects that
+owner's copy or move lifecycle according to the analyzed value category.
+A generic by-value converting constructor instantiated with that
 same owner type cannot outrank or resurrect a deleted lifecycle operation;
 unrelated argument types retain ordinary inference/constraint selection. The
 selected `ConstructorKind`, declaration and argument facts continue through
 HIR/MIR. Completed-value optional publication therefore transports the selected
 lifecycle value rather than invoking another converting constructor at the
 private storage boundary. No public callable/container name defines this rule.
+Stored-borrow and raw-field provenance pass through a direct wrapper to its
+producer. The wrapper adds no invocation effects or new borrow permission;
+ordinary producer validity, unsafe obligations and escape checking remain
+mandatory. Tooling retains a selected construction occurrence whose hover
+explicitly explains that no additional copy/move is selected.
 
 ## Native C scalar target facts
 
@@ -575,7 +598,13 @@ class substitution preserves that identity through symbolic base forwarding.
 Method selection groups the owner's prescribed concrete list by source argument
 expression and reuses exact argument and ownership checks, including forwarding
 and `operator()`. It does not infer owner arguments from the call. Concrete
-class reanalysis validates member pack object positions even for uncalled
+lexical pack scopes retain the declaring name/ID independently of a substituted
+pack's canonical type identity. Signature-pattern forwarding does not rewrite
+that type identity to impersonate the receiving declaration, and a nearer
+non-pack generic shadows the enclosing pack normally. Concrete field reanalysis
+also runs for zero-element owner packs, preserving the same canonical selected
+field types as their constructor schedules. Concrete class reanalysis validates
+member pack object positions even for uncalled
 methods. Empty owner packs still trigger concrete method reanalysis. HIR
 instance signatures flatten concrete packs independently of discovery path,
 while body bindings retain source pack identity for cleanup and forwarding.
@@ -628,6 +657,16 @@ for that resolved function. It does not rescan every namespace/member overload
 table once per function. The index is request-local and contains no durable or
 process-global identity.
 
+Pre-body stored-field summaries compose unambiguous exact-result factory calls
+and same-type construction/grouping wrappers field by field. Each result field
+retains its source parameter or receiver projection and its own shared or
+exclusive access; a mixed result is not flattened to its first parameter.
+Recursive, ambiguous, and unresolved generic-call paths remain conservative.
+This declaration inference only proposes a contract: selected call analysis and
+return-body validation independently check every actual owner, field, access
+permission, and permitted escape. The direct-initialization rule does not grant
+new borrowing or escape authority.
+
 Mutable field groups are source-only declaration containers. Member collection
 recurses through the active group items with the surrounding access state,
 registering every child as an ordinary mutable direct field in textual order.
@@ -673,6 +712,44 @@ destructors, field/base initialization, and cleanup. An ordinary bodyless GTI
 declaration, open generic cleanup shape, or other missing summary is unknown;
 `GTI-S2068` rejects a later-storage access or unknown transitive effect before
 HIR. This proof does not infer safety from a backend or from `findConstant()`.
+
+Closed generic calls use request-local concrete effect queries keyed by the
+declaration, concrete owner, and type/value substitutions. A reused isolated
+semantic instance worker analyzes only initializer-reachable selected bodies;
+discarded `if constexpr` arms do not contribute effects. Nongeneric bridge
+calls retain their graph edges, and source constructor/destructor/field effects
+use the same exact instance identity. Query expansion is bounded by 64 generic
+ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
+diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
+without exact selected generic arguments remain conservatively unknown.
+
+Value-generic arithmetic needed before complete program HIR/MIR is retained as
+an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.
+Substitution reuses the checked constant-operation kernel and exact-specialization
+selection. Complete MIR cannot yet own this early type-formation query because
+array/value arguments and class field layout shape the semantic instance itself;
+the remaining L-CONST-01 staged/query-driven MIR evaluator remains the migration
+goal, not a separate permanent runtime interpreter.
+
+Missing nominal-field defaults use semantic-owned empty construction anchors,
+retained across snapshots and deltas. Ordinary contextual construction analysis
+publishes the exact selected operation and effects; HIR lowers that typed field
+initializer, and MIR owns final-address construction, stage activation, ordering,
+and rollback. Other omitted field categories do not gain an implicit initializer.
+An open nominal field defers construction until concrete analysis; recursively
+unresolved type arguments, value expressions, and extents are not an invitation
+to check a constructor requirement outside its selected constructor's context.
+Concrete selection still enforces every zero-argument operation and requirement.
+Default-availability queries apply those requirements under the exact owner
+substitution; a constrained-out zero-argument constructor is not queried as an
+omitted default when a different constructor explicitly initializes the field.
+Abstract owners remain constructible only in base-subobject position, never as
+implicitly defaulted value fields.
+New omitted-nominal defaults do not manufacture an extra argument-free overload
+beside an owner's declared argument-taking construction API. Constructor-free
+owners can use the structural default; declared zero-argument operations keep
+their ordinary selection rules. The earlier generated overload for completely
+written declaration-default state remains available unchanged.
 
 `SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
 active-statement preorder, and exact ordered source-graph/prelude provenance.
@@ -932,7 +1009,13 @@ base facts through the fallback, loan tables deliberately restart rather
 than fall back, and record mutators copy a base record into the delta before
 updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
-unchanged from the previous whole-model-copy design.
+unchanged for inherited declarations. New declarations found only in a selected
+dependent branch receive IDs above a request-wide symbol identity ceiling. The
+ceiling advances in sequential analysis order and resets with the request; it
+is not restored with body-local counters. Thus distinct concrete-only locals
+cannot collide even when instances have identical source names or different
+types. These delta symbol records remain concrete and are handed to HIR without
+mutating the immutable primary snapshot. Discarded arms are still unanalyzed.
 
 A complete-range requirement is checked symbolically before its concrete
 iterator and sentinel types exist. The primary analysis therefore uses private
@@ -997,7 +1080,15 @@ source order after selection. Named functions/methods, constructors, lexical
 lambdas, function items, and concrete call operators share this rule. A
 callback's eventual concrete result does not choose between outer overloads;
 an ambiguous outer signature remains ambiguous. Unknown arguments do not
-deduce an outer generic parameter. Raw pointers
+deduce an outer generic parameter. If the outer receiver is itself an open
+generic callable, a directly nested callable argument instead retains an
+explicit `inferResultFromInstantiation` requirement in the semantic contract.
+Concrete reanalysis selects the inner result and checks the outer invocation;
+it must resolve a non-void, non-reference, non-borrowing, non-lambda value before
+HIR copies the exact signatures. This is not inference from the enclosing
+return type or backend representation. Tooling labels unresolved declaration
+requirements as deferred rather than presenting an unknown type as exact.
+Raw pointers
 remain non-owning values under their ordinary language rules, and the current
 `std::string_view` denotes static literal storage; the callable boundary does
 not reclassify either as ownership. `auto` cannot infer a result through an

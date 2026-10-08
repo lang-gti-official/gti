@@ -111,7 +111,7 @@ def main():
             vector_source = (
                 "#include <std/vector>\n"
                 "using Cursor = std::vector<int>::const_iterator;\n"
-                "using Writable = std::vector<int>::mut_iterator;\n"
+                "using Writable = std::vector<int>::iterator;\n"
                 "using End = std::vector<int>::sentinel;\n"
                 "int main() { return 0; }\n"
             )

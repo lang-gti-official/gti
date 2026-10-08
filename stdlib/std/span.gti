@@ -31,7 +31,7 @@ public:
     this.current_position++;
   }
 
-  bool operator!=(span_sentinel& sentinel) {
+  bool operator!=(span_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 
@@ -60,7 +60,7 @@ public:
     gti_internal::index_bounds_check(this.current_position, this.final_position);
     this.current_position++;
   }
-  bool operator!=(span_sentinel& sentinel) {
+  bool operator!=(span_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 };

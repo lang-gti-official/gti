@@ -99,22 +99,31 @@ int main() {
                 moveOnly.diagnostics.begin(), moveOnly.diagnostics.end(),
                 [](const auto &item) { return item.code == "GTI-S2003"; }),
         "type aliases cannot make a unique owner copyable");
-  const auto borrowed = analyze(R"(
+  const std::string borrowedSource = R"(
 #include <std/vector>
 int main() {
   mut std::vector<int> values{};
   values.push_back(1);
-  std::vector<int>::iterator cursor = values.begin();
+  std::vector<int>::const_iterator cursor = values.begin();
   values.push_back(2);
   return *cursor;
 }
-)");
-  check(!borrowed.semanticValid && !borrowed.canGenerateCode(),
-        "public iterator aliases retain their owner loans");
+)";
+  const auto borrowed = analyze(borrowedSource);
+  const auto mutation = borrowedSource.find("values.push_back(2)") +
+                        std::string_view("values.push_back(2").size();
+  check(!borrowed.semanticValid && !borrowed.canGenerateCode() &&
+            borrowed.diagnostics.size() == 1 &&
+            borrowed.diagnostics.front().code == "GTI-S2017" &&
+            borrowed.diagnostics.front().primary.start == mutation &&
+            borrowed.diagnostics.front().primary.end == mutation + 1 &&
+            borrowed.diagnostics.front().related.size() == 2,
+        "public iterator aliases reject owner mutation at the actual call, "
+        "with borrow-origin and later-use locations");
   const auto wrapper = analyze(R"(
 #include <std/vector>
 struct CursorTraits<std::move_constructible T> {
-  using iterator = std::vector<T>::iterator;
+  using iterator = std::vector<T>::const_iterator;
   using sentinel = std::vector<T>::sentinel;
 };
 int main() {

@@ -145,6 +145,219 @@ auto SemanticVisitor::Impl::addUnknownProgramEffect(SourceSpan span,
       {.span = std::move(span), .reason = std::move(reason)});
 }
 
+auto SemanticVisitor::Impl::recordConcreteProgramEffect(
+    ProgramEffectOwner target, const SemanticType &owner,
+    const std::vector<SemanticType> &types,
+    const std::vector<CompileTimeValue> &values, const SourceSpan &site)
+    -> void {
+  if (!currentProgramEffectOwner.valid())
+    return;
+  if (hasOpenProgramCleanupShape(owner) ||
+      std::any_of(
+          types.begin(), types.end(),
+          [&](const auto &type) { return hasOpenProgramCleanupShape(type); }) ||
+      std::any_of(values.begin(), values.end(), [](const auto &value) {
+        return value.kind != CompileTimeValue::UInt64;
+      })) {
+    addUnknownProgramEffect(site,
+                            "a GTI call has unresolved generic arguments");
+    return;
+  }
+  if (!requestSession.programConcreteEffects)
+    requestSession.programConcreteEffects =
+        std::make_shared<ProgramConcreteEffectState>();
+  auto &state = *requestSession.programConcreteEffects;
+  auto &queries = state.queries;
+  std::size_t hash = ProgramEffectOwnerHash{}(target);
+  const auto add = [&](std::size_t value) {
+    hash ^= value + std::size_t{0x9e3779b9} + (hash << 6) + (hash >> 2);
+  };
+  const auto hashType = [&](const auto &self,
+                            const SemanticType &type) -> void {
+    add(type.kind);
+    add(type.classId);
+    add(type.enumId);
+    add(type.genericParameterId);
+    add(type.functionId);
+    add(type.arrayLength);
+    add(type.arrayLengthParameterId);
+    add(type.arguments.size());
+    for (const auto &argument : type.arguments)
+      self(self, argument);
+    add(type.valueArguments.size());
+    for (const auto &value : type.valueArguments)
+      add(value.value);
+  };
+  hashType(hashType, owner);
+  for (const auto &type : types)
+    hashType(hashType, type);
+  for (const auto &value : values)
+    add(value.value);
+  auto &bucket = state.buckets[hash];
+  const auto existing =
+      std::find_if(bucket.begin(), bucket.end(), [&](std::size_t index) {
+        const auto &query = queries[index];
+        return query.target == target && query.owner == owner &&
+               query.types == types && query.values == values;
+      });
+  const std::size_t index =
+      existing == bucket.end() ? queries.size() : *existing;
+  if (existing == bucket.end()) {
+    queries.push_back({.target = target,
+                       .owner = owner,
+                       .types = types,
+                       .values = values,
+                       .site = site});
+    bucket.push_back(index);
+  }
+  addProgramEffectEdge(
+      {.kind = ProgramEffectOwnerKind::ConcreteInstance, .id = index + 1},
+      site);
+}
+
+auto SemanticVisitor::Impl::closeConcreteProgramEffects(
+    const ProgramInitializationPlan &plan) -> void {
+  const auto state = requestSession.programConcreteEffects;
+  if (!state)
+    return;
+  std::unique_ptr<Impl> worker;
+  std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
+  const auto visit = [&](const auto &self, ProgramEffectOwner owner,
+                         std::size_t depth) -> void {
+    if (!visited.insert(owner).second)
+      return;
+    if (owner.kind == ProgramEffectOwnerKind::ConcreteInstance &&
+        owner.id != 0 && owner.id <= state->queries.size()) {
+      const auto query = state->queries[owner.id - 1];
+      if (!query.complete) {
+        if (depth >= 64 || state->analyzed >= 16384) {
+          diagnostics.push_back(makeDiagnostic(
+              DiagnosticId::GenericInstantiationLimit, query.site,
+              {depth >= 64 ? "initializer-effect-depth"
+                           : "initializer-effect-instance",
+               depth >= 64 ? "64" : "16384"}));
+          programEffects[owner].unknown.push_back(
+              {.span = query.site,
+               .reason = "concrete effect resource exhaustion"});
+          return;
+        }
+        ++state->analyzed;
+        if (!worker) {
+          worker = std::make_unique<Impl>(target, sourceGraph, false,
+                                          workMetrics, sources, rawPointerAudit,
+                                          requireFunctionDefinitions);
+          worker->catalog = catalog.snapshotForInstanceAnalysis();
+          worker->semanticModel = semanticModel;
+          worker->valueFlow = valueFlow;
+          worker->constexprDefinitionsAnalyzed = constexprDefinitionsAnalyzed;
+          worker->constexprConstructorsAnalyzed = constexprConstructorsAnalyzed;
+          worker->genericDefaultConstants = genericDefaultConstants;
+          worker->defaultArgumentSyntax = defaultArgumentSyntax;
+          worker->defaultArgumentDependencies = defaultArgumentDependencies;
+          worker->nextLambdaId = nextLambdaId;
+          worker->requestSession.constexprWork = requestSession.constexprWork;
+          worker->requestSession.programConcreteEffects = state;
+        }
+        worker->programEffects.clear();
+        SemanticInstanceAnalysis analysis;
+        switch (query.target.kind) {
+        case ProgramEffectOwnerKind::Function:
+          analysis = worker->analyzeFunctionInstance(
+              query.target.id, query.owner.arguments,
+              query.owner.valueArguments, query.types, query.values);
+          break;
+        case ProgramEffectOwnerKind::Constructor:
+          analysis = worker->analyzeConstructorInstance(
+              query.target.id, query.owner.arguments,
+              query.owner.valueArguments, query.types, query.values);
+          break;
+        case ProgramEffectOwnerKind::Destructor:
+          analysis = worker->analyzeDestructorInstance(
+              query.target.id, query.owner.arguments,
+              query.owner.valueArguments);
+          break;
+        case ProgramEffectOwnerKind::FieldInitializers:
+          analysis = worker->analyzeClassFieldInitializers(
+              query.target.id, query.owner.arguments,
+              query.owner.valueArguments);
+          break;
+        default:
+          programEffects[owner].unknown.push_back(
+              {.span = query.site,
+               .reason = "unsupported concrete effect owner"});
+          return;
+        }
+        if (!analysis.valid()) {
+          for (auto &diagnostic : analysis.diagnostics) {
+            diagnostic.related.push_back(
+                {query.site, "Initializer instance requested here."});
+            diagnostics.push_back(std::move(diagnostic));
+          }
+          programEffects[owner].unknown.push_back(
+              {.span = query.site,
+               .reason = "a concrete GTI body is not valid"});
+        } else {
+          // Local callable/initializer owners share this selected body. Flatten
+          // those exact records, never mix in the primary generic's open arms.
+          std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> local;
+          const auto collect = [&](const auto &collectSelf,
+                                   ProgramEffectOwner source) -> void {
+            if (!local.insert(source).second)
+              return;
+            const auto found = worker->programEffects.find(source);
+            if (found == worker->programEffects.end()) {
+              programEffects[owner].edges.push_back(
+                  {.target = source, .span = query.site});
+              return;
+            }
+            const auto &summary = found->second;
+            auto &destination = programEffects[owner];
+            destination.uses.insert(destination.uses.end(),
+                                    summary.uses.begin(), summary.uses.end());
+            destination.unknown.insert(destination.unknown.end(),
+                                       summary.unknown.begin(),
+                                       summary.unknown.end());
+            for (const auto &edge : summary.edges) {
+              if (edge.target.kind == ProgramEffectOwnerKind::ConcreteInstance)
+                destination.edges.push_back(edge);
+              else
+                collectSelf(collectSelf, edge.target);
+            }
+          };
+          // An empty selected body has no effects; an absent local record is
+          // empty at the root, but an absent referenced owner is a primary
+          // edge.
+          if (worker->programEffects.contains(query.target))
+            collect(collect, query.target);
+        }
+        state->queries[owner.id - 1].complete = true;
+        ++depth;
+      }
+    }
+    const auto found = programEffects.find(owner);
+    if (found != programEffects.end()) {
+      const auto edges = found->second.edges;
+      for (const auto &edge : edges)
+        self(self, edge.target, depth);
+    }
+  };
+  for (const auto &step : plan.steps) {
+    if (step.role != ProgramInitializationStepRole::Initializer)
+      continue;
+    const auto *binding = step.declaration
+                              ? semanticModel.findBinding(*step.declaration)
+                              : nullptr;
+    // A failed constant has no runtime initializer to close. Keep its owning
+    // constant/discovery diagnostics instead of querying the rejected instance
+    // again and adding an unrelated initializer-effect budget cascade.
+    if (step.declaration && step.declaration->isConstexpr() &&
+        (!binding || !binding->constant))
+      continue;
+    visit(visit,
+          {.kind = ProgramEffectOwnerKind::Initializer, .id = step.symbol}, 0);
+  }
+}
+
 auto SemanticVisitor::Impl::programConstructor(ConstructorId id) const
     -> const ConstructorInfo * {
   if (id == 0) {
@@ -206,9 +419,12 @@ auto SemanticVisitor::Impl::recordProgramDefaultConstructionEffects(
     visiting.erase(type.classId);
     return;
   }
-  addProgramEffectEdge(
-      {.kind = ProgramEffectOwnerKind::FieldInitializers, .id = owner.id},
-      span);
+  const ProgramEffectOwner fields{
+      .kind = ProgramEffectOwnerKind::FieldInitializers, .id = owner.id};
+  if (!owner.genericParameters.empty())
+    recordConcreteProgramEffect(fields, type, {}, {}, span);
+  else
+    addProgramEffectEdge(fields, span);
 
   const auto recordBase = [&] {
     const ClassBaseTypeInfo *base = concreteBase(owner);
@@ -223,9 +439,7 @@ auto SemanticVisitor::Impl::recordProgramDefaultConstructionEffects(
     recordProgramConstructorDefaultArgumentEffects(declared, 0, span);
     if (declared->declaration != nullptr &&
         declared->declaration->body() != nullptr) {
-      addProgramEffectEdge(
-          {.kind = ProgramEffectOwnerKind::Constructor, .id = declared->id},
-          span);
+      recordProgramSelectedConstructorEffect(declared, type, span);
     } else if (declared->declaration != nullptr &&
                declared->declaration->specifier() &&
                declared->declaration->specifier()->kind ==
@@ -253,16 +467,21 @@ auto SemanticVisitor::Impl::recordProgramDefaultConstructionEffects(
 
 auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
     const ConstructorInfo *constructor, const SemanticType &constructedType,
-    const SourceSpan &span) -> void {
+    const SourceSpan &span, const std::vector<SemanticType> &types,
+    const std::vector<CompileTimeValue> &values) -> void {
   if (constructor == nullptr || constructor->declaration == nullptr) {
     addUnknownProgramEffect(
         span, "a selected GTI constructor has no exact declaration");
     return;
   }
   if (constructor->declaration->body() != nullptr) {
-    addProgramEffectEdge(
-        {.kind = ProgramEffectOwnerKind::Constructor, .id = constructor->id},
-        span);
+    const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Constructor,
+                                    .id = constructor->id};
+    if (!classInfo(constructedType.classId).genericParameters.empty() ||
+        !constructor->genericParameters.empty())
+      recordConcreteProgramEffect(effect, constructedType, types, values, span);
+    else
+      addProgramEffectEdge(effect, span);
     return;
   }
   if (constructor->declaration->specifier() &&
@@ -302,7 +521,7 @@ auto SemanticVisitor::Impl::hasOpenProgramCleanupShape(
   }
   if (std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
                   [](const CompileTimeValue &value) {
-                    return value.kind == CompileTimeValue::Parameter;
+                    return value.kind != CompileTimeValue::UInt64;
                   })) {
     return true;
   }
@@ -315,7 +534,17 @@ auto SemanticVisitor::Impl::hasOpenProgramCleanupShape(
 auto SemanticVisitor::Impl::recordProgramCleanupEffects(
     const SemanticType &type, const SourceSpan &span,
     std::vector<SemanticType> &visiting, bool includeDirectDestructor) -> void {
+  if (std::find(requestSession.invalidOrdinaryLayouts.begin(),
+                requestSession.invalidOrdinaryLayouts.end(),
+                type) != requestSession.invalidOrdinaryLayouts.end())
+    return;
   if (!currentProgramEffectOwner.valid() || !requiresActiveCleanupFor(type)) {
+    return;
+  }
+  if (visiting.size() >= 64) {
+    diagnostics.push_back(
+        makeDiagnostic(DiagnosticId::GenericInstantiationLimit, span,
+                       {"cleanup-lifecycle-depth", "64"}));
     return;
   }
   if (hasOpenProgramCleanupShape(type)) {
@@ -371,8 +600,12 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
   }
   const ClassInfo &owner = classInfo(type.classId);
   if (includeDirectDestructor && hasSourceDestructorBody(owner)) {
-    addProgramEffectEdge(
-        {.kind = ProgramEffectOwnerKind::Destructor, .id = owner.id}, span);
+    const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Destructor,
+                                    .id = owner.id};
+    if (!owner.genericParameters.empty())
+      recordConcreteProgramEffect(effect, type, {}, {}, span);
+    else
+      addProgramEffectEdge(effect, span);
   }
   const GenericSubstitution substitution = classSubstitution(type);
   for (const FieldInfo &field : owner.fields) {
@@ -444,12 +677,19 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
         recordProgramDefaultConstructionEffects(construction->constructedType,
                                                 span);
       } else {
-        addProgramEffectEdge({.kind = ProgramEffectOwnerKind::FieldInitializers,
-                              .id = construction->constructedType.classId},
-                             span);
+        const ProgramEffectOwner fields{
+            .kind = ProgramEffectOwnerKind::FieldInitializers,
+            .id = construction->constructedType.classId};
+        if (!classInfo(construction->constructedType.classId)
+                 .genericParameters.empty())
+          recordConcreteProgramEffect(fields, construction->constructedType, {},
+                                      {}, span);
+        else
+          addProgramEffectEdge(fields, span);
         recordProgramSelectedConstructorEffect(
             programConstructor(construction->constructor),
-            construction->constructedType, span);
+            construction->constructedType, span, construction->typeArguments,
+            construction->valueArguments);
       }
     }
   }
@@ -593,11 +833,9 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
   if (target != nullptr && target->linkage != LanguageLinkage::Gti) {
     return;
   }
-  if (resolved->dispatch != CallDispatch::Static || target == nullptr ||
-      !target->genericParameters.empty() || !resolved->typeArguments.empty() ||
-      !resolved->valueArguments.empty()) {
-    addUnknownProgramEffect(
-        expression, "a GTI call has no closed static non-generic target");
+  if (resolved->dispatch != CallDispatch::Static || target == nullptr) {
+    addUnknownProgramEffect(expression,
+                            "a GTI call has no closed static target");
     return;
   }
   if (target->declaration != nullptr && target->declaration->runtimeBinding()) {
@@ -612,8 +850,18 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
                             "body");
     return;
   }
-  addProgramEffectEdge(
-      {.kind = ProgramEffectOwnerKind::Function, .id = target->id}, expression);
+  const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Function,
+                                  .id = target->id};
+  if (!target->genericParameters.empty() || !resolved->typeArguments.empty() ||
+      !resolved->valueArguments.empty() ||
+      (target->ownerClass != 0 &&
+       !classInfo(target->ownerClass).genericParameters.empty())) {
+    recordConcreteProgramEffect(
+        effect, resolved->dispatchOwner, resolved->typeArguments,
+        resolved->valueArguments, tokenSpan(expressionToken(expression)));
+  } else {
+    addProgramEffectEdge(effect, expression);
+  }
 }
 
 auto SemanticVisitor::Impl::programInitializationUnitOrder() const
@@ -1036,6 +1284,7 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
   for (std::size_t index = 0; index < plan.steps.size(); ++index) {
     plan.steps[index].id = index + 1;
   }
+  closeConcreteProgramEffects(plan);
   finalizeDeferredProgramConstantSubstitutions(plan);
   validateProgramInitializationEffects(plan);
   semanticModel.setProgramInitializationPlan(std::move(plan));
@@ -1713,7 +1962,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
   if (const ResolvedOperatorInfo *resolved = semanticModel.findOperator(expr)) {
     const bool assignmentExpression =
         kind == ExprKind::Assign || kind == ExprKind::Set ||
-        kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet;
+        kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet ||
+        kind == ExprKind::PlaceSet;
     const bool loweredAssignmentCall =
         assignmentExpression &&
         (resolved->kind == OverloadedOperator::Assignment ||
@@ -2138,6 +2388,18 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
       addCompoundConversionFailure(operation, set->oper().kind, info.type,
                                    right, nullptr, set->value().get());
     }
+  } else if (kind == ExprKind::PlaceSet) {
+    const auto *set = static_cast<const PlaceSet *>(&expr);
+    if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
+      anchor(set->oper());
+      const SemanticType right = semanticModel.typeOf(*set->value());
+      const SemanticType intermediate = compoundIntermediateType(
+          set->oper().kind, info.type, right, nullptr, set->value().get());
+      addIntegerOperationFailures(operation, set->oper().kind, intermediate,
+                                  right);
+      addCompoundConversionFailure(operation, set->oper().kind, info.type,
+                                   right, nullptr, set->value().get());
+    }
   } else if (kind == ExprKind::DereferenceSet) {
     const auto *set = static_cast<const DereferenceSet *>(&expr);
     if (set->oper().kind != TokenKind::EQUAL && isIntegral(info.type)) {
@@ -2180,13 +2442,16 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   valueFlow.rawOperatorResults.erase(&expr);
   expr.accept(*this);
   SemanticType result = currentType;
-  if (exprAs<Call>(&expr) || semanticModel.findConstruction(expr))
+  const auto *construction = semanticModel.findConstruction(expr);
+  const bool directInitialization =
+      construction != nullptr && construction->directInitialization;
+  if (!directInitialization && (exprAs<Call>(&expr) || construction))
     validateRawCallAccesses(expr);
-  if (const auto *call = exprAs<Call>(&expr))
+  if (const auto *call = exprAs<Call>(&expr); call && !directInitialization)
     preserveRawCallWrites(*call);
-  if (const auto *call = exprAs<Call>(&expr))
+  if (const auto *call = exprAs<Call>(&expr); call && !directInitialization)
     invalidateRawCallOrigins(call);
-  if (exprAs<Call>(&expr) || semanticModel.findConstruction(expr))
+  if (!directInitialization && (exprAs<Call>(&expr) || construction))
     applyRawCallWrites(expr);
   ExpressionInfo info = classifyExpression(expr, result);
   if (semanticModel.findOperator(expr) == nullptr && isNumeric(result)) {
@@ -2211,6 +2476,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     } else if (const auto *set = exprAs<IndexSet>(&expr)) {
       compound(set->oper().kind, set->value());
     } else if (const auto *set = exprAs<DereferenceSet>(&expr)) {
+      compound(set->oper().kind, set->value());
+    } else if (const auto *set = exprAs<PlaceSet>(&expr)) {
       compound(set->oper().kind, set->value());
     }
   }
@@ -2392,6 +2659,16 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     if (set.oper().kind != TokenKind::EQUAL) {
       roles |= OccurrenceRole::Read;
     }
+  } else if (kind == ExprKind::PlaceSet) {
+    const PlaceSet &set = static_cast<const PlaceSet &>(expr);
+    roles = OccurrenceRole::Reference | OccurrenceRole::Write;
+    if (set.oper().kind != TokenKind::EQUAL)
+      roles |= OccurrenceRole::Read;
+    if (expressionPlace.root != nullptr) {
+      bindingKind = expressionPlace.root->bindingKind;
+      mutableBinding = expressionPlace.root->assignable;
+      symbolId = toolingSymbolFor(*expressionPlace.root);
+    }
   }
   const FunctionDecl *functionItemDeclaration = nullptr;
   if (const FunctionItemSelectionInfo *item =
@@ -2507,15 +2784,18 @@ auto SemanticVisitor::Impl::analyze(const ExprPtr &expr, OccurrenceRole roles)
 }
 
 auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
-    const ExprPtr &expr, const SemanticType &expectedType) -> SemanticType {
+    const ExprPtr &expr, const SemanticType &expectedType,
+    bool inferFromInstantiation) -> SemanticType {
   const Call *call = directCall(expr);
   if (call == nullptr) {
     return analyze(expr);
   }
   const std::optional<ContextualCallableResult> enclosingResult =
       contextualCallableResult;
-  contextualCallableResult =
-      ContextualCallableResult{.call = call, .type = expectedType};
+  contextualCallableResult = ContextualCallableResult{
+      .call = call,
+      .type = expectedType,
+      .inferResultFromInstantiation = inferFromInstantiation};
   const SemanticType result = analyze(expr);
   contextualCallableResult = enclosingResult;
   return result;
@@ -3224,6 +3504,20 @@ auto SemanticVisitor::Impl::recordBindingOccurrence(
          .staticMember = staticMember || internalLinkage});
   }
   return symbol;
+}
+
+auto SemanticVisitor::Impl::recordParameterBinding(const Parameter &parameter,
+                                                   const SemanticType &type)
+    -> SymbolId {
+  Token binder = parameter.name;
+  if (binder.lexeme.empty()) {
+    binder = parameter.sourceAnchor();
+    binder.lexeme = "__gti_unnamed_parameter";
+    binder.generated = true;
+  }
+  return recordBindingOccurrence(binder, type,
+                                 parameter.mutability == Mutability::Mutable,
+                                 SemanticBindingKind::Parameter);
 }
 
 auto SemanticVisitor::Impl::genericParameterIndex(
@@ -5575,10 +5869,17 @@ auto SemanticVisitor::Impl::memberReceiverIsMutable(const Get &member) const
 }
 
 auto SemanticVisitor::Impl::transparentTemporaryProducer(
-    const ExprPtr &expression) -> const Expr * {
+    const ExprPtr &expression) const -> const Expr * {
   const Expr *producer = expression.get();
-  while (const auto *grouping = exprAs<Grouping>(producer)) {
-    producer = grouping->expression().get();
+  while (producer != nullptr) {
+    const Expr *source = semanticModel.directInitializationSource(*producer);
+    if (source == nullptr) {
+      const auto *grouping = exprAs<Grouping>(producer);
+      source = grouping == nullptr ? nullptr : grouping->expression().get();
+    }
+    if (source == nullptr)
+      break;
+    producer = source;
   }
   return producer;
 }
@@ -6223,6 +6524,9 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
   if (kind == ExprKind::Set) {
     return semanticPlace(*static_cast<const Set *>(expression));
   }
+  if (kind == ExprKind::PlaceSet) {
+    return semanticPlace(static_cast<const PlaceSet *>(expression)->target());
+  }
   if (kind == ExprKind::Unary) {
     const auto *unary = static_cast<const Unary *>(expression);
     if (unary->oper().kind != TokenKind::STAR) {
@@ -6477,7 +6781,8 @@ auto SemanticVisitor::Impl::validateProjectedPlaceRead(const Expr &expression)
       exprAs<Assign>(&expression) != nullptr ||
       exprAs<Set>(&expression) != nullptr ||
       exprAs<IndexSet>(&expression) != nullptr ||
-      exprAs<DereferenceSet>(&expression) != nullptr) {
+      exprAs<DereferenceSet>(&expression) != nullptr ||
+      exprAs<PlaceSet>(&expression) != nullptr) {
     return;
   }
   SemanticPlace place = semanticPlace(&expression);
@@ -7071,7 +7376,8 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
   }
   if (const auto *construction = semanticModel.findConstruction(*expression)) {
     // Generated copy/move construction preserves the source's projection map.
-    if (construction->kind == ConstructorKind::Copy ||
+    if (construction->directInitialization ||
+        construction->kind == ConstructorKind::Copy ||
         construction->kind == ConstructorKind::Move) {
       if (const auto *call = exprAs<Call>(expression);
           call && call->arguments().size() == 1)
@@ -10637,18 +10943,10 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
   if (info == nullptr) {
     return true;
   }
-  // An ordinary constructor creates a new object, not a transfer from an
-  // existing object's storage. Copy/move policy still applies to named values
-  // and explicit lifecycle constructions, but must not forbid initial creation
-  // of an immobile value (for example a shared once flag).
-  if (info->category == ValueCategory::Value) {
-    const ResolvedConstructionInfo *construction =
-        semanticModel.findConstruction(*expression);
-    if (construction != nullptr && construction->constructedType == target &&
-        construction->kind == ConstructorKind::Ordinary) {
-      return true;
-    }
-  }
+  // Initial creation/publication of a fresh result does not move an existing
+  // object. Assignment separately requires its real assignment operation.
+  if (semanticModel.isFreshClassResult(*expression))
+    return true;
   const SemanticTypeTraits traits = typeTraits(target);
   return info->category == ValueCategory::Value ? traits.movable
                                                 : traits.copyable;
@@ -11091,6 +11389,8 @@ auto SemanticVisitor::Impl::expressionToken(const Expr &expression) -> Token {
     return static_cast<const DirectInitializer &>(expression).brace();
   case ExprKind::DereferenceSet:
     return static_cast<const DereferenceSet &>(expression).dereference();
+  case ExprKind::PlaceSet:
+    return static_cast<const PlaceSet &>(expression).oper();
   case ExprKind::Get:
     return static_cast<const Get &>(expression).name();
   case ExprKind::Grouping:

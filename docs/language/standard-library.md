@@ -206,10 +206,10 @@ The current implemented foundation includes:
   cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used. Public
-  type aliases are `std::vector<T>::iterator` (read-only), `::const_iterator`
-  (the same read-only type), `::mut_iterator` (exclusive writable traversal),
-  and `::sentinel`. `begin()` returns `iterator`, `begin_mut() mut` returns
-  `mut_iterator`, and `end()` returns `sentinel`, not `iterator`. These names
+  type aliases are `std::vector<T>::const_iterator` (read-only), `::iterator`
+  (exclusive writable traversal), and `::sentinel`. `begin()` returns
+  `const_iterator`, `begin_mut() mut` returns `iterator`, and `end()` returns
+  `sentinel`, not `iterator`. These names
   preserve the underlying checked owner loans; no public code needs to name
   `std::detail` to wrap vector traversal. Reverse iteration is not yet provided; and
 - `<std/forward_list>` `std::forward_list<T>` as a move-only linked owner with
