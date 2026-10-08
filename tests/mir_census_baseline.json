@@ -21,7 +21,7 @@
     "109-borrowed-aggregates.gti": 46,
     "11-overloads.gti": 34,
     "110-integral-enums.gti": 500,
-    "111-final-address-storage.gti": 106,
+    "111-final-address-storage.gti": 109,
     "112-raw-owner-witness.gti": 68,
     "113-erased-addresses.gti": 70,
     "114-owning-storage-view.gti": 430,
@@ -30,7 +30,7 @@
     "117-unsafe-member-contracts.gti": 42,
     "118-cleanup-bound-guards.gti": 41,
     "119-runtime-object-layout.gti": 79,
-    "12-fixed-arrays.gti": 38,
+    "12-fixed-arrays.gti": 46,
     "120-immovable-storage.gti": 424,
     "121-programmable-allocators.gti": 626,
     "122-native-function-invocation.gti": 34,
@@ -38,9 +38,10 @@
     "124-nested-raw-pointers.gti": 35,
     "125-manual-object-lifetimes.gti": 521,
     "126-conditional-thread-capabilities.gti": 86,
+    "127-operator-and-value-transport.gti": 411,
     "128-inline-object-pool.gti": 520,
     "129-generic-payload-enums.gti": 398,
-    "13-ownership.gti": 75,
+    "13-ownership.gti": 80,
     "14-operators.gti": 51,
     "15-variadic-generics.gti": 49,
     "16-move-generics.gti": 71,
@@ -59,7 +60,7 @@
     "29-callable-predicates.gti": 35,
     "30-callable-forwarding.gti": 32,
     "31-exact-constraints.gti": 42,
-    "32-structured-bindings.gti": 31,
+    "32-structured-bindings.gti": 386,
     "33-source-concepts.gti": 42,
     "34-do-while.gti": 28,
     "35-conditional-expressions.gti": 69,
@@ -126,5 +127,5 @@
     "98-shared-ownership.gti": 390,
     "99-borrowed-expected.gti": 391
   },
-  "total": 19904
+  "total": 20686
 }
