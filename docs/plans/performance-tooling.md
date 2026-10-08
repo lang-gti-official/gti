@@ -1,5 +1,71 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## RT-1: source-storage failure-path cost
+
+Status: measured one-helper proxy; production implementation and validation in
+progress. This is a partial cause of #169, not a claim that the historical
+storage regression has been fully recovered.
+
+The reconciled optimized compiler is `7577bf93` (identical production sources
+to merged main `b6614cb4`), SHA-256
+`224cba3989a6b1a87b39d83334b9f41e3227a6e2f515c5c6637851532ec658b4`.
+Its runtime archive is
+`4e98f7fc9bac4711ec39abb888016c6b840987339db422756f1ed45710e01e52`.
+The M4 Pro Mac mini uses Apple Clang 21.0.0 (`clang-2100.3.34.2`), arm64
+Darwin 27.0.0. All pairs use native O2/C++23, strict floating-point options,
+the same source/runtime and a warm filesystem. Only the incoming cleanup
+failure helper receives cold/noinline hints in the disposable generated-C++
+proxy; no failure check, exception boundary or allocation policy changes.
+
+After the first measurement, an independent repeat verifies the binary hashes,
+performs five warmups and 41 seeded randomized/interleaved pairs per workload,
+and checks complete output after every execution:
+
+| Workload | Baseline median ms | One-helper proxy ms |
+| --- | ---: | ---: |
+| Source storage, process provider | 74.018 | 63.661 |
+| Source storage, explicit resource | 77.515 | 68.124 |
+| Fixed-array loop proof | 104.889 | 104.916 |
+| Checked vector loop | 81.334 | 81.342 |
+| Scalar floating-point update | 79.571 | 79.652 |
+| Game update | 57.574 | 57.586 |
+| Checked scalar chain | 318.034 | 318.091 |
+| Managed-thread parallelism | 170.378 | 171.323 |
+
+Median paired candidate/baseline ratios are 0.8565 (95% bootstrap interval
+0.8439–0.8657) and 0.8652 (0.8566–0.8769) for storage. The thread control has
+a small, detectable approximately 0.6% cost, below the existing 5% material
+regression gate; do not describe it as exactly unchanged. Code-size cost is
+2.0–4.5% across these clients. Single native compile RSS observations increase
+2–10%; they are screening data, not repeated compile/memory acceptance.
+
+Native inline remarks reduce the resource access wrapper cost from 200 to 145,
+while inner sparse reads remain above the native inline threshold (305 to 285).
+This isolates a real representation cost but not all of #169's old 3.68x
+process regression. Explicit resource allocation/release counts remain
+100000/100000, destruction count 4800000, destructor sum 542222784, and process
+and resource sums 364681856/729363712. The intentional separate same-provider
+metadata allocation is retained. No old private storage capability is restored.
+
+The raw proxy record has SHA-256
+`15975c8c580eec58f204a8fb6658030a2bc904a6fd942c0c79ae456a277bb881`;
+the independent repeat is
+`a68926890dc6178abc3ab274abc28a45c8f90917a49c8ea5787b9db017007b3c`.
+Local temporary evidence is in `/private/tmp/gti-reconciled-perf.xkcFxt/`;
+the Mac mini's `/tmp/gti-reconciled-perf.xWl0NZ/evidence/` additionally retains
+MIR reports, native commands, remarks, disassembly, binaries and RSS records.
+These paths are evidence locations, not durable repository artifacts.
+
+For production before/after comparisons with **two source-storage revisions**,
+use `scripts/storage_migration_compare.py` with
+`--baseline-resource-allocations 100000`. Its default remains 50000 for the
+historical pre-migration baseline. Both policies are explicit oracles; an
+unexpected count still fails, rather than silently normalizing the observation.
+Freeze optimized compiler/runtime/library snapshots, record exact revisions,
+and compare full builds as well as emission and execution. PR #166's broader
+recommendations and their prerequisites are audited in
+[optimization.md](optimization.md#pr-166-audit-disposition-2026-10-09).
+
 ## C-TIME-03: HTTP/JSON representation-admission latency (2026-10-07)
 
 Status: bounded compiler improvement; paired emission measurements and complete

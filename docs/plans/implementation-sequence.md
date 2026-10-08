@@ -33,6 +33,21 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Runtime audit follow-up: 2026-10-09
+
+`RT-1` is the current bounded client: reduce source-storage success-path costs
+by outlining only the incoming cleanup-failure check. PR #166 is reviewed as
+proposal input, with immediate versus future dispositions in
+[optimization.md](optimization.md#pr-166-audit-disposition-2026-10-09).
+Prerequisite: reconciled modules/reachability integration (#174, main
+`b6614cb4`), a semantics-preserving current-head proxy, and unchanged source
+storage policy. Acceptance: exact frozen-snapshot production comparison,
+complete allocation/destructor observations, runtime/code-size/memory controls,
+and cleanup/panic/managed-thread/sanitizer/malformed-MIR tests. The earlier
+historical regression in #169 is not considered fully recovered merely because
+this one cause improves. Follow-on RT-2 through RT-10 need their individual
+prerequisites and measured clients; they are not added to this implementation.
+
 ## Stabilization Reset: 2026-10-08
 
 The owner paused new issue-campaign work to finish the existing lifetime/storage
