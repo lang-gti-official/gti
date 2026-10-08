@@ -798,6 +798,103 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
          "nonassignable enum field publications");
 }
 
+void testFreshClassPayloadOperandStaging() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/payload_fresh_class_operands.gti";
+  std::ifstream input(path);
+  expect(input.good(), "fresh class payload operand fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "fresh class payload operands must pass semantic and MIR checks");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(emitter.analyzeProgram().ready(),
+         "fresh class payload operands need a complete backend "
+         "representation");
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       frontend.mir.functionInstances()) {
+    if (candidate.entryKind != lang::ProgramEntryKind::None)
+      entry = &candidate;
+  }
+  expect(entry != nullptr, "the fixture must retain its entry body");
+  if (entry == nullptr)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  const bool failureForm = emitter.supportsFailureBodyText(address);
+  expect(failureForm || emitter.supportsBodyText(address),
+         "the entry body staging fresh payload operands must be emittable");
+  const auto text =
+      failureForm ? emitter.emitFailureBodyText(address, "payload-fresh", 1)
+                  : emitter.emitBodyText(address, "payload-fresh", 1);
+
+  // Each staged operand is constructed at its own MIR position, moved into
+  // the alternative, and only then has its moved-from shell destroyed.
+  const std::string retirement =
+      ".destroy(); // end payload operand representation";
+  std::vector<lang::MirValueId> staged;
+  bool ordered = true;
+  for (std::size_t at = text.text.find(retirement); at != std::string::npos;
+       at = text.text.find(retirement, at + 1)) {
+    const std::size_t begin = text.text.rfind("__gti_mir_v_", at);
+    const std::string name = text.text.substr(begin, at - begin);
+    // Failure-free constructors publish with construct(); failure-capable
+    // ones construct in place at construction_address() before marking it.
+    const std::size_t construct =
+        std::min(text.text.find(name + ".construct("),
+                 text.text.find(name + ".construction_address()"));
+    const std::size_t moved = text.text.find("std::move(" + name + ".get())");
+    ordered = ordered && construct != std::string::npos &&
+              moved != std::string::npos && construct < moved && moved < at;
+    staged.push_back(
+        std::stoul(name.substr(std::string("__gti_mir_v_").size())));
+  }
+  expect(text.emitted() && staged.size() >= 4 && ordered,
+         "non-adjacent fresh class payload operands must be constructed, "
+         "moved into the alternative, and then retired");
+
+  // Forge the consuming PayloadConstruct of each staged operand: a local
+  // failure site or a drifted operand type removes the slot's proof, and the
+  // emitter must decline rather than spell an unproven transfer.
+  std::size_t rejected = 0;
+  std::size_t forged = 0;
+  for (const lang::MirValueId value : staged) {
+    for (int mutation = 0; mutation != 2; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(malformed, address);
+      lang::MirInstruction *consumer = nullptr;
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.operation == lang::MirOperation::PayloadConstruct)
+            for (const auto &operand : instruction.operands)
+              if (operand.kind == lang::MirOperandKind::Value &&
+                  operand.value == value)
+                consumer = &instruction;
+      if (consumer == nullptr)
+        continue;
+      ++forged;
+      if (mutation == 0) {
+        consumer->localFailureSites.push_back(1);
+      } else {
+        for (auto &operand : consumer->operands)
+          if (operand.kind == lang::MirOperandKind::Value &&
+              operand.value == value)
+            operand.type = lang::SemanticType::Int32;
+      }
+      const lang::CppMirBodyEmitter forgedEmitter(malformed, map);
+      rejected += !(failureForm ? forgedEmitter.supportsFailureBodyText(address)
+                                : forgedEmitter.supportsBodyText(address));
+    }
+  }
+  expect(forged == staged.size() * 2 && rejected == forged,
+         "a staged payload operand whose consumer gains a failure site or "
+         "loses its exact operand type must fail closed");
+}
+
 void testOwningPayloadEnumTransportAdmissionFailsClosed() {
   testOwningPayloadEnumFieldContainmentAdmission();
   testConstructionOnlyPayloadEnumFieldAdmission();
@@ -4467,8 +4564,9 @@ int main() {
       failureBody
           ? emitter.emitFailureBodyText(address, "slot-rearm-test-v0", 1).text
           : emitter.emitBodyText(address, "slot-rearm-test-v0", 1).text;
+  // C-linkage callees use their private native identity, not the C name.
   const std::string constructMarker =
-      ".construct_from([&]() { return make_pair_c(";
+      ".construct_from([&]() { return __gti_c_fn_";
   const std::size_t construction = text.find(constructMarker);
   const std::size_t slotStart = construction == std::string::npos
                                     ? std::string::npos
@@ -4925,6 +5023,8 @@ constexpr NamedTest kTests[] = {
      testOwningPayloadEnumRepresentationAdmission},
     {"testOwningPayloadEnumTransportAdmissionFailsClosed",
      testOwningPayloadEnumTransportAdmissionFailsClosed},
+    {"testFreshClassPayloadOperandStaging",
+     testFreshClassPayloadOperandStaging},
     {"testDischargedCompoundOperatorVocabulary",
      testDischargedCompoundOperatorVocabulary},
     {"testExhaustiveEnumClassification", testExhaustiveEnumClassification},

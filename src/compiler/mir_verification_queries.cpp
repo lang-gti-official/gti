@@ -3,8 +3,193 @@
 
 #include <algorithm>
 #include <climits>
+#include <unordered_set>
 
 namespace lang::mir_detail {
+
+bool referenceParameterContainsPlace(const MirBody &body,
+                                     const MirLoan &parameter,
+                                     MirPlaceId place) {
+  const MirPlace *formal = body.findPlace(parameter.source);
+  if (parameter.kind != MirLoanKind::Parameter || !parameter.entry ||
+      parameter.parent != 0 || parameter.escapes || parameter.producedBy != 0 ||
+      formal == nullptr || formal->root != MirPlaceRootKind::Binding ||
+      !formal->projections.empty() ||
+      formal->type.kind != SemanticType::Reference ||
+      formal->type.arguments.size() != 1 ||
+      std::find(parameter.carriers.begin(), parameter.carriers.end(),
+                formal->binding) == parameter.carriers.end())
+    return false;
+  const auto contains = [&](const auto &self, MirPlaceId id,
+                            std::size_t depth) -> bool {
+    const MirPlace *projected = body.findPlace(id);
+    if (projected == nullptr || depth > body.places.size() + body.loans.size())
+      return false;
+    if (id == parameter.source)
+      return true;
+    if (projected->root != MirPlaceRootKind::Binding ||
+        projected->projections.empty() ||
+        projected->projections.front() !=
+            MirPlaceProjection{.kind = MirProjectionKind::Dereference} ||
+        !std::all_of(std::next(projected->projections.begin()),
+                     projected->projections.end(), [](const auto &projection) {
+                       return projection.kind == MirProjectionKind::Field &&
+                              projection.field != 0 && projection.index == 0 &&
+                              !projection.constantIndex &&
+                              projection.selection == 0;
+                     }))
+      return false;
+    if (projected->binding == formal->binding)
+      return projected->symbol == formal->symbol &&
+             (projected->projections.size() > 1 ||
+              projected->type == formal->type.arguments.front());
+    if (std::find(parameter.carriers.begin(), parameter.carriers.end(),
+                  projected->binding) == parameter.carriers.end())
+      return false;
+    const MirInstruction *initialize = nullptr;
+    const MirPlace *destination = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *target = instruction.destination
+                                 ? body.findPlace(*instruction.destination)
+                                 : nullptr;
+        if (target == nullptr || target->root != MirPlaceRootKind::Binding ||
+            target->binding != projected->binding ||
+            !target->projections.empty())
+          continue;
+        if (initialize != nullptr ||
+            instruction.kind != MirInstructionKind::Initialize)
+          return false;
+        initialize = &instruction;
+        destination = target;
+      }
+    if (initialize == nullptr ||
+        destination->type.kind != SemanticType::Reference ||
+        destination->type.arguments.size() != 1 ||
+        initialize->operands.size() != 1)
+      return false;
+    const auto &input = initialize->operands.front();
+    const auto *address = body.findPlace(input.place);
+    if (input.kind != MirOperandKind::Loan || input.loan != parameter.id ||
+        input.value != 0 || address == nullptr ||
+        input.type != destination->type.arguments.front() ||
+        address->type != input.type)
+      return false;
+    if (address->root == MirPlaceRootKind::Loan) {
+      const auto *result = body.findLoan(address->loan);
+      return result != nullptr && result->kind == MirLoanKind::CallResult &&
+             referenceAddressRetainsLoan(body, *address, parameter) &&
+             self(self, result->source, depth + 1);
+    }
+    return self(self, address->id, depth + 1);
+  };
+  return contains(contains, place, 0);
+}
+
+bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
+                                 const MirLoan &retained) {
+  if (address.root != MirPlaceRootKind::Loan || address.loan == retained.id)
+    return true;
+  std::unordered_set<MirLoanId> visited;
+  MirLoanId link = address.loan;
+  while (link != retained.id) {
+    const MirLoan *child = body.findLoan(link);
+    if (child == nullptr || !visited.insert(link).second)
+      return false;
+    if (child->kind == MirLoanKind::CallResult) {
+      const MirInstruction *producer = nullptr;
+      for (const MirBlock &block : body.blocks)
+        for (const MirInstruction &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.loan == child->id &&
+              instruction.hirValue == child->producedBy) {
+            if (producer != nullptr)
+              return false;
+            producer = &instruction;
+          }
+      if (producer == nullptr || child->producedBy == 0 ||
+          producer->info.access != child->access)
+        return false;
+      const auto &result = producer->info.type;
+      const SemanticType &referent =
+          result.kind == SemanticType::Reference && result.arguments.size() == 1
+              ? result.arguments.front()
+              : result;
+      if (link == address.loan && referent != address.type)
+        return false;
+      // The call that produced this address may also produce the binding's
+      // durable loan as its sibling: both reborrow one parent with the same
+      // access, as a structural range element does beside its dereference.
+      if (link == address.loan && child->parent != 0 &&
+          child->parent == retained.parent &&
+          child->producedBy == retained.producedBy &&
+          child->access == retained.access &&
+          retained.kind != MirLoanKind::CallResult)
+        return true;
+      // A call on a checked field (or on a captured reference carrier) names
+      // that precise receiver storage as its dependency. Do not let the loan
+      // table replace it with a coarse formal or an unrelated same-typed place.
+      if (retained.kind == MirLoanKind::Parameter &&
+          child->parent == retained.id &&
+          producer->borrowOrigin == BorrowOriginKind::Receiver &&
+          producer->receiver) {
+        const auto *formal = body.findPlace(retained.source);
+        const auto *receiver = body.findPlace(producer->receiver->place);
+        const auto *source = body.findPlace(child->source);
+        if (formal != nullptr && receiver != nullptr &&
+            receiver->root == MirPlaceRootKind::Binding &&
+            ((receiver->binding == formal->binding &&
+              receiver->projections.size() > 1) ||
+             (receiver->binding != formal->binding &&
+              child->source != retained.source)) &&
+            (source == nullptr || source->root != receiver->root ||
+             source->binding != receiver->binding ||
+             source->symbol != receiver->symbol ||
+             source->projections != receiver->projections ||
+             source->type != receiver->type))
+          return false;
+      }
+      // Shared carrier extraction can publish a fresh address loan with no
+      // reborrow parent. Its exact external source and dependency identities
+      // still agree with the retained read-only owner; a mutable parent cannot
+      // use this parallel-loan family to hide a detached exclusive reborrow.
+      if (child->parent == 0 && child->access == AccessMode::ReadOnly &&
+          retained.access == AccessMode::ReadOnly &&
+          child->source == retained.source &&
+          child->storedDependency == retained.storedDependency &&
+          child->additionalDependencies == retained.additionalDependencies)
+        return true;
+    }
+    link = child->parent;
+  }
+  return !visited.empty();
+}
+
+bool generatedUniqueConstruction(const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::AllocateUniqueOwner ||
+      instruction.constructorTarget || instruction.functionTarget ||
+      instruction.receiver || !instruction.result ||
+      instruction.info.type.kind != SemanticType::UniqueOwner ||
+      instruction.info.type.arguments.size() != 1 ||
+      instruction.info.type.arguments.front().kind != SemanticType::Class ||
+      instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1)
+    return false;
+  const auto &pointee = instruction.info.type.arguments.front();
+  const auto &parameter = instruction.parameterTypes.front();
+  const auto &operand = instruction.operands.front();
+  if (operand.kind != MirOperandKind::Value || operand.value == 0 ||
+      operand.place != 0 || operand.loan != 0 || operand.literal ||
+      operand.type != parameter)
+    return false;
+  return (instruction.constructorKind == ConstructorKind::Copy &&
+          parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::ReadOnly &&
+          parameter.arguments == std::vector<SemanticType>{pointee}) ||
+         (instruction.constructorKind == ConstructorKind::Move &&
+          parameter == pointee);
+}
 
 bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
                                MirLoanId dependency, std::size_t depth) {

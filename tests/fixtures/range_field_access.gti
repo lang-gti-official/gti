@@ -1,0 +1,41 @@
+#include <std/vector>
+
+mut int calls = 0;
+struct Inner {
+  int value;
+  Inner(int number) : value(number) {}
+  int& operator*() { calls += 1; return this.value; }
+  int read() { return this.value; }
+};
+struct Holder {
+  Inner item;
+  Holder(int number) : item(Inner(number)) {}
+};
+
+int sum_fields(std::vector<Holder>& range) {
+  mut int sum = 0;
+  for (auto& element : range) {
+    sum += *element.item;
+    sum += element.item.read();
+  }
+  return sum;
+}
+
+int main() {
+  Holder fixed[2] = {Holder(4), Holder(5)};
+  mut int total = 0;
+  for (auto& element : fixed) {
+    total += *element.item;
+    total += element.item.read();
+  }
+  if (total != 18 || calls != 2) { return 1; }
+  mut std::vector<Holder> dynamic{};
+  dynamic.push_back(Holder(7));
+  dynamic.push_back(Holder(11));
+  if (sum_fields(dynamic) != 36 || calls != 4) { return 2; }
+  for (auto& element : fixed) {
+    Holder& alias = element;
+    if (*alias.item != alias.item.read()) { return 3; }
+  }
+  return calls == 6 ? 0 : 4;
+}

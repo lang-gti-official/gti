@@ -5446,6 +5446,16 @@ private:
           }
         }
       }
+      if (value.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+          construction->kind == ConstructorKind::Move &&
+          !value.constructorTarget &&
+          construction->constructedType.kind == SemanticType::Class &&
+          value.parameterTypes.size() == 1) {
+        // A generated move has no callable reference formal. Its selected
+        // operation consumes one same-type value into allocated storage;
+        // preserve that transfer role when the source pack expands in MIR.
+        value.parameterTypes = {construction->constructedType};
+      }
     }
     if ((kind == HirValueKind::MemberAccess ||
          kind == HirValueKind::MemberSet) &&

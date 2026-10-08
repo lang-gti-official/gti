@@ -14929,6 +14929,219 @@ int main() {
          "reuse of the original owner");
 }
 
+void testPassiveCleanupRangeTemporary() {
+  // The range class has no destructor and only scalar fields, so its lexical
+  // cleanup is passive. The loop must still own and drop the temporary.
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("passive-cleanup-range-temporary.gti", R"(
+class Cursor {
+  mut int32_t at;
+public:
+  Cursor(int32_t at) : at(at) {}
+  int32_t& operator*() { return this.at; }
+  void operator++() mut { this.at += 1; }
+  bool operator!=(Cursor& end) { return this.at < end.at; }
+};
+
+class Span {
+  int32_t last;
+public:
+  Span(int32_t last) : last(last) {}
+  Cursor begin() { return Cursor(0); }
+  Cursor end() { return Cursor(this.last); }
+};
+
+int32_t first_over(int32_t limit) {
+  for (int32_t value : Span(10)) {
+    if (value > limit) { return value; }
+  }
+  return -1;
+}
+
+int main() {
+  mut int32_t total = 0;
+  for (int32_t value : Span(4)) {
+    if (value == 1) { continue; }
+    total += value;
+  }
+  return total - 5 + first_over(6) - 7;
+}
+)",
+                               {standardLibraryPrelude()});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << "Unexpected passive range diagnostic: " << diagnostic.message
+              << '\n';
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a range-for over a temporary with passive cleanup should lower to "
+         "verified MIR");
+
+  std::size_t passiveRanges = 0;
+  const lang::MirBody *passiveBody = nullptr;
+  for (const lang::HirFunctionInstance &hirFunction :
+       frontend.hir.functionInstances()) {
+    const lang::MirFunctionInstance *mirFunction =
+        frontend.mir.findFunctionInstance(hirFunction.id);
+    if (mirFunction == nullptr) {
+      continue;
+    }
+    for (const lang::MirRangeIteration &range :
+         mirFunction->body.rangeIterations) {
+      if (!range.ownsRangeTemporary) {
+        continue;
+      }
+      const lang::MirPlace *owner = mirFunction->body.findPlace(range.owner);
+      const lang::MirDropObligation *drop =
+          mirFunction->body.findDropObligation(range.ownerDrop);
+      if (owner != nullptr && drop != nullptr && drop->place == range.owner &&
+          drop->dropType.type == owner->type &&
+          !drop->dropType.requiresActiveCleanup) {
+        ++passiveRanges;
+        passiveBody = &mirFunction->body;
+      }
+    }
+  }
+  expect(passiveRanges == 2 && passiveBody != nullptr,
+         "each owned passive-cleanup range temporary should keep one exact "
+         "owner drop obligation without requiring active cleanup");
+
+  if (passiveBody != nullptr) {
+    lang::MirBody missingDrop = *passiveBody;
+    missingDrop.rangeIterations.front().ownerDrop = 0;
+    expect(!lang::verifyMirBody(missingDrop).valid(),
+           "MIR verification should reject an owned lexical range temporary "
+           "with no cleanup obligation");
+
+    lang::MirBody wrongType = *passiveBody;
+    const lang::MirDropObligationId ownerDrop =
+        wrongType.rangeIterations.front().ownerDrop;
+    if (ownerDrop != 0 && ownerDrop <= wrongType.dropObligations.size()) {
+      wrongType.dropObligations[ownerDrop - 1].dropType.type =
+          lang::SemanticType::Int32;
+    }
+    expect(ownerDrop != 0 && !lang::verifyMirBody(wrongType).valid(),
+           "MIR verification should reject a range owner obligation whose "
+           "cleanup type differs from the owner");
+  }
+
+  if (!frontend.mirValid || !lang::verifyMirProgram(frontend.mir).valid()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("Span") != std::string::npos,
+         "the C++ backend should emit a passive-cleanup range temporary");
+}
+
+void testSharedPayloadSiblingReborrows() {
+  // Read-only payload bindings of one matched enum are siblings. Reborrowing a
+  // payload of one sibling must not conflict with the other read-only ones.
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("shared-payload-sibling-reborrows.gti", R"(
+enum Event<T> { item(T value) };
+class Inner {
+public:
+  Event<int32_t> data;
+  Inner(Event<int32_t> data) : data(data) {}
+};
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+
+enum class Tag { small(int32_t value), big(int64_t value) };
+class Cell {
+public:
+  Tag tag;
+  int32_t weight;
+  Cell(Tag tag, int32_t weight) : tag(tag), weight(weight) {}
+};
+enum class Trio { all(Cell a, Cell b, Cell c), none };
+
+int32_t generic_pair() {
+  Inner left = Inner(Event<int32_t>::item(1));
+  Inner right = Inner(Event<int32_t>::item(2));
+  Pair<Inner> pair = Pair<Inner>::items(left, right);
+  switch (pair) {
+    case Pair<Inner>::items(auto& first, auto& second):
+      switch (first.data) {
+        case Event<int32_t>::item(auto& value):
+          if (value != 1) { return 1; }
+          break;
+      }
+      switch (second.data) {
+        case Event<int32_t>::item(value): return value - 2;
+      }
+    case Pair<Inner>::other: return 3;
+  }
+}
+
+int32_t three_siblings() {
+  Cell x = Cell(Tag::small(1), 2);
+  Cell y = Cell(Tag::big(int64_t(3)), 4);
+  Cell z = Cell(Tag::small(5), 6);
+  Trio trio = Trio::all(x, y, z);
+  switch (trio) {
+    case Trio::all(auto& a, auto& b, auto& c):
+      switch (a.tag) {
+        case Tag::small(auto& v): if (v != 1) { return 1; } break;
+        case Tag::big(auto& v): return 2;
+      }
+      switch (b.tag) {
+        case Tag::small(auto& v): return 3;
+        case Tag::big(auto& v): return int32_t(v) + a.weight + c.weight - 11;
+      }
+    case Trio::none: return 4;
+  }
+}
+
+int main() { return generic_pair() + three_siblings(); }
+)",
+                               {standardLibraryPrelude()});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << "Unexpected shared payload diagnostic: " << diagnostic.message
+              << '\n';
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "nested read-only payload reborrows beside live read-only payload "
+         "siblings should lower to verified MIR");
+
+  std::size_t corrupted = 0;
+  std::size_t rejected = 0;
+  for (const lang::HirFunctionInstance &hirFunction :
+       frontend.hir.functionInstances()) {
+    const lang::MirFunctionInstance *mirFunction =
+        frontend.mir.findFunctionInstance(hirFunction.id);
+    if (mirFunction == nullptr || hirFunction.source == nullptr ||
+        hirFunction.source->name().lexeme == "main") {
+      continue;
+    }
+    for (const lang::MirLoan &child : mirFunction->body.loans) {
+      const lang::MirLoan *parent = mirFunction->body.findLoan(child.parent);
+      if (child.kind != lang::MirLoanKind::Local ||
+          child.access != lang::AccessMode::ReadOnly || parent == nullptr ||
+          parent->kind != lang::MirLoanKind::Local ||
+          parent->access != lang::AccessMode::ReadOnly) {
+        continue;
+      }
+      // Widening the parent lets the child's place be written through it, so
+      // the overlapping read-only sibling becomes a genuine conflict.
+      lang::MirBody widened = mirFunction->body;
+      widened.loans[parent->id - 1].access = lang::AccessMode::Mutable;
+      ++corrupted;
+      rejected += !lang::verifyMirBody(widened).valid();
+      break;
+    }
+  }
+  expect(corrupted == 2 && rejected == 2,
+         "MIR verification should still reject a payload reborrow whose "
+         "parent was widened to mutable access");
+}
+
 void testExpectedPayloadRangeLoans() {
   const std::string source = R"(
 #include <std/string>
@@ -21133,6 +21346,8 @@ constexpr NamedTest kTests[] = {
     {"testRangeBasedForAndIteratorProtocol",
      testRangeBasedForAndIteratorProtocol},
     {"testReadOnlyRangeLoans", testReadOnlyRangeLoans},
+    {"testPassiveCleanupRangeTemporary", testPassiveCleanupRangeTemporary},
+    {"testSharedPayloadSiblingReborrows", testSharedPayloadSiblingReborrows},
     {"testExpectedPayloadRangeLoans", testExpectedPayloadRangeLoans},
     {"testMutableRangeLoans", testMutableRangeLoans},
     {"testLambdas", testLambdas},

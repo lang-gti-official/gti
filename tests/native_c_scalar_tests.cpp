@@ -3,6 +3,7 @@
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/native_header.h"
+#include "native_symbol_spelling.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -161,11 +162,16 @@ int main() {
            "C17 header prototypes must retain primitive C identities");
     const auto artifact =
         gti_test::emitCpp(result, lang::CppStandard::Cpp20, target);
-    expect(artifact.contents.find(wordSpelling + " take_word") !=
+    expect(artifact.contents.find(
+               wordSpelling + " " +
+               gti_test::nativeSpelling(artifact.contents, "take_word")) !=
                std::string::npos,
            "native C declarations must preserve long rather than substitute an "
            "equal-width type");
-    expect(artifact.contents.find("char take_char") != std::string::npos,
+    expect(artifact.contents.find(
+               "char " +
+               gti_test::nativeSpelling(artifact.contents, "take_char")) !=
+               std::string::npos,
            "native plain char must not become signed char or a GTI code unit");
   }
   return failures ? 1 : 0;
