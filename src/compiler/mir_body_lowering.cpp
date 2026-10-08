@@ -5997,15 +5997,19 @@ private:
         value.info.type.kind == SemanticType::UniqueOwner &&
         value.info.type.arguments.size() == 1 &&
         value.info.type.arguments.front().kind == SemanticType::Class &&
-        value.constructorTarget &&
-        value.constructorKind == ConstructorKind::Ordinary) {
+        ((value.constructorTarget &&
+          value.constructorKind == ConstructorKind::Ordinary) ||
+         mir_detail::generatedUniqueConstruction(call))) {
       // Prepared parameters remain caller-owned until allocation succeeds.
       // The second instruction transfers them into the selected constructor;
       // its failure path owns only the unconstructed allocation, not T.
       call.objectAllocation = appendObjectAllocation(value);
       call.definedFailure.localOrigins.clear();
-      call.definedFailure.propagation = normalizedConstructorPropagation(
-          FailurePropagationKind::Constructor, value.constructorTarget);
+      call.definedFailure.propagation =
+          value.constructorTarget ? normalizedConstructorPropagation(
+                                        FailurePropagationKind::Constructor,
+                                        value.constructorTarget)
+                                  : FailurePropagationKind::None;
     }
     if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
         value.definedFailure.propagation ==

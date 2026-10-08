@@ -1833,7 +1833,11 @@ is provided by the separate `resource_vector` described under
 independent trivial value over static storage. `std::string::view()` produces
 a dynamic view carrying one compiler-tracked read-only dependency on that
 string's character storage. Both forms support `size()`, `empty()`, and checked
-read-only indexing.
+read-only indexing. These apply equally to a named view and to a view produced
+by a call in the same expression, as in `text.view().size()`,
+`record.name().empty()` or `entry.first.view().size()` over a range element;
+the call's owner dependency stays live for the whole expression, including a
+temporary owner such as `std::string("tmp").view().size()`.
 
 `std::string`, imported with `#include <std/string>`, is an ordinary nominal GTI
 class over `gti_internal::prefix_storage<char>`. It supports construction and
@@ -1868,6 +1872,13 @@ read-only reference parameter for a free relay); body analysis must validate
 that the selected call actually returns a borrow from that source. Merely
 calling a method on an owner does not prove this. Local owners, by-value owning
 parameters, and fresh temporary owners cannot supply an escaping view.
+
+The receiver path may include indexing, including an overloaded subscript:
+`return records[index].text();` can relay the enclosing receiver's dependency
+when resolved body analysis proves that the selected element and text accessor
+retain that owner. A free relay through a read-only reference parameter follows
+the same rule. Indexing alone does not establish a lifetime contract, and a
+retained view still prevents conflicting mutation of the enclosing collection.
 
 `std::string::c_string()` and `std::string::try_c_string()` use the same
 single-owner dependency model for the compiler-owned `c_string` boundary type.

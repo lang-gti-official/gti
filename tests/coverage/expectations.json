@@ -1835,23 +1835,27 @@
     "a28-map-range-for-key-view": {
       "finding": "A28",
       "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-range-element-field-overloaded-operator": {
+      "finding": "A28",
+      "issue": 73,
       "outcome": "pass"
     },
     "a28-range-element-field-ref-method": {
+      "finding": "A28",
+      "issue": 73,
       "outcome": "pass"
     },
     "a29-method-on-returned-string-view": {
       "finding": "A29",
       "issue": 74,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a29-string-view-size-on-dynamic-view": {
       "finding": "A29",
       "issue": 74,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a30-assign-consuming-call-result": {
       "finding": "A30",
@@ -1879,10 +1883,9 @@
       "outcome": "pass"
     },
     "a34-view-relay-through-subscript": {
-      "code": "GTI-S2045",
       "finding": "A34",
       "issue": 78,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a35-expected-ref-field-stale-message": {
       "code": "GTI-S2045",
@@ -2073,12 +2076,12 @@
     "a56-make-unique-same-type": {
       "finding": "A56",
       "issue": 97,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a56-make-unique-string-from-string": {
       "finding": "A56",
       "issue": 97,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a57-generic-member-field-range-for-silent": {
       "outcome": "pass"

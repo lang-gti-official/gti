@@ -16817,6 +16817,34 @@ directExpectedScalarExtraction(const MirProgram &program, const MirBody &body,
              });
 }
 
+// A counted text view is an ordinary by-value SSA descriptor. Its verified
+// size and emptiness observers read only that descriptor: they cannot fail,
+// touch the viewed bytes, or start a borrow. When the view came from a call,
+// MIR's result loan already keeps its owner borrowed across every use of the
+// value, so the observer spells its member read on the SSA value exactly as
+// it does on a borrowed view place. Staged call inputs keep their own route.
+[[nodiscard]] bool ssaTextViewObserverReceiver(const MirBody &body,
+                                               const MirInstruction &call) {
+  if ((call.intrinsic != IntrinsicKind::StringViewSize &&
+       call.intrinsic != IntrinsicKind::StringViewEmpty) ||
+      !call.receiver || !call.result || !call.operands.empty() ||
+      !call.localFailureSites.empty() || !call.definedFailure.empty() ||
+      call.receiver->kind != MirOperandKind::Value ||
+      call.receiver->value == 0 || call.receiver->place != 0 ||
+      call.receiver->loan != 0) {
+    return false;
+  }
+  const auto representation = expectedTypeRepresentation(call.receiver->type);
+  const MirValue *receiver = body.findValue(call.receiver->value);
+  const MirInstruction *definition = definitionFor(body, *call.receiver);
+  return representation &&
+         *representation == CppMirTypeRepresentationKind::StringView &&
+         receiver != nullptr && receiver->info.type == call.receiver->type &&
+         receiver->info.category == ValueCategory::Value &&
+         definition != nullptr &&
+         definition->kind != MirInstructionKind::CallInput;
+}
+
 [[nodiscard]] CleanupFreeExpectedReceiver
 directExpectedScalarExtractionForReceiver(const MirProgram &program,
                                           const MirBody &body,
@@ -37212,9 +37240,11 @@ private:
               ? facts.body.findPlace(receiverBorrow.place)
               : scalarExpectedExtractionPlace(program, representations,
                                               facts.body, instruction);
-      const bool scalarSsa =
+      const bool ssaReceiver =
           scalarExpectedSsaReceiver(program, facts.body, instruction) ||
-          fallibleExpectedSsaReceiver(facts.body, instruction);
+          fallibleExpectedSsaReceiver(facts.body, instruction) ||
+          (staged == nullptr &&
+           ssaTextViewObserverReceiver(facts.body, instruction));
       const bool terminalVoidExpectedValue =
           instruction.intrinsic == IntrinsicKind::ExpectedValue &&
           instruction.receiver->type.kind == SemanticType::Expected &&
@@ -37222,7 +37252,7 @@ private:
           instruction.receiver->type.arguments.front() == SemanticType::Void &&
           instruction.info.type == SemanticType::Void && !instruction.result &&
           !invokePairedInstruction(facts.body, instruction.id);
-      if ((viewPlace == nullptr && !scalarSsa) ||
+      if ((viewPlace == nullptr && !ssaReceiver) ||
           (!instruction.result && !terminalVoidExpectedValue)) {
         throw std::logic_error(
             "verified MIR builtin member read lost its staged place");
@@ -49346,8 +49376,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const bool scalarSsa =
               scalarExpectedSsaReceiver(program_, body, instruction) ||
               fallibleExpectedSsaReceiver(body, instruction);
+          const bool viewSsa = staged == nullptr &&
+                               ssaTextViewObserverReceiver(body, instruction);
           if ((viewPlace == nullptr && ownedExtraction == nullptr &&
-               !directExtraction && !scalarSsa) ||
+               !directExtraction && !scalarSsa && !viewSsa) ||
               (ownedExtraction != nullptr && !expectedExtraction) ||
               (!instruction.result && !voidExpectedValue) ||
               !instruction.operands.empty() ||
@@ -50446,17 +50478,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                       ? program_.findConstructorInstance(
                             *instruction.constructorTarget)
                       : nullptr;
-              if (!failureForm || constructor == nullptr ||
-                  (!cppMirConstructorStatusCannotFail(program_,
-                                                      constructor->id) &&
-                   !failureConstructorBoundaryEligible(program_,
-                                                       *constructor))) {
+              const bool generated =
+                  mir_detail::generatedUniqueConstruction(instruction);
+              if (!failureForm ||
+                  (!generated && (constructor == nullptr ||
+                                  (!cppMirConstructorStatusCannotFail(
+                                       program_, constructor->id) &&
+                                   !failureConstructorBoundaryEligible(
+                                       program_, *constructor))))) {
                 return false;
               }
             }
             // Allocation consumes the ordinary explicit input schedule. Each
             // pack element has already become a typed CallInput carrying its
             // exact copy/move policy.
+            for (const auto &operand : instruction.operands)
+              if (const auto *stage = borrowStagedCallInput(body, operand))
+                consumedStaged.push_back(*stage->result);
             if ((scalarUniqueAllocation(instruction) &&
                  (!failureForm ||
                   !invokePairedInstruction(body, instruction.id))) ||
