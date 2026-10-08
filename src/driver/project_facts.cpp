@@ -116,20 +116,56 @@ const std::vector<ProjectFactsTarget> &ProjectFacts::targets() const {
   return resolvedTargets;
 }
 
+const ProjectFactsTarget *
+ProjectFacts::findTarget(std::string_view name) const {
+  const auto match = std::find_if(
+      resolvedTargets.begin(), resolvedTargets.end(),
+      [&](const ProjectFactsTarget &target) { return target.name == name; });
+  return match == resolvedTargets.end() ? nullptr : &*match;
+}
+
+const ProjectFactsTarget *
+ProjectFacts::targetForSource(const std::filesystem::path &source) const {
+  if (resolvedTargets.size() == 1) {
+    return &resolvedTargets.front();
+  }
+  std::error_code error;
+  const auto canonical = std::filesystem::weakly_canonical(source, error);
+  if (error) {
+    return nullptr;
+  }
+  const ProjectFactsTarget *selected = nullptr;
+  for (const auto &target : resolvedTargets) {
+    if (target.root == canonical) {
+      if (selected) {
+        return nullptr;
+      }
+      selected = &target;
+    }
+  }
+  return selected;
+}
+
 const ConfigurationFlags &ProjectFacts::configurationFlags() const {
   return resolvedConfigurationFlags;
 }
 
-std::optional<AnalysisConfiguration>
-ProjectFacts::analysisConfiguration(std::string_view profileName,
-                                    TargetInfo target,
-                                    RuntimeProfile runtimeProfile) const {
+std::optional<AnalysisConfiguration> ProjectFacts::analysisConfiguration(
+    std::string_view profileName, TargetInfo target,
+    RuntimeProfile runtimeProfile,
+    std::optional<std::string_view> targetName) const {
   const ProjectFactsProfile *profile = findProfile(profileName);
-  if (profile == nullptr) {
+  const ProjectFactsTarget *projectTarget =
+      targetName ? findTarget(*targetName) : nullptr;
+  if (profile == nullptr || (targetName && projectTarget == nullptr)) {
     return std::nullopt;
   }
-  return AnalysisConfiguration(std::move(target), profile->executionProfile,
-                               runtimeProfile, resolvedConfigurationFlags);
+  return AnalysisConfiguration(
+      std::move(target), profile->executionProfile, runtimeProfile,
+      composeProjectConfigurationFlags(
+          resolvedConfigurationFlags, profile->defines,
+          projectTarget ? projectTarget->defines : ConfigurationFlags{}),
+      resolvedDeclaredConfigurationFlags);
 }
 
 const std::string &ProjectFacts::modelIdentity() const {
@@ -168,6 +204,8 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
   const ProjectManifest &manifest = selected.manifest;
   facts.selectedIdentity = selected.identity();
   facts.resolvedConfigurationFlags = workspace.configurationFlags();
+  facts.resolvedDeclaredConfigurationFlags =
+      workspace.declaredConfigurationFlags();
   facts.resolvedDefaultProfile = selectDefaultProfileName(manifest.profiles());
 
   facts.resolvedProfiles.reserve(manifest.profiles().size());
@@ -179,7 +217,8 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
                             .executionProfile = profile.executionProfile,
                             .rawPointerAudit = profile.rawPointerAudit,
                             .warningPolicy = profile.warningPolicy,
-                            .dependencyWarnings = profile.dependencyWarnings});
+                            .dependencyWarnings = profile.dependencyWarnings,
+                            .defines = profile.defines});
   }
 
   facts.resolvedTargets.reserve(manifest.targets().size());
@@ -189,7 +228,8 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
                            .kind = target.kind,
                            .linkage = target.linkage,
                            .root = target.root,
-                           .exports = target.exports});
+                           .exports = target.exports,
+                           .defines = target.defines});
   }
   return facts;
 }

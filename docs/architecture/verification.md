@@ -4524,6 +4524,21 @@ Its reconciled inventory contributes 1,254 declarations, 530 bodies and 76
 generated items after the public container aliases are included. The standalone
 inference feature added no bodies or generated items to existing examples.
 
+The 0.390.0 integration of local reference inference, public container aliases,
+qualified member types and scoped configuration passed the complete unfiltered
+565-test CTest suite at `7cc97682` (zero failures, errors, disabled or skipped
+tests; 2,299.60 seconds). Evidence uses a Release compiler on macOS arm64,
+AppleClang 21 and LLVM 22.1.8. Separate intermediate heads passed four inference/
+CLI gates, twelve alias/inference/library/corpus gates and ten qualified-type/
+inference/corpus gates. The staged SDK passed thirteen CMake consumers, both
+language examples, closure success/failure sanitizers, three LSP suites, scoped
+CLI/cache checks, alias native tests and the eight-mode process-provider matrix.
+The earlier 560/565 run was not accepted: its constructor-declaration regression
+and four stale diagnostic/representation/source-line expectations were repaired
+before the complete rerun. Post-validation integration and documentation updates
+must retain the tested production source; this is local acceptance evidence,
+not a claim of a newly executed Linux/Windows matrix.
+
 The borrowed-reference issue checkpoint extends example 99 with two passive
 source-defined owner/referent types, nested read-only accessors and a fallible
 projected-parameter relay. Its reviewed closure adds seven source bodies

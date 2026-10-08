@@ -1,0 +1,17 @@
+// Run `gti run game` and `gti run game --release` in this project.
+// The selected target and profile contribute flags to the entire program.
+#if !defined(PSYCH_PROJECT) || !defined(PSYCH_GAME)
+#error "game target configuration is missing"
+#endif
+#ifdef PSYCH_TESTS
+#error "another target's defines must not leak into the game"
+#endif
+
+int main() {
+#ifdef PSYCH_ASSERTIONS
+  std::println("game: assertions enabled");
+#else
+  std::println("game: assertions disabled");
+#endif
+  return 0;
+}
