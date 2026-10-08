@@ -4038,6 +4038,15 @@ no-elide, plus ASan/UBSan. These focused results do not establish the remaining
 owned/borrowed frame, generic carrier or inactive owning-base families and do
 not replace the separately deferred combined acceptance run.
 
+The isolated PR151 candidate passes the base-stage, lifecycle-emitter,
+detached lowered-program and representation-snapshot contracts using an
+optimized Release compiler. Its complete focused base runtime suite passes
+60 native cases, 48 intentional failure observations and nine sanitizer
+executions. Expanded example05 preserves its reviewed inventory exactly:
+41 MIR bodies and 154 lowered declarations/41 bodies/two generated items.
+No baseline counts are changed or auto-promoted. Cross-branch union and full
+combined validation remain the coordinating agent's separate integration goal.
+
 The old differential oracle was retired with the AST/HIR executable emitter.
 Keeping a no-MIR `CppEmitter` callable solely as a test control would recreate
 the fallback that the hard cutover removed.
