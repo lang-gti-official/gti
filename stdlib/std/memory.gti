@@ -839,13 +839,19 @@ public:
   prefix_owner() {}
   prefix_owner(uint64_t count) {
     uint64_t minimum = std::layout_of<T>().alignment;
-    auto allocated = gti_internal::try_allocate_objects<T, process_lease>(this.objects,
-        count, minimum);
-    gti_internal::require_allocation(allocated.has_value());
-    if (count != uint64_t(0)) {
-      std::detail::raw_allocation region = std::move(allocated).value();
-      unsafe { this.data.attach(std::typed_address<T>(region.address), count); }
+    mut T* address = nullptr;
+    // Finish allocation-result cleanup before publishing the slot state.
+    // The member lease, not either temporary descriptor, owns the bytes.
+    {
+      auto allocated = gti_internal::try_allocate_objects<T, process_lease>(this.objects,
+          count, minimum);
+      gti_internal::require_allocation(allocated.has_value());
+      if (count != uint64_t(0)) {
+        std::detail::raw_allocation region = std::move(allocated).value();
+        address = std::typed_address<T>(region.address);
+      }
     }
+    unsafe { this.data.attach(address, count); }
   }
   prefix_owner(prefix_owner<T>& other) = delete;
   prefix_owner(prefix_owner<T>&& other) = default;

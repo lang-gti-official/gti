@@ -5049,6 +5049,13 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   the independent continuation without admitting its callee's owning argument.
   Three formerly unreached record clients now pass; the safety suite retains
   seven proof failures and native evidence retains its three failures.
+  Exact result-only integer moves now preserve an independent result envelope
+  while retiring the source. Unique unprojected by-value integer formals permit
+  bounded preservation of ordinary owned receiver fields; references, stored
+  borrowed paths and unrelated ownership transfers remain conservative. Source
+  allocation-result cleanup precedes final prefix-field publication, recovering
+  exact capacity and initial empty length without an allocation-freshness fact.
+  Neither prerequisite supplies initialized raw-element coverage.
   A further general prerequisite distinguishes inert address arithmetic and
   typed pointer conversion from actual pointee/lifetime operations, and avoids
   repeating an operation at an empty full-expression marker. Selected unsafe

@@ -1,0 +1,14 @@
+#include <std/memory>
+
+uint64_t initial_length(std::detail::prefix_owner<int>& value) {
+  return value.length();
+}
+uint64_t reserved_capacity(std::detail::prefix_owner<int>& value) {
+  return value.capacity();
+}
+
+int main() {
+  std::detail::prefix_owner<int> value{uint64_t(4)};
+  return reserved_capacity(value) == uint64_t(4) &&
+      initial_length(value) == uint64_t(0) ? 0 : 1;
+}

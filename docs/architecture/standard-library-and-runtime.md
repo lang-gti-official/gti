@@ -474,6 +474,14 @@ a secondary failure records the emergency and stops further capture/result
 cleanup without destroying still-active native shells. This also applies when
 cleanup itself has already produced an emergency before returning to the adapter.
 
+The process prefix owner acquires bytes into its member lease first and finishes
+temporary allocation-result cleanup before publishing its slot address, capacity
+and empty live count. The lease remains the unique byte owner throughout;
+temporary descriptors never acquire release authority. Empty reservation
+publishes null/zero fields without requesting a region. This source sequencing
+preserves ordinary constructor postconditions across conservative cleanup
+analysis; it grants no fresh-region or initialized-element optimizer invariant.
+
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI
 wrappers. Sparse-storage capacity, live-slot state, traversal and validation
