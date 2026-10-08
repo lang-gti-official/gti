@@ -47036,6 +47036,47 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !instruction.rawMemoryAccess &&
             instruction.unsafeOperation == UnsafeOperationKind::None)
           continue;
+        // A source call supplying a scalar argument cannot carry or replace
+        // this bare receiver. Keep the call at its MIR position, with the
+        // original Invoke failure edge; only its address staging is erased.
+        const auto scalarUses =
+            instruction.result ? nonRootRecordUses(body, *instruction.result)
+                               : std::vector<MirValueUse>{};
+        const MirInstruction *scalarStage =
+            scalarUses.size() == 1 && scalarUses.front().kind ==
+                                          MirValueUseKind::InstructionOperand
+                ? findInstruction(body, scalarUses.front().instruction)
+                : nullptr;
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.functionTarget && !instruction.receiver &&
+            !instruction.constructorTarget && !instruction.lambdaTarget &&
+            !instruction.bodyTarget && !instruction.callableInvocation &&
+            instruction.intrinsic == IntrinsicKind::None && !instruction.loan &&
+            !instruction.rawMemoryAccess &&
+            instruction.unsafeOperation == UnsafeOperationKind::None &&
+            instruction.lifecycle.empty() &&
+            cppMirExpectedTypeRepresentation(instruction.info.type) ==
+                CppMirTypeRepresentationKind::Scalar &&
+            std::all_of(instruction.operands.begin(),
+                        instruction.operands.end(),
+                        [&](const MirOperand &input) {
+                          return input.kind == MirOperandKind::Value &&
+                                 cppMirExpectedTypeRepresentation(input.type) ==
+                                     CppMirTypeRepresentationKind::Scalar;
+                        }) &&
+            scalarStage != nullptr &&
+            scalarStage->kind == MirInstructionKind::CallInput &&
+            scalarStage->result &&
+            scalarStage->callSite == consumer->callSite &&
+            scalarStage->callInputRole == MirCallInputRole::Argument &&
+            scalarStage->callInputIndex < consumer->operands.size() &&
+            consumer->operands[scalarStage->callInputIndex].kind ==
+                MirOperandKind::Value &&
+            consumer->operands[scalarStage->callInputIndex].value ==
+                *scalarStage->result &&
+            (instruction.definedFailure.empty() ||
+             invokePairedInstruction(body, instruction.id)))
+          continue;
         const auto nestedResult =
             instruction.result
                 ? stagedClassResultForSource(body, *instruction.result)
