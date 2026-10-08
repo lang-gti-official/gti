@@ -5,6 +5,7 @@ import argparse
 import os
 import pathlib
 import platform
+import shutil
 import subprocess
 import tempfile
 
@@ -19,15 +20,22 @@ def run(command, environment):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=pathlib.Path)
+    parser.add_argument("--installed", action="store_true",
+                        help="Use only the staged toolchain's library and runtime resources.")
     parser.add_argument("--mode", action="append",
                         help="Run selected matrix mode(s); the default runs all eight.")
     arguments = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parent.parent
-    compiler = str(arguments.compiler.resolve())
-    environment = dict(os.environ, GTI_STDLIB_PATH=str(root / "stdlib"),
-                       GTI_RUNTIME_INCLUDE=str(root / "runtime/include"),
+    compiler = shutil.which(str(arguments.compiler)) or str(arguments.compiler.resolve())
+    environment = dict(os.environ,
                        ASAN_OPTIONS="halt_on_error=1:detect_leaks=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
+    for name in ("GTI_STDLIB_PATH", "GTI_RUNTIME_INCLUDE", "GTI_RUNTIME_LIBRARY",
+                 "GTI_VENDOR_INCLUDE"):
+        environment.pop(name, None)
+    if not arguments.installed:
+        environment.update(GTI_STDLIB_PATH=str(root / "stdlib"),
+                           GTI_RUNTIME_INCLUDE=str(root / "runtime/include"))
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
@@ -45,12 +53,14 @@ def main():
         for label, flags, native_flags in modes:
             for fixture, native in (
                 ("process_resource_policy", root / "tests/fixtures/process_resource_policy_native.cpp"),
-                ("raw_resource_movement", root / "runtime/src/memory.cpp"),
+                ("process_storage_policy", root / "tests/fixtures/process_resource_policy_native.cpp"),
+                ("raw_resource_movement", None),
             ):
                 binary = temporary / f"{fixture}-{label}"
+                native_inputs = [str(native)] if native else []
                 run([compiler, str(root / "tests/fixtures" / f"{fixture}.gti"),
-                     *flags, "-o", str(binary), "--", str(native),
-                     f"-I{root / 'runtime/include'}", *native_flags], environment)
+                     *flags, "-o", str(binary), "--", *native_inputs,
+                     *native_flags], environment)
                 result = run([str(binary)], environment)
                 assert not result.stdout and not result.stderr, result
             example = root / "examples/libc-region-provider"

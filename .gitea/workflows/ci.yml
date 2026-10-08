@@ -181,6 +181,11 @@ jobs:
             --test-dir "${{ runner.temp }}/gti-system-library-smoke" \
             -C Release --parallel "${GTI_TEST_JOBS}" --output-on-failure
 
+      - name: Test installed source allocation provider
+        run: >-
+          python3 tests/process_resource_policy_test.py
+          "${{ runner.temp }}/gti-system-stage/bin/gti" --installed
+
       - name: Report compiler cache statistics
         if: always()
         run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
