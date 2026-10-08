@@ -2467,6 +2467,18 @@ that contract as runtime descriptors and transformed failure siblings where
 the native ABI requires them. It does not infer failure from emitted C++ or use
 C++ exceptions to reconstruct GTI semantics.
 
+The generated incoming-cleanup failure check is outlined with guarded
+`cold`/`noinline` native hints on GNU-compatible compilers. Its only production
+call sites are failure edges. Keeping its emergency-record construction and
+thread-local lookup outside native inlining reduces successful-path costs in
+source-storage clients without removing any operation. Other native compilers
+use the identical unannotated helper. It is neither `noexcept` nor terminal:
+it returns when no primary cleanup failure is active, and a managed-worker
+double-failure report can perform the existing internal exception handoff.
+Cleanup scopes, activation, record construction and ordinary source functions
+receive no blanket cold, inline or exception annotation. MIR, replay evidence,
+failure identity and cleanup order are unchanged.
+
 Unique-owner borrowing uses the failure ABI. At the intrinsic instruction the
 backend tests the represented owner for emptiness and selects only the exact
 code/detail carried by MIR. Its `Invoke` routes failure through cleanup; the

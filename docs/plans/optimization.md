@@ -1,5 +1,44 @@
 # GTI Optimization Architecture Proposal
 
+## PR #166 audit disposition (2026-10-09)
+
+The reviewed proposal is `1636c1df`, not an implementation authority. Its
+screen is useful for finding clients, but minimum-of-seven timings under
+competing builds, non-interleaved attribution samples, and unsafe check-removal
+ceilings do not establish a production speedup. Its runner also fails to
+forward the selected C++ compiler/standard to the GTI build. Do not import that
+runner as the canonical measurement path. Reuse the existing benchmark and
+frozen-storage comparison harnesses with complete-state oracles, exact source
+and tool identities, warmups and interleaved samples.
+
+The immediately justified slice is **RT-1: one cold failure-only helper**.
+An independent current-head storage proxy improves runtime without removing
+checks; broad cold scope/activation/destructor annotations instead regress it.
+Production code adopts only the incoming-cleanup check's guarded cold/noinline
+hint. Production validation and exact before/after measurement remain required;
+the proxy alone is not completion evidence. See
+[performance-tooling.md](performance-tooling.md#rt-1-source-storage-failure-path-cost).
+
+The rest is useful future work, not implicitly implemented by this change:
+
+| Finding | Disposition, prerequisite and acceptance |
+| --- | --- |
+| RT-1 broader outlining/inline policy | Defer until a fresh client shows additional value after the one-helper slice. Keep managed-worker handoff exception-transparent; blanket `noexcept`, forced inlining and higher global thresholds are not accepted. |
+| RT-2 contextual narrowing | Prepare a bounded post-fixpoint refinement, re-establishing conservative coverage of **every** reachable call context. Current closed-call contexts widen but do not narrow; simply replacing widened inputs with attractive return ranges is not a proof. Require independent replay, conflicting callers/recursion/budget negatives, and a measured loop-carried client. |
+| RT-3 conversions/division/shifts | A promising next proof slice, beginning with exact integral conversion domains. Each failure outcome needs its own rule and replay: zero and signed-minimum/-1 for division, and all GTI shift preconditions, not merely a bounded shift count. Require boundary negatives and a material byte/text workload gain before broadening the family. |
+| RT-4 refreshed infallibility | Requires effect derivation on optimized MIR plus an independently replayed Invoke-to-Call edit, including CFG/identity repair. Native, recursive, synchronizing and cleanup boundaries remain conservative. No backend inference from apparently empty failure blocks. |
+| RT-5 relational index/length facts | Begin with a body-local relation whose origin, dominance and mutation/alias invalidation are proved. Crossing an accessor requires an admitted precondition/specialization or bounded inlining; a container's public name is not authority. Require opaque-call/mutation negatives and exact failure parity. |
+| RT-6 affine loop versioning | Requires a non-failing, side-effect-free preflight and an unchanged checked fallback. Hoisting may not change the first failure, partial stores, evaluation order or floating-point ordering. The fallback's presence alone does not prove the preflight safe. Measure a representative client first. |
+| RT-7 iterator counters/reductions | Prove length fits the **counter's** domain; allocation capacity alone does not prove a `ptrdiff_t` counter cannot overflow. Speculative reductions additionally require non-observable, exactly restorable state and ordered first-failure replay. Do not apply a wrapping accumulator to ordinary effectful loops. |
+| RT-8 slot/drop self-checks | Measured defer: no demonstrated value. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
+| RT-9 library algorithms/layout | Independent source-library clients, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Preserve those contracts and measure saved workload time/cache/allocation costs before replacing a layout. |
+| RT-10 bounded MIR inlining | Larger follow-up only after a remaining call-chain workload and proxy justify it. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual exclusions, cost limits and independent replay. Do not add general infrastructure merely to make a benchmark pass. |
+
+Closed-world executable lowering from #176 is already integrated; the old
+whole-stdlib code-size observations must be remeasured, not used as current
+evidence. None of the above authorizes removal of GTI-observable checks without
+canonical proof or an exactly equivalent, independently verified fallback.
+
 > **Plan status:** Non-canonical staged design. The implemented optimizer
 > boundary is documented in
 > [`docs/architecture/optimization.md`](../architecture/optimization.md).

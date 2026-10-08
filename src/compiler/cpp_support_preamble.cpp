@@ -1178,6 +1178,13 @@ private:
   mir_failure_cleanup_context_v1 context_{};
   bool active_ = false;
 };
+// This helper is reached only after a MIR operation fails. Keep its emergency
+// record/TLS work out of the successful caller's native inlining cost. It may
+// return for a first failure or unwind through the managed-worker handoff;
+// neither noexcept nor a terminal-function annotation would be sound here.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#endif
 inline void mir_check_incoming_cleanup_failure_v1(
     const ::gti_failure_record_v2 *secondary,
     const ::gti_failure_artifact_descriptor_v1 *artifact) {
