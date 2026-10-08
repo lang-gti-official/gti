@@ -168,7 +168,17 @@ it builds with system LLVM, stages `gti_toolchain`, smoke-tests a checksummed
 archive, and activates it through the existing Lua release installer without
 network downloads. It writes a local-checkout Lazy spec with explicit tool
 paths and downloads disabled, backing up an existing different spec only after
-`--replace-config`. It preserves a supplied build directory's generator and
+`--replace-config`. It also publishes `gti`/`gti_lsp` symlinks in `~/.local/bin`
+(or `--bin-dir`) to the complete installed toolchain. Existing different
+commands require `--replace-bin` and receive preserved backups; command-pair
+publication rolls back on failure. `--no-terminal` retains editor-only setup.
+Shell configuration is not modified; a PATH shadow is reported explicitly.
+`--activate-only` validates the installed resources and both executable
+versions against the installed VERSION, then activates commands/configuration
+without consulting LLVM or rebuilding. It reports the installed version even
+when the checkout is newer. This permits recovery after Homebrew removes build
+prerequisites while the bundled runtime remains usable. It preserves a supplied
+build directory's generator and
 does not change source compilation, project manifests, LSP semantics, or release
 publication authority. Discovery accepts LLVM 18–22, skips unsupported newer
 Homebrew formulas, and considers retained supported versions without assuming
