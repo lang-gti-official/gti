@@ -7721,6 +7721,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (instruction.operation == MirOperation::AddressOf) {
       if (instruction.operands.size() != 1 ||
           instruction.operands.front().kind != MirOperandKind::Address ||
+          resultType != instruction.info.type ||
           resultType.kind != SemanticType::RawPointer ||
           resultType.arguments.size() != 1 ||
           resultType.arguments.front() != instruction.operands.front().type) {
@@ -7728,7 +7729,35 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       }
       const MirPlace *place =
           body.findPlace(instruction.operands.front().place);
-      return place != nullptr && resultType.pointerAccess == place->access;
+      if (place == nullptr || resultType.pointerAccess != place->access)
+        return false;
+      const bool fixedArraySelection = std::any_of(
+          body.places.begin(), body.places.end(), [&](const MirPlace &array) {
+            const std::size_t prefix = array.projections.size();
+            return array.type.kind == SemanticType::Array &&
+                   array.root == place->root &&
+                   array.binding == place->binding &&
+                   array.symbol == place->symbol &&
+                   array.capture == place->capture &&
+                   array.temporary == place->temporary &&
+                   array.value == place->value && array.loan == place->loan &&
+                   prefix < place->projections.size() &&
+                   place->projections[prefix].kind ==
+                       MirProjectionKind::Index &&
+                   std::equal(array.projections.begin(),
+                              array.projections.end(),
+                              place->projections.begin());
+          });
+      const bool boundsOrigin =
+          instruction.definedFailure.propagation ==
+              FailurePropagationKind::None &&
+          instruction.definedFailure.localOrigins.size() == 1 &&
+          instruction.definedFailure.localOrigins.front().outcomes ==
+              std::vector<DefinedFailureOutcome>{
+                  {DefinedFailureCode::IndexOutOfBounds,
+                   DefinedFailureDetail::FixedArray}};
+      return fixedArraySelection ? boundsOrigin
+                                 : instruction.definedFailure.empty();
     }
     if (instruction.operation == MirOperation::PointerAdd) {
       if (instruction.operands.size() != 2 || !validRawPointer(resultType)) {
@@ -8592,10 +8621,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              (instruction.operation == MirOperation::Closure ||
               !instruction.lambdaTarget) &&
              validCompute(instruction);
-    case MirInstructionKind::Load:
+    case MirInstructionKind::Load: {
+      const MirPlace *source =
+          instruction.operands.size() == 1
+              ? body.findPlace(instruction.operands.front().place)
+              : nullptr;
       return noOperation && hasResult && !instruction.destination &&
-             instruction.operands.size() == 1 &&
+             source != nullptr &&
+             instruction.operands.front().type == source->type &&
              instruction.operands.front().kind == MirOperandKind::Copy;
+    }
     case MirInstructionKind::Initialize: {
       if (!noOperation || hasResult || !instruction.destination ||
           instruction.operands.size() > 1) {
@@ -9046,6 +9081,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     expectedUseCount += place.root == MirPlaceRootKind::Value ? 1 : 0;
     for (const MirPlaceProjection &projection : place.projections) {
+      if (projection.kind == MirProjectionKind::Index && projection.index &&
+          projection.constantIndex) {
+        const auto *value = body.findValue(projection.index);
+        const auto *block =
+            value ? body.findBlock(value->definitionBlock) : nullptr;
+        if (block)
+          for (const auto &definition : block->instructions) {
+            if (definition.id != value->definition ||
+                definition.operation != MirOperation::Literal ||
+                !definition.literal)
+              continue;
+            const auto *unsignedIndex =
+                std::get_if<std::uint64_t>(&*definition.literal);
+            if (unsignedIndex && *unsignedIndex != *projection.constantIndex)
+              return failure(body, owner,
+                             "constant array projection disagrees with its "
+                             "literal index value");
+          }
+      }
       if ((projection.kind == MirProjectionKind::Base &&
            (body.kind != MirBodyKind::Constructor ||
             place.root != MirPlaceRootKind::This ||

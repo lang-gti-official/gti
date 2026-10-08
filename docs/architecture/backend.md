@@ -2005,8 +2005,40 @@ share this representation; the former single-field/single-index receiver-only
 route is removed. Borrowed record parameters also admit one leading checked
 reference `Dereference` before the field chain; an exact root reference and
 sibling array place prove the path, without copying the owner or admitting a
-raw-pointer dereference. Read-only and mutable access still come from verified
-MIR and source loan analysis.
+raw-pointer dereference through that checked-reference proof. A separate exact
+raw-pointer SSA prefix (`RawDereference` or `RawIndex`) may select the same
+field-array sibling: the raw operation retains its unsafe access metadata,
+while every subsequent fixed-array dimension retains ordinary bounds checks.
+Read-only and mutable access still come from verified MIR and source loan
+analysis. Constant in-bounds array-element field chains use the same type/field
+rows for binding, receiver and raw-pointer roots; no extra object is materialized.
+
+Structured fixed-array decomposition retains its semantically chosen ordinal
+as a MIR constant index as well as the evaluated index value. A fixed-array
+projection whose index is a literal must agree with that literal; verification
+rejects a contradictory constant ordinal instead of trusting an unchecked
+backend shortcut. A passive class array copy with one adjacent binding
+initialization constructs that destination
+directly from its exact source array. The source's Read/Available ownership
+event, generated copy/move/destruction traits and destination activation/drop
+identity must all match. There is no default-initialized array SSA temporary,
+no extra ordinary constructor invocation, and no change to the hidden owned
+copy or its immutable element projections. Active cleanup/borrowed-state
+arrays retain their separate protocols rather than entering this fusion.
+An owning whole-array Move followed by its one adjacent lexical Initialize
+constructs the final binding directly only with an exact source ownership
+event, source/value drop Move, value/binding Reparent, and structurally
+failure-free element movement. All original source and destination cleanup
+instructions remain scheduled by MIR; no representation-only fusion may
+invent a source Drop or erase an owning result obligation.
+
+Raw address formation evaluates a selected array place without loading its
+referent. MIR lowering places the selected Index's semantic fixed-array bounds
+origin on AddressOf; verification rejects missing or mismatched bounds facts.
+The native detector checks every dimension before forming the address, and its
+paired Invoke carries the canonical source failure record through ordinary
+cleanup. Unsafe raw-pointer validity obligations remain distinct from these
+checked fixed-array selections. Forming an address creates no checked loan.
 
 Generated passive record copies may contain positive concrete
 fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
