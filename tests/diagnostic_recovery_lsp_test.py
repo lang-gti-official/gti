@@ -68,6 +68,21 @@ def main():
                 "end": lsp_position(value, offset + 7)}, errors
             assert "compile-time value" in errors[0]["message"], errors
             assert change(value.replace("extent<runtime>", "extent<4>"), 6) == []
+
+            local = "int main() { /* 😀 */ mut int32_t value; value = 4; return value; }\n"
+            errors = change(local, 7)
+            assert len(errors) == 1 and errors[0]["code"] == "GTI-S2000", errors
+            offset = local.index("value")
+            assert errors[0]["range"] == {
+                "start": lsp_position(local, offset),
+                "end": lsp_position(local, offset + 5)}, errors
+            assert "requires an initializer" in errors[0]["message"], errors
+            assert "later assignment" in errors[0]["message"], errors
+            session.send({"jsonrpc": "2.0", "id": 3, "method": "textDocument/codeAction", "params": {
+                "textDocument": {"uri": uri}, "range": errors[0]["range"],
+                "context": {"diagnostics": errors, "only": ["quickfix"]}}})
+            assert not session.receive_until(lambda message: message.get("id") == 3)["result"]
+            assert change(local.replace("value;", "value = 0;", 1), 8) == []
         finally:
             session.close()
 
