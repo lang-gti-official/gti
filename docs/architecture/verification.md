@@ -220,6 +220,38 @@ S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
 metadata/default-factory migration described above; the provider checkpoint's
 independent tests alone do not validate that integration.
 
+## Indexed view relay, range fields and existing-value allocation (candidate)
+
+The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
+the indexed text relay in #78, the generated same-type allocation path in #97,
+and two range-field address cases in #73. The expanded native matrix has
+64 passing observations: five original reproducers and three stronger fixtures
+at C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan. Eight injected allocation
+observations separately prove exact success output and exhaustion cleanup of
+the prepared existing owner and caller, with GTI-R0011/70 rather than abort.
+
+`operator_relay_pipeline` checks O0/O1/O3 snapshot and body admission, corrupts
+generated construction policy, inputs and raw-storage publication, and rejects
+forged field addresses and actual borrow-access upgrades. Semantic negatives
+retain local/temporary owner escape, wrong borrowed-from owner and mutation
+with a live indexed view rejection. `operator_relay_lsp` verifies versioned
+diagnostics, UTF-16 source positions, related origins, hover and definition
+queries during an error, and recovery after the edit is removed. Example 127
+passes the independent O0/C++20 and O3/C++23 native oracle with identical 382
+body identities; its reviewed inventory adds 1012 declarations and 72 generated
+items without refreshing unrelated baseline entries.
+
+The remaining original `a28-map-range-for-key-view.gti` still fails all eight
+native modes, so `operator_relay_runtime` deliberately remains failing and
+#73 is not complete. Its range-field address is now exact, but the result of
+`entry.first.view()` is an SSA text descriptor whose subsequent `.size()` is
+not admitted by the primitive observer representation. This is a prerequisite
+for the source-defined view migration in PR109, not permission to relax loans
+or introduce a temporary public-type exception. Keep that original regression
+until the migration proves it. This candidate is draft/partially verified;
+combined full-suite, installed-toolchain, Linux and Windows evidence is deferred
+to the campaign coordinator.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes

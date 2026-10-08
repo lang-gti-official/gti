@@ -11,6 +11,11 @@ namespace lang::mir_detail {
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);
 
+// The generated same-type copy/move family has no source constructor target.
+// Allocation and staged input ownership still have distinct MIR identities.
+[[nodiscard]] bool
+generatedUniqueConstruction(const MirInstruction &instruction);
+
 // Runtime representation queries have no runtime input and cannot acquire
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,

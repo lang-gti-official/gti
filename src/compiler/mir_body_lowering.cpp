@@ -4286,6 +4286,13 @@ private:
                           ? nullptr
                           : output.findLoan(found->second));
         projectionOffset = loan == nullptr ? 0 : 1;
+        if (projectionOffset < place->projections.size() &&
+            referenceAccessorBindings.contains(place->binding)) {
+          // This carrier captured a projected runtime address, which can be
+          // narrower than its shared owner loan (notably a range element).
+          // Fields project from that referent, not from the protected range.
+          return current;
+        }
       } else if (place->root == MirPlaceRootKind::Value) {
         const MirValue *value = output.findValue(place->value);
         const MirLoanId loanId =
@@ -5979,15 +5986,19 @@ private:
         value.info.type.kind == SemanticType::UniqueOwner &&
         value.info.type.arguments.size() == 1 &&
         value.info.type.arguments.front().kind == SemanticType::Class &&
-        value.constructorTarget &&
-        value.constructorKind == ConstructorKind::Ordinary) {
+        ((value.constructorTarget &&
+          value.constructorKind == ConstructorKind::Ordinary) ||
+         mir_detail::generatedUniqueConstruction(call))) {
       // Prepared parameters remain caller-owned until allocation succeeds.
       // The second instruction transfers them into the selected constructor;
       // its failure path owns only the unconstructed allocation, not T.
       call.objectAllocation = appendObjectAllocation(value);
       call.definedFailure.localOrigins.clear();
-      call.definedFailure.propagation = normalizedConstructorPropagation(
-          FailurePropagationKind::Constructor, value.constructorTarget);
+      call.definedFailure.propagation =
+          value.constructorTarget ? normalizedConstructorPropagation(
+                                        FailurePropagationKind::Constructor,
+                                        value.constructorTarget)
+                                  : FailurePropagationKind::None;
     }
     if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
         value.definedFailure.propagation ==
@@ -9358,6 +9369,20 @@ private:
         // the source expression from carrier topology.
         reference.place = placeForValue(*statement.value);
         retainedLoan = reference.loan;
+        const auto *address = output.findPlace(reference.place);
+        if (address != nullptr &&
+            ((!address->projections.empty() &&
+              address->type == reference.type) ||
+             (address->root == MirPlaceRootKind::Loan &&
+              retainableCallResultChain(address->loan, retainedLoan,
+                                        *statement.value,
+                                        binding->info.type.referenceAccess)) ||
+             (address->root == MirPlaceRootKind::Binding &&
+              address->projections.size() == 1 &&
+              address->projections.front().kind ==
+                  MirProjectionKind::Dereference &&
+              referenceAccessorBindings.contains(address->binding))))
+          referenceAccessorBindings.insert(*statement.binding);
         operands.push_back(std::move(reference));
       } else {
         MirOperand initializer = valueOperand(*statement.value);
@@ -10925,6 +10950,7 @@ private:
   std::unordered_map<HirValueId, MirOperand> payloadSwitchSubjects;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
+  std::unordered_set<HirBindingId> referenceAccessorBindings;
   std::unordered_map<MirPlaceId, MirLoanId> packEntryLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
   std::unordered_map<MirLoanId, HirStatementId> callTransferredLoanEndpoints;

@@ -7230,8 +7230,9 @@ static MirVerificationResult verifyObjectAllocations(const MirBody &body,
       const bool construction =
           instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
-          instruction.constructorKind == ConstructorKind::Ordinary &&
-          instruction.constructorTarget &&
+          ((instruction.constructorKind == ConstructorKind::Ordinary &&
+            instruction.constructorTarget) ||
+           mir_detail::generatedUniqueConstruction(instruction)) &&
           instruction.info.type.kind == SemanticType::UniqueOwner &&
           instruction.info.type.arguments.size() == 1 &&
           instruction.info.type.arguments.front().kind == SemanticType::Class;
