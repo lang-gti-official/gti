@@ -2155,11 +2155,19 @@ remain visible in the derived constructor's summary and to the optimizer.
 
 The C++ backend fuses observation-free scalar parameter/literal prefixes into
 the exact native base initializer, using its status overload when fallible,
-and branches on the retained result before executing derived MIR. Its independent
-prefix proof rejects any checked operation or other effect; those require a
-pre-native-base MIR preparation runner, not reconstructed C++ expressions.
-Passive
-field defaults include plain read-only enum values. For the selected
+and branches on the retained result before executing derived MIR. Checked
+arithmetic, scalar calls and control flow instead execute in an admitted
+pre-native-base partition of this same verified body. The immutable body plan
+records the exact stage/CFG and scalar values/places crossing into the remaining
+schedule; a private delegation carrier retains arguments, mutated scalar
+parameters and the original failure record. Global effects are never restored
+from a snapshot. Prefix failure disables the passive base gate, so no source
+base constructor or destructor runs before successful preparation. Neither path
+reconstructs source expressions in a native initializer list.
+This preparation family does not transport owned/borrowed inputs, generic
+carriers, or recursively owning/nested base shells; those remain named frame,
+loan/transfer and inactive-shell prerequisites in the implementation sequence.
+Passive field defaults include plain read-only enum values. For the selected
 aggregate schedule, observable base cleanup runs at the explicit MIR `Drop`
 and returns its secondary record before the caller tears down the empty native
 representation. Other admitted base rollback finishes when the allocation

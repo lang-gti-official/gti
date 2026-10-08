@@ -28728,6 +28728,22 @@ public:
         familyLabel);
   }
 
+  [[nodiscard]] std::string
+  emitBasePreparation(const MirConstructorInstance &constructor,
+                      const CppMirBasePreparation &plan,
+                      std::string_view familyLabel) {
+    preparation = &plan;
+    preparingBase = true;
+    return emit(constructor, familyLabel);
+  }
+
+  [[nodiscard]] std::string
+  emitBaseGate(const MirConstructorInstance &constructor,
+               std::string_view familyLabel) {
+    gatedBase = true;
+    return emit(constructor, familyLabel);
+  }
+
   [[nodiscard]] std::string emit(const MirLambdaInstance &lambda,
                                  std::string_view familyLabel) {
     // A lambda body spells only nested inside its closure literal: the
@@ -28787,7 +28803,12 @@ public:
     writeIndent();
     output << "// GTI verified-MIR body: " << familyLabel << " "
            << facts.instanceLabel << " " << facts.id << "\n";
-    if (failureForm && facts.kind == MirBodyKind::Constructor) {
+    if (preparingBase) {
+      writeIndent();
+      output << "__gti_base_preparation_" << facts.id << " __gti_prepared{};\n";
+    }
+    if (failureForm && facts.kind == MirBodyKind::Constructor &&
+        !preparingBase) {
       const MirConstructorInstance *constructor =
           program.findConstructorInstance(facts.id);
       const MirInstruction *base =
@@ -28796,7 +28817,8 @@ public:
       if (base != nullptr) {
         writeIndent();
         output << "const bool __gti_mir_construct_success_" << base->id << " = "
-               << (base->definedFailure.empty()
+               << (base->definedFailure.empty() &&
+                           !cppMirBasePreparation(program, *constructor)
                        ? "true"
                        : "*__gti_mir_constructor_success")
                << ";\n";
@@ -28820,9 +28842,37 @@ public:
         output << "(*this).__gti_lifecycle_active_" << owner->declaration
                << " = false;\n";
       }
+      if (gatedBase) {
+        writeIndent();
+        output << "if (!__gti_base_enabled) return;\n";
+      }
+      if (constructor != nullptr) {
+        ownedPreparation = cppMirBasePreparation(program, *constructor);
+        if (ownedPreparation) {
+          preparation = &*ownedPreparation;
+          writeIndent();
+          output << "if (!__gti_prepared.ready) return;\n";
+          for (std::size_t index = 0;
+               index < constructor->parameterTypes.size(); ++index) {
+            writeIndent();
+            output << typeSpelling(constructor->parameterTypes[index])
+                   << " __gti_mir_arg_" << index
+                   << " = __gti_prepared.parameter_" << index << ";\n";
+          }
+        }
+      }
     }
     for (const MirBlock &block : facts.body.blocks) {
+      if (preparingBase &&
+          std::find(preparation->blocks.begin(), preparation->blocks.end(),
+                    block.id) == preparation->blocks.end())
+        continue;
       for (const MirInstruction &instruction : block.instructions) {
+        if (preparingBase &&
+            std::find(preparation->instructions.begin(),
+                      preparation->instructions.end(),
+                      instruction.id) == preparation->instructions.end())
+          continue;
         if (instruction.kind != MirInstructionKind::Compute ||
             instruction.operation != MirOperation::Closure ||
             closureChainAdmits(program, facts.body, instruction)) {
@@ -28836,6 +28886,10 @@ public:
       }
     }
     for (const MirPlace &place : facts.body.places) {
+      if (preparingBase &&
+          std::find(preparation->places.begin(), preparation->places.end(),
+                    place.id) == preparation->places.end())
+        continue;
       if (provenanceOnlyReceiverPlace(program, representations, facts.body,
                                       place))
         continue;
@@ -29188,6 +29242,10 @@ public:
       output << ";\n";
     }
     for (const MirValue &value : facts.body.values) {
+      if (preparingBase &&
+          std::find(preparation->values.begin(), preparation->values.end(),
+                    value.id) == preparation->values.end())
+        continue;
       const auto *arrayStage =
           value.info.type.kind == SemanticType::Array
               ? findInstruction(facts.body, value.definition)
@@ -29906,6 +29964,8 @@ public:
              << "{};\n";
     }
     for (const MirLoan &loan : facts.body.loans) {
+      if (preparingBase)
+        continue;
       if (!loanHasCppPointerCarrier(program, representations, facts.body,
                                     loan)) {
         continue;
@@ -30006,7 +30066,16 @@ public:
     }
     if (failureForm) {
       for (const MirBlock &block : facts.body.blocks) {
+        if (preparingBase &&
+            std::find(preparation->blocks.begin(), preparation->blocks.end(),
+                      block.id) == preparation->blocks.end())
+          continue;
         for (const MirInstruction &instruction : block.instructions) {
+          if (preparingBase &&
+              std::find(preparation->instructions.begin(),
+                        preparation->instructions.end(),
+                        instruction.id) == preparation->instructions.end())
+            continue;
           const bool failureStatusRequired =
               !allMirLocalFailuresDischarged(instruction) ||
               invokePairedInstruction(facts.body, instruction.id);
@@ -30186,8 +30255,24 @@ public:
         }
       }
     }
-    const CppMirControlFlowBlock *entry =
-        findCppMirControlFlowBlock(controlFlow, controlFlow.entry);
+    if (preparation && !preparingBase) {
+      for (const auto id : preparation->carriedValues) {
+        writeIndent();
+        output << "__gti_mir_v_" << id << " = __gti_prepared.value_" << id
+               << ";\n";
+      }
+      for (const auto id : preparation->places) {
+        const auto *place = facts.body.findPlace(id);
+        if (place->root == MirPlaceRootKind::Symbol)
+          continue;
+        writeIndent();
+        emitPlaceExpression(facts, *place);
+        output << " = __gti_prepared.place_" << id << ";\n";
+      }
+    }
+    const CppMirControlFlowBlock *entry = findCppMirControlFlowBlock(
+        controlFlow, preparation && !preparingBase ? preparation->stageBlock
+                                                   : controlFlow.entry);
     if (entry == nullptr) {
       throw std::logic_error(
           "verified MIR C++ control-flow plan lost its entry label");
@@ -30195,6 +30280,10 @@ public:
     writeIndent();
     output << "goto " << entry->label << ";\n";
     for (const CppMirControlFlowBlock &plannedBlock : controlFlow.blocks) {
+      if (preparingBase &&
+          std::find(preparation->blocks.begin(), preparation->blocks.end(),
+                    plannedBlock.block) == preparation->blocks.end())
+        continue;
       const MirBlock *block = facts.body.findBlock(plannedBlock.block);
       if (block == nullptr) {
         throw std::logic_error(
@@ -30217,13 +30306,70 @@ public:
                << " cleanup\n";
       }
       for (const MirInstruction &instruction : block->instructions) {
+        if (preparingBase && instruction.id == preparation->stage) {
+          for (std::size_t index = 0; index < instruction.operands.size();
+               ++index) {
+            writeIndent();
+            output << "__gti_prepared.argument_" << index << " = ";
+            emitOperand(instruction.operands[index]);
+            output << ";\n";
+          }
+          for (const auto id : preparation->carriedValues) {
+            writeIndent();
+            output << "__gti_prepared.value_" << id << " = ";
+            emitOperand({.kind = MirOperandKind::Value,
+                         .value = id,
+                         .type = facts.body.findValue(id)->info.type});
+            output << ";\n";
+          }
+          for (std::size_t index = 0; index < facts.parameterBindings.size();
+               ++index) {
+            writeIndent();
+            output << "__gti_prepared.parameter_" << index << " = ";
+            const auto place = std::find_if(
+                facts.body.places.begin(), facts.body.places.end(),
+                [&](const auto &candidate) {
+                  return candidate.root == MirPlaceRootKind::Binding &&
+                         candidate.projections.empty() &&
+                         candidate.binding == facts.parameterBindings[index] &&
+                         std::find(preparation->places.begin(),
+                                   preparation->places.end(),
+                                   candidate.id) != preparation->places.end();
+                });
+            if (place != facts.body.places.end())
+              emitPlaceExpression(facts, *place);
+            else
+              output << "__gti_mir_arg_" << index;
+            output << ";\n";
+          }
+          for (const auto id : preparation->places) {
+            const auto *place = facts.body.findPlace(id);
+            if (place->root == MirPlaceRootKind::Symbol)
+              continue;
+            writeIndent();
+            output << "__gti_prepared.place_" << id << " = ";
+            emitPlaceExpression(facts, *place);
+            output << ";\n";
+          }
+          writeIndent();
+          output << "__gti_prepared.ready = true;\n";
+          writeIndent();
+          output << "return __gti_prepared;\n";
+          break;
+        }
+        if (preparation && !preparingBase &&
+            std::find(preparation->instructions.begin(),
+                      preparation->instructions.end(),
+                      instruction.id) != preparation->instructions.end())
+          continue;
         emitDebugLocation(facts, block->id, instruction.id);
         emitInstruction(*block, instruction, facts);
         emitStagedFieldPublication(instruction, facts);
         emitGeneratedLocation();
       }
       emitDebugLocation(facts, block->id, 0);
-      emitTerminator(*block, facts, controlFlow);
+      if (!preparingBase || block->id != preparation->stageBlock)
+        emitTerminator(*block, facts, controlFlow);
       emitGeneratedLocation();
       --indentation;
       writeIndent();
@@ -39985,6 +40131,11 @@ private:
       return;
     }
     case MirTerminatorKind::PropagateFailure:
+      if (preparingBase) {
+        writeIndent();
+        output << "return __gti_prepared;\n";
+        return;
+      }
       if (!failureForm) {
         // Only an inline literal's plain shape admits this terminator:
         // every failure source is contained terminally inside its helper,
@@ -41590,6 +41741,10 @@ private:
   std::size_t indentation;
   bool failureForm = false;
   bool indirectResultForm = false;
+  bool preparingBase = false;
+  bool gatedBase = false;
+  const CppMirBasePreparation *preparation = nullptr;
+  std::optional<CppMirBasePreparation> ownedPreparation;
   std::string_view indentationPlaceholder;
   bool deducedCallableFamilyOverride = false;
   std::span<const LoweredBody> debugBodies;
@@ -42242,6 +42397,298 @@ cppMirStoredReferenceBindings(const MirConstructorInstance &constructor) {
   return bindings;
 }
 
+namespace {
+bool preparationScalar(const SemanticType &type) {
+  return (type.kind >= SemanticType::Int8 &&
+          type.kind <= SemanticType::Double) ||
+         type.kind == SemanticType::Bool || type.kind == SemanticType::Char;
+}
+} // namespace
+
+bool cppMirBaseGateEligible(const MirProgram &program,
+                            const MirConstructorInstance &constructor) {
+  const auto *owner = program.findClassInstance(constructor.owner);
+  return constructor.definitionKind == MirDefinitionKind::Source &&
+         owner != nullptr && !owner->cAbiRecord && !owner->unionLayout &&
+         owner->compilerCapability == CompilerCapabilityTypeKind::None &&
+         owner->type.arguments.empty() && owner->type.valueArguments.empty() &&
+         !classHasStateBearingBase(*owner) &&
+         !owner->traits.containsBorrowedState &&
+         passiveConstructorFieldInitializers(program,
+                                             owner->fieldInitializers) &&
+         (!owner->destructor ||
+          failureConstructorDisarmsDeclaredDestructor(program, *owner)) &&
+         std::all_of(owner->declaredFields.begin(), owner->declaredFields.end(),
+                     [](const auto &field) {
+                       return preparationScalar(field.type) &&
+                              field.dropKind == DropKind::Trivial &&
+                              !field.requiresActiveCleanup;
+                     }) &&
+         std::all_of(constructor.parameterTypes.begin(),
+                     constructor.parameterTypes.end(), preparationScalar);
+}
+
+std::optional<CppMirBasePreparation>
+cppMirBasePreparation(const MirProgram &program,
+                      const MirConstructorInstance &constructor) {
+  const auto *owner = program.findClassInstance(constructor.owner);
+  const auto *stage = constructorBaseInitialization(constructor);
+  const auto *target =
+      stage && stage->constructorTarget
+          ? program.findConstructorInstance(*stage->constructorTarget)
+          : nullptr;
+  if (!owner || owner->cAbiRecord || owner->unionLayout ||
+      owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+      !owner->type.arguments.empty() || !owner->type.valueArguments.empty() ||
+      !stage || !target || !cppMirBaseGateEligible(program, *target) ||
+      !constructorBaseRollbackCovered(constructor, *owner) ||
+      target->parameterTypes.size() != stage->operands.size() ||
+      stage->parameterTypes != target->parameterTypes ||
+      !constructor.mayRaiseDefinedFailure ||
+      constructor.parameterTypes.size() !=
+          constructor.parameterBindings.size() ||
+      !std::all_of(constructor.parameterTypes.begin(),
+                   constructor.parameterTypes.end(), preparationScalar) ||
+      !std::all_of(stage->parameterTypes.begin(), stage->parameterTypes.end(),
+                   preparationScalar) ||
+      stage->constructorInitializer == 0 ||
+      stage->constructorInitializer > constructor.initializers.size())
+    return std::nullopt;
+  const auto &initializer =
+      constructor.initializers[stage->constructorInitializer - 1];
+  if (initializer.kind != ConstructorInitializerTargetKind::Base ||
+      !initializer.base || *initializer.base != target->owner ||
+      initializer.targetType !=
+          program.findClassInstance(target->owner)->type ||
+      initializer.constructorTarget != target->id ||
+      initializer.arguments.size() != stage->operands.size())
+    return std::nullopt;
+  for (std::size_t index = 0; index < stage->operands.size(); ++index) {
+    const auto &argument = stage->operands[index];
+    const auto *value = argument.kind == MirOperandKind::Value
+                            ? constructor.body.findValue(argument.value)
+                            : nullptr;
+    if (!value || value->sourceValue != initializer.arguments[index] ||
+        value->info.type != target->parameterTypes[index] ||
+        argument.type != value->info.type)
+      return std::nullopt;
+  }
+  CppMirBasePreparation result{.stage = stage->id};
+  std::vector<MirBlockId> pending{constructor.body.entry};
+  bool found = false;
+  const auto retain = [](auto &items, auto id) {
+    if (std::find(items.begin(), items.end(), id) == items.end())
+      items.push_back(id);
+  };
+  const auto operand = [&](const MirOperand &argument) {
+    if (!preparationScalar(argument.type))
+      return false;
+    if (argument.kind == MirOperandKind::Constant)
+      return argument.literal.has_value();
+    if (argument.kind == MirOperandKind::Value) {
+      const auto *value = constructor.body.findValue(argument.value);
+      if (!value || value->info.type != argument.type ||
+          value->info.traits.drop != DropKind::Trivial ||
+          value->info.traits.containsBorrowedState)
+        return false;
+      retain(result.values, value->id);
+      return true;
+    }
+    if (argument.kind != MirOperandKind::Copy)
+      return false;
+    const auto *place = constructor.body.findPlace(argument.place);
+    if (!place || !place->projections.empty() ||
+        !preparationScalar(place->type) ||
+        place->traits.drop != DropKind::Trivial ||
+        place->traits.containsBorrowedState ||
+        (place->root != MirPlaceRootKind::Binding &&
+         place->root != MirPlaceRootKind::Symbol &&
+         place->root != MirPlaceRootKind::Temporary))
+      return false;
+    retain(result.places, place->id);
+    return true;
+  };
+  for (const auto &argument : stage->operands)
+    if (!operand(argument))
+      return std::nullopt;
+  while (!pending.empty()) {
+    const auto id = pending.back();
+    pending.pop_back();
+    if (std::find(result.blocks.begin(), result.blocks.end(), id) !=
+        result.blocks.end())
+      continue;
+    const auto *block = constructor.body.findBlock(id);
+    if (!block)
+      return std::nullopt;
+    result.blocks.push_back(id);
+    for (const auto &parameter : block->parameters) {
+      const auto *value = constructor.body.findValue(parameter.value);
+      if (!value || !preparationScalar(value->info.type) ||
+          value->info.traits.drop != DropKind::Trivial ||
+          value->info.traits.containsBorrowedState)
+        return std::nullopt;
+      retain(result.values, parameter.value);
+    }
+    bool stop = false;
+    for (const auto &instruction : block->instructions) {
+      if (&instruction == stage) {
+        result.stageBlock = id;
+        found = true;
+        stop = true;
+        break;
+      }
+      if (instruction.destination) {
+        const auto *place =
+            constructor.body.findPlace(*instruction.destination);
+        if (!place || !preparationScalar(place->type) ||
+            !place->projections.empty() ||
+            place->traits.drop != DropKind::Trivial ||
+            place->traits.containsBorrowedState ||
+            (place->root != MirPlaceRootKind::Binding &&
+             place->root != MirPlaceRootKind::Temporary) ||
+            (instruction.kind != MirInstructionKind::Initialize &&
+             instruction.kind != MirInstructionKind::Assign &&
+             instruction.kind != MirInstructionKind::Modify))
+          return std::nullopt;
+        retain(result.places, place->id);
+      }
+      if (instruction.receiver || instruction.loan ||
+          instruction.successResultDrop ||
+          instruction.successResultDestination ||
+          !instruction.lifecycle.empty() || instruction.rawMemoryAccess ||
+          instruction.objectAllocation || instruction.lambdaTarget ||
+          instruction.constructorTarget || instruction.callableInvocation ||
+          instruction.intrinsic != IntrinsicKind::None ||
+          (instruction.kind != MirInstructionKind::Compute &&
+           instruction.kind != MirInstructionKind::Load &&
+           instruction.kind != MirInstructionKind::CallInput &&
+           instruction.kind != MirInstructionKind::Call &&
+           instruction.kind != MirInstructionKind::Initialize &&
+           instruction.kind != MirInstructionKind::Assign &&
+           instruction.kind != MirInstructionKind::Modify &&
+           instruction.kind != MirInstructionKind::Lifecycle))
+        return std::nullopt;
+      if (instruction.kind == MirInstructionKind::Call) {
+        const auto *callee =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (!callee || callee->owner ||
+            callee->returnType != instruction.info.type ||
+            (callee->returnType != SemanticType::Void &&
+             !preparationScalar(callee->returnType)) ||
+            !std::all_of(callee->parameterTypes.begin(),
+                         callee->parameterTypes.end(), preparationScalar))
+          return std::nullopt;
+      }
+      for (const auto &argument : instruction.operands)
+        if (!operand(argument))
+          return std::nullopt;
+      if (instruction.result) {
+        const auto *value = constructor.body.findValue(*instruction.result);
+        if (!value || !preparationScalar(value->info.type) ||
+            value->info.traits.drop != DropKind::Trivial ||
+            value->info.traits.containsBorrowedState)
+          return std::nullopt;
+        if (!discardedAssignmentResult(constructor.body, value->id))
+          retain(result.values, value->id);
+      }
+      result.instructions.push_back(instruction.id);
+    }
+    if (stop)
+      continue;
+    if (block->terminator.value && !operand(*block->terminator.value))
+      return std::nullopt;
+    for (const auto &argument : block->terminator.targetArguments)
+      if (!operand(argument))
+        return std::nullopt;
+    for (const auto &argument : block->terminator.elseArguments)
+      if (!operand(argument))
+        return std::nullopt;
+    switch (block->terminator.kind) {
+    case MirTerminatorKind::Goto:
+      pending.push_back(block->terminator.target);
+      break;
+    case MirTerminatorKind::Invoke:
+    case MirTerminatorKind::Branch:
+      pending.push_back(block->terminator.target);
+      pending.push_back(block->terminator.elseTarget);
+      break;
+    case MirTerminatorKind::PropagateFailure:
+      break;
+    default:
+      return std::nullopt;
+    }
+  }
+  if (!found)
+    return std::nullopt;
+  for (const auto id : result.values) {
+    const auto *value = constructor.body.findValue(id);
+    if (value->definition != 0 &&
+        std::find(result.instructions.begin(), result.instructions.end(),
+                  value->definition) == result.instructions.end())
+      return std::nullopt;
+    const bool crossesBoundary = std::any_of(
+        constructor.body.usesOf(id).begin(), constructor.body.usesOf(id).end(),
+        [&](const auto &use) {
+          if (use.kind == MirValueUseKind::PlaceRoot) {
+            const auto *place = constructor.body.findPlace(use.place);
+            return place &&
+                   !unreferencedValueRootedPlace(constructor.body, *place);
+          }
+          if (use.kind == MirValueUseKind::PlaceIndex)
+            return true;
+          if (use.instruction)
+            return use.instruction != stage->id &&
+                   std::find(result.instructions.begin(),
+                             result.instructions.end(),
+                             use.instruction) == result.instructions.end();
+          return use.block == result.stageBlock ||
+                 std::find(result.blocks.begin(), result.blocks.end(),
+                           use.block) == result.blocks.end();
+        });
+    if (crossesBoundary)
+      result.carriedValues.push_back(id);
+  }
+  // Direct scalar loads/literals retain the existing observation-free fusion.
+  const auto *entry = constructor.body.findBlock(constructor.body.entry);
+  const bool direct =
+      result.stageBlock == constructor.body.entry && entry &&
+      std::all_of(
+          entry->instructions.begin(),
+          std::find_if(entry->instructions.begin(), entry->instructions.end(),
+                       [&](const auto &instruction) {
+                         return instruction.id == stage->id;
+                       }),
+          [&](const auto &instruction) {
+            return instruction.result && instruction.definedFailure.empty() &&
+                   ((instruction.kind == MirInstructionKind::Load &&
+                     instruction.operands.size() == 1 &&
+                     instruction.operands.front().kind ==
+                         MirOperandKind::Copy &&
+                     [&] {
+                       const auto *place = constructor.body.findPlace(
+                           instruction.operands.front().place);
+                       return place &&
+                              place->root == MirPlaceRootKind::Binding &&
+                              place->projections.empty() &&
+                              std::find(constructor.parameterBindings.begin(),
+                                        constructor.parameterBindings.end(),
+                                        place->binding) !=
+                                  constructor.parameterBindings.end();
+                     }()) ||
+                    (instruction.kind == MirInstructionKind::Compute &&
+                     instruction.operation == MirOperation::Literal)) &&
+                   std::any_of(stage->operands.begin(), stage->operands.end(),
+                               [&](const auto &argument) {
+                                 return argument.kind ==
+                                            MirOperandKind::Value &&
+                                        argument.value == *instruction.result;
+                               });
+          });
+  return direct ? std::nullopt : std::optional(std::move(result));
+}
+
 std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
 cppMirBaseParameterInitializerBindings(
     const MirProgram &program, const MirConstructorInstance &constructor) {
@@ -42267,6 +42714,17 @@ cppMirBaseParameterInitializerBindings(
     }
   };
 
+  if (const auto preparation = cppMirBasePreparation(program, constructor)) {
+    const auto *stage = constructorBaseInitialization(constructor);
+    const auto &initializer =
+        constructor.initializers[stage->constructorInitializer - 1];
+    return std::vector<CppMirBaseParameterInitializerBinding>{
+        {.initializer = stage->constructorInitializer - 1,
+         .baseType = initializer.targetType,
+         .base = *initializer.base,
+         .constructor = *stage->constructorTarget,
+         .prepared = true}};
+  }
   std::vector<CppMirBaseParameterInitializerBinding> bindings;
   for (std::size_t initializerIndex = 0;
        initializerIndex < constructor.initializers.size(); ++initializerIndex) {
@@ -53822,6 +54280,42 @@ CppMirBodyEmissionPlan CppMirBodyEmitter::buildPlanFromAnalysis(
       plan.failureTextTemplate_ = emitTemplate(true, false);
       if (familySensitive) {
         plan.failureDeducedCallableTextTemplate_ = emitTemplate(true, true);
+      }
+    }
+    if (address.kind == MirBodyKind::Constructor) {
+      const auto *instance = program_.findConstructorInstance(address.owner);
+      if (!baseGateTargets_) {
+        baseGateTargets_.emplace();
+        for (const auto &caller : program_.constructorInstances()) {
+          const auto preparation = cppMirBasePreparation(program_, caller);
+          const auto *stage =
+              preparation ? constructorBaseInitialization(caller) : nullptr;
+          if (stage)
+            baseGateTargets_->push_back(*stage->constructorTarget);
+        }
+      }
+      const bool requestedGate =
+          instance &&
+          std::find(baseGateTargets_->begin(), baseGateTargets_->end(),
+                    instance->id) != baseGateTargets_->end();
+      if (instance && requestedGate &&
+          cppMirBaseGateEligible(program_, *instance) &&
+          (plan.supportsPlainText() || plan.supportsFailureText())) {
+        ScalarBodyTextEmitter writer(program_, representations_, 0, true,
+                                     cppMirBodyEmissionIndentationPlaceholder,
+                                     false, debugBodies_);
+        plan.baseGateTextTemplate_ =
+            writer.emitBaseGate(*instance, cppMirBodyEmissionFamilyPlaceholder);
+      }
+      if (instance && plan.supportsFailureText()) {
+        if (const auto preparation =
+                cppMirBasePreparation(program_, *instance)) {
+          ScalarBodyTextEmitter writer(program_, representations_, 0, true,
+                                       cppMirBodyEmissionIndentationPlaceholder,
+                                       false, debugBodies_);
+          plan.basePreparationTextTemplate_ = writer.emitBasePreparation(
+              *instance, *preparation, cppMirBodyEmissionFamilyPlaceholder);
+        }
       }
     }
     plan.boundaryDeclaration_ = boundaryDeclarationBody(address);
