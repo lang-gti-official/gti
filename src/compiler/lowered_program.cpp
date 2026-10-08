@@ -4,6 +4,59 @@
 #include <algorithm>
 
 namespace lang {
+namespace {
+
+// The first row whose `Payload` matches, using `rows` as a validated hint.
+template <typename Payload, typename Matches>
+const Payload *
+findIndexedDeclaration(const std::vector<LoweredDeclaration> &declarations,
+                       const std::unordered_map<std::size_t, std::size_t> &rows,
+                       std::size_t id, Matches matches) {
+  if (const auto row = rows.find(id);
+      row != rows.end() && row->second < declarations.size()) {
+    if (const auto *payload =
+            std::get_if<Payload>(&declarations[row->second].payload);
+        payload != nullptr && matches(*payload)) {
+      return payload;
+    }
+  }
+  for (const LoweredDeclaration &declaration : declarations) {
+    if (const auto *payload = std::get_if<Payload>(&declaration.payload);
+        payload != nullptr && matches(*payload)) {
+      return payload;
+    }
+  }
+  return nullptr;
+}
+
+} // namespace
+
+void LoweredProgram::indexDeclarations() {
+  classRows_.clear();
+  functionRows_.clear();
+  constructorRows_.clear();
+  storageRows_.clear();
+  symbolRows_.clear();
+  for (std::size_t row = 0; row < declarations_.size(); ++row) {
+    const auto &payload = declarations_[row].payload;
+    if (const auto *item = std::get_if<LoweredClassDeclaration>(&payload)) {
+      classRows_.try_emplace(item->id, row);
+    } else if (const auto *item =
+                   std::get_if<LoweredFunctionDeclaration>(&payload)) {
+      functionRows_.try_emplace(item->id, row);
+    } else if (const auto *item =
+                   std::get_if<LoweredConstructorDeclaration>(&payload)) {
+      constructorRows_.try_emplace(item->id, row);
+    } else if (const auto *item =
+                   std::get_if<LoweredStorageDeclaration>(&payload)) {
+      storageRows_.try_emplace(item->symbol, row);
+    }
+  }
+  for (std::size_t row = 0; row < symbols_.size(); ++row) {
+    symbolRows_.try_emplace(symbols_[row].id, row);
+  }
+}
+
 const LoweredBody *LoweredProgram::findBody(MirBodyAddress address) const {
   return lowered_detail::findBody(bodies_, address);
 }
@@ -16,14 +69,11 @@ LoweredProgram::findDeclaration(LoweredDeclarationId id) const {
 
 const LoweredClassDeclaration *
 LoweredProgram::findClassDeclaration(ClassId id) const {
-  for (const LoweredDeclaration &declaration : declarations_) {
-    if (const auto *payload =
-            std::get_if<LoweredClassDeclaration>(&declaration.payload);
-        payload != nullptr && payload->id == id) {
-      return payload;
-    }
-  }
-  return nullptr;
+  return findIndexedDeclaration<LoweredClassDeclaration>(
+      declarations_, classRows_, id,
+      [id](const LoweredClassDeclaration &payload) {
+        return payload.id == id;
+      });
 }
 
 const LoweredEnumDeclaration *
@@ -45,38 +95,29 @@ LoweredProgram::findEnumDeclaration(const SemanticType &type) const {
 
 const LoweredFunctionDeclaration *
 LoweredProgram::findFunctionDeclaration(FunctionId id) const {
-  for (const LoweredDeclaration &declaration : declarations_) {
-    if (const auto *payload =
-            std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
-        payload != nullptr && payload->id == id) {
-      return payload;
-    }
-  }
-  return nullptr;
+  return findIndexedDeclaration<LoweredFunctionDeclaration>(
+      declarations_, functionRows_, id,
+      [id](const LoweredFunctionDeclaration &payload) {
+        return payload.id == id;
+      });
 }
 
 const LoweredConstructorDeclaration *
 LoweredProgram::findConstructorDeclaration(ConstructorId id) const {
-  for (const LoweredDeclaration &declaration : declarations_) {
-    if (const auto *payload =
-            std::get_if<LoweredConstructorDeclaration>(&declaration.payload);
-        payload != nullptr && payload->id == id) {
-      return payload;
-    }
-  }
-  return nullptr;
+  return findIndexedDeclaration<LoweredConstructorDeclaration>(
+      declarations_, constructorRows_, id,
+      [id](const LoweredConstructorDeclaration &payload) {
+        return payload.id == id;
+      });
 }
 
 const LoweredStorageDeclaration *
 LoweredProgram::findStorageDeclaration(SymbolId id) const {
-  for (const LoweredDeclaration &declaration : declarations_) {
-    if (const auto *payload =
-            std::get_if<LoweredStorageDeclaration>(&declaration.payload);
-        payload != nullptr && payload->symbol == id) {
-      return payload;
-    }
-  }
-  return nullptr;
+  return findIndexedDeclaration<LoweredStorageDeclaration>(
+      declarations_, storageRows_, id,
+      [id](const LoweredStorageDeclaration &payload) {
+        return payload.symbol == id;
+      });
 }
 
 const LoweredGenericParameter *
@@ -112,6 +153,11 @@ LoweredProgram::findGenericParameter(GenericParameterId id) const {
 }
 
 const LoweredSymbol *LoweredProgram::findSymbol(SymbolId id) const {
+  if (const auto row = symbolRows_.find(id); row != symbolRows_.end() &&
+                                             row->second < symbols_.size() &&
+                                             symbols_[row->second].id == id) {
+    return &symbols_[row->second];
+  }
   const auto found = std::find_if(
       symbols_.begin(), symbols_.end(),
       [id](const LoweredSymbol &symbol) { return symbol.id == id; });

@@ -334,6 +334,21 @@ contains:
 or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
 provides deterministic full text for comparison and independent tooling.
 
+Checking the seal prints and hashes the whole program, which for a
+library-heavy program is the largest single cost after lowering. Each
+consumer therefore verifies once. `verifiedLoweredProgram` returns a
+`VerifiedLoweredProgram`, evidence that one exact immutable value passed, and
+`CppBackend` hands that evidence to the emitter, emission planner, and
+representation snapshot instead of letting each stage verify again. The
+`LoweredProgram` overloads of those stages still verify first, so a direct or
+test caller cannot bypass rejection. The builder runs every check except the
+seal and then computes the seal; it never re-checks a seal it has just
+computed. Lookups by class, function, constructor, storage, or symbol
+identity use row hints built at construction. A hint is used only after its
+row is confirmed to still carry that identity; otherwise the lookup scans, so
+mutated test values keep their exact behavior. The hints are derived data and
+are not part of the printed contract.
+
 ## Generated Items
 
 Every generated family has a target-independent contract:

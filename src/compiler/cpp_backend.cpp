@@ -13,13 +13,15 @@ CppBackend::CppBackend(CppStandard standard, bool debugInfo)
 std::string_view CppBackend::name() const { return "cpp"; }
 
 BackendArtifact CppBackend::generate(const LoweredProgram &program) {
-  const std::vector<LoweredProgramIssue> issues = verifyLoweredProgram(program);
-  if (!issues.empty()) {
+  std::vector<LoweredProgramIssue> issues;
+  const std::optional<VerifiedLoweredProgram> verified =
+      verifiedLoweredProgram(program, issues);
+  if (!verified) {
     throw std::logic_error("C++ backend requires a verified lowered program: " +
                            issues.front().detail);
   }
   return {.kind = BackendArtifactKind::Source,
-          .contents = CppEmitter(program, standard, debugInfo).emit(),
+          .contents = CppEmitter(*verified, standard, debugInfo).emit(),
           .extension = ".cpp"};
 }
 

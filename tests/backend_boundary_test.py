@@ -131,8 +131,10 @@ def main() -> int:
 
     emitter_header = (root / "include/gti/cpp_emitter.h").read_text(encoding="utf-8")
     emitter_code = without_comments(emitter_header)
+    # The backend verifies its LoweredProgram once and hands the emitter that
+    # evidence; the emitter has no other input.
     if not re.search(
-        r"CppEmitter\s*\(\s*const\s+LoweredProgram\s*&\s*program\s*,\s*"
+        r"CppEmitter\s*\(\s*const\s+VerifiedLoweredProgram\s*&\s*program\s*,\s*"
         r"CppStandard\s+standard\s*,\s*bool\s+debugInfo\s*\)",
         emitter_code,
     ):
