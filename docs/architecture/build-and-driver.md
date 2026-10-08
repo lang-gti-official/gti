@@ -56,7 +56,7 @@ choice enters a compilation request, manifest, executable or cache key.
 - `src/cli/` owns argument routing, diagnostics/output presentation, and exit
   status. It constructs driver requests rather than reimplementing compilation.
 - `gti_lsp` is built whenever `GTI_BUILD_LSP` is enabled. It links the driver
-  for canonical read-only manifest discovery/parsing of `[build].defines`, but
+  for canonical read-only manifest discovery and selected configuration, but
   does not construct compilation, backend, or native-process requests. Its
   private JSON protocol machinery reuses the mandatory LLVM support dependency,
   so LSP availability no longer depends on discovering or bundling a separate

@@ -238,8 +238,7 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
   }
   std::string text;
   if (type.qualifiedOwner) {
-    text = typeToString(*type.qualifiedOwner) + "::" +
-           type.name.last().lexeme;
+    text = typeToString(*type.qualifiedOwner) + "::" + type.name.last().lexeme;
   } else {
     for (std::size_t index = 0; index < type.name.segments.size(); ++index) {
       if (index != 0) {

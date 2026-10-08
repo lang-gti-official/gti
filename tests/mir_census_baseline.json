@@ -43,6 +43,7 @@
     "129-generic-payload-enums.gti": 398,
     "13-ownership.gti": 81,
     "130-fresh-result-initialization.gti": 384,
+    "131-inferred-references.gti": 530,
     "132-qualified-type-members.gti": 100,
     "14-operators.gti": 52,
     "15-variadic-generics.gti": 49,
@@ -129,5 +130,5 @@
     "98-shared-ownership.gti": 390,
     "99-borrowed-expected.gti": 391
   },
-  "total": 21203
+  "total": 21733
 }
