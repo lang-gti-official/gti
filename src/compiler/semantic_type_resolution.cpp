@@ -2993,8 +2993,8 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     diagnostic.related.push_back({tokenSpan(classInfo(alias.ownerClass).name),
                                   "Generic owning type is declared here."});
     diagnostic.hints.emplace_back(
-        "Use the alias inside its declaring generic class, or name the "
-        "concrete target type directly.");
+        "Write a specialized owning type before '::' (or a named alias to "
+        "it), or use the alias inside its declaring generic class.");
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
@@ -3018,7 +3018,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       return;
     }
     if (type.name.last().completion) {
-      captureQualifiedCompletion(type.name, type.qualifiedOwner.get());
+      captureQualifiedCompletion(type.name, type.qualifiedOwner.get(), true);
       return;
     }
     if (!resolveTypeAliasPath(type, currentNamespace)) {

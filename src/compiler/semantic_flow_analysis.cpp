@@ -3960,7 +3960,8 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
 }
 
 auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
-                                                       const TypeRef *ownerType)
+                                                       const TypeRef *ownerType,
+                                                       bool typeOnly)
     -> void {
   const Token &completion = path.last();
   SemanticCompletionContext context{.kind = SemanticCompletionKind::Namespace,
@@ -4088,7 +4089,8 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
     for (const auto &[name, member] : classType.members) {
       // Alias qualification currently names type members, not static values.
       // Do not advertise a spelling that ordinary symbol lookup cannot use.
-      if (specializedOwner || !member.symbol.staticMember ||
+      if (typeOnly || (specializedOwner && !ownerType) ||
+          !member.symbol.staticMember ||
           (member.access == AccessModifier::Private &&
            currentClass != member.symbol.ownerClass)) {
         continue;

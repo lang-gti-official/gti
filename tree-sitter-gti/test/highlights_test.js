@@ -669,6 +669,13 @@ for (const component of ["qualified_outer", "qualified_inner", "qualified_leaf"]
   requireCapture(namespacePathRow, component, "module");
 }
 
+const specializedTypeRow = fixtureLines.findIndex((line) =>
+  line.includes("using SpecializedHighlight"),
+);
+requireCaptureCount(specializedTypeRow, "Box", "type", 2);
+requireCapture(specializedTypeRow, "nested", "type");
+requireCapture(specializedTypeRow, "value_type", "type");
+
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );

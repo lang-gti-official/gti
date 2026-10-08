@@ -284,7 +284,11 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    scoped alias follows the surrounding access section and the default access
    of its class key. A public alias on a non-generic owner may be named as
    `Owner::Name`; an alias in a generic owner may use that owner's parameters
-   in member signatures, but GTI has no `Owner<Args>::Name` type path yet.
+   in member signatures and may be selected through `Owner<Args>::Name` in
+   type contexts, including chained alias qualifiers. Member aliases do not
+   themselves accept generic arguments. Exact class definitions still reject
+   aliases, and direct specialized-alias constructor expressions are outside
+   this type-context syntax.
    Class aliases are direct members and are not inherited through base types.
 
    Alias cycles and aliases whose target contains a reference are invalid;

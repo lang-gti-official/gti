@@ -298,16 +298,24 @@ owning specialization's generic substitution, including chained type members.
 Specialized owners may also appear directly in type paths:
 `Box<int>::value_type` and `Outer<int>::nested_type::value_type` resolve the
 same types as their named-alias equivalents. Owner arguments (including
-defaults, value generics and exact specializations) are resolved and validated
+defaults and value generics) are resolved and validated
 before member selection. Every qualifier retains source visibility and access
 checks; a public final member cannot bypass a private intermediate alias.
 Each selected member alias is substituted under its actual owning instance.
-Only direct type aliases can follow a class-like owner in this type syntax;
+An enclosing generic must establish the selected owner's constraints: for
+example, `CursorTraits<std::move_constructible T>` may define
+`using iterator = std::vector<T>::iterator;`; unconstrained `T` does not gain
+vector's move-construction guarantee merely by naming its alias.
+This form extends type contexts, not direct specialized-alias constructor
+expressions; introduce a named alias or use direct brace initialization at the
+typed declaration. Existing restrictions on aliases in exact class definitions
+remain in force. Only direct type aliases can follow a class-like owner;
 fields, methods, namespace members, alias templates and inherited aliases do
 not become type members. A malformed or missing member is diagnosed by the
 frontend before HIR/MIR/backend entry. `Box::value_type` remains rejected
-outside generic `Box` as an unspecialized type. Class aliases are direct members rather than inherited
-members; a derived class does not acquire a base alias. Alias templates,
+outside generic `Box` as an unspecialized type. Class aliases are direct members
+rather than inherited members; a derived class does not acquire a base alias.
+Alias templates,
 C++ `using Base::member` exposure, constructor inheritance, and access
 reshaping are not part of this declaration form. Native callback aliases remain
 namespace-only under the native C interoperation contract.
