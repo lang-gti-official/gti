@@ -1,0 +1,33 @@
+#include <std/memory>
+
+uint64_t bounded(uint64_t input) {
+  gti_internal::require_relocation_capacity(input < uint64_t(4));
+  return input + uint64_t(1);
+}
+
+uint64_t inverse(uint64_t input) {
+  gti_internal::require_relocation_capacity(!(input >= uint64_t(4)));
+  return input + uint64_t(1);
+}
+
+uint64_t changed(mut uint64_t input) {
+  gti_internal::require_relocation_capacity(input < uint64_t(4));
+  input = uint64_t(18446744073709551615);
+  return input + uint64_t(1);
+}
+
+int main() {
+  // Canonical context discovery considers both sides. The guards, not the
+  // selected literal branch, justify successful-path arithmetic bounds.
+  if (true) {
+    if (bounded(uint64_t(0)) != uint64_t(1)) return 1;
+  } else {
+    [[discard]] bounded(uint64_t(18446744073709551615));
+  }
+  if (true) {
+    if (inverse(uint64_t(0)) != uint64_t(1)) return 2;
+  } else {
+    [[discard]] inverse(uint64_t(18446744073709551615));
+  }
+  return changed(uint64_t(0)) == uint64_t(0) ? 0 : 3;
+}

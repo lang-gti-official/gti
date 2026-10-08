@@ -451,6 +451,16 @@ failures; their native behavior checks pass. Those expectations remain intact.
 Full native corpus, final combined inventories, installed consumers and measured
 performance remain required. No Linux/Windows native execution is claimed.
 
+The subsequent successful-predicate prerequisite passes the eight focused
+compiler/optimizer/source-contract gates in 41.93 seconds and the expanded
+18-fixture, eight-mode native matrix (144 executions) in 65.26 seconds.
+Direct and negated guards refine only their successful path; a later write
+still reports its exact integer overflow, and a false guard still reports
+`GTI-R0010` at its exact source. The detector controls live in a temporary
+trusted source module: application access to compiler-private names is not
+relaxed. Independent coherence replay and the 508-file formatting check pass.
+The seven original owner proof requirements remain open.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

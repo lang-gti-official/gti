@@ -350,6 +350,14 @@ An unrelated record regression distinguishes the pure detector from an
 unknown field, conflicting field writes and an unreached call context.
 The existing one-boolean defined-failure detectors likewise preserve unrelated
 facts: their input condition is source-computed, not a container invariant.
+On the successful Invoke edge, the same comparison refinement used by ordinary
+branches can consume that predicate. A bounded 32-stage walk follows only
+inert boolean value staging, identity and negation; arbitrary source calls or
+loaded boolean bindings do not become predicate contracts. The failed edge
+receives no successful-predicate refinement. Evidence retains the detector,
+comparison and staged identities for independent replay. Exact later writes
+invalidate the place's earlier bound. This does not invent a relation between
+unknown container fields or initialize a raw region.
 
 Exact integer-scalar final-address construction has a narrow transfer profile.
 Shared MIR effects retain its unknown-memory write and initialization, but do

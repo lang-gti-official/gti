@@ -684,15 +684,41 @@ adjust(CheckedIntegerValue value, int delta, CheckedIntegerDomain domain) {
   }
 }
 
-void refineBranch(const MirBody &body, const MirBlock &block,
-                  AbstractState &state, bool branchTaken) {
-  if (!state.reachable || block.terminator.kind != MirTerminatorKind::Branch ||
-      !block.terminator.value ||
-      block.terminator.value->kind != MirOperandKind::Value) {
+void refineCondition(const MirBody &body, MirBlockId block,
+                     const MirOperand &condition, AbstractState &state,
+                     bool branchTaken, Evidence conditionEvidence = {}) {
+  if (!state.reachable || condition.kind != MirOperandKind::Value) {
     return;
   }
-  const MirInstruction *comparison =
-      definingInstruction(body, block.terminator.value->value);
+  const MirInstruction *comparison = definingInstruction(body, condition.value);
+  // A detector consumes an exactly staged boolean value. Follow only inert
+  // value staging/boolean negation, with a hard bound; arbitrary source calls
+  // and loaded booleans do not supply a hidden predicate contract.
+  for (std::size_t depth = 0; comparison && depth < 32; ++depth) {
+    if (comparison->operands.size() != 1 ||
+        comparison->operands.front().kind != MirOperandKind::Value ||
+        comparison->info.type != SemanticType::Bool)
+      break;
+    const bool staged = comparison->kind == MirInstructionKind::CallInput &&
+                        comparison->callInputKind == HirCallInputKind::Value;
+    const bool negated = comparison->kind == MirInstructionKind::Compute &&
+                         comparison->operation == MirOperation::LogicalNot;
+    const bool identity = comparison->kind == MirInstructionKind::Compute &&
+                          comparison->operation == MirOperation::Identity;
+    if (!staged && !negated && !identity)
+      break;
+    const auto effect = effects(*comparison);
+    if (comparison->rawMemoryAccess ||
+        comparison->unsafeOperation != UnsafeOperationKind::None ||
+        effect.writesPlace || effect.writesUnknownMemory ||
+        effect.invokesUserCode || effect.maySynchronize)
+      return;
+    addInstruction(conditionEvidence, comparison->id);
+    addValue(conditionEvidence, *comparison->result);
+    if (negated)
+      branchTaken = !branchTaken;
+    comparison = definingInstruction(body, comparison->operands.front().value);
+  }
   if (comparison == nullptr ||
       comparison->kind != MirInstructionKind::Compute ||
       comparison->operands.size() != 2) {
@@ -779,9 +805,10 @@ void refineBranch(const MirBody &body, const MirBlock &block,
     return;
   }
   Evidence evidence = merged(variableFact->evidence, constantFact->evidence);
-  add(evidence, block.id);
+  evidence = merged(std::move(evidence), conditionEvidence);
+  add(evidence, block);
   addInstruction(evidence, comparison->id);
-  addValue(evidence, block.terminator.value->value);
+  addValue(evidence, condition.value);
   if (!intersect(*variableFact, lower, upper, evidence)) {
     state.reachable = false;
     return;
@@ -810,6 +837,14 @@ void refineBranch(const MirBody &body, const MirBlock &block,
     placeFact.wideningEnvelope = variableFact->wideningEnvelope;
     state.integerPlaces[place] = std::move(placeFact);
   }
+}
+
+void refineBranch(const MirBody &body, const MirBlock &block,
+                  AbstractState &state, bool branchTaken) {
+  if (block.terminator.kind == MirTerminatorKind::Branch &&
+      block.terminator.value)
+    refineCondition(body, block.id, *block.terminator.value, state,
+                    branchTaken);
 }
 
 [[nodiscard]] std::optional<IntegerFact>
@@ -2698,7 +2733,24 @@ struct Edge {
     }
     break;
   case MirTerminatorKind::Invoke: {
-    append(terminator.target, terminator.targetArguments, 0, transfer.output,
+    AbstractState success = transfer.output;
+    const auto detector =
+        std::find_if(block.instructions.begin(), block.instructions.end(),
+                     [&](const auto &instruction) {
+                       return instruction.id == terminator.invokeInstruction;
+                     });
+    if (detector != block.instructions.end() &&
+        intrinsicBooleanFailureOutcome(detector->intrinsic) &&
+        detector->kind == MirInstructionKind::Call && !detector->result &&
+        !detector->receiver && detector->info.type == SemanticType::Void &&
+        detector->operands.size() == 1 &&
+        detector->operands.front().type == SemanticType::Bool) {
+      Evidence evidence;
+      addInstruction(evidence, detector->id);
+      refineCondition(body, block.id, detector->operands.front(), success, true,
+                      std::move(evidence));
+    }
+    append(terminator.target, terminator.targetArguments, 0, std::move(success),
            false, false);
     const auto before = transfer.before.find(terminator.invokeInstruction);
     append(terminator.elseTarget, terminator.elseArguments, 1,

@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -130,5 +132,49 @@ int main() {
            "a pure boolean detector preserves unrelated facts without hiding "
            "an overflowing mutation");
   }
+  const auto guardPath = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures/optimizer_boolean_guards.gti";
+  const std::ifstream guardFile(guardPath);
+  const std::string guardSource{
+      std::istreambuf_iterator<char>(guardFile.rdbuf()), {}};
+  const auto guards = lang::Frontend().analyze(
+      guardPath, guardSource, {standardLibrary / "prelude.gti", guardPath},
+      {{std::filesystem::weakly_canonical(guardPath).string(), guardSource}},
+      {standardLibrary});
+  expect(guards.canGenerateCode(),
+         "source predicate guard controls must lower");
+  if (!guards.canGenerateCode())
+    for (const auto &diagnostic : guards.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (guards.canGenerateCode())
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized =
+          pipeline.run({.hir = guards.hir, .mir = guards.mir, .level = level});
+      expect(optimized.valid(), "source predicate guard proofs must replay");
+      for (const auto &instance : guards.hir.functionInstances()) {
+        if (!instance.source)
+          continue;
+        const auto name = instance.source->name().lexeme;
+        if (name != "bounded" && name != "inverse" && name != "changed")
+          continue;
+        const auto *body = optimized.mir.findFunctionInstance(instance.id);
+        std::size_t count = 0;
+        if (body)
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              for (const auto &proof : instruction.safetyDischarges)
+                count += proof.family ==
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow;
+        expect(count ==
+                   (name != "changed" && level != lang::OptimizationLevel::O0
+                        ? 1
+                        : 0),
+               "successful boolean guards refine staged predicates; a later "
+               "write must not retain the earlier place bound: " +
+                   std::string(name) + " has " + std::to_string(count));
+      }
+    }
   return failures == 0 ? 0 : 1;
 }
