@@ -73,6 +73,17 @@ extern "C" {
 }
 ```
 
+Declare a platform library function with the C families its own header uses.
+A `size_t` parameter or result is `c_size_t`, not `uint64_t`: on macOS
+`size_t` is `unsigned long` while `uint64_t` is `unsigned long long`, and the
+generated C++ may already see the platform prototype, so a fixed-width spelling
+can conflict with it during native compilation (coverage finding A37). The same
+applies to `long`, `char*` buffers (`c_char*`), and other C families: equal
+width is not enough. The C families make such a binding direct, without a
+forwarding C shim; the
+[libc region provider](../../examples/libc-region-provider/src/main.gti) binds
+`malloc` this way.
+
 The runnable [native scalar example](../../examples/123-native-c-scalars.gti)
 uses real C library calls, unrelated generic aggregates and checked numeric
 conversion. `gti bindgen` emits these families for the corresponding C
