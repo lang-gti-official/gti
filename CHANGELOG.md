@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.384.0 — Program installation and quieter builds
+
+- Install a project's executable with `gti install` and remove it with
+  `gti uninstall <name>`. Programs are built with the `release` profile and
+  copied into `~/.local/bin` by default (`--root` or `GTI_INSTALL_ROOT` choose
+  another location); `gti install --list` shows them. Install never replaces
+  or removes a file it did not place unless you pass `--force`. macOS and
+  Linux only for now.
+- Build and run output no longer shows the `Lowering`, `Emitting` and
+  `Native` stages. `--verbose` still shows them, and a long native link keeps
+  the elapsed-time row live.
+
 ## 0.379.0 — Programmable allocators
 
 - Write allocation policies in ordinary GTI. A resource implements the small
