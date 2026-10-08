@@ -1838,14 +1838,10 @@
       "outcome": "ice"
     },
     "a28-range-element-field-overloaded-operator": {
-      "finding": "A28",
-      "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-range-element-field-ref-method": {
-      "finding": "A28",
-      "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a29-method-on-returned-string-view": {
       "finding": "A29",
@@ -2097,6 +2093,13 @@
       "outcome": "pass"
     },
     "a59-map-at-then-element-ref": {
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "<std/map>:[0-9]+: runtime error\\[GTI-R0015\\]: key_not_found in key_lookup\\n",
+          "stdout": ""
+        }
+      ],
       "outcome": "pass"
     },
     "a59-readonly-ref-into-mut-nested-container": {
