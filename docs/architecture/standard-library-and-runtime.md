@@ -366,16 +366,16 @@ repository consumer and is retired rather than retaining a second validation
 policy. The replacement native ABI in `<gti/memory.h>` exposes only target facts
 and forwarding operations with documented caller preconditions. Native `size_t`
 is not GTI's `std::size_t = uint64_t`; adapters perform that conversion only after
-source validation. POSIX's unsupported `void**` stays local to its adapter.
-CRT leading-underscore symbols are inaccessible through the current native-name
-rules, so Windows release also uses a forwarding adapter. Remove these adapters
-when general exact native scalar/output-pointer/symbol binding support can
-express their signatures. `free(void*)` is expressible directly, but the stdlib
-uses a uniquely named forwarding release adapter: the current C ABI rejects
-compatible duplicate symbol declarations, and a hidden private `free` declaration
-would otherwise prevent applications from declaring their own libc binding.
-Canonical reusable native declarations are the removal prerequisite for this
-last forwarding seam. The independent libc-region example uses ordinary `free`.
+source validation. General `c_size_t` and nested-pointer support can now express
+the POSIX signature. Its uniquely named allocation and release forwarders remain
+because the current C ABI rejects even compatible duplicate symbol declarations;
+private declarations of `posix_memalign` or `free` would otherwise prevent
+applications from declaring their own libc bindings. CRT leading-underscore
+symbols are also inaccessible through the current native-name rules. Reusable
+native declarations and exact reserved-symbol binding are the respective removal
+prerequisites, rather than missing scalar/output-pointer support. Native target
+constants may still need a narrow host boundary. The independent libc-region
+example uses ordinary `malloc(c_size_t)` and `free`.
 
 Sparse object regions and live metadata now use this source-owned provider
 policy, including default typed factories. Other generated-program allocations
