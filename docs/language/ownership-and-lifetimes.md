@@ -1862,11 +1862,46 @@ is provided by the separate `resource_vector` described under
 
 ## Owning Text
 
-`std::string_view` is a counted read-only view. A literal-backed view is an
-independent trivial value over static storage. `std::string::view()` produces
-a dynamic view carrying one compiler-tracked read-only dependency on that
-string's character storage. Both forms support `size()`, `empty()`, and checked
-read-only indexing.
+`std::string_view` is an ordinary source-defined class declared in the
+implicit prelude. Its only field is the compiler-private text capability
+`gti_internal::text_view`. Every public operation is GTI source that takes
+part in ordinary lookup, overload selection, tooling, and selected-call
+lowering: `size`, `empty`, checked indexing, `at`, `front`, `back`,
+`find`/`rfind`, the `find_*_of` family, `starts_with`, `ends_with`,
+`contains`, `compare` and the comparison operators, `substr`,
+`remove_prefix`, `remove_suffix`, and read-only iteration. The compiler does
+not recognize any public method spelling.
+
+The compiler keeps only the mechanisms that source cannot establish safely.
+Each is bound to an exact trusted declaration identity in the prelude, never
+to an application spelling:
+
+| Mechanism | Why it is compiler-owned |
+| --- | --- |
+| The literal bridge: a string literal constructs `std::string_view` through its one trusted constructor over the literal's static text | Static literal storage has no GTI owner; the construction stays explicit in HIR and MIR. |
+| `gti_internal::prefix_storage_text_view` | Views initialized owner storage and starts the owner dependency. |
+| `size()` and checked `[]` on the private capability | Counted byte access over storage that source cannot address. |
+| `gti_internal::text_view_slice` | A clamped narrowing that keeps the original storage provenance, including for empty results. Range policy and its `GTI-R0007` failures live in `substr`, `remove_prefix`, and `remove_suffix` source. |
+| Constant text materialization | Literal-backed views evaluate through staged MIR constant execution. |
+| A literal bound to a `c_string` call parameter | Only complete static literals carry a terminator. |
+| `expect(message)` and the native C boundary | Panic messages and native counted-text arguments read the private text through the trusted `text_capability()` accessor; native callbacks rebuild the view through the bridge constructor. See [native C interop](native-c-interop.md). |
+
+Declarations whose signature mentions the private capability, such as the
+bridge constructor and `text_capability()`, are withheld from application
+lookup and tooling.
+
+Operations count code units and treat embedded NUL bytes as ordinary
+characters. `compare` and the ordering operators use unsigned byte order, and
+a proper prefix orders first. Searches return `std::string_view::npos` when
+nothing matches. An empty needle matches at the requested position for `find`
+(when the position is at most `size()`) and at `min(position, size())` for
+`rfind`. `substr(position, count)` permits `position == size()`, raises
+`GTI-R0007` for `position > size()`, and clamps `count` to the remaining
+length. `remove_prefix` and `remove_suffix` require a mutable view and raise
+`GTI-R0007` when the count exceeds `size()`. `front` and `back` raise on an
+empty view. Checked indexing reports `index_out_of_bounds in string_view`,
+including during constant evaluation, where an out-of-range index is reported
+at the library index with the exact valid range.
 
 `std::string`, imported with `#include <std/string>`, is an ordinary nominal GTI
 class over `gti_internal::prefix_storage<char>`. It supports construction and
@@ -1878,18 +1913,69 @@ string. Because its storage field is a unique owner, the compiler derives a
 move-only lifecycle for the class. This avoids a hidden allocation on
 assignment; duplication is visible at the call site as `value.clone()`.
 
+### Text-Carrying Values
+
+A literal-backed view is an ownerless value over static storage.
+`std::string::view()` produces a dynamic view carrying one compiler-tracked
+read-only dependency on that string's character storage. The dependency is a
+property of each value, not of the type: copies, moves, parameters, returns,
+subviews, and iterators relay the original storage owner, never the view
+object they were obtained from. Destroying a temporary view does not
+invalidate a derived view; destroying, moving, or mutating the owner while any
+dependent view is live is rejected.
+
+The same rule applies to every *text-carrying* class: a class whose instance
+fields are only text descriptors, trivially dropped scalars, or other
+text-carrying classes, with at least one text field. Such a class owns nothing
+a method could view, so every text it yields relays only the external owners
+it was constructed from. `std::string_view`, its iterator, and user-defined
+carriers follow one structural rule:
+
+```gti
+class Token {
+  std::string_view text;
+  int kind;
+public:
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view view() { return this.text; }
+};
+```
+
+A `Token` built from `owned.view()` keeps `owned` borrowed for as long as the
+token or any view derived from it is live. Construction relays the owners of
+its owner-dependent text arguments; a carrier constructed from owner-dependent
+text must have exactly one text-carrying constructor parameter. A field of a
+text-carrying class may retain owner-dependent text only from such a
+constructor parameter. A class that also owns storage is not a text carrier
+and cannot retain owner-dependent text in a field.
+
+A read-only method of a text-carrying class returns text relaying the
+receiver's external owners. A mutable method may narrow its own text field to
+text derived only from that same field (the `remove_prefix` shape), and MIR
+verifies that exact relay independently. A mutable receiver may otherwise
+update its non-text fields freely.
+
 Dynamic views may be copied among local bindings and relayed from one exact
 read-only parameter or receiver. Concrete generic instantiation derives this
 same return dependency after substituting the exact parameter and return
-types. A literal-backed argument remains an ownerless static view and needs no
-runtime loan; a dynamic argument transfers its existing owner dependency to
-the result. That retained loan prevents mutation, movement, or destruction of
-the owner until the last local carrier ends. A dynamic view cannot escape a
-local owner, originate from temporary storage, be assigned into existing
-storage, or be nested in a field, global, static, array, or dynamic container.
-Mutable, multiple-origin, nested, and reassignable view graphs remain
+types. A literal-backed argument remains ownerless and needs no runtime loan;
+a dynamic argument transfers its existing owner dependency to the result. That
+retained loan prevents mutation, movement, or destruction of the owner until
+the last local carrier ends. A dynamic view cannot escape a local owner,
+originate from temporary storage, be assigned into an existing binding, or be
+nested in a global, static, array, dynamic container, or a field of a class
+that is not text-carrying. Multiple-origin and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
+
+Two shapes are not yet supported. They currently stop at internal MIR or
+backend verification rather than a semantic diagnostic. The first is calling a
+method on a temporary view of an element borrowed from a resource-bound
+container, such as `words.get(i).view().size()`; compare or inspect through
+the element itself (`words.get(i) != "beta"`) instead. The second is
+explicitly constructing a view from a temporary view,
+`std::string_view(owned.view())`, which shares the general gap for explicit
+construction from a class prvalue; bind or pass the view directly.
 
 An owning wrapper may relay a field's text accessor, for example
 `return text.view();` or `return this.text.view();`. Both spellings retain

@@ -7428,17 +7428,38 @@ public:
 
   void emitNativeCallbackArguments(const CppMirNativeCallbackThunk &callback) {
     const MirNativeCallbackAdapter &adapter = callback.adapter;
+    const MirFunctionInstance &target = nativeCallbackTarget(callback);
     const std::size_t count =
         adapter.type.nativeFunctionParameterTypes().size();
     for (std::size_t index = 0; index < count; ++index) {
       if (index != 0) {
         output << ", ";
       }
+      // A verified bridge constructor rebuilds the target's public text
+      // view from the native counted record.
+      const bool bridged = index < adapter.textBridges.size() &&
+                           adapter.textBridges[index] != 0 &&
+                           index < target.parameterTypes.size();
       if (adapter.type.nativeFunctionParameterTypes()[index].kind ==
           SemanticType::StringView) {
+        const MirConstructorInstance *bridge =
+            bridged ? mir.findConstructorInstance(adapter.textBridges[index])
+                    : nullptr;
+        if (bridged && (bridge == nullptr || bridge->mayRaiseDefinedFailure)) {
+          throw std::logic_error(
+              "native callback text bridge is not a failure-free "
+              "constructor");
+        }
+        if (bridged) {
+          emitSemanticType(target.parameterTypes[index]);
+          output << '(';
+        }
         output << "std::string_view(__gti_callback_arg_" << index
                << ".data, static_cast<std::size_t>(__gti_callback_arg_" << index
                << ".length))";
+        if (bridged) {
+          output << ')';
+        }
       } else {
         output << "__gti_callback_arg_" << index;
       }

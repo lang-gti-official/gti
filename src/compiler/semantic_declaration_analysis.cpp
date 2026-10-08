@@ -5189,6 +5189,12 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   }
   const std::optional<CallableCandidate> intrinsic =
       intrinsicCandidate(call->callee());
+  // A slice relays exactly its first argument's text owner.
+  if (intrinsic &&
+      intrinsic->record().intrinsic == IntrinsicKind::TextViewSlice &&
+      call->arguments().size() == 3) {
+    return predeclaredTextBorrowSource(call->arguments().front(), function);
+  }
   if (!intrinsic || call->arguments().size() != 1 ||
       (intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageTextView &&
        intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageCString &&

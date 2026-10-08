@@ -283,23 +283,25 @@ dependency; assignment is unavailable because the current lifetime model does
 not reseat borrowed-state carriers.
 
 `std::string::view()` returns a counted `std::string_view` over the string's
-live character prefix. Literal-backed string views remain independent trivial
-values. A view produced from dynamic storage is instead tagged at the
-expression and binding level with one read-only owner dependency. That
-dependency passes through local copies, direct receiver factories, exact
-single-parameter relay functions, moves, returns, and drops. It ends at the
-proven last use or enclosing scope end of the final retained local view, after
-which the owner may be mutated, moved, or dropped. While it is live, every
-overlapping owner mutation or movement is rejected. Empty dynamic views follow
-the same rules and carry a zero length without requiring an element address.
+live character prefix. Literal-backed string views remain ownerless values. A
+view produced from dynamic storage carries one read-only owner dependency per
+value. That dependency passes through copies, subviews, iterators, direct
+receiver factories, exact single-parameter relay functions, moves, returns,
+drops, and text-carrying classes that store the view. It ends at the proven
+last use or enclosing scope end of the final retained carrier, after which the
+owner may be mutated, moved, or dropped. While it is live, every overlapping
+owner mutation or movement is rejected. Empty dynamic views follow the same
+rules and carry a zero length without requiring an element address.
 
-The bounded release deliberately excludes mutable views, multiple owners,
-nested borrowed-state storage, reassignment, and field/global/static storage.
-A dynamic text view cannot be formed from temporary storage or escape a local
-owner. A `std::string_view` parameter is conservatively treated as potentially
-dynamic inside the callee; it may be inspected or returned through one exact
-read-only parameter summary, but it cannot be retained in another storage
-object. These restrictions keep source validity in semantics and preserve the
+The bounded release deliberately excludes multiple owners, reassignment of an
+existing binding, and global/static storage. A dynamic text view cannot be
+formed from temporary storage or escape a local owner. A `std::string_view`
+parameter is conservatively treated as potentially dynamic inside the callee;
+it may be inspected, returned through one exact read-only parameter summary,
+or stored in a text-carrying class constructed from it. The structural rule
+for text-carrying classes is in
+[owning text](ownership-and-lifetimes.md#text-carrying-values).
+These restrictions keep source validity in semantics and preserve the
 same owner and transfer facts in HIR and verified MIR. The C++ backend only
 represents the already-verified counted view and does not infer its lifetime.
 

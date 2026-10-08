@@ -41,7 +41,7 @@ public:
     case SemanticType::Char:
       return "char";
     case SemanticType::StringView:
-      return "std::string_view";
+      return "gti_internal::text_view";
     case SemanticType::CString:
       return "c_string";
     case SemanticType::NullPtr:

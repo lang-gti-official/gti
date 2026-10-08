@@ -676,6 +676,10 @@ private:
         evaluated = instruction.intrinsic == IntrinsicKind::StringViewSize
                         ? evaluateConstantTextSize(*text.value)
                         : evaluateConstantTextEmpty(*text.value);
+      } else if (!instruction.receiver && arguments.size() == 3 &&
+                 instruction.intrinsic == IntrinsicKind::TextViewSlice) {
+        evaluated =
+            evaluateConstantTextSlice(arguments[0], arguments[1], arguments[2]);
       } else if (!instruction.receiver && arguments.size() == 1 &&
                  (instruction.intrinsic ==
                       IntrinsicKind::NumericAliasConversion ||
@@ -690,9 +694,24 @@ private:
                   "Instruction is outside the scalar constant MIR profile.");
     }
     if (!evaluated) {
-      return fail(frame, evaluated.failure == ConstantEvaluationFailure::None
-                             ? ConstantEvaluationFailure::UnsupportedExpression
-                             : evaluated.failure);
+      // Checked text indexing reports the exact valid range, as early
+      // constant evaluation of the same text does.
+      const auto *text =
+          instruction.kind == MirInstructionKind::Compute &&
+                  instruction.operation == MirOperation::Index &&
+                  arguments.size() == 2 &&
+                  instruction.operands[0].type == SemanticType::StringView
+              ? std::get_if<std::string>(&arguments[0])
+              : nullptr;
+      return fail(frame,
+                  evaluated.failure == ConstantEvaluationFailure::None
+                      ? ConstantEvaluationFailure::UnsupportedExpression
+                      : evaluated.failure,
+                  text == nullptr
+                      ? std::string{}
+                      : "Constexpr string-view index is outside the valid "
+                        "range [0, " +
+                            std::to_string(text->size()) + ").");
     }
     if (instruction.result)
       frame.values[*instruction.result] = evaluated.value;
@@ -716,9 +735,12 @@ private:
         function->requiresUnsafe || function->virtualMethod ||
         function->definitionKind != MirDefinitionKind::Source ||
         function->receiverMutability != ReceiverMutability::ReadOnly ||
+        // A relayed text result is constant text: its owner dependency has
+        // no runtime meaning while every input is itself a constant.
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
          (function->returnType.kind != SemanticType::Reference ||
-          function->returnType.referenceAccess != AccessMode::ReadOnly)) ||
+          function->returnType.referenceAccess != AccessMode::ReadOnly) &&
+         !mir_detail::textCarrierType(program, function->returnType)) ||
         function->entryKind != ProgramEntryKind::None ||
         function->linkage != LanguageLinkage::Gti ||
         !observedStorageType(function->returnType) ||

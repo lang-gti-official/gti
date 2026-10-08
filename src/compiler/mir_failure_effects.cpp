@@ -1450,6 +1450,9 @@ private:
   [[nodiscard]] bool
   proveSingleFieldTransferConstructor(const MirConstructorInstance &constructor,
                                       const MirClassInstance &owner) const;
+  [[nodiscard]] bool
+  proveTextRelayConstructor(const MirConstructorInstance &constructor,
+                            const MirClassInstance &owner) const;
   [[nodiscard]] bool proveBody(const MirBody &body, MirBodyKind kind,
                                std::size_t owner,
                                const MirClassInstance *ownerClass);
@@ -1803,6 +1806,89 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
   return true;
 }
 
+// A passive text-carrying class built field by field from its scalar and
+// text formals: every field is a copy of one formal, text dependencies are
+// read-only loan bookkeeping, and nothing allocates, traps, or runs user code.
+bool MirOwnedFailureClosure::proveTextRelayConstructor(
+    const MirConstructorInstance &constructor,
+    const MirClassInstance &owner) const {
+  const auto passiveField = [](const SemanticType &type) {
+    return passiveConstructorValueType(type) ||
+           type.kind == SemanticType::StringView ||
+           type.kind == SemanticType::CString;
+  };
+  if (!owner.textCarrier || owner.declaration == 0 || !owner.bases.empty() ||
+      !owner.structuralBases.empty() || owner.abstract || owner.polymorphic ||
+      owner.cAbiRecord || owner.unionLayout || owner.destructor ||
+      owner.requiresActiveDropState || owner.requiresActiveCleanup ||
+      !std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                   [&](const MirClassFieldInfo &field) {
+                     return passiveField(field.type) &&
+                            field.dropKind == DropKind::Trivial &&
+                            !field.requiresActiveCleanup;
+                   }) ||
+      constructor.definitionKind != MirDefinitionKind::Source ||
+      (constructor.borrowOrigin != BorrowOriginKind::None &&
+       !(constructor.borrowOrigin == BorrowOriginKind::Argument &&
+         constructor.borrowAccess == AccessMode::ReadOnly)) ||
+      constructor.parameterTypes.size() !=
+          constructor.parameterBindings.size() ||
+      !std::all_of(constructor.parameterTypes.begin(),
+                   constructor.parameterTypes.end(), passiveField) ||
+      constructor.initializers.size() != owner.declaredFields.size() ||
+      !constructor.body.failureRecords.empty() ||
+      !constructor.body.dropObligations.empty() ||
+      constructor.body.blocks.size() != 1 ||
+      constructor.body.blocks.front().terminator.kind !=
+          MirTerminatorKind::Return)
+    return false;
+  for (const MirConstructorInitializer &initializer : constructor.initializers)
+    if (initializer.kind != ConstructorInitializerTargetKind::Field ||
+        initializer.base || initializer.constructorTarget ||
+        initializer.storesReference || initializer.generatedDefault ||
+        initializer.arguments.size() != 1 ||
+        !passiveField(initializer.targetType))
+      return false;
+  for (const MirInstruction &instruction :
+       constructor.body.blocks.front().instructions) {
+    const MirPlace *source =
+        instruction.kind == MirInstructionKind::Load &&
+                instruction.operands.size() == 1 &&
+                instruction.operands.front().kind == MirOperandKind::Copy
+            ? constructor.body.findPlace(instruction.operands.front().place)
+            : nullptr;
+    const MirPlace *destination =
+        instruction.kind == MirInstructionKind::Initialize &&
+                instruction.destination
+            ? constructor.body.findPlace(*instruction.destination)
+            : nullptr;
+    const bool parameterCopy =
+        source != nullptr && source->root == MirPlaceRootKind::Binding &&
+        source->projections.empty() && passiveField(source->type) &&
+        std::find(constructor.parameterBindings.begin(),
+                  constructor.parameterBindings.end(),
+                  source->binding) != constructor.parameterBindings.end();
+    const bool fieldStage =
+        destination != nullptr && destination->root == MirPlaceRootKind::This &&
+        destination->projections.size() == 1 &&
+        destination->projections.front().kind == MirProjectionKind::Field &&
+        instruction.operands.size() == 1 &&
+        instruction.operands.front().kind == MirOperandKind::Value &&
+        passiveField(destination->type);
+    const bool bookkeeping =
+        (instruction.kind == MirInstructionKind::EndBorrow ||
+         instruction.kind == MirInstructionKind::Lifecycle) &&
+        instruction.lifecycle.empty() && instruction.operands.empty();
+    if ((!parameterCopy && !fieldStage && !bookkeeping) ||
+        !instruction.localFailureSites.empty() ||
+        !instruction.definedFailure.empty() || instruction.functionTarget ||
+        instruction.constructorTarget ||
+        instruction.intrinsic != IntrinsicKind::None)
+      return false;
+  }
+  return true;
+}
+
 bool MirOwnedFailureClosure::proveSingleFieldTransferConstructor(
     const MirConstructorInstance &constructor,
     const MirClassInstance &owner) const {
@@ -2071,6 +2157,11 @@ bool MirOwnedFailureClosure::proveConstructor(HirConstructorInstanceId id) {
 
   if (valid && owner != nullptr &&
       proveSingleFieldTransferConstructor(constructor, *owner)) {
+    state = State::Complete;
+    effects.constructors[id - 1] = false;
+    return true;
+  }
+  if (owner != nullptr && proveTextRelayConstructor(constructor, *owner)) {
     state = State::Complete;
     effects.constructors[id - 1] = false;
     return true;

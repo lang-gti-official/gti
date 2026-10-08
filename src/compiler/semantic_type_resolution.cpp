@@ -59,10 +59,17 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateMatches(
   const SemanticType *returnType = expectedType.nativeFunctionReturnType();
   const std::span<const SemanticType> parameterTypes =
       expectedType.nativeFunctionParameterTypes();
+  // A native counted-text parameter reaches a GTI callback as a public
+  // std::string_view rebuilt through the trusted bridge constructor.
   return returnType != nullptr && candidate.returnType == *returnType &&
          candidate.parameterTypes.size() == parameterTypes.size() &&
          std::equal(candidate.parameterTypes.begin(),
-                    candidate.parameterTypes.end(), parameterTypes.begin());
+                    candidate.parameterTypes.end(), parameterTypes.begin(),
+                    [&](const SemanticType &gti, const SemanticType &native) {
+                      return gti == native ||
+                             (native == SemanticType::StringView &&
+                              isPublicTextView(gti));
+                    });
 }
 
 auto SemanticVisitor::Impl::matchingNativeFunctionCandidates(
@@ -160,6 +167,11 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
         "the wrapper call site becomes the reported location.");
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
+  }
+  if (std::any_of(
+          selected.parameterTypes.begin(), selected.parameterTypes.end(),
+          [&](const SemanticType &type) { return isPublicTextView(type); })) {
+    (void)recordNativeTextBoundary();
   }
   semanticModel.recordNativeFunctionConversion(
       expression,
@@ -730,9 +742,19 @@ auto SemanticVisitor::Impl::callArgumentMatches(const SemanticType &parameter,
   }
   if (parameter.kind != SemanticType::Reference) {
     if (parameter == SemanticType::CString) {
+      // A string literal's static text is NUL-terminated, so its view may
+      // bind a c_string call parameter; no other view converts.
+      const auto *literal =
+          expression ? exprAs<LiteralExpr>(expression.get()) : nullptr;
+      const ConstructorInfo *bridge = textLiteralBridge();
+      const bool literalView =
+          literal != nullptr &&
+          std::holds_alternative<std::string>(literal->value()) &&
+          bridge != nullptr &&
+          argument == SemanticType::classType(bridge->owner);
       return argument == SemanticType::CString ||
              argument == SemanticType::StringView ||
-             argument == SemanticType::NullPtr;
+             argument == SemanticType::NullPtr || literalView;
     }
     if (parameter.kind == SemanticType::RawPointer) {
       return isAssignable(parameter, argument, expression.get());
@@ -2093,8 +2115,17 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
       currentType = SemanticType::Unknown;
       return;
     }
-    if (argumentTypes.front() != SemanticType::StringView &&
-        argumentTypes.front() != SemanticType::Unknown) {
+    // The public message is a std::string_view; the panic intrinsic reads
+    // its private text through the trusted accessor recorded below.
+    const ConstructorInfo *textBridge = textLiteralBridge();
+    const bool viewMessage =
+        textBridge != nullptr &&
+        argumentTypes.front() == SemanticType::classType(textBridge->owner);
+    const FunctionId messageAccessor =
+        viewMessage ? textCapabilityAccessor() : 0;
+    if ((argumentTypes.front() != SemanticType::StringView &&
+         argumentTypes.front() != SemanticType::Unknown && !viewMessage) ||
+        (viewMessage && messageAccessor == 0)) {
       report(expressionToken(call.arguments().front()),
              "expect requires one std::string_view message.", "GTI-S2016");
       currentType = SemanticType::Unknown;
@@ -2133,7 +2164,7 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
     currentType = borrowedSuccess ? expected.arguments[0].arguments.front()
                                   : expected.arguments[0];
     ResolvedCallInfo resolved{.returnType = expected.arguments[0],
-                              .parameterTypes = {SemanticType::StringView},
+                              .parameterTypes = {argumentTypes.front()},
                               .tracksCaller = true,
                               .borrowOrigin = borrowedSuccess
                                                   ? BorrowOriginKind::Receiver
@@ -2146,7 +2177,8 @@ auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
         call, ExpectedCombinatorInfo{.kind = ExpectedCombinatorKind::Expect,
                                      .sourceType = expected,
                                      .resultType = currentType,
-                                     .mapperType = SemanticType::StringView});
+                                     .mapperType = argumentTypes.front(),
+                                     .mapper = messageAccessor});
     recordSelectedCallOccurrence(call, std::move(resolved));
     return;
   }
@@ -6995,9 +7027,13 @@ auto SemanticVisitor::Impl::validateExternCFunction(
                                       "extern C parameter name", true, false);
     }
     const SemanticType parameterType = typeOf(parameter);
+    // The public std::string_view crosses the boundary as the native counted
+    // record of its private text, through the exact trusted accessor.
+    const bool publicTextView = isPublicTextView(parameterType) &&
+                                recordNativeTextBoundary() != nullptr;
     if (parameter.mutability == Mutability::Mutable || parameter.pack ||
         parameter.type.reference || !parameter.type.arrayExtents.empty() ||
-        (!isCAbiScalar(parameterType) &&
+        (!isCAbiScalar(parameterType) && !publicTextView &&
          parameterType != SemanticType::StringView &&
          parameterType != SemanticType::CString &&
          !isCAbiRawPointer(parameterType) && !isCAbiRecordType(parameterType) &&

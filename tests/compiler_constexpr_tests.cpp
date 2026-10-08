@@ -536,18 +536,18 @@ int main() {
           ? nullptr
           : valid.semantics.findBinding(*textDeclaration);
   expect(textBinding != nullptr &&
-             textBinding->type == lang::SemanticType::StringView &&
-             textBinding->traits.drop == lang::DropKind::Trivial &&
-             textBinding->traits.copyable,
-         "string views should remain trivial copyable values in semantics");
+             textBinding->type.kind == lang::SemanticType::Class &&
+             textBinding->traits.copyable &&
+             !textBinding->traits.containsBorrowedState,
+         "a literal-backed std::string_view should be a copyable, ownerless "
+         "source class value in semantics");
 
   const lang::OptimizationResult optimized =
       lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O1);
   const std::string generated = gti_test::emitCppText(
       valid, lang::CppStandard::Cpp23, lang::TargetInfo::host(),
       lang::OptimizationLevel::O1, &optimized);
-  expect(generated.find("using string_view = std::string_view;") !=
-                 std::string::npos &&
+  expect(generated.find("class string_view") != std::string::npos &&
              generated.find("char8_t{71}") != std::string::npos &&
              generated.find("std::string_view{\"GTI\\000text\", 8}") !=
                  std::string::npos &&
@@ -564,24 +564,23 @@ int main() {
                  std::string::npos,
          "the C++ backend should preserve counted text and exact code units");
 
+  // std::string_view is an ordinary source class: misuse is reported by the
+  // same member, overload, and access rules as any class. Checked indexing
+  // is source code, so an out-of-range index fails at run time (GTI-R0007).
   const lang::FrontendResult invalidView = lang::Frontend().analyze(
       "invalid-string-view.gti",
       "int main() { mut std::string_view view = \"abc\"; "
-      "view[0] = 'x'; char outside = \"abc\"[3]; "
-      "char wrong = view[false]; view.missing(); return 0; }",
+      "view[0] = 'x'; char wrong = view[false]; view.missing(); return 0; }",
       {standardLibraryPrelude()});
   expect(!invalidView.canGenerateCode() &&
-             countDiagnosticCode(invalidView.diagnostics, "GTI-S2035") == 4 &&
              hasDiagnostic(invalidView.diagnostics,
-                           "character access is read-only") &&
+                           "operator[] does not provide mutable element "
+                           "access") &&
+             countDiagnosticCode(invalidView.diagnostics, "GTI-S2022") == 1 &&
              hasDiagnostic(invalidView.diagnostics,
-                           "outside the valid range [0, 3)") &&
-             hasDiagnostic(invalidView.diagnostics,
-                           "index must have an integer type") &&
-             hasDiagnostic(invalidView.diagnostics,
-                           "Unknown std::string_view member"),
-         "string-view traversal should reject mutation, invalid literal "
-         "indexes, non-integer indexes, and unknown members in semantics");
+                           "Unknown member 'missing' on 'string_view'"),
+         "string-view misuse should report ordinary class diagnostics for "
+         "mutation, non-integer indexes, and unknown members");
 
   lang::Lexer lexer;
   lang::Parser expressionParser(lexer.scan("'a'"));
@@ -1556,7 +1555,29 @@ static_assert(table<3>(7) == 7);
            "constant array bounds errors reject at the executing body, without "
            "AST fallback");
   }
-  const auto text = evaluate("checksum", std::string("a\0é", 4));
+  // std::string_view is a source class: its constant value is the object
+  // holding the private counted text in its one field.
+  const auto viewOf = [&](std::string bytes) -> lang::ConstantValue {
+    const auto *function =
+        frontend.mir.findFunctionInstance(functionId("checksum"));
+    if (function == nullptr || function->parameterTypes.size() != 1)
+      return bytes;
+    for (const auto &instance : frontend.mir.classInstances()) {
+      if (instance.type != function->parameterTypes.front() ||
+          instance.declaredFields.size() != 1)
+        continue;
+      auto object = std::make_shared<lang::ConstantAggregate>();
+      object->kind = lang::ConstantAggregateKind::Object;
+      object->identity = instance.type.classId;
+      object->exactType = std::make_shared<lang::SemanticType>(instance.type);
+      object->fields.push_back(
+          {.symbol = instance.declaredFields.front().symbol,
+           .value = std::move(bytes)});
+      return lang::ConstantAggregateValue{std::move(object)};
+    }
+    return bytes;
+  };
+  const auto text = evaluate("checksum", viewOf(std::string("a\0é", 4)));
   if (!text)
     std::cerr << "checksum: " << text.detail << " at " << text.block << ':'
               << text.instruction << '\n';
@@ -2277,14 +2298,15 @@ void testConstexprReadOnlyReferences() {
   const auto result = lang::Frontend({.workMetrics = &metrics})
                           .analyze(fixture, source, {standardLibraryPrelude()},
                                    {}, {standardLibraryRoot()});
-  if (!result.canGenerateCode() || metrics.constexprMirExecutions != 14) {
+  // std::string_view observers are GTI source and execute as staged MIR.
+  if (!result.canGenerateCode() || metrics.constexprMirExecutions != 15) {
     std::cerr << "Read-only MIR executions: " << metrics.constexprMirExecutions
               << '\n';
     for (const auto &d : result.diagnostics)
       std::cerr << d.primary.line << ": " << d.message << '\n';
   }
   expect(!source.empty() && result.canGenerateCode() &&
-             metrics.constexprMirExecutions == 14,
+             metrics.constexprMirExecutions == 15,
          "read-only reference calls, returns, rebinding across loop iterations "
          "and std::array/string-view observers execute canonical MIR");
 
@@ -2443,16 +2465,17 @@ void testConstexprReadOnlyReferences() {
           .analyze(assetFixture, assetSource, {standardLibraryPrelude()}, {},
                    {standardLibraryRoot()});
   // The passive record-array constructor now has an explicit field-write
-  // stage and executes through MIR too, instead of the AST fallback.
+  // stage and executes through MIR too, instead of the AST fallback; the
+  // std::string_view text inspection is GTI source executed the same way.
   if (!assetTable.canGenerateCode() ||
-      assetMetrics.constexprMirExecutions != 10) {
+      assetMetrics.constexprMirExecutions != 13) {
     std::cerr << "Asset table MIR executions: "
               << assetMetrics.constexprMirExecutions << '\n';
     for (const auto &diagnostic : assetTable.diagnostics)
       std::cerr << diagnostic.message << '\n';
   }
   expect(!assetSource.empty() && assetTable.canGenerateCode() &&
-             assetMetrics.constexprMirExecutions == 10,
+             assetMetrics.constexprMirExecutions == 13,
          "compile-time asset metadata composes text inspection, record "
          "construction, fixed-array storage and checked reference traversal");
 }
@@ -3016,19 +3039,24 @@ int main() {
         "constexpr-text-bounds.gti", source, {standardLibraryPrelude()});
     const auto *diagnostic =
         findDiagnosticByCode(invalid.diagnostics, "GTI-S2057");
-    expect(
-        !invalid.semanticValid && diagnostic != nullptr &&
-            diagnostic->message.find("outside the valid range [0, 3)") !=
-                std::string::npos &&
-            diagnostic->phase == lang::DiagnosticPhase::Semantics &&
-            diagnostic->primary.source ==
-                std::filesystem::weakly_canonical("constexpr-text-bounds.gti")
-                    .string() &&
-            diagnostic->primary.start == source.find(index) &&
-            diagnostic->primary.end ==
-                source.find(index) + (index == "-1" ? 1 : index.size()) &&
-            diagnostic->fixes.empty(),
-        "constexpr out-of-bounds text access diagnoses its index expression");
+    // Checked indexing is std::string_view source: like other library
+    // operators, the failure keeps its exact library index location, with
+    // the application's constexpr binding as related context.
+    const std::string application =
+        std::filesystem::weakly_canonical("constexpr-text-bounds.gti").string();
+    expect(!invalid.semanticValid && diagnostic != nullptr &&
+               diagnostic->message.find("outside the valid range [0, 3)") !=
+                   std::string::npos &&
+               diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+               diagnostic->primary.source.ends_with("prelude.gti") &&
+               std::any_of(diagnostic->related.begin(),
+                           diagnostic->related.end(),
+                           [&](const auto &related) {
+                             return related.span.source == application;
+                           }) &&
+               diagnostic->fixes.empty(),
+           "constexpr out-of-bounds text access reports the exact range at the "
+           "library index and relates the application binding");
   }
   const auto runtime =
       lang::Frontend().analyze("constexpr-runtime-text.gti", R"(

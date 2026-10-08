@@ -400,6 +400,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .target = adapter.target,
          .type = adapter.type,
          .cThreadCallback = adapter.cThreadCallback,
+         .textBridges = adapter.textBridges,
          .targetMayRaiseDefinedFailure = target->mayRaiseDefinedFailure,
          .failurePolicy = MirNativeCallbackFailurePolicy::TerminateInvocation,
          .catchesNativeExceptions = true});

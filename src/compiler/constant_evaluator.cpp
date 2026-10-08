@@ -1,5 +1,6 @@
 #include "gti/semantic_core.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -92,6 +93,25 @@ ConstantEvaluation evaluateConstantTextEmpty(const ConstantValue &text) {
     return {.failure = ConstantEvaluationFailure::InvalidOperands};
   }
   return {.value = bytes->empty()};
+}
+
+// Mirrors the runtime text_view_slice: the position and count are clamped to
+// the available text, so the result is always a valid subrange.
+ConstantEvaluation evaluateConstantTextSlice(const ConstantValue &text,
+                                             const ConstantValue &position,
+                                             const ConstantValue &count) {
+  const auto *bytes = std::get_if<std::string>(&text);
+  const auto offset = constantUnsignedMagnitude(position);
+  const auto length = constantUnsignedMagnitude(count);
+  if (bytes == nullptr || !offset || !length) {
+    return {.failure = ConstantEvaluationFailure::InvalidOperands};
+  }
+  const std::uint64_t first = std::min<std::uint64_t>(
+      *offset, static_cast<std::uint64_t>(bytes->size()));
+  const std::uint64_t taken = std::min<std::uint64_t>(
+      *length, static_cast<std::uint64_t>(bytes->size()) - first);
+  return {.value = bytes->substr(static_cast<std::size_t>(first),
+                                 static_cast<std::size_t>(taken))};
 }
 
 ConstantEvaluation evaluateConstantTextIndex(const ConstantValue &text,

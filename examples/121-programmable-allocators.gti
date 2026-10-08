@@ -34,7 +34,7 @@ public:
   FixedObject(FixedObject& other) = delete;
   FixedObject(FixedObject&& other) = delete;
   bool stable() { return this.initial_address == &this.value; }
-  std::string_view label() { return this.name.view(); }
+  bool named(std::string_view text) { return this.name == text; }
 };
 }
 
@@ -53,12 +53,12 @@ int use_arena(std::resource_ref<engine::Arena> resource) {
 
   auto moved = std::move(objects);
   if (!moved.get(std::size_t(1)).stable() ||
-      moved.get(std::size_t(1)).label() != "stationary") { return 3; }
+      !moved.get(std::size_t(1)).named("stationary")) { return 3; }
   mut std::size_t total = 0;
   for (auto& name : names) { total += name.size(); }
   if (total != std::size_t(11)) { return 4; }
   names.pop_back();
-  if (names.back().view() != "two") { return 5; }
+  if (names.back() != "two") { return 5; }
   // References into either owner prohibit its mutation/release until last use.
   // resource.get().reset() is intentionally unavailable through this binding.
   return 0;

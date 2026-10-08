@@ -206,6 +206,20 @@ HIR/MIR retain selected intrinsic identity, and the backend queries semantic
 capability facts rather than recognizing a source name before choosing its
 representation.
 
+`std::string_view` is a source-defined prelude class over the private
+`text_view` capability. Its trusted members are identified by exact prelude
+declaration identity, never by spelling: the bridge constructor taking the
+raw capability (selected for every string literal and recorded as an ordinary
+construction), the `text_capability()` accessor, and the
+`gti_internal::text_view_slice` intrinsic. Declarations whose signatures
+mention the capability are withheld from application lookup and tooling.
+At the C boundary the semantic model records one native text boundary (the
+view class, accessor, and bridge constructor). HIR converts each `extern "C"`
+or native-function-pointer argument through an explicit accessor call, gives
+the native instance the raw capability parameter, and records the bridge
+constructor that a native callback adapter uses to rebuild a view. MIR
+verifies those shapes and the backend only spells them.
+
 `shared_owner<T>` is a nominal move-only strong token, not the legacy implicit
 shared-pointer type. Its private operations create an empty token, consume an
 existing unique owner, explicitly retain, borrow read-only, observe emptiness

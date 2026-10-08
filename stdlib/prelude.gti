@@ -80,6 +80,10 @@ namespace gti_internal {
   void prefix_storage_insert<T, Args...>(mut gti_internal::prefix_storage<T>& storage, uint64_t index, Args... args);
   void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
   gti_internal::text_view prefix_storage_text_view(gti_internal::prefix_storage<char>& storage);
+  // The narrowed descriptor [position, position + count) of `text`, clamped
+  // to its size. The result observes the same storage as `text`, including
+  // when it is empty. Range policy belongs to std::string_view.
+  gti_internal::text_view text_view_slice(gti_internal::text_view text, uint64_t position, uint64_t count);
   gti_internal::c_string prefix_storage_c_string(gti_internal::prefix_storage<char>& storage);
   gti_internal::c_string prefix_storage_try_c_string(gti_internal::prefix_storage<char>& storage);
 
@@ -90,9 +94,9 @@ namespace gti_internal {
     }
 
     [[track_caller]]
-    void write_stdout(gti_internal::text_view value) {
-      if (gti_rt_write_stdout(value) != 0) {
-        gti_internal::panic("Output failed: stdout write failed");
+    void write_stdout(std::string_view value) {
+      if (gti_rt_write_stdout(value.text_capability()) != 0) {
+        gti_internal::panic("Output failed: stdout write failed".text_capability());
       }
     }
 
@@ -174,9 +178,503 @@ namespace std {
       std::addable<T> && std::subtractable<T> && std::negatable<T> &&
       std::scalable_by<T, Scalar> && std::copyable<T>;
 
-  /// A counted, read-only view over character storage.
-  using string_view = gti_internal::text_view;
   using size_t = uint64_t;
+  /// The end position of a string_view iteration.
+  class string_view_sentinel {
+    size_t final_position;
+
+  public:
+    string_view_sentinel(size_t position) : final_position(position) {}
+
+    size_t position() {
+      return this.final_position;
+    }
+  };
+
+  /// A read-only iterator over the code units of a string_view. It relays the
+  /// viewed storage's owner, not the view it was obtained from. The current
+  /// code unit is held by the iterator itself, so a dereference observes the
+  /// iterator rather than addressing the viewed bytes.
+  class string_view_iterator {
+    gti_internal::text_view text;
+    mut size_t current_position = 0;
+    mut char current = '\0';
+
+  public:
+    // The private text capability withholds this constructor from
+    // application lookup; string_view::begin() is the public factory.
+    string_view_iterator(gti_internal::text_view text) : text(text) {
+      if (this.text.size() != 0) {
+        this.current = this.text[size_t(0)];
+      }
+    }
+
+    char& operator*() {
+      return this.current;
+    }
+
+    void operator++() mut {
+      this.current_position++;
+      if (this.current_position < this.text.size()) {
+        this.current = this.text[this.current_position];
+      }
+    }
+
+    bool operator!=(string_view_sentinel& sentinel) {
+      return this.current_position != sentinel.position();
+    }
+
+    bool operator!=(string_view_iterator& other) {
+      return this.current_position != other.current_position;
+    }
+  };
+
+  /// A counted, read-only, non-owning view of character storage.
+  ///
+  /// A view never owns, allocates, or modifies the characters it observes.
+  /// Every copy, subview, and iterator retains the original storage owner,
+  /// so the owner cannot be mutated, moved, or destroyed while any of them
+  /// remains live. Operations count code units and treat embedded NUL bytes
+  /// as ordinary characters; comparison uses unsigned byte order.
+  class string_view {
+    mut gti_internal::text_view text;
+
+    constexpr bool matches_at(size_t position, string_view needle) {
+      size_t count = this.size();
+      if (position > count || needle.size() > count - position) {
+        return false;
+      }
+      for (mut size_t offset = 0; offset < needle.size(); offset++) {
+        if (this[position + offset] != needle[offset]) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    constexpr bool contains_char(string_view set, char value) {
+      for (mut size_t index = 0; index < set.size(); index++) {
+        if (set[index] == value) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+  public:
+    /// The largest size_t value; returned by searches that find no match.
+    static constexpr size_t npos = uint64_t(18446744073709551615);
+
+    /// Creates an empty view.
+    constexpr string_view() : text("".text_capability()) {}
+
+    // The parameter is a compiler-private text capability, so this
+    // constructor is available to trusted library source only. It is the
+    // single bridge from literal and owner storage to the public view.
+    constexpr string_view(gti_internal::text_view text) : text(text) {}
+
+    /// Returns the private text capability for trusted library source.
+    constexpr gti_internal::text_view text_capability() {
+      return this.text;
+    }
+
+    /// Returns the number of code units in the view.
+    constexpr size_t size() {
+      return this.text.size();
+    }
+
+    /// Returns the number of code units in the view.
+    constexpr size_t length() {
+      return this.size();
+    }
+
+    /// Returns whether the view contains no code units.
+    constexpr bool empty() {
+      return this.size() == 0;
+    }
+
+    /// Returns the code unit at `index`; raises GTI-R0007 when
+    /// `index >= size()`.
+    constexpr char operator[](size_t index) {
+      return this.text[index];
+    }
+
+    /// Signed indexing; raises GTI-R0007 for a negative index or
+    /// `index >= size()`.
+    constexpr char operator[](int index) {
+      return this.text[index];
+    }
+
+    /// Returns the code unit at `index`; raises GTI-R0007 when
+    /// `index >= size()`.
+    constexpr char at(size_t index) {
+      return this.text[index];
+    }
+
+    /// Returns the first code unit; raises GTI-R0007 on an empty view.
+    constexpr char front() {
+      return this.text[size_t(0)];
+    }
+
+    /// Returns the last code unit; raises GTI-R0007 on an empty view.
+    constexpr char back() {
+      size_t count = this.size();
+      if (count == 0) {
+        return this.text[size_t(0)];
+      }
+      return this.text[count - 1];
+    }
+
+    /// Returns a view of at most `count` code units starting at `position`.
+    /// `position == size()` yields an empty view; `position > size()` raises
+    /// GTI-R0007. The count is clamped to the remaining length. The result
+    /// observes the same storage owner as this view.
+    constexpr string_view substr(size_t position, size_t count) {
+      size_t available = this.size();
+      if (position > available) {
+        gti_internal::index_bounds_check(position, available);
+      }
+      mut size_t taken = available - position;
+      if (count < taken) {
+        taken = count;
+      }
+      return string_view(gti_internal::text_view_slice(this.text, position, taken));
+    }
+
+    /// Returns the view from `position` to the end.
+    constexpr string_view substr(size_t position) {
+      return this.substr(position, string_view::npos);
+    }
+
+    /// Drops the first `count` code units; raises GTI-R0007 when
+    /// `count > size()`.
+    void remove_prefix(size_t count) mut {
+      size_t available = this.size();
+      if (count > available) {
+        gti_internal::index_bounds_check(count, available);
+      }
+      this.text = gti_internal::text_view_slice(this.text, count, available - count);
+    }
+
+    /// Drops the last `count` code units; raises GTI-R0007 when
+    /// `count > size()`.
+    void remove_suffix(size_t count) mut {
+      size_t available = this.size();
+      if (count > available) {
+        gti_internal::index_bounds_check(count, available);
+      }
+      this.text = gti_internal::text_view_slice(this.text, size_t(0), available - count);
+    }
+
+    /// Returns the first match at or after `position`, or npos. An empty
+    /// needle matches at any position up to and including size().
+    constexpr size_t find(string_view needle, size_t position) {
+      size_t count = this.size();
+      if (position > count || needle.size() > count - position) {
+        return string_view::npos;
+      }
+      size_t last = count - needle.size();
+      mut size_t index = position;
+      while (true) {
+        if (this.matches_at(index, needle)) {
+          return index;
+        }
+        if (index == last) {
+          return string_view::npos;
+        }
+        index++;
+      }
+    }
+
+    constexpr size_t find(string_view needle) {
+      return this.find(needle, size_t(0));
+    }
+
+    constexpr size_t find(char needle, size_t position) {
+      size_t count = this.size();
+      for (mut size_t index = position; index < count; index++) {
+        if (this[index] == needle) {
+          return index;
+        }
+      }
+      return string_view::npos;
+    }
+
+    constexpr size_t find(char needle) {
+      return this.find(needle, size_t(0));
+    }
+
+    /// Returns the last match starting at or before `position`, or npos. An
+    /// empty needle matches at min(position, size()).
+    constexpr size_t rfind(string_view needle, size_t position) {
+      size_t count = this.size();
+      if (needle.size() > count) {
+        return string_view::npos;
+      }
+      mut size_t index = count - needle.size();
+      if (position < index) {
+        index = position;
+      }
+      while (true) {
+        if (this.matches_at(index, needle)) {
+          return index;
+        }
+        if (index == 0) {
+          return string_view::npos;
+        }
+        index--;
+      }
+    }
+
+    constexpr size_t rfind(string_view needle) {
+      return this.rfind(needle, string_view::npos);
+    }
+
+    constexpr size_t rfind(char needle, size_t position) {
+      size_t count = this.size();
+      if (count == 0) {
+        return string_view::npos;
+      }
+      mut size_t index = count - 1;
+      if (position < index) {
+        index = position;
+      }
+      while (true) {
+        if (this[index] == needle) {
+          return index;
+        }
+        if (index == 0) {
+          return string_view::npos;
+        }
+        index--;
+      }
+    }
+
+    constexpr size_t rfind(char needle) {
+      return this.rfind(needle, string_view::npos);
+    }
+
+    /// Returns the first position at or after `position` whose code unit
+    /// occurs in `set`, or npos.
+    constexpr size_t find_first_of(string_view set, size_t position) {
+      size_t count = this.size();
+      for (mut size_t index = position; index < count; index++) {
+        if (this.contains_char(set, this[index])) {
+          return index;
+        }
+      }
+      return string_view::npos;
+    }
+
+    constexpr size_t find_first_of(string_view set) {
+      return this.find_first_of(set, size_t(0));
+    }
+
+    constexpr size_t find_first_of(char value, size_t position) {
+      return this.find(value, position);
+    }
+
+    constexpr size_t find_first_of(char value) {
+      return this.find(value, size_t(0));
+    }
+
+    /// Returns the last position at or before `position` whose code unit
+    /// occurs in `set`, or npos.
+    constexpr size_t find_last_of(string_view set, size_t position) {
+      size_t count = this.size();
+      if (count == 0) {
+        return string_view::npos;
+      }
+      mut size_t index = count - 1;
+      if (position < index) {
+        index = position;
+      }
+      while (true) {
+        if (this.contains_char(set, this[index])) {
+          return index;
+        }
+        if (index == 0) {
+          return string_view::npos;
+        }
+        index--;
+      }
+    }
+
+    constexpr size_t find_last_of(string_view set) {
+      return this.find_last_of(set, string_view::npos);
+    }
+
+    constexpr size_t find_last_of(char value, size_t position) {
+      return this.rfind(value, position);
+    }
+
+    constexpr size_t find_last_of(char value) {
+      return this.rfind(value, string_view::npos);
+    }
+
+    /// Returns the first position at or after `position` whose code unit
+    /// does not occur in `set`, or npos.
+    constexpr size_t find_first_not_of(string_view set, size_t position) {
+      size_t count = this.size();
+      for (mut size_t index = position; index < count; index++) {
+        if (!this.contains_char(set, this[index])) {
+          return index;
+        }
+      }
+      return string_view::npos;
+    }
+
+    constexpr size_t find_first_not_of(string_view set) {
+      return this.find_first_not_of(set, size_t(0));
+    }
+
+    constexpr size_t find_first_not_of(char value, size_t position) {
+      size_t count = this.size();
+      for (mut size_t index = position; index < count; index++) {
+        if (this[index] != value) {
+          return index;
+        }
+      }
+      return string_view::npos;
+    }
+
+    constexpr size_t find_first_not_of(char value) {
+      return this.find_first_not_of(value, size_t(0));
+    }
+
+    /// Returns the last position at or before `position` whose code unit
+    /// does not occur in `set`, or npos.
+    constexpr size_t find_last_not_of(string_view set, size_t position) {
+      size_t count = this.size();
+      if (count == 0) {
+        return string_view::npos;
+      }
+      mut size_t index = count - 1;
+      if (position < index) {
+        index = position;
+      }
+      while (true) {
+        if (!this.contains_char(set, this[index])) {
+          return index;
+        }
+        if (index == 0) {
+          return string_view::npos;
+        }
+        index--;
+      }
+    }
+
+    constexpr size_t find_last_not_of(string_view set) {
+      return this.find_last_not_of(set, string_view::npos);
+    }
+
+    constexpr size_t find_last_not_of(char value, size_t position) {
+      size_t count = this.size();
+      if (count == 0) {
+        return string_view::npos;
+      }
+      mut size_t index = count - 1;
+      if (position < index) {
+        index = position;
+      }
+      while (true) {
+        if (this[index] != value) {
+          return index;
+        }
+        if (index == 0) {
+          return string_view::npos;
+        }
+        index--;
+      }
+    }
+
+    constexpr size_t find_last_not_of(char value) {
+      return this.find_last_not_of(value, string_view::npos);
+    }
+
+    constexpr bool contains(string_view needle) {
+      return this.find(needle) != string_view::npos;
+    }
+
+    constexpr bool contains(char needle) {
+      return this.find(needle) != string_view::npos;
+    }
+
+    constexpr bool starts_with(string_view prefix) {
+      return this.matches_at(size_t(0), prefix);
+    }
+
+    constexpr bool starts_with(char prefix) {
+      return this.size() != 0 && this[size_t(0)] == prefix;
+    }
+
+    constexpr bool ends_with(string_view suffix) {
+      size_t count = this.size();
+      if (suffix.size() > count) {
+        return false;
+      }
+      return this.matches_at(count - suffix.size(), suffix);
+    }
+
+    constexpr bool ends_with(char suffix) {
+      size_t count = this.size();
+      return count != 0 && this[count - 1] == suffix;
+    }
+
+    /// Compares code units in unsigned byte order; a proper prefix orders
+    /// first. Returns a negative, zero, or positive value.
+    constexpr int compare(string_view other) {
+      size_t count = this.size();
+      size_t other_count = other.size();
+      mut size_t shared = count;
+      if (other_count < shared) {
+        shared = other_count;
+      }
+      for (mut size_t index = 0; index < shared; index++) {
+        uint8_t left = uint8_t(this[index]);
+        uint8_t right = uint8_t(other[index]);
+        if (left < right) {
+          return -1;
+        }
+        if (left > right) {
+          return 1;
+        }
+      }
+      if (count < other_count) {
+        return -1;
+      }
+      if (count > other_count) {
+        return 1;
+      }
+      return 0;
+    }
+
+    // Byte equality of two counted descriptors is a failure-free
+    // representation comparison of the private capability.
+    constexpr bool operator==(string_view other) {
+      return this.text == other.text;
+    }
+
+    constexpr bool operator!=(string_view other) {
+      return this.text != other.text;
+    }
+
+    constexpr bool operator<(string_view other) { return this.compare(other) < 0; }
+    constexpr bool operator>(string_view other) { return this.compare(other) > 0; }
+    constexpr bool operator<=(string_view other) { return this.compare(other) <= 0; }
+    constexpr bool operator>=(string_view other) { return this.compare(other) >= 0; }
+
+    /// Iterates the code units in order. The iterator retains this view's
+    /// storage owner.
+    string_view_iterator begin() {
+      return string_view_iterator(this.text);
+    }
+
+    string_view_sentinel end() {
+      return string_view_sentinel(this.size());
+    }
+  };
+
   using ptrdiff_t = int64_t;
 
   /// Transfers `value` into an owned result and leaves the source moved from.
@@ -192,7 +690,7 @@ namespace std {
   [[track_caller]]
   void print(char value) {
     if (gti_internal::runtime::write_stdout_byte(uint8_t(value)) != 0) {
-      gti_internal::panic("Output failed: stdout write failed");
+      gti_internal::panic("Output failed: stdout write failed".text_capability());
     }
   }
 

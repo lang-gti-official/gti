@@ -733,7 +733,7 @@ std::filesystem::file_type type(uint32_t code) {
 expected<std::filesystem::file_status, std::filesystem::errc> status(std::string_view input, uint32_t follow) {
   mut uint32_t type_value = 0;
   mut uint32_t code = 0;
-  unsafe { code = filesystem_runtime::gti_rt_fs_status_v1(input, follow, &type_value); }
+  unsafe { code = filesystem_runtime::gti_rt_fs_status_v1(input.text_capability(), follow, &type_value); }
   if (code != uint32_t(0)) {
     std::filesystem::errc failure = error(code);
     return unexpected(failure);
@@ -744,7 +744,7 @@ expected<std::filesystem::file_status, std::filesystem::errc> status(std::string
 expected<uint64_t, std::filesystem::errc> mutate(uint32_t operation, std::string_view first, std::string_view second, uint32_t option) {
   mut uint64_t value = 0;
   mut uint32_t code = 0;
-  unsafe { code = filesystem_runtime::gti_rt_fs_mutate_v1(operation, first, second, option, &value); }
+  unsafe { code = filesystem_runtime::gti_rt_fs_mutate_v1(operation, first.text_capability(), second.text_capability(), option, &value); }
   if (code != uint32_t(0)) {
     std::filesystem::errc failure = error(code);
     return unexpected(failure);
@@ -754,7 +754,7 @@ expected<uint64_t, std::filesystem::errc> mutate(uint32_t operation, std::string
 expected<std::filesystem::path, std::filesystem::errc> resolve(uint32_t operation, std::string_view input) {
   mut int64_t value = 0;
   mut uint32_t code = 0;
-  unsafe { code = filesystem_runtime::gti_rt_fs_path_v1(operation, input, &value); }
+  unsafe { code = filesystem_runtime::gti_rt_fs_path_v1(operation, input.text_capability(), &value); }
   if (code != uint32_t(0)) {
     std::filesystem::errc failure = error(code);
     return unexpected(failure);
@@ -816,7 +816,7 @@ expected<bool, errc> is_symlink(path& input) { return is_symlink(input.view()); 
 expected<uint64_t, errc> file_size(std::string_view input) {
   mut uint64_t value = 0;
   mut uint32_t code = 0;
-  unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_measure_v1(input, uint32_t(0), &value); }
+  unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_measure_v1(input.text_capability(), uint32_t(0), &value); }
   if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
   return value;
 }
@@ -825,7 +825,7 @@ expected<uint64_t, errc> file_size(path& input) { return file_size(input.view())
 expected<bool, errc> is_empty(std::string_view input) {
   mut uint64_t value = 0;
   mut uint32_t code = 0;
-  unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_measure_v1(input, uint32_t(1), &value); }
+  unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_measure_v1(input.text_capability(), uint32_t(1), &value); }
   if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
   return value != uint64_t(0);
 }
@@ -834,7 +834,7 @@ expected<bool, errc> is_empty(path& input) { return is_empty(input.view()); }
 expected<bool, errc> equivalent(std::string_view left, std::string_view right) {
   mut uint32_t value = 0;
   mut uint32_t code = 0;
-  unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_equivalent_v1(left, right, &value); }
+  unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_equivalent_v1(left.text_capability(), right.text_capability(), &value); }
   if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
   return value != uint32_t(0);
 }
@@ -949,7 +949,7 @@ public:
   static expected<directory_iterator, errc> open(std::string_view input) {
     mut int64_t value = 0;
     mut uint32_t code = 0;
-    unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_directory_open_v1(input, &value); }
+    unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_directory_open_v1(input.text_capability(), &value); }
     if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
     return directory_iterator(gti_internal::filesystem_result(value));
   }

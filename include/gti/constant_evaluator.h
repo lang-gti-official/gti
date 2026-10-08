@@ -179,6 +179,10 @@ evaluateConstantTextEmpty(const ConstantValue &text);
 evaluateConstantTextIndex(const ConstantValue &text,
                           const ConstantValue &index);
 [[nodiscard]] ConstantEvaluation
+evaluateConstantTextSlice(const ConstantValue &text,
+                          const ConstantValue &position,
+                          const ConstantValue &count);
+[[nodiscard]] ConstantEvaluation
 convertConstantInteger(const ConstantValue &value, CheckedIntegerDomain target);
 [[nodiscard]] ConstantEvaluation
 convertConstantFloat(const ConstantValue &value,

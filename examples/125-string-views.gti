@@ -1,0 +1,67 @@
+// String views: allocation-free text inspection and slicing.
+//
+// std::string_view is an ordinary GTI class whose search, comparison, and
+// slicing methods are written in GTI. A view never owns or modifies the
+// characters it observes, and every view derived from an owning string keeps
+// that string borrowed until the last derived view ends.
+#include <std/string>
+
+// A view of the first word relays the caller's string: the result is tied to
+// `line`, so the caller cannot shrink or move it while the word is in use.
+std::string_view first_word(std::string& line) {
+  return line.view().substr(std::size_t(0), line.view().find(' '));
+}
+
+// A user-defined carrier relays the owner of the text it was built from:
+// every view it returns is tied to that owner, not to the Field object.
+class Field {
+  std::string_view entry;
+
+public:
+  Field(std::string_view entry) : entry(entry) {}
+
+  std::string_view key() {
+    return this.entry.substr(std::size_t(0), this.entry.find('='));
+  }
+
+  std::string_view text() {
+    return this.entry.substr(this.entry.find('=') + std::size_t(1));
+  }
+};
+
+int main() {
+  // Literal views observe static storage and need no owner.
+  std::string_view greeting = "hello, world";
+  std::println(greeting.substr(std::size_t(7)));
+  std::println(greeting.starts_with("hello") ? "greeting" : "other");
+
+  // Owner-backed views: searching and slicing allocate nothing.
+  mut std::string line = std::string("compile with care");
+  {
+    std::string_view word = first_word(line);
+    std::println(word);
+    std::string_view rest = line.view().substr(word.size() + std::size_t(1));
+    std::println(rest.find("care") == std::size_t(5) ? "found care" : "missing");
+
+    std::string_view vowel_set = "aeiou";
+    mut int vowels = 0;
+    for (char code : rest) {
+      if (vowel_set.contains(code)) {
+        vowels++;
+      }
+    }
+    std::println(vowels);
+    // line.push_back('!') here would be rejected: `word` and `rest` still
+    // borrow the string's characters.
+  }
+  // Every view of `line` has ended, so the owner may change again.
+  line.append(" and test");
+  std::println(line.view().ends_with("test") ? "updated" : "stale");
+
+  std::string entry = std::string("mode=release");
+  Field field = Field(entry.view());
+  std::print(field.key());
+  std::print(" -> ");
+  std::println(field.text());
+  return 0;
+}

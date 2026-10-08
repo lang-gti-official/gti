@@ -514,7 +514,7 @@ namespace gti_internal {
       return url_analysis(secure, authority_begin, host_end, authority_end, port_begin, has_port, uint16_t(parsed_port), query_marker, query_marker < input.size());
     }
 
-    std::string copy_text_range(std::string_view input, std::size_t begin, std::size_t end) {
+    std::string copy_text_range(std::string_view& input, std::size_t begin, std::size_t end) {
       mut std::string output = std::string();
       output.reserve(end - begin);
       for (mut std::size_t index = begin; index < end; index++) {
@@ -530,14 +530,14 @@ namespace gti_internal {
       return std::string("http");
     }
 
-    std::string url_port_text(std::string_view input, url_analysis& parts) {
+    std::string url_port_text(std::string_view& input, url_analysis& parts) {
       if (!parts.has_port()) {
         return std::string();
       }
       return copy_text_range(input, parts.port_start(), parts.authority_finish());
     }
 
-    std::string url_query_text(std::string_view input, url_analysis& parts) {
+    std::string url_query_text(std::string_view& input, url_analysis& parts) {
       if (!parts.has_query()) {
         return std::string();
       }
@@ -1173,7 +1173,7 @@ namespace std {
         mut int32_t native_code = int32_t(0);
         mut uint32_t status = uint32_t(0);
         unsafe {
-          status = gti_internal::runtime::gti_rt_http_client_send_v1(this.handle.get(), gti_internal::http_detail::runtime_method(input.verb()), input.url().view(), encoded_headers.view(), uint64_t(fields.size()), input.body().view(), input.connect_timeout_ms(), input.timeout_ms(), input.max_response_bytes(), input.ca_bundle().view(), &response_value, &native_code);
+          status = gti_internal::runtime::gti_rt_http_client_send_v1(this.handle.get(), gti_internal::http_detail::runtime_method(input.verb()), input.url().view().text_capability(), encoded_headers.view().text_capability(), uint64_t(fields.size()), input.body().view().text_capability(), input.connect_timeout_ms(), input.timeout_ms(), input.max_response_bytes(), input.ca_bundle().view().text_capability(), &response_value, &native_code);
         }
         this.backend_code = native_code;
         if (status != uint32_t(0)) {

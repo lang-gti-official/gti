@@ -1512,11 +1512,29 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             (sourceInfo->type.kind == SemanticType::CString ||
              sourceInfo->type.kind == SemanticType::StringView ||
              sourceInfo->type.kind == SemanticType::NullPtr);
+        // Only an ownerless text source makes the relayed text ownerless;
+        // any other argument (such as an owner borrowed by reference) is the
+        // owner the result depends on.
         if (sourceInfo != nullptr &&
-            (sourceInfo->type.kind == type.kind || ownerlessCStringSource ||
-             isTextCarryingType(sourceInfo->type)) &&
+            (ownerlessCStringSource || isTextCarryingType(sourceInfo->type)) &&
             !sourceInfo->traits.containsBorrowedState) {
           return expressionInfo(std::move(type));
+        }
+      }
+      // A text-carrying receiver holds only passive fields, so its read-only
+      // text results relay nothing but the receiver's own external owners.
+      // An ownerless receiver, such as a literal view, yields ownerless text.
+      if (resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+          resolved->borrowAccess == AccessMode::ReadOnly) {
+        if (const auto *member = exprAs<Get>(call.callee().get())) {
+          const ExpressionInfo *receiverInfo =
+              semanticModel.findExpression(*member->object());
+          if (receiverInfo != nullptr &&
+              exprAs<This>(member->object().get()) == nullptr &&
+              isTextCarryingType(receiverInfo->type) &&
+              !receiverInfo->traits.containsBorrowedState) {
+            return expressionInfo(std::move(type));
+          }
         }
       }
       return ownerDependentTextInfo(std::move(type));
@@ -1541,6 +1559,9 @@ auto SemanticVisitor::Impl::storageBoundsCheckDetail() const
       }
       if (owner.name.lexeme == "string") {
         return DefinedFailureDetail::String;
+      }
+      if (owner.name.lexeme == "string_view") {
+        return DefinedFailureDetail::StringView;
       }
     }
   }
@@ -1941,6 +1962,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::OptionalStorageReset:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
+        case IntrinsicKind::TextViewSlice:
         // The expected extractions' defined-failure outcomes anchor in
         // the member-call analysis that has always owned them; the
         // resolved record only carries the spelling identity.
@@ -4145,19 +4167,6 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
          .qualifiedName = "size",
          .detail = "uint64_t size()",
          .scopeDistance = 0});
-  } else if (objectType.kind == SemanticType::StringView) {
-    context.candidates.push_back(
-        {.kind = SemanticCompletionCandidateKind::Method,
-         .name = "size",
-         .qualifiedName = "size",
-         .detail = "uint64_t size()",
-         .scopeDistance = 0});
-    context.candidates.push_back(
-        {.kind = SemanticCompletionCandidateKind::Method,
-         .name = "empty",
-         .qualifiedName = "empty",
-         .detail = "bool empty()",
-         .scopeDistance = 0});
   } else if (objectType.kind == SemanticType::Expected &&
              objectType.arguments.size() == 2) {
     const SemanticType &value = objectType.arguments[0];
@@ -5686,7 +5695,7 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
       function.receiverMutability == ReceiverMutability::ReadOnly &&
       function.returnBorrowOrigin == BorrowOriginKind::Receiver &&
       function.returnBorrowAccess == AccessMode::ReadOnly &&
-      (function.returnType.kind == SemanticType::StringView ||
+      (isTextCarryingType(function.returnType) ||
        (function.returnType.kind == SemanticType::Reference &&
         function.returnType.referenceAccess == AccessMode::ReadOnly));
   return readObservation ||
@@ -5876,6 +5885,77 @@ auto SemanticVisitor::Impl::isDefaultLibraryClass(
          owner->namespaceScope.size() == 1 &&
          owner->namespaceScope.front() == "std" &&
          owner->name.lexeme == expectedName;
+}
+
+auto SemanticVisitor::Impl::publicTextViewClass() const -> ClassId {
+  if (textLiteralBridgeClass == 0) {
+    for (const ClassInfo &candidate : classes) {
+      if (isPreludeUnit(candidate.sourceUnit) &&
+          candidate.kind == ClassKind::Class &&
+          candidate.namespaceScope == std::vector<std::string>{"std"} &&
+          candidate.name.lexeme == "string_view") {
+        textLiteralBridgeClass = candidate.id;
+        break;
+      }
+    }
+  }
+  return textLiteralBridgeClass;
+}
+
+auto SemanticVisitor::Impl::textLiteralBridge() const
+    -> const ConstructorInfo * {
+  if (publicTextViewClass() == 0) {
+    return nullptr;
+  }
+  for (const ConstructorInfo &constructor :
+       classInfo(textLiteralBridgeClass).constructors) {
+    if (constructor.kind == ConstructorKind::Ordinary &&
+        constructor.genericParameters.empty() && !constructor.parameterPack &&
+        constructor.parameterTypes ==
+            std::vector<SemanticType>{SemanticType::StringView}) {
+      return &constructor;
+    }
+  }
+  return nullptr;
+}
+
+auto SemanticVisitor::Impl::textCapabilityAccessor() const -> FunctionId {
+  const ConstructorInfo *bridge = textLiteralBridge();
+  if (bridge == nullptr) {
+    return 0;
+  }
+  const ClassInfo &owner = classInfo(bridge->owner);
+  const auto member = owner.members.find("text_capability");
+  if (member == owner.members.end()) {
+    return 0;
+  }
+  for (const CallableCandidate &candidate : member->second.symbol.overloads) {
+    if (candidate.ownerClass == owner.id && candidate.id != 0 &&
+        candidate.parameterTypes.empty() &&
+        candidate.returnType == SemanticType::StringView) {
+      return candidate.id;
+    }
+  }
+  return 0;
+}
+
+auto SemanticVisitor::Impl::isPublicTextView(const SemanticType &type) const
+    -> bool {
+  const ClassId view = publicTextViewClass();
+  return view != 0 && type.kind == SemanticType::Class &&
+         type.classId == view && type.arguments.empty();
+}
+
+auto SemanticVisitor::Impl::recordNativeTextBoundary()
+    -> const NativeTextBoundaryInfo * {
+  const ConstructorInfo *bridge = textLiteralBridge();
+  const FunctionId accessor = textCapabilityAccessor();
+  if (bridge == nullptr || accessor == 0) {
+    return nullptr;
+  }
+  semanticModel.recordNativeTextBoundary(
+      {.viewClass = bridge->owner, .accessor = accessor, .bridge = bridge->id});
+  return semanticModel.nativeTextBoundary();
 }
 
 auto SemanticVisitor::Impl::ownedProgramEntryAppendFunction(
@@ -10680,6 +10760,13 @@ auto SemanticVisitor::Impl::baseTypeOf(
       return SemanticType::functionSignature(
           typeOf(type.arguments.back(), fromScope), std::move(parameters),
           receiver);
+    }
+    // A public std::string_view parameter of a native function type is the
+    // separate native counted record of the view's private text.
+    for (SemanticType &parameter : parameters) {
+      if (isPublicTextView(parameter)) {
+        parameter = SemanticType::StringView;
+      }
     }
     return SemanticType::nativeFunctionType(
         typeOf(type.arguments.back(), fromScope), parameters);

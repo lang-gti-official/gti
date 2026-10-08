@@ -654,18 +654,30 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
   }
   std::vector<SemanticType> ordinaryParameters;
   std::vector<const ExprPtr *> ordinaryArguments;
+  // A public std::string_view argument for a native counted-text parameter
+  // is passed as the public class; lowering converts it through the trusted
+  // accessor at the boundary.
+  std::vector<SemanticType> selectedParameters(parameters.begin(),
+                                               parameters.end());
   for (std::size_t index = 0;
        index < std::min(arguments->size(), parameters.size()); ++index) {
     const auto &argument = (*arguments)[index];
     const auto &expression = *argument.expression;
+    if (!argument.forwardedPackElement &&
+        parameters[index] == SemanticType::StringView &&
+        isPublicTextView(argument.type) &&
+        recordNativeTextBoundary() != nullptr) {
+      selectedParameters[index] = argument.type;
+    }
     if (!argument.forwardedPackElement) {
-      ordinaryParameters.push_back(parameters[index]);
+      ordinaryParameters.push_back(selectedParameters[index]);
       ordinaryArguments.push_back(argument.expression);
     }
     const bool matches =
         argument.forwardedPackElement
             ? forwardedPackArgumentMatches(parameters[index], argument.type)
-            : callArgumentMatches(parameters[index], argument.type, expression);
+            : callArgumentMatches(selectedParameters[index], argument.type,
+                                  expression);
     if (argument.type != SemanticType::Unknown && !matches) {
       reportCallArgumentMismatch(index, parameters[index], argument.type,
                                  expression, "Native function pointer");
@@ -687,7 +699,7 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
                 : std::optional{callableParameterContract(call.callee())
                                     ->boundary},
         .returnType = *result,
-        .parameterTypes = {parameters.begin(), parameters.end()}};
+        .parameterTypes = std::move(selectedParameters)};
     semanticModel.record(call, resolved);
     semanticModel.recordDefinedFailure(call, {});
     recordSelectedCallOccurrence(call, std::move(resolved));
@@ -6668,7 +6680,10 @@ auto SemanticVisitor::Impl::callConversionRank(const SemanticType &parameter,
     return 0;
   }
   if (parameter == SemanticType::CString) {
-    if (argument == SemanticType::StringView) {
+    // A literal view (the only class argument callArgumentMatches admits
+    // here) ranks like raw literal text.
+    if (argument == SemanticType::StringView ||
+        argument.kind == SemanticType::Class) {
       return 1;
     }
     if (argument == SemanticType::NullPtr) {

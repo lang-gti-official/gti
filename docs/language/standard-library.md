@@ -51,7 +51,7 @@ public surface includes:
 | --- | --- |
 | `std::size_t` | Transparent alias of `uint64_t` |
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
-| `std::string_view` | Counted read-only view over static literal storage |
+| `std::string_view` | Source-defined counted read-only view over literal or string storage: size, checked access, search, comparison, slicing, and iteration (see [owning text](ownership-and-lifetimes.md#owning-text)) |
 | `std::print` and `std::println` | Portable output over string views, `char`, and all fixed-width integers |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
@@ -968,13 +968,15 @@ releasing the unused side is not yet supported. There is no implicit ownership,
 allocation, or zip-iterator proxy protocol.
 
 `std::string::view()` returns the same bounded single-owner dependency through
-the existing `std::string_view` value type. Literal views remain ownerless
-references to static storage; dynamic views retain their source string through
-local copies and exact factory/relay calls. A dynamic text view cannot escape a
-local owner or be assigned/reseated, placed in a field, global, fixed array, or
-dynamic storage, or used to construct a nested dependency graph. Mutable,
-multi-owner, nested, and generally reseatable views remain deliberately
-unsupported.
+the source-defined `std::string_view` class. Literal views remain ownerless
+views of static storage; dynamic views retain their source string through
+copies, subviews, iterators, exact factory/relay calls, and text-carrying
+classes that store them. A dynamic text view cannot escape a local owner, be
+assigned into an existing binding, or be placed in a global, fixed array,
+dynamic storage, or a field of a class that also owns storage. A mutable view
+may narrow itself with `remove_prefix`/`remove_suffix`. Multi-owner and
+generally reseatable view graphs remain deliberately unsupported. The full
+operation contract is in [owning text](ownership-and-lifetimes.md#owning-text).
 
 `std::string::c_string()` exposes the same live bytes as a non-null
 NUL-terminated `c_string`. Embedded NUL bytes are allowed and cause ordinary C

@@ -421,6 +421,25 @@ lowerParameters(const std::vector<Parameter> &parameters,
   return result;
 }
 
+// A C-linkage declaration is lowered with its native boundary representation:
+// a public std::string_view parameter crosses as the counted record of its
+// private text, matching the verified HIR/MIR instance signature.
+[[nodiscard]] std::vector<SemanticType>
+nativeBoundaryParameterTypes(const FunctionInfo &function,
+                             const SemanticModel &semantics) {
+  std::vector<SemanticType> types = function.parameterTypes;
+  const NativeTextBoundaryInfo *boundary =
+      function.linkage == LanguageLinkage::C ? semantics.nativeTextBoundary()
+                                             : nullptr;
+  for (SemanticType &type : types) {
+    if (boundary != nullptr && type.kind == SemanticType::Class &&
+        type.classId == boundary->viewClass) {
+      type = SemanticType::StringView;
+    }
+  }
+  return types;
+}
+
 [[nodiscard]] std::vector<LoweredCallableParameter> lowerCallableParameters(
     const std::vector<CallableParameterContract> &parameters) {
   std::vector<LoweredCallableParameter> result;
@@ -674,8 +693,9 @@ private:
             .ownerClass = info->ownerClass,
             .qualifiedName = info->qualifiedName,
             .returnType = info->returnType,
-            .parameters = lowerParameters(declaration->parameters(),
-                                          info->parameterTypes, semantics_),
+            .parameters = lowerParameters(
+                declaration->parameters(),
+                nativeBoundaryParameterTypes(*info, semantics_), semantics_),
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
             .requirements = lowerRequirements(info->requirements),

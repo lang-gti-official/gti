@@ -39,6 +39,10 @@ terminatorSuccessors(const MirTerminator &terminator);
 
 [[nodiscard]] const MirInstruction *linearDefinition(const MirBody &body,
                                                      MirValueId value);
+// The argument-relay call through which a text-carrying receiver narrows its
+// own text field in `assign`, or null when `assign` is not that exact shape.
+[[nodiscard]] const MirInstruction *
+receiverTextReseatProducer(const MirBody &body, const MirInstruction &assign);
 [[nodiscard]] bool receiverIsConsumed(const MirBody &body,
                                       const MirOperand &operand,
                                       MirValueUseKind expectedUseKind,

@@ -1315,6 +1315,9 @@ struct MirNativeCallbackAdapter {
   HirFunctionInstanceId target = 0;
   SemanticType type = SemanticType::Unknown;
   CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
+  // Per native parameter, the verified constructor instance rebuilding the
+  // target's public text view from native counted text (zero if unchanged).
+  std::vector<HirConstructorInstanceId> textBridges;
   bool targetMayRaiseDefinedFailure = true;
   MirNativeCallbackFailurePolicy failurePolicy =
       MirNativeCallbackFailurePolicy::TerminateInvocation;

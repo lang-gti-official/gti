@@ -1,0 +1,80 @@
+#include <std/string>
+
+// Source-defined std::string_view: every operation below is GTI source over
+// the private text capability, exercised on literal and owner-backed views.
+
+void report(bool passed, std::string_view label) {
+  if (!passed) {
+    std::print("failed: ");
+    std::println(label);
+  }
+}
+
+int check_literal_views() {
+  std::string_view text = "hello world";
+  report(text.size() == std::size_t(11) && !text.empty(), "size");
+  report(text[std::size_t(4)] == 'o' && text.at(std::size_t(6)) == 'w', "index");
+  report(text.front() == 'h' && text.back() == 'd', "front/back");
+  report(text.find("world") == std::size_t(6) && text.find("world", std::size_t(7)) == std::string_view::npos, "find view");
+  report(text.find('o') == std::size_t(4) && text.find('o', std::size_t(5)) == std::size_t(7), "find char");
+  report(text.rfind('o') == std::size_t(7) && text.rfind("l") == std::size_t(9), "rfind");
+  report(text.find("") == std::size_t(0) && text.find("", std::size_t(11)) == std::size_t(11), "empty needle find");
+  report(text.find("", std::size_t(12)) == std::string_view::npos, "empty needle past end");
+  report(text.rfind("") == std::size_t(11) && text.rfind("", std::size_t(3)) == std::size_t(3), "empty needle rfind");
+  report(text.starts_with("hello") && text.starts_with('h') && !text.starts_with("world"), "starts_with");
+  report(text.ends_with("world") && text.ends_with('d') && !text.ends_with("hello"), "ends_with");
+  report(text.contains("lo w") && text.contains('w') && !text.contains("xyz"), "contains");
+  report(text.find_first_of("ow") == std::size_t(4) && text.find_last_of("ow") == std::size_t(7), "find_of");
+  report(text.find_first_not_of("hel") == std::size_t(4) && text.find_last_not_of("dl") == std::size_t(8), "find_not_of");
+  report(text.find_first_of("") == std::string_view::npos && text.find_first_not_of("") == std::size_t(0), "find_of empty set");
+  report(text.substr(std::size_t(6)) == "world" && text.substr(std::size_t(0), std::size_t(5)) == "hello", "substr");
+  report(text.substr(std::size_t(11)).empty() && text.substr(std::size_t(3), std::size_t(100)) == "lo world", "substr clamp");
+  std::string_view empty = "";
+  report(empty.empty() && empty.find('a') == std::string_view::npos && empty.rfind('a') == std::string_view::npos, "empty view");
+  report(empty.substr(std::size_t(0)).empty() && empty.compare("") == 0, "empty substr");
+  return 0;
+}
+
+int check_comparison() {
+  std::string_view abc = "abc";
+  report(abc == "abc" && abc != "abd" && abc < "abd" && abc <= "abc", "ordering");
+  report(abc > "ab" && abc >= "abc" && abc.compare("abcd") < 0 && abc.compare("ab") > 0, "prefix order");
+  mut std::string high_owner = std::string();
+  high_owner.push_back(char(uint8_t(255)));
+  std::string_view high = high_owner.view();
+  report(high > "a" && high.compare("a") > 0, "unsigned byte order");
+  std::string_view nul = "a\0b";
+  report(nul.size() == std::size_t(3) && nul[std::size_t(1)] == '\0' && nul.find('b') == std::size_t(2), "embedded NUL");
+  report(nul != "a" && nul.compare("a") > 0, "embedded NUL compare");
+  std::string_view utf8 = "é";
+  report(utf8.size() == std::size_t(2) && uint8_t(utf8[std::size_t(0)]) == uint8_t(195), "non-ASCII bytes");
+  return 0;
+}
+
+int check_owner_views() {
+  mut std::string owned = std::string("owned text value");
+  {
+    std::string_view whole = owned.view();
+    std::string_view middle = whole.substr(std::size_t(6), std::size_t(4));
+    mut std::string_view trimmed = whole;
+    trimmed.remove_prefix(std::size_t(6));
+    trimmed.remove_suffix(std::size_t(6));
+    report(middle == "text" && trimmed == "text" && middle == trimmed, "owner slices");
+    mut int letters = 0;
+    for (char code : middle) {
+      if (code == 't') { letters++; }
+    }
+    report(letters == 2, "owner iteration");
+    std::string copied = std::string(middle);
+    report(copied.size() == std::size_t(4), "owning copy");
+  }
+  owned.push_back('!');
+  report(owned.view().ends_with("value!"), "owner reuse after loans end");
+  return 0;
+}
+
+int main() {
+  int failures = check_literal_views() + check_comparison() + check_owner_views();
+  std::println("string_view ok");
+  return failures;
+}

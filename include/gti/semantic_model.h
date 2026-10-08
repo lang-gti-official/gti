@@ -308,6 +308,7 @@ enum class IntrinsicKind {
   OptionalStorageReset,
   StringViewSize,
   StringViewEmpty,
+  TextViewSlice,
   ExpectedValue,
   ExpectedError,
   ExpectedValueOr,
@@ -1034,6 +1035,18 @@ struct ResolvedCollectionInfo {
   FunctionId insert = 0;
 };
 
+// The public std::string_view at a C boundary. An extern "C" or native
+// function parameter of exactly this trusted class passes the separate native
+// counted record of the view's private text. Conversions use these exact
+// trusted members, never an assumption that the class is ABI-compatible.
+struct NativeTextBoundaryInfo {
+  ClassId viewClass = 0;
+  FunctionId accessor = 0;
+  // The trusted constructor rebuilding a public view from native text, used
+  // where native code calls a GTI callback with a counted-text argument.
+  ConstructorId bridge = 0;
+};
+
 struct NativeFunctionConversionInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
@@ -1708,6 +1721,8 @@ public:
 
   [[nodiscard]] bool isContextualIntegerOperand(const Expr &expression) const;
 
+  [[nodiscard]] const NativeTextBoundaryInfo *nativeTextBoundary() const;
+
   [[nodiscard]] const ClassLifecycleInfo *
   findClassLifecycle(const ClassDecl &declaration) const;
 
@@ -1969,6 +1984,8 @@ private:
 
   void recordContextualIntegerOperand(const Expr &expression);
 
+  void recordNativeTextBoundary(NativeTextBoundaryInfo info);
+
   void record(const ClassDecl &declaration, ClassLifecycleInfo info);
 
   void record(const Expr &expression, ResolvedConstructionInfo info);
@@ -2097,6 +2114,7 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> projectionOperators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_set<const Expr *> contextualIntegerOperands;
+  std::optional<NativeTextBoundaryInfo> nativeTextBoundaryInfo;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>

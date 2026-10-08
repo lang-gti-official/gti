@@ -1506,6 +1506,14 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
               producer->functionTarget
                   ? program.findFunctionInstance(*producer->functionTarget)
                   : nullptr;
+          // An ownerless text-carrying temporary holds no owner even when
+          // its producer relays one in general (a slice of a literal view).
+          const bool ownerlessText =
+              !borrowedCarrier && !producer->loan &&
+              mir_detail::textCarrierType(program, receiverPlace->type) &&
+              target != nullptr &&
+              target->returnBorrowAccess == AccessMode::ReadOnly &&
+              !producer->info.traits.containsBorrowedState;
           exactProducer =
               target != nullptr && target->linkage == LanguageLinkage::Gti &&
               target->returnType == receiverPlace->type &&
@@ -1513,7 +1521,8 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                    ? target->returnBorrowOrigin != BorrowOriginKind::None &&
                          !target->virtualMethod &&
                          producer->dispatch == CallDispatch::Static
-                   : target->returnBorrowOrigin == BorrowOriginKind::None);
+                   : target->returnBorrowOrigin == BorrowOriginKind::None ||
+                         ownerlessText);
           if (producer->lambdaTarget && !producer->functionTarget) {
             const MirLambdaInstance *lambda =
                 program.findLambda(*producer->lambdaTarget);
@@ -1549,7 +1558,7 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
             functionTarget != nullptr && !mutableInput &&
             functionTarget->returnBorrowOrigin == BorrowOriginKind::Receiver &&
             functionTarget->returnBorrowAccess == AccessMode::ReadOnly &&
-            (functionTarget->returnType.kind == SemanticType::StringView ||
+            (mir_detail::textCarrierType(program, functionTarget->returnType) ||
              (functionTarget->returnType.kind == SemanticType::Reference &&
               functionTarget->returnType.referenceAccess ==
                   AccessMode::ReadOnly));
@@ -2837,11 +2846,95 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             argumentInput->kind == MirInstructionKind::CallInput &&
             argumentInput->callInputRole == MirCallInputRole::Argument &&
             argumentInput->callInputIndex == instruction.borrowArgument &&
-            argumentInput->callInputKind == HirCallInputKind::Value &&
+            (argumentInput->callInputKind == HirCallInputKind::Value ||
+             argumentInput->callInputKind == HirCallInputKind::CopyValue ||
+             argumentInput->callInputKind == HirCallInputKind::MoveValue ||
+             argumentInput->callInputKind ==
+                 HirCallInputKind::ReadTemporaryBorrow) &&
             argumentInput->info.type ==
                 instruction.parameterTypes[instruction.borrowArgument] &&
             !argumentInput->info.traits.containsBorrowedState;
-        if (ownerlessTextResult) {
+        // A read-only text result of a text-carrying temporary receiver
+        // relays only that receiver's external owners. When the temporary
+        // was itself produced as ownerless text (verified by this same rule,
+        // since it has no loan), the result has no owner to retain.
+        const auto ownerlessTextReceiver = [&]() {
+          if (instruction.kind != MirInstructionKind::Call ||
+              instruction.borrowOrigin != BorrowOriginKind::Receiver ||
+              instruction.borrowAccess != AccessMode::ReadOnly ||
+              instruction.borrowPlace || !instruction.receiver ||
+              instruction.receiver->kind != MirOperandKind::Value ||
+              !mir_detail::textCarrierType(program, instruction.info.type) ||
+              instruction.info.traits.containsBorrowedState)
+            return false;
+          const MirInstruction *input =
+              definitionFor(body, instruction.receiver->value);
+          const MirPlace *place =
+              input != nullptr &&
+                      input->kind == MirInstructionKind::CallInput &&
+                      input->callInputRole == MirCallInputRole::Receiver &&
+                      input->operands.size() == 1
+                  ? body.findPlace(input->operands.front().place)
+                  : nullptr;
+          if (place == nullptr || !place->projections.empty() ||
+              !mir_detail::textCarrierType(program, place->type))
+            return false;
+          // A local text binding relays owners only through Stored loans it
+          // carries; with none (and no entry authority as a formal) it holds
+          // ownerless text, such as a literal view.
+          if (place->root == MirPlaceRootKind::Binding && place->binding != 0)
+            return !place->initiallyAvailable &&
+                   std::none_of(body.loans.begin(), body.loans.end(),
+                                [&](const MirLoan &candidate) {
+                                  return std::find(candidate.carriers.begin(),
+                                                   candidate.carriers.end(),
+                                                   place->binding) !=
+                                         candidate.carriers.end();
+                                });
+          if (place->root != MirPlaceRootKind::Value &&
+              place->root != MirPlaceRootKind::Temporary)
+            return false;
+          // The temporary's producer retained no owner: either it relays
+          // nothing at all, or it was itself verified ownerless here. A
+          // materialized temporary (for example inside a short-circuit arm)
+          // names its producer through its exact materialization.
+          const MirInstruction *producer =
+              place->root == MirPlaceRootKind::Value
+                  ? definitionFor(body, place->value)
+                  : findMirTemporaryMaterialization(body, *place,
+                                                    input->hirValue)
+                        .producer;
+          return producer != nullptr &&
+                 (producer->kind == MirInstructionKind::Construct ||
+                  producer->kind == MirInstructionKind::Call) &&
+                 !producer->loan && producer->info.type == place->type &&
+                 !producer->info.traits.containsBorrowedState;
+        };
+        // A generated copy or move of an ownerless text value produced in
+        // place (verified by this rule, having no loan) stays ownerless.
+        const auto ownerlessTextTransfer = [&]() {
+          if (instruction.kind != MirInstructionKind::Construct ||
+              (instruction.constructorKind != ConstructorKind::Copy &&
+               instruction.constructorKind != ConstructorKind::Move) ||
+              instruction.borrowOrigin != BorrowOriginKind::Argument ||
+              instruction.borrowAccess != AccessMode::ReadOnly ||
+              instruction.borrowPlace || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Value ||
+              !mir_detail::textCarrierType(program, instruction.info.type) ||
+              instruction.info.traits.containsBorrowedState)
+            return false;
+          const MirInstruction *producer =
+              definitionFor(body, instruction.operands.front().value);
+          return producer != nullptr &&
+                 (producer->kind == MirInstructionKind::Construct ||
+                  producer->kind == MirInstructionKind::Call) &&
+                 producer->borrowOrigin != BorrowOriginKind::None &&
+                 !producer->loan &&
+                 producer->info.type == instruction.info.type &&
+                 !producer->info.traits.containsBorrowedState;
+        };
+        if (ownerlessTextResult || ownerlessTextReceiver() ||
+            ownerlessTextTransfer()) {
           continue;
         }
         return verificationFailure(
@@ -3893,13 +3986,14 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
       for (const MirBlock &block : body.blocks) {
         for (const MirInstruction &instruction : block.instructions) {
           const MirPlace *destination =
-              instruction.destination
-                  ? body.findPlace(*instruction.destination)
-                  : nullptr;
+              instruction.destination ? body.findPlace(*instruction.destination)
+                                      : nullptr;
           if (destination != nullptr &&
               destination->root == MirPlaceRootKind::This &&
               !destination->projections.empty() &&
-              mir_detail::textCarrierType(program, destination->type))
+              mir_detail::textCarrierType(program, destination->type) &&
+              mir_detail::receiverTextReseatProducer(body, instruction) ==
+                  nullptr)
             return verificationFailure(
                 body, owner,
                 "a text-carrying receiver field cannot be rewritten while "
@@ -4535,7 +4629,10 @@ verifyMirFunctionBorrowSummary(const MirProgram &program,
                         if ((producer.kind == MirInstructionKind::Construct ||
                              producer.kind == MirInstructionKind::Call) &&
                             producer.loan == produced->id &&
-                            producer.borrowOrigin == BorrowOriginKind::Argument)
+                            (producer.borrowOrigin ==
+                                 BorrowOriginKind::Argument ||
+                             producer.borrowOrigin ==
+                                 BorrowOriginKind::Receiver))
                           return true;
                     return false;
                   });
@@ -10538,14 +10635,45 @@ verifyMirProgramContracts(const MirProgram &program) {
     const SemanticType *returnType = adapter.type.nativeFunctionReturnType();
     const std::span<const SemanticType> parameters =
         adapter.type.nativeFunctionParameterTypes();
+    // A bridged parameter rebuilds the target's text-carrying class from
+    // native counted text through one source constructor of exactly that
+    // class taking only the text.
+    const auto exactParameters = [&] {
+      if (target == nullptr ||
+          target->parameterTypes.size() != parameters.size() ||
+          adapter.textBridges.size() != parameters.size()) {
+        return false;
+      }
+      for (std::size_t parameter = 0; parameter < parameters.size();
+           ++parameter) {
+        const SemanticType &gti = target->parameterTypes[parameter];
+        if (adapter.textBridges[parameter] == 0) {
+          if (gti != parameters[parameter]) {
+            return false;
+          }
+          continue;
+        }
+        const MirConstructorInstance *bridge =
+            program.findConstructorInstance(adapter.textBridges[parameter]);
+        const MirClassInstance *owner =
+            bridge == nullptr ? nullptr
+                              : program.findClassInstance(bridge->owner);
+        if (bridge == nullptr || owner == nullptr ||
+            parameters[parameter] != SemanticType::StringView ||
+            owner->type != gti || !mir_detail::textCarrierType(program, gti) ||
+            bridge->definitionKind != MirDefinitionKind::Source ||
+            bridge->parameterTypes !=
+                std::vector<SemanticType>{SemanticType::StringView}) {
+          return false;
+        }
+      }
+      return true;
+    };
     if (adapter.id != index + 1 || target == nullptr || target->owner ||
         target->requiresUnsafe ||
         target->definitionKind != MirDefinitionKind::Source ||
         target->linkage != LanguageLinkage::Gti || returnType == nullptr ||
-        target->returnType != *returnType ||
-        target->parameterTypes.size() != parameters.size() ||
-        !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameters.begin()) ||
+        target->returnType != *returnType || !exactParameters() ||
         adapter.targetMayRaiseDefinedFailure !=
             target->mayRaiseDefinedFailure ||
         adapter.failurePolicy !=
@@ -11940,6 +12068,10 @@ verifyMirProgramContracts(const MirProgram &program) {
       case SemanticType::Bool:
       case SemanticType::Char:
       case SemanticType::RawPointer:
+      // A text descriptor is a passive copy; its owner dependency is a
+      // separately verified loan fact.
+      case SemanticType::StringView:
+      case SemanticType::CString:
         return true;
       case SemanticType::Array: {
         const auto traits = concretePackElementTraits(program, type);

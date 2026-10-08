@@ -1045,21 +1045,45 @@ auto SemanticVisitor::Impl::isTextCarryingType(const SemanticType &type) const
   if (type.kind != SemanticType::Class) {
     return false;
   }
-  if (const auto cached =
-          std::find_if(textCarryingTypes.begin(), textCarryingTypes.end(),
-                       [&](const auto &entry) { return entry.first == type; });
+  // Generic instances share one spelling until their arguments are applied;
+  // key the answer by the concrete instance type.
+  const SemanticType concrete = substituteType(
+      type, GenericSubstitution{.types = instanceTypeSubstitution,
+                                .values = instanceValueSubstitution});
+  if (const auto cached = std::find_if(
+          textCarryingTypes.begin(), textCarryingTypes.end(),
+          [&](const auto &entry) { return entry.first == concrete; });
       cached != textCarryingTypes.end()) {
     return cached->second;
   }
+  // A text-carrying class holds only passive fields: text descriptors,
+  // trivially destroyed scalars, and nested passive or text-carrying
+  // classes. It owns nothing a method could view, so every text it yields
+  // relays only the external owners it was constructed from. A class that
+  // also owns storage is not a carrier; its text fields keep the stored-view
+  // restrictions.
+  enum class Shape { Passive, Text, Other };
   std::vector<SemanticType> visiting;
   const auto visit = [&](const auto &self,
-                         const SemanticType &current) -> bool {
+                         const SemanticType &current) -> Shape {
     if (current.kind == SemanticType::StringView ||
         current.kind == SemanticType::CString) {
-      return true;
+      return Shape::Text;
+    }
+    if (current.kind == SemanticType::Array) {
+      return current.arguments.size() == 1 &&
+                     current.arrayLengthParameterId == 0
+                 ? self(self, current.arguments.front())
+                 : Shape::Other;
     }
     if (current.kind != SemanticType::Class) {
-      return false;
+      const SemanticTypeTraits traits = typeTraits(current);
+      return current.kind != SemanticType::Reference &&
+                     current.kind != SemanticType::Unknown &&
+                     traits.drop == DropKind::Trivial && traits.copyable &&
+                     !traits.containsBorrowedState
+                 ? Shape::Passive
+                 : Shape::Other;
     }
     const ClassInfo *owner = classInfo(current);
     // Stored-reference carriers keep their type-level dependency model; a
@@ -1069,11 +1093,11 @@ auto SemanticVisitor::Impl::isTextCarryingType(const SemanticType &type) const
         typeTraits(current).containsBorrowedState ||
         std::find(visiting.begin(), visiting.end(), current) !=
             visiting.end()) {
-      return false;
+      return Shape::Other;
     }
     visiting.push_back(current);
     const GenericSubstitution substitution = classSubstitution(current);
-    bool carries = false;
+    Shape shape = Shape::Passive;
     for (const FieldInfo &field : owner->fields) {
       if (field.declaration == nullptr) {
         continue;
@@ -1087,16 +1111,20 @@ auto SemanticVisitor::Impl::isTextCarryingType(const SemanticType &type) const
           substituteType(member->second.symbol.type, substitution),
           GenericSubstitution{.types = instanceTypeSubstitution,
                               .values = instanceValueSubstitution});
-      if (self(self, fieldType)) {
-        carries = true;
+      const Shape fieldShape = self(self, fieldType);
+      if (fieldShape == Shape::Other) {
+        shape = Shape::Other;
         break;
+      }
+      if (fieldShape == Shape::Text) {
+        shape = Shape::Text;
       }
     }
     visiting.pop_back();
-    return carries;
+    return shape;
   };
-  const bool carries = visit(visit, type);
-  textCarryingTypes.emplace_back(type, carries);
+  const bool carries = visit(visit, concrete) == Shape::Text;
+  textCarryingTypes.emplace_back(concrete, carries);
   return carries;
 }
 
@@ -2130,6 +2158,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   if (name == "prefix_storage_erase") {
     return IntrinsicKind::PrefixStorageErase;
   }
+  if (name == "text_view_slice") {
+    return IntrinsicKind::TextViewSlice;
+  }
   if (name == "prefix_storage_text_view") {
     return IntrinsicKind::PrefixStorageTextView;
   }
@@ -2225,6 +2256,21 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   }
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
+  }
+  // Text read from a text-carrying receiver's fields relays the receiver's
+  // abstract text entry: the caller's external owners, not the shell.
+  if (const auto *member = exprAs<Get>(expression.get())) {
+    const ExprPtr *base = &member->object();
+    while (const auto *nested = exprAs<Get>(base->get())) {
+      base = &nested->object();
+    }
+    const auto *type = semanticModel.findType(*expression);
+    if (exprAs<This>(base->get()) != nullptr && type != nullptr &&
+        isTextCarryingType(*type) && currentClass &&
+        isTextCarryingType(openClassType(*currentClass))) {
+      return {{.place = SemanticLoanPlace{.root = 0, .receiver = true},
+               .access = AccessMode::ReadOnly}};
+    }
   }
   if (const ResolvedConstructionInfo *construction =
           semanticModel.findConstruction(*expression);
@@ -2423,6 +2469,22 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
                      ? storedBorrowDependencies(member->object())
                      : std::vector<SemanticLoanDependency>{};
         }
+      }
+    }
+    // An argument-derived text result, such as a slice, relays exactly the
+    // owners of the text argument it narrows.
+    if (const auto *resolved = semanticModel.findCall(*call);
+        resolved != nullptr &&
+        resolved->borrowOrigin == BorrowOriginKind::Argument &&
+        resolved->borrowArguments.empty() && resolved->borrowFields.empty() &&
+        resolved->borrowArgument < call->arguments().size() &&
+        isTextCarryingType(resolved->returnType)) {
+      const ExprPtr &argument = call->arguments()[resolved->borrowArgument];
+      const auto *source = semanticModel.findExpression(*argument);
+      if (source != nullptr && isTextCarryingType(source->type)) {
+        return isOwnerDependentTextExpression(argument)
+                   ? storedBorrowDependencies(argument)
+                   : std::vector<SemanticLoanDependency>{};
       }
     }
     if (const auto *resolved = semanticModel.findCall(*call);
@@ -6989,6 +7051,11 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::TextViewSlice) {
+    analyzeTextViewSliceCall(expr);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::StorageBoundsCheck) {
     analyzeStorageBoundsCheckCall(expr);
     bindIntrinsicCallDeclaration(expr, declaration);
@@ -8403,6 +8470,39 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
                                                : BorrowOriginKind::None,
                        .borrowArgument = 0,
                        .borrowAccess = borrowAccess});
+}
+
+// A clamped narrowing of one text descriptor. The result observes the same
+// storage as its first argument, so it relays that argument's owner
+// dependency exactly like a by-value text formal returned from a function;
+// an empty slice keeps the dependency. Range policy belongs to the calling
+// source, which reports out-of-range requests before narrowing.
+auto SemanticVisitor::Impl::analyzeTextViewSliceCall(const Call &expr) -> void {
+  std::vector<SemanticType> argumentTypes;
+  argumentTypes.reserve(expr.arguments().size());
+  for (const ExprPtr &argument : expr.arguments()) {
+    argumentTypes.emplace_back(analyze(argument));
+  }
+  for (const TypeRef &argument : expr.typeArguments()) {
+    validateType(argument);
+  }
+  if (!expr.typeArguments().empty() || argumentTypes.size() != 3 ||
+      argumentTypes[0] != SemanticType::StringView ||
+      argumentTypes[1] != SemanticType::UInt64 ||
+      argumentTypes[2] != SemanticType::UInt64) {
+    report(expr.paren(),
+           "text_view_slice expects one gti_internal::text_view and a "
+           "uint64_t position and count.",
+           "GTI-S2019");
+  }
+  currentType = SemanticType::StringView;
+  semanticModel.record(
+      expr, ResolvedCallInfo{.returnType = SemanticType::StringView,
+                             .parameterTypes = std::move(argumentTypes),
+                             .intrinsic = IntrinsicKind::TextViewSlice,
+                             .borrowOrigin = BorrowOriginKind::Argument,
+                             .borrowArgument = 0,
+                             .borrowAccess = AccessMode::ReadOnly});
 }
 
 auto SemanticVisitor::Impl::analyzeStorageBoundsCheckCall(const Call &expr)

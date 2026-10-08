@@ -110,7 +110,7 @@ public:
     }
     unsafe {
       return gti_internal::build_runtime::gti_rt_run_process_v1(
-          this.encoded.view());
+          this.encoded.view().text_capability());
     }
   }
 };

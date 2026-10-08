@@ -1,0 +1,20 @@
+#include <std/string>
+#include <std/vector>
+
+// Each argument count selects one invalid range request; every request must
+// raise the defined string_view bounds failure even in optimized builds.
+int main(int argc, std::vector<std::string> argv) {
+  std::string owned = std::string("abc");
+  mut std::string_view view = owned.view();
+  std::string_view empty = "";
+  std::println("99");
+  switch (argc) {
+    case 1: return int(uint8_t(view[std::size_t(3)]));
+    case 2: return int(view.substr(std::size_t(4)).size());
+    case 3: view.remove_prefix(std::size_t(4)); return 0;
+    case 4: view.remove_suffix(std::size_t(4)); return 0;
+    case 5: return int(uint8_t(empty.front()));
+    case 6: return int(uint8_t(empty.back()));
+    default: return int(uint8_t(view.at(std::size_t(9))));
+  }
+}

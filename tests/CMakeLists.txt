@@ -398,6 +398,16 @@ add_test(NAME prefix_generated_transport_runtime
           "${PROJECT_SOURCE_DIR}/tests/prefix_generated_transport_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(prefix_generated_transport_runtime PROPERTIES TIMEOUT 240)
 
+add_executable(gti_string_view_tests string_view_tests.cpp)
+target_link_libraries(gti_string_view_tests PRIVATE gti_cpp_backend)
+target_precompile_headers(gti_string_view_tests
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME string_view_semantics COMMAND gti_string_view_tests)
+add_test(NAME string_view_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/string_view_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(string_view_runtime PROPERTIES TIMEOUT 300)
+
 add_executable(gti_carrier_shell_reference_tests carrier_shell_reference_tests.cpp)
 target_link_libraries(gti_carrier_shell_reference_tests PRIVATE gti_cpp_backend)
 target_precompile_headers(gti_carrier_shell_reference_tests
@@ -3003,6 +3013,12 @@ if(Python3_Interpreter_FOUND)
       NAME expected_payload_range_lsp
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" expected-payload-range
+    )
+    add_test(
+      NAME string_view_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/string_view_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
       NAME optional_contract_lsp

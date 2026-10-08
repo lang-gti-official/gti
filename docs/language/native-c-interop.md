@@ -337,13 +337,14 @@ compare it with `nullptr`, copy it as the same exact type, initialize it from
 `unsafe` boundary.
 
 The only implicit production conversion in the current bounded slice is from
-`std::string_view` to a `c_string` **call parameter**. Current string views can
-only denote complete static string literals, whose backing arrays include a
-terminator, so MIR verifies the exact source/parameter pair and the backend
-passes the literal's `.data()` pointer. Exact overloads remain preferred: a
-literal selects a `std::string_view` overload over a `c_string` overload.
-This conversion is not a general class conversion and does not permit a
-`c_string` local to be initialized from a string view.
+a string **literal** to a `c_string` **call parameter**. A complete static
+literal's backing array includes a terminator, so the literal is passed as its
+raw static text, MIR verifies the exact source/parameter pair, and the backend
+passes the literal's `.data()` pointer. Other `std::string_view` values do not
+convert, because a view of part of a string has no terminator. Exact overloads
+remain preferred: a literal selects a `std::string_view` overload over a
+`c_string` overload. This conversion is not a general class conversion and
+does not permit a `c_string` local to be initialized from a string view.
 
 `std::string::c_string()` returns a non-null NUL-terminated view of the
 string's characters. Allocated character storage maintains a
@@ -727,6 +728,16 @@ typedef struct gti_c_string_view {
   uint64_t length;
 } gti_c_string_view;
 ```
+
+`std::string_view` is a source-defined GTI class, and GTI does not assume
+that it is ABI-compatible with this record. Each argument is converted
+through the view's trusted `text_capability()` accessor, an explicit call in
+HIR and MIR, and the declaration's native signature uses the counted record.
+A native function type such as `(std::string_view) -> int32_t` has the same
+parameter representation: calls through the pointer convert their arguments
+the same way. A GTI function adapted to such a type receives a
+`std::string_view` rebuilt from the native record through the view's trusted
+bridge constructor.
 
 The matching native declaration must use `gti_c_string_view` at that parameter
 position. The record carries bytes and an explicit length: the data need not be

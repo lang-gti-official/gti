@@ -551,6 +551,10 @@ struct HirNativeCallbackAdapter {
   HirFunctionInstanceId target = 0;
   SemanticType type = SemanticType::Unknown;
   CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
+  // Per native parameter: the trusted std::string_view bridge constructor
+  // instance rebuilding the target's public view from native counted text,
+  // or zero when the parameter passes unchanged.
+  std::vector<HirConstructorInstanceId> textBridges;
 };
 
 struct HirThreadTaskAdapter {

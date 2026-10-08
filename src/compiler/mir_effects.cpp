@@ -322,6 +322,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{},
     // StringViewEmpty
     MirEffectTraits{},
+    // TextViewSlice: a pure, clamped narrowing of a view's descriptor that
+    // relays its operand's owner dependency.
+    MirEffectTraits{.startsLoan = true},
     // ExpectedValue: extraction terminates on the wrong state.
     MirEffectTraits{.mayTrap = true},
     // ExpectedError
@@ -633,6 +636,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "optional-storage-reset",
     "string-view-size",
     "string-view-empty",
+    "text-view-slice",
     "expected-value",
     "expected-error",
     "expected-value-or",

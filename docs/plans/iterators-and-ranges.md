@@ -944,7 +944,8 @@ authoritative until a dedicated optimization architecture is adopted.
   mutable `std::vector`, `std::list`, `std::deque`, and `std::array` iteration
   is implemented; nominal array cursors remain separate from built-in
   fixed-array traversal.
-- Add read-only iteration to `std::string_view`.
+- Read-only iteration over `std::string_view` is implemented in the
+  source-defined view class; each iterator relays the view's owner.
 - Structural invalidation, mutable element access, nested readers, early exits,
   and owned temporary vector ranges are covered by compiler and runtime tests.
 

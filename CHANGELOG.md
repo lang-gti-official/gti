@@ -9,6 +9,26 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.384.0 — Source-defined string views
+
+- `std::string_view` is now an ordinary class written in GTI in the prelude,
+  with a full read-only API: `find`/`rfind`, the `find_*_of` family,
+  `starts_with`, `ends_with`, `contains`, `compare` and the ordering
+  operators, `substr`, `remove_prefix`/`remove_suffix`, `at`, `front`,
+  `back`, and iteration. Searching and slicing allocate nothing. Hover,
+  go-to-definition, and completion reach the source declarations.
+- Views of a `std::string` keep that string borrowed through copies,
+  subviews, iterators, and your own classes that store them: a class holding
+  only text views and scalars relays the owners of the text it was built from.
+  This also closes a hole where storing a view in a class field could outlive
+  its string.
+- String literals, constant evaluation, `expect(message)`, and `extern "C"` /
+  native function-pointer `std::string_view` parameters keep working through
+  narrow trusted conversions; the C ABI record is unchanged.
+- An out-of-range constant index on a string view is now reported by
+  constant evaluation at the library index, with the exact valid range,
+  rather than as a separate semantic error. See example 125.
+
 ## 0.379.0 — Programmable allocators
 
 - Write allocation policies in ordinary GTI. A resource implements the small

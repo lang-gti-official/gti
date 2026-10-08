@@ -281,7 +281,7 @@ public:
     }
 
     int64_t count =
-        gti_internal::runtime::write_file(this.handle.get(), value);
+        gti_internal::runtime::write_file(this.handle.get(), value.text_capability());
     if (count < 0 || uint64_t(count) != uint64_t(value.size())) {
       return unexpected(io_errc::write_failed);
     }
@@ -437,7 +437,7 @@ expected<string, io_errc> read_stdin_some(size_t maximum) {
 /// Opens a file using a typed access policy.
 expected<unique_ptr<FILE>, io_errc> fopen(string_view path, file_mode mode) {
   int64_t descriptor = gti_internal::runtime::open_file(
-      path, gti_internal::runtime_file_mode(mode));
+      path.text_capability(), gti_internal::runtime_file_mode(mode));
   if (descriptor < 0) {
     return unexpected(io_errc::open_failed);
   }
@@ -494,7 +494,7 @@ expected<void, io_errc> fclose(mut FILE& stream) {
 
 /// Writes one counted byte sequence to stdout without discarding host errors.
 expected<size_t, io_errc> try_write_stdout(string_view value) {
-  int64_t count = gti_internal::runtime::write_stdout_bytes(value);
+  int64_t count = gti_internal::runtime::write_stdout_bytes(value.text_capability());
   if (count < 0 || uint64_t(count) != uint64_t(value.size())) {
     return unexpected(io_errc::write_failed);
   }
@@ -503,7 +503,7 @@ expected<size_t, io_errc> try_write_stdout(string_view value) {
 
 /// Writes one counted byte sequence to stderr without discarding host errors.
 expected<size_t, io_errc> try_write_stderr(string_view value) {
-  int64_t count = gti_internal::runtime::write_stderr_bytes(value);
+  int64_t count = gti_internal::runtime::write_stderr_bytes(value.text_capability());
   if (count < 0 || uint64_t(count) != uint64_t(value.size())) {
     return unexpected(io_errc::write_failed);
   }

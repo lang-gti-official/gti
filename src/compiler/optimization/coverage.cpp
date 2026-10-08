@@ -209,6 +209,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::OptionalStorageReset:
   case IntrinsicKind::StringViewSize:
   case IntrinsicKind::StringViewEmpty:
+  case IntrinsicKind::TextViewSlice:
   case IntrinsicKind::ExpectedValue:
   case IntrinsicKind::ExpectedError:
   case IntrinsicKind::ExpectedValueOr:

@@ -274,6 +274,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "source",
       "take",
       "target",
+      "text_view_slice",
       "to_c_string_view",
       "truncated",
       "try_allocate",
@@ -3587,6 +3588,23 @@ inline char8_t string_view_at(std::string_view value, Index index) {
   }
   return static_cast<char8_t>(static_cast<unsigned char>(
       value[static_cast<std::size_t>(index)]));
+}
+
+// The clamped narrowing behind gti_internal::text_view_slice. GTI source
+// validates the requested range first; clamping keeps the descriptor inside
+// the viewed storage even for an empty result at its end.
+inline std::string_view text_view_slice(std::string_view value,
+                                        std::uint64_t position,
+                                        std::uint64_t count) {
+  const std::size_t first =
+      std::cmp_less(position, value.size())
+          ? static_cast<std::size_t>(position)
+          : value.size();
+  const std::size_t remaining = value.size() - first;
+  const std::size_t taken = std::cmp_less(count, remaining)
+                                ? static_cast<std::size_t>(count)
+                                : remaining;
+  return value.substr(first, taken);
 }
 
 template <typename Target, typename Source>

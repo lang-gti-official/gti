@@ -167,6 +167,7 @@ is a teaching helper, not a production server.
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
+| `125-string-views.gti` | allocation-free search and slicing through the source-defined `std::string_view`, owner-backed views keeping their string borrowed, and a user-defined text carrier relaying its owner |
 
 ## Build and run
 

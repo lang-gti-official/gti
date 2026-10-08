@@ -1035,7 +1035,7 @@ void panic_print_error(print_errc error) {
 expected<void, print_errc> submit_print(string_view text) {
   // The prelude's counted stdout entry checks complete submission already.
   // Avoid importing the unrelated FILE/descriptor layer just for its status.
-  if (gti_internal::runtime::gti_rt_write_stdout(text) != 0) {
+  if (gti_internal::runtime::gti_rt_write_stdout(text.text_capability()) != 0) {
     return unexpected(print_errc::write_failed);
   }
   return;

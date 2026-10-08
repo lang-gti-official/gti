@@ -46,7 +46,7 @@ from_chars_result parse_float(string_view input, size_t offset, mut float& outpu
   mut uint64_t position = offset;
   mut uint32_t code = 0;
   unsafe {
-    code = gti_internal::runtime::gti_rt_parse_f32_v1(input, offset, numeric_format(format), &value, &position);
+    code = gti_internal::runtime::gti_rt_parse_f32_v1(input.text_capability(), offset, numeric_format(format), &value, &position);
   }
   if (code == 0) { output = value; }
   return from_chars_result(position, numeric_error(code));
@@ -57,7 +57,7 @@ from_chars_result parse_float(string_view input, size_t offset, mut double& outp
   mut uint64_t position = offset;
   mut uint32_t code = 0;
   unsafe {
-    code = gti_internal::runtime::gti_rt_parse_f64_v1(input, offset, numeric_format(format), &value, &position);
+    code = gti_internal::runtime::gti_rt_parse_f64_v1(input.text_capability(), offset, numeric_format(format), &value, &position);
   }
   if (code == 0) { output = value; }
   return from_chars_result(position, numeric_error(code));

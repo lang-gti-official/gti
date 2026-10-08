@@ -134,7 +134,7 @@ public:
     mut uint32_t result = uint32_t(0);
     unsafe {
       result = gti_internal::process_runtime::gti_rt_process_run_v1(
-          this.encoded.view(), &termination_kind, &termination_value,
+          this.encoded.view().text_capability(), &termination_kind, &termination_value,
           &native_code);
     }
 

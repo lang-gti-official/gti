@@ -270,6 +270,12 @@ Processing a field, call, operator, constructor, destructor, lambda, return, or
 parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
 
+The implicit prelude is loaded by every program, so its non-virtual class
+members are not seeded: a selected call discovers each one it uses. A program
+therefore does not lower and emit the whole source-defined `std::string_view`
+surface when it uses only a literal. Virtual members and members of other
+units keep ordinary declaration seeding.
+
 Declaration seeding also closes over nondependent type components in generic
 function and constructor signatures, fields, and bases. A concrete return such
 as `pair<size_t, bool>` needs a class-instance identity even if its generic

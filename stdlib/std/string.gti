@@ -255,6 +255,15 @@ namespace std {
       }
     }
 
+    // The private text capability withholds this constructor from
+    // application lookup; hosted startup copies each argv entry through it.
+    string(gti_internal::text_view value) : data(gti_internal::allocate_prefix_storage<char>(value.size())), reserved(value.size()) {
+      for (mut size_t index = 0; index < value.size(); index++) {
+        gti_internal::prefix_storage_append(this.data, value[index]);
+        this.count++;
+      }
+    }
+
     string<uint64_t N>(char values[N]) : data(gti_internal::allocate_prefix_storage<char>(N)), reserved(N) {
       while (this.count < N) {
         gti_internal::prefix_storage_append(this.data, values[this.count]);
@@ -428,7 +437,7 @@ namespace std {
 
     /// Returns a counted read-only text view tied to this string.
     string_view view() {
-      return gti_internal::prefix_storage_text_view(this.data);
+      return string_view(gti_internal::prefix_storage_text_view(this.data));
     }
 
     /// Returns a NUL-terminated C string tied to this string's storage.

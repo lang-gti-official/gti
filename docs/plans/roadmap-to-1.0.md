@@ -517,12 +517,16 @@ The remaining first-wave work is:
 - The bounded owner-tied `std::span<T>` borrowed view is implemented for
   vector and string owners without exposing `.data()` or pointer-and-length
   pairs. Mutable and multi-owner views remain.
-- Add read-only iteration to `std::string_view` and mutable iteration to
-  `std::string`. Read-only `std::string` iteration is implemented through the
-  structural protocol and an owner-tied source-defined iterator.
-- Dynamic `std::string_view` construction is implemented through
-  `std::string::view()` and retains the owning string's lifetime through local
-  copies and exact relays. Nested, reseatable, and multi-owner forms remain.
+- Add mutable iteration to `std::string`. Read-only `std::string` and
+  `std::string_view` iteration are implemented through the structural
+  protocol and owner-tied source-defined iterators.
+- `std::string_view` is a source-defined prelude class with its search,
+  comparison, and slicing API in GTI. Dynamic views from `std::string::view()`
+  retain the owning string through copies, subviews, exact relays, and
+  text-carrying classes. Reseatable and multi-owner forms remain, as do method
+  calls on temporary views of resource-bound container elements and explicit
+  view construction from a class prvalue, which currently stop at internal
+  verification instead of a semantic diagnostic.
 
 ### Deliberate improvements over C++
 

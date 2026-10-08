@@ -433,6 +433,17 @@ private:
                                            std::move(parameter));
     }
     parameterTypes = std::move(concreteParameters);
+    if (const NativeTextBoundaryInfo *boundary =
+            declaration.linkage == LanguageLinkage::C
+                ? baseModel->nativeTextBoundary()
+                : nullptr) {
+      for (SemanticType &parameter : parameterTypes) {
+        if (parameter.kind == SemanticType::Class &&
+            parameter.classId == boundary->viewClass) {
+          parameter = SemanticType::StringView;
+        }
+      }
+    }
     // Free functions ignore class arguments, matching the previous scan.
     const bool freeFunction = declaration.ownerClass == 0;
     const std::vector<SemanticType> noTypeArguments;
@@ -542,15 +553,34 @@ private:
         target->ownerClass != 0 || target->linkage != LanguageLinkage::Gti ||
         !target->genericParameters.empty() || target->parameterPack ||
         returnType == nullptr || target->returnType != *returnType ||
-        target->parameterTypes.size() != parameters.size() ||
-        !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameters.begin())) {
+        target->parameterTypes.size() != parameters.size()) {
       lifecycleValid = false;
       return 0;
     }
+    // A native counted-text parameter reaches a public std::string_view
+    // target parameter through the trusted bridge constructor.
+    const NativeTextBoundaryInfo *boundary = baseModel->nativeTextBoundary();
+    std::vector<HirConstructorInstanceId> textBridges(parameters.size(), 0);
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      const SemanticType &gti = target->parameterTypes[index];
+      if (gti == parameters[index]) {
+        continue;
+      }
+      if (boundary == nullptr ||
+          parameters[index] != SemanticType::StringView ||
+          gti.kind != SemanticType::Class ||
+          gti.classId != boundary->viewClass ||
+          (textBridges[index] = enqueueHostedConstructor(
+               gti, boundary->bridge,
+               conversion.declaration == nullptr
+                   ? SourceSpan{}
+                   : tokenSpan(conversion.declaration->name()))) == 0) {
+        lifecycleValid = false;
+        return 0;
+      }
+    }
     const HirFunctionInstanceId function = enqueueFunction(
-        *target, {}, {}, {}, {}, *returnType,
-        std::vector<SemanticType>(parameters.begin(), parameters.end()));
+        *target, {}, {}, {}, {}, *returnType, target->parameterTypes);
     if (function == 0) {
       lifecycleValid = false;
       return 0;
@@ -570,7 +600,8 @@ private:
         {.id = id,
          .target = function,
          .type = conversion.type,
-         .cThreadCallback = conversion.cThreadCallback});
+         .cThreadCallback = conversion.cThreadCallback,
+         .textBridges = std::move(textBridges)});
     return id;
   }
 
@@ -702,6 +733,13 @@ private:
     return concrete;
   }
 
+  [[nodiscard]] bool preludeSourceUnit(SourceUnitId sourceUnit) const {
+    const auto &units = baseModel->analysisSeal().sourceGraph.units;
+    return std::any_of(units.begin(), units.end(), [&](const auto &unit) {
+      return unit.id == sourceUnit && unit.role == SourceUnitRole::Prelude;
+    });
+  }
+
   void seedDeclarations(const StmtList &declarations,
                         std::optional<ClassId> enclosingClass) {
     for (const StmtPtr &statement : declarations) {
@@ -797,6 +835,14 @@ private:
           if (owner == nullptr || !owner->genericParameters.empty()) {
             continue;
           }
+        }
+        // The prelude is loaded by every program. Its non-virtual class
+        // members are lowered from their uses, so a program does not carry
+        // the whole always-available library surface.
+        if (info->ownerClass != 0 && !info->virtualMethod &&
+            !info->pureVirtual && !info->overrideMethod &&
+            preludeSourceUnit(info->sourceUnit)) {
+          continue;
         }
         (void)enqueueFunction(*info, classArguments, {}, {}, {},
                               info->returnType, info->parameterTypes);
@@ -1305,7 +1351,9 @@ private:
                                .value = lowered.initializer},
                               staticFieldInitializers);
           staticFieldInitializers.roots.push_back(lowered.statement);
-          if (declaration->genericParameters.empty()) {
+          // A staged constant closure has no whole-program storage plan; it
+          // lowers each reachable static like a generic instance's.
+          if (declaration->genericParameters.empty() && !constantClosure) {
             lifecycleValid = false;
           }
         } else {
@@ -1492,6 +1540,24 @@ private:
     parameterBindings.reserve(declaration->declaration->parameters().size());
     for (const Parameter &parameter : declaration->declaration->parameters()) {
       parameterBindings.push_back(lowerBinding(parameter, *model, body));
+    }
+    // A C-linkage declaration receives the native counted record of each
+    // public std::string_view parameter, matching its instance signature.
+    if (const NativeTextBoundaryInfo *boundary =
+            declaration->linkage == LanguageLinkage::C
+                ? baseModel->nativeTextBoundary()
+                : nullptr) {
+      for (HirBinding &binding : body.bindings) {
+        if (binding.parameter != nullptr &&
+            binding.info.type.kind == SemanticType::Class &&
+            binding.info.type.classId == boundary->viewClass) {
+          const bool borrowed = binding.info.traits.containsBorrowedState;
+          binding.info.type = SemanticType::StringView;
+          binding.info.traits =
+              instanceProvider->traitsFor(SemanticType::StringView);
+          binding.info.traits.containsBorrowedState = borrowed;
+        }
+      }
     }
     if (declaration->declaration->body()) {
       body.roots =
@@ -3237,6 +3303,52 @@ private:
                             explicitArgumentCount);
   }
 
+  // One exact call of the trusted std::string_view accessor reading a public
+  // view's private text (a panic message or a C-boundary argument). The
+  // receiver mode matches what semantics selects for the same source call.
+  [[nodiscard]] std::optional<HirValueId>
+  textCapabilityAccess(HirValueId view, FunctionId accessorId,
+                       const Expr &source, HirBody &body) {
+    const HirValue *value = body.findValue(view);
+    const FunctionInfo *accessor = baseModel->findFunction(accessorId);
+    if (value == nullptr || accessor == nullptr) {
+      return std::nullopt;
+    }
+    const bool borrowed = value->info.traits.containsBorrowedState;
+    const CallReceiverMode mode = value->info.category != ValueCategory::Value
+                                      ? CallReceiverMode::ReadOnlyPlace
+                                  : borrowed
+                                      ? CallReceiverMode::Value
+                                      : CallReceiverMode::FreshTemporaryRead;
+    const HirFunctionInstanceId target = enqueueFunction(
+        *accessor, {}, {}, {}, {}, SemanticType::StringView, {});
+    const std::optional<HirCallReceiver> receiver =
+        orderedReceiver(view, ReceiverMutability::ReadOnly, mode, body);
+    if (target == 0 || !receiver) {
+      return std::nullopt;
+    }
+    SemanticTypeTraits traits =
+        instanceProvider->traitsFor(SemanticType::StringView);
+    traits.containsBorrowedState = borrowed;
+    HirValue access{.id = nextValueId++,
+                    .kind = HirValueKind::Call,
+                    .source = &source,
+                    .info = {.type = SemanticType::StringView,
+                             .category = ValueCategory::Value,
+                             .access = AccessMode::ReadOnly,
+                             .traits = traits},
+                    .operands = {view}};
+    access.borrowOrigin = BorrowOriginKind::Receiver;
+    access.borrowAccess = AccessMode::ReadOnly;
+    access.receiver = view;
+    access.definedFailure.propagation = FailurePropagationKind::DirectCall;
+    access.callPlan = HirCallPlan{.receiver = *receiver, .arguments = {}};
+    access.functionTarget = target;
+    const HirValueId id = access.id;
+    body.values.push_back(std::move(access));
+    return id;
+  }
+
   [[nodiscard]] std::optional<HirCallReceiver>
   orderedReceiver(HirValueId receiver, ReceiverMutability mutability,
                   CallReceiverMode receiverMode, const HirBody &body) const {
@@ -3844,8 +3956,9 @@ private:
         expect.sourceType.kind != SemanticType::Expected ||
         expect.sourceType.arguments.size() != 2 ||
         expect.resultType != payload || expect.resultType != resultInfo->type ||
-        expect.mapper != 0 || expect.lambda != 0 ||
-        expect.mapperType != SemanticType::StringView) {
+        expect.lambda != 0 ||
+        (expect.mapperType == SemanticType::StringView) !=
+            (expect.mapper == 0)) {
       lifecycleValid = false;
       return std::nullopt;
     }
@@ -3860,9 +3973,21 @@ private:
     if (receiverValue == nullptr || messageValue == nullptr ||
         receiverValue->info.type != expect.sourceType ||
         receiverValue->info.category != ValueCategory::Value ||
-        messageValue->info.type != SemanticType::StringView) {
+        messageValue->info.type != expect.mapperType) {
       lifecycleValid = false;
       return std::nullopt;
+    }
+    // A public std::string_view message reaches the panic intrinsic through
+    // the exact trusted accessor semantics selected for its private text.
+    HirValueId panicMessage = *message;
+    if (expect.mapper != 0) {
+      const std::optional<HirValueId> text = textCapabilityAccess(
+          *message, expect.mapper, *expression.arguments().front(), body);
+      if (!text) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      panicMessage = *text;
     }
 
     const auto appendObserver = [&](IntrinsicKind intrinsic,
@@ -3907,7 +4032,7 @@ private:
                              .intrinsic = IntrinsicKind::Move});
     }
     const auto arguments =
-        orderedArguments({*message}, {SemanticType::StringView}, body, 1);
+        orderedArguments({panicMessage}, {SemanticType::StringView}, body, 1);
     if (!arguments) {
       lifecycleValid = false;
       return std::nullopt;
@@ -3921,7 +4046,7 @@ private:
                   .category = ValueCategory::Value,
                   .access = AccessMode::ReadOnly,
                   .traits = instanceProvider->traitsFor(SemanticType::Void)},
-         .operands = {*message},
+         .operands = {panicMessage},
          .parameterTypes = {SemanticType::StringView},
          .intrinsic = IntrinsicKind::Panic,
          .neverReturns = true,
@@ -4395,8 +4520,18 @@ private:
           receiver = lowerImplicitReceiver(body);
         }
       }
-      for (const ExprPtr &argument : call->arguments()) {
-        lowerOperand(argument);
+      for (std::size_t index = 0; index < call->arguments().size(); ++index) {
+        // A literal bound to a c_string parameter passes its static text
+        // directly; MIR verifies that exact literal/parameter pair.
+        const auto *literal =
+            exprAs<LiteralExpr>(call->arguments()[index].get());
+        if (literal != nullptr && resolved != nullptr &&
+            index < resolved->parameterTypes.size() &&
+            resolved->parameterTypes[index] == SemanticType::CString &&
+            std::holds_alternative<std::string>(literal->value())) {
+          rawTextLiterals.insert(literal);
+        }
+        lowerOperand(call->arguments()[index]);
       }
     } else if (const auto *conditional = exprAs<ConditionalExpr>(raw)) {
       kind = HirValueKind::Conditional;
@@ -4563,19 +4698,28 @@ private:
     } else if (const auto *literalExpression = exprAs<LiteralExpr>(raw)) {
       const ResolvedConstructionInfo *construction =
           model.findConstruction(*literalExpression);
+      // A class-typed nullptr or string literal is an exact construction
+      // from its raw constant: the selected constructor stays explicit.
+      const bool nullConstruction =
+          construction != nullptr && construction->parameterTypes.size() == 1 &&
+          construction->parameterTypes.front() == SemanticType::NullPtr &&
+          std::holds_alternative<std::nullptr_t>(literalExpression->value());
+      const bool textConstruction =
+          construction != nullptr && construction->parameterTypes.size() == 1 &&
+          construction->parameterTypes.front() == SemanticType::StringView &&
+          std::holds_alternative<std::string>(literalExpression->value()) &&
+          !rawTextLiterals.contains(literalExpression);
       if (construction != nullptr &&
           construction->constructedType.kind == SemanticType::Class &&
-          construction->parameterTypes.size() == 1 &&
-          construction->parameterTypes.front() == SemanticType::NullPtr &&
-          std::holds_alternative<std::nullptr_t>(literalExpression->value())) {
+          (nullConstruction || textConstruction)) {
+        const SemanticType rawType = construction->parameterTypes.front();
         HirValue argument;
         argument.id = nextValueId++;
         argument.kind = HirValueKind::Literal;
-        argument.info =
-            ExpressionInfo{.type = SemanticType::NullPtr,
-                           .category = ValueCategory::Value,
-                           .access = AccessMode::ReadOnly,
-                           .traits = semanticTraits(SemanticType::NullPtr)};
+        argument.info = ExpressionInfo{.type = rawType,
+                                       .category = ValueCategory::Value,
+                                       .access = AccessMode::ReadOnly,
+                                       .traits = semanticTraits(rawType)};
         argument.literal = literalExpression->value();
         operands.push_back(argument.id);
         body.values.push_back(std::move(argument));
@@ -4761,13 +4905,23 @@ private:
                 : std::optional<HirValueId>{callee->operands.front()};
       }
     }
+    const auto *rawText = exprAs<LiteralExpr>(raw);
+    const bool rawTextLiteral =
+        rawText != nullptr && rawTextLiterals.contains(rawText);
     if (const DefinedFailureOperation *failure =
-            model.findDefinedFailure(*raw)) {
+            rawTextLiteral ? nullptr : model.findDefinedFailure(*raw)) {
       value.definedFailure = *failure;
     }
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
+    }
+    if (rawTextLiteral) {
+      value.info = ExpressionInfo{
+          .type = SemanticType::StringView,
+          .category = ValueCategory::Value,
+          .access = AccessMode::ReadOnly,
+          .traits = instanceProvider->traitsFor(SemanticType::StringView)};
     }
     if (const auto *assertion = model.findRawReferenceAssertion(*raw)) {
       const auto *dereference = exprAs<Unary>(raw);
@@ -5155,7 +5309,7 @@ private:
       }
     }
     if (const ResolvedConstructionInfo *construction =
-            model.findConstruction(*raw)) {
+            rawTextLiteral ? nullptr : model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::StorageConstruct ||
@@ -5335,6 +5489,35 @@ private:
           resolved == nullptr ? std::span<const std::size_t>{}
                               : std::span<const std::size_t>{
                                     resolved->ephemeralBorrowArguments};
+      if (const NativeTextBoundaryInfo *boundary = model.nativeTextBoundary();
+          exactOperands && boundary != nullptr && resolved != nullptr) {
+        const FunctionInfo *target =
+            resolved->function == 0
+                ? nullptr
+                : baseModel->findFunction(resolved->function);
+        const bool nativeBoundary =
+            target != nullptr && target->linkage == LanguageLinkage::C;
+        for (std::size_t index = 0; nativeBoundary && index < argumentCount;
+             ++index) {
+          SemanticType &parameter = value.parameterTypes[index];
+          if (parameter.kind != SemanticType::Class ||
+              parameter.classId != boundary->viewClass) {
+            continue;
+          }
+          const std::optional<HirValueId> text = textCapabilityAccess(
+              arguments[index], boundary->accessor,
+              index < call->arguments().size() ? *call->arguments()[index]
+                                               : *raw,
+              body);
+          if (!text) {
+            lifecycleValid = false;
+            break;
+          }
+          value.operands[value.operands.size() - argumentCount + index] = *text;
+          arguments[index] = *text;
+          parameter = SemanticType::StringView;
+        }
+      }
       const std::optional<std::vector<HirCallArgument>> plannedArguments =
           exactOperands ? orderedArguments(arguments, value.parameterTypes,
                                            body, call->arguments().size(),
@@ -5397,6 +5580,37 @@ private:
     }
     if (value.nativeCalleeType && !value.operands.empty()) {
       value.receiver = value.operands.front();
+      // A public std::string_view argument for native counted text passes
+      // its private text through the trusted accessor.
+      const std::span<const SemanticType> nativeParameters =
+          value.nativeCalleeType->nativeFunctionParameterTypes();
+      const NativeTextBoundaryInfo *boundary = model.nativeTextBoundary();
+      const auto *nativeCall = exprAs<Call>(raw);
+      for (std::size_t index = 0;
+           boundary != nullptr && nativeCall != nullptr &&
+           index + 1 < value.operands.size() &&
+           index < value.parameterTypes.size() &&
+           index < nativeParameters.size();
+           ++index) {
+        SemanticType &parameter = value.parameterTypes[index];
+        if (nativeParameters[index] != SemanticType::StringView ||
+            parameter.kind != SemanticType::Class ||
+            parameter.classId != boundary->viewClass) {
+          continue;
+        }
+        const std::optional<HirValueId> text =
+            textCapabilityAccess(value.operands[index + 1], boundary->accessor,
+                                 index < nativeCall->arguments().size()
+                                     ? *nativeCall->arguments()[index]
+                                     : *raw,
+                                 body);
+        if (!text) {
+          lifecycleValid = false;
+          break;
+        }
+        value.operands[index + 1] = *text;
+        parameter = SemanticType::StringView;
+      }
       const std::vector<HirValueId> arguments(value.operands.begin() + 1,
                                               value.operands.end());
       const bool expandsPack =
@@ -5613,6 +5827,8 @@ private:
                      std::unique_ptr<SemanticInstanceAnalysis>>
       constructorAnalyses;
   std::unordered_set<const Expr *> activeDefaultArguments;
+  // String literals lowered as raw static text for a c_string parameter.
+  std::unordered_set<const Expr *> rawTextLiterals;
   std::optional<SourceLocationLiteral> activeDefaultSourceLocation;
   std::unordered_set<HirValueId> collectionResults;
 };

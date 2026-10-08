@@ -232,6 +232,8 @@ public:
                initializer.targetType == SemanticType::Bool ||
                initializer.targetType == SemanticType::Char ||
                initializer.targetType.kind == SemanticType::RawPointer ||
+               initializer.targetType.kind == SemanticType::StringView ||
+               initializer.targetType.kind == SemanticType::CString ||
                initializer.targetType.kind == SemanticType::Array ||
                initializer.targetType.kind == SemanticType::Class ||
                (initializer.targetType.kind == SemanticType::Enum &&
@@ -5595,7 +5597,16 @@ private:
     call.borrowArguments = value.borrowArguments;
     call.borrowFields = value.borrowFields;
     call.borrowPlace = value.borrowPlace;
-    if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
+    // A text-carrying result whose source carries no owner (for example a
+    // view of a literal) is an independent value: it borrows nothing,
+    // including the shell of a temporary text carrier it was read from.
+    const bool ownerlessTextResult =
+        value.borrowAccess == AccessMode::ReadOnly &&
+        value.info.type.kind != SemanticType::Reference &&
+        textCarrier(value.info.type) &&
+        !value.info.traits.containsBorrowedState;
+    if (value.borrowOrigin != BorrowOriginKind::None && origin != 0 &&
+        !ownerlessTextResult) {
       const bool shellReference = borrowsCarrierStorage(value);
       const MirLoanKind kind =
           value.info.traits.containsBorrowedState && !shellReference

@@ -1262,7 +1262,8 @@ private:
   [[nodiscard]] ConstexprEvaluation evaluateConstexprConstruction(
       const Expr &source, const ResolvedConstructionInfo &resolved,
       const ExprList &explicitArguments, const Token &callSite,
-      ConstexprInterpreter &context);
+      ConstexprInterpreter &context,
+      const std::vector<ConstantValue> *evaluatedArguments = nullptr);
 
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const ExprPtr &expression,
@@ -1838,6 +1839,7 @@ private:
   // uint64_t scalars — the index and the logical size — with a void
   // result; the only effect is the defined index_out_of_bounds failure.
   void analyzeStorageBoundsCheckCall(const Call &expr);
+  void analyzeTextViewSliceCall(const Call &expr);
 
   void analyzeStorageIntrinsicCall(const Call &expr, IntrinsicKind intrinsic);
 
@@ -1987,6 +1989,7 @@ private:
   };
   mutable std::vector<ActiveMemberRequirement> activeMemberRequirements;
   mutable std::vector<std::pair<SemanticType, bool>> textCarryingTypes;
+  mutable ClassId textLiteralBridgeClass = 0;
   [[nodiscard]] std::optional<SemanticType>
   symbolicReadMemberReturnType(const SemanticType &receiver,
                                std::string_view member) const;
@@ -3716,6 +3719,26 @@ private:
 
   [[nodiscard]] bool isDefaultLibraryClass(const SemanticType &type,
                                            std::string_view expectedName) const;
+
+  // The trusted prelude std::string_view constructor that bridges a string
+  // literal's static text into the public class, or null before the prelude
+  // class is declared.
+  [[nodiscard]] const ConstructorInfo *textLiteralBridge() const;
+
+  // The trusted prelude std::string_view class, or zero before it is
+  // declared.
+  [[nodiscard]] ClassId publicTextViewClass() const;
+
+  // The trusted std::string_view accessor that yields its private text
+  // capability, for compiler-owned consumers such as expect's panic message.
+  [[nodiscard]] FunctionId textCapabilityAccessor() const;
+
+  // Whether a type is exactly the trusted public std::string_view class.
+  [[nodiscard]] bool isPublicTextView(const SemanticType &type) const;
+
+  // Records and returns the native counted-text boundary of the trusted
+  // std::string_view, or null when the prelude members are unavailable.
+  const NativeTextBoundaryInfo *recordNativeTextBoundary();
 
   [[nodiscard]] std::optional<FunctionId>
   ownedProgramEntryAppendFunction(const FunctionDecl &declaration,

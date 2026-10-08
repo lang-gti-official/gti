@@ -2048,6 +2048,57 @@ successors(const MirTerminator &terminator) {
          source->type.kind == SemanticType::Class;
 }
 
+// A text-carrying receiver narrowing its own text field (remove_prefix): an
+// Assign to a receiver text projection whose value comes from one read-only
+// argument-relay call over a copy of that same projection. The relayed
+// owners are unchanged, so the receiver's text entry still describes them.
+[[nodiscard]] const MirInstruction *
+receiverTextReseatProducerImpl(const MirBody &body,
+                               const MirInstruction &assign) {
+  const auto definition = [&](MirValueId value) -> const MirInstruction * {
+    const MirValue *found = body.findValue(value);
+    if (found == nullptr)
+      return nullptr;
+    for (const MirBlock &block : body.blocks)
+      for (const MirInstruction &instruction : block.instructions)
+        if (instruction.id == found->definition && instruction.result == value)
+          return &instruction;
+    return nullptr;
+  };
+  const MirPlace *destination =
+      assign.destination ? body.findPlace(*assign.destination) : nullptr;
+  if (assign.kind != MirInstructionKind::Assign || destination == nullptr ||
+      destination->root != MirPlaceRootKind::This ||
+      destination->projections.empty() ||
+      (destination->type.kind != SemanticType::StringView &&
+       destination->type.kind != SemanticType::CString) ||
+      assign.operands.size() != 1 ||
+      assign.operands.front().kind != MirOperandKind::Value)
+    return nullptr;
+  const MirInstruction *producer = definition(assign.operands.front().value);
+  if (producer == nullptr || producer->kind != MirInstructionKind::Call ||
+      producer->receiver ||
+      producer->borrowOrigin != BorrowOriginKind::Argument ||
+      producer->borrowAccess != AccessMode::ReadOnly || producer->borrowPlace ||
+      producer->borrowArgument >= producer->operands.size() ||
+      producer->info.type != destination->type)
+    return nullptr;
+  const MirOperand &relayed = producer->operands[producer->borrowArgument];
+  const MirInstruction *copy = relayed.kind == MirOperandKind::Value
+                                   ? definition(relayed.value)
+                                   : nullptr;
+  const MirPlace *source =
+      copy != nullptr && copy->kind == MirInstructionKind::Load &&
+              copy->operands.size() == 1 &&
+              copy->operands.front().kind == MirOperandKind::Copy
+          ? body.findPlace(copy->operands.front().place)
+          : nullptr;
+  if (source == nullptr || source->root != MirPlaceRootKind::This ||
+      source->projections != destination->projections)
+    return nullptr;
+  return producer;
+}
+
 struct AbstractStoredAccess {
   bool overlaps = false;
   bool referent = false;
@@ -2455,7 +2506,24 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                  : accessed->type.kind != SemanticType::StringView &&
                        accessed->type.kind != SemanticType::CString &&
                        !accessed->traits.containsBorrowedState);
-        return returnedCarrier || textReceiverShell ||
+        // A receiver narrowing its own text field keeps the same relayed
+        // owners: neither its text entry nor the producing slice's loan over
+        // that field is a conflicting access.
+        const MirInstruction *reseat = nullptr;
+        if (write && accessed != nullptr &&
+            accessed->root == MirPlaceRootKind::This && instruction != 0)
+          for (const MirBlock &candidate : body.blocks)
+            for (const MirInstruction &item : candidate.instructions)
+              if (item.id == instruction && item.destination == placeId)
+                reseat = &item;
+        const MirInstruction *reseatProducer =
+            reseat != nullptr ? receiverTextReseatProducerImpl(body, *reseat)
+                              : nullptr;
+        const bool textReceiverReseat =
+            reseatProducer != nullptr &&
+            (abstractTextReceiverEntry(body, loan) ||
+             reseatProducer->loan == loan.id);
+        return returnedCarrier || textReceiverShell || textReceiverReseat ||
                (canonicalStoredEntryCarrier && place.projections.empty()) ||
                (storedEntryCarrier &&
                 (accessed->projections.empty() ||
@@ -2710,8 +2778,8 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
         return checkPlace(resolved.place, true, context, instruction);
       }
       case MirOperandKind::BorrowWrite:
-        return checkPlace(resolved.place, true, context, instruction,
-                          inputLoan, true);
+        return checkPlace(resolved.place, true, context, instruction, inputLoan,
+                          true);
       case MirOperandKind::Value:
       case MirOperandKind::Constant:
         return std::nullopt;
@@ -6576,9 +6644,10 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     }
     if (range.ownsRangeTemporary &&
         ownerPlace->traits.drop == DropKind::Lexical) {
+      // A passive owner (such as a view temporary) has a trivial cleanup,
+      // but it is still the exact drop obligation of the owned temporary.
       const MirDropObligation *drop = body.findDropObligation(range.ownerDrop);
-      if (drop == nullptr || drop->place != range.owner ||
-          !drop->dropType.requiresActiveCleanup) {
+      if (drop == nullptr || drop->place != range.owner) {
         return failure(body, owner,
                        "owned range temporary lacks its exact cleanup "
                        "obligation");
@@ -6691,6 +6760,11 @@ bool validCallInputType(const SemanticType &source,
 
 const MirInstruction *linearDefinition(const MirBody &body, MirValueId value) {
   return linearValueDefinition(body, value);
+}
+
+const MirInstruction *receiverTextReseatProducer(const MirBody &body,
+                                                 const MirInstruction &assign) {
+  return receiverTextReseatProducerImpl(body, assign);
 }
 
 bool receiverIsConsumed(const MirBody &body, const MirOperand &operand,
@@ -9793,11 +9867,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
             const bool storedCarrier =
                 retained != nullptr && retained->kind == MirLoanKind::Stored &&
                 retained->entry && !retained->designatedFields.empty();
+            // A field-free abstract entry exists only for text formals and
+            // text-carrying receivers; program verification proves a class
+            // operand is a recorded text carrier.
             const bool dynamicTextCarrier =
                 retained != nullptr && retained->kind == MirLoanKind::Stored &&
                 retained->entry && retained->designatedFields.empty() &&
                 (operand.type.kind == SemanticType::StringView ||
-                 operand.type.kind == SemanticType::CString) &&
+                 operand.type.kind == SemanticType::CString ||
+                 operand.type.kind == SemanticType::Class) &&
                 published != nullptr &&
                 published->access == AccessMode::ReadOnly;
             const bool callResult = retained != nullptr &&
@@ -10210,10 +10288,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           }
           const bool exactStoredCarrierEntry =
               retained->entry && !retained->designatedFields.empty();
+          // A field-free abstract entry exists only for text formals and
+          // text-carrying receivers (see the value-evidence rule above).
           const bool exactDynamicTextEntry =
               retained->entry && retained->designatedFields.empty() &&
               (source.type.kind == SemanticType::StringView ||
-               source.type.kind == SemanticType::CString) &&
+               source.type.kind == SemanticType::CString ||
+               source.type.kind == SemanticType::Class) &&
               instruction.info.type == source.type;
           const auto *constructedValue = body.findValue(source.value);
           const auto *constructedBlock =

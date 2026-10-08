@@ -8,8 +8,8 @@
 #include <std/string>
 
 namespace gti_internal {
-std::string_view source_file_name();
-std::string_view source_function_name();
+gti_internal::text_view source_file_name();
+gti_internal::text_view source_function_name();
 uint32_t source_line();
 uint32_t source_column();
 }
@@ -39,8 +39,10 @@ public:
         line_value(line_number), column_value(column_number) {}
 
   static source_location current(
-      std::string_view file_name = gti_internal::source_file_name(),
-      std::string_view function_name = gti_internal::source_function_name(),
+      std::string_view file_name =
+          std::string_view(gti_internal::source_file_name()),
+      std::string_view function_name =
+          std::string_view(gti_internal::source_function_name()),
       uint32_t line_number = gti_internal::source_line(),
       uint32_t column_number = gti_internal::source_column()) {
     return source_location(file_name, function_name, line_number,

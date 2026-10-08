@@ -556,6 +556,8 @@ SemanticModel::isCompilerPrivateType(const SemanticType &type) const {
   case SemanticType::UniqueOwner:
   case SemanticType::Storage:
   case SemanticType::PrefixStorage:
+  // The raw text capability; applications use the std::string_view class.
+  case SemanticType::StringView:
     return true;
   case SemanticType::Class: {
     const ClassTypeInfo *info = findClassType(type.classId);
@@ -571,6 +573,14 @@ SemanticModel::isCompilerPrivateType(const SemanticType &type) const {
     }
     break;
   }
+  case SemanticType::NativeFunction:
+    // A native counted-text parameter is the boundary form of the public
+    // std::string_view, not an application use of the private capability.
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [this](const SemanticType &argument) {
+                         return argument != SemanticType::StringView &&
+                                isCompilerPrivateType(argument);
+                       });
   default:
     break;
   }
@@ -1088,6 +1098,14 @@ SemanticModel::findContextualConversion(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findContextualConversion(expression);
 }
 
+[[nodiscard]] const NativeTextBoundaryInfo *
+SemanticModel::nativeTextBoundary() const {
+  if (nativeTextBoundaryInfo) {
+    return &*nativeTextBoundaryInfo;
+  }
+  return base == nullptr ? nullptr : base->nativeTextBoundary();
+}
+
 [[nodiscard]] bool
 SemanticModel::isContextualIntegerOperand(const Expr &expression) const {
   if (contextualIntegerOperands.contains(&expression)) {
@@ -1360,6 +1378,7 @@ void SemanticModel::clear() {
   projectionOperators.clear();
   contextualConversions.clear();
   contextualIntegerOperands.clear();
+  nativeTextBoundaryInfo.reset();
   classLifecycles.clear();
   designatedConstructors.clear();
   constructions.clear();
@@ -1985,6 +2004,10 @@ void SemanticModel::recordProjectionOperator(const Expr &expression,
 void SemanticModel::recordContextualConversion(const Expr &expression,
                                                ResolvedOperatorInfo info) {
   contextualConversions.insert_or_assign(&expression, std::move(info));
+}
+
+void SemanticModel::recordNativeTextBoundary(NativeTextBoundaryInfo info) {
+  nativeTextBoundaryInfo = info;
 }
 
 void SemanticModel::recordContextualIntegerOperand(const Expr &expression) {

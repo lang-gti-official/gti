@@ -10041,6 +10041,20 @@ directOwningFieldInitializerTransfers(const MirProgram &program,
     if (temporaryDrop.kind == MirDropObligationKind::ConstructionRollback) {
       continue;
     }
+    // A passive text carrier staged as a by-value argument (a literal view)
+    // is a descriptor copy with no cleanup; the callee consumes it.
+    if (temporaryDrop.kind == MirDropObligationKind::PreparedParameter &&
+        !temporaryDrop.dropType.requiresActiveCleanup &&
+        !temporaryDrop.dropType.destructor) {
+      const MirClassInstance *carrier =
+          uniqueClassInstanceForType(program, temporaryDrop.dropType.type);
+      if (carrier != nullptr && carrier->textCarrier && !carrier->destructor &&
+          !carrier->requiresActiveDropState &&
+          !carrier->requiresActiveCleanup) {
+        matched.insert(temporaryDrop.id);
+        continue;
+      }
+    }
     const bool aggregateResult =
         temporaryDrop.dropType.type.kind == SemanticType::Array &&
         temporaryDrop.dropType.fixedArray.has_value();
@@ -18950,6 +18964,57 @@ expectedPayloadReturnSlot(const MirProgram &program,
              : ExpectedPayloadReturnSlot{};
 }
 
+// A cleanup-free temporary of a passive generated-copy class that is only
+// initialized from values and read by moves or copies, such as the join of a
+// class-typed conditional over literal views. With no drop obligation it is
+// plain lifetime storage: no arm owns cleanup and no rollback is required.
+[[nodiscard]] bool passiveClassJoinTemporary(const MirProgram &program,
+                                             const MirBody &body,
+                                             const MirPlace &place) {
+  if (place.root != MirPlaceRootKind::Temporary || place.temporary == 0 ||
+      !place.projections.empty() || place.type.kind != SemanticType::Class ||
+      place.initiallyAvailable ||
+      passiveGeneratedCopyClass(program, place.type) == nullptr ||
+      std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                  [&](const MirDropObligation &drop) {
+                    return drop.place == place.id;
+                  })) {
+    return false;
+  }
+  std::size_t writes = 0;
+  std::size_t reads = 0;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.destination == place.id) {
+        if (instruction.kind != MirInstructionKind::Initialize ||
+            instruction.receiver || instruction.result ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Value ||
+            instruction.operands.front().type != place.type ||
+            !instruction.localFailureSites.empty() ||
+            !instruction.definedFailure.empty())
+          return false;
+        ++writes;
+        continue;
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        if (operand.place != place.id)
+          continue;
+        if ((operand.kind != MirOperandKind::Move &&
+             operand.kind != MirOperandKind::Copy) ||
+            (instruction.kind != MirInstructionKind::Move &&
+             instruction.kind != MirInstructionKind::Load) ||
+            !instruction.result)
+          return false;
+        ++reads;
+      }
+      if (instruction.receiver && instruction.receiver->place == place.id)
+        return false;
+    }
+  }
+  return writes != 0 && reads != 0;
+}
+
 [[nodiscard]] bool
 lifetimeSlotPlace(const MirProgram &program,
                   const CppMirBodyEmissionMap &representations,
@@ -19136,6 +19201,9 @@ lifetimeSlotPlace(const MirProgram &program,
       return true;
     }
     if (conditionalClassBindingJoin(body, place)) {
+      return true;
+    }
+    if (passiveClassJoinTemporary(program, body, place)) {
       return true;
     }
     if (std::any_of(
@@ -21848,6 +21916,8 @@ storageBoundsDetailSpelling(const MirProgram &program,
     return "GTI_FAILURE_DETAIL_VECTOR_V1";
   case DefinedFailureDetail::String:
     return "GTI_FAILURE_DETAIL_STRING_V1";
+  case DefinedFailureDetail::StringView:
+    return "GTI_FAILURE_DETAIL_STRING_VIEW_V1";
   case DefinedFailureDetail::PrivateStorage:
     return "GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1";
   default:
@@ -28268,10 +28338,12 @@ private:
         });
     const bool passiveClassTemporary =
         place.root == MirPlaceRootKind::Temporary &&
-        std::any_of(
-            body.values.begin(), body.values.end(), [&](const MirValue &value) {
-              return classValueDestinationSlot(body, value.id) == &place;
-            });
+        (std::any_of(body.values.begin(), body.values.end(),
+                     [&](const MirValue &value) {
+                       return classValueDestinationSlot(body, value.id) ==
+                              &place;
+                     }) ||
+         passiveClassJoinTemporary(program, body, place));
     if (place.traits.drop != DropKind::Trivial && !expectedCopyTemporary &&
         !expectedConditionalSlot(body, place) &&
         !expectedConditionalBinding(body, place) && !passiveClassTemporary &&
@@ -35145,6 +35217,22 @@ private:
       output << "__gti_mir_v_" << *instruction.result
              << " = ::gti_internal::backend::prefix_storage_length(";
       emitStoragePlaceValue(facts, *storage);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::TextViewSlice) {
+      if (instruction.operands.size() != 3 || !instruction.result) {
+        throw std::logic_error(
+            "verified MIR text-view slice lost its operands or result");
+      }
+      output << "__gti_mir_v_" << *instruction.result
+             << " = ::gti_internal::backend::text_view_slice(";
+      emitOperand(instruction.operands[0]);
+      output << ", ";
+      emitOperand(instruction.operands[1]);
+      output << ", ";
+      emitOperand(instruction.operands[2]);
       output << ");\n";
       return;
     }
@@ -47008,6 +47096,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             {
               return false;
             }
+          }
+          continue;
+        }
+        if (instruction.intrinsic == IntrinsicKind::TextViewSlice) {
+          // A clamped descriptor narrowing over three staged values. Its
+          // Return loan relays the first operand's verified owner.
+          if (instruction.functionTarget || !instruction.result ||
+              !instruction.localFailureSites.empty() ||
+              instruction.operands.size() != 3 ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(),
+                           [&](const MirOperand &operand) {
+                             return valueOperand(operand);
+                           }) ||
+              instruction.info.type.kind != SemanticType::StringView ||
+              !typeRow(instruction.info.type)) {
+            return false;
           }
           continue;
         }

@@ -401,14 +401,48 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const SemanticType *returnType = adapter.type.nativeFunctionReturnType();
     const std::span<const SemanticType> parameterTypes =
         adapter.type.nativeFunctionParameterTypes();
+    // Each parameter passes unchanged, or native counted text rebuilds the
+    // target's public view through the exact trusted bridge constructor.
+    const NativeTextBoundaryInfo *boundary = semantics.nativeTextBoundary();
+    const auto exactParameters = [&] {
+      if (target == nullptr ||
+          target->parameterTypes.size() != parameterTypes.size() ||
+          adapter.textBridges.size() != parameterTypes.size()) {
+        return false;
+      }
+      for (std::size_t parameter = 0; parameter < parameterTypes.size();
+           ++parameter) {
+        const SemanticType &gti = target->parameterTypes[parameter];
+        if (adapter.textBridges[parameter] == 0) {
+          if (gti != parameterTypes[parameter]) {
+            return false;
+          }
+          continue;
+        }
+        const HirConstructorInstance *bridge =
+            program.findConstructorInstance(adapter.textBridges[parameter]);
+        const HirClassInstance *owner =
+            bridge == nullptr || bridge->owner == 0 ||
+                    bridge->owner > program.classInstances().size()
+                ? nullptr
+                : &program.classInstances()[bridge->owner - 1];
+        if (boundary == nullptr || bridge == nullptr || owner == nullptr ||
+            parameterTypes[parameter] != SemanticType::StringView ||
+            bridge->declaration != boundary->bridge || owner->type != gti ||
+            gti.classId != boundary->viewClass ||
+            bridge->parameterTypes !=
+                std::vector<SemanticType>{SemanticType::StringView}) {
+          return false;
+        }
+      }
+      return true;
+    };
     if (adapter.id != index + 1 || target == nullptr ||
         target->owner.has_value() || target->source == nullptr ||
         target->requiresUnsafe || target->linkage != LanguageLinkage::Gti ||
         declaration == nullptr || declaration->ownerClass != 0 ||
         returnType == nullptr || target->returnType != *returnType ||
-        target->parameterTypes.size() != parameterTypes.size() ||
-        !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameterTypes.begin()) ||
+        !exactParameters() ||
         adapter.cThreadCallback !=
             (program.executionProfile() == ExecutionProfile::Concurrent
                  ? adapter.type.cThreadCallbackKind()
@@ -695,11 +729,34 @@ verifyHirProgramPlans(const SemanticModel &semantics,
               result.errors.emplace_back("borrowed expect success lost its "
                                          "read-only reference extraction");
             }
+            // A raw text message panics directly; a public std::string_view
+            // message panics with the text read by its exact trusted
+            // accessor, the function semantics recorded as the mapper.
+            const HirValue *message =
+                failure->operands.size() == 1
+                    ? body.findValue(failure->operands.front())
+                    : nullptr;
+            const HirFunctionInstance *accessor =
+                message != nullptr && message->functionTarget
+                    ? program.findFunctionInstance(*message->functionTarget)
+                    : nullptr;
+            const bool exactMessage =
+                mapper != nullptr && message != nullptr &&
+                (transform->mapper == 0
+                     ? message->id == mapper->id
+                     : message->kind == HirValueKind::Call &&
+                           message->receiver == mapper->id &&
+                           message->operands ==
+                               std::vector<HirValueId>{mapper->id} &&
+                           message->info.type == SemanticType::StringView &&
+                           message->borrowOrigin ==
+                               BorrowOriginKind::Receiver &&
+                           accessor != nullptr &&
+                           accessor->declaration == transform->mapper);
             if (failure->intrinsic != IntrinsicKind::Panic ||
                 failure->info.type != SemanticType::Void ||
                 !failure->neverReturns || !failure->tracksCaller ||
-                failure->operands.size() != 1 || mapper == nullptr ||
-                failure->operands.front() != mapper->id ||
+                failure->operands.size() != 1 || !exactMessage ||
                 failure->parameterTypes !=
                     std::vector<SemanticType>{SemanticType::StringView} ||
                 failure->source != sourceCall ||
@@ -1482,6 +1539,27 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const HirValue &parent = *parents->second.front();
     if (value.kind == HirValueKind::Literal) {
       const auto *literal = exprAs<LiteralExpr>(parent.source);
+      // A string literal constructing the public std::string_view passes its
+      // raw static text to the exact selected bridge constructor.
+      const ResolvedConstructionInfo *textBridge =
+          literal == nullptr ? nullptr : semantics.findConstruction(*literal);
+      if (literal != nullptr && textBridge != nullptr &&
+          std::holds_alternative<std::string>(literal->value())) {
+        return parent.kind == HirValueKind::DirectInitializer &&
+               parent.constructorTarget &&
+               textBridge->parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::StringView} &&
+               parent.parameterTypes == textBridge->parameterTypes &&
+               parent.operands == std::vector<HirValueId>{value.id} &&
+               value.info == ExpressionInfo{.type = SemanticType::StringView,
+                                            .category = ValueCategory::Value,
+                                            .access = AccessMode::ReadOnly,
+                                            .traits = semanticTraits(
+                                                SemanticType::StringView)} &&
+               value.symbol == 0 && value.literal &&
+               *value.literal == literal->value() && !value.place &&
+               value.fullExpression == parent.fullExpression;
+      }
       return literal != nullptr && parent.constructorTarget &&
              std::holds_alternative<std::nullptr_t>(literal->value()) &&
              parent.parameterTypes ==

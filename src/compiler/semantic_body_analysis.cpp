@@ -1162,7 +1162,15 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     }
     if (field != nullptr && initializer.arguments.size() == 1 &&
         isTextCarryingType(fieldType) &&
-        isOwnerDependentTextExpression(initializer.arguments.front())) {
+        isOwnerDependentTextExpression(initializer.arguments.front()) &&
+        !isTextCarryingType(openClassType(*currentClass))) {
+      // Only a passive text-carrying class relays its text owners to the
+      // values constructed from it; any other class cannot retain them.
+      reportOwnerDependentTextStorage(initializer.arguments.front(),
+                                      "stored in a field");
+    } else if (field != nullptr && initializer.arguments.size() == 1 &&
+               isTextCarryingType(fieldType) &&
+               isOwnerDependentTextExpression(initializer.arguments.front())) {
       // A text-carrying field may retain owner-dependent text only when it is
       // relayed from this constructor's text parameter, whose owners every
       // caller already retains for the constructed value.
@@ -6780,6 +6788,26 @@ auto SemanticVisitor::Impl::visitLiteralExpr(const LiteralExpr &expr) -> void {
       return;
     }
   }
+  // A string literal denotes static text viewed through the public
+  // std::string_view class. Its construction is recorded against the one
+  // trusted bridge constructor, so HIR and MIR carry an explicit
+  // construction from the private text capability.
+  if (std::holds_alternative<std::string>(expr.value())) {
+    if (const ConstructorInfo *bridge = textLiteralBridge()) {
+      const SemanticType viewType = SemanticType::classType(bridge->owner);
+      semanticModel.record(
+          expr,
+          ResolvedConstructionInfo{.constructor = bridge->id,
+                                   .declaration = bridge->declaration,
+                                   .constructedType = viewType,
+                                   .parameterTypes = {SemanticType::StringView},
+                                   .borrowOrigin = BorrowOriginKind::Argument,
+                                   .borrowArgument = 0,
+                                   .borrowAccess = AccessMode::ReadOnly});
+      currentType = viewType;
+      return;
+    }
+  }
   currentType = literalType(expr.value());
 }
 
@@ -7341,8 +7369,25 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
+  // A text-carrying receiver may narrow its own text field to text derived
+  // only from its receiver: the relayed owners are unchanged, so the
+  // caller's dependency stays exact. Any other owner-dependent store is
+  // rejected.
+  const auto receiverReseat = [&]() {
+    const Symbol *receiver = receiverStateSymbol();
+    if (receiver == nullptr || !isTextCarryingType(receiver->type) ||
+        exprAs<This>(expr.object().get()) == nullptr) {
+      return false;
+    }
+    const auto dependencies = storedBorrowDependencies(expr.value());
+    return !dependencies.empty() &&
+           std::all_of(dependencies.begin(), dependencies.end(),
+                       [](const SemanticLoanDependency &dependency) {
+                         return dependency.place.receiver;
+                       });
+  };
   if (simpleAssignment && (isTextCarryingType(targetType)) &&
-      isOwnerDependentTextExpression(expr.value())) {
+      isOwnerDependentTextExpression(expr.value()) && !receiverReseat()) {
     reportOwnerDependentTextStorage(expr.value(), "stored in a field");
   }
   const bool directSelfMove =
@@ -8730,7 +8775,9 @@ auto SemanticVisitor::Impl::seedConstexprValueParameters(
 auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     const Expr &source, const ResolvedConstructionInfo &resolved,
     const ExprList &explicitArguments, const Token &callSite,
-    ConstexprInterpreter &context) -> ConstexprEvaluation {
+    ConstexprInterpreter &context,
+    const std::vector<ConstantValue> *evaluatedArguments)
+    -> ConstexprEvaluation {
   const ConstructorDecl *declaration = resolved.declaration;
   if (resolved.generatedDefault || declaration == nullptr ||
       !declaration->isConstexpr() ||
@@ -8773,15 +8820,28 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
   argumentExpressions.insert(argumentExpressions.end(),
                              resolved.defaultArguments.begin(),
                              resolved.defaultArguments.end());
-  if (argumentExpressions.size() != resolved.parameterTypes.size()) {
+  if (evaluatedArguments != nullptr &&
+      evaluatedArguments->size() != resolved.parameterTypes.size()) {
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedExpression,
+        "The resolved constexpr constructor has an invalid argument "
+        "count.");
+  }
+  if (evaluatedArguments == nullptr &&
+      argumentExpressions.size() != resolved.parameterTypes.size()) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
         "The resolved constexpr constructor has an invalid argument "
         "count.");
   }
   std::vector<ConstantValue> arguments;
-  arguments.reserve(argumentExpressions.size());
-  for (std::size_t index = 0; index < argumentExpressions.size(); ++index) {
+  arguments.reserve(resolved.parameterTypes.size());
+  if (evaluatedArguments != nullptr) {
+    arguments = *evaluatedArguments;
+  }
+  for (std::size_t index = 0;
+       evaluatedArguments == nullptr && index < argumentExpressions.size();
+       ++index) {
     if (argumentExpressions[index] == nullptr) {
       return constexprFailure(
           callSite, ConstantEvaluationFailure::UnsupportedExpression,
@@ -9038,6 +9098,16 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
   if (const auto *literal = exprAs<LiteralExpr>(&source)) {
     const ConstantEvaluation evaluated = evaluateConstantLiteral(
         literal->value(), constantIntegerDomain(sourceType));
+    // A class-typed string literal is the trusted bridge construction over
+    // its static text, evaluated like any constexpr constructor call.
+    if (const ResolvedConstructionInfo *construction =
+            semanticModel.findConstruction(*literal);
+        evaluated && construction != nullptr &&
+        std::holds_alternative<std::string>(literal->value())) {
+      const std::vector<ConstantValue> text{*evaluated.value};
+      return evaluateConstexprConstruction(source, *construction, {},
+                                           literal->token(), context, &text);
+    }
     return evaluated ? constexprSuccess(source, *evaluated.value, context)
                      : constexprFailure(literal->token(), evaluated.failure);
   }

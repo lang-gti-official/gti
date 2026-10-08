@@ -925,9 +925,10 @@ lambdas, function items, and concrete call operators share this rule. A
 callback's eventual concrete result does not choose between outer overloads;
 an ambiguous outer signature remains ambiguous. Unknown arguments do not
 deduce an outer generic parameter. Raw pointers
-remain non-owning values under their ordinary language rules, and the current
-`std::string_view` denotes static literal storage; the callable boundary does
-not reclassify either as ownership. `auto` cannot infer a result through an
+remain non-owning values under their ordinary language rules, and a
+`std::string_view` is a passive text-carrying value whose owner dependency is
+tracked per value; the callable boundary does not reclassify either as
+ownership. `auto` cannot infer a result through an
 otherwise unknown generic callable, and reference, tracked borrowed-state, and
 lambda-identity results remain rejected.
 
@@ -1553,12 +1554,18 @@ program-storage materialization. The C++ backend may serialize an accepted
 constant from its exact fields, but it cannot invoke source constructors or
 host constant evaluation to recover language meaning.
 
-Literal-backed text inspection dispatches on resolved `StringViewSize` and
-`StringViewEmpty` intrinsic identities and the typed string-view index
-operation. Its byte/length kernels live in `constant_evaluator`, independent of
-AST or library spelling; indexing preserves unsigned code units and rejects
-negative and end-or-later offsets, matching the verified-MIR runtime operation.
-The semantic interpreter supplies operands and consumes source-located failures.
+Public `std::string_view` operations are prelude source and execute through
+staged MIR like any constexpr member. Only the compiler-private
+`gti_internal::text_view` capability retains intrinsic identities:
+`StringViewSize`, `StringViewEmpty`, the typed text index operation, and the
+clamped `TextViewSlice`. Their byte/length kernels live in
+`constant_evaluator`, independent of AST or library spelling; indexing
+preserves unsigned code units and rejects negative and end-or-later offsets
+with the exact valid range, matching the verified-MIR runtime operation. A
+string literal records an exact construction through the trusted bridge
+constructor, so constant evaluation materializes the class value from the
+literal's static text. The semantic interpreter supplies operands and consumes
+source-located failures.
 Read-only operator expressions normalize their already-resolved receiver and
 arguments into the same constant-call boundary as named methods. This shares
 generic substitution, argument observation, and completed-definition checks;

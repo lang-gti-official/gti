@@ -126,7 +126,7 @@ int process_backed() {
     words.emplace_back("beta");
     words.reserve(std::size_t(32));
     if (words.size() != std::size_t(2) || words.capacity() < std::size_t(32) ||
-        words.get(std::size_t(1)).view() != "beta") { return 60; }
+        words.get(std::size_t(1)) != "beta") { return 60; }
   }
   return 0;
 }
