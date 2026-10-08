@@ -646,10 +646,9 @@ ProjectBuildPlan makeBuildPlan(
       overrides.debugInfo.value_or(selectedProfile.debugInfo);
   const RawPointerAuditMode rawPointerAudit =
       overrides.rawPointerAudit.value_or(selectedProfile.rawPointerAudit);
-  ConfigurationFlags configurationFlags = workspace.configurationFlags();
-  configurationFlags.insert(configurationFlags.end(),
-                            overrides.configurationFlags.begin(),
-                            overrides.configurationFlags.end());
+  ConfigurationFlags configurationFlags = composeProjectConfigurationFlags(
+      workspace.configurationFlags(), selectedProfile.defines,
+      selectedTarget.defines, overrides.configurationFlags);
   std::vector<std::string> disabledWarnings =
       selectedProfile.warningPolicy.disabledGroups();
   disabledWarnings.insert(disabledWarnings.end(),

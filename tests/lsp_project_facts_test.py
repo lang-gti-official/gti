@@ -450,6 +450,86 @@ def test_read_only_git_failure(executable, root):
         session.close()
 
 
+def test_scoped_configuration_flags(executable, root):
+    project = root / "scoped-flags"
+    manifest_path = project / "gti.toml"
+    manifest = (
+        'manifest-version = 1\n[package]\nname = "flags"\nversion = "0.1.0"\n'
+        '[build]\ndefines = ["PACKAGE_FLAG"]\n'
+        '[profiles.dev]\ndefines = ["DEBUG"]\n'
+        '[profiles.release]\ndefines = ["RELEASE_ONLY"]\n'
+        '[targets.game]\nkind = "executable"\nroot = "src/game.gti"\n'
+        'defines = ["GAME"]\n'
+        '[targets.tool]\nkind = "executable"\nroot = "src/tool.gti"\n'
+        'defines = ["TOOL"]\n'
+    )
+    write(manifest_path, manifest)
+    game = (
+        '#if defined(PACKAGE_FLAG) && defined(DEBUG) && defined(GAME)\n'
+        'class Counter { public: int value() { return 0; } };\n'
+        '#else\n#error "game configuration missing"\n#endif\n'
+        'int main() { Counter counter{}; return counter.value(); }\n'
+    )
+    tool = (
+        '#if defined(PACKAGE_FLAG) && defined(DEBUG) && defined(TOOL)\n'
+        'int main() { return 0; }\n'
+        '#else\n#error "tool configuration missing"\n#endif\n'
+    )
+    shared = (
+        '#if defined(PACKAGE_FLAG) && defined(DEBUG)\n'
+        'int shared() { return 0; }\n'
+        '#else\n#error "shared profile configuration missing"\n#endif\n'
+        '#if defined(GAME) || defined(TOOL) || defined(RELEASE_ONLY)\n'
+        '#error "unselected configuration leaked"\n#endif\n'
+    )
+    for name, text in (("game", game), ("tool", tool), ("shared", shared)):
+        write(project / f"src/{name}.gti", text)
+    session = LspSession(executable)
+    try:
+        initialize(session, watched_files=True)
+        game_uri = open_document(session, project / "src/game.gti", game)
+        initial = diagnostics_for(session, game_uri, version=1)
+        assert initial == [], initial
+        assert "value" in completion_labels(session, 2, game_uri, game)
+        tool_uri = open_document(session, project / "src/tool.gti", tool)
+        assert diagnostics_for(session, tool_uri, version=1) == []
+        shared_uri = open_document(session, project / "src/shared.gti", shared)
+        shared_diagnostics = diagnostics_for(session, shared_uri, version=1)
+        assert not any(item["severity"] == 1 for item in shared_diagnostics), shared_diagnostics
+
+        # Profile changes must invalidate diagnostics and completion snapshots.
+        write(manifest_path, manifest.replace('defines = ["DEBUG"]', 'defines = []'))
+        session.send({
+            "jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+            "params": {"changes": [{"uri": manifest_path.resolve().as_uri(), "type": 2}]},
+        })
+        errors = diagnostics_for(session, game_uri,
+            predicate=lambda items: any("game configuration missing" in item["message"] for item in items))
+        assert any("game configuration missing" in item["message"] for item in errors)
+        assert "value" not in completion_labels(session, 3, game_uri, game)
+
+        write(manifest_path, manifest)
+        session.send({
+            "jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+            "params": {"changes": [{"uri": manifest_path.resolve().as_uri(), "type": 2}]},
+        })
+        assert diagnostics_for(session, game_uri, predicate=lambda items: not items) == []
+        assert "value" in completion_labels(session, 4, game_uri, game)
+
+        # The same invalidation path also responds to target-only changes.
+        write(manifest_path, manifest.replace('defines = ["GAME"]', 'defines = []'))
+        session.send({
+            "jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+            "params": {"changes": [{"uri": manifest_path.resolve().as_uri(), "type": 2}]},
+        })
+        errors = diagnostics_for(session, game_uri,
+            predicate=lambda items: any("game configuration missing" in item["message"] for item in items))
+        assert any("game configuration missing" in item["message"] for item in errors)
+        assert diagnostics_for(session, tool_uri, predicate=lambda items: not items) == []
+    finally:
+        session.close()
+
+
 def test_standalone_compatibility(executable, root):
     source_path = root / "standalone.gti"
     source = "int standalone_value() { return 1; }\n"
@@ -472,6 +552,7 @@ def main():
         test_path_dependency_tooling(sys.argv[1], root)
         test_dependency_warning_policy(sys.argv[1], root)
         test_read_only_git_failure(sys.argv[1], root)
+        test_scoped_configuration_flags(sys.argv[1], root)
         test_standalone_compatibility(sys.argv[1], root)
 
 

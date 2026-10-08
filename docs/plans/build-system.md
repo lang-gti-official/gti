@@ -24,6 +24,15 @@ a binary module system, or a second language for writing build scripts.
 
 ## Current Implementation
 
+Configuration defines are implemented in `[build]`, `[profiles.<name>]` and
+`[targets.<name>]`. One driver-owned normalized union combines the selected
+package/dependency build flags, consumer profile, consumer target and CLI
+flags. Metadata, cache identity, build/check and read-only editor facts share
+that selection; dependency target/profile flags remain local to their own
+consumer builds. The runnable `examples/scoped-configuration` project and
+`scoped_configuration_defines` gate cover dev/release, distinct executable/test
+targets, CLI additions, cached rebuilds and source-order undefinition.
+
 Raw-pointer audit policy is now resolved through the existing immutable
 direct/project request path: `off` by default, profile
 `raw-pointer-audit = "off"|"warn"|"strict"`, and explicit command override.
