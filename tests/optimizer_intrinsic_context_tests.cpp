@@ -37,9 +37,6 @@ int changed(mut BoundsClient& object, uint64_t index, uint64_t length) {
 
 int main() {
   mut BoundsClient object{7};
-  // Seed the field explicitly: parameterized member-initializer summaries
-  // are a separate prerequisite, not the bounds detector's responsibility.
-  object.value = 7;
   int value = checked(object, uint64_t(0), uint64_t(2));
   if (value != 8) return 1;
   return changed(object, uint64_t(0), uint64_t(2));

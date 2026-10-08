@@ -291,9 +291,15 @@ represented and independently replayable; native optimization is not GTI proof.
 Contexts
 join monotonically and use the same typed integer/object widening policy as the
 body-local client after four prior per-body context updates. The global
-32-round limit and per-body eight-update limit remain fail-closed budgets; a
-body exceeding either boundary contributes no contextual proof. Proofs are
-published only after convergence. A body may retain contextual proofs
+worklist schedules only a changed context or a caller of a changed summary,
+including each constructor's exact declaration-field initializer dependency.
+Every body has a 32-analysis limit and an eight-consumed-context-update limit;
+exceeding either rejects that body's contextual facts and invalidates its
+callers. These are fail-closed budgets over the finite body inventory, not an
+unbounded scan. Long ordinary source chains no longer exhaust 32 whole-program
+rounds merely to propagate already fixed facts. The reported iteration count
+is the maximum work performed for any one body. Proofs are published only
+after the dependency worklist is stable. A body may retain contextual proofs
 established before a conservative call barrier even when that barrier prevents
 the body from exporting a complete return or mutation summary. The barrier
 still clears mutable facts for every later instruction. Recursive SCCs, native
@@ -321,6 +327,17 @@ still uses the pre-instruction state. This is not a source-container length or
 initialized-element invariant; those require independently represented facts.
 An unrelated record regression distinguishes the pure detector from an
 unknown field, conflicting field writes and an unreached call context.
+
+Ordinary class construction and owned class returns transport independently
+proved scalar field envelopes, including parameterized member initializers.
+The analysis tracks an implicit receiver when MIR contains `this.field` places
+without a whole-object `this` place. This analysis-only root never becomes a
+MIR or published proof identity. Exact receiver field writes invalidate
+overlapping paths; raw/unknown memory effects discard the state. Nested class
+facts are relative to the selected subobject, not its enclosing owner's field
+path. Constructor destination publication and return summaries retain those
+same facts after sanitizing them against the exact concrete type. These are
+ordinary class facts, not initialized raw-allocation or container invariants.
 
 Context discovery is also bounded by complete summaries: an earlier
 source-allocation or raw object-lifetime call can prevent completion of a

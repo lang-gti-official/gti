@@ -5022,11 +5022,21 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   nominal prefix-container rule. The first general optimizer prerequisite admits
   contextual proofs before raw operations while retaining opaque per-operation
   memory barriers and independently checked replay. It does not yet transport
-  owned-construction or initialized-element facts; the same ten original
+  raw-backed owned-construction or initialized-element facts; the same ten original
   source-owner proof requirements remain unmet. A second prerequisite preserves
   existing field/context facts across the general pure scalar bounds detector;
   its unrelated record proof does not invent a prefix-length invariant or
-  supply the missing parameterized constructor-field summary.
+  supply a prefix invariant. Ordinary parameterized constructor-field,
+  implicit-receiver, nested-subobject and class-result summaries are recovered
+  by a separate general prerequisite with unrelated record proofs and
+  raw-write negatives. The raw initialized-element and allocation transfer
+  prerequisites, and the same ten source-owner requirements, remain open.
+  The combined unrelated record proof exposed 32 whole-program rounds consumed
+  solely by fixed-summary propagation. Dependency-based scheduling now bounds
+  each body to 32 analyses while retaining four-update widening and eight
+  consumed-context-update rejection; rejected facts invalidate their callers.
+  A 128-function ordinary chain proves every exact addition without increasing
+  that per-body cap. This does not make raw/unknown calls effect-closed.
   Full admission/corpus/performance coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.
