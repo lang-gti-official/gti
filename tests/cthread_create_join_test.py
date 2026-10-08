@@ -9,6 +9,8 @@ import tempfile
 
 from sanitizer_support import thread_sanitizer_enabled
 
+from native_symbol_spelling import native_spelling
+
 
 def execute(command, expected=0, stdout=None, failure=False):
     environment = os.environ.copy()
@@ -63,10 +65,11 @@ def main():
                 execute(command)
                 execute([str(binary)], status, output, failure)
                 generated = binary.with_suffix(".gti.cpp").read_text()
+                spell = lambda symbol: native_spelling(generated, symbol)
                 for marker in ("// GTI verified-MIR body:",
-                               "gti_rt_cthread_begin_v1();",
-                               "gti_rt_cthread_end_v1();",
-                               "gti_rt_cthread_enter_v1(&__gti_native_callback_"):
+                               f"{spell('gti_rt_cthread_begin_v1')}();",
+                               f"{spell('gti_rt_cthread_end_v1')}();",
+                               f"{spell('gti_rt_cthread_enter_v1')}(&__gti_native_callback_"):
                     if marker not in generated:
                         raise AssertionError(f"{case} lost {marker!r}")
             print(f"C-thread create/join: {mode} passed", flush=True)

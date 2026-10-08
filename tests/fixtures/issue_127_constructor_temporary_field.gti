@@ -70,13 +70,54 @@ int32_t controls() {
   return total;
 }
 
+mut int32_t argument_evaluations = 0;
+mut int32_t factory_evaluations = 0;
+
+int32_t next_argument() {
+  argument_evaluations += 1;
+  return argument_evaluations;
+}
+
+class Fixed {
+public:
+  int32_t value;
+  Fixed(int32_t initial) : value(initial) { constructions += 1; }
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+};
+
+class Stamp {
+public:
+  int32_t value;
+  Stamp(int32_t initial) : value(initial) { constructions += 1; }
+  Stamp(Stamp& other) = delete;
+  Stamp(Stamp&& other) = delete;
+};
+
+Fixed make_fixed(int32_t initial) {
+  factory_evaluations += 1;
+  return Fixed(initial);
+}
+
+int32_t immovable_observations() {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 5; index += 1) {
+    // Both slots must be constructed exactly once and retired before reuse.
+    // The result is observed, never copied or moved.
+    total += make_fixed(next_argument()).value;
+    total += Stamp(next_argument()).value;
+  }
+  return total;
+}
+
 int32_t main() {
   int32_t total = if_position() + while_position() + switch_position() +
                   argument_position() + return_position() + index_position() +
                   initializer_position() + compound_assignment_position() +
-                  controls();
-  if (constructions != 12) {
+                  controls() + immovable_observations();
+  if (constructions != 22 || argument_evaluations != 10 ||
+      factory_evaluations != 5) {
     return 1;
   }
-  return total - 12;
+  return total - 67;
 }

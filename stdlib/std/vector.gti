@@ -49,11 +49,11 @@ public:
 
   // The signed distance from this iterator to the sentinel; positive while
   // the sentinel is ahead.
-  ptrdiff_t operator-(vector_sentinel& sentinel) {
+  ptrdiff_t operator-(vector_sentinel sentinel) {
     return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
   }
 
-  bool operator!=(vector_sentinel& sentinel) {
+  bool operator!=(vector_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 
@@ -88,7 +88,7 @@ public:
     this.current_position++;
   }
 
-  bool operator!=(vector_sentinel& sentinel) {
+  bool operator!=(vector_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 };

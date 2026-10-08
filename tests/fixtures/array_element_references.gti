@@ -1,0 +1,76 @@
+// Named references bound to checked fixed-array elements (issue #112).
+struct Point {
+  mut int32_t x = 0;
+};
+
+class Counter {
+public:
+  mut int32_t n;
+  Counter(int32_t n) : n(n) {}
+  void bump() mut { this.n += 1; }
+  int32_t get() { return this.n; }
+};
+
+struct Frame {
+  mut int32_t slots[3] = {1, 2, 3};
+};
+
+int32_t pick(int32_t index) { return index; }
+int32_t read(int32_t& value) { return value; }
+void fill(mut int32_t& slot, int32_t value) { slot = value; }
+
+int main() {
+  // Read-only borrow of an immutable array element.
+  int32_t fixed[2] = {1, 2};
+  int32_t& first = fixed[0];
+  if (first != 1) { return 1; }
+
+  // Writable borrows of distinct constant elements are disjoint places.
+  mut int32_t values[3] = {1, 2, 3};
+  mut int32_t& low = values[0];
+  mut int32_t& high = values[2];
+  low = 10;
+  high += 20;
+  if (values[0] != 10 || values[2] != 23) { return 2; }
+
+  // A variable index is checked once, when the reference is formed. Its
+  // borrow conservatively overlaps every element until its last use.
+  int32_t seed = values[0];
+  mut int32_t& middle = values[pick(1)];
+  middle = seed + 5;
+  if (read(middle) != 15) { return 3; }
+  if (values[1] != 15) { return 3; }
+
+  // Record elements, nested arrays, and record array fields.
+  mut Point points[2] = {};
+  mut Point& point = points[1];
+  point.x = 7;
+  mut int32_t grid[2][2] = {{1, 2}, {3, 4}};
+  mut int32_t& corner = grid[1][0];
+  corner = 9;
+  int32_t& other = grid[0][1];
+  mut Frame frame{};
+  mut int32_t& slot = frame.slots[2];
+  slot = 8;
+  if (points[1].x != 7 || grid[1][0] + other != 11 || frame.slots[2] != 8) {
+    return 4;
+  }
+
+  // Class elements: mutating and reading members through element references.
+  mut Counter counters[2] = {Counter(1), Counter(5)};
+  mut Counter& counter = counters[1];
+  counter.bump();
+  counter.bump();
+  Counter& unchanged = counters[0];
+  if (counter.get() + unchanged.get() != 8) { return 5; }
+  if (counters[1].n != 7) { return 5; }
+
+  // Loop-local element references end before the next iteration's borrow.
+  mut int32_t totals[3] = {0, 0, 0};
+  for (mut int32_t i = 0; i < 3; i += 1) {
+    mut int32_t& element = totals[i];
+    fill(element, i * 2);
+    element += 1;
+  }
+  return totals[0] + totals[1] + totals[2] == 9 ? 0 : 6;
+}

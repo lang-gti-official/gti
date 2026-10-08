@@ -563,7 +563,33 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     // internal failure names its real origin instead of a later symptom.
     constexpr std::size_t maximumReportedDetails = 5;
     std::vector<std::string> details;
+    SourceSpan primary{
+        entry == nullptr ? entryPath.string() : entry->path.string(), 0, 0, 1};
+    std::vector<RelatedDiagnostic> related;
+    for (const MirLoweringError &error : mir.errors) {
+      std::string detail = error.message + " (body kind " +
+                           std::to_string(static_cast<int>(error.body.kind)) +
+                           ", owner " + std::to_string(error.body.owner) +
+                           ", block " + std::to_string(error.block) +
+                           ", instruction " +
+                           std::to_string(error.instruction) + ")";
+      if (std::find(details.begin(), details.end(), detail) != details.end())
+        continue;
+      if (error.source) {
+        if (details.empty())
+          primary = *error.source;
+        else if (*error.source != primary)
+          related.push_back({*error.source, error.message});
+      }
+      details.push_back(std::move(detail));
+      if (details.size() == maximumReportedDetails)
+        break;
+    }
+    // Construction may stop before hosted-startup lowering. Its absence is
+    // then a consequence, not the body-local rejection that caused the stop.
     for (const MirVerificationError &error : verification.errors) {
+      if (!mir.errors.empty())
+        break;
       if (error.message == "MIR program is marked invalid") {
         continue;
       }
@@ -582,11 +608,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     for (const std::string &detail : details) {
       message += " " + detail + ".";
     }
-    result.diagnostics.push_back(makeDiagnostic(
-        "GTI-B0001", DiagnosticPhase::Backend,
-        SourceSpan{entry == nullptr ? entryPath.string() : entry->path.string(),
-                   0, 0, 1},
-        std::move(message)));
+    auto diagnostic = makeDiagnostic("GTI-B0001", DiagnosticPhase::Backend,
+                                     std::move(primary), std::move(message));
+    diagnostic.related = std::move(related);
+    result.diagnostics.push_back(std::move(diagnostic));
   }
   applyAuditPolicy();
   return result;

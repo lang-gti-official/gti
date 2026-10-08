@@ -1,0 +1,22 @@
+struct Ledger { mut int32_t n = 0; };
+struct Nested { mut Ledger ledger{}; };
+
+class Book {
+  mut Ledger ledger{};
+  mut Nested nested{};
+  mut Ledger* book = nullptr;
+  mut int32_t* number = nullptr;
+public:
+  Book() {
+    this.book = &this.ledger;
+    this.number = &this.nested.ledger.n;
+    int32_t* local = &this.ledger.n;
+    unsafe { *local = 7; *this.number = 3; }
+  }
+  int32_t read() { unsafe { return this.book->n + *this.number; } }
+};
+
+int main() {
+  Book book{};
+  return book.read() - 10;
+}

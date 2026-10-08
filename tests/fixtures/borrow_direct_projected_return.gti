@@ -1,0 +1,43 @@
+enum class lookup_errc { missing };
+
+struct Record {
+  mut int32_t sentinel = 71;
+  mut int32_t selected = 29;
+};
+
+struct Table {
+  mut int32_t sentinel = 83;
+  mut Record record{};
+};
+
+int32_t& plain(Table& table) {
+  int32_t& other = table.record.sentinel;
+  if (other != 71) { return other; }
+  int32_t& selected = table.record.selected;
+  int32_t& alias = selected;
+  return alias;
+}
+
+expected<int32_t&, lookup_errc> fallible(Table& table, bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  int32_t& selected = table.record.selected;
+  int32_t& alias = selected;
+  return alias;
+}
+
+int32_t& through_record(Table& table) {
+  Record& record = table.record;
+  int32_t& selected = record.selected;
+  return selected;
+}
+
+int main() {
+  mut Table table{};
+  if (plain(table) != 29) { return 1; }
+  if (fallible(table, true).value() != 29) { return 2; }
+  auto absent = fallible(table, false);
+  if (absent || absent.error() != lookup_errc::missing) { return 3; }
+  if (through_record(table) != 29) { return 4; }
+  table.record.selected = 31;
+  return plain(table) == 31 ? 0 : 5;
+}

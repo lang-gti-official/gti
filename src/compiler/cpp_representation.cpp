@@ -151,8 +151,17 @@ concreteClassPrimaryRow(const LoweredProgram &program,
     }
     if (std::holds_alternative<LoweredClassDeclaration>(candidate.payload) ||
         std::holds_alternative<LoweredEnumDeclaration>(candidate.payload) ||
-        std::holds_alternative<LoweredTypeAliasDeclaration>(
-            candidate.payload)) {
+        (std::holds_alternative<LoweredTypeAliasDeclaration>(
+             candidate.payload) &&
+         std::none_of(declaration.genericParameters.begin(),
+                      declaration.genericParameters.end(),
+                      [](const LoweredGenericParameter &parameter) {
+                        return parameter.value;
+                      }))) {
+      // Keep the established shared source-template identity of type-only
+      // alias carriers and their transitive signatures. Value-generic aliases
+      // instead need the verified concrete alias catalog: dependent arithmetic
+      // and finite layout must not be re-evaluated by native instantiation.
       return false;
     }
   }
@@ -205,7 +214,7 @@ concreteClassHasTemplateDependency(const LoweredProgram &program,
            type.arrayLengthParameterId != 0 ||
            std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
                        [](const CompileTimeValue &value) {
-                         return value.kind == CompileTimeValue::Parameter;
+                         return value.kind != CompileTimeValue::UInt64;
                        }) ||
            std::any_of(type.arguments.begin(), type.arguments.end(),
                        [&](const SemanticType &argument) {
@@ -717,6 +726,63 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   const auto spell = [&](const SemanticType &inner) {
     return cppSemanticTypeSpelling(program, standard, inner);
   };
+  // Spell declaration-bound dependent metadata; never evaluate it here.
+  // Executable concrete instances already carry checked literal arguments.
+  const auto spellValueExpression =
+      [&](const auto &self,
+          const GenericValueExpression &expression) -> std::string {
+    if (expression.kind == GenericValueExpression::UInt64)
+      return "std::uint64_t(" + std::to_string(expression.value) + "ULL)";
+    if (expression.kind == GenericValueExpression::Parameter) {
+      const auto *parameter =
+          program.findGenericParameter(expression.parameterId);
+      if (parameter == nullptr)
+        throw std::logic_error(
+            "dependent value representation lost its declaration identity");
+      return parameter->name;
+    }
+    if (!expression.left || !expression.right)
+      throw std::logic_error(
+          "dependent value representation has an incomplete expression");
+    std::string_view operation;
+    switch (expression.token.kind) {
+    case TokenKind::PLUS:
+      operation = "+";
+      break;
+    case TokenKind::MINUS:
+      operation = "-";
+      break;
+    case TokenKind::STAR:
+      operation = "*";
+      break;
+    case TokenKind::SLASH:
+      operation = "/";
+      break;
+    case TokenKind::PERCENT:
+      operation = "%";
+      break;
+    case TokenKind::SHIFT_LEFT:
+      operation = "<<";
+      break;
+    case TokenKind::SHIFT_RIGHT:
+      operation = ">>";
+      break;
+    case TokenKind::AMPERSAND:
+      operation = "&";
+      break;
+    case TokenKind::PIPE:
+      operation = "|";
+      break;
+    case TokenKind::CARET:
+      operation = "^";
+      break;
+    default:
+      throw std::logic_error(
+          "dependent value representation has an unsupported typed operation");
+    }
+    return '(' + self(self, *expression.left) + ' ' + std::string(operation) +
+           ' ' + self(self, *expression.right) + ')';
+  };
   const auto dependent = [&](const auto &self,
                              const SemanticType &inner) -> bool {
     return inner.kind == SemanticType::TypeParameter ||
@@ -960,6 +1026,9 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
           const LoweredGenericParameter *parameter =
               program.findGenericParameter(argument.parameterId);
           result += parameter == nullptr ? "0" : parameter->name;
+        } else if (argument.expression) {
+          result +=
+              spellValueExpression(spellValueExpression, *argument.expression);
         } else {
           result += '0';
         }
@@ -1210,8 +1279,11 @@ std::string cppFunctionSpelling(const LoweredFunctionDeclaration &function,
     return std::string(sourceName);
   }
   if (function.linkage == LanguageLinkage::C) {
-    return function.externalSymbol.empty() ? std::string(sourceName)
-                                           : function.externalSymbol;
+    // C++ declaration identity is distinct from the semantic link identity.
+    // This prevents support-header prototypes from capturing an accepted GTI
+    // declaration; the declaration writer binds this private name to the exact
+    // unchanged external symbol.
+    return "__gti_c_fn_" + std::to_string(function.id);
   }
   if (function.entryKind != ProgramEntryKind::None &&
       function.returnType == SemanticType::Int32) {

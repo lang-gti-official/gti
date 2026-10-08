@@ -2527,6 +2527,19 @@ private:
       ExprPtr value =
           check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
 
+      const Expr *ungrouped = expr.get();
+      while (const auto *group = exprAs<Grouping>(ungrouped))
+        ungrouped = group->expression().get();
+      const auto *unaryTarget = exprAs<Unary>(ungrouped);
+      if (exprAs<Variable>(ungrouped) || exprAs<QualifiedName>(ungrouped) ||
+          exprAs<Get>(ungrouped) || exprAs<Index>(ungrouped) ||
+          (unaryTarget && unaryTarget->oper().kind == TokenKind::STAR)) {
+        // Parentheses do not change a traditional target's initialization,
+        // ownership, or reserved-projection semantics.
+        while (auto *group = exprAs<Grouping>(expr.get()))
+          expr = group->takeExpression();
+      }
+
       if (auto *variable = exprAs<Variable>(expr.get())) {
         return std::make_unique<Assign>(variable->name(), oper,
                                         std::move(value));
@@ -2548,6 +2561,10 @@ private:
           unary != nullptr && unary->oper().kind == TokenKind::STAR) {
         return std::make_unique<DereferenceSet>(
             unary->oper(), unary->takeRight(), oper, std::move(value));
+      }
+      if (exprAs<Call>(ungrouped)) {
+        return std::make_unique<PlaceSet>(std::move(expr), oper,
+                                          std::move(value));
       }
       throw error(oper, "Invalid assignment target.");
     }

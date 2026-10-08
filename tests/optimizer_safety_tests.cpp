@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
@@ -1623,11 +1624,11 @@ int32_t main() {
          "checks");
 }
 
-// A multidimensional fixed-array element access folds every dimension into one
-// place and one bounds site, so the site describes the whole chain. Proving the
-// last index alone would let the emitted text drop the earlier dimension's
-// bound and subscript past the array, so the discharge must hold for every
-// dimension or for none.
+// A multidimensional access checks each prefix before evaluating the next
+// index, then retains the complete place on its terminal bounds operation.
+// Proving only the last index must not discharge that terminal check: every
+// dimension must be proven. The early AddressOf preflight currently remains
+// conservatively checked and retains its own first-failure source identity.
 void testChainedFixedArrayDimensionBounds() {
   const std::string source = R"(
 int32_t proven_chain() {
@@ -1690,38 +1691,83 @@ int32_t main() { return proven_chain(); }
     const lang::HirFunctionInstance *hir = findFunction(frontend, name);
     const lang::MirFunctionInstance *function =
         hir == nullptr ? nullptr : o3.mir.findFunctionInstance(hir->id);
-    std::size_t count = 0;
+    std::pair<std::size_t, std::size_t> count{};
     if (function == nullptr) {
       return count;
     }
+    const lang::MirInstruction *prefix = nullptr;
+    const lang::MirInstruction *terminal = nullptr;
+    const lang::MirBlock *prefixBlock = nullptr;
+    const lang::MirBlock *terminalBlock = nullptr;
     for (const lang::MirBlock &block : function->body.blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
         for (const lang::DefinedFailureOrigin &origin :
              instruction.definedFailure.localOrigins) {
-          count += static_cast<std::size_t>(
+          const auto bounds = static_cast<std::size_t>(
               std::count_if(origin.outcomes.begin(), origin.outcomes.end(),
                             [](const lang::DefinedFailureOutcome &outcome) {
                               return outcome.code ==
                                      lang::DefinedFailureCode::IndexOutOfBounds;
                             }));
+          if (bounds == 0)
+            continue;
+          if (instruction.kind == lang::MirInstructionKind::Compute &&
+              instruction.operation == lang::MirOperation::AddressOf) {
+            count.first += bounds;
+            prefix = &instruction;
+            prefixBlock = &block;
+          } else {
+            count.second += bounds;
+            terminal = &instruction;
+            terminalBlock = &block;
+          }
         }
       }
     }
+    const auto dominance = lang::computeMirDominance(function->body);
+    expect(prefix && terminal && prefixBlock && terminalBlock && dominance &&
+               terminal->kind == lang::MirInstructionKind::Load &&
+               prefixBlock->terminator.kind ==
+                   lang::MirTerminatorKind::Invoke &&
+               prefixBlock->terminator.invokeInstruction == prefix->id &&
+               dominance->dominates(prefixBlock->terminator.target,
+                                    terminalBlock->id),
+           "early prefix selection must succeed before the terminal load");
+    expect(prefix && terminal &&
+               prefix->definedFailure.localOrigins.size() == 1 &&
+               terminal->definedFailure.localOrigins.size() == 1 &&
+               prefix->definedFailure.localOrigins !=
+                   terminal->definedFailure.localOrigins &&
+               prefix->localFailureSites.size() == 1 &&
+               terminal->localFailureSites.size() == 1 &&
+               prefix->localFailureSites != terminal->localFailureSites &&
+               o3.mir.failureMetadata().siteFor(
+                   prefix->definedFailure.localOrigins.front()) ==
+                   prefix->localFailureSites.front() &&
+               o3.mir.failureMetadata().siteFor(
+                   terminal->definedFailure.localOrigins.front()) ==
+                   terminal->localFailureSites.front(),
+           "prefix and terminal retain distinct exact source failure sites");
     return count;
   };
 
-  expect(o3.valid() && boundsSites("proven_chain") == 1 &&
-             boundsSites("dynamic_parent_chain") == 1 &&
-             boundsSites("dynamic_terminal_chain") == 1,
-         "each chained element access should carry exactly one bounds site "
-         "for the whole chain");
+  const std::pair<std::size_t, std::size_t> prefixAndTerminal{1, 1};
+  expect(o3.valid() && boundsSites("proven_chain") == prefixAndTerminal &&
+             boundsSites("dynamic_parent_chain") == prefixAndTerminal &&
+             boundsSites("dynamic_terminal_chain") == prefixAndTerminal,
+         "each chained access retains its early prefix site and complete "
+         "terminal site independently");
   expect(o3.valid() && bounds("proven_chain") == 1,
          "a chained element access whose every dimension is proven should "
-         "discharge its single bounds site");
+         "discharge its terminal bounds site without erasing the preflight");
   expect(o3.valid() && bounds("dynamic_parent_chain") == 0 &&
              bounds("dynamic_terminal_chain") == 0,
          "an unproven dimension anywhere in the chain must leave the access "
          "checked, whichever dimension it is");
+  expect(functionOperationDischarges(frontend, o3, "proven_chain",
+                                     lang::MirSafetyCheckFamily::Bounds,
+                                     lang::MirOperation::AddressOf) == 0,
+         "the proven chain must not claim an unsupported prefix discharge");
 }
 
 } // namespace

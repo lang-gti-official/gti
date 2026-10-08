@@ -1,19 +1,26 @@
 #include <std/memory>
 
+struct EntryRecord { int code = 7; };
+
 // The allocation owns the address independently of the storage handle's place.
 // Construction happens in that address, not in a temporary that is moved in.
 class Entry {
   int value;
   mut const int* original_address = nullptr;
+  EntryRecord record{};
+  mut const EntryRecord* record_address = nullptr;
 public:
   Entry(int input) : value(input) {
     this.original_address = &this.value;
+    // Struct-typed fields also have their final address during construction.
+    this.record_address = &this.record;
   }
   Entry(Entry& other) = delete;
   Entry(Entry&& other) = default;
 
   bool at_original_address() {
-    return this.original_address == &this.value;
+    return this.original_address == &this.value &&
+           this.record_address == &this.record;
   }
   int read() { return this.value; }
 };

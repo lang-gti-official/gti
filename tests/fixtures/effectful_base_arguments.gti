@@ -1,0 +1,52 @@
+#include <std/string>
+#include <std/vector>
+
+mut int phase = 0;
+mut int order = 0;
+int argument(int value) {
+  order = order * 10 + value;
+  std::println(value);
+  if (phase == 1 && value == 2) {
+    int zero = 0;
+    int failed = value / zero;
+  }
+  return value + 10;
+}
+class Resource {
+  int id;
+public:
+  Resource(int id) : id(id) { std::println(id); }
+  ~Resource() { std::println(this.id + 100); }
+};
+class Foundation {
+public:
+  int score;
+  Foundation(int first, int second) : score(first + second) {
+    std::println(30);
+    if (phase == 2) {
+      int zero = 0;
+      int failed = score / zero;
+    }
+  }
+  ~Foundation() { std::println(130); }
+};
+class Building : public Foundation {
+  Resource resource;
+  std::string label;
+public:
+  int input_after;
+  Building(mut int initial) : Foundation(argument(initial), argument(initial > 0 ? ++initial : 2)), resource(Resource(40)), label(std::string("building")), input_after(initial) {
+    std::println(50);
+    if (phase == 3) {
+      int zero = 0;
+      int failed = initial / zero;
+    }
+  }
+  ~Building() { std::println(150); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Resource caller = Resource(9);
+  Building value = Building(1);
+  return value.score - 23 + order - 12 + value.input_after - 2;
+}

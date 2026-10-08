@@ -1,0 +1,26 @@
+// Integer -> float/double is a rounding conversion in assignment contexts,
+// not a promise of exact precision or an implicit call-argument conversion.
+constexpr float as_float(int32_t value) { return value; }
+constexpr double as_double(uint64_t value) { return value; }
+constexpr float rounded_literal = 16777217;
+constexpr float rounded_return = as_float(16777217);
+constexpr double rounded_double = as_double(uint64_t(9007199254740993));
+static_assert(int32_t(rounded_literal) == 16777216);
+static_assert(int32_t(rounded_return) == 16777216);
+static_assert(uint64_t(rounded_double) == uint64_t(9007199254740992));
+
+int main() {
+  int32_t original = 16777217;
+  mut float assigned = original;
+  if (int32_t(assigned) != 16777216 || int32_t(as_float(original)) != 16777216) {
+    return 1;
+  }
+  assigned = 16777219;
+  if (int32_t(assigned) != 16777220) { return 2; }
+  uint64_t wide = uint64_t(9007199254740993);
+  mut double double_assignment = wide;
+  double_assignment = wide;
+  if (uint64_t(double_assignment) != uint64_t(9007199254740992) ||
+      uint64_t(as_double(wide)) != uint64_t(9007199254740992)) { return 3; }
+  return 0;
+}
