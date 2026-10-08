@@ -1384,9 +1384,11 @@ runs also retain these regressions.
 
 ## L-INFER-01: Local Inferred Reference Bindings
 
-**Status: Proposed for review; not implemented.** This proposal does not
-reorder or resume the stabilization queue. Implementation requires a separate
-authorization after review.
+**Status: Implementation authorized and in progress.** Local reference inference
+now shares ordinary referent/binding validation and retained loans. Paired semantic,
+HIR/MIR, native cleanup and LSP validation is being completed before publication.
+Whole-array and raw-pointer references retain their existing explicit-reference
+boundary; no backend inference or new owner is introduced.
 
 **Outcome:** Applications can retain a checked borrow without spelling a long
 concrete type. For example, reading an array nested in a parsed JSON document
@@ -1402,8 +1404,8 @@ for (auto& scope : scopes_array.elements()) {
 
 ### Evidence And Prerequisites
 
-The current `SemanticVisitor::Impl::analyzeInferredVariable` explicitly rejects
-ordinary local `auto&`. Its existing reference path already constructs a
+At proposal time `SemanticVisitor::Impl::analyzeInferredVariable` explicitly rejected
+ordinary local `auto&`. Its reference path already constructed a
 resolved reference type, calls `validateReferenceBinding`, and records retained
 borrows. Explicit local `T&` declarations use the same reference validation and
 retained-borrow machinery. This overlap supports a bounded generalization;
@@ -1417,7 +1419,7 @@ The current move-only-copy diagnostic on `mut auto value = borrowed_result`
 therefore rejects a real attempted copy, but its unconditional movement hint
 does not explain the available borrowing alternative.
 
-### Proposed Language Rule
+### Language Rule
 
 An initialized ordinary local declaration `auto& name = expression;` infers
 the exact complete referent type and requests a read-only checked reference.

@@ -8973,7 +8973,6 @@ int main() {
   auto fixed = value;
   fixed = 2;
   auto missing;
-  auto& reference = value;
   auto array[2] = {1, 2};
   auto values = {1, 2};
   auto no_value = perform();
@@ -8985,8 +8984,6 @@ int main() {
              hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
              hasDiagnostic(invalid.diagnostics, "initialized local binding") &&
              hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "limited to range-for element bindings") &&
              hasDiagnostic(invalid.diagnostics, "array extents") &&
              hasDiagnostic(invalid.diagnostics,
                            "requires a fixed array type from its context") &&
