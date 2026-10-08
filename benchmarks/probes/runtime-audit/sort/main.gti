@@ -1,0 +1,21 @@
+#include <std/algorithm>
+#include <std/string>
+#include <std/vector>
+int main() {
+  mut uint64_t state = uint64_t(88172645463325252);
+  mut uint64_t checksum = 0;
+  for (mut int32_t round = 0; round < 8; round++) {
+    mut std::vector<int32_t> values{};
+    for (mut int32_t i = 0; i < 1000000; i++) {
+      state ^= state << uint64_t(13);
+      state ^= state >> uint64_t(7);
+      state ^= state << uint64_t(17);
+      values.push_back(int32_t(state % uint64_t(1000000000)));
+    }
+    std::sort(values);
+    checksum += uint64_t(values[std::size_t(0)]) + uint64_t(values[std::size_t(500000)]);
+  }
+  std::print("checksum ");
+  std::println(std::to_string(checksum));
+  return 0;
+}
