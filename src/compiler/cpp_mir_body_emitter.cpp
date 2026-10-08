@@ -48050,24 +48050,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                (!runtime || runtime->type != operand.type)))
             return false;
           if (retained->kind == MirLoanKind::Parameter &&
-              operand.type != body.returnType) {
-            const auto *parameter = body.findPlace(retained->source);
-            if (!parameter)
-              return false;
-            const bool selectedAlias = std::any_of(
-                body.places.begin(), body.places.end(),
-                [&](const MirPlace &place) {
-                  return place.root == MirPlaceRootKind::Binding &&
-                         place.binding != parameter->binding &&
-                         place.sourceValue == instruction.hirValue &&
-                         place.type == operand.type &&
-                         std::find(retained->carriers.begin(),
-                                   retained->carriers.end(),
-                                   place.binding) != retained->carriers.end();
-                });
-            if (selectedAlias && operand.place == 0)
-              return false;
-          }
+              operand.type != body.returnType &&
+              !mir_detail::referenceParameterReturnPublication(body, block,
+                                                               instruction))
+            return false;
         }
         if (loan->kind == MirLoanKind::Stored) {
           // The reference field binds in the member initializer list;

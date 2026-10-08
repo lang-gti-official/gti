@@ -7,6 +7,7 @@ void checkReferents() {
   for (const auto &relative :
        {"fixtures/borrow_return_exact_referent.gti",
         "fixtures/borrow_projected_parameter_return.gti",
+        "fixtures/borrow_direct_projected_return.gti",
         "fixtures/fallible_borrow.gti",
         "coverage/reproducers/a25-expected-ref-relay-wrong-referent.gti",
         "coverage/reproducers/a25-ref-return-from-expected-value.gti"}) {
@@ -184,6 +185,149 @@ void checkProjectedParameterOrigins() {
          "plain and fallible projected-parameter returns have origin controls");
   std::cout << "projected parameter origins: " << publications * 6
             << " mutations checked by MIR and C++ admission\n";
+}
+
+void checkDirectProjectedReturnOrigins() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrow_direct_projected_return.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "direct field aliases return their exact caller-owned referent");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  std::size_t changedAddresses = 0;
+  std::size_t changedSuffixes = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *published = instruction.loan
+                                    ? function.body.findLoan(*instruction.loan)
+                                    : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Borrow ||
+            !published || published->kind != lang::MirLoanKind::Return ||
+            instruction.operands.size() != 1)
+          continue;
+        const auto &operand = instruction.operands.front();
+        const auto *retained = function.body.findLoan(operand.loan);
+        const auto *runtime = function.body.findPlace(operand.place);
+        if (!retained || retained->kind != lang::MirLoanKind::Parameter ||
+            !runtime || runtime->root != lang::MirPlaceRootKind::Binding)
+          continue;
+        for (const auto &other : function.body.places) {
+          if (other.root != lang::MirPlaceRootKind::Binding ||
+              other.binding == runtime->binding ||
+              other.type != runtime->type || other.projections.size() != 1 ||
+              other.projections.front().kind !=
+                  lang::MirProjectionKind::Dereference ||
+              std::find(retained->carriers.begin(), retained->carriers.end(),
+                        other.binding) == retained->carriers.end())
+            continue;
+          auto malformed = frontend.mir;
+          auto &body = const_cast<lang::MirFunctionInstance *>(
+                           malformed.findFunctionInstance(function.id))
+                           ->body;
+          for (auto &candidateBlock : body.blocks) {
+            for (auto &candidate : candidateBlock.instructions)
+              if (candidate.id == instruction.id)
+                candidate.operands.front().place = other.id;
+            if (candidateBlock.terminator.returnLoan == published->id &&
+                candidateBlock.terminator.value)
+              candidateBlock.terminator.value->place = other.id;
+          }
+          (void)lang::rebuildMirValueUses(body);
+          ++changedAddresses;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "return cannot substitute another same-type alias of the "
+                 "same owner for the selected source expression");
+          expect(!lang::CppMirBodyEmitter(malformed, rows)
+                      .supportsFailureBodyText(
+                          {lang::MirBodyKind::Function, function.id}),
+                 "representation rejects substituted return aliases");
+        }
+      }
+    for (const auto &place : function.body.places) {
+      if (place.root != lang::MirPlaceRootKind::Binding ||
+          place.projections.size() < 2 ||
+          place.projections.front().kind !=
+              lang::MirProjectionKind::Dereference ||
+          place.projections.back().kind != lang::MirProjectionKind::Field)
+        continue;
+      const bool executedAddress = std::any_of(
+          function.body.blocks.begin(), function.body.blocks.end(),
+          [&](const auto &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind ==
+                             lang::MirInstructionKind::Initialize &&
+                         std::any_of(instruction.operands.begin(),
+                                     instruction.operands.end(),
+                                     [&](const auto &operand) {
+                                       return operand.kind ==
+                                                  lang::MirOperandKind::Loan &&
+                                              operand.place == place.id;
+                                     });
+                });
+          });
+      if (!executedAddress)
+        continue;
+      for (unsigned mutation = 0; mutation != 3; ++mutation) {
+        auto malformed = frontend.mir;
+        auto &body = const_cast<lang::MirFunctionInstance *>(
+                         malformed.findFunctionInstance(function.id))
+                         ->body;
+        auto &changed = body.places[place.id - 1];
+        if (mutation == 0)
+          changed.projections.back().field = 0;
+        if (mutation == 1)
+          changed.projections.back().kind =
+              lang::MirProjectionKind::RawDereference;
+        if (mutation == 2)
+          changed.symbol = 0;
+        (void)lang::rebuildMirValueUses(body);
+        ++changedSuffixes;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "projected return rejects forged field paths or formal roots " +
+                   std::to_string(mutation) + " at " +
+                   std::to_string(function.id) + ":" +
+                   std::to_string(place.id));
+        expect(!lang::CppMirBodyEmitter(malformed, rows)
+                    .supportsFailureBodyText(
+                        {lang::MirBodyKind::Function, function.id}),
+               "representation rejects forged executed field paths");
+      }
+    }
+  }
+  expect(changedAddresses != 0 && changedSuffixes != 0,
+         "direct projection regressions exercise alias and field mutations");
+  const auto declarations = source.substr(0, source.find("int main()"));
+  for (const auto &body :
+       {"int32_t& bad() { Table local{}; return plain(local); } "
+        "int main() { return 0; }",
+        "int main() { mut Table table{}; int32_t& held = plain(table); "
+        "table.record.selected = 7; return held; }",
+        "int main() { Table table{}; mut int32_t& held = plain(table); "
+        "held = 7; return held; }",
+        "mut int32_t& bad(mut Table& table) { "
+        "mut Record& record = table.record; "
+        "mut int32_t& selected = record.selected; return selected; } "
+        "int main() { return 0; }"}) {
+    const auto invalid = analyzeWithStandardLibrary(
+        "invalid-direct-projected-return.gti", declarations + body);
+    expect(invalid.syntaxValid && !invalid.semanticValid &&
+               !invalid.canGenerateCode(),
+           "direct projected aliases retain escape and readonly restrictions");
+    expect(std::none_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           "invalid projected reference uses fail before MIR/backend");
+  }
+  std::cout << "Direct projected returns: " << changedAddresses
+            << " alias mutations, " << changedSuffixes << " suffix mutations\n";
 }
 
 void checkOwnedFieldPlaces() {
@@ -412,6 +556,7 @@ int main() {
   checkReferents();
   checkInvalidEscapes();
   checkProjectedParameterOrigins();
+  checkDirectProjectedReturnOrigins();
   checkOwnedFieldPlaces();
   checkLoweringFailureContext();
   checkNestedReadonlyReferences();
