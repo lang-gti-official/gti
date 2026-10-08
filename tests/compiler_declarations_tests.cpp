@@ -2829,7 +2829,8 @@ int main() {
              containsMangledFunction(generated, "", "identity",
                                      "(std::int32_t __gti_mir_arg_0)") &&
              containsMangledFunction(generated, "", "identity",
-                                     "__gti_mir_failure(std::string_view "
+                                     "__gti_mir_failure(::__gti_program::"
+                                     "__gti_std::string_view "
                                      "__gti_mir_arg_0") &&
              containsMangledFunction(generated, "", "unbox", ""),
          "nameable generic functions should lower as GTI-selected concrete "
@@ -4194,8 +4195,10 @@ int main() {
       if (instance.typeArguments.front() == lang::SemanticType::Int32) {
         sawIntegerBox =
             instance.traits.transferCapable && instance.traits.shareCapable;
-      } else if (instance.typeArguments.front() ==
-                 lang::SemanticType::StringView) {
+      } else if (instance.typeArguments.front().kind ==
+                 lang::SemanticType::Class) {
+        // Box<std::string_view>: the source-defined view class derives its
+        // capabilities from its private text field.
         sawViewBox =
             !instance.traits.transferCapable && !instance.traits.shareCapable;
       }
@@ -6788,8 +6791,11 @@ int main() {
                 if (mutation == 1)
                   changed.preparedParameterDrop.reset();
               }
+              // The handoff belongs to the consuming invocation, which may be
+              // a construction or (for a passed view) an ordinary call.
               if (mutation == 2 &&
-                  changed.kind == lang::MirInstructionKind::Construct)
+                  (changed.kind == lang::MirInstructionKind::Construct ||
+                   changed.kind == lang::MirInstructionKind::Call))
                 std::erase_if(changed.lifecycle, [&](const auto &event) {
                   return event.kind ==
                              lang::MirLifecycleEventKind::TransferOut &&
@@ -7898,19 +7904,19 @@ int main() {
   expect(containsMangledFunction(
              generated, "", "consume",
              "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-             "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+             "__gti_mir_arg_1, ::__gti_program::__gti_std::string_view __gti_mir_arg_2"),
          "variadic declarations and forwarding should lower explicitly");
   expect(containsMangledFunction(
              generated, "", "consume",
              "__gti_mir_failure(std::int32_t __gti_mir_arg_0, "
              "std::int32_t __gti_mir_arg_1, bool __gti_mir_arg_2, "
-             "std::string_view __gti_mir_arg_3"),
+             "::__gti_program::__gti_std::string_view __gti_mir_arg_3"),
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("Rest... __gti_mir_arg_1") == std::string::npos &&
              containsMangledFunction(
                  generated, "", "first",
                  "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-                 "__gti_mir_arg_1, std::string_view __gti_mir_arg_2"),
+                 "__gti_mir_arg_1, ::__gti_program::__gti_std::string_view __gti_mir_arg_2"),
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
 

@@ -10317,11 +10317,14 @@ def main():
         "start": lsp_position(source, invalid_index),
         "end": lsp_position(source, invalid_index + 1),
     }
+    # std::string_view is a source class: writing through its read-only
+    # operator[] is the ordinary class diagnostic at the indexing bracket.
     string_view_mutation = next(
         diagnostic
         for diagnostic in diagnostics
-        if diagnostic["code"] == "GTI-S2035"
-        and "character access is read-only" in diagnostic["message"]
+        if diagnostic["code"] == "GTI-S2002"
+        and "operator[] does not provide mutable element access"
+        in diagnostic["message"]
     )
     string_view_bracket = source.index("[", source.index("read_only_text[0]"))
     assert string_view_mutation["range"] == {
