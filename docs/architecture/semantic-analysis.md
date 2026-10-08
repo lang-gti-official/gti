@@ -568,7 +568,13 @@ class substitution preserves that identity through symbolic base forwarding.
 Method selection groups the owner's prescribed concrete list by source argument
 expression and reuses exact argument and ownership checks, including forwarding
 and `operator()`. It does not infer owner arguments from the call. Concrete
-class reanalysis validates member pack object positions even for uncalled
+lexical pack scopes retain the declaring name/ID independently of a substituted
+pack's canonical type identity. Signature-pattern forwarding does not rewrite
+that type identity to impersonate the receiving declaration, and a nearer
+non-pack generic shadows the enclosing pack normally. Concrete field reanalysis
+also runs for zero-element owner packs, preserving the same canonical selected
+field types as their constructor schedules. Concrete class reanalysis validates
+member pack object positions even for uncalled
 methods. Empty owner packs still trigger concrete method reanalysis. HIR
 instance signatures flatten concrete packs independently of discovery path,
 while body bindings retain source pack identity for cleanup and forwarding.
@@ -694,6 +700,11 @@ An open nominal field defers construction until concrete analysis; recursively
 unresolved type arguments, value expressions, and extents are not an invitation
 to check a constructor requirement outside its selected constructor's context.
 Concrete selection still enforces every zero-argument operation and requirement.
+Default-availability queries apply those requirements under the exact owner
+substitution; a constrained-out zero-argument constructor is not queried as an
+omitted default when a different constructor explicitly initializes the field.
+Abstract owners remain constructible only in base-subobject position, never as
+implicitly defaulted value fields.
 New omitted-nominal defaults do not manufacture an extra argument-free overload
 beside an owner's declared argument-taking construction API. Constructor-free
 owners can use the structural default; declared zero-argument operations keep

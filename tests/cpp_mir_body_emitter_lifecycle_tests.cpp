@@ -93,6 +93,43 @@ void testSelectedConstructorDefaultSchedule() {
     }
   }
   expect(checked, "fixture must reach the mixed selected-field schedule");
+  bool checkedNullable = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    const auto *info =
+        owner == nullptr ? nullptr
+                         : frontend.semantics.findClassType(owner->declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "BorrowedOwner")
+      continue;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructor.id};
+    expect(lang::CppMirBodyEmitter(frontend.mir, map)
+               .supportsFailureBodyText(address),
+           "nullable pointer publication follows the selected owning and "
+           "reference fields");
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Compute ||
+            instruction.operation != lang::MirOperation::Literal ||
+            instruction.info.type != lang::SemanticType::NullPtr)
+          continue;
+        checkedNullable = true;
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirConstructorInstance *>(
+            malformed.findConstructorInstance(constructor.id));
+        for (auto &changedBlock : changed->body.blocks)
+          for (auto &producer : changedBlock.instructions)
+            if (producer.id == instruction.id)
+              producer.literal = std::uint64_t{1};
+        expect(!lang::CppMirBodyEmitter(malformed, map)
+                    .supportsFailureBodyText(address),
+               "nullable publication rejects a non-null literal masquerading "
+               "as nullptr");
+      }
+    }
+  }
+  expect(checkedNullable, "fixture must reach nullable pointer construction");
   expect(!gti_test::emitCpp(frontend).contents.empty(),
          "selected defaults must reach production emission");
 }

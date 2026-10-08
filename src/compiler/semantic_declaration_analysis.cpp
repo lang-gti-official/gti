@@ -997,6 +997,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 
   const ConceptDecl &declaration = *conceptInfo.declaration;
   typeParameterScopes.emplace_back();
+  typePackScopes.emplace_back();
   for (std::size_t index = 0; index < declaration.typeParameters().size();
        ++index)
     typeParameterScopes.back().emplace(
@@ -1365,6 +1366,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   currentSourceUnit = enclosingSourceUnit;
   currentNamespace = enclosingNamespace;
   typeParameterScopes.pop_back();
+  typePackScopes.pop_back();
   conceptInfo.parameterConstraints = std::move(parameterConstraints);
   conceptInfo.structuralConstraints = std::move(structuralConstraints);
   if (declaration.compilerBinding()) {
@@ -3863,6 +3865,7 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
     const ConstructorInfo *constructor = defaultConstructor(*fieldOwner);
     if (constructor != nullptr) {
       return constructor->access == AccessModifier::Public &&
+             resolveDefaultConstruction(fieldType, baseSubobject) &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
               classCanUseStructuralDefaultConstruction(fieldType, visiting));
     }

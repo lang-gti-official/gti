@@ -37,6 +37,66 @@ void check(std::string_view source, bool valid, std::string_view label,
 } // namespace
 
 int main() {
+  constexpr std::string_view constrainedDefaults = R"gti(
+class NoDefault {
+  int value;
+public:
+  NoDefault(int value) : value(value) {}
+};
+class Choice<T> {
+public:
+  Choice() requires std::default_initializable<T> {}
+  Choice(int value) {}
+};
+class Holder<T> {
+  Choice<T> child;
+public:
+  Holder() : child(Choice<T>(1)) {}
+};
+)gti";
+  check(std::string(constrainedDefaults) + R"gti(
+int main() { Holder<NoDefault> object{}; return 0; }
+)gti",
+        true,
+        "a constrained-out default is not queried for an explicitly "
+        "initialized field",
+        {}, true);
+  check(std::string(constrainedDefaults) + R"gti(
+int main() { Choice<NoDefault> object{}; return 0; }
+)gti",
+        false, "selecting that constrained default still rejects", "GTI-S2029",
+        true);
+  check(R"gti(
+class Adapter<R(Args...)> {
+public:
+  Adapter() {}
+  void operator()(Args... args) {}
+};
+class Holder<Args...> {
+  Adapter<void(Args...)> child;
+public:
+  Holder() : child(Adapter<void(Args...)>()) {}
+};
+int main() { Holder<int, bool> pair{}; Holder<> empty{}; return 0; }
+)gti",
+        true,
+        "signature-pattern scopes retain the declared pack identity for "
+        "forwarded and empty packs");
+  check(R"gti(
+class Owner<Args...> {
+public:
+  void bad<Args>(Args... args) {}
+};
+int main() { Owner<int> value{}; return 0; }
+)gti",
+        false, "a non-pack method parameter cannot borrow a shadowed pack name",
+        "GTI-S2023");
+  check(R"gti(
+class Owner<Args...> { public: void invoke(Args... args) {} };
+int main() { Owner<void> value{}; return 0; }
+)gti",
+        false, "concrete owner packs still reject non-object element types",
+        "GTI-S2023");
   constexpr std::string_view layers = R"gti(
 namespace shapes {
 struct Layer<uint64_t N> { Layer<N - 1> inner; int32_t value = 1; };

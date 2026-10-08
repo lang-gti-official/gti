@@ -10193,7 +10193,7 @@ containedInitializerDestructor(const MirProgram &program, const MirBody &body,
         (previousEnd.block != 0 && !precedes(previousEnd, producerPosition)))
       return false;
     const auto *value = body.findValue(*producer->result);
-    if (!value || value->sourceValue != root ||
+    if (!value || value->sourceValue != root || producer->info != value->info ||
         value->definition != producer->id ||
         value->definitionBlock != producerPosition.block)
       return false;
@@ -10221,12 +10221,19 @@ containedInitializerDestructor(const MirProgram &program, const MirBody &body,
       const auto *destination = publication && publication->destination
                                     ? body.findPlace(*publication->destination)
                                     : nullptr;
+      const bool nullablePointerDefault =
+          field.type.kind == SemanticType::RawPointer &&
+          value->info.type == SemanticType::NullPtr &&
+          producer->kind == MirInstructionKind::Compute &&
+          producer->operation == MirOperation::Literal && producer->literal &&
+          std::holds_alternative<std::nullptr_t>(*producer->literal);
       if (!publication || publication->hirValue != root ||
           publication->operands.size() != 1 ||
           publication->operands.front().kind != MirOperandKind::Value ||
           publication->operands.front().value != value->id ||
-          publication->operands.front().type != field.type ||
-          value->info.type != field.type || destination == nullptr ||
+          publication->operands.front().type != value->info.type ||
+          (value->info.type != field.type && !nullablePointerDefault) ||
+          destination == nullptr ||
           destination->root != MirPlaceRootKind::This ||
           destination->projections.size() != 1 ||
           destination->projections.front().kind != MirProjectionKind::Field ||
@@ -12734,18 +12741,24 @@ failureConstructorBoundaryEligible(const MirProgram &program,
        !bodyStagedOptionalParameter)) {
     return false;
   }
-  if (edgeFree) {
-    // The status overload can only report success, so no partially
-    // initialized object is ever published or rolled back. Active cleanup
-    // and a generated/user destructor are therefore ordinary completed-object
-    // lifecycle, not construction-failure machinery.
-    return true;
-  }
-  if ((!disarmedDeclaredDestructor &&
-       (owner->destructor || owner->requiresActiveDropState)) ||
-      constructor.body.failureRecords.empty() ||
-      !mirBodyRoutesFailureEdges(constructor.body)) {
-    return false;
+  // Publication order cannot substitute for a sealed storage constructor's
+  // exact body witness. Alternate aggregate/status routes must verify the
+  // selected private target too, not just its empty representation shape.
+  for (const auto &block : constructor.body.blocks) {
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Construct ||
+          !optionalStorageType(program, instruction.info.type))
+        continue;
+      const auto *target =
+          instruction.constructorTarget
+              ? program.findConstructorInstance(*instruction.constructorTarget)
+              : nullptr;
+      const auto *storage =
+          target ? program.findClassInstance(target->owner) : nullptr;
+      if (!target || !storage || storage->type != instruction.info.type ||
+          !nativeOptionalStorageConstructorTarget(program, *target, *storage))
+        return false;
+    }
   }
   // The aggregate fallback relies on each lexical field having a
   // failure-free empty C++ representation. Raw backend owners provide that
@@ -12788,6 +12801,18 @@ failureConstructorBoundaryEligible(const MirProgram &program,
                                                  EmptyFieldUse::Construction)) {
       return false;
     }
+  }
+  if (edgeFree) {
+    // Selected publication proves order, not the child's native shell or
+    // private capability contract. Even a success-only overload needs the
+    // independent field representation proof above before skipping rollback.
+    return true;
+  }
+  if ((!disarmedDeclaredDestructor &&
+       (owner->destructor || owner->requiresActiveDropState)) ||
+      constructor.body.failureRecords.empty() ||
+      !mirBodyRoutesFailureEdges(constructor.body)) {
+    return false;
   }
   for (const MirBlock &block : constructor.body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {

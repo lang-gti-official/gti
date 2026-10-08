@@ -4004,8 +4004,7 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
     // A multidimensional array element is itself a fixed array; the
     // construction that must be resolved is the leaf class element's.
     if (std::optional<ResolvedConstructionInfo> construction =
-            resolveArrayElementDefaultConstruction(
-                fixedArrayClassLeafType(elementType))) {
+            resolveDefaultConstruction(fixedArrayClassLeafType(elementType))) {
       recordDefaultArgumentDependencies(construction->defaultArguments);
       semanticModel.recordArrayElementConstruction(expr,
                                                    std::move(*construction));
