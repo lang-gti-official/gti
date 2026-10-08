@@ -14588,8 +14588,6 @@ int main() {
                            "Prefix operator++ must return void") &&
              hasDiagnostic(invalid.diagnostics,
                            "Prefix operator++ must use a mutable receiver") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "must accept its sentinel by read-only reference") &&
              hasDiagnostic(invalid.diagnostics, "Unknown member 'begin'") &&
              hasDiagnosticCode(invalid.diagnostics, "GTI-S2022"),
          "range and iterator diagnostics should reject malformed operator "

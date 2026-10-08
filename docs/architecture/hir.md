@@ -17,6 +17,16 @@ access to that accessor's private storage.
 
 ## Inputs And Outputs
 
+Expression-valued assignments retain their complete written target in the AST
+`PlaceSet` node. Semantics checks its ordinary mutable-place authority and
+active result-loan conflicts. HIR `PlaceSet` retains the exact typed target
+and right operand; an overloaded compound operation instead retains its
+selected ordinary call. MIR evaluates the target dependencies once, then
+assigns through that resolved place or returned loan using ordinary store,
+failure, replacement-cleanup, and full-expression loan endpoints. The backend
+does not infer writability from a native C++ call result or inline an accessor
+into its private field.
+
 `HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
 `SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
 Concrete generic validity is obtained through semantic instance reanalysis.

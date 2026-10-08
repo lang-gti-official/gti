@@ -498,6 +498,16 @@ Corpus program: `c33_file_io`.
 
 ## F10 — Assignment through a method returning `mut T&` is rejected by the parser
 
+Resolved in the reference/sentinel composition repair. Assignment now accepts
+an expression target and semantics requires an ordinary mutable place.
+Named mutable-reference accessors, grouped targets, compound updates and the
+standard library's mutable accessors use the existing verified place/loan
+store contract. The target executes once before the right operand; a named
+accessor's active exclusive result excludes overlapping right-operand access.
+Read-only/value results and temporary mutable receivers remain rejected.
+The original reproducer is gated with exact `4` output; the account below
+records the earlier behavior.
+
 `reproducers/f10-assign-through-mut-ref-method.gti`
 
 ```gti
@@ -629,6 +639,14 @@ defect, not the method call. `a.plus(b).get()` and
 correction is on the record rather than silently edited away.
 
 ## F16 — The canonical C++ iterator loop does not compile over `std::vector`
+
+Resolved in the reference/sentinel composition repair. The library's passive
+end markers and position sentinels are ordinary by-value comparison/distance
+arguments. Structural sentinel requirements accept an unambiguous exact
+read-only-reference operation or a copyable by-value operation. Application
+types exercise both protocols; temporary reference binding is unchanged.
+The original reproducer and `c55_iterator_utilities` are gated with exact
+output. The account below records the earlier behavior.
 
 `reproducers/f16-canonical-iterator-loop.gti`
 
@@ -995,6 +1013,16 @@ Opposite half of S05, which needs a payload *with* a destructor and emits
 invalid C++ rather than an ICE.
 
 ## S12 — Implicit integer-to-float conversions silently lose value
+
+Resolved as a contract-audit finding, not a numeric-policy change. The accepted
+assignment compatibility rule already permits every fixed-width integer to
+`float`/`double`; this means rounding to the destination precision, not exact
+widening. Static semantics now states round-to-nearest, ties-to-even and the
+binary32/binary64 precision-loss examples explicitly. Compile-time/runtime
+regressions cover initialization, assignment and return, while exact function
+and constructor matching still rejects implicit integer-to-floating arguments.
+The original reproducer is gated with its exact rounded output. A stricter
+conversion policy would be a separate explicit language-design decision.
 
 `reproducers/s12-lossy-implicit-int-to-float.gti`
 

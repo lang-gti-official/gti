@@ -2169,6 +2169,11 @@ if(Python3_Interpreter_FOUND)
       "${PROJECT_SOURCE_DIR}/tests/operator_place_composition_runtime_test.py"
       "$<TARGET_FILE:gti>")
   set_tests_properties(operator_place_composition_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME coverage_composition_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/coverage_composition_runtime_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(coverage_composition_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME operator_place_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/operator_place_failure_runtime_test.py"

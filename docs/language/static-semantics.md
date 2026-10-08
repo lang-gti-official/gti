@@ -358,6 +358,18 @@ also assignment-compatible with `float` or `double`, and `float` may widen to
 compound assignment. These assignment compatibilities do not participate in
 call or constructor overload selection.
 
+Integer-to-floating assignment conversion is a rounding conversion, not a
+value-preserving widening guarantee. It uses the destination's IEEE binary32
+or binary64 precision and round-to-nearest, ties-to-even, at compile time and
+runtime. For example, `float value = 16777217` produces `16777216`, and a
+`uint64_t` value of `9007199254740993` assigned to `double` produces
+`9007199254740992`. All supported fixed-width integers fit the floating
+formats' finite exponent range; precision loss is not an out-of-range failure.
+An explicit conversion has the same rounding behavior. A call still requires
+its exact argument type: pass `float(integer)` to a `float` parameter. The
+existing checked floating-to-integer conversion does not restore lost bits;
+it truncates toward zero and fails for non-finite or out-of-range results.
+
 The binary equality, relational, arithmetic, modulo, and bitwise operators add
 one narrow operand context for integer literals. When exactly one operand is
 an integer literal, optionally parenthesized and optionally preceded by one
