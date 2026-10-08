@@ -324,7 +324,8 @@ int main() {
       }
     }
   }
-  expect(argumentStages == 5, "four direct/grouped argument stages and the "
-                              "later-failure stage were exercised");
+  expect(argumentStages == 7,
+         "six direct/grouped/member argument stages and the "
+         "later-failure stage were exercised");
   return failures ? 1 : 0;
 }

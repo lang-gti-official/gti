@@ -21,8 +21,19 @@ public:
 int consume_owned(OwnedReading value, int later) { return value.read() + later; }
 int later_argument(int before) { return destroyed == before ? 4 : 99; }
 
+class Recorder {
+  mut int recorded = 0;
+public:
+  void take(Reading value) mut { this.recorded = value.read(); }
+  void take_owned(OwnedReading value, int later) mut {
+    this.recorded = value.read() + later;
+  }
+  int read() { return this.recorded; }
+};
+
 int check(bool left) {
   int wanted = left ? 3 : 7;
+  mut Recorder recorder{};
   for (mut int index = 0; index < 3; ++index) {
     if (consume(left ? Reading(3) : Reading(7)) != wanted) { return 1; }
     if (consume(((left ? Reading(3) : Reading(7)))) != wanted) { return 2; }
@@ -33,11 +44,16 @@ int check(bool left) {
     if (consume_owned(((left ? OwnedReading(3) : OwnedReading(7))),
                       later_argument(before + 1)) != wanted + 4) { return 5; }
     if (destroyed != before + 2) { return 6; }
+    recorder.take(((left ? Reading(3) : Reading(7))));
+    if (recorder.read() != wanted) { return 7; }
+    recorder.take_owned(((left ? OwnedReading(3) : OwnedReading(7))),
+                        later_argument(before + 2));
+    if (recorder.read() != wanted + 4 || destroyed != before + 3) { return 8; }
   }
   return 0;
 }
 
 int main() {
   if (check(true) != 0 || check(false) != 0) { return 1; }
-  return destroyed == 12 ? 0 : 2;
+  return destroyed == 18 ? 0 : 2;
 }
