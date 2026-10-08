@@ -1,0 +1,3 @@
+// Module std.memory: the public surface of <std/memory>.
+export module memory;
+export #include <std/memory>

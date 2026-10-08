@@ -1,0 +1,26 @@
+// Every public <std/name> unit is also the module std.name. Importing makes
+// that unit's declarations visible without an #include, and only that unit:
+// <std/vector> uses <std/span> internally, but std::span stays invisible here
+// until this file imports std.span as well. Application interfaces can pass a
+// standard module on to their own importers with `export import std.vector;`.
+import std.format;
+import std.string;
+import std.vector;
+
+int32_t total(std::vector<int32_t>& values) {
+  mut int32_t sum = 0;
+  for (int32_t value : values) {
+    sum = sum + value;
+  }
+  return sum;
+}
+
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(19);
+  values.push_back(23);
+  std::string source = std::string("standard modules");
+  std::println(std::format("{} values from {}", values.size(), source.view()));
+  std::println(std::format("total {}", total(values)));
+  return 0;
+}

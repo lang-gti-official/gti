@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "native-callback-slots"
+version = "0.1.0"
+
+[package.native]
+c-sources = ["native/hooks.c"]
+
+[bindgen.hooks]
+header = "native/hooks.h"
+namespace = "native"
+
+[targets.native-callback-slots]
+kind = "executable"
+root = "src/main.gti"

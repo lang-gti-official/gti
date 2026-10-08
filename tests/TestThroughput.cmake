@@ -19,6 +19,7 @@ if(Python3_Interpreter_FOUND)
     consuming_receiver_runtime consuming_retained_field_replace_runtime
     consuming_retained_field_runtime consuming_retained_lambda_runtime
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
+    dormant_capability_runtime
     expected_class_return_runtime expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
     expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
@@ -49,6 +50,7 @@ if(Python3_Interpreter_FOUND)
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
     uninitialized_carrier_runtime
+    stdlib_modules
     stdlib_surface
   )
   foreach(suite IN LISTS gti_parallel_case_suites)

@@ -818,6 +818,12 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
+  print(program, output);
+  return output.str();
+}
+
+void LoweredProgramPrinter::print(const LoweredProgram &program,
+                                  std::ostream &output) const {
   output << "lowered-program-v16\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
@@ -1138,8 +1144,8 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
     output << '\n';
   }
 
-  output << "mir\n" << MirPrinter().print(program.mir());
-  return output.str();
+  output << "mir\n";
+  MirPrinter().print(program.mir(), output);
 }
 
 } // namespace lang

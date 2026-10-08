@@ -13,8 +13,7 @@ public:
                       bool debugInfo = false);
 
   [[nodiscard]] std::string_view name() const override;
-  [[nodiscard]] BackendArtifact
-  generate(const LoweredProgram &program) override;
+  [[nodiscard]] BackendArtifact generate(LoweredProgram program) override;
 
 private:
   CppStandard standard;

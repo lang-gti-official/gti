@@ -93,6 +93,19 @@ def main():
             change(uri, 4, inferred)
             assert diagnostics_for(session, uri, 4) == []
             assert "read" in completion(uri, inferred, "item."), "a reachable value retains public members"
+
+            # A standard module exposes its unit to the editor, but not the
+            # units that unit includes.
+            standard = ("import lib;\nimport std.vector;\nint main() {\n"
+                        "  std::vector<int32_t> values{};\n  std::\n"
+                        "  return int32_t(values.size());\n}\n")
+            change(uri, 5, standard)
+            assert diagnostics_for(session, uri, 5), "the unfinished std:: is reported"
+            labels = completion(uri, standard, "  std::")
+            assert "vector" in labels and "span" not in labels, labels
+            location = request("textDocument/definition", uri, standard,
+                               standard.index("vector<") + 1)
+            assert location["uri"].endswith("/stdlib/std/vector.gti"), location
             assert not (app / "build").exists(), "module completion must remain read-only"
             assert not (app / "gti.lock").exists(), "module completion must not fetch dependencies"
         finally:

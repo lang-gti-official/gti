@@ -79,6 +79,38 @@ values or convert terminal failures into recoverable results.
 Optional units are loaded using `<std/name>` and are independently parsed GTI
 source. An optional unit does not automatically re-export its own dependencies.
 
+### Standard-library modules
+
+Every public unit can be imported instead of included:
+
+```gti
+import std.format;
+import std.string;
+import std.vector;
+
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(42);
+  std::println(std::format("{}", values[std::size_t(0)]));
+  return 0;
+}
+```
+
+`import std.name;` loads the interface `stdlib/modules/name.gti`, which declares
+`export module name;` and republishes `<std/name>` with
+`export #include <std/name>`. The import exposes the same declarations as the
+include, and nothing more: `<std/vector>` uses `<std/span>`, but `std::span` stays
+invisible to a file that imports only `std.vector`. Mixing the two spellings, or
+including a unit that another module imports, loads each unit once. An
+application interface can pass a standard module on to its importers with
+`export import std.vector;`.
+
+Imports and includes use the same compilation pipeline; an import does not
+precompile anything or promise a compilation speedup. `import std;` is rejected: the cost of
+compiling a unit does not depend on how much of it a program uses, and the
+whole library takes several seconds to compile, so an aggregate module would
+slow every program that used it. Import each unit you use.
+
 ### Fixed-lane SIMD
 
 `<std/simd>` provides source-defined `std::simd<T, N>` for `float` and `double`,

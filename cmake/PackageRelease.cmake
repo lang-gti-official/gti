@@ -63,6 +63,7 @@ foreach(required_file
           "include/gti/runtime.hpp"
           "share/gti/VERSION"
           "share/gti/parser/gti.so"
+          "share/gti/stdlib/modules/vector.gti"
           "share/gti/stdlib/prelude.gti"
           "share/gti/stdlib/std/array.gti"
           "share/gti/stdlib/std/filesystem.gti"

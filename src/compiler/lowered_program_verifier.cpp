@@ -27,13 +27,13 @@ namespace {
 
 using lowered_detail::addIssue;
 using lowered_detail::bodyRole;
+using lowered_detail::constructionSeal;
 using lowered_detail::containsGenerated;
 using lowered_detail::DerivedGeneratedGraph;
 using lowered_detail::deriveGeneratedGraph;
 using lowered_detail::findBody;
 using lowered_detail::findDeclaration;
 using lowered_detail::findGenerated;
-using lowered_detail::fingerprint;
 using lowered_detail::generatedLess;
 using lowered_detail::ordinal;
 
@@ -554,7 +554,7 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
 
 } // namespace
 std::vector<LoweredProgramIssue>
-verifyLoweredProgram(const LoweredProgram &program) {
+lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
   std::vector<LoweredProgramIssue> issues;
   if (!program.target_.supported()) {
     addIssue(issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -1519,13 +1519,34 @@ verifyLoweredProgram(const LoweredProgram &program) {
     }
   }
 
-  const std::uint64_t currentSeal =
-      fingerprint(LoweredProgramPrinter().print(program));
+  return issues;
+}
+
+std::vector<LoweredProgramIssue>
+verifyLoweredProgram(const LoweredProgram &program) {
+  std::vector<LoweredProgramIssue> issues =
+      lowered_detail::verifyLoweredProgramContents(program);
+  const std::uint64_t currentSeal = constructionSeal(program);
   if (!program.constructionSeal_ || *program.constructionSeal_ != currentSeal) {
     addIssue(issues, LoweredProgramIssueKind::InvalidConstructionSeal,
              "lowered program differs from its immutable construction seal");
   }
   return issues;
+}
+
+std::optional<VerifiedLoweredProgram>
+verifiedLoweredProgram(LoweredProgram program,
+                       std::vector<LoweredProgramIssue> &issues) {
+  const auto snapshot =
+      std::make_shared<const LoweredProgram>(std::move(program));
+  // The inspection print is not a complete serialization of every invariant
+  // (for example, program kind is independent of the embedding plan). A seal
+  // match cannot replace verification of the exact snapshot being admitted.
+  issues = verifyLoweredProgram(*snapshot);
+  if (!issues.empty()) {
+    return std::nullopt;
+  }
+  return VerifiedLoweredProgram(snapshot);
 }
 
 } // namespace lang
