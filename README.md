@@ -385,6 +385,20 @@ Declare an independent whole-program test with `kind = "test"`, then run it
 with `gti test` (or `gti test <name>`). Runtime failures are reported per target
 without preventing later tests from running.
 
+On macOS and Linux, `gti install` builds an executable target with the
+`release` profile and copies it into `~/.local/bin`, beside the toolchain, so
+you can run it by name. `gti uninstall <name>` removes it, and
+`gti install --list` shows what is installed. Use `--root <dir>` or
+`GTI_INSTALL_ROOT` for another location and `--path <dir>` to install a project
+other than the current one. Install only replaces or removes programs it
+installed; `--force` replaces anything else at the destination:
+
+```sh
+gti install
+hello
+gti uninstall hello
+```
+
 Use `gti init` to initialize an existing directory. It preserves an existing
 `src/main.gti` and refuses to replace an existing `gti.toml`; `--name <name>`
 overrides the package name derived from the directory. Add `--git` to create a
@@ -455,8 +469,8 @@ disable its release-download hook.
 From this checkout, run:
 
 ```sh
-python3 scripts/install_neovim_local.py --dry-run --replace-config
-python3 scripts/install_neovim_local.py --replace-config
+python3 scripts/install_neovim_local.py --dry-run --replace-config --replace-bin
+python3 scripts/install_neovim_local.py --replace-config --replace-bin
 ```
 
 Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
@@ -469,11 +483,30 @@ automatically. Builds use all detected CPUs at normal priority by default
 The script builds compiler/LSP/parser, stages the complete `gti_toolchain`
 component, verifies a checksummed local archive with the Neovim plugin smoke
 test, then activates it with the same installer used for downloaded releases.
+It installs `gti` and `gti_lsp` symlinks in `~/.local/bin` to the complete
+toolchain. Existing different commands require `--replace-bin` and are saved
+beside the originals before replacement. Use `--bin-dir` for another command
+directory or `--no-terminal` for editor-only setup. The script reports when
+PATH selects another compiler; it does not edit shell configuration. Add the
+command directory to PATH if needed, and run `rehash` in existing zsh sessions.
 It writes `lua/plugins/gti.lua` under Neovim's active config directory, pointing
 Lazy at this checkout with downloads disabled. An existing different config
 requires `--replace-config` and is backed up beside the original. Use `--config`
 for another Lazy spec location. It never edits `init.lua` or installs Lazy;
 your configuration must already import that plugins directory.
+
+If a Homebrew upgrade removed the supported LLVM build prerequisites but the
+portable toolchain is already installed, restore terminal/editor activation
+without rebuilding:
+
+```sh
+python3 scripts/install_neovim_local.py --activate-only --replace-config --replace-bin
+```
+
+This validates and activates the installed version; it does not rebuild it to
+the checkout's VERSION. For a new build, install supported LLVM (for example
+`brew install llvm@22`) and rerun the normal installer. LLVM 23 is not currently
+a supported build prerequisite.
 
 Restart Neovim, run `:Lazy sync`, open a `.gti` file, and check `:GTIInfo`.
 Re-run the script after pulling changes. This system-LLVM build uses the same
