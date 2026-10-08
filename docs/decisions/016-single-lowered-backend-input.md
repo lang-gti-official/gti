@@ -74,8 +74,12 @@ Executable C++ generation converges on one immutable lowered-program input.
 - A future backend can inspect the complete lowered contract without linking
   frontend representations or parsing generated C++.
 - Unsupported or incomplete lowered representation fails before emission.
-  Backends verify the construction seal and inventory but do not reconstruct
-  frontend coherence.
+  Backends verify the construction seal but do not reconstruct frontend
+  coherence. Since 0.393.0 the seal alone admits a program: the builder seals
+  a value only after its complete inventory verifies, and the seal covers the
+  complete printed program, so re-checking the inventory per backend repeated
+  work without adding evidence. `verifyLoweredProgram` remains the complete
+  check.
 - Deterministic printing, verifier mutations, a complete shipped-corpus census,
   backend rejection tests, and an independent contract client guard the
   boundary. Existing MIR, native, runtime, FFI, C++20/C++23, and installed-
