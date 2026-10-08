@@ -6,6 +6,7 @@ extern "C" {
   void provider_test_fail_on_call(int32_t attempt);
   int32_t provider_test_calls();
   int32_t provider_test_releases();
+  uint64_t provider_test_bytes(int32_t attempt);
   void provider_test_event(int32_t value);
   int32_t provider_test_events();
   int32_t provider_test_event_at(int32_t index);
@@ -53,6 +54,10 @@ int main() {
     mut auto first = allocator.try_storage<Fixed>(std::size_t(3), std::alignment(std::size_t(4096))).expect("first");
     mut auto second = allocator.try_storage<int>(std::size_t(1)).expect("second");
     if (provider_test_calls() != 4 || provider_test_releases() != 0) { return 7; }
+    if (provider_test_bytes(1) != std::layout_of<Fixed>().bytes * uint64_t(3) ||
+        provider_test_bytes(2) != uint64_t(3) ||
+        provider_test_bytes(3) != std::layout_of<int>().bytes ||
+        provider_test_bytes(4) != uint64_t(1)) { return 14; }
     first.emplace(std::size_t(0), 10);
     first.emplace(std::size_t(2), 20);
     second.emplace(std::size_t(0), 30);
