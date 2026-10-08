@@ -1,16 +1,5 @@
 # Typed HIR
 
-Class instances retain an ordered type-alias catalog pairing the primary
-semantic `TypeAliasId` with the exact owner-substituted type. Semantic instance
-analysis resolves aliases, including checked value-generic expressions and
-exact nominal specializations; HIR verifies the declaration order and closed
-types against the primary semantic catalog. MIR preserves these rows without
-source pointers. Detached lowering checks them independently against the
-resolved declaration inventory. The C++ representation planner can therefore
-publish ordinary concrete classes containing aliases without substituting a
-representative instantiation's field type or construction operation into a
-source template.
-
 Status: Implemented concrete-instance, typed-value, normal-exit lifecycle, and
 defined-failure identity foundation.
 
@@ -114,12 +103,26 @@ concrete class/enum dependencies, including alternatives never constructed in
 source. This permits finite recursive owning sums without inventing a second
 generic type system or omitting an unused alternative from layout.
 
-Type aliases discover exact enum identities separately from class layouts.
+Namespace and member type aliases discover exact enum identities separately
+from class layouts.
 Walking an alias's type arguments may register enum rows, but a class appearing
 only in that metadata retains a forward identity rather than an executable
 class instance. An enum's actual alternative fields still discover the class
 layouts their representation requires. Semantic alias validation is unchanged;
 validating a type is not authority to instantiate its construction or cleanup.
+
+Class instances retain an ordered type-alias catalog pairing the primary
+semantic `TypeAliasId` with the exact owner-substituted type. Semantic instance
+analysis resolves aliases, including checked value-generic expressions and
+exact nominal specializations; HIR verifies the declaration order and closed
+types against the primary semantic catalog. MIR preserves these rows without
+source pointers. Detached lowering checks them independently against the
+resolved declaration inventory. Retaining this catalog does not itself enqueue
+class layouts; executable fields, calls and signatures discover the concrete
+instances they need. The C++ representation planner can therefore publish
+ordinary concrete classes containing aliases without substituting a
+representative instantiation's field type or construction operation into a
+source template.
 
 Consuming `expected<T, E>` combinators receive their exact operation, mapper
 identity, and result type from semantics. `transform_error`, `transform`, and
