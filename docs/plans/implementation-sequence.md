@@ -5023,8 +5023,11 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   contextual proofs before raw operations while retaining opaque per-operation
   memory barriers and independently checked replay. It does not yet transport
   owned-construction or initialized-element facts; the same ten original
-  source-owner proof requirements remain unmet. Full admission/corpus/performance
-  coverage
+  source-owner proof requirements remain unmet. A second prerequisite preserves
+  existing field/context facts across the general pure scalar bounds detector;
+  its unrelated record proof does not invent a prefix-length invariant or
+  supply the missing parameterized constructor-field summary.
+  Full admission/corpus/performance coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.
   The `source_prefix_complete_elements` composition probe remains unaccepted:
@@ -5070,8 +5073,8 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   MIR cleanup or the failure ABI. A many-guard structural check pins the
   storage bound; its eight-mode native matrix preserves complete cleanup,
   exact panic messages and immediate secondary termination. The complete JSON
-  fixture now runs at O0, but its O3 native build still exceeds the 600-second
-  gate. Full JSON, installed and performance acceptance remains outstanding.
+  fixture then ran at O0, while its O3 native build still exceeded the
+  600-second gate at that checkpoint.
   A native profile identifies dominance-frontier/phi construction over the
   large cleanup graph. The backend now retains one invocation-local cleanup
   context across the verified primary chain and omits dead entry initializers
@@ -5079,9 +5082,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   and native checks preserve that exact assignment/activation schedule;
   an isolated optimized native JSON snapshot now compiles with uninitialized
   carrier warnings treated as errors and produces the expected complete output.
-  The fresh compiler-driven JSON matrix is still running. Full acceptance is
-  not inferred merely from removing those representation costs or from that
-  isolated native replay.
+  The complete compiler-driven JSON matrix subsequently passes in 512.66
+  seconds: source/MIR O0/O3, native document and codec endpoints, temporary
+  owners and owned-error regressions. No timeout was raised. Full acceptance
+  still requires the optimizer proofs, complete native corpus, installed
+  consumers and measured performance; it is not inferred merely from removing
+  those representation costs or from the isolated native replay.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

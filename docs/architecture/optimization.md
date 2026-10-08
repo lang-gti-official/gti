@@ -313,6 +313,15 @@ families retain their separate admission boundaries. An unrelated source
 function proves a bounded scalar addition before writing through a raw pointer;
 arithmetic on the changed referent and in its caller remains checked.
 
+The trusted scalar bounds detector has no memory transfer: its exact void
+call takes two staged `uint64_t` values, compares them and may raise its defined
+failure. Successful execution therefore preserves unrelated scalar/object
+facts and does not make a source body opaque. Its existing Invoke failure edge
+still uses the pre-instruction state. This is not a source-container length or
+initialized-element invariant; those require independently represented facts.
+An unrelated record regression distinguishes the pure detector from an
+unknown field, conflicting field writes and an unreached call context.
+
 Context discovery is also bounded by complete summaries: an earlier
 source-allocation or raw object-lifetime call can prevent completion of a
 required closed-call summary, leaving later call contexts on that path
