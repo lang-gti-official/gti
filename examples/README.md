@@ -500,6 +500,14 @@ and relies on ordinary reverse field cleanup. Its immovable nodes own strings;
 the compiler does not recognize the pool or cell names. A slot index is not a
 generation-checked handle: after erasure and reuse it names the replacement.
 
+## Qualified generic type members
+
+[`132-qualified-type-members.gti`](132-qualified-type-members.gti) spells
+`ValueBox<T>::value_type` in a generic signature and wraps a vector of unique
+layer owners behind `std::vector<std::unique_ptr<Layer>>::const_iterator` and
+`::sentinel`. It uses ordinary range traversal and deterministic object cleanup,
+without naming private implementation iterator types.
+
 ## Complete projects
 
 [`transit-planner/`](transit-planner/README.md) is a multi-file manifest project

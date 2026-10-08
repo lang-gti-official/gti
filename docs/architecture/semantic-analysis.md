@@ -525,7 +525,14 @@ inherit them with base value/function members. Type lookup, concrete generic
 reanalysis, and tooling all consume the same resolved target. Type lookup
 through a concrete type alias substitutes the containing specialization
 at every member step, preserving access checks on the qualifier chain and
-source identities for both qualifiers and selected members. Lowered-program
+source identities for both qualifiers and selected members. Written specialized
+type qualifiers use `TypeRef::qualifiedOwner` to retain each segment's generic
+arguments (`Box<T>::nested::value_type`), rather than appending them to the final
+alias. The ordinary class selection and substitution path resolves each owner;
+the same direct-member alias lookup serves concrete aliases and written generic
+owners, including staged dependency resolution before member maps are complete.
+Owner constraints, source visibility, private qualifiers, and alias access are
+validated before a resolved type reaches HIR. Lowered-program
 rows retain the source declaration so the C++ backend can emit the alias in its
 owning class; no HIR or MIR instruction is introduced because an alias has no
 runtime effect.
