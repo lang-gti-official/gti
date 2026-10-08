@@ -46934,14 +46934,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    !arm.construct->rawMemoryAccess &&
                    arm.construct->unsafeOperation ==
                        UnsafeOperationKind::None &&
-                   std::all_of(
-                       arm.construct->operands.begin(),
-                       arm.construct->operands.end(),
-                       [&](const MirOperand &input) {
-                         return input.kind == MirOperandKind::Value &&
-                                cppMirExpectedTypeRepresentation(input.type) ==
-                                    CppMirTypeRepresentationKind::Scalar;
-                       });
+                   std::all_of(arm.construct->operands.begin(),
+                               arm.construct->operands.end(),
+                               [&](const MirOperand &input) {
+                                 return input.kind == MirOperandKind::Value &&
+                                        isPassiveScalarValueType(input.type);
+                               });
           });
       if (scalarInputs)
         conditionalArguments.push_back(std::move(conditional));
@@ -47055,14 +47053,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !instruction.rawMemoryAccess &&
             instruction.unsafeOperation == UnsafeOperationKind::None &&
             instruction.lifecycle.empty() &&
-            cppMirExpectedTypeRepresentation(instruction.info.type) ==
-                CppMirTypeRepresentationKind::Scalar &&
+            isPassiveScalarValueType(instruction.info.type) &&
             std::all_of(instruction.operands.begin(),
                         instruction.operands.end(),
                         [&](const MirOperand &input) {
                           return input.kind == MirOperandKind::Value &&
-                                 cppMirExpectedTypeRepresentation(input.type) ==
-                                     CppMirTypeRepresentationKind::Scalar;
+                                 isPassiveScalarValueType(input.type);
                         }) &&
             scalarStage != nullptr &&
             scalarStage->kind == MirInstructionKind::CallInput &&

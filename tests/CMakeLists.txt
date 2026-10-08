@@ -912,6 +912,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/class_expression_publication_runtime_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(class_expression_publication_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME class_expression_consumers_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_expression_consumers_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}" --jobs 2)
+  set_tests_properties(class_expression_consumers_runtime
+    PROPERTIES TIMEOUT 600 PROCESSORS 2)
   add_test(NAME class_field_value_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"

@@ -295,6 +295,19 @@ grouped producer bodies; cleanup-owning identity mutations additionally remove
 the reparent or forge a self-transfer. This strengthens the binding repair's
 evidence without resolving the six remaining conditional argument cases.
 
+At `801adc7a`, all 48 class producer/consumer cases pass natively in C++20/C++23
+O0/O1/O3 with optional copy elision disabled. Conditional passive/owning argument
+fixtures also pass those modes and ASan/UBSan, including an unrelated mutable
+receiver, later primitive argument calls, repeated execution, and both branch
+outcomes. The later-argument panic fixture passes with status 70, its original
+source attribution, and exact argument-before-outer-guard cleanup. The structural
+gate passes (5.59 seconds) with six malformed schedules at each of seven argument
+stages. The initial tests exposed both a duplicate native construction and a
+fallback that admitted malformed prepared-argument schedules; both are repaired.
+`class_expression_consumers_runtime` now gates the 48-case matrix with two workers
+and a matching CTest PROCESSORS reservation. This is focused evidence, not yet
+full-suite or current-main integration acceptance.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
