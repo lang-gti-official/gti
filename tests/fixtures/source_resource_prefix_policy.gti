@@ -1,0 +1,173 @@
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+#include <std/numeric>
+#include <std/string>
+
+mut int live_items = 0;
+mut int destroyed_items = 0;
+mut int destruction_order = 0;
+
+class Item {
+  std::string text;
+  int id;
+public:
+  Item(int id) : text(std::string("owned")), id(id) { live_items++; }
+  int value() { return this.id; }
+  ~Item() {
+    live_items--;
+    destroyed_items += this.id;
+    destruction_order = destruction_order * 10 + this.id;
+  }
+};
+
+struct Counts {
+  mut uint64_t attempts = 0;
+  mut uint64_t acquisitions = 0;
+  mut uint64_t releases = 0;
+  mut uint64_t first_bytes = 0;
+  mut uint64_t second_alignment = 0;
+  mut int live_at_release = 0;
+};
+
+// A source-defined resource makes the exact region policy observable. Its
+// stronger descriptor alignment must survive subsequent prefix growth.
+[[no_transfer, no_share]]
+class RecordingResource {
+  std::process_resource process{};
+  uint64_t budget;
+  mut std::unique_ptr<Counts> counts;
+  mut Counts* state = nullptr;
+public:
+  RecordingResource(uint64_t budget)
+      : budget(budget), counts(std::make_unique<Counts>()) {
+    this.state = &*this.counts;
+  }
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe {
+      this.state->attempts++;
+      if (this.state->attempts == uint64_t(1)) {
+        this.state->first_bytes = request.bytes;
+      }
+      if (this.state->attempts == uint64_t(2)) {
+        this.state->second_alignment = request.alignment;
+      }
+      if (this.state->acquisitions == this.budget) {
+        return unexpected(std::alloc_errc::resource_exhausted);
+      }
+      mut uint64_t alignment = request.alignment;
+      if (alignment < uint64_t(64)) { alignment = uint64_t(64); }
+      auto allocated = this.process.allocate(std::layout(request.bytes, alignment));
+      if (allocated) { this.state->acquisitions++; }
+      return std::move(allocated);
+    }
+  }
+  unsafe void release(std::raw_allocation allocation) {
+    unsafe {
+      this.state->releases++;
+      this.state->live_at_release = live_items;
+      this.process.release(allocation);
+    }
+  }
+  uint64_t attempts() { unsafe { return this.state->attempts; } }
+  uint64_t acquisitions() { unsafe { return this.state->acquisitions; } }
+  uint64_t releases() { unsafe { return this.state->releases; } }
+  uint64_t first_bytes() { unsafe { return this.state->first_bytes; } }
+  uint64_t second_alignment() { unsafe { return this.state->second_alignment; } }
+  int live_at_release() { unsafe { return this.state->live_at_release; } }
+};
+
+int failed_growth(std::resource_ref<RecordingResource> resource) {
+  mut std::resource_vector<Item, RecordingResource> values{resource};
+  if (!values.try_reserve(std::size_t(0)) || resource.get().attempts() != 0) { return 1; }
+  auto overflow = values.try_reserve(std::MAX_UINT64);
+  if (overflow || overflow.error() != std::alloc_errc::size_overflow ||
+      resource.get().attempts() != 0) { return 2; }
+  if (!values.try_reserve(std::size_t(1)) || resource.get().acquisitions() != 1 ||
+      resource.get().first_bytes() != std::layout_of<Item>().bytes) { return 3; }
+  if (!values.try_emplace_back(7)) { return 4; }
+  auto growth = values.try_reserve(std::size_t(8));
+  if (growth || growth.error() != std::alloc_errc::resource_exhausted ||
+      values.size() != std::size_t(1) || values.capacity() != std::size_t(1) ||
+      values.front().value() != 7 || live_items != 1 || destroyed_items != 0 ||
+      resource.get().acquisitions() != 1 || resource.get().releases() != 0 ||
+      resource.get().second_alignment() != uint64_t(64)) { return 5; }
+  auto pushed = values.try_push_back(Item(9));
+  if (pushed || pushed.error() != std::alloc_errc::resource_exhausted ||
+      values.size() != std::size_t(1) || values.front().value() != 7 ||
+      live_items != 1 || destroyed_items != 9 ||
+      resource.get().attempts() != 3 || resource.get().releases() != 0) { return 6; }
+  return 0;
+}
+
+int growth_and_reuse(std::resource_ref<RecordingResource> resource) {
+  mut std::resource_vector<Item, RecordingResource> values{resource};
+  if (!values.try_reserve(std::size_t(2))) { return 10; }
+  values.emplace_back(1);
+  values.emplace_back(2);
+  if (!values.try_reserve(std::size_t(8)) || values.size() != std::size_t(2) ||
+      values.capacity() != std::size_t(8) || values.front().value() != 1 ||
+      values.back().value() != 2 || live_items != 2 || destroyed_items != 0 ||
+      resource.get().acquisitions() != 2 || resource.get().releases() != 1 ||
+      resource.get().live_at_release() != 2 ||
+      resource.get().second_alignment() != uint64_t(64)) { return 11; }
+  mut int sum = 0;
+  for (auto& value : values) { sum += value.value(); }
+  if (sum != 3) { return 12; }
+  values.clear();
+  if (!values.empty() || values.capacity() != std::size_t(8) ||
+      live_items != 0 || destruction_order != 21 || resource.get().releases() != 1) { return 13; }
+  values.emplace_back(3);
+  values.release();
+  if (!values.empty() || values.capacity() != std::size_t(0) || live_items != 0 ||
+      destroyed_items != 6 || resource.get().releases() != 2 ||
+      resource.get().live_at_release() != 0) { return 14; }
+  values.emplace_back(4);
+  auto moved = std::move(values);
+  if (moved.size() != std::size_t(1) || moved.front().value() != 4 ||
+      resource.get().acquisitions() != 3) { return 15; }
+  return 0;
+}
+
+int main() {
+  {
+    RecordingResource resource{uint64_t(1)};
+    unsafe {
+      auto binding = std::bind_resource(resource);
+      int status = failed_growth(binding);
+      if (status != 0) { return status; }
+    }
+    if (live_items != 0 || destroyed_items != 16 || resource.acquisitions() != 1 ||
+        resource.releases() != 1 || resource.live_at_release() != 0) { return 7; }
+  }
+  destroyed_items = 0;
+  destruction_order = 0;
+  {
+    RecordingResource resource{uint64_t(3)};
+    unsafe {
+      auto binding = std::bind_resource(resource);
+      int status = growth_and_reuse(binding);
+      if (status != 0) { return status; }
+    }
+    if (live_items != 0 || destroyed_items != 10 || resource.acquisitions() != 3 ||
+        resource.releases() != 3 || resource.live_at_release() != 0) { return 16; }
+  }
+  {
+    RecordingResource first{uint64_t(1)};
+    RecordingResource second{uint64_t(1)};
+    unsafe {
+      auto first_binding = std::bind_resource(first);
+      auto second_binding = std::bind_resource(second);
+      mut std::resource_vector<Item, RecordingResource> left{first_binding};
+      mut std::resource_vector<Item, RecordingResource> right{second_binding};
+      left.emplace_back(5);
+      right.emplace_back(6);
+      auto moved = std::move(left);
+      if (moved.front().value() != 5 || right.front().value() != 6 ||
+          first.acquisitions() != 1 || second.acquisitions() != 1) { return 17; }
+    }
+    if (live_items != 0 || destroyed_items != 21 ||
+        first.releases() != 1 || second.releases() != 1) { return 18; }
+  }
+  return 0;
+}

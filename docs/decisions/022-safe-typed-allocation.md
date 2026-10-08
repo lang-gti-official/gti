@@ -14,6 +14,15 @@ validation.
 
 ## Context
 
+Source-prefix revision (2026-10-08): the owner approved one region per
+`resource_vector` capacity reservation. Its live objects are a prefix tracked
+by one source length, so a separate live-slot bitmap and metadata allocation
+are unnecessary. This changes observable vector provider request/release
+counts, not raw provider obligations, checked loans, relocation, failure
+atomicity or element-before-region cleanup. Public sparse `resource_storage`
+and `storage` still require their two regions. Do not retain a useless metadata
+allocation solely to imitate the former vector implementation.
+
 GTI needs allocator-controlled storage for arenas, pools, containers, and
 game-engine workloads. Fixed arrays cannot represent spare or partially
 initialized capacity, while `std::unique_ptr<T>` represents one initialized

@@ -4976,6 +4976,33 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   or fails early with a target-capability diagnostic, never a native link
   surprise.
 
+### S-ALLOC-08: Source Prefix Ownership And Container Cutover
+
+- **State:** implementation in progress; not accepted or integrated. The source
+  prefix slot engine and one-region resource-vector candidate have focused
+  native feedback. Default vector/views, superseded-path removal and final
+  acceptance remain required; existing private prefix machinery is not yet
+  claimed retired.
+- **Outcome:** vector and its checked views use ordinary source-defined prefix
+  ownership, with one authoritative initialized length and no sparse bitmap.
+  Companion resource-vector shares the engine and retains the original bound
+  provider through cleanup, including while empty.
+- **Prerequisites:** completed `S-ALLOC-06/07` layout, final-address construction,
+  destruction, relocation, owner-witness references, process leases and resource
+  leases. Shared vector/string spans require a coherent general owner/view
+  boundary; do not adopt the separate source-text-view proposal implicitly.
+- **Accepted companion policy:** one object region per nonempty resource-vector
+  reservation; zero reserves none. Public sparse storage still uses two. The
+  owner explicitly approved the observable request-count revision.
+- **Remaining acceptance:** preserve admitted element types and public APIs,
+  exact ordered constructor arguments, loans/invalidation, first/secondary
+  failure identity and exactly-once cleanup. Test unrelated source owners,
+  malformed IR where general compiler facts change, all native differential/
+  no-elide/sanitizer modes, installed consumers, examples/censuses and measured
+  allocation/check/throughput parity. Remove actually subsumed operations rather
+  than retaining selectable fallback implementations. Update the operation
+  ownership ledger only as each migration is proven.
+
 ## Phase C: Concurrency And The Language Memory Model
 
 D-MEM-01 is complete as design evidence. D-FAIL-01 selected contained worker
