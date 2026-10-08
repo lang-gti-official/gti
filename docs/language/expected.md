@@ -92,6 +92,13 @@ exact global/static place in the single-threaded profile. Error returns carry
 no borrow. Forwarding, copying, or moving the complete expected value preserves
 the same dependency rather than creating an independent lifetime.
 
+The protecting owner need not be the returned object. An accessor may select
+a child or field, and a local reference alias may forward that exact referent
+through either a plain reference return or a successful fallible return.
+The result retains the accessor's actual address; it does not become a reference
+to the owner merely because both objects have the same type. Returning a
+reference extracted from a fallible carrier preserves the same distinction.
+
 A successful local may also be formed directly from a stable place:
 
 ```gti

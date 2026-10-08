@@ -1,5 +1,11 @@
 # GTI examples
 
+[`127-operator-and-value-transport.gti`](127-operator-and-value-transport.gti)
+demonstrates an overloaded operator on a range element's field, a read-only
+view relayed through an indexed receiver and observed directly from that call,
+and allocation of existing passive and move-only values. Exact addresses, owner dependencies and copy/move policy
+remain compiler-checked; local/temporary view escapes remain invalid.
+
 [`123-native-c-scalars.gti`](123-native-c-scalars.gti) demonstrates target-correct
 C integer and character families, real libc calls, unrelated generic values,
 and checked conversion/indexing. C types preserve native declaration identity;
@@ -58,7 +64,7 @@ is a teaching helper, not a production server.
 | `09-target-selection.gti` | compile-time host selection and active `#error` guards |
 | `10-modules/main.gti` | loading another GTI source file with `#include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
-| `12-fixed-arrays.gti` | bounded arrays, signed contextual literals, named passive records, passive unions, indexing, and size |
+| `12-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `14-operators.gti` | restricted member operators; self-read dereference stores, nested subscripts and once-formed compound targets |
 | `15-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
@@ -78,7 +84,7 @@ is a teaching helper, not a production server.
 | `29-callable-predicates.gti` | exact bool predicate results from confined generic callables |
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
-| `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
+| `32-structured-bindings.gti` | immutable exact-arity decomposition, independent passive class-array copies, explicit owning class-array moves |
 | `33-source-concepts.gti` | unary capabilities, structural class contracts, and trailing-clause admission of dependent compound arguments |
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
@@ -143,7 +149,7 @@ is a teaching helper, not a production server.
 | `96-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
 | `97-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |
 | `98-shared-ownership.gti` | shared handles, explicit cloning versus moving, and final-owner cleanup |
-| `99-borrowed-expected.gti` | read-only fallible lookup, borrowed `?` propagation, and consuming `.expect` with owner lifetime checks |
+| `99-borrowed-expected.gti` | read-only fallible lookup, local-alias return publication, nested read-only accessors, borrowed `?` propagation, and consuming `.expect` with owner lifetime checks |
 | `100-owned-error-pipelines.gti` | exact-error propagation and explicit conversion into an owning application error without losing JSON path context |
 | `101-owned-algorithm-results.gti` | move-only string transformation and bounded comparator sorting for asset-build work |
 | `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |
@@ -155,7 +161,7 @@ is a teaching helper, not a production server.
 | `108-mutable-slices.gti` | exclusive subviews, shared projections and parent reactivation |
 | `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, generic movement and owner reactivation |
 | `110-integral-enums.gti` | exact enum extraction, numeric formatting and application customization |
-| `111-final-address-storage.gti` | in-slot construction, checked borrowing, allocation-owner movement, slot reuse and explicit release |
+| `111-final-address-storage.gti` | in-slot construction, scalar/struct field addresses in constructors, checked borrowing, allocation-owner movement, slot reuse and explicit release |
 | `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
 | `113-erased-addresses.gti` | explicit const-preserving typed/erased address conversion and separate owner-witness borrowing |
 | `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
@@ -169,6 +175,7 @@ is a teaching helper, not a production server.
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
 | `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 | `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
+| `127-operator-and-value-transport.gti` | an overloaded operator on a range element's field, a read-only view relayed through an indexed receiver and observed straight from the call, and boxing existing passive and move-only values |
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |

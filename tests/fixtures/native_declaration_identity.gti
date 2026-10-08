@@ -1,0 +1,22 @@
+using Length = (c_string) -> uint64_t;
+namespace foreign {
+  extern "C" {
+    [[link_name("gti_external_length")]] uint64_t length(c_string text);
+    [[link_name("gti_external_length_factory")]] Length factory();
+    [[link_name("gti_external_apply")]] uint64_t apply(Length callback, c_string text);
+  }
+}
+uint64_t adapted_length(c_string text) {
+  return foreign::length(text);
+}
+int main() {
+  unsafe {
+    Length address = adapted_length;
+    Length returned = foreign::factory();
+    if (foreign::length("direct") != uint64_t(6) ||
+        address("address") != uint64_t(7) ||
+        returned("factory") != uint64_t(7) ||
+        foreign::apply(address, "callback") != uint64_t(8)) { return 1; }
+  }
+  return 0;
+}

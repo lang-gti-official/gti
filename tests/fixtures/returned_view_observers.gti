@@ -1,0 +1,94 @@
+#include <std/map>
+#include <std/string>
+#include <std/vector>
+
+// Failure-free observers applied directly to a view produced by a call. The
+// call's result loan keeps its owner borrowed; the observer reads only the
+// view value itself.
+class Label {
+  std::string text_;
+public:
+  Label(std::string_view text) : text_(std::string(text)) {}
+  std::string_view name() { return this.text_.view(); }
+};
+struct Tagged {
+  std::string name;
+  int weight;
+  Tagged(std::string_view name, int weight)
+      : name(std::string(name)), weight(weight) {}
+};
+
+// An unrelated user-defined view-like value observed straight from a call.
+struct Window {
+  std::size_t begin;
+  std::size_t end;
+  std::size_t size() { return this.end - this.begin; }
+  bool empty() { return this.begin == this.end; }
+};
+class Buffer {
+  int cells_[4] = {1, 2, 3, 4};
+public:
+  Buffer() {}
+  Window window(std::size_t first, std::size_t last) {
+    Window result{.begin = first, .end = last};
+    return result;
+  }
+};
+
+std::string_view relay(std::string_view text) { return text; }
+
+std::size_t total_names(std::vector<Tagged>& items) {
+  mut std::size_t total = 0;
+  for (auto& item : items) {
+    total += item.name.view().size();
+  }
+  return total;
+}
+
+int main() {
+  std::string word = std::string("build");
+  std::string none = std::string("");
+  if (word.view().size() != std::size_t(5) || word.view().empty()) {
+    return 1;
+  }
+  if (!none.view().empty() || none.view().size() != std::size_t(0)) {
+    return 2;
+  }
+  Label label = Label("gauge");
+  if (label.name().size() != std::size_t(5) || label.name().empty()) {
+    return 3;
+  }
+  if (relay(word.view()).size() != std::size_t(5)) {
+    return 4;
+  }
+  mut std::vector<Tagged> items{};
+  items.push_back(Tagged("pear", 1));
+  items.push_back(Tagged("fig", 2));
+  if (total_names(items) != std::size_t(7)) {
+    return 5;
+  }
+  mut std::map<std::string, int> inventory{};
+  [[discard]] inventory.insert(std::string("plum"), 3);
+  [[discard]] inventory.insert(std::string("kiwi"), 4);
+  mut std::size_t keys = 0;
+  for (auto& entry : inventory) {
+    keys += entry.first.view().size();
+    if (entry.first.view().empty()) {
+      return 6;
+    }
+  }
+  if (keys != std::size_t(8)) {
+    return 7;
+  }
+  Buffer buffer{};
+  if (buffer.window(std::size_t(1), std::size_t(3)).size() != std::size_t(2) ||
+      !buffer.window(std::size_t(2), std::size_t(2)).empty()) {
+    return 8;
+  }
+  // A temporary owner remains alive for its own full expression.
+  if (std::string("temp").view().size() != std::size_t(4)) {
+    return 9;
+  }
+  std::println(word.view().size());
+  return 0;
+}

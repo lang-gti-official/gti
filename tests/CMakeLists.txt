@@ -10,6 +10,20 @@ add_executable(gti_generic_payload_enum_backend_tests generic_payload_enum_backe
 target_link_libraries(gti_generic_payload_enum_backend_tests PRIVATE gti_cpp_backend)
 add_test(NAME generic_payload_enum_backend COMMAND gti_generic_payload_enum_backend_tests)
 
+add_executable(gti_operator_relay_tests operator_relay_tests.cpp)
+target_link_libraries(gti_operator_relay_tests PRIVATE gti_cpp_backend)
+add_test(NAME operator_relay_pipeline COMMAND gti_operator_relay_tests)
+add_test(NAME operator_relay_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/operator_relay_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(operator_relay_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME existing_value_allocation_failure_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/existing_value_allocation_failure_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(existing_value_allocation_failure_runtime PROPERTIES TIMEOUT 180)
+if(TARGET gti_lsp)
+  add_test(NAME operator_relay_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/operator_relay_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+endif()
+
 add_executable(gti_native_c_scalar_target_tests native_c_scalar_target_tests.cpp)
 target_link_libraries(gti_native_c_scalar_target_tests PRIVATE gti_compiler)
 add_test(NAME native_c_scalar_target COMMAND gti_native_c_scalar_target_tests)
@@ -695,6 +709,17 @@ add_test(NAME consuming_call_assignment_runtime
                  $<TARGET_FILE:gti>)
 set_tests_properties(consuming_call_assignment_runtime PROPERTIES TIMEOUT 240)
 
+add_executable(gti_initialization_and_native_identity_tests
+  "${PROJECT_SOURCE_DIR}/tests/initialization_and_native_identity_tests.cpp")
+target_link_libraries(gti_initialization_and_native_identity_tests PRIVATE gti_cpp_backend)
+add_test(NAME initialization_and_native_identity COMMAND gti_initialization_and_native_identity_tests)
+add_test(NAME constructor_null_native_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
+add_test(NAME payload_fresh_class_operands_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/payload_fresh_class_operands_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/payload_fresh_class_operands.gti")
+set_tests_properties(constructor_null_native_runtime PROPERTIES TIMEOUT 300)
+
 add_executable("gti_native_header_tests" "${PROJECT_SOURCE_DIR}/tests/native_header_tests.cpp")
 target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)
 add_test(NAME native_header_pipeline COMMAND gti_native_header_tests)
@@ -909,6 +934,16 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(class_field_value_runtime PROPERTIES TIMEOUT 300)
+endif()
+add_executable(gti_aggregate_projection_tests aggregate_projection_tests.cpp)
+target_link_libraries(gti_aggregate_projection_tests PRIVATE gti_cpp_backend)
+add_test(NAME aggregate_projection COMMAND gti_aggregate_projection_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME aggregate_projection_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/aggregate_projection_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(aggregate_projection_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME passive_fixed_array_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
@@ -938,6 +973,9 @@ add_test(NAME expected_ergonomics COMMAND gti_expected_ergonomics_tests)
 add_executable(gti_borrowed_expected_extraction_tests borrowed_expected_extraction_tests.cpp)
 target_link_libraries(gti_borrowed_expected_extraction_tests PRIVATE gti_cpp_backend)
 add_test(NAME borrowed_expected_extraction COMMAND gti_borrowed_expected_extraction_tests)
+add_executable(gti_borrow_origin_tests borrow_origin_tests.cpp)
+target_link_libraries(gti_borrow_origin_tests PRIVATE gti_cpp_backend)
+add_test(NAME borrow_origin COMMAND gti_borrow_origin_tests)
 add_executable(gti_panic_contract_tests panic_contract_tests.cpp)
 target_link_libraries(gti_panic_contract_tests PRIVATE gti_cpp_backend)
 add_test(NAME panic_contracts COMMAND gti_panic_contract_tests)
@@ -1878,6 +1916,18 @@ if(Python3_Interpreter_FOUND)
     NAME mutable_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/mutable_range_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  add_test(
+    NAME passive_range_temporary_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/passive_range_temporary_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  add_test(
+    NAME shared_payload_sibling_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/shared_payload_sibling_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
   add_test(
@@ -2914,6 +2964,11 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/fixtures/fallible_borrow.gti"
     )
     set_tests_properties(fallible_borrow_runtime PROPERTIES TIMEOUT 300)
+    add_test(NAME borrow_origin_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/borrow_origin_runtime_test.py"
+              "$<TARGET_FILE:gti>")
+    set_tests_properties(borrow_origin_runtime PROPERTIES TIMEOUT 600)
     add_test(
       NAME mut_reference_retained_chain_runtime
       COMMAND "${Python3_EXECUTABLE}"

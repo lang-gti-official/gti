@@ -220,6 +220,31 @@ S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
 metadata/default-factory migration described above; the provider checkpoint's
 independent tests alone do not validate that integration.
 
+## Indexed and returned views, range fields and existing-value allocation (candidate)
+
+The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
+the indexed text relay in #78, the generated same-type allocation path in #97,
+range-element field addresses in #73 and direct observation of call-produced
+views in #74. `operator_relay_runtime` builds and runs four stronger fixtures
+and eight original reproducers at C++20/C++23 O0/O1/O3, with disabled elision
+and ASan/UBSan (96 observations). Eight injected allocation observations
+separately prove exact success output and exhaustion cleanup of the prepared
+existing owner and caller, with GTI-R0011/70 rather than abort.
+
+`operator_relay_pipeline` checks O0/O1/O3 snapshot and body admission, corrupts
+generated construction policy, inputs and raw-storage publication, and rejects
+forged field addresses and actual borrow-access upgrades. Twelve SSA view
+observers reject forged receiver type, operand category, identity and failure
+contract. Semantic negatives retain local/temporary owner escape, wrong
+borrowed-from owner, a temporary owner's view escaping into a binding, and
+mutation with a live view. `operator_relay_lsp` verifies versioned
+diagnostics, UTF-16 source positions, related origins, hover and definition
+queries during an error, and recovery after the edit is removed. Example 127
+runs at C++20/C++23 O0/O3. The new generated C++ also compiles with GCC 15.
+This is a focused, partially verified candidate; combined full-suite,
+census, installed-toolchain, Linux and Windows evidence belongs to the
+integration run.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
@@ -4104,6 +4129,20 @@ are unchanged. Its C++20/O0 and C++23/O3 executions retain the same cleanup
 observations.
 
 ## Development And Completion Cadence
+
+The borrowed-reference issue checkpoint extends example 99 with two passive
+source-defined owner/referent types, nested read-only accessors and a fallible
+projected-parameter relay. Its reviewed closure adds seven source bodies
+(the two types' field/static-field initializer bodies, their accessors and
+the relay) and eleven declarations; the 53 generated items are unchanged.
+Only that example's inventory entry and derived totals change. Focused native
+endpoints, exact body identities and the LoweredProgram inventory must agree;
+this does not claim the whole corpus has been rerun. `borrow_origin` additionally
+checks wrong-address, detached/wrong-owner, access-upgrade and projected-origin
+forgeries independently in MIR and C++ admission, while
+`borrow_origin_runtime` retains the original missing-key runtime failure and
+tests populated nested storage and unrelated user-defined accessors across
+all eight native modes.
 
 ### Operator-place composition focused gates
 

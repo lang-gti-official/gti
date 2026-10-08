@@ -5,8 +5,18 @@
 
 namespace lang {
 
+// Transient construction diagnostics, not part of serialized executable MIR.
+struct MirLoweringError {
+  MirBodyAddress body;
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  std::optional<SourceSpan> source;
+  std::string message;
+};
+
 struct MirLoweringResult {
   MirProgram program;
+  std::vector<MirLoweringError> errors;
 
   [[nodiscard]] bool valid() const { return program.valid(); }
 };
@@ -27,6 +37,7 @@ private:
       const HirBody &body, MirBodyKind kind, SemanticType returnType,
       const std::vector<HirValueId> &prologueValues,
       const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
+      std::vector<MirLoweringError> &errors, std::size_t owner,
       bool implicitZeroReturn = false,
       const std::vector<HirConstructorInitializer> *initializers = nullptr,
       const HirFunctionInstance *function = nullptr,

@@ -1,0 +1,28 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+class Guard {
+  int number;
+public:
+  Guard(int value) : number(value) {}
+  ~Guard() { std::println(this.number); }
+};
+class Owner {
+  std::unique_ptr<Guard> guard;
+public:
+  Owner(int value) : guard(std::make_unique<Guard>(value)) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  int read() { return 7; }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Guard caller = Guard(9);
+  Owner source = Owner(7);
+  gti_test_fail_scalar_allocation(argc > 1 ? 1 : 0);
+  {
+    auto boxed = std::make_unique<Owner>(std::move(source));
+    std::println(boxed->read());
+  }
+  return 0;
+}

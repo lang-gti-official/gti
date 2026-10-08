@@ -1,0 +1,20 @@
+struct Cell {
+  mut int32_t sentinel = 71;
+  mut int32_t selected = 29;
+  int32_t& operator[](std::size_t index) { return this.selected; }
+};
+
+struct Table {
+  mut int32_t sentinel = 83;
+  mut Cell cell{};
+  mut Cell& operator[](std::size_t index) mut { return this.cell; }
+};
+
+int main() {
+  mut Table table{};
+  Cell& row = table[std::size_t(0)];
+  int32_t& selected = row[std::size_t(0)];
+  int32_t& alias = selected;
+  int32_t& again = row[std::size_t(0)];
+  return alias == 29 && again == 29 && row.sentinel == 71 ? 0 : 1;
+}
