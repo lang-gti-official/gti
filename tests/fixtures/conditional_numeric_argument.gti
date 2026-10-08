@@ -1,0 +1,30 @@
+#include <std/vector>
+#include <std/string>
+
+using Index = uint8_t;
+
+class Pair<std::numeric T> {
+  mut int total = 0;
+public:
+  Pair() {}
+  [[discardable]] mut Pair<T>& set(T index, int left, int right) mut {
+    this.total = int(index) + left + right;
+    return this;
+  }
+  int read() { return this.total; }
+  ~Pair() { std::println(this.total); }
+};
+
+int generic_check<std::numeric T>(int input) {
+  mut Pair<T> pair{};
+  pair.set(T(input), input == 1 ? 10 : 20, input == 2 ? 30 : 40); // generic-failure
+  return pair.read();
+}
+
+int main(int argc, std::vector<std::string> args) {
+  mut Pair<Index> pair{};
+  int input = argc == 3 ? -1 : argc;
+  pair.set(Index(input), argc == 1 ? 10 : 20, argc == 2 ? 30 : 40); // alias-failure
+  int other = generic_check<uint8_t>(argc == 4 ? -1 : argc);
+  return pair.read() == other ? 0 : 1;
+}

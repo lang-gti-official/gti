@@ -157,6 +157,7 @@ jobs:
           python3 "${{ gitea.workspace }}/tests/lsp_smoke_test.py" gti_lsp
           python3 "${{ gitea.workspace }}/tests/cli_smoke_test.py" gti
           python3 "${{ gitea.workspace }}/tests/project_cli_smoke_test.py" gti
+          python3 "${{ gitea.workspace }}/tests/process_resource_policy_test.py" gti --installed
           python3 "${{ gitea.workspace }}/tests/managed_thread_runtime_test.py" gti
           python3 "${{ gitea.workspace }}/tests/atomic_runtime_test.py" gti \
             "${{ gitea.workspace }}/tests/fixtures/atomic_scalar.gti" \
