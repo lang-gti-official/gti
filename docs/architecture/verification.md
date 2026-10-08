@@ -3036,6 +3036,21 @@ Separate implicit/explicit default-failure cases check once-only reverse
 cleanup, while native status-field rollback tests retain child and later-body
 failure controls. Coverage alone never replaces empty-shell or rollback proof.
 
+The PR133 generic initialization/layout candidate reconciled through canonical
+`b08acfc8` passes all optimized production build targets, all six compiler
+partitions, the concrete query/layout/discovery and detached representation
+contracts, current definition-diagnostic CLI/LSP checks, complete lifecycle
+emitter checks, and the 42-cell generic-instance native matrix. The two complete
+125-example corpus gates pass before inventory promotion: all 19,926 lowered
+bodies are ready, all 11,996 applicable general emissions agree, and both native
+endpoints retain all 19,919 reviewed MIR identities with identical observations.
+The reviewed inventory adds fourteen declarations and twenty-four bodies:
+fifteen bodies in expanded example 23 and nine selected nominal defaults in
+seven existing examples. Generated-item counts are unchanged. Unused aliases
+remain metadata and do not demand layouts or introduce executable bodies.
+This is candidate evidence; the unfiltered full suite, final integration-bound
+validation and installed-consumer acceptance remain separate obligations.
+
 The `native_packages` CTest runs offline preparation-safety and inventory
 checks without acquiring upstream code. After explicitly preparing the optional
 packages, `gti test` in `packages/examples/smoke` exercises real native bindings:
