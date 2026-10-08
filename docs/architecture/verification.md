@@ -6,8 +6,11 @@
 typed/braced/grouped wrappers, genuine existing-object copy/move, deleted real
 movement, borrowed-owner escape rejection, exact generic instances, constexpr
 producer parity, HIR source-alias mutations, verified MIR and both C++ backend
-standards. `prvalue_direct_initialization_runtime` runs example 130 and owning
-constructor failure rollback in the shared eight-mode matrix: C++20/C++23 at
+standards. It also checks field-wise mixed borrowed factories/relays and rejects
+owner mutation before last use, conflicting exclusive inputs, and local-owner
+escape. `prvalue_direct_initialization_runtime` runs example 130, method,
+operator and lambda factories, mixed borrowed results, and owning constructor
+failure rollback in the shared eight-mode matrix: C++20/C++23 at
 O0/O1/O3, no-elide and generated-program ASan/UBSan. Final-address self-pointers
 and exact destructor output distinguish direct initialization from hidden
 relocation or extra temporary cleanup. The LSP gate checks current diagnostics,

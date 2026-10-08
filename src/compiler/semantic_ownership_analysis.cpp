@@ -4521,6 +4521,18 @@ auto SemanticVisitor::Impl::receiverStorageBorrow(
 auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                                                  const ExprPtr &expression)
     -> void {
+  if (expression && semanticModel.directInitializationSource(*expression)) {
+    // A transparent result wrapper has no separate invocation contract or
+    // lifetime. Retain the producer's complete field-wise loan, not the
+    // wrapper's one-argument construction summary. HIR maps both source
+    // expressions to that same value and publication.
+    if (const auto *group = exprAs<Grouping>(expression.get()))
+      return recordRetainedBorrow(binding, group->expression());
+    if (const auto *call = exprAs<Call>(expression.get()))
+      return recordRetainedBorrow(binding, call->arguments().front());
+    if (const auto *direct = exprAs<DirectInitializer>(expression.get()))
+      return recordRetainedBorrow(binding, direct->arguments().front());
+  }
   Symbol *carrier = resolveMutable(binding.name());
   if (carrier == nullptr ||
       carrier->bindingKind != SemanticBindingKind::LocalVariable) {
