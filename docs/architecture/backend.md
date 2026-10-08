@@ -2025,6 +2025,17 @@ identity must all match. There is no default-initialized array SSA temporary,
 no extra ordinary constructor invocation, and no change to the hidden owned
 copy or its immutable element projections. Active cleanup/borrowed-state
 arrays retain their separate protocols rather than entering this fusion.
+A by-value argument copied from a named passive class array is a copy Load
+immediately consumed by its argument CallInput. The CallInput owns
+uninitialized representation storage and copy-constructs it from the exact
+source in MIR argument order; the consuming source call or constructor copies
+that completed stage into its parameter. The same Read/Available, adjacency,
+sole-use and source-callee facts are required, and neither SSA value records
+storage or a drop. A constructor's exact copy of such a parameter into a field
+uses the member-initializer copy proof shared with passive record parameters.
+Any remaining fixed-array SSA value whose element class has no default
+constructor fails body planning instead of being value-initialized, so a lost
+publication proof cannot invent element default construction.
 An owning whole-array Move followed by its one adjacent lexical Initialize
 constructs the final binding directly only with an exact source ownership
 event, source/value drop Move, value/binding Reparent, and structurally
