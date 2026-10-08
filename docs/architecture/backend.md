@@ -1866,6 +1866,19 @@ Every selected constructor still requires the full field-order, exact-type,
 and once-only coverage proof; absence of a constructor is not permission to
 omit a default from an executable construction.
 
+A status constructor may override an effectful declaration default, including
+an implicitly selected nominal default. The declaration catalog is not a second
+executable schedule: this route requires native catalog suppression and exact
+selected field order/types, each MIR producer and `Initialize` publication, and
+its full-expression endpoint. Stored reference fields retain the existing exact
+parameter/loan binding proof. Each endpoint must precede the next field's
+producer; missing, duplicate or forged coverage is rejected. This same proof
+replaces initializer-list-only coverage for status base constructors. Per-field
+empty-shell, active-drop, reference and failure-rollback checks remain separate
+and mandatory; selected-schedule coverage does not authorize an empty native
+representation by itself. An overridden default is neither evaluated nor
+replayed by native field initialization.
+
 Generated/defaulted construction still uses the separate declaration schedule.
 Fallible ordinary class-value calls on that route remain `GTI-B0003`: generated
 construction has no concrete constructor body to carry propagation to callers.

@@ -3026,6 +3026,16 @@ emitter tests reject missing/duplicate constructor initializer coverage, removed
 floating and enum publication stages, and forged cleanup/call targets. Generated
 constructor propagation remains a tracked limitation, not a tested success.
 
+The generic-instance runtime matrix also checks nominal defaults, finite
+value-generic layouts and exact aliases at C++20/C++23 O0/O1/O3. Its mixed
+reference/class/scalar constructor overrides a panicking declaration default;
+successful execution must produce no output from that unselected function.
+The selected-default emitter test mutates field coverage/order/types, MIR
+publication and full-expression endpoints, and the stored reference origin.
+Separate implicit/explicit default-failure cases check once-only reverse
+cleanup, while native status-field rollback tests retain child and later-body
+failure controls. Coverage alone never replaces empty-shell or rollback proof.
+
 The `native_packages` CTest runs offline preparation-safety and inventory
 checks without acquiring upstream code. After explicitly preparing the optional
 packages, `gti test` in `packages/examples/smoke` exercises real native bindings:
