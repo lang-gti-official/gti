@@ -49,9 +49,12 @@ def validate_emission(generated: str, mode: str) -> bool:
             return False
         call = calls[0]
         retire = generated.find(f"{slot}.destroy();", call.end())
+        # Slot names are body-local, so other bodies (such as prelude text
+        # output passing a string_view class value) may reuse the spelling.
+        lifetime = generated[stage.start():retire]
         if (not stage.end() < call.start() < retire
-                or generated.count(f"{slot}.construct_from(") != 1
-                or generated.count(f"std::move({slot}.get())") != 1
+                or lifetime.count(f"{slot}.construct_from(") != 1
+                or lifetime.count(f"std::move({slot}.get())") != 1
                 or "goto " in generated[call.end():retire]
                 or "if (" in generated[call.end():retire]):
             sys.stderr.write(f"{mode} lost {algorithm}'s once-only preparation and retirement\n")

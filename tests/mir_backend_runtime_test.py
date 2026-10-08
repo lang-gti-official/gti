@@ -78,21 +78,25 @@ def main() -> int:
                     return fail(emission)
                 generated = emitted.read_text(encoding="utf8")
                 if (
+                    # The text-view capabilities and the source-defined
+                    # string_view, string_view_iterator, and
+                    # string_view_sentinel each verify their initializers.
                     generated.count(f"{marker} field-initializers-instance")
-                    != 2
+                    != 5
                     or generated.count(
                         f"{marker} static-field-initializers-instance"
                     )
-                    != 2
+                    != 5
                     or generated.count(f"{marker} module-instance") != 1
                     or generated.count(
                         "// GTI verified-MIR body: native-boundary-v1 "
                         "function-instance"
                     )
-                    # Twelve declaration-bound prelude operations (including
-                    # the five source-storage state/relocation checks) and two
-                    # native stdout declarations retain verified boundaries.
-                    != 14
+                    # Thirteen declaration-bound prelude operations (including
+                    # the five source-storage state/relocation checks and
+                    # text_view_slice) and two native stdout declarations
+                    # retain verified boundaries.
+                    != 15
                 ):
                     sys.stderr.write(
                         "generated C++ lost the verified prelude initializer, "

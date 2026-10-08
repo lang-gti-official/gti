@@ -66,14 +66,17 @@ def function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    # The verified-empty text-view capability initializers and empty module
-    # body join the named function bodies (the initializer slice).
+    # The verified-empty text-view capability initializers, the source-defined
+    # string_view, string_view_iterator, and string_view_sentinel initializers,
+    # and the empty module body join the named function bodies (the
+    # initializer slice). string_view's native text capability accessor is the
+    # one additional failure-form body.
     if (
         generated.count(f"{MARKER} function-instance")
         != len(SELECTED) + len(STDLIB_SELECTED)
-        or generated.count(f"{FAILURE_MARKER} function-instance") != 11
-        or generated.count(f"{MARKER} field-initializers-instance") != 2
-        or generated.count(f"{MARKER} static-field-initializers-instance") != 2
+        or generated.count(f"{FAILURE_MARKER} function-instance") != 12
+        or generated.count(f"{MARKER} field-initializers-instance") != 5
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 5
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(

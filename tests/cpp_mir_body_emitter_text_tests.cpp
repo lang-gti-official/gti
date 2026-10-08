@@ -1253,7 +1253,18 @@ int32_t main() {
                                       lang::MirProjectionKind::PackElement;
                              });
         });
-    if (!projectsPackElement) {
+    // Class-typed pack elements (such as std::string_view) also project for
+    // their prepared-parameter drops, so a forwarding body must also call.
+    const bool forwardsCall =
+        std::any_of(function.body.blocks.begin(), function.body.blocks.end(),
+                    [](const lang::MirBlock &block) {
+                      return std::any_of(
+                          block.instructions.begin(), block.instructions.end(),
+                          [](const auto &item) {
+                            return item.kind == lang::MirInstructionKind::Call;
+                          });
+                    });
+    if (!projectsPackElement || !forwardsCall) {
       continue;
     }
     for (const lang::MirPlace &place : function.body.places) {
@@ -1707,8 +1718,11 @@ int32_t main() {
 
   const lang::CppMirBodyEmissionText text =
       emitter.emitFailureBodyText(address, "expected-value-or-test-v0", 1);
-  const std::string receiver =
-      "__gti_mir_p_" + std::to_string(valueOr->receiver->place) + ".value_or(";
+  // The class-typed std::string_view error makes the Expected a lifetime
+  // slot, whose live value is read in place through get().
+  const std::string receiver = "__gti_mir_p_" +
+                               std::to_string(valueOr->receiver->place) +
+                               ".get().value_or(";
   const std::string voidReceiver =
       "::gti_internal::backend::mir_expected_void_value_v1(__gti_mir_p_" +
       std::to_string(voidExtraction->receiver->place) + ");";

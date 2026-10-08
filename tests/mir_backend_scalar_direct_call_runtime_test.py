@@ -89,10 +89,12 @@ def failure_function_definition(generated: str, source_name: str) -> str:
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
     # The verified initializer bodies and empty module remain structural
     # invariants; function coverage is checked by exact source name below so
-    # unrelated prelude additions do not create count churn.
+    # unrelated prelude additions do not create count churn. The initializers
+    # cover the fixture class, the text-view capabilities, and the
+    # source-defined string_view family.
     if (
-        generated.count(f"{MARKER} field-initializers-instance") != 3
-        or generated.count(f"{MARKER} static-field-initializers-instance") != 3
+        generated.count(f"{MARKER} field-initializers-instance") != 6
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 6
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(
