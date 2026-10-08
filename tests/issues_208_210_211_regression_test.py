@@ -167,7 +167,8 @@ def main() -> int:
         vector_schedule_pattern = re.compile(
             r"std::destroy_at\(std::addressof\(" + destination + r"\)\);\s*"
             r"::new \(static_cast<void \*>\(std::addressof\(" + destination + r"\)\)\) "
-            r"[\w:]+\("
+            r"::__gti_program::__gti_std::"
+            r"(?:__gti_type_[0-9a-f]{64}_vector|vector<std::int32_t>)\("
             r"::gti_internal::backend::mir_failure_constructor_tag_v1<\d+>\{\}, "
             r"&(?P<status>__gti_mir_construct_success_\d+), __gti_mir_failure_record\);\s*"
             r"if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);\s*"
