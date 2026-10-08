@@ -5063,6 +5063,22 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   public logical-bounds and matching source-read requirement, reducing seven
   optimizer acceptance failures to six without changing those tests. Owning
   argument and raw initialized-element transfer remain open prerequisites.
+  The next bounds prerequisite is general scalar getter-return field
+  provenance, not another container identity or allocation rule. Optimized
+  queries already recover capacity exactly four after `vector<int>(4)` and
+  length in `[0, 4]`; constructor field publication is present. An unrelated
+  counter loop using a scalar getter loses the exit lower bound that direct
+  field comparison retains. The candidate goal is to connect an exact pure
+  read-only getter result to its typed ordinary owned-field path while that
+  origin remains current, including nested getter forwarding. Overlapping
+  writes, mutable/unknown calls, raw/lifetime barriers and movement must retire
+  the relation without changing the earlier immutable SSA value. Stored
+  references, arrays, unions and capability backing paths stay outside that
+  bounded transfer. This is not implemented yet. Its acceptance requires an
+  unrelated bounded getter loop, cached-result-after-mutation negatives and
+  canonical proof replay before re-running the original source-owner/native
+  bounds requirements. Owning class movement and raw initialized-element
+  coverage remain separate work; neither is inferred from a getter name.
   A further general prerequisite distinguishes inert address arithmetic and
   typed pointer conversion from actual pointee/lifetime operations, and avoids
   repeating an operation at an empty full-expression marker. Selected unsafe
