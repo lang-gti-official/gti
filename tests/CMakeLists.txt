@@ -701,6 +701,9 @@ target_link_libraries(gti_initialization_and_native_identity_tests PRIVATE gti_c
 add_test(NAME initialization_and_native_identity COMMAND gti_initialization_and_native_identity_tests)
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
+add_test(NAME payload_fresh_class_operands_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/payload_fresh_class_operands_runtime_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/payload_fresh_class_operands.gti")
 set_tests_properties(constructor_null_native_runtime PROPERTIES TIMEOUT 300)
 
 add_executable("gti_native_header_tests" "${PROJECT_SOURCE_DIR}/tests/native_header_tests.cpp")
