@@ -3142,13 +3142,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   const SemanticType declaredType =
       typeOf(stmt.type(),
              stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
-  const bool openField =
-      declaredType.kind == SemanticType::Class &&
-      std::any_of(declaredType.valueArguments.begin(),
-                  declaredType.valueArguments.end(),
-                  [](const CompileTimeValue &value) {
-                    return value.kind != CompileTimeValue::Kind::UInt64;
-                  });
+  const bool openField = declaredType.kind == SemanticType::Class &&
+                         !isConcreteExactSpecializationType(declaredType);
   const ExprPtr &initializer =
       !stmt.initializer() && instanceField && !openField &&
               declaredType.kind == SemanticType::Class &&
