@@ -2,6 +2,18 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
+target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend)
+add_test(NAME local_reference_inference COMMAND gti_local_reference_inference_tests)
+add_test(NAME local_reference_inference_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(local_reference_inference_runtime PROPERTIES TIMEOUT 300)
+if(TARGET gti_lsp)
+  add_test(NAME local_reference_inference_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(local_reference_inference_lsp PROPERTIES TIMEOUT 120)
+endif()
+
 add_executable(gti_qualified_type_member_tests qualified_type_member_tests.cpp)
 target_link_libraries(gti_qualified_type_member_tests PRIVATE gti_compiler)
 add_test(NAME qualified_type_members COMMAND gti_qualified_type_member_tests)

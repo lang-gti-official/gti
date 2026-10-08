@@ -31,6 +31,14 @@ for what minor and patch releases mean.
   through an alias of a concrete type, for example
   `using Ints = std::vector<int>;` then `Ints::iterator`.
 
+## 0.387.0 — Checked local reference inference
+
+- Use `auto&` and `mut auto&` for local checked references without spelling
+  long types, including borrowed results extracted with `?` or `.expect()`.
+  The same access and lifetime rules as explicit references apply; plain
+  `auto` still creates a value. Copy diagnostics explain borrowing and cloning
+  alternatives without suggesting movement of borrowed results.
+
 ## 0.384.0 — Program installation and quieter builds
 
 - Install a project's executable with `gti install` and remove it with
