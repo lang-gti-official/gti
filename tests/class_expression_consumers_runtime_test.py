@@ -30,7 +30,7 @@ CONSUMERS = {
     "receiver": "return {value}.get() == {expected} ? 0 : 1;",
     "argument": "return consume({value}) == {expected} ? 0 : 1;",
     "relay": "return consume(relay({value})) == {expected} ? 0 : 1;",
-    "container": "bag.push_back({value}); return bag[0].get() == {expected} ? 0 : 1;",
+    "container": "bag.push_back({value}); return bag[std::size_t(0)].get() == {expected} ? 0 : 1;",
     "operator": "Value zero = Value(0); return ({value} + zero).get() == {expected} ? 0 : 1;",
     "chain": "return {value}.twin().get() == {expected} ? 0 : 1;",
     "discard": "[[discard]] {value}.get(); return 0;",
