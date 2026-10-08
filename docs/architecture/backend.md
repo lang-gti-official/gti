@@ -162,6 +162,16 @@ ABI or permit converting between distinct opaque handle types.
 
 ### Raw Address Representation
 
+An `AddressOf` result with no uses in the verified body's use table needs no
+SSA storage. The C++ backend still evaluates its address expression and emits
+every checked projection and failure successor in MIR order, but discards the
+result rather than assigning it to a fabricated carrier. Nested native-array
+indexing uses this rule: later element places already contain the complete
+projection path, so an unused C row address must not be stored as a pointer to
+an ordinary GTI `std::array`. This is a representation-only repair, not dead
+instruction removal or a native-array cast. Used address values retain their
+existing typed storage, and checked element borrows retain their loans.
+
 Ordinary GTI raw-pointer values use an artifact-private union
 `raw_address<T>` with one live native `T*` member. Its implicit union
 copy/move operations copy the object representation, rather than evaluating

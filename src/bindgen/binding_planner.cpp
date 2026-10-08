@@ -131,10 +131,9 @@ identifierProblem(std::string_view name, bool fileScope) {
 // it can import.
 enum class RecordBinding { CAbi, Opaque, Unavailable };
 
-// GTI's bounded ABI is position-aware: `c_string` crosses only function and
-// callback boundaries, and the `Handle**` out-parameter form exists only as
-// a direct function parameter. `RecordField` marks uses inside a [[c_abi]]
-// record, whose field set admits neither.
+// c_string is a call-boundary convenience, not a storage representation.
+// RecordField also selects storage-faithful spelling for reusable typedefs.
+// Recursive pointers and callback slots otherwise share one type family.
 // `ArrayResult` marks the result of a function the caller annotated with
 // `[[c_array(count)]]`; its count contract does not change pointer type
 // identity.
@@ -149,10 +148,12 @@ struct MappedType {
   bool supported = false;
   std::string spelling;
   std::string reason;
+  bool namedType = false;
 };
 
-[[nodiscard]] MappedType supportedType(std::string spelling) {
-  return {true, std::move(spelling), {}};
+[[nodiscard]] MappedType supportedType(std::string spelling,
+                                       bool named = false) {
+  return {true, std::move(spelling), {}, named};
 }
 
 [[nodiscard]] MappedType unsupportedType(std::string reason) {
@@ -498,6 +499,36 @@ private:
                                     : supportedType(spelled(declaration));
   }
 
+  [[nodiscard]] const NativeType *callbackShape(const NativeType &type) const {
+    if (type.kind == NativeTypeKind::Function) {
+      return &type;
+    }
+    if (type.kind == NativeTypeKind::Pointer) {
+      const NativeType *pointee = canonical(type.pointee);
+      if (pointee && pointee->kind == NativeTypeKind::Function) {
+        return pointee;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] MappedType mapNamedCallback(NativeDeclarationId id,
+                                            const NativeDeclaration &alias,
+                                            const NativeType &function) const {
+    const MappedType shape = mapCallbackShape(function);
+    if (!shape.supported) {
+      return shape;
+    }
+    const auto outcome = typedefImported_.find(id);
+    if (!admitted(alias) || identifierProblem(spelled(alias), false) ||
+        (outcome != typedefImported_.end() && !outcome->second)) {
+      // A hidden/invalid source name does not make its native signature
+      // unusable. Reuse the ordinary deterministic inline-callback synthesis.
+      return mapFunctionPointer(function);
+    }
+    return supportedType(spelled(alias), true);
+  }
+
   // Maps one native type use to its GTI spelling under the bounded C ABI.
   // `pointerDepth` tracks how many pointer levels wrap this use.
   [[nodiscard]] MappedType mapType(NativeTypeId id, bool allowVoid,
@@ -517,16 +548,20 @@ private:
         return unsupportedType("the typedef reference is invalid");
       }
       if (target->kind == NativeTypeKind::Function) {
-        // Callback alias: valid wherever the named callback type is.
-        const MappedType shape = mapCallbackShape(*target);
-        if (!shape.supported) {
-          return shape;
-        }
-        return supportedType(spelled(*alias));
+        return unsupportedType(
+            "a C function type requires a pointer or parameter decay");
+      }
+      if (const NativeType *shape = callbackShape(*target)) {
+        return mapNamedCallback(direct->declaration, *alias, *shape);
       }
       const MappedType canonicalMapping =
           mapType(alias->aliased, allowVoid, use, pointerDepth);
       if (!canonicalMapping.supported) {
+        return canonicalMapping;
+      }
+      if (canonicalMapping.spelling == "c_string") {
+        // The declared typedef preserves storage as const c_char*. Retain
+        // call-only string convenience without putting c_string in records.
         return canonicalMapping;
       }
       // A skipped typedef never reaches the generated file, so a use that is
@@ -535,7 +570,7 @@ private:
           outcome != typedefImported_.end() && !outcome->second) {
         return canonicalMapping;
       }
-      return supportedType(spelled(*alias));
+      return supportedType(spelled(*alias), true);
     }
     switch (direct->kind) {
     case NativeTypeKind::Void:
@@ -589,6 +624,22 @@ private:
           "an unnamed function type is outside the bounded surface; name it "
           "with a typedef");
     case NativeTypeKind::Array:
+      if (use == TypeUse::RecordField) {
+        const ArrayShape shape = arrayShape(*direct);
+        MappedType element =
+            mapType(shape.elementId, false, TypeUse::RecordField);
+        if (!element.supported) {
+          return element;
+        }
+        for (const auto extent : shape.extents) {
+          if (extent == 0) {
+            return unsupportedType("fixed arrays require positive extents");
+          }
+          element.spelling += "[" + std::to_string(extent) + "]";
+        }
+        element.namedType = false;
+        return element;
+      }
       return unsupportedType("a fixed array is only a record field type");
     case NativeTypeKind::Alias:
       return unsupportedType("unreachable alias state");
@@ -609,6 +660,12 @@ private:
       return unsupportedType("the pointee type is invalid");
     }
     if (pointee->kind == NativeTypeKind::Function) {
+      const NativeType *written = model_.findType(pointer.pointee);
+      if (written && written->kind == NativeTypeKind::Alias) {
+        if (const auto *alias = model_.findDeclaration(written->declaration)) {
+          return mapNamedCallback(written->declaration, *alias, *pointee);
+        }
+      }
       return mapFunctionPointer(*pointee);
     }
     if (pointee->kind == NativeTypeKind::Pointer) {
@@ -617,10 +674,16 @@ private:
       // inside this tree so every qualification level remains explicit.
       const MappedType inner = mapType(pointer.pointee, false,
                                        TypeUse::RecordField, pointerDepth + 1);
-      return inner.supported
-                 ? supportedType(inner.spelling +
-                                 (pointer.constPointee ? " const*" : "*"))
-                 : inner;
+      if (!inner.supported) {
+        return inner;
+      }
+      // GTI qualifies an alias as `const Alias*`, whereas a written pointer
+      // chain qualifies that slot as `T* const*`. Preserve the rendering shape
+      // rather than moving const onto the terminal object.
+      return supportedType(
+          (pointer.constPointee && inner.namedType ? "const " : "") +
+          inner.spelling +
+          (pointer.constPointee && !inner.namedType ? " const*" : "*"));
     }
     if (pointee->kind == NativeTypeKind::Char) {
       if (pointer.constPointee && use != TypeUse::RecordField) {
@@ -711,12 +774,12 @@ private:
     rendered += ") -> " + mapType(function.result, true).spelling;
     if (const auto existing = callbackNameByShape_.find(rendered);
         existing != callbackNameByShape_.end()) {
-      return supportedType(existing->second);
+      return supportedType(existing->second, true);
     }
     if (!commitSynthesis_) {
       // Record classification only asks admissibility; the alias itself is
       // allocated when the emission pass reaches a committed use.
-      return supportedType(rendered);
+      return supportedType(rendered, true);
     }
     const std::string base =
         (synthesisHint_.empty() ? "callback" : synthesisHint_) + "_fn";
@@ -737,7 +800,7 @@ private:
           {std::string(), mapType(parameter, false).spelling});
     }
     pendingCallbacks_.push_back(std::move(alias));
-    return supportedType(name);
+    return supportedType(name, true);
   }
 
   // -- Record classification ------------------------------------------------
@@ -755,7 +818,7 @@ private:
     while (node != nullptr && node->kind == NativeTypeKind::Array) {
       shape.extents.push_back(node->count);
       shape.elementId = node->element;
-      node = model_.findType(node->element);
+      node = canonical(node->element);
     }
     return shape;
   }
@@ -766,7 +829,7 @@ private:
             identifierProblem(field.name, false)) {
       return "field " + *problem;
     }
-    const NativeType *type = model_.findType(field.type);
+    const NativeType *type = canonical(field.type);
     if (type == nullptr) {
       return "field '" + field.name + "' has an invalid type";
     }
@@ -774,7 +837,7 @@ private:
       // The ultimate element uses the ordinary field set: GTI computes array
       // layout recursively from admitted element facts (decision 013).
       const MappedType element =
-          mapType(arrayShape(*type).elementId, false, TypeUse::RecordField);
+          mapType(field.type, false, TypeUse::RecordField);
       if (!element.supported) {
         return "array field '" + field.name + "': " + element.reason;
       }
@@ -876,7 +939,7 @@ private:
     item.kind = BindingItemKind::Record;
     for (const NativeRecordField &field : declaration.fields) {
       synthesisHint_ = declaration.name + "_" + field.name;
-      const NativeType *type = model_.findType(field.type);
+      const NativeType *type = canonical(field.type);
       if (type->kind == NativeTypeKind::Array) {
         const ArrayShape shape = arrayShape(*type);
         const MappedType element =
@@ -923,25 +986,28 @@ private:
             identifierProblem(item.name, false)) {
       return skipped(declaration, *problem);
     }
-    const NativeType *target = model_.findType(declaration.aliased);
+    const NativeType *target = canonical(declaration.aliased);
     if (target == nullptr) {
       return skipped(declaration, "the typedef target is invalid");
     }
-    if (target->kind == NativeTypeKind::Function) {
-      const MappedType shape = mapCallbackShape(*target);
+    if (const NativeType *function = callbackShape(*target)) {
+      const MappedType shape = mapCallbackShape(*function);
       if (!shape.supported) {
         return skipped(declaration, shape.reason);
       }
       item.kind = BindingItemKind::Callback;
-      const MappedType result = mapType(target->result, true);
+      const MappedType result = mapType(function->result, true);
       item.resultSpelling = result.spelling;
-      for (std::size_t index = 0; index < target->parameters.size(); ++index) {
-        const MappedType parameter = mapType(target->parameters[index], false);
+      for (std::size_t index = 0; index < function->parameters.size();
+           ++index) {
+        const MappedType parameter =
+            mapType(function->parameters[index], false);
         item.parameters.push_back({std::string(), parameter.spelling});
       }
       return item;
     }
-    const MappedType mapped = mapType(declaration.aliased, false);
+    const MappedType mapped =
+        mapType(declaration.aliased, false, TypeUse::RecordField);
     if (!mapped.supported) {
       return skipped(declaration, mapped.reason);
     }

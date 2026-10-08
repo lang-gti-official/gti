@@ -64,7 +64,7 @@ int engine_submit(Engine *engine, Vec2 position, Stamp stamp);
   expect(contains(printed, "typedef Stamp = c_ulonglong[u64]"),
          "the multi-word builtin typedef should model as u64");
   expect(contains(printed,
-                  "typedef Log = fn(c_int[i32], ptr(const char)) -> void"),
+                  "typedef Log = ptr(fn(c_int[i32], ptr(const char)) -> void)"),
          "the callback typedef should model its shape");
   expect(contains(printed, "function engine_create(mode: c_int[i32]) -> "
                            "ptr(record:Engine)"),
@@ -176,7 +176,7 @@ int engine_submit(Engine *engine, Vec2 position, Stamp stamp);
              "  MODE_B = 5\n"
              "  MODE_C = 6\n"
              "typedef Stamp = c_ulonglong[u64]\n"
-             "typedef Log = fn(c_int[i32], ptr(const char)) -> void\n"
+             "typedef Log = ptr(fn(c_int[i32], ptr(const char)) -> void)\n"
              "function engine_create(mode: c_int[i32]) -> ptr(record:Engine)\n"
              "function engine_submit(engine: ptr(record:Engine), "
              "position: record:Vec2, stamp: alias:Stamp) -> c_int[i32]\n",
@@ -878,6 +878,129 @@ int use_base(int value);
 // shape and emitted before its first use. A shape the bounded ABI cannot
 // express still skips with its reason, and a skipped declaration leaves no
 // orphaned alias behind.
+void testComposableNativeTypedefs() {
+  const std::string header = R"(
+typedef int Function(int value);
+typedef Function *Callback;
+typedef Callback CallbackAlias;
+typedef const char *Text;
+typedef Text TextAlias;
+typedef unsigned short Row[3];
+typedef Row Grid[2];
+struct Api {
+  Callback *slot;
+  Callback const *readonly_slot;
+  Callback **nested;
+  Text label;
+  Text *labels;
+  TextAlias alias_label;
+  Grid grid;
+  Callback callbacks[2];
+};
+void install(Callback *slot);
+Function *get_function(void);
+Callback *get_slot(void);
+void apply(Function handler);
+void text_input(Text text);
+void row_input(Row values);
+void rejected_array_pointer(Row *values);
+void rejected_variadic(int (*callback)(int, ...));
+void rejected_no_proto(int (*callback)());
+typedef int Empty[0];
+struct EmptyField { int empty[0]; };
+)";
+  const auto result = lang::bindgen::runCBindgen(header, "typedefs.h");
+  const auto &source = result.gtiSource;
+  expect(contains(source, "using Function = (c_int) -> c_int;") &&
+             contains(source, "using Callback = (c_int) -> c_int;"),
+         "function and pointer typedefs must both get usable named GTI "
+         "callback shapes");
+  expect(contains(source, "void install(Callback* slot)") &&
+             contains(source, "Callback* get_slot()") &&
+             contains(source, "Function get_function()") &&
+             contains(source, "void apply(Function handler)"),
+         "callback values, callback slots and function-parameter decay must "
+         "stay distinct");
+  expect(contains(source, "mut const Callback* readonly_slot;") &&
+             contains(source, "mut Callback** nested;"),
+         "callback slot qualification and pointer depth must be preserved");
+  expect(contains(source, "using Text = const c_char*;") &&
+             contains(source, "mut Text label;") &&
+             contains(source, "mut Text* labels;") &&
+             contains(source, "void text_input(c_string text)"),
+         "text typedefs must be storage-faithful while calls retain string "
+         "convenience");
+  expect(contains(source, "using Row = c_ushort[3];") &&
+             contains(source, "using Grid = c_ushort[2][3];") &&
+             contains(source, "mut c_ushort grid[2][3];") &&
+             contains(source, "void row_input(c_ushort* values)"),
+         "array typedefs must compose through record fields and native "
+         "parameter decay");
+  for (const auto name :
+       {"rejected_array_pointer", "rejected_variadic", "rejected_no_proto"}) {
+    const auto *item = findItem(result.plan, name);
+    expect(item && item->kind == lang::bindgen::BindingItemKind::Skipped,
+           std::string(name) + " must retain the existing language boundary");
+  }
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto checkSource = [&](const std::string &generated) {
+    const auto frontend = lang::Frontend().analyze(
+        "typedef-bindings.gti", generated + "\nint main() { return 0; }\n",
+        {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+    for (const auto &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    expect(frontend.canGenerateCode(),
+           "composed typedef bindings must be valid ordinary GTI");
+  };
+  checkSource(source);
+  expect(findItem(result.plan, "Empty")->kind ==
+                 lang::bindgen::BindingItemKind::Skipped &&
+             findItem(result.plan, "EmptyField")->kind ==
+                 lang::bindgen::BindingItemKind::Opaque,
+         "zero-length array extensions must not generate invalid GTI arrays");
+  const auto readonly = lang::Frontend().analyze(
+      "readonly-slot.gti", source + R"(
+void cannot_replace(mut Api& api) {
+  unsafe { *api.readonly_slot = nullptr; }
+}
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  expect(!readonly.canGenerateCode(),
+         "a const callback slot must remain non-writable even in unsafe");
+  const auto system =
+      lang::bindgen::runCBindgen("# 1 \"/work/app.h\"\n"
+                                 "# 1 \"/usr/include/callback.h\" 1 3\n"
+                                 "typedef int SystemFunction(int);\n"
+                                 "typedef SystemFunction *SystemCallback;\n"
+                                 "# 1 \"/work/app.h\" 2\n"
+                                 "void system_slot(SystemCallback *slot);\n"
+                                 "SystemFunction *system_function(void);\n",
+                                 "app.h");
+  checkSource(system.gtiSource);
+  expect(findItem(system.plan, "system_slot")->kind ==
+                 lang::bindgen::BindingItemKind::Function &&
+             !contains(system.gtiSource, "using SystemCallback"),
+         "system callback aliases must synthesize an emitted name at "
+         "user-header uses");
+  lang::bindgen::BindingOptions filtered;
+  for (const auto name : {"Function", "Callback", "Text", "Row", "Grid"}) {
+    filtered.deny.push_back({name});
+  }
+  const auto hidden =
+      lang::bindgen::runCBindgen(header, "typedefs.h", filtered);
+  checkSource(hidden.gtiSource);
+  expect(findItem(hidden.plan, "install")->kind ==
+                 lang::bindgen::BindingItemKind::Function &&
+             findItem(hidden.plan, "Api")->kind ==
+                 lang::bindgen::BindingItemKind::Record,
+         "filtered callback names must synthesize usable signatures instead of "
+         "rejecting their uses");
+  expect(source == lang::bindgen::runCBindgen(header, "typedefs.h").gtiSource,
+         "composed typedef emission must be deterministic");
+}
+
 void testSynthesizedCallbackAliases() {
   const lang::bindgen::BindgenResult result =
       lang::bindgen::runCBindgen(R"(
@@ -1294,6 +1417,7 @@ int main() {
   testWriterShapeAndDeterminism();
   testMacroConstantImport();
   testSynthesizedCallbackAliases();
+  testComposableNativeTypedefs();
   testStringArrayParameters();
   testRealHeaderShapes();
   testGeneratedBindingsCompile();

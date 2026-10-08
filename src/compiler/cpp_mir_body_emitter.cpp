@@ -2251,6 +2251,18 @@ packElementParameterIndex(const MirProgram &program, const MirBody &body,
   return uses;
 }
 
+// An address calculation can exist solely to perform a checked projection.
+// Its later element uses already carry the complete MIR place; they need not
+// consume the intermediate row pointer. Preserve evaluation and failure edges,
+// but do not invent a storage representation for an unused address result.
+// In particular, native C array rows are not GTI std::array objects.
+[[nodiscard]] bool unusedAddressResult(const MirBody &body,
+                                       const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Compute &&
+         instruction.operation == MirOperation::AddressOf &&
+         instruction.result && body.usesOf(*instruction.result).empty();
+}
+
 struct ClassCopyAssignmentFusion {
   const MirInstruction *load = nullptr;
   const MirInstruction *assignment = nullptr;
@@ -29544,6 +29556,10 @@ public:
         // move-only storage and not present in MIR.
         continue;
       }
+      if (valueDefinition &&
+          unusedAddressResult(facts.body, *valueDefinition)) {
+        continue;
+      }
       if (valueDefinition && valueDefinition->loan) {
         const auto *loan = facts.body.findLoan(*valueDefinition->loan);
         if (loan && fallibleExpectedBorrowLoanProducer(facts.body, *loan) ==
@@ -32146,7 +32162,10 @@ private:
       output << ";\n";
       return;
     }
-    output << "__gti_mir_v_" << *instruction.result << " = ";
+    const bool discardAddress = unusedAddressResult(facts.body, instruction);
+    if (!discardAddress) {
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+    }
     if (instruction.operation == MirOperation::Literal) {
       emitLiteral(*instruction.literal, instruction.info.type);
       output << ";\n";
@@ -32201,6 +32220,9 @@ private:
         throw std::logic_error(
             "verified MIR address formation lost its source place");
       }
+      if (discardAddress) {
+        output << "static_cast<void>(";
+      }
       output << "::gti_internal::backend::raw_address_of(&";
       if (!instruction.localFailureSites.empty() &&
           !allMirLocalFailuresDischarged(instruction)) {
@@ -32226,7 +32248,7 @@ private:
       } else {
         emitPlaceExpression(facts, *place);
       }
-      output << ");\n";
+      output << (discardAddress ? "));\n" : ");\n");
       return;
     }
     if (instruction.operation == MirOperation::PointerAdd ||
@@ -32782,10 +32804,15 @@ private:
             ++branches;
             writeIndent();
           }
-          output << "__gti_mir_v_" << *instruction.result
-                 << " = ::gti_internal::backend::raw_address_of(&";
+          const bool discard = unusedAddressResult(facts.body, instruction);
+          if (discard) {
+            output << "static_cast<void>(";
+          } else {
+            output << "__gti_mir_v_" << *instruction.result << " = ";
+          }
+          output << "::gti_internal::backend::raw_address_of(&";
           emitElement();
-          output << ");\n";
+          output << (discard ? "));\n" : ");\n");
           closeCheckedArrayChain(branches);
         };
         if (const auto access = arrayFieldElementAccess(facts.body, *place)) {

@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.393.0 — Compile only what the program uses
+## 0.393.0 — Standard-library modules and reachable compilation
 
 - Builds lower, optimize and natively compile only code reachable from the
   program: its entry point, library exports, global initialization and the C
@@ -26,7 +26,7 @@ for what minor and patch releases mean.
   remaining declaration lookups no longer scan the whole program. Backend
   admission retains full verification rather than relying on the seal alone.
 
-## 0.392.0 — Standard-library modules
+### Standard-library modules
 
 - Import the standard library instead of including it: `import std.vector;`
   makes `<std/vector>` visible, in direct compilation and in projects alike.

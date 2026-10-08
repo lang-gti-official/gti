@@ -1,7 +1,7 @@
 # 024: Explicit Source Module Interfaces
 
 Status: Accepted and implemented in 0.362.0, with combined release validation.
-Revised in 0.392.0: republished includes, standard-library modules, and
+Revised in 0.393.0: republished includes, standard-library modules, and
 configuration sharing by replay. Separate compilation and independent module
 linkage remain outside this decision.
 
@@ -86,10 +86,10 @@ name mangling that invents different GTI types.
 A legacy included unit still has one canonical configuration in a compilation.
 Each module configuration domain replays its directives, so nothing is
 silently reused from whichever domain loaded it first. Sharing is diagnosed
-when a replay selects different syntax. As of 0.392.0, different incoming
+when a replay selects different syntax. As of 0.393.0, different incoming
 flags alone are no longer diagnosed.
 
-## Revision: Standard-Library Modules (0.392.0)
+## Revision: Standard-Library Modules (0.393.0)
 
 The standard library is the first library that every program uses, and
 converting its 43 units to interfaces with private details would break every
