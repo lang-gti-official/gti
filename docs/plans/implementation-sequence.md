@@ -5058,8 +5058,14 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   and an extra-predecessor rejection. Template formatting uses append-only
   passes with byte-identical comparison evidence. The formerly 300-second
   MIR timeout completes locally in 12.38 seconds; the formerly 600-second
-  native timeout now builds, but full JSON/installed/performance acceptance
-  remains outstanding.
+  native timeout now builds. Native execution then exposed excessive stack
+  storage for mutually exclusive secondary-failure paths in a large ordinary
+  body. The backend now reserves one fresh invocation-local secondary record
+  and constructs terminal emergency envelopes out of line, without changing
+  MIR cleanup or the failure ABI. A many-guard structural check pins the
+  storage bound; its eight-mode native matrix preserves complete cleanup,
+  exact panic messages and immediate secondary termination. Full JSON,
+  installed and performance acceptance remains outstanding.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

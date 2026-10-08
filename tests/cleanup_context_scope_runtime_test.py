@@ -20,6 +20,8 @@ int main() {
   // Worker failure handoff may unwind through this boundary. Outlining must
   // never turn the helper into an exception firewall or a terminal first-failure check.
   static_assert(!noexcept(mir_check_incoming_cleanup_failure_v1(nullptr, nullptr)));
+  static_assert(!noexcept(mir_terminate_cleanup_failure_v2(
+      nullptr, nullptr, nullptr, nullptr)));
   if (mir_incoming_failure_cleanup_v1() != nullptr) return 1;
   mir_check_incoming_cleanup_failure_v1(nullptr, nullptr);
   {
@@ -86,6 +88,14 @@ def main():
                            "#endif\n"
                            "inline void mir_check_incoming_cleanup_failure_v1(")
             assert text.count(cold_helper) == 1, "failure-only check must have its bounded cold hint"
+            terminal_helper = ("[[noreturn]]\n"
+                               "#if defined(__GNUC__) || defined(__clang__)\n"
+                               "__attribute__((__cold__, __noinline__))\n"
+                               "#elif defined(_MSC_VER)\n"
+                               "__declspec(noinline)\n"
+                               "#endif\n"
+                               "inline void mir_terminate_cleanup_failure_v2(")
+            assert text.count(terminal_helper) == 1, "terminal envelope must stay in its own native frame"
             generated.write_text(text + PROBE)
             for level in ("-O0", "-O3"):
                 binary = work / f"{standard}-{level}"

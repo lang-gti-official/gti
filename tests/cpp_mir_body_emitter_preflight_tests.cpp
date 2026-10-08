@@ -38,6 +38,73 @@ void testDischargedCompoundOperatorVocabulary() {
       "proved successful path exactly matches C++ semantics");
 }
 
+void testBoundedSecondaryFailureRecordStorage() {
+  std::string source = R"gti(
+class Guard {
+  int divisor;
+public:
+  Guard(int divisor) : divisor(divisor) {}
+  ~Guard() { int checked = 1 / this.divisor; }
+};
+int many(int divisor) {
+)gti";
+  for (int index = 0; index != 32; ++index)
+    source += "  Guard guard" + std::to_string(index) + "{divisor};\n";
+  source += "  return 0;\n}\nint main() { return many(1); }\n";
+  const auto frontend = analyze("bounded-secondary-records.gti", source);
+  expect(frontend.canGenerateCode(), "many fallible guards must lower");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  std::size_t checkedBodies = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.owner || function.parameterTypes.size() != 1)
+      continue;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const auto text =
+        emitter.emitFailureBodyText(address, "bounded-records", 1);
+    expect(text.emitted(), "many guards must emit through verified MIR");
+    const auto occurrences = [&](std::string_view needle) {
+      std::size_t count = 0;
+      for (std::size_t position = text.text.find(needle);
+           position != std::string::npos;
+           position = text.text.find(needle, position + needle.size()))
+        ++count;
+      return count;
+    };
+    std::size_t secondaryDrops = 0;
+    std::size_t terminalEdges = 0;
+    for (const auto &block : function.body.blocks) {
+      terminalEdges += block.terminator.kind ==
+                       lang::MirTerminatorKind::TerminateCleanupFailure;
+      if (block.activeFailure == 0)
+        continue;
+      for (const auto &instruction : block.instructions)
+        secondaryDrops += instruction.kind == lang::MirInstructionKind::Drop &&
+                          instruction.definedFailure.propagation ==
+                              lang::FailurePropagationKind::Destructor;
+    }
+    expect(secondaryDrops > 32 && terminalEdges == secondaryDrops,
+           "the fixture must contain many alternative secondary failures");
+    expect(
+        occurrences("::gti_failure_record_v2 "
+                    "__gti_mir_cleanup_failure_record{};") == 1 &&
+            occurrences("std::memset(&__gti_mir_cleanup_failure_record,") ==
+                secondaryDrops &&
+            occurrences("mir_terminate_cleanup_failure_v2(") == terminalEdges &&
+            text.text.find("__gti_mir_cleanup_failure_record_") ==
+                std::string::npos &&
+            text.text.find("::gti_failure_emergency_v2") == std::string::npos,
+        "all alternatives share one fresh secondary record; terminal "
+        "envelopes belong to the out-of-line helper frame");
+    ++checkedBodies;
+  }
+  expect(checkedBodies == 1,
+         "the many-guard body must be checked exactly once");
+}
+
 void testExhaustiveEnumClassification() {
   for (std::size_t value = 0;
        value <= static_cast<std::size_t>(lang::MirInstructionKind::Count);
@@ -5080,6 +5147,8 @@ int main() {
 }
 
 constexpr NamedTest kTests[] = {
+    {"testBoundedSecondaryFailureRecordStorage",
+     testBoundedSecondaryFailureRecordStorage},
     {"testOwningPayloadEnumRepresentationAdmission",
      testOwningPayloadEnumRepresentationAdmission},
     {"testOwningPayloadEnumTransportAdmissionFailsClosed",
