@@ -156,6 +156,7 @@ private:
     processedDestructors = 0;
     discoveryDepth = 0;
     discoverySite.reset();
+    discoveryOrigin.reset();
     discoveryLimitReached = false;
     discoveredGenericInstances = 0;
     classDiscoveryDepths.clear();
@@ -183,21 +184,38 @@ private:
   static constexpr std::size_t maximumDiscoveryDepth = 64;
   static constexpr std::size_t maximumDiscoveredInstances = 16384;
 
+  struct InstanceDiscovery {
+    std::size_t depth;
+    std::optional<SourceSpan> origin;
+  };
+
+  [[nodiscard]] InstanceDiscovery
+  nextDiscovery(const std::optional<SourceSpan> &site) const {
+    return {discoveryDepth + 1, discoveryOrigin ? discoveryOrigin : site};
+  }
+
   struct DiscoveryScope {
     DiscoveryScope(std::size_t &depth, std::optional<SourceSpan> &site,
-                   std::size_t next, std::optional<SourceSpan> nextSite)
-        : depth(depth), site(site), previous(depth), previousSite(site) {
-      depth = next;
+                   std::optional<SourceSpan> &origin,
+                   const InstanceDiscovery &next,
+                   std::optional<SourceSpan> nextSite)
+        : depth(depth), site(site), origin(origin), previous(depth),
+          previousSite(site), previousOrigin(origin) {
+      depth = next.depth;
       site = std::move(nextSite);
+      origin = next.origin;
     }
     ~DiscoveryScope() {
       depth = previous;
       site = std::move(previousSite);
+      origin = std::move(previousOrigin);
     }
     std::size_t &depth;
     std::optional<SourceSpan> &site;
+    std::optional<SourceSpan> &origin;
     std::size_t previous;
     std::optional<SourceSpan> previousSite;
+    std::optional<SourceSpan> previousOrigin;
   };
 
   [[nodiscard]] bool admitInstance(const Token &declaration,
@@ -371,6 +389,8 @@ private:
             resolvedType.valueArguments)) {
       HirClassInstance &instance = output.program.classes[*existing - 1];
       if (!instance.instantiationSite && site) {
+        classDiscoveryDepths[*existing - 1].origin =
+            discoveryOrigin ? discoveryOrigin : site;
         instance.instantiationSite = std::move(site);
       }
       return *existing;
@@ -488,7 +508,8 @@ private:
              instanceProvider->requiresActiveCleanupFor(resolvedType)});
     instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,
                               resolvedType.valueArguments, id);
-    classDiscoveryDepths.push_back(discoveryDepth + 1);
+    classDiscoveryDepths.push_back(
+        nextDiscovery(output.program.classes.back().instantiationSite));
     discoveredGenericInstances += generic;
     return id;
   }
@@ -569,7 +590,7 @@ private:
       return 0;
     }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
-    functionDiscoveryDepths.push_back(discoveryDepth + 1);
+    functionDiscoveryDepths.push_back(nextDiscovery(site));
     discoveredGenericInstances += generic;
     if (freeFunction || owner.has_value()) {
       // An instance whose owner failed to resolve was never matchable by the
@@ -738,7 +759,7 @@ private:
     if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
-    constructorDiscoveryDepths.push_back(discoveryDepth + 1);
+    constructorDiscoveryDepths.push_back(nextDiscovery(site));
     discoveredGenericInstances += generic;
     output.program.constructors.push_back(
         {.id = id,
@@ -790,7 +811,8 @@ private:
                        classInstance.instantiationSite, generic)) {
       return std::nullopt;
     }
-    destructorDiscoveryDepths.push_back(discoveryDepth + 1);
+    destructorDiscoveryDepths.push_back(
+        nextDiscovery(classInstance.instantiationSite));
     discoveredGenericInstances += generic;
     output.program.destructors.push_back(
         {.id = id,
@@ -1202,7 +1224,7 @@ private:
       while (!discoveryLimitReached &&
              processedClasses < output.program.classes.size()) {
         DiscoveryScope scope(
-            discoveryDepth, discoverySite,
+            discoveryDepth, discoverySite, discoveryOrigin,
             classDiscoveryDepths[processedClasses],
             output.program.classes[processedClasses].instantiationSite);
         processClass(processedClasses++);
@@ -1211,7 +1233,7 @@ private:
       while (!discoveryLimitReached &&
              processedFunctions < output.program.functions.size()) {
         DiscoveryScope scope(
-            discoveryDepth, discoverySite,
+            discoveryDepth, discoverySite, discoveryOrigin,
             functionDiscoveryDepths[processedFunctions],
             output.program.functions[processedFunctions].instantiationSite);
         processFunction(processedFunctions++);
@@ -1224,7 +1246,7 @@ private:
         while (!discoveryLimitReached &&
                processedClasses < output.program.classes.size()) {
           DiscoveryScope scope(
-              discoveryDepth, discoverySite,
+              discoveryDepth, discoverySite, discoveryOrigin,
               classDiscoveryDepths[processedClasses],
               output.program.classes[processedClasses].instantiationSite);
           processClass(processedClasses++);
@@ -1232,7 +1254,7 @@ private:
         if (discoveryLimitReached) {
           break;
         }
-        DiscoveryScope scope(discoveryDepth, discoverySite,
+        DiscoveryScope scope(discoveryDepth, discoverySite, discoveryOrigin,
                              constructorDiscoveryDepths[processedConstructors],
                              output.program.constructors[processedConstructors]
                                  .instantiationSite);
@@ -1241,7 +1263,7 @@ private:
       while (!discoveryLimitReached &&
              processedDestructors < output.program.destructors.size()) {
         DiscoveryScope scope(
-            discoveryDepth, discoverySite,
+            discoveryDepth, discoverySite, discoveryOrigin,
             destructorDiscoveryDepths[processedDestructors],
             output.program
                 .classes
@@ -1416,7 +1438,7 @@ private:
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
-                                snapshot.instantiationSite);
+                                snapshot.instantiationSite, discoveryOrigin);
       model = &analysis.model;
     }
     std::vector<HirClassField> fields;
@@ -1531,9 +1553,20 @@ private:
   }
 
   void appendInstanceDiagnostics(std::vector<Diagnostic> diagnostics,
-                                 const std::optional<SourceSpan> &site) {
+                                 const std::optional<SourceSpan> &site,
+                                 const std::optional<SourceSpan> &origin) {
     for (Diagnostic &diagnostic : diagnostics) {
-      if (site) {
+      const auto request = origin ? origin : site;
+      const bool missingDefinition =
+          diagnostic.code ==
+          diagnosticDescriptor(DiagnosticId::MissingFunctionDefinition).code;
+      if (missingDefinition && request && diagnostic.primary != *request) {
+        diagnostic.related.push_back(
+            {diagnostic.primary,
+             "This selected call requires the missing definition."});
+        diagnostic.primary = *request;
+      }
+      if (site && (!missingDefinition || diagnostic.primary != *site)) {
         diagnostic.related.push_back(
             {*site, "Concrete generic instance requested here."});
       }
@@ -1581,7 +1614,8 @@ private:
             declaration->id, classArguments, classValueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
-                              snapshot.instantiationSite);
+                              snapshot.instantiationSite,
+                              functionDiscoveryDepths[id - 1].origin);
     SemanticInstanceAnalysis *result = analysis.get();
     functionAnalyses.emplace(id, std::move(analysis));
     return result;
@@ -1609,7 +1643,8 @@ private:
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
-                              snapshot.instantiationSite);
+                              snapshot.instantiationSite,
+                              constructorDiscoveryDepths[id - 1].origin);
     SemanticInstanceAnalysis *result = analysis.get();
     constructorAnalyses.emplace(id, std::move(analysis));
     return result;
@@ -2106,7 +2141,8 @@ private:
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
-      appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
+      appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt,
+                                discoveryOrigin);
       model = &analysis.model;
     }
 
@@ -3695,6 +3731,19 @@ private:
                                              : call.paren());
   }
 
+  [[nodiscard]] static SourceSpan callInstantiationSite(const Call &call) {
+    const Expr *callee = call.callee().get();
+    while (const auto *group = exprAs<Grouping>(callee))
+      callee = group->expression().get();
+    if (const auto *name = exprAs<Variable>(callee))
+      return tokenSpan(name->name());
+    if (const auto *name = exprAs<QualifiedName>(callee))
+      return tokenSpan(name->name().last());
+    if (const auto *member = exprAs<Get>(callee))
+      return tokenSpan(member->name());
+    return tokenSpan(call.leftParen() ? *call.leftParen() : call.paren());
+  }
+
   [[nodiscard]] std::optional<SourceLocationLiteral>
   sourceLocationAt(const Expr &expression) const {
     if (const auto *call = exprAs<Call>(&expression)) {
@@ -4604,7 +4653,8 @@ private:
             defaults.emplace(instanceProvider->analyzeClassFieldInitializers(
                 target.classId, target.arguments, target.valueArguments));
             appendInstanceDiagnostics(std::move(defaults->diagnostics),
-                                      tokenSpan(initializer->brace()));
+                                      tokenSpan(initializer->brace()),
+                                      discoveryOrigin);
           }
           if (auto lowered = lowerDefaultArgument(
                   argument,
@@ -5239,7 +5289,7 @@ private:
                                             classValueArguments),
                 resolved->typeArguments, resolved->valueArguments,
                 resolved->returnType, resolved->parameterTypes,
-                tokenSpan(call->paren()));
+                callInstantiationSite(*call));
           }
         }
         if (!resolved->defaultArguments.empty() && value.functionTarget &&
@@ -5362,7 +5412,7 @@ private:
       value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;
       if (const auto *call = exprAs<Call>(raw)) {
-        site = tokenSpan(call->paren());
+        site = callInstantiationSite(*call);
       } else if (const auto *initializer = exprAs<DirectInitializer>(raw)) {
         site = tokenSpan(initializer->brace());
       }
@@ -5785,12 +5835,15 @@ private:
   bool constantClosure = false;
   std::size_t discoveryDepth = 0;
   std::optional<SourceSpan> discoverySite;
+  // Diagnostic provenance only; this does not participate in instance identity,
+  // discovery limits, overload selection, or executable HIR/MIR semantics.
+  std::optional<SourceSpan> discoveryOrigin;
   bool discoveryLimitReached = false;
   std::size_t discoveredGenericInstances = 0;
-  std::vector<std::size_t> classDiscoveryDepths;
-  std::vector<std::size_t> functionDiscoveryDepths;
-  std::vector<std::size_t> constructorDiscoveryDepths;
-  std::vector<std::size_t> destructorDiscoveryDepths;
+  std::vector<InstanceDiscovery> classDiscoveryDepths;
+  std::vector<InstanceDiscovery> functionDiscoveryDepths;
+  std::vector<InstanceDiscovery> constructorDiscoveryDepths;
+  std::vector<InstanceDiscovery> destructorDiscoveryDepths;
   std::vector<FunctionId> constantFunctions;
   std::vector<ConstructorId> constantConstructors;
   std::size_t processedClasses = 0;
