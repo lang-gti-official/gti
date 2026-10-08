@@ -26,6 +26,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testStandardLibraryModules",
+      "suite": "frontend"
+    },
+    {
       "name": "testPackageImports",
       "suite": "frontend"
     },
