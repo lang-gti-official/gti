@@ -2,6 +2,125 @@
 
 namespace {
 
+const lang::MirInstruction *testInstruction(const lang::MirBody &body,
+                                            lang::MirInstructionId id);
+
+void testContainedClosureConstructorPlan() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constructor_callback_field.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "contained closure constructor fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "closure field construction must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto rows = buildRows(frontend, frontend.mir, standard);
+    std::size_t closureConstructors = 0;
+    for (const auto &row : rows.containedConstructors) {
+      const auto *constructor =
+          frontend.mir.findConstructorInstance(row.constructor);
+      if (constructor &&
+          std::any_of(constructor->parameterTypes.begin(),
+                      constructor->parameterTypes.end(), [](const auto &type) {
+                        return type.kind == lang::SemanticType::Lambda;
+                      }))
+        ++closureConstructors;
+    }
+    expect(closureConstructors == 2,
+           "both library and unrelated generic constructors need containment");
+    expect(!gti_test::emitCpp(frontend, standard).contents.empty(),
+           "containment must retain the admitted closure-dependent body plan");
+  }
+}
+
+void testOwningCallFieldInputTransfers() {
+  for (const auto *name : {"constructor_collection_field_inputs",
+                           "constructor_owning_call_inputs"}) {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures" / (std::string(name) + ".gti");
+    std::ifstream input(fixture);
+    expect(input.good(), "owning call field fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "owning call fields must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyzeProgram().ready(),
+           "owning function inputs and field results retain separate handoffs");
+    std::size_t checked = 0;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      for (const auto &block : constructor.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.functionTarget || !instruction.successResultDrop ||
+              instruction.lifecycle.empty() || !instruction.result)
+            continue;
+          const auto uses = constructor.body.usesOf(*instruction.result);
+          const auto publication =
+              std::find_if(uses.begin(), uses.end(), [&](const auto &use) {
+                const auto *consumer =
+                    testInstruction(constructor.body, use.instruction);
+                return consumer &&
+                       consumer->kind == lang::MirInstructionKind::Initialize &&
+                       consumer->constructorInitializer != 0;
+              });
+          if (publication == uses.end())
+            continue;
+          ++checked;
+          const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                             constructor.id};
+          expect(emitter.supportsFailureBodyText(address),
+                 "field-producing call must retain its failure body");
+          for (int mutation = 0; mutation != 8; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *body = lang::findMirBody(malformed, address);
+            auto &instructions = body->findBlock(block.id)->instructions;
+            auto changed =
+                std::find_if(instructions.begin(), instructions.end(),
+                             [&](const auto &candidate) {
+                               return candidate.id == instruction.id;
+                             });
+            auto &event = changed->lifecycle.front();
+            if (mutation == 0)
+              changed->lifecycle.clear();
+            if (mutation == 1)
+              event.source = *instruction.successResultDrop;
+            if (mutation == 2)
+              event.target = *instruction.successResultDrop;
+            if (mutation == 3)
+              event.conditional = true;
+            if (mutation == 4)
+              event.failureCleanup = true;
+            if (mutation == 5)
+              changed->lifecycle.push_back(event);
+            if (mutation == 6)
+              changed->successResultDrop.reset();
+            if (mutation == 7) {
+              for (auto &candidateBlock : body->blocks)
+                for (auto &candidate : candidateBlock.instructions)
+                  if (candidate.id == publication->instruction)
+                    candidate.lifecycle.clear();
+            }
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "forged input transfer or field publication must fail MIR "
+                   "verification " +
+                       std::to_string(mutation));
+          }
+        }
+      }
+    }
+    expect(checked != 0,
+           "fixture must consume owning inputs to produce a field");
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "owning field calls must reach production emission");
+  }
+}
+
 void testExplicitVirtualResultChannel() {
   const auto frontend = analyze("explicit-virtual-result-channel.gti", R"(
 interface Channel<T> { T read(T value); };
@@ -11335,6 +11454,9 @@ int32_t main() { return cleanup_t().value - 7; }
 }
 
 constexpr NamedTest kTests[] = {
+    {"testContainedClosureConstructorPlan",
+     testContainedClosureConstructorPlan},
+    {"testOwningCallFieldInputTransfers", testOwningCallFieldInputTransfers},
     {"testExplicitVirtualResultChannel", testExplicitVirtualResultChannel},
     {"testGeneratedMoveReferenceBindings", testGeneratedMoveReferenceBindings},
     {"testPreparedConstructorReplacement", testPreparedConstructorReplacement},
