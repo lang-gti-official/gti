@@ -563,14 +563,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                  ? nullptr
                                  : semantics.findConstruction(*alias.source);
       const bool grouping = exprAs<Grouping>(alias.source) != nullptr;
-      const auto *owner =
-          alias.constructionOwner && *alias.constructionOwner != 0 &&
-                  *alias.constructionOwner <= program.classInstances().size()
-              ? &program.classInstances()[*alias.constructionOwner - 1]
-              : nullptr;
-      const bool exactOwner =
-          grouping ? !alias.constructionOwner
-                   : owner != nullptr && owner->type == alias.type;
+      const auto &proof = alias.constructionProof;
+      const bool exactConstruction =
+          grouping ? !proof
+                   : proof && proof->source() == alias.source &&
+                         proof->producer() == alias.producer &&
+                         proof->type() == alias.type &&
+                         proof->snapshot() ==
+                             semantics.analysisSeal().programSnapshot;
       const auto *sourceCall = exprAs<Call>(alias.source);
       const auto *call =
           sourceCall == nullptr ? nullptr : semantics.findCall(*sourceCall);
@@ -581,7 +581,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             call->intrinsic !=
                 IntrinsicKind::DefaultTypeParameterConstruction) ||
            semantics.findLambdaCall(*sourceCall) != nullptr ||
-           semantics.findDeferredCallableCall(*sourceCall) != nullptr);
+           semantics.findDeferredCallableCall(*sourceCall) != nullptr ||
+           semantics.findOperator(*sourceCall) != nullptr);
       const bool executableSource = std::any_of(
           body.values.begin(), body.values.end(), [&](const auto &candidate) {
             return candidate.source == alias.source;
@@ -590,7 +591,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       // exact construction is retained, its direct-initialization decision
       // must agree; the concrete value/type and source identity are mandatory.
       const bool semanticMatch =
-          !ordinaryCall && !executableSource && exactOwner &&
+          !ordinaryCall && !executableSource && exactConstruction &&
           (selected == nullptr || selected->directInitialization || grouping);
       const bool fresh =
           value != nullptr && (value->kind == HirValueKind::Call ||

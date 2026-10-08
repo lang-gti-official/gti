@@ -1313,6 +1313,30 @@ SemanticModel::directInitializationSource(const Expr &expression) const {
   return nullptr;
 }
 
+std::optional<SemanticDirectInitializationProof>
+SemanticModel::directInitializationProof(const Expr &expression) const {
+  const auto *selected = findConstruction(expression);
+  const auto *info = findExpression(expression);
+  const auto *producer = directInitializationSource(expression);
+  if (selected == nullptr || !selected->directInitialization ||
+      selected->kind != ConstructorKind::Ordinary ||
+      selected->constructor != 0 || selected->declaration != nullptr ||
+      selected->generatedDefault || !selected->defaultArguments.empty() ||
+      !selected->designatedArguments.empty() || info == nullptr ||
+      info->type.kind != SemanticType::Class ||
+      info->category != ValueCategory::Value ||
+      selected->constructedType != info->type ||
+      selected->parameterTypes.size() != 1 ||
+      selected->parameterTypes.front() != info->type || producer == nullptr ||
+      !isFreshClassResult(*producer))
+    return std::nullopt;
+  const auto *input = findExpression(*producer);
+  if (input == nullptr || input->type != info->type)
+    return std::nullopt;
+  return SemanticDirectInitializationProof(expression, *producer, info->type,
+                                           analysisSeal().programSnapshot);
+}
+
 [[nodiscard]] const ResolvedConstructionInfo *
 SemanticModel::findArrayElementConstruction(
     const ArrayInitializer &initializer) const {

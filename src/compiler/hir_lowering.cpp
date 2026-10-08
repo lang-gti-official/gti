@@ -4482,21 +4482,20 @@ private:
                                       classValueArguments, body);
       if (id) {
         const bool grouping = exprAs<Grouping>(&expression) != nullptr;
-        const auto *construction = model.findConstruction(expression);
-        std::optional<HirClassInstanceId> owner;
+        std::optional<SemanticDirectInitializationProof> proof;
         if (!grouping) {
-          if (construction == nullptr || !construction->directInitialization ||
-              construction->constructedType != info->type ||
-              !(owner = enqueueClass(construction->constructedType))) {
+          proof = model.directInitializationProof(expression);
+          if (!proof) {
             lifecycleValid = false;
             return std::nullopt;
           }
         }
-        body.directInitializations.push_back({.source = &expression,
-                                              .producer = producer,
-                                              .value = *id,
-                                              .type = info->type,
-                                              .constructionOwner = owner});
+        body.directInitializations.push_back(
+            {.source = &expression,
+             .producer = producer,
+             .value = *id,
+             .type = info->type,
+             .constructionProof = std::move(proof)});
         output.program.sourceValueIds[&expression].push_back(*id);
       }
       return id;
