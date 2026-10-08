@@ -371,9 +371,9 @@ struct HirDirectInitialization {
   const Expr *producer = nullptr;
   HirValueId value = 0;
   SemanticType type = SemanticType::Unknown;
-  // Exact concrete owner selected by semantic construction. Grouping has no
-  // construction owner; an ordinary invocation cannot masquerade as either.
-  std::optional<HirClassInstanceId> constructionOwner;
+  // Source-bound selected construction from the concrete semantic model.
+  // Grouping needs no construction proof; ordinary invocation cannot get one.
+  std::optional<SemanticDirectInitializationProof> constructionProof;
 };
 
 struct HirBody {

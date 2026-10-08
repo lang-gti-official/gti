@@ -1535,6 +1535,38 @@ struct SemanticAnalysisSeal {
 makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
                          const SourceGraph *sourceGraph = nullptr);
 
+// Immutable selected-construction provenance. HIR may carry or copy a proof,
+// but cannot manufacture one for a different source expression. Concrete
+// instance models issue the same proof even when the primary skipped an arm.
+class SemanticDirectInitializationProof {
+public:
+  SemanticDirectInitializationProof(const SemanticDirectInitializationProof &) =
+      default;
+  SemanticDirectInitializationProof(SemanticDirectInitializationProof &&) =
+      default;
+  SemanticDirectInitializationProof &
+  operator=(const SemanticDirectInitializationProof &) = default;
+  SemanticDirectInitializationProof &
+  operator=(SemanticDirectInitializationProof &&) = default;
+
+  [[nodiscard]] const Expr *source() const { return source_; }
+  [[nodiscard]] const Expr *producer() const { return producer_; }
+  [[nodiscard]] const SemanticType &type() const { return type_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticDirectInitializationProof(const Expr &source, const Expr &producer,
+                                    SemanticType type, std::uint64_t snapshot)
+      : source_(&source), producer_(&producer), type_(std::move(type)),
+        snapshot_(snapshot) {}
+
+  const Expr *source_;
+  const Expr *producer_;
+  SemanticType type_;
+  std::uint64_t snapshot_;
+};
+
 struct SemanticFullExpression {
   std::size_t order = 0;
   const Stmt *statement = nullptr;
@@ -1788,6 +1820,9 @@ public:
   // Class-value grouping or a selected fresh-result construction wrapper.
   [[nodiscard]] const Expr *
   directInitializationSource(const Expr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticDirectInitializationProof>
+  directInitializationProof(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedConstructionInfo *
   findArrayElementConstruction(const ArrayInitializer &initializer) const;

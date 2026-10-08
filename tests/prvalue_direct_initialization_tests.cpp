@@ -1,7 +1,75 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 #include "gti/language_queries.h"
 
+#include <type_traits>
+
 using namespace gti_test::cpp_mir_body_emitter_fixture;
+
+static_assert(
+    !std::is_default_constructible_v<lang::SemanticDirectInitializationProof>);
+static_assert(!std::is_aggregate_v<lang::SemanticDirectInitializationProof>);
+
+std::optional<lang::SemanticDirectInitializationProof>
+constructionProof(const lang::HirProgram &program) {
+  for (const auto &function : program.functionInstances())
+    for (const auto &alias : function.body.directInitializations)
+      if (alias.constructionProof)
+        return alias.constructionProof;
+  return std::nullopt;
+}
+
+void eraseOperation(lang::HirProgram &program, lang::HirBody &body,
+                    lang::HirValueId erased, lang::HirValueId replacement) {
+  const auto redirect = [&](lang::HirValueId &id) {
+    if (id == erased)
+      id = replacement;
+  };
+  const auto optional = [&](std::optional<lang::HirValueId> &id) {
+    if (id)
+      redirect(*id);
+  };
+  for (auto &value : body.values) {
+    if (value.source != nullptr) {
+      auto &ids = const_cast<std::vector<lang::HirValueId> &>(
+          program.valueIdsForSource(*value.source));
+      for (auto &id : ids)
+        redirect(id);
+    }
+    for (auto &id : value.operands)
+      redirect(id);
+    for (auto &id : value.conditionalInputs)
+      redirect(id);
+    for (auto &id : value.sequencedInputs)
+      redirect(id);
+    optional(value.receiver);
+    optional(value.retainedReceiverOwner);
+    if (value.callPlan) {
+      if (value.callPlan->receiver)
+        redirect(value.callPlan->receiver->value);
+      for (auto &argument : value.callPlan->arguments)
+        redirect(argument.value);
+    }
+  }
+  for (auto &statement : body.statements) {
+    optional(statement.value);
+    optional(statement.condition);
+    optional(statement.increment);
+  }
+  for (auto &expression : body.fullExpressions)
+    for (auto &root : expression.roots)
+      redirect(root);
+  for (auto &drop : body.dropObligations)
+    redirect(drop.value);
+  for (auto &alias : body.directInitializations) {
+    redirect(alias.value);
+    auto &ids = const_cast<std::vector<lang::HirValueId> &>(
+        program.valueIdsForSource(*alias.source));
+    for (auto &id : ids)
+      redirect(id);
+  }
+  std::erase_if(body.values,
+                [&](const auto &value) { return value.id == erased; });
+}
 
 void checkFreshResults() {
   const auto frontend = analyzeWithStandardLibrary("fresh-results.gti", R"(
@@ -87,23 +155,24 @@ int main() {
     break;
   }
   corrupted = frontend.hir;
-  bool removedOwner = false;
+  bool removedProof = false;
   for (const auto &function : corrupted.functionInstances()) {
     auto &body = const_cast<lang::HirBody &>(function.body);
     for (auto &alias : body.directInitializations) {
-      if (!alias.constructionOwner)
+      if (!alias.constructionProof)
         continue;
-      alias.constructionOwner.reset();
-      removedOwner = true;
+      alias.constructionProof.reset();
+      removedProof = true;
       break;
     }
-    if (removedOwner)
+    if (removedProof)
       break;
   }
   expect(
-      removedOwner &&
+      removedProof &&
           !lang::verifyHirProgramPlans(frontend.semantics, corrupted).valid(),
-      "a construction wrapper must retain its exact concrete owner witness");
+      "a construction wrapper must retain concrete semantic construction "
+      "provenance");
   corrupted = frontend.hir;
   for (const auto &function : corrupted.functionInstances()) {
     if (function.body.directInitializations.empty())
@@ -140,16 +209,13 @@ int main() {
         // Forge both category and source indexing, rather than relying on
         // an incidental lvalue/index mismatch to reject the missing lifecycle.
         input->info.category = lang::ValueCategory::Value;
-        std::optional<lang::HirClassInstanceId> owner;
-        for (const auto &instance : forged.classInstances())
-          if (instance.type == value.info.type)
-            owner = instance.id;
+        const auto proof = constructionProof(forged);
         body.directInitializations.push_back(
             {.source = value.source,
              .producer = call->arguments().front().get(),
              .value = input->id,
              .type = value.info.type,
-             .constructionOwner = owner});
+             .constructionProof = proof});
         auto &ids = const_cast<std::vector<lang::HirValueId> &>(
             forged.valueIdsForSource(*value.source));
         ids.push_back(input->id);
@@ -187,19 +253,22 @@ int main() {
              "an ordinary factory retains its fresh argument");
       if (input == nullptr)
         continue;
-      std::optional<lang::HirClassInstanceId> owner;
-      for (const auto &instance : forgedCall.classInstances())
-        if (instance.type == value.info.type)
-          owner = instance.id;
+      const auto proof = constructionProof(forgedCall);
+      const auto source = value.source;
+      const auto erased = value.id;
+      const auto replacement = input->id;
       body.directInitializations.push_back(
           {.source = value.source,
            .producer = call->arguments().front().get(),
            .value = input->id,
            .type = value.info.type,
-           .constructionOwner = owner});
+           .constructionProof = proof});
       auto &ids = const_cast<std::vector<lang::HirValueId> &>(
-          forgedCall.valueIdsForSource(*value.source));
-      ids.push_back(input->id);
+          forgedCall.valueIdsForSource(*source));
+      ids.assign(1, replacement);
+      eraseOperation(forgedCall, body, erased, replacement);
+      expect(body.findValue(erased) == nullptr,
+             "the mutation actually removes the ordinary factory invocation");
       mutated = true;
       break;
     }
@@ -284,6 +353,135 @@ int main() {
                            }),
            "fresh initialization does not bypass a deleted real move or escape "
            "loan");
+  }
+}
+
+void checkConcreteInvocationErasure() {
+  const auto frontend = analyze("concrete-alias-provenance.gti", R"(
+class Point {
+public:
+  int value;
+  Point(int value) : value(value) {}
+};
+Point make() { return Point(4); }
+Point adjust(Point source) { return Point(source.value + 1); }
+class Factory {
+public:
+  Factory() {}
+  Point operator()(Point source) { return Point(source.value + 1); }
+};
+Point choose<uint64_t N>() {
+  if constexpr (N == 1) { return adjust(make()); }
+  else { return Point(make()); }
+}
+int main() {
+  Point proof = Point(make());
+  Factory factory{};
+  Point called = factory(make());
+  Point selected = choose<1>();
+  Point direct = choose<2>();
+  return proof.value == 4 && called.value == 5 && selected.value == 5 &&
+      direct.value == 4 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "concrete provenance preserves nominal calls and dependent branches");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto proof = constructionProof(frontend.hir);
+  expect(proof.has_value(),
+         "a genuine construction supplies source-bound provenance");
+  bool concreteProof = false;
+  for (const auto &function : frontend.hir.functionInstances())
+    for (const auto &alias : function.body.directInitializations)
+      if (alias.constructionProof &&
+          frontend.semantics.findConstruction(*alias.source) == nullptr) {
+        concreteProof = true;
+        expect(alias.constructionProof->source() == alias.source &&
+                   alias.constructionProof->producer() == alias.producer &&
+                   alias.constructionProof->type() == alias.type &&
+                   alias.constructionProof->snapshot() ==
+                       frontend.semantics.analysisSeal().programSnapshot,
+               "a skipped primary arm retains its concrete construction proof");
+      }
+  expect(concreteProof,
+         "the positive dependent arm needs concrete rather than primary proof");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "both concrete dependent arms and nominal calls remain representable");
+  for (const std::string_view name : {"factory", "adjust"}) {
+    auto forged = frontend.hir;
+    bool mutated = false;
+    for (const auto &function : forged.functionInstances()) {
+      auto &body = const_cast<lang::HirBody &>(function.body);
+      for (const auto &value : body.values) {
+        const auto *call = lang::exprAs<lang::Call>(value.source);
+        const auto *callee =
+            call == nullptr
+                ? nullptr
+                : lang::exprAs<lang::Variable>(call->callee().get());
+        if (callee == nullptr || callee->name().lexeme != name ||
+            call->arguments().size() != 1)
+          continue;
+        if (name == "factory") {
+          expect(frontend.semantics.findCall(*call) == nullptr &&
+                     frontend.semantics.findOperator(*call) != nullptr,
+                 "nominal invocation is not an ordinary-call record");
+        } else {
+          expect(frontend.semantics.findCall(*call) == nullptr &&
+                     frontend.semantics.findConstruction(*call) == nullptr &&
+                     frontend.semantics.directInitializationProof(*call) ==
+                         std::nullopt,
+                 "the deferred arm lacks a primary selection, not permission "
+                 "to elide");
+        }
+        const auto *input = body.valueForSource(*call->arguments().front());
+        expect(input != nullptr && input->info.type == value.info.type &&
+                   input->info.category == lang::ValueCategory::Value,
+               "the forgery keeps an exact fresh result child");
+        if (input == nullptr)
+          continue;
+        const auto erased = value.id;
+        const auto replacement = input->id;
+        const auto source = value.source;
+        const auto type = value.info.type;
+        expect(
+            proof && proof->source() != source && proof->type() == type &&
+                proof->snapshot() ==
+                    frontend.semantics.analysisSeal().programSnapshot,
+            "same-type, same-snapshot proof still cannot name an invocation");
+        body.directInitializations.push_back(
+            {.source = source,
+             .producer = call->arguments().front().get(),
+             .value = replacement,
+             .type = type,
+             .constructionProof = proof});
+        eraseOperation(forged, body, erased, replacement);
+        auto &ids = const_cast<std::vector<lang::HirValueId> &>(
+            forged.valueIdsForSource(*source));
+        ids.assign(1, replacement);
+        expect(body.findValue(erased) == nullptr &&
+                   std::none_of(body.values.begin(), body.values.end(),
+                                [&](const auto &remaining) {
+                                  return remaining.source == source;
+                                }),
+               "the forgery removes the operation instead of leaving an "
+               "executable source");
+        mutated = true;
+        break;
+      }
+      if (mutated)
+        break;
+    }
+    const auto verified =
+        lang::verifyHirProgramPlans(frontend.semantics, forged);
+    expect(mutated &&
+               std::any_of(verified.errors.begin(), verified.errors.end(),
+                           [](const auto &error) {
+                             return error.find("class result alias") !=
+                                    std::string::npos;
+                           }),
+           "true nominal/dependent factory erasure requires actual concrete "
+           "construction provenance");
   }
 }
 
@@ -447,6 +645,7 @@ int main() {
 int main() {
   checkFreshResults();
   checkImmovableAndBorrowedResults();
+  checkConcreteInvocationErasure();
   checkConcreteAndConstantResults();
   checkBorrowedResultComposition();
   return failures == 0 ? 0 : 1;

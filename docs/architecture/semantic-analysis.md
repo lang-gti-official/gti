@@ -41,6 +41,13 @@ It selects no extra constructor or lifetime and does not require a move
 constructor. Compiler-private placement/storage calls are not one-source class
 construction expressions and retain their selected lifecycle protocol.
 
+`SemanticModel::directInitializationProof` issues an immutable, source-bound
+construction proof only for that selected exact fresh-result rule. It binds the
+immediate producer, concrete type and program snapshot; consumers cannot create
+a proof for an ordinary invocation by presenting a matching class ID. HIR keeps
+the concrete proof when symbolic primary analysis skipped a dependent branch,
+without retaining or copying the entire concrete semantic model.
+
 For a named source or explicit transfer, construction still selects that
 owner's copy or move lifecycle according to the analyzed value category.
 A generic by-value converting constructor instantiated with that
