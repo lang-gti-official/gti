@@ -22,6 +22,12 @@ JSON-RPC/LSP
   -> LanguageQueries / SemanticDatabase
 ```
 
+Missing-definition diagnostics from concrete generic instances retain the
+frontend's outer requesting call as primary, including calls through an included
+library or a constructor. Related locations still identify the selected internal
+call and its bodyless declaration. The LSP performs only source URI and UTF-16
+range conversion; it does not infer caller attribution from public type names.
+
 ## Semantic Source Of Truth
 
 Source modules use the same manifest module maps, source graph, export

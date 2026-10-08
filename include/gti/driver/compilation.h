@@ -108,6 +108,8 @@ public:
   [[nodiscard]] const PackageWarningPolicy &packageWarnings() const;
   [[nodiscard]] bool requiresEntryPoint() const;
   [[nodiscard]] CompilationRequest forExecutable() const;
+  [[nodiscard]] bool requiresFunctionDefinitions() const;
+  [[nodiscard]] CompilationRequest withDefinitionClosure() const;
 
 private:
   std::filesystem::path entryPath;
@@ -122,6 +124,7 @@ private:
   WarningPolicy warningPolicy;
   PackageWarningPolicy packageWarningPolicy;
   bool entryPointRequired = false;
+  bool functionDefinitionsRequired = false;
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
 };

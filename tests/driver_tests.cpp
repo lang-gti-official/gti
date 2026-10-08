@@ -385,6 +385,53 @@ int main() {
          "entering a backend");
 }
 
+void testDefinitionClosureWithoutEntryPoint() {
+  TemporaryDirectory temporary;
+  const auto source = temporary.root() / "fragment.gti";
+  expect(writeFile(temporary.root() / "prelude.gti", ""),
+         "definition closure prelude is writable");
+  const std::string missing =
+      "int missing(int value);\nint use() { return missing(4); }\n";
+  expect(writeFile(source, missing), "definition closure source is writable");
+  const lang::driver::CompilationRequest fragment(
+      source, lang::standardLibraryLayout(temporary.root()),
+      lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+      lang::CppStandard::Cpp23);
+  const auto closed = fragment.withDefinitionClosure();
+  expect(!fragment.requiresFunctionDefinitions() &&
+             closed.requiresFunctionDefinitions() &&
+             !closed.requiresEntryPoint(),
+         "definition closure is immutable and independent of hosted entry");
+  expect(lang::driver::checkCompilation(fragment).succeeded(),
+         "open fragment analysis may resolve a bodyless signature");
+  expect(lang::driver::compileToMir(fragment).succeeded(),
+         "MIR inspection does not claim an executable definition closure");
+  const auto checked = lang::driver::checkCompilation(closed);
+  expect(!checked.succeeded(), "explicit closure rejects a missing definition");
+  for (bool loaded : {false, true}) {
+    const auto result =
+        loaded ? lang::driver::compileToCpp(
+                     fragment, lang::driver::loadCompilationInputs(fragment))
+               : lang::driver::compileToCpp(fragment);
+    expect(result.status == lang::driver::CompilationStatus::FrontendFailure &&
+               !result.artifact && result.diagnostics.size() == 1 &&
+               result.diagnostics.front().code == "GTI-S2106" &&
+               result.diagnostics.front().primary.start ==
+                   missing.find("missing(4)"),
+           "both C++ entry paths reject the selected call before backend work");
+  }
+  expect(writeFile(source,
+                   "int unused(int value);\nint answer() { return 42; }\n"),
+         "unused declaration control is writable");
+  expect(lang::driver::compileToCpp(fragment).succeeded(),
+         "C++ emission permits unused declarations and needs no main");
+  expect(writeFile(source, "extern \"C\" { int abs(int value); }\n"
+                           "int answer() { return abs(-7); }\n"),
+         "foreign definition control is writable");
+  expect(lang::driver::compileToCpp(fragment).succeeded(),
+         "native linkage retains its independent definition contract");
+}
+
 void testPackageWarningPolicy() {
   TemporaryDirectory temporary;
   const std::filesystem::path app = temporary.root() / "app";
@@ -3155,6 +3202,7 @@ int main(int argc, char *argv[]) {
 
   testAnalysisConfigurationResolution();
   testCompilationRequestAndTargetPropagation();
+  testDefinitionClosureWithoutEntryPoint();
   testPackageWarningPolicy();
   testBackendExceptionBoundary();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
