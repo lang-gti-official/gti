@@ -450,6 +450,14 @@
       "suite": "ownership"
     },
     {
+      "name": "testPassiveCleanupRangeTemporary",
+      "suite": "ownership"
+    },
+    {
+      "name": "testSharedPayloadSiblingReborrows",
+      "suite": "ownership"
+    },
+    {
       "name": "testExpectedPayloadRangeLoans",
       "suite": "ownership"
     },
@@ -635,6 +643,10 @@
     },
     {
       "name": "testConversionDiagnosticGuidance",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testOverloadFailureGuidance",
       "suite": "diagnostics"
     },
     {

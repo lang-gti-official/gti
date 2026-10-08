@@ -124,6 +124,32 @@ namespace example {
          "matching name");
 }
 
+void missingOverloadDeclarations() {
+  Fixture f;
+  f.write("extra.gti",
+          "namespace example { int choose(int a, int b) { return a + b; } }");
+  f.write("wrong.gti",
+          "namespace other { int choose(int a, int b) { return a + b; } }");
+  const std::string source =
+      "namespace example { int choose(int a) { return a; } "
+      "int choose(bool a) { return 0; } }\n"
+      "int main() { return example::choose(1, 2); }\n";
+  const auto result = f.analyze(source);
+  const auto edits = fixes(result);
+  expect(edits.size() == 1 &&
+             edits.front().replacement == "#include \"extra.gti\"\n" &&
+             edits.front().preferred,
+         "arity failures discover exact missing user-defined overloads, not "
+         "same-spelled unrelated declarations");
+  if (!edits.empty())
+    expect(f.analyze(edits.front().replacement + source).hirValid,
+           "the proposed overload include must restore frontend validity");
+  f.overlays[(f.root / "extra.gti").string()] =
+      "namespace example { int choose(int a, int b) { return missing; } }";
+  expect(fixes(f.analyze(source)).empty(),
+         "a missing overload with a broken body cannot receive a safe fix");
+}
+
 void snapshotsAndAlternatives() {
   Fixture f;
   f.write("first.gti", "int answer() { return 1; }");
@@ -265,6 +291,7 @@ void declaredDependencies() {
 
 int main() {
   projectDeclarations();
+  missingOverloadDeclarations();
   snapshotsAndAlternatives();
   conceptsAndGenericDeclarations();
   requestingModuleHeader();

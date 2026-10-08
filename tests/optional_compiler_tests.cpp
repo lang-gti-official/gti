@@ -554,8 +554,7 @@ int main() {
     const auto start = constructorSource.find(condition);
     const auto request = condition == "N > 2"
                              ? constructorSource.find("first =")
-                             : constructorSource.find("Broken<0>()") +
-                                   std::string_view("Broken<0>(").size();
+                             : constructorSource.find("Broken<0>()");
     expect(std::count_if(
                constructorDiagnostics.diagnostics.begin(),
                constructorDiagnostics.diagnostics.end(),
@@ -567,6 +566,8 @@ int main() {
                         diagnostic.related.front().message ==
                             "Concrete substitution: 'N' = '0'." &&
                         diagnostic.related.back().span.start == request &&
+                        diagnostic.related.back().span.end ==
+                            request + (condition == "N > 2" ? 5 : 6) &&
                         diagnostic.related.back().message ==
                             "Concrete generic instance requested here.";
                }) == 1,
@@ -595,7 +596,7 @@ int main() {
       const auto request =
           condition == "N > 2"
               ? multipleInstances.find(value == 0 ? "first =" : "second =")
-              : multipleInstances.find(construction) + construction.size() - 1;
+              : multipleInstances.find(construction);
       const auto matching = std::count_if(
           distinctInstances.diagnostics.begin(),
           distinctInstances.diagnostics.end(),
@@ -611,6 +612,9 @@ int main() {
                    diagnostic.related.back().span.source ==
                        entry->path.string() &&
                    diagnostic.related.back().span.start == request &&
+                   diagnostic.related.back().span.end ==
+                       request +
+                           (condition == "N > 2" ? (value == 0 ? 5 : 6) : 6) &&
                    diagnostic.related.back().message ==
                        "Concrete generic instance requested here.";
           });

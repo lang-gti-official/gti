@@ -5,6 +5,7 @@
 #include "gti/optimizer.h"
 
 #include "cpp_backend_test_support.h"
+#include "native_symbol_spelling.h"
 
 #include <algorithm>
 #include <array>
@@ -218,9 +219,10 @@ void testSemanticLayoutAndAbi() {
               std::string::npos &&
           artifact.contents.find("__builtin_offsetof(Packet, point) == 20") !=
               std::string::npos &&
-          artifact.contents.find("::__gti_program::Packet "
-                                 "packet_roundtrip(::__gti_program::Packet") !=
-              std::string::npos &&
+          artifact.contents.find(
+              "::__gti_program::Packet " +
+              gti_test::nativeSpelling(artifact.contents, "packet_roundtrip") +
+              "(::__gti_program::Packet") != std::string::npos &&
           artifact.contents.find("static_cast<std::uint64_t>(32)") !=
               std::string::npos,
       "the C++ backend should emit a passive record, C signatures, native "
@@ -718,7 +720,9 @@ int main() {
     expect(cpp.contents.find("struct NativeEngine;") != std::string::npos &&
                cpp.contents.find("struct NativeEngine {") ==
                    std::string::npos &&
-               cpp.contents.find("::NativeEngine* engine_create") !=
+               cpp.contents.find(
+                   "::NativeEngine* " +
+                   gti_test::nativeSpelling(cpp.contents, "engine_create")) !=
                    std::string::npos,
            "the C++ backend should preserve the opaque handle as an "
            "incomplete type used only by pointer");

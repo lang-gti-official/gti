@@ -1,0 +1,52 @@
+class Fixed {
+public:
+  int value;
+  Fixed(int value) : value(value) {}
+  Fixed(Fixed&) = delete;
+  Fixed(Fixed&&) = delete;
+  Fixed add(int delta) { return Fixed(this.value + delta); }
+  Fixed operator+(int delta) { return Fixed(this.value + delta); }
+};
+
+class Factory {
+public:
+  Factory() {}
+  Fixed operator()() { return Fixed(5); }
+};
+
+class Point {
+public:
+  int value;
+  Point(int value) : value(value) {}
+};
+
+Point make() { return Point(4); }
+Point adjust(Point source) { return Point(source.value + 1); }
+
+class Increment {
+public:
+  Increment() {}
+  Point operator()(Point source) { return Point(source.value + 1); }
+};
+
+Point choose<uint64_t N>() {
+  if constexpr (N == 1) { return adjust(make()); }
+  else { return Point(make()); }
+}
+
+int main() {
+  Fixed source{7};
+  Fixed from_member = Fixed((source.add(2)));
+  Fixed from_operator{Fixed(source + 3)};
+  Factory factory{};
+  Fixed from_callable = Fixed((factory()));
+  auto lambda = []() -> Fixed { return Fixed(4); };
+  Fixed from_lambda = Fixed(lambda());
+  Increment increment{};
+  Point called = increment(make());
+  Point selected = choose<1>();
+  Point direct = choose<2>();
+  return from_member.value + from_operator.value + from_callable.value +
+      from_lambda.value == 28 && called.value == 5 && selected.value == 5 &&
+      direct.value == 4 ? 0 : 1;
+}

@@ -2,6 +2,7 @@
 
 #include "cpp_failure_support_writer.h"
 #include "cpp_mir_body_emitter.h"
+#include "cpp_mir_body_text_writer.h"
 #include "cpp_mir_program_plan.h"
 #include "cpp_mir_representation_snapshot.h"
 #include "cpp_representation.h"
@@ -1156,10 +1157,7 @@ public:
   void emitLoweredCAbiSignature(const LoweredDeclaration &row,
                                 const LoweredFunctionDeclaration &function) {
     emitLoweredCAbiType(function.returnType);
-    output << ' '
-           << (function.externalSymbol.empty() ? row.name
-                                               : function.externalSymbol)
-           << '(';
+    output << ' ' << cppFunctionSpelling(function, row.name) << '(';
     for (std::size_t index = 0; index < function.parameters.size(); ++index) {
       if (index != 0) {
         output << ", ";
@@ -1853,7 +1851,25 @@ public:
       }
       writeIndent();
       emitLoweredCAbiSignature(*declaration, *function);
-      output << ";\n";
+      const std::string symbol = function->externalSymbol.empty()
+                                     ? declaration->name
+                                     : function->externalSymbol;
+      const std::string name =
+          cppFunctionSpelling(*function, declaration->name);
+      // Source semantics admits only portable ASCII C identifiers here, so no
+      // source-provided quote, escape or directive can enter the link label.
+      // The selected target fixes the object format: Mach-O symbols carry a
+      // leading underscore, ELF symbols do not, and COFF transports the C-name
+      // alias in a linker directive. Host preprocessor checks would leave an
+      // unresolved target branch in the lowered program.
+      const std::string &os = loweredProgram.target().os;
+      if (os == "windows") {
+        output << ";\n#pragma comment(linker, \"/alternatename:" << name << '='
+               << symbol << "\")\n";
+      } else {
+        output << " __asm__(\"" << (os == "macos" ? "_" : "") << symbol
+               << "\");\n";
+      }
       emitLoweredBoundaryMarkers(*declaration, *function);
     }
     --indentation;
@@ -2978,6 +2994,7 @@ public:
           generalMirBodyPlan(
               {.kind = MirBodyKind::Constructor, .owner = instance->id})
               .supportsFailureText();
+      emitBaseGateDeclaration(*instance, classRow.name);
       if (!instance->mayRaiseDefinedFailure ||
           (!concreteFailure && !genericOwnerPrimary)) {
         continue;
@@ -3001,6 +3018,7 @@ public:
       output << ", ";
       output << "bool *__gti_mir_constructor_success, "
                 "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
+      emitBasePreparationDeclaration(*instance, classRow.name);
       if (loweredContainedConstructorRepresentation(instance->id) != nullptr) {
         if (genericOwnerPrimary)
           emitLoweredTemplateDeclaration(constructor.genericParameters);
@@ -3032,6 +3050,7 @@ public:
       output << "explicit " << classRow.name << '(';
       emitLoweredMirParameters(instance->parameterTypes);
       output << ");\n";
+      emitBaseGateDeclaration(*instance, classRow.name);
       const MirBodyAddress address{.kind = MirBodyKind::Constructor,
                                    .owner = instance->id};
       if (instance->mayRaiseDefinedFailure &&
@@ -3045,6 +3064,7 @@ public:
         emitLoweredMirParameters(instance->parameterTypes);
         output << ", bool *__gti_mir_constructor_success, "
                   "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
+        emitBasePreparationDeclaration(*instance, classRow.name);
         if (loweredContainedConstructorRepresentation(instance->id) !=
             nullptr) {
           writeIndent();
@@ -4072,16 +4092,16 @@ public:
         output << "using " << member->name << " = ";
         SemanticType aliasType = alias->type;
         if (concreteInstance != nullptr) {
-          const LoweredClassDeclaration *primary =
-              loweredProgram.findClassDeclaration(
-                  concreteInstance->type.classId);
-          if (primary == nullptr) {
+          const auto concrete = std::find_if(
+              concreteInstance->typeAliases.begin(),
+              concreteInstance->typeAliases.end(), [&](const auto &fact) {
+                return fact.declaration == member->semanticIdentity;
+              });
+          if (concrete == concreteInstance->typeAliases.end()) {
             throw std::logic_error(
-                "concrete class type alias lost its primary declaration");
+                "concrete class type alias lost its verified exact type");
           }
-          aliasType = substituteLoweredConstantType(
-              aliasType, loweredConstantClassSubstitution(
-                             *primary, concreteInstance->type));
+          aliasType = concrete->type;
         }
         emitSemanticType(aliasType);
         output << ";\n";
@@ -6289,6 +6309,81 @@ public:
               "::gti_failure_record_v2 *__gti_mir_failure_record";
   }
 
+  void emitBasePreparationDeclaration(const MirConstructorInstance &instance,
+                                      std::string_view className) {
+    const auto &plan =
+        generalMirBodyPlan({MirBodyKind::Constructor, instance.id});
+    if (!plan.supportsBasePreparationText())
+      return;
+    const auto preparation = cppMirBasePreparation(mir, instance);
+    if (!preparation)
+      throw std::logic_error(
+          "prepared constructor lost its admitted MIR partition");
+    // Called only after the original signature has been closed by its caller.
+    const auto *stage = [&]() -> const MirInstruction * {
+      for (const auto &block : instance.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.id == preparation->stage)
+            return &instruction;
+      return nullptr;
+    }();
+    writeIndent();
+    output << "struct __gti_base_preparation_" << instance.id << " {\n";
+    ++indentation;
+    writeIndent();
+    output << "bool ready = false;\n";
+    for (std::size_t index = 0; index < stage->parameterTypes.size(); ++index) {
+      writeIndent();
+      emitSemanticType(stage->parameterTypes[index]);
+      output << " argument_" << index << "{};\n";
+    }
+    for (std::size_t index = 0; index < instance.parameterTypes.size();
+         ++index) {
+      writeIndent();
+      emitSemanticType(instance.parameterTypes[index]);
+      output << " parameter_" << index << "{};\n";
+    }
+    for (const auto id : preparation->carriedValues) {
+      writeIndent();
+      emitSemanticType(instance.body.findValue(id)->info.type);
+      output << " value_" << id << "{};\n";
+    }
+    for (const auto id : preparation->places) {
+      const auto *place = instance.body.findPlace(id);
+      if (place->root == MirPlaceRootKind::Symbol)
+        continue;
+      writeIndent();
+      emitSemanticType(place->type);
+      output << " place_" << id << "{};\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "};\n";
+    writeIndent();
+    output << "static __gti_base_preparation_" << instance.id
+           << " __gti_prepare_base_" << instance.id << '(';
+    const auto count = emitLoweredMirParameters(instance.parameterTypes);
+    if (count)
+      output << ", ";
+    output << "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
+    writeIndent();
+    output << className << "(__gti_base_preparation_" << instance.id
+           << " __gti_prepared, bool *__gti_mir_constructor_success, "
+              "::gti_failure_record_v2 *__gti_mir_failure_record);\n";
+  }
+
+  void emitBaseGateDeclaration(const MirConstructorInstance &instance,
+                               std::string_view className) {
+    const auto &plan =
+        generalMirBodyPlan({MirBodyKind::Constructor, instance.id});
+    if (!plan.supportsBaseGateText())
+      return;
+    writeIndent();
+    output << className << '(';
+    emitLoweredConstructorParameters(instance, true);
+    output << ", bool __gti_base_enabled);\n";
+  }
+
   void emitLoweredGenericOwnerConstructorParameters(
       const LoweredConstructorDeclaration &constructor,
       const MirConstructorInstance &instance, bool failure) {
@@ -6384,6 +6479,7 @@ public:
       std::vector<bool> cleanup;
       std::string text;
       std::string initializers;
+      std::vector<std::string> banners;
     };
     std::vector<GenericNormalBody> genericNormalBodies;
     for (const MirConstructorInstance *instance : instances) {
@@ -6457,6 +6553,20 @@ public:
                                               prepared->second->plan);
         }
         if (genericNormal) {
+          const std::string marker =
+              "// GTI verified-MIR body: scalar-cfg-v1 constructor-instance " +
+              std::to_string(instance->id) + "\n";
+          const std::size_t markerAt = genericNormal->find(marker);
+          if (markerAt == std::string::npos) {
+            throw std::logic_error(
+                "generic-owner constructor lost its exact instance marker");
+          }
+          std::size_t lineStart = markerAt;
+          while (lineStart > 0 && (*genericNormal)[lineStart - 1] != '\n') {
+            --lineStart;
+          }
+          const std::string banner = genericNormal->substr(
+              lineStart, markerAt - lineStart + marker.size());
           const std::string normalized =
               loweredConstructorRepresentationText(*genericNormal);
           std::vector<bool> cleanup;
@@ -6487,9 +6597,13 @@ public:
                                    "incompatible MIR representations");
           }
           if (previous == genericNormalBodies.end()) {
-            genericNormalBodies.push_back({instance, std::move(cleanup),
+            genericNormalBodies.push_back({instance,
+                                           std::move(cleanup),
                                            normalized,
-                                           std::move(initializers)});
+                                           std::move(initializers),
+                                           {banner}});
+          } else {
+            previous->banners.push_back(banner);
           }
         }
         continue;
@@ -6517,8 +6631,53 @@ public:
         emitLoweredConstructorParameters(*instance, failureForm);
         output << ')';
       };
+      const auto preparation = cppMirBasePreparation(mir, *instance);
+      if (generalMirBodyPlan(address).supportsBaseGateText()) {
+        writeIndent();
+        output << ownerSpelling << "::" << constructorName << '(';
+        emitLoweredConstructorParameters(*instance, true);
+        output << ", bool __gti_base_enabled)";
+        emitGeneralMirConstructorInitializerList(*instance, true);
+        output << ' '
+               << CppMirBodyTextWriter::write(
+                      generalMirBodyPlan(address), CppMirBodyTextForm::BaseGate,
+                      "scalar-cfg-base-gate-v1", indentation)
+                      .text;
+      }
       if (failure) {
         emitSignature(true);
+        if (preparation) {
+          output << " : " << constructorName << "(__gti_prepare_base_"
+                 << instance->id << '(';
+          for (std::size_t index = 0; index < instance->parameterTypes.size();
+               ++index) {
+            if (index)
+              output << ", ";
+            output << "__gti_mir_arg_" << index;
+          }
+          if (!instance->parameterTypes.empty())
+            output << ", ";
+          output << "__gti_mir_failure_record), __gti_mir_constructor_success, "
+                    "__gti_mir_failure_record) {}\n";
+          writeIndent();
+          output << ownerSpelling << "::__gti_base_preparation_" << instance->id
+                 << ' ' << ownerSpelling << "::__gti_prepare_base_"
+                 << instance->id << '(';
+          const auto count = emitLoweredMirParameters(instance->parameterTypes);
+          if (count)
+            output << ", ";
+          output << "::gti_failure_record_v2 *__gti_mir_failure_record) "
+                 << CppMirBodyTextWriter::write(
+                        generalMirBodyPlan(address),
+                        CppMirBodyTextForm::BasePreparation,
+                        "scalar-cfg-base-preparation-v1", indentation)
+                        .text;
+          writeIndent();
+          output << ownerSpelling << "::" << constructorName
+                 << "(__gti_base_preparation_" << instance->id
+                 << " __gti_prepared, bool *__gti_mir_constructor_success, "
+                    "::gti_failure_record_v2 *__gti_mir_failure_record)";
+        }
         emitGeneralMirConstructorInitializerList(*instance, true);
         output << ' ';
         emitGeneralFailureConstructorBodyText(*instance);
@@ -6547,6 +6706,19 @@ public:
       }
     }
     if (!genericNormalBodies.empty()) {
+      const auto assemble = [](const GenericNormalBody &body) {
+        const std::size_t brace = body.text.find("{\n");
+        if (brace == std::string::npos) {
+          throw std::logic_error(
+              "generic-owner constructor body has no opening brace");
+        }
+        std::string text = body.text.substr(0, brace + 2);
+        for (const std::string &banner : body.banners) {
+          text += banner;
+        }
+        text += body.text.substr(brace + 2);
+        return text;
+      };
       const GenericNormalBody &first = genericNormalBodies.front();
       emitLoweredClassTemplateHeaders(owner);
       emitLoweredTemplateDeclaration(constructor.genericParameters);
@@ -6556,7 +6728,7 @@ public:
                                                    false);
       output << ')' << first.initializers << ' ';
       if (genericNormalBodies.size() == 1) {
-        output << first.text;
+        output << assemble(first);
       } else {
         std::vector<std::size_t> varying;
         for (std::size_t index = 0; index < first.cleanup.size(); ++index) {
@@ -6603,7 +6775,7 @@ public:
           output << ") {\n";
           ++indentation;
           writeIndent();
-          output << "[&]() -> void " << body.text << "();\n";
+          output << "[&]() -> void " << assemble(body) << "();\n";
           --indentation;
           writeIndent();
           output << "}\n";
@@ -7774,6 +7946,8 @@ public:
   void emitGeneralMirConstructorInitializerList(
       const MirConstructorInstance &constructor, bool failureForm = false) {
     const MirClassInstance *owner = mir.findClassInstance(constructor.owner);
+    const bool preparedBase =
+        failureForm && cppMirBasePreparation(mir, constructor).has_value();
     const std::optional<std::vector<CppMirStoredReferenceBinding>> bindings =
         cppMirStoredReferenceBindings(constructor);
     const std::optional<std::vector<CppMirBaseParameterInitializerBinding>>
@@ -7809,6 +7983,7 @@ public:
       std::vector<CppMirConstructedFieldInitializerArgument>
           constructedArguments;
       HirConstructorInstanceId statusConstructor = 0;
+      bool prepared = false;
     };
     std::vector<InitializerBinding> initializers;
     initializers.reserve(baseBindings->size() + bindings->size() +
@@ -7819,7 +7994,8 @@ public:
                               .initializer = binding.initializer,
                               .baseType = binding.baseType,
                               .baseParameters = binding.parameters,
-                              .baseArguments = binding.arguments});
+                              .baseArguments = binding.arguments,
+                              .prepared = binding.prepared});
     }
     for (const CppMirStoredReferenceBinding &binding : *bindings) {
       initializers.push_back({.initializer = binding.initializer,
@@ -7933,12 +8109,18 @@ public:
                 instruction.constructorInitializer ==
                     initializer.initializer + 1)
               baseStage = &instruction;
-        const bool status = failureForm && baseStage != nullptr &&
-                            !baseStage->definedFailure.empty();
+        const bool status =
+            failureForm && baseStage != nullptr &&
+            (!baseStage->definedFailure.empty() || initializer.prepared);
         if (status)
           output << cppMirFailureConstructorTagSpelling(
                         *baseStage->constructorTarget)
                  << "{}";
+        if (initializer.prepared) {
+          for (std::size_t index = 0; index < baseStage->parameterTypes.size();
+               ++index)
+            output << ", __gti_prepared.argument_" << index;
+        }
         for (std::size_t index = 0; index < initializer.baseArguments.size();
              ++index) {
           if (status || index != 0)
@@ -7954,6 +8136,8 @@ public:
         }
         if (status)
           output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
+        if (initializer.prepared)
+          output << ", __gti_prepared.ready";
         output << ')';
         continue;
       }
@@ -7997,7 +8181,9 @@ public:
             if (source.moved) {
               output << "std::move(";
             }
-            output << "__gti_mir_arg_" << *source.parameter;
+            output << (preparedBase ? "__gti_prepared.parameter_"
+                                    : "__gti_mir_arg_")
+                   << *source.parameter;
             if (source.moved) {
               output << ')';
             }
@@ -8027,7 +8213,8 @@ public:
       if (initializer.moved) {
         output << "std::move(";
       }
-      output << "__gti_mir_arg_" << initializer.parameter;
+      output << (preparedBase ? "__gti_prepared.parameter_" : "__gti_mir_arg_")
+             << initializer.parameter;
       if (initializer.moved) {
         output << ')';
       }
@@ -8266,7 +8453,15 @@ public:
             "hosted C-thread boundary lost its exact target");
       }
       writeIndent();
-      output << "::" << target->externalSymbol << "();\n";
+      const LoweredFunctionDeclaration *declaration =
+          loweredProgram.findFunctionDeclaration(target->declaration);
+      const LoweredDeclaration *row = loweredFunctionRow(target->declaration);
+      if (declaration == nullptr || row == nullptr) {
+        throw std::logic_error(
+            "hosted C-thread boundary lost its declaration identity");
+      }
+      emitLoweredQualifiedFunctionName(*row, *declaration);
+      output << "();\n";
     };
     const MirBodyAddress entryAddress{.kind = MirBodyKind::Function,
                                       .owner = entry->id};

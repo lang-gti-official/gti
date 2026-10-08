@@ -21,6 +21,12 @@ public:
 
 struct Coordinate { mut int32_t x = 0; };
 union NativeWord { mut int32_t integer; mut float real; };
+struct Samples { mut int values[2] = {5, 8}; };
+class Coordinates {
+  Coordinate values[2] = {};
+public:
+  int first_x() { return this.values[0].x; }
+};
 
 int main() {
   mut int values[4] = {1, 2, 3, 4};
@@ -32,6 +38,16 @@ int main() {
   int8_t bytes[2] = {-128, -2};
   Coordinate origin{.x = 9};
   Coordinate coordinates[2] = {origin, origin};
+  mut Samples samples{};
+  Samples* pointer = &samples;
+  // Raw record access remains unsafe; its fixed arrays remain checked.
+  unsafe {
+    int* last = &pointer->values[1];
+    *last = 10;
+    if ((*pointer).values[1] != 10) { return 1; }
+  }
+  Coordinates defaults{};
+  if (defaults.first_x() != 0) { return 1; }
   NativeWord words[2] = {};
   // Unions are passive, but choosing and interpreting a member remains unsafe.
   unsafe {

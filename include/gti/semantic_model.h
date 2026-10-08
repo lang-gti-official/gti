@@ -195,6 +195,9 @@ struct CallableSignatureRequirement {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
+  // Only a direct argument of another open callable may defer its result.
+  // Concrete semantic reanalysis must resolve a non-borrowing value before HIR.
+  bool inferResultFromInstantiation = false;
 };
 
 struct CallableForwardingRequirement {
@@ -765,6 +768,9 @@ struct ClassTypeInfo {
   std::vector<SemanticType> genericArgumentPatterns;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
+  // Active source declaration order; instance analysis resolves each alias in
+  // the exact owner scope before HIR publishes a concrete class catalog.
+  std::vector<const TypeAliasDecl *> typeAliases;
   std::optional<StoredReferenceInfo> storedReference;
   bool lifecycleBoundBorrowCarrier = false;
   // Separate trusted lock authority from general dependency retention.
@@ -865,6 +871,7 @@ struct ResolvedPayloadPatternInfo {
 };
 
 struct TypeAliasInfo {
+  TypeAliasId id = 0;
   SourceUnitId sourceUnit = 0;
   const TypeAliasDecl *declaration = nullptr;
   std::string qualifiedName;
@@ -955,6 +962,9 @@ struct ResolvedConstructionInfo {
   std::vector<BorrowedFieldOrigin> borrowFields;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
+  // Exact same-type fresh-result initialization names the existing result
+  // object. It selects no copy/move constructor and creates no second lifetime.
+  bool directInitialization = false;
 };
 
 enum class ConstructorInitializerTargetKind {
@@ -1130,6 +1140,7 @@ struct DeferredCallableCallInfo {
   // A stored receiver is checked again against its concrete field type.
   // It is not a confined parameter or an ownership-transfer boundary.
   SymbolId receiverField = 0;
+  bool inferResultFromInstantiation = false;
 };
 
 struct ResolvedOperatorInfo {
@@ -1351,6 +1362,9 @@ class SemanticDatabase {
 public:
   [[nodiscard]] const std::vector<SymbolRecord> &symbols() const;
 
+  // Identity ceiling, including the reserved prefix of an instance delta.
+  [[nodiscard]] SymbolId symbolIdentityCeiling() const;
+
   [[nodiscard]] const SymbolRecord *findSymbol(SymbolId id) const;
 
   [[nodiscard]] std::vector<const SemanticOccurrence *>
@@ -1398,7 +1412,8 @@ private:
   // Turns this database into an instance-analysis delta over baseDatabase:
   // lookups fall back to the base, and new symbol identities continue after
   // the base's so instance records never collide with base SymbolIds.
-  void beginInstanceDelta(const SemanticDatabase &baseDatabase);
+  void beginInstanceDelta(const SemanticDatabase &baseDatabase,
+                          SymbolId reservedIdentityCeiling);
 
   void rebase(const SemanticDatabase *baseDatabase);
 
@@ -1520,6 +1535,38 @@ struct SemanticAnalysisSeal {
 makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
                          const SourceGraph *sourceGraph = nullptr);
 
+// Immutable selected-construction provenance. HIR may carry or copy a proof,
+// but cannot manufacture one for a different source expression. Concrete
+// instance models issue the same proof even when the primary skipped an arm.
+class SemanticDirectInitializationProof {
+public:
+  SemanticDirectInitializationProof(const SemanticDirectInitializationProof &) =
+      default;
+  SemanticDirectInitializationProof(SemanticDirectInitializationProof &&) =
+      default;
+  SemanticDirectInitializationProof &
+  operator=(const SemanticDirectInitializationProof &) = default;
+  SemanticDirectInitializationProof &
+  operator=(SemanticDirectInitializationProof &&) = default;
+
+  [[nodiscard]] const Expr *source() const { return source_; }
+  [[nodiscard]] const Expr *producer() const { return producer_; }
+  [[nodiscard]] const SemanticType &type() const { return type_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticDirectInitializationProof(const Expr &source, const Expr &producer,
+                                    SemanticType type, std::uint64_t snapshot)
+      : source_(&source), producer_(&producer), type_(std::move(type)),
+        snapshot_(snapshot) {}
+
+  const Expr *source_;
+  const Expr *producer_;
+  SemanticType type_;
+  std::uint64_t snapshot_;
+};
+
 struct SemanticFullExpression {
   std::size_t order = 0;
   const Stmt *statement = nullptr;
@@ -1543,6 +1590,13 @@ public:
   // Own semantic-generated constructor syntax for the lifetime of every
   // downstream reference; cached parsed source trees remain immutable.
   std::vector<std::shared_ptr<const ConstructorDecl>> designatedConstructors;
+  // Source-free empty construction anchors are owned across immutable copies
+  // and instance deltas, just like semantic-generated constructor syntax.
+  [[nodiscard]] const ExprPtr &
+  implicitFieldInitializer(const VariableDecl &field) const;
+  [[nodiscard]] const ExprPtr &
+  resolvedFieldInitializer(const VariableDecl &field) const;
+  void retainImplicitFieldInitializer(const VariableDecl &field);
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
 
   [[nodiscard]] ExecutionProfile executionProfile() const;
@@ -1760,6 +1814,16 @@ public:
   [[nodiscard]] const ResolvedConstructionInfo *
   findConstruction(const Expr &expression) const;
 
+  // A fresh class result is a newly produced object, not a value-category
+  // transfer from an existing place (notably the Move intrinsic).
+  [[nodiscard]] bool isFreshClassResult(const Expr &expression) const;
+  // Class-value grouping or a selected fresh-result construction wrapper.
+  [[nodiscard]] const Expr *
+  directInitializationSource(const Expr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticDirectInitializationProof>
+  directInitializationProof(const Expr &expression) const;
+
   [[nodiscard]] const ResolvedConstructionInfo *
   findArrayElementConstruction(const ArrayInitializer &initializer) const;
 
@@ -1837,7 +1901,8 @@ private:
   // program's model. Loan tables deliberately do not fall back - instance
   // analysis restarts loan identities, mirroring the clearLoans() semantics
   // the previous whole-model copy relied on.
-  void beginInstanceDelta(const SemanticModel &baseModel);
+  void beginInstanceDelta(const SemanticModel &baseModel,
+                          SymbolId reservedIdentityCeiling = 0);
 
   // Re-points an instance delta at a relocated base (the analyzer restores
   // its model after each instance analysis; the delta must follow it).
@@ -2147,6 +2212,8 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
+  std::unordered_map<const VariableDecl *, std::shared_ptr<const ExprPtr>>
+      implicitFieldInitializers;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
       collections;
@@ -2186,5 +2253,13 @@ struct SemanticInstanceAnalysis {
 
   [[nodiscard]] bool valid() const { return !hasErrorDiagnostics(diagnostics); }
 };
+
+// Shared semantic substitution kernel. Consumers preserve declaration-bound
+// parameter identities; an optional semantic catalog resolves exact nominal
+// specializations after substitution, including nested type arguments.
+[[nodiscard]] SemanticType
+substituteSemanticType(const SemanticType &type,
+                       const GenericSubstitution &substitution,
+                       const SemanticModel *model = nullptr);
 
 } // namespace lang

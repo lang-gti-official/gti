@@ -11,6 +11,11 @@ namespace lang::mir_detail {
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);
 
+// The generated same-type copy/move family has no source constructor target.
+// Allocation and staged input ownership still have distinct MIR identities.
+[[nodiscard]] bool
+generatedUniqueConstruction(const MirInstruction &instruction);
+
 // Runtime representation queries have no runtime input and cannot acquire
 // ownership or borrow authority merely by naming a type.
 [[nodiscard]] bool objectLayoutQuery(const MirProgram &program,
@@ -32,6 +37,36 @@ namespace lang::mir_detail {
 // access authority come from the explicit witness in operand one.
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
+
+// A distinct loan-rooted address retains either descendant provenance or a
+// parallel read-only loan over the identical source/dependencies. Check typed
+// call publication too; this proves identity and access, never liveness or
+// permission to use a suspended loan.
+[[nodiscard]] bool referenceAddressRetainsLoan(const MirBody &body,
+                                               const MirPlace &address,
+                                               const MirLoan &retained);
+
+// A stable, checked field projection through an entry reference parameter is
+// still caller-owned. This establishes owner containment, not the referent
+// address or permission to escape; call publication and loan flow prove those.
+[[nodiscard]] bool referenceParameterContainsPlace(const MirBody &body,
+                                                   const MirLoan &parameter,
+                                                   MirPlaceId place);
+
+// Checked expected-reference extraction retains the external owner's identity,
+// not the carrier's storage. Ordinary loan flow separately proves availability.
+[[nodiscard]] bool
+fallibleReferenceOwnerTransport(const MirBody &body,
+                                const MirInstruction &instruction,
+                                const MirLoan &extracted);
+
+// Publish an exact runtime alias of an entry-reference dependency. A unique,
+// dominating initializer chain must establish its typed address, and the return
+// expression must identify the selected alias. Shared by verification and
+// backend admission; carrier membership alone never proves the referent.
+[[nodiscard]] bool
+referenceParameterReturnPublication(const MirBody &body, const MirBlock &block,
+                                    const MirInstruction &instruction);
 
 // Recognize the exact, single-use signed-minimum literal schedule shared by
 // native emission and constant execution. Ordinary runtime negation is not

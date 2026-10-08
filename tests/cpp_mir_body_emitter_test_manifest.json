@@ -58,6 +58,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testFreshClassPayloadOperandStaging",
+      "suite": "preflight"
+    },
+    {
       "name": "testDischargedCompoundOperatorVocabulary",
       "suite": "preflight"
     },
@@ -583,6 +587,14 @@
     },
     {
       "name": "testGeneratedDefaultOwningFieldInitializer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testPassiveStatusDefaultField",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testSelectedConstructorDefaultSchedule",
       "suite": "lifecycle"
     },
     {

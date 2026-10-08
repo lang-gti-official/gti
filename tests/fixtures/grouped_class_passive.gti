@@ -1,0 +1,22 @@
+mut int last_constructed = 0;
+
+class Reading {
+  int number;
+public:
+  Reading(int initial) : number(initial) { last_constructed = initial; }
+  Reading(Reading& other) = delete;
+  int read() { return this.number; }
+};
+
+int main() {
+  for (mut int index = 0; index < 4; ++index) {
+    // Neither a default constructor nor a copy is available. Re-entering this
+    // binding must rearm representation storage, not leave a prior object live.
+    Reading first = (Reading(index));
+    if (first.read() != index || last_constructed != index) { return 1; }
+    Reading second = (((Reading(9))));
+    if (second.read() != 9 || last_constructed != 9) { return 2; }
+    if (first.read() != index) { return 3; }
+  }
+  return 0;
+}

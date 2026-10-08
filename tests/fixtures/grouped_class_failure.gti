@@ -1,0 +1,23 @@
+#include <std/panic>
+
+class Guard {
+  int number;
+public:
+  Guard(int initial) : number(initial) {}
+  ~Guard() { std::println(this.number); }
+};
+
+class Failing {
+  Guard field;
+public:
+  Failing() : field(Guard(2)) {
+    std::panic("grouped construction failed"); // failure-site
+  }
+  ~Failing() { std::println(99); }
+};
+
+int main() {
+  Guard earlier = Guard(1);
+  Failing never_published = (((Failing())));
+  return 0;
+}
