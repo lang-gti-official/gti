@@ -10,6 +10,8 @@ namespace lang {
 enum class CppMirBodyTextForm {
   Plain,
   Failure,
+  BaseGate,
+  BasePreparation,
 };
 
 // Formatting-only consumer of an immutable body plan. It has no MIR program

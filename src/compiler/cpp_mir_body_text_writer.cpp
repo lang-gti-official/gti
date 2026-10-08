@@ -41,13 +41,19 @@ CppMirBodyEmissionText CppMirBodyTextWriter::write(
           ? plan.failureDeducedCallableTextTemplate_
           : plan.plainDeducedCallableTextTemplate_;
   const std::string &text =
-      deducedCallable && !deducedText.empty()
+      form == CppMirBodyTextForm::BaseGate ? plan.baseGateTextTemplate_
+      : form == CppMirBodyTextForm::BasePreparation
+          ? plan.basePreparationTextTemplate_
+      : deducedCallable && !deducedText.empty()
           ? deducedText
           : (form == CppMirBodyTextForm::Failure ? plan.failureTextTemplate_
                                                  : plan.plainTextTemplate_);
-  const bool supported = form == CppMirBodyTextForm::Failure
-                             ? plan.supportsFailureText()
-                             : plan.supportsPlainText();
+  const bool supported =
+      form == CppMirBodyTextForm::BaseGate ? plan.supportsBaseGateText()
+      : form == CppMirBodyTextForm::BasePreparation
+          ? plan.supportsBasePreparationText()
+      : form == CppMirBodyTextForm::Failure ? plan.supportsFailureText()
+                                            : plan.supportsPlainText();
   if (supported) {
     result.text = renderTemplate(text, familyLabel, indentation);
   }

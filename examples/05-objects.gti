@@ -31,7 +31,8 @@ public:
 class MeasuredCounter : public Counter {
 public:
   int limit;
-  MeasuredCounter(int initial, int limit) : Counter(initial), limit(limit) {}
+  // Checked argument computation finishes before the base constructor starts.
+  MeasuredCounter(int initial, int limit) : Counter(initial + 1), limit(limit) {}
   ~MeasuredCounter() {}
 };
 
@@ -40,7 +41,7 @@ int main() {
   Point offset{2, 3};
   mut Counter counter{origin.x};
   int next = counter.tick();
-  MeasuredCounter measured{2, 5};
+  MeasuredCounter measured{1, 5};
 
   if (next == counter.current() and offset.x == 2 and measured.current() == 2 and measured.limit == 5) {
     std::println("objects use explicit construction");

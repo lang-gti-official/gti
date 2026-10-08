@@ -4027,6 +4027,17 @@ ownership or entry-signature inference.
 
 ## Post-Cutover MIR Corpus Gates
 
+The base-constructor stage gate retains the existing generated-base, owning
+payload-argument and field-after-base ordering mutations. Checked/effectful
+scalar preparation additionally checks forged parameter, receiver, borrow,
+stage/CFG and selected target authority. Its focused native suite includes all
+five original A45 forms, unrelated resource-bearing inheritance, checked
+overflow before base entry, argument-order/parameter mutation, prefix/base/body
+failure and unchanged original cleanup records at C++20/C++23 O0/O1/O3 with
+no-elide, plus ASan/UBSan. These focused results do not establish the remaining
+owned/borrowed frame, generic carrier or inactive owning-base families and do
+not replace the separately deferred combined acceptance run.
+
 The old differential oracle was retired with the AST/HIR executable emitter.
 Keeping a no-MIR `CppEmitter` callable solely as a test control would recreate
 the fallback that the hard cutover removed.
