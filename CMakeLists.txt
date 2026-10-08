@@ -499,6 +499,7 @@ add_library(
   "src/driver/build_report.cpp"
   "src/driver/compilation.cpp"
   "src/driver/dependencies.cpp"
+  "src/driver/install.cpp"
   "src/driver/package_archive.cpp"
   "src/driver/registry_metadata.cpp"
   "src/driver/registry_gitea.cpp"
