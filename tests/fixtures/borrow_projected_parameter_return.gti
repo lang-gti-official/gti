@@ -1,0 +1,42 @@
+enum class errc { missing };
+
+struct Cell {
+  int32_t sentinel = 71;
+  int32_t selected = 29;
+  int32_t& operator[](std::size_t index) { return this.selected; }
+};
+
+struct Table {
+  int32_t sentinel = 83;
+  Cell cell{};
+};
+
+expected<int32_t&, errc> relay(Table& table, bool present) {
+  if (!present) { return unexpected(errc::missing); }
+  int32_t& selected = table.cell[std::size_t(0)];
+  int32_t& alias = selected;
+  return alias;
+}
+
+int32_t& plain(Table& table) {
+  int32_t& selected = table.cell[std::size_t(0)];
+  int32_t& alias = selected;
+  return alias;
+}
+
+expected<int32_t&, errc> relay_alias(Table& table) {
+  Cell& row = table.cell;
+  int32_t& selected = row[std::size_t(0)];
+  int32_t& alias = selected;
+  return alias;
+}
+
+int main() {
+  Table table{};
+  auto value = relay(table, true);
+  if (!value || value.value() != 29) { return 1; }
+  auto missing = relay(table, false);
+  if (missing || missing.error() != errc::missing) { return 2; }
+  if (plain(table) != 29) { return 3; }
+  return relay_alias(table).value() == 29 ? 0 : 4;
+}

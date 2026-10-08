@@ -938,6 +938,9 @@ add_test(NAME expected_ergonomics COMMAND gti_expected_ergonomics_tests)
 add_executable(gti_borrowed_expected_extraction_tests borrowed_expected_extraction_tests.cpp)
 target_link_libraries(gti_borrowed_expected_extraction_tests PRIVATE gti_cpp_backend)
 add_test(NAME borrowed_expected_extraction COMMAND gti_borrowed_expected_extraction_tests)
+add_executable(gti_borrow_origin_tests borrow_origin_tests.cpp)
+target_link_libraries(gti_borrow_origin_tests PRIVATE gti_cpp_backend)
+add_test(NAME borrow_origin COMMAND gti_borrow_origin_tests)
 add_executable(gti_panic_contract_tests panic_contract_tests.cpp)
 target_link_libraries(gti_panic_contract_tests PRIVATE gti_cpp_backend)
 add_test(NAME panic_contracts COMMAND gti_panic_contract_tests)
@@ -2907,6 +2910,11 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/fixtures/fallible_borrow.gti"
     )
     set_tests_properties(fallible_borrow_runtime PROPERTIES TIMEOUT 300)
+    add_test(NAME borrow_origin_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/borrow_origin_runtime_test.py"
+              "$<TARGET_FILE:gti>")
+    set_tests_properties(borrow_origin_runtime PROPERTIES TIMEOUT 600)
     add_test(
       NAME mut_reference_retained_chain_runtime
       COMMAND "${Python3_EXECUTABLE}"

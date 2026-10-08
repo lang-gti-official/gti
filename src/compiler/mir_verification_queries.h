@@ -33,6 +33,21 @@ namespace lang::mir_detail {
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
 
+// A distinct loan-rooted address retains either descendant provenance or a
+// parallel read-only loan over the identical source/dependencies. Check typed
+// call publication too; this proves identity and access, never liveness or
+// permission to use a suspended loan.
+[[nodiscard]] bool referenceAddressRetainsLoan(const MirBody &body,
+                                               const MirPlace &address,
+                                               const MirLoan &retained);
+
+// A stable, checked field projection through an entry reference parameter is
+// still caller-owned. This establishes owner containment, not the referent
+// address or permission to escape; call publication and loan flow prove those.
+[[nodiscard]] bool referenceParameterContainsPlace(const MirBody &body,
+                                                   const MirLoan &parameter,
+                                                   MirPlaceId place);
+
 // Recognize the exact, single-use signed-minimum literal schedule shared by
 // native emission and constant execution. Ordinary runtime negation is not
 // interchangeable with this failure-free literal formation.
