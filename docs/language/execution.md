@@ -207,6 +207,28 @@ temporary first. An implementation may use result slots or another elision
 strategy, but it shall neither add nor remove an observable copy, move,
 lifetime, or cleanup event from this abstract model.
 
+An exact same-type construction spelling around a fresh class result, such as
+`T(make())`, `T{make()}`, or nested `T(T(make()))`, names that result object
+directly. It does not select another constructor, begin another temporary
+lifetime, or add a destructor event. Parentheses do not change that identity.
+Fresh results are selected class constructions and calls returning a class
+value (including concrete generic, method, operator and lambda calls), not
+merely every expression classified as a value.
+
+In particular, `T(std::move(existing))` still selects a real move constructor;
+`T(existing)` still selects a real copy constructor. Deleted/private lifecycle
+operations remain enforced at those actual operations. A fresh result may
+initialize a local or return destination even when its type is not movable.
+This does not change assignment, named-local return/implicit-return movement,
+conversion between different types, or existing callable/container constraints.
+Conditional/comma materializations and immovable by-value argument transport
+retain their existing structural admission rules; this slice does not widen
+those families. Borrow-carrying results retain their original owner dependency
+set and access/escape limits, not a new owner supplied by the wrapper.
+
+[`130-fresh-result-initialization.gti`](../../examples/130-fresh-result-initialization.gti)
+demonstrates an immovable owning factory result and its final-address identity.
+
 Array elements are initialized in increasing index order. Each completed
 element becomes live immediately, while nested temporaries from the complete
 array initializer remain active until the initializer's full-expression ends.

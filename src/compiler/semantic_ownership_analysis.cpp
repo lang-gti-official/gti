@@ -2216,6 +2216,13 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   if (const auto *group = exprAs<Grouping>(expression.get())) {
     return storedBorrowDependencies(group->expression());
   }
+  if (const auto *construction = semanticModel.findConstruction(*expression);
+      construction != nullptr && construction->directInitialization) {
+    if (const auto *call = exprAs<Call>(expression.get()))
+      return storedBorrowDependencies(call->arguments().front());
+    if (const auto *direct = exprAs<DirectInitializer>(expression.get()))
+      return storedBorrowDependencies(direct->arguments().front());
+  }
   if (const ResolvedConstructionInfo *construction =
           semanticModel.findConstruction(*expression);
       construction != nullptr &&

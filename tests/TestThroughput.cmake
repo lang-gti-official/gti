@@ -33,7 +33,8 @@ if(Python3_Interpreter_FOUND)
     owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
     owning_function_resource_result_runtime owning_function_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
-    programmable_allocators_runtime raw_owner_witness_runtime raw_pointer_conversion_runtime
+    programmable_allocators_runtime prvalue_direct_initialization_runtime
+    raw_owner_witness_runtime raw_pointer_conversion_runtime
     reference_class_assignment_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime

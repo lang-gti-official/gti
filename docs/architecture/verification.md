@@ -1,5 +1,22 @@
 # Compiler Verification
 
+## Guaranteed fresh-result direct initialization
+
+`prvalue_direct_initialization` covers the original #150 class factory, nested
+typed/braced/grouped wrappers, genuine existing-object copy/move, deleted real
+movement, borrowed-owner escape rejection, exact generic instances, constexpr
+producer parity, HIR source-alias mutations, verified MIR and both C++ backend
+standards. `prvalue_direct_initialization_runtime` runs example 130 and owning
+constructor failure rollback in the shared eight-mode matrix: C++20/C++23 at
+O0/O1/O3, no-elide and generated-program ASan/UBSan. Final-address self-pointers
+and exact destructor output distinguish direct initialization from hidden
+relocation or extra temporary cleanup. The LSP gate checks current diagnostics,
+compiler-owned hover/definition, UTF-16 source positions, invalid edits and
+repaired snapshots. Syntax/formatter/Tree-sitter grammar is unchanged.
+
+These focused gates supplement the full production and installed-consumer
+acceptance; they do not claim the combined feature/release is verified alone.
+
 ## Combined lifetime/storage and payload-enum release gate
 
 PR #94 is the single integration point for the S-ALLOC-06/07 and generic
