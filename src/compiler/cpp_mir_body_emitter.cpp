@@ -20411,6 +20411,13 @@ public:
         add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
             "void status-result channel requires an exact void function");
       }
+      if (row.conditionalResultParameter &&
+          (function == nullptr || !function->owner || function->staticMember ||
+           !function->virtualMethod ||
+           function->linkage != LanguageLinkage::Gti)) {
+        add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
+            "conditional result channel requires an exact GTI virtual method");
+      }
       const auto *root =
           function == nullptr
               ? nullptr
@@ -20424,7 +20431,9 @@ public:
             });
         if (rootRow == representations.bodies().end() ||
             rootRow->voidFailureResultParameter !=
-                row.voidFailureResultParameter) {
+                row.voidFailureResultParameter ||
+            rootRow->conditionalResultParameter !=
+                row.conditionalResultParameter) {
           add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
               "virtual status-result channel disagrees with its contract root");
         }
@@ -29757,6 +29766,20 @@ private:
     return bodyRepresentation(target).spelling;
   }
 
+  bool emitUnusedVirtualResultArgument(HirFunctionInstanceId target,
+                                       bool precedingArgument) {
+    const auto *function = program.findFunctionInstance(target);
+    if (function == nullptr ||
+        !bodyRepresentation(target).conditionalResultParameter ||
+        cppRequiresIndirectValueTransport(program, function->returnType)) {
+      return false;
+    }
+    if (precedingArgument)
+      output << ", ";
+    output << "nullptr";
+    return true;
+  }
+
   void emitPolymorphicAllocationBinding(const SemanticType &type,
                                         const std::string &pointer) {
     for (const auto &pointee : program.classInstances()) {
@@ -32272,6 +32295,7 @@ private:
           emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
           output << "))." << bodySpelling(member->id) << '(';
           emitSubscriptIndex(*access);
+          (void)emitUnusedVirtualResultArgument(member->id, true);
           output << ");\n";
           return;
         }
@@ -33186,6 +33210,7 @@ private:
           emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
           output << ")." << bodySpelling(member->id) << '(';
           emitSubscriptIndex(*access);
+          (void)emitUnusedVirtualResultArgument(member->id, true);
           output << ')';
         };
         const std::string_view checkedCompound =
@@ -33492,7 +33517,9 @@ private:
           "verified MIR inline nested call lost its receiver place");
     }
     emitStoragePlaceValue(facts, *producerPlace);
-    output << '.' << bodySpelling(*producer.functionTarget) << "()";
+    output << '.' << bodySpelling(*producer.functionTarget) << '(';
+    (void)emitUnusedVirtualResultArgument(*producer.functionTarget, false);
+    output << ')';
   }
 
   void emitInstruction(const MirBlock &block, const MirInstruction &instruction,
@@ -35541,6 +35568,10 @@ private:
         } else {
           output << "UINT32_C(" << instruction.callerLocationSite << ')';
         }
+        emitted = true;
+      }
+      if (!transformed && target != nullptr &&
+          emitUnusedVirtualResultArgument(target->id, emitted)) {
         emitted = true;
       }
       return emitted;
