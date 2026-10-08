@@ -103,6 +103,13 @@ a later borrow when no other loan conflicts. The current compiler still
 rejects the pair in either written order until the matching ordered MIR/backend
 family implements this distinction.
 
+Ordinary local value bindings require initialization at their declaration,
+including mutable scalar bindings. `mut` grants write access; it does not
+permit an uninitialized local followed by a later assignment. The compiler
+diagnoses a missing initializer before executable lowering and does not invent
+a zero value. Constructor-initialized instance fields and program-wide scalar
+data initialization retain their separate rules.
+
 Local `auto` infers one exact complete value type from its initializer. It does
 not infer globals, fields, parameters, returns, arrays, or untyped braced
 initializers. The range-for forms `auto&` and `mut auto&` infer element borrows;
