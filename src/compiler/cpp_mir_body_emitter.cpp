@@ -7438,9 +7438,7 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
   const MirPlace *valuePlace =
       valueDrop == nullptr ? nullptr : body.findPlace(valueDrop->place);
   const MirClassInstance *passive =
-      value->info.traits.drop == DropKind::Trivial
-          ? passiveGeneratedDestructorClass(program, value->info.type)
-          : nullptr;
+      passiveGeneratedDestructorClass(program, value->info.type);
   const bool representationOnly =
       passive != nullptr && !passive->traits.containsBorrowedState &&
       passive->moveConstructor == SpecialMemberStatus::Generated &&
@@ -7466,8 +7464,7 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
     return {};
   }
   if (representationOnly) {
-    if (value->info.traits != passive->traits ||
-        value->info.traits.drop != DropKind::Trivial || valueDrop != nullptr ||
+    if (value->info.traits != passive->traits || valueDrop != nullptr ||
         !construct->lifecycle.empty()) {
       return {};
     }
