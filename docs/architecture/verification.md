@@ -4384,9 +4384,14 @@ observations.
 `local_reference_inference` pairs explicit and inferred reference programs,
 checking admission and concrete binding/drop facts, HIR owner dependencies and
 MIR loan records. Detached local-loan source mutations must fail verification.
-Its native counterpart compares C++20/C++23 O0/O3 success and failure traces
+Its native counterpart compares C++20/C++23 O0/O1/O3 success and failure traces
 with copy elision disabled, including borrowed `expected` extraction, exactly-once
-cleanup and external panic attribution. `local_reference_inference_lsp` checks
+cleanup and external panic attribution. Lambda references retain one environment
+for captureless, copied-snapshot and owning-capture closures; nested reborrows
+preserve results and exactly-once cleanup on division failure. Forged owner
+identities fail MIR verification, and semantic negatives reject invalidating a
+borrowed environment, permission upgrades and references to fresh closures.
+`local_reference_inference_lsp` checks
 inferred type/access hover, declaration navigation, copy hints, mutation/upgrade
 errors, UTF-16 spans, malformed-source recovery, dirty dependency overlays and
 format/reanalysis. These focused gates do not substitute for combined validation.
