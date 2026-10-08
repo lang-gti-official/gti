@@ -440,6 +440,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       exact &= selectedValues == instance.initializerValues &&
                instance.initializers.size() == position + owner->fields.size();
       for (const auto &field : owner->fields) {
+        const Expr *selectedSource =
+            field.declaration == nullptr
+                ? nullptr
+                : (field.declaration->initializer()
+                       ? field.declaration->initializer().get()
+                       : semantics.implicitFieldInitializer(*field.declaration)
+                             .get());
         const auto *initializer = position < instance.initializers.size()
                                       ? &instance.initializers[position]
                                       : nullptr;
@@ -447,24 +454,22 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             initializer != nullptr && initializer->arguments.size() == 1
                 ? instance.body.findValue(initializer->arguments.front())
                 : nullptr;
-        exact &= field.declaration != nullptr &&
-                 field.declaration->initializer() != nullptr &&
-                 initializer != nullptr &&
-                 initializer->kind == ConstructorInitializerTargetKind::Field &&
-                 initializer->source == nullptr &&
-                 initializer->field == field.info.symbol &&
-                 initializer->targetType == field.info.type &&
-                 initializer->explicitArgumentCount == 1 &&
-                 !initializer->base && !initializer->constructorTarget &&
-                 !initializer->generatedDefault &&
-                 !initializer->storesReference &&
-                 !initializer->ownedParameter && value != nullptr &&
-                 value->source == field.declaration->initializer().get() &&
-                 (value->info.type == field.info.type ||
-                  isImplicitScalarInitializationConversion(field.info.type,
-                                                           value->info.type) ||
-                  isImplicitExpectedInitializationConversion(field.info.type,
-                                                             value->info.type));
+        exact &=
+            field.declaration != nullptr && selectedSource != nullptr &&
+            initializer != nullptr &&
+            initializer->kind == ConstructorInitializerTargetKind::Field &&
+            initializer->source == nullptr &&
+            initializer->field == field.info.symbol &&
+            initializer->targetType == field.info.type &&
+            initializer->explicitArgumentCount == 1 && !initializer->base &&
+            !initializer->constructorTarget && !initializer->generatedDefault &&
+            !initializer->storesReference && !initializer->ownedParameter &&
+            value != nullptr && value->source == selectedSource &&
+            (value->info.type == field.info.type ||
+             isImplicitScalarInitializationConversion(field.info.type,
+                                                      value->info.type) ||
+             isImplicitExpectedInitializationConversion(field.info.type,
+                                                        value->info.type));
         ++position;
       }
       if (!exact)

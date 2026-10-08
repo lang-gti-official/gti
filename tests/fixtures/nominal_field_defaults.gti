@@ -23,11 +23,25 @@ public:
   Declared() { trace = trace * 10 + 3; }
 };
 
+class Base {
+public:
+  int stamp = 5;
+  Base() {}
+  virtual int read() = 0;
+};
+class Derived : public Base {
+public:
+  int read() override { return this.stamp; }
+};
+struct NominalDerived { Derived value; };
+
 int main() {
   { Generated object{}; }
   if (trace != 1221 || live != 0) return 1;
   trace = 0;
   { Declared object{}; }
   if (trace != 12321 || live != 0) return 2;
+  NominalDerived owner{};
+  if (owner.value.read() != 5) return 3;
   return 0;
 }
