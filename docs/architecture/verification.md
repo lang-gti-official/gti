@@ -1793,6 +1793,11 @@ owners whose unused aliases name otherwise uninstantiated classes, including
 nested type arguments. `cpp_mir_representation_snapshot` requires the exact
 forward identities from each concrete member-alias catalog, deduplicated before
 use, without inventing target layouts or executable bodies.
+The unrelated `Packet<T>` constructor regression retains four concrete bodies
+while requiring one native-primary declaration per exact parameter list, plus
+distinct per-instance failure adapters. Its runtime fixture covers matching and
+different argument lists at both native standards and optimization endpoints;
+the full forward-list emplacement/cleanup matrix also exercises this path.
 `passive_record_runtime` passes 35 executions and `nested_receiver_array_runtime`
 passes 49 executions across C++20/C++23 at O0/O1/O3 and an ASan/UBSan case.
 These include error-constructor failure, later-argument failure, checked array
