@@ -19,6 +19,11 @@ compiler-owned, backend-neutral `LoweredProgram`; they do not receive the AST,
 C++. The backend chooses target representation, but it cannot recover missing
 language meaning from an upstream representation or from host C++ behavior.
 
+Body-template presentation substitutes the family label and indentation with
+two append-only passes, in that order. It does not admit operations or consult
+MIR/semantic state. This avoids repeatedly shifting a large cleanup body for
+every indentation marker while preserving the established output bytes.
+
 Hosted argument marshalling consumes the verified startup drop recipe when
 argument construction or append fails. A source-owned vector may have
 failure-capable destruction: its secondary-failure Invoke/terminal envelope is

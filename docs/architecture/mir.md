@@ -1579,6 +1579,14 @@ boundaries; and the version-4 body-local full-expression identities, exact
 ordered cleanup membership, standalone boundary markers, and active-cleanup
 metadata.
 
+Within one body-verification invocation, cleanup-spine checks share a
+precomputed predecessor-block index. The CFG is already shape-validated and
+immutable during that invocation. Repeated edges from one source block count
+as one predecessor, while any second source block, including an unreachable
+one, still prevents a unique cleanup spine. The exact Invoke success edge,
+active failure identity, reverse drop order and boundary-marker checks remain
+unchanged; this index avoids whole-body rescans at each fallible cleanup step.
+
 A `MirBody` owns:
 
 - basic blocks with `goto`, branch, switch, return, unreachable, or exit
