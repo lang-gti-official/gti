@@ -1,0 +1,43 @@
+#include <std/resource_vector>
+#include <std/resource>
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Provider {
+  std::process_resource process{};
+public:
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe { return this.process.allocate(request); }
+  }
+  unsafe void release(std::raw_allocation allocation) {
+    std::println(900);
+    unsafe { this.process.release(allocation); }
+  }
+  ~Provider() { std::println(901); }
+};
+class Element {
+  int id;
+  int divisor;
+public:
+  Element(int id, int divisor) : id(id), divisor(divisor) {}
+  ~Element() {
+    std::println(this.id);
+    int checked = 1 / this.divisor;
+  }
+};
+void exercise(std::resource_ref<Provider> resource, int divisor, bool release) {
+  mut std::resource_vector<Element, Provider> elements{resource};
+  elements.emplace_back(1, 1);
+  elements.emplace_back(2, divisor);
+  mut auto moved = std::move(elements);
+  if (release) { moved.release(); }
+}
+int main(int argc, std::vector<std::string> argv) {
+  Provider provider{};
+  unsafe {
+    auto resource = std::bind_resource(provider);
+    exercise(resource, argc > 1 && argv[std::size_t(1)] == "fail" ? 0 : 1, argc > 2);
+  }
+  return 0;
+}

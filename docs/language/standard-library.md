@@ -913,7 +913,14 @@ Constructor failure retains its original defined-failure identity and rollback;
 it is not converted into an allocation error.
 
 `<std/resource_vector>` supplies `resource_vector<T,R>`, a contiguous move-only
-container over that storage. It supports `size`, `capacity`, `empty`, indexed
+container over source-defined prefix ownership rather than sparse slot storage.
+Each nonempty capacity reservation acquires one object region from the bound
+resource; its initialized length needs no per-slot metadata allocation. Zero
+capacity acquires no region. Failed growth leaves the old allocation and live
+prefix unchanged, and element cleanup precedes the matching single release.
+This revises the earlier two-region resource-vector policy; public sparse
+`resource_storage<T,R>` retains its two-region contract above.
+The vector supports `size`, `capacity`, `empty`, indexed
 read-only/mutable access, `front`, `back`, read-only range iteration, `pop_back`,
 `clear` and `release`. `try_reserve`, `try_push_back` and `try_emplace_back`
 report allocation errors; their plain counterparts panic on allocation failure.

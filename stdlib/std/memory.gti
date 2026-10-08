@@ -381,6 +381,139 @@ namespace gti_internal {
 concept sparse_element<T> = std::storage_element<T>;
 concept movable_sparse_element<T> = sparse_element<T> && std::movable<T>;
 
+// Source-defined initialized-prefix policy. The enclosing owner supplies one
+// lease; these slots own object lifetimes, never the allocation itself.
+class prefix_drain<std::layout_queryable T> {
+  T* objects = nullptr;
+  uint64_t* live = nullptr;
+public:
+  prefix_drain(T* objects, uint64_t* live) : objects(objects), live(live) {}
+  void finish() mut {
+    unsafe {
+      while (*this.live > uint64_t(0)) {
+        (*this.live)--;
+        std::destroy_at(this.objects + *this.live);
+      }
+    }
+  }
+  ~prefix_drain() { this.finish(); }
+};
+
+// Erasure retires the removed slot before its destructor executes. If that
+// destructor fails, drain the detached suffix before the enclosing prefix.
+class prefix_suffix_drain<std::layout_queryable T> {
+  T* objects = nullptr;
+  uint64_t first;
+  mut uint64_t next;
+public:
+  prefix_suffix_drain(T* objects, uint64_t first, uint64_t next)
+      : objects(objects), first(first), next(next) {}
+  void disarm() mut { this.next = this.first; }
+  void finish() mut {
+    unsafe {
+      while (this.next > this.first) {
+        this.next--;
+        std::destroy_at(this.objects + this.next);
+      }
+    }
+  }
+  ~prefix_suffix_drain() { this.finish(); }
+};
+
+[[unsafe_transfer(T), unsafe_share(T)]]
+class prefix_slots<sparse_element T> {
+  mut T* objects = nullptr;
+  mut uint64_t slots = 0;
+  mut uint64_t live = 0;
+public:
+  prefix_slots() {}
+  prefix_slots(prefix_slots<T>& other) = delete;
+  prefix_slots(prefix_slots<T>&& other) = default;
+  uint64_t capacity() { return this.slots; }
+  uint64_t length() { return this.live; }
+  // The caller proves writable vacant extent/alignment and retains its lease
+  // through all element cleanup. No public spelling grants compiler trust.
+  unsafe void attach(T* objects, uint64_t count) mut {
+    require_relocation_capacity(this.slots == uint64_t(0));
+    this.objects = objects;
+    this.slots = count;
+  }
+  T& read(uint64_t index) {
+    index_bounds_check(index, this.live);
+    unsafe { return std::assume_ref(this.objects + index, this); }
+  }
+  mut T& read_mut(uint64_t index) mut {
+    index_bounds_check(index, this.live);
+    unsafe { return std::assume_mut(this.objects + index, this); }
+  }
+  void append<Args...>(Args... args) mut {
+    require_relocation_capacity(this.live < this.slots);
+    unsafe { std::construct_at(this.objects + this.live, args...); }
+    this.live++;
+  }
+  void pop() mut {
+    require_live_storage(this.live > uint64_t(0));
+    this.live--;
+    unsafe { std::destroy_at(this.objects + this.live); }
+  }
+  void clear() mut {
+    mut prefix_drain<T> pending{this.objects, &this.live};
+    pending.finish();
+  }
+  void relocate_to(mut prefix_slots<T>& destination) mut
+      requires std::relocatable<T> {
+    require_relocation_destination(destination.live == uint64_t(0));
+    require_relocation_capacity(destination.slots >= this.live);
+    unsafe {
+      for (mut uint64_t index = 0; index < this.live; index++) {
+        std::relocate_at(destination.objects + index, this.objects + index);
+        destination.live++;
+      }
+    }
+    this.live = uint64_t(0);
+  }
+  void insert(uint64_t index, T value) mut requires std::relocatable<T> {
+    require_relocation_capacity(index <= this.live && this.live < this.slots);
+    unsafe {
+      mut uint64_t destination = this.live;
+      while (destination > index) {
+        uint64_t source = destination - uint64_t(1);
+        std::relocate_at(this.objects + destination, this.objects + source);
+        destination--;
+      }
+      std::construct_at(this.objects + index, std::move(value));
+    }
+    this.live++;
+  }
+  void erase(uint64_t index) mut requires std::relocatable<T> {
+    index_bounds_check(index, this.live);
+    uint64_t previous = this.live;
+    this.live = index;
+    mut prefix_suffix_drain<T> pending{this.objects, index + uint64_t(1), previous};
+    unsafe { std::destroy_at(this.objects + index); }
+    pending.disarm();
+    unsafe {
+      for (mut uint64_t source = index + uint64_t(1); source < previous; source++) {
+        std::relocate_at(this.objects + source - uint64_t(1), this.objects + source);
+        this.live++;
+      }
+    }
+  }
+  void swap_elements(uint64_t left, uint64_t right) mut
+      requires std::relocatable<T> {
+    index_bounds_check(left, this.live);
+    index_bounds_check(right, this.live);
+    if (left == right) { return; }
+    mut std::uninitialized<T> temporary{};
+    unsafe {
+      std::relocate_at(temporary.data(), this.objects + left);
+      std::relocate_at(this.objects + left, this.objects + right);
+      std::relocate_at(this.objects + right, temporary.data());
+    }
+  }
+  ~prefix_slots() { this.clear(); }
+};
+
 // Ordinary GTI cleanup policy. A local guard resumes the remaining reverse
 // traversal if the first destructor fails; it never retries a retired slot.
 class sparse_drain<std::layout_queryable T> {
@@ -556,6 +689,39 @@ concept byte_lease<L> = requires(L& lease, std::layout request) {
   { lease.release() } -> void;
 };
 
+expected<void, std::alloc_errc> try_allocate_prefix<T, Lease>(
+    mut Lease& objects, mut prefix_slots<T>& destination,
+    uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
+  if (destination.capacity() != uint64_t(0)) {
+    return unexpected(std::alloc_errc::invalid_state);
+  }
+  if (minimum == uint64_t(0) || (minimum & (minimum - uint64_t(1))) != uint64_t(0)) {
+    return unexpected(std::alloc_errc::invalid_alignment);
+  }
+  std::layout object = std::layout_of<T>();
+  mut uint64_t selected = object.alignment;
+  if (minimum > selected) { selected = minimum; }
+  uint64_t maximum = runtime::gti_rt_native_size_max_v1();
+  if (selected > maximum || count > maximum / object.bytes) {
+    return unexpected(std::alloc_errc::size_overflow);
+  }
+  if (count == uint64_t(0)) { return; }
+  std::layout request{count * object.bytes, selected};
+  unsafe {
+    auto attempt = objects.allocate(request);
+    if (!attempt) { return unexpected(attempt.error()); }
+    std::detail::raw_allocation region = std::move(attempt).value();
+    objects.attach(region);
+    auto valid = validate_region(region, request);
+    if (!valid) {
+      objects.release();
+      return unexpected(valid.error());
+    }
+    destination.attach(std::typed_address<T>(region.address), count);
+  }
+  return;
+}
+
 expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
     mut Lease& objects, mut Lease& metadata, mut sparse_slots<T>& destination,
     uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
@@ -607,6 +773,44 @@ expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
 }
 
 namespace std {
+namespace detail {
+// Source owner: one process region and one initialized length, no slot map.
+class prefix_owner<std::storage_element T> {
+  mut process_lease objects;
+  mut gti_internal::prefix_slots<T> data;
+public:
+  prefix_owner() {}
+  prefix_owner(uint64_t count) {
+    uint64_t minimum = std::layout_of<T>().alignment;
+    mut process_lease objects{};
+    mut gti_internal::prefix_slots<T> data{};
+    auto allocated = gti_internal::try_allocate_prefix(objects, data,
+        count, minimum);
+    if (!allocated) { gti_internal::panic("Container allocation failed"); }
+    this.objects = std::move(objects);
+    this.data = std::move(data);
+  }
+  prefix_owner(prefix_owner<T>& other) = delete;
+  prefix_owner(prefix_owner<T>&& other) = default;
+  uint64_t capacity() { return this.data.capacity(); }
+  uint64_t length() { return this.data.length(); }
+  T& read(uint64_t index) { return this.data.read(index); }
+  mut T& read_mut(uint64_t index) mut { return this.data.read_mut(index); }
+  void append<Args...>(Args... args) mut { this.data.append(args...); }
+  void pop() mut { this.data.pop(); }
+  void clear() mut { this.data.clear(); }
+  void relocate_to(mut prefix_owner<T>& destination) mut
+      requires std::relocatable<T> { this.data.relocate_to(destination.data); }
+  void insert(uint64_t index, T value) mut requires std::relocatable<T> {
+    this.data.insert(index, std::move(value));
+  }
+  void erase(uint64_t index) mut requires std::relocatable<T> { this.data.erase(index); }
+  void swap_elements(uint64_t left, uint64_t right) mut requires std::relocatable<T> {
+    this.data.swap_elements(left, right);
+  }
+};
+}
+
 /// A move-only owner of partially initialized typed storage.
 ///
 /// `T` must not contain borrowed state. Final-address emplacement supports
