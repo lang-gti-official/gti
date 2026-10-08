@@ -166,6 +166,61 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
         << "unpublished expected result cannot hide failure-capable cleanup\n";
     return 1;
   }
+  const auto payloadPath =
+      root / "tests/fixtures/source_prefix_payload_return_cleanup.gti";
+  std::ifstream payloadInput(payloadPath);
+  const std::string payloadSource{std::istreambuf_iterator<char>(payloadInput),
+                                  {}};
+  const auto payload = lang::Frontend().analyze(payloadPath, payloadSource,
+                                                {root / "stdlib/prelude.gti"},
+                                                {}, {root / "stdlib"});
+  if (!payload.canGenerateCode() ||
+      gti_test::emitCppText(payload).find(
+          "GTI MIR unpublished return cleanup") == std::string::npos) {
+    std::cerr << "owning enum return lost its unpublished cleanup recipe\n";
+    return 1;
+  }
+  std::size_t returnCleanups = 0;
+  for (const auto &function : payload.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Drop ||
+            instruction.lifecycle.size() != 1)
+          continue;
+        const auto *drop = function.body.findDropObligation(
+            instruction.lifecycle.front().source);
+        if (drop == nullptr ||
+            drop->kind != lang::MirDropObligationKind::ReturnResult ||
+            drop->dropType.type.kind != lang::SemanticType::Enum)
+          continue;
+        ++returnCleanups;
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = payload.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              malformed.findFunctionInstance(function.id));
+          for (auto &member : changed->body.findBlock(block.id)->instructions) {
+            if (member.id != instruction.id)
+              continue;
+            if (mutation == 0)
+              member.definedFailure.propagation =
+                  lang::FailurePropagationKind::None;
+            if (mutation == 1)
+              member.lifecycle.front().conditional = true;
+            if (mutation == 2)
+              member.lifecycle.front().source = 0;
+          }
+          if (lang::verifyMirProgram(malformed).valid()) {
+            std::cerr << "owning enum rollback accepted a forged cleanup\n";
+            return 1;
+          }
+        }
+      }
+    }
+  }
+  if (returnCleanups == 0) {
+    std::cerr << "enum return fixture did not exercise result rollback\n";
+    return 1;
+  }
   std::cout << "source prefix lifetime/condition authority: passed\n";
   return 0;
 }

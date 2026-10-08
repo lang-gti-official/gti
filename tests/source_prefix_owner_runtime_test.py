@@ -26,10 +26,22 @@ if __name__ == "__main__":
     forwarded_secondary = (f"{forwarded.name}:{secondary_line}: runtime error[GTI-R0014]: "
                            "failure_during_cleanup; primary [GTI-R0002] at "
                            f"{forwarded.name}:{primary_line}; secondary [GTI-R0002]\n")
+    payload = fixture.with_name("source_prefix_payload_return_cleanup.gti")
+    payload_lines = payload.read_text().splitlines()
+    payload_primary_line = next(index for index, text in enumerate(payload_lines, 1)
+                                if "// primary cleanup" in text)
+    payload_secondary_line = next(index for index, text in enumerate(payload_lines, 1)
+                                  if "// result cleanup" in text)
+    payload_primary = (f"{payload.name}:{payload_primary_line}: runtime error[GTI-R0002]: "
+                       "division_by_zero in integer_division\n")
+    payload_secondary = (f"{payload.name}:{payload_secondary_line}: runtime error[GTI-R0014]: "
+                         "failure_during_cleanup; primary [GTI-R0002] at "
+                         f"{payload.name}:{payload_primary_line}; secondary [GTI-R0002]\n")
     runtime_matrix(
         names=("source_prefix_owner", "source_prefix_vector", "source_prefix_expected_range", "generic_payload_enum",
                "raw_text_owner_example",
-               "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup"),
+               "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup",
+               "source_prefix_payload_return_cleanup"),
         cases={
             "source_prefix_owner": [((), (0, "2\n1\n4\n3\n", ""))],
             "source_prefix_vector": [((), (0, "", ""))],
@@ -48,6 +60,11 @@ if __name__ == "__main__":
                 ((), (0, "7\n3\n8\n9\n", "")),
                 (("primary",), (70, "7\n8\n9\n", forwarded_primary)),
                 (("primary", "secondary"), (70, "7\n8\n", forwarded_secondary)),
+            ],
+            "source_prefix_payload_return_cleanup": [
+                ((), (0, "8\n42\n42\n9\n", "")),
+                (("primary",), (70, "8\n42\n9\n", payload_primary)),
+                (("primary", "secondary"), (70, "8\n42\n", payload_secondary)),
             ],
         },
         fixture_paths={"raw_text_owner_example":
