@@ -848,6 +848,56 @@ int main() { Block value{}; value = make(); return 0; }
          "passive call staging must not permit immutable destinations");
 }
 
+void testOwningAssignmentRequiresTransfer(
+    const std::filesystem::path &fixtures) {
+  const auto source = fixtures / "class_prvalue_assignment.gti";
+  const auto library = fixtures.parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend().analyze(source.string(), readFile(source),
+                               {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode(), "owning assignment fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  bool binding = false;
+  bool element = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *place =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            instruction.lifecycle.size() != 1 ||
+            instruction.lifecycle.front().kind !=
+                lang::MirLifecycleEventKind::Replace ||
+            !place || place->root != lang::MirPlaceRootKind::Binding)
+          continue;
+        const bool indexed =
+            !place->projections.empty() &&
+            place->projections.back().kind == lang::MirProjectionKind::Index;
+        if ((!indexed && !place->projections.empty()) ||
+            (indexed ? element : binding))
+          continue;
+        (indexed ? element : binding) = true;
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Function, function.id});
+        auto &instructions = body->findBlock(block.id)->instructions;
+        auto changed = std::find_if(
+            instructions.begin(), instructions.end(),
+            [&](const auto &item) { return item.id == instruction.id; });
+        changed->lifecycle.clear();
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "owning binding/element assignment cannot omit its replacement "
+               "transfer");
+      }
+    }
+  }
+  expect(binding && element,
+         "missing-transfer mutation covers bindings and array elements");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -863,6 +913,8 @@ int main(int argc, char **argv) {
                           "mir_backend_owned_lifecycle_comma_near_miss.gti");
   testFoldedFloatDestructorKeepsFailureSummary();
   testPassiveCallAssignment(std::filesystem::path(argv[1]).parent_path());
+  testOwningAssignmentRequiresTransfer(
+      std::filesystem::path(argv[1]).parent_path());
   if (failures != 0) {
     std::cerr << failures << " owned lifecycle backend test(s) failed\n";
     return 1;

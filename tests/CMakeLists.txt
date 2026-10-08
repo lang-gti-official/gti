@@ -2775,6 +2775,13 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(class_prvalue_assignment_runtime PROPERTIES TIMEOUT 240)
     add_test(
+      NAME reference_class_assignment_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/reference_class_assignment_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(reference_class_assignment_runtime PROPERTIES TIMEOUT 300)
+    add_test(
       NAME mutable_temporary_receiver_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"

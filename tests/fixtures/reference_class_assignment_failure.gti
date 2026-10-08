@@ -1,0 +1,33 @@
+#include <std/string>
+#include <std/vector>
+
+class Tracked {
+  int32_t tag;
+  int32_t cleanup_divisor;
+public:
+  Tracked(int32_t tag, int32_t divisor, int32_t cleanup_divisor)
+      : tag(tag), cleanup_divisor(cleanup_divisor) {
+    int32_t checked = 12 / divisor;
+  }
+  ~Tracked() {
+    std::println(this.tag);
+    int32_t checked = 12 / this.cleanup_divisor;
+  }
+};
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+void replace(mut Tracked& target, int32_t divisor) {
+  target = Tracked(2, divisor, 1);
+}
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  mut Tracked target{1, 1, argc == 3 || argc == 5 ? 0 : 1};
+  replace(target, argc == 2 || argc == 5 ? 0 : 1);
+  int32_t divisor = argc == 4 ? 0 : 1;
+  int32_t checked = 12 / divisor;
+  std::println(99);
+  return 0;
+}
