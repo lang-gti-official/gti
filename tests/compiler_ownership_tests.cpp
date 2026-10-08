@@ -14932,8 +14932,8 @@ int main() {
 void testPassiveCleanupRangeTemporary() {
   // The range class has no destructor and only scalar fields, so its lexical
   // cleanup is passive. The loop must still own and drop the temporary.
-  const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "passive-cleanup-range-temporary.gti", R"(
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("passive-cleanup-range-temporary.gti", R"(
 class Cursor {
   mut int32_t at;
 public:
@@ -14967,7 +14967,7 @@ int main() {
   return total - 5 + first_over(6) - 7;
 }
 )",
-      {standardLibraryPrelude()});
+                               {standardLibraryPrelude()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected passive range diagnostic: " << diagnostic.message
               << '\n';
@@ -15041,8 +15041,8 @@ int main() {
 void testSharedPayloadSiblingReborrows() {
   // Read-only payload bindings of one matched enum are siblings. Reborrowing a
   // payload of one sibling must not conflict with the other read-only ones.
-  const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "shared-payload-sibling-reborrows.gti", R"(
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("shared-payload-sibling-reborrows.gti", R"(
 enum Event<T> { item(T value) };
 class Inner {
 public:
@@ -15099,7 +15099,7 @@ int32_t three_siblings() {
 
 int main() { return generic_pair() + three_siblings(); }
 )",
-      {standardLibraryPrelude()});
+                               {standardLibraryPrelude()});
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "Unexpected shared payload diagnostic: " << diagnostic.message
               << '\n';
