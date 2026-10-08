@@ -259,6 +259,14 @@ bodies. This is focused evidence; the additional class-result producer matrix,
 all eight conditional consumer positions, broad gates and release integration
 remain outstanding.
 
+At `1891ce4e`, the expanded grouped fixture also passes all six modes and
+ASan/UBSan for operator, free-function and member-call producers with exact
+construction/destruction counts. The original S01 reproducer compiles and
+prints `4`. Backend preflight, text emission, lifecycle and the structural
+publication gate pass together (36.34 seconds). The explicit eight-consumer
+probe is a development inventory until all of its producer/consumer pairs are
+repaired; emission-only runs must not be reported as native execution coverage.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes

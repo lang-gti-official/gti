@@ -2204,7 +2204,7 @@
     "s01-parenthesized-constructor": {
       "finding": "S01",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "s02-ternary-class-value": {
       "finding": "S02",
