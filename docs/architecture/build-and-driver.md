@@ -917,6 +917,14 @@ mechanism and the alias shares the dependency-alias namespace (a collision
 is a manifest diagnostic). Every package in the resolved graph generates its
 own imports; aliases do not leak to dependents.
 
+Imported enums retain the selected native integer family and evaluated values,
+including unsigned high-bit flags and supported 64-bit ranges. See
+[enum representation](../language/native-c-interop.md#imported-enum-representation)
+for the current reader profiles and ABI-option boundary. Existing handwritten
+`int32_t` arguments may need an explicit conversion after regenerating older
+bindings; that type change corrects the native declaration, not GTI's conversion
+rules. The runnable `examples/native-enum-bindings` project exercises this path.
+
 Generation is deterministic and keyed: a `bindings.key` sidecar hashes the
 preprocessed translation unit (which captures every transitive header
 fact), the ordered options, the resolved target triple, and the GTI release

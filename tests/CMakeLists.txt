@@ -754,6 +754,9 @@ add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
 add_executable("gti_bindgen_tests" "${PROJECT_SOURCE_DIR}/tests/bindgen_tests.cpp")
 target_link_libraries("gti_bindgen_tests" PRIVATE gti_bindgen gti_compiler)
 add_test(NAME bindgen_pipeline COMMAND gti_bindgen_tests)
+add_test(NAME native_enum_bindgen
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_enum_bindgen_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(native_enum_bindgen PROPERTIES TIMEOUT 300)
 
 add_executable("gti_native_record_tests" "${PROJECT_SOURCE_DIR}/tests/native_record_tests.cpp")
 target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)
