@@ -244,10 +244,13 @@ failure channel remains separate from this result representation.
 A retained class-bound virtual result uses one coherent result-channel
 convention across its resolved virtual-slot family. The representation query
 follows lowered virtual-root identities, including nongeneric overrides of a
-generic base. A defaulted internal output parameter is present throughout the
+generic base. An explicit internal output parameter is present throughout the
 family: native-record results return `void` and publish bytes to that parameter;
 ordinary scalar and owning results retain their original return and cleanup
-convention. The C++ return spelling is conditional only while the owner type is
+convention, passing `nullptr` for the unused channel. Calls take this choice
+from the sealed representation snapshot; they do not rely on C++ default
+arguments, including when a generic parameter pack becomes concrete. The C++
+return spelling is conditional only while the owner type is
 symbolic. Virtual methods therefore need no constrained overloads or native
 by-value fallback. Verified concrete MIR still selects every emitted body;
 the extra parameter is backend calling-convention glue, not a source argument
@@ -1355,6 +1358,13 @@ failure record when construction fails. The emitter rejects missing,
 duplicated, or mismatched rows; no C++ spelling or containment policy enters
 `LoweredProgram`.
 
+A containment wrapper delegates to the same admitted body plan as its status
+constructor definition. For a generic constructor with an unnamed closure
+parameter, this is the cached, independently verified dependent-type overlay,
+not the ordinary map that cannot spell that closure. The wrapper checks the
+exact constructor body identity and failure-form admission; it does not
+introduce a second execution schedule or treat template spelling as proof.
+
 The passive initializer schedule keeps a closed expression vocabulary.
 Transparent `Identity` values preserve one exact staged spelling, `Convert`
 uses the copied target-type row and retains either the unchecked cast or the
@@ -1819,6 +1829,17 @@ defaults only after proving every concrete source constructor covers each
 default exactly once. Explicit overrides suppress the corresponding default;
 failure unwinds completed fields before constructor parameters and caller
 values, without beginning the enclosing object's lifetime.
+
+An owning field-result call can itself consume prepared owning arguments.
+Calls and constructors share the same exact input-transfer proof: every
+unconditional `TransferOut` names one operand's prepared-parameter obligation,
+including a fresh result reparented into its argument slot. Input handoff is
+distinct from result publication. The result activates only on its Invoke
+success edge, then its explicit field `Initialize` reparents that exact value
+into construction rollback. Later argument, callee, field and body failures
+retain their original reverse-order cleanup. This covers source-defined
+collection builders and unrelated owning functions without recognizing public
+library names or relaxing the field's private empty-state/movement proof.
 
 A type-only concrete instance with no selected constructor and no generated
 default-construction route has no executable declaration-default consumer.

@@ -42,4 +42,24 @@ if __name__ == "__main__":
         (("postfix", "overflow"), (70, partial, overflow(increment_line))),
         (("compound", "overflow", "here"), (70, partial, overflow(compound_line))),
     ]
+    cases["constructor_collection_field_inputs"] = [((), (0, "one\ntwo\n", ""))]
+    cases["constructor_callback_field"] = [((), (0, "", ""))]
+    source = fixtures / "constructor_owning_call_inputs.gti"
+    lines = source.read_text().splitlines()
+    def division_failure(fragment):
+        line = next(index + 1 for index, text in enumerate(lines) if fragment in text)
+        return (f"{source.name}:{line}: runtime error[GTI-R0002]: "
+                "division_by_zero in integer_division\n")
+    cases[source.stem] = [
+        ((), (0, "1\nsecond\nsecond\n12\nfirst\nholder\nfirst\nguard\n", "")),
+        (("argument",), (70, "second\nfirst\nguard\n",
+                          division_failure("12 / argument_divisor"))),
+        (("inside", "call"), (70, "second\nfirst\nguard\n",
+                               division_failure("12 / divisor"))),
+        (("later", "field", "fails"), (70, "1\nsecond\nsecond\nfirst\nguard\n",
+                                         division_failure("12 / field_divisor"))),
+        (("constructor", "body", "now", "fails"),
+         (70, "1\nsecond\nsecond\nfirst\nguard\n",
+          division_failure("12 / body_divisor"))),
+    ]
     main(names=tuple(cases), cases=cases)
