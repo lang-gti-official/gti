@@ -1154,13 +1154,35 @@ private:
     declaration.scope = rootScope_;
     declaration.origin = origin(cursor);
     declaration.inPolicy = inPolicy(declaration.origin);
+    const CXType integerType = clang_getEnumDeclIntegerType(cursor);
+    declaration.enumIntegerType = mapType(integerType);
+    const CXType enumType = clang_getCursorType(cursor);
+    const long long integerSize = clang_Type_getSizeOf(integerType);
+    const long long integerAlignment = clang_Type_getAlignOf(integerType);
+    declaration.enumLayoutMatchesInteger =
+        integerSize > 0 && integerAlignment > 0 &&
+        clang_Type_getSizeOf(enumType) == integerSize &&
+        clang_Type_getAlignOf(enumType) == integerAlignment;
+    const NativeType *integer =
+        result_.model.findType(declaration.enumIntegerType);
+    const bool readable = integer != nullptr &&
+                          integer->kind == NativeTypeKind::Integer &&
+                          integer->bitWidth <= 64;
     for (const CXCursor child : childrenOf(cursor)) {
-      if (clang_getCursorKind(child) != CXCursor_EnumConstantDecl) {
+      if (clang_getCursorKind(child) != CXCursor_EnumConstantDecl ||
+          !readable) {
         continue;
       }
-      declaration.enumerators.push_back(
-          {owned(clang_getCursorSpelling(child)),
-           static_cast<std::int64_t>(clang_getEnumConstantDeclValue(child))});
+      NativeEnumerator enumerator;
+      enumerator.name = owned(clang_getCursorSpelling(child));
+      if (integer->isSigned) {
+        enumerator.value =
+            static_cast<std::int64_t>(clang_getEnumConstantDeclValue(child));
+      } else {
+        enumerator.value = static_cast<std::uint64_t>(
+            clang_getEnumConstantDeclUnsignedValue(child));
+      }
+      declaration.enumerators.push_back(std::move(enumerator));
     }
     const NativeDeclarationId id =
         result_.model.addDeclaration(std::move(declaration));

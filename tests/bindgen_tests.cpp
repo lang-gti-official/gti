@@ -57,8 +57,9 @@ int engine_submit(Engine *engine, Vec2 position, Stamp stamp);
          "the typedef forward reference should model an incomplete record");
   expect(contains(printed, "record Vec2\n  field x: f32\n  field y: f32"),
          "the typedef struct should model its fields");
-  expect(contains(printed, "enum Mode\n  MODE_A = 0\n  MODE_B = 5\n"
-                           "  MODE_C = 6"),
+  expect(contains(printed,
+                  "enum Mode : c_uint[u32]\n  MODE_A = 0\n  MODE_B = 5\n"
+                  "  MODE_C = 6"),
          "enumerators should carry explicit and successor values");
   expect(contains(printed, "typedef Stamp = c_ulonglong[u64]"),
          "the multi-word builtin typedef should model as u64");
@@ -170,7 +171,7 @@ int engine_submit(Engine *engine, Vec2 position, Stamp stamp);
              "record Vec2\n"
              "  field x: f32\n"
              "  field y: f32\n"
-             "enum Mode\n"
+             "enum Mode : c_uint[u32]\n"
              "  MODE_A = 0\n"
              "  MODE_B = 5\n"
              "  MODE_C = 6\n"
@@ -234,7 +235,7 @@ int with_const_array(const int values[], int count);
   const std::string printed = lang::bindgen::printNativeModel(read.model);
   expect(contains(printed, "field cells: array[array[f64 x 3] x 2]"),
          "multi-extent array fields should nest outermost-first");
-  expect(contains(printed, "enum \n  BARE_A = 0\n  BARE_B = 9"),
+  expect(contains(printed, "enum  : c_uint[u32]\n  BARE_A = 0\n  BARE_B = 9"),
          "a bare anonymous enum should keep its enumerators under an empty "
          "name");
   expect(contains(printed,
@@ -328,7 +329,7 @@ int fill(int *__restrict__ buffer, int count);
          "a multi-extent array field should model as nested arrays");
   expect(contains(printed, "field rows: array[ptr(c_int[i32]) x 4]"),
          "a pointer-element array field should model faithfully");
-  expect(contains(printed, "enum \n  FLAG_A = 1\n  FLAG_B = 2"),
+  expect(contains(printed, "enum  : c_uint[u32]\n  FLAG_A = 1\n  FLAG_B = 2"),
          "a bare anonymous enum should model its constants");
   expect(contains(printed, "function copy_board(destination: "
                            "ptr(const record:Board), source: "
@@ -456,8 +457,9 @@ typedef struct Panel {
          "a callback-alias field should import");
   expect(fieldSpelling("handlers") == "Notify handlers[3]",
          "a callback-alias array field should import");
-  expect(fieldSpelling("mode") == "Mode mode",
-         "an enum-typed field should spell through its int32_t alias");
+  expect(
+      fieldSpelling("mode") == "Mode mode",
+      "an enum-typed field should spell through its compatible integer alias");
 }
 
 void testAnonymousEnumPlanning() {
@@ -471,8 +473,8 @@ enum { CAP_AUDIO = 1, CAP_VIDEO = 2 };
              anonymous->kind == lang::bindgen::BindingItemKind::Enum &&
              anonymous->constants.size() == 2 &&
              anonymous->constants[0].name == "CAP_AUDIO" &&
-             anonymous->constants[0].value == 1 &&
-             anonymous->constants[1].value == 2,
+             anonymous->constants[0].value == "1" &&
+             anonymous->constants[1].value == "2",
          "a bare anonymous enum should plan as constants without an alias");
 }
 
@@ -591,11 +593,11 @@ int uses_enum(enum Small value, Named named, Flags flags, Handle handle);
   const lang::bindgen::BindingPlan plan =
       lang::bindgen::planBindings(read.model, {});
   const lang::bindgen::BindingItem *small = findItem(plan, "Small");
-  expect(small != nullptr &&
-             small->kind == lang::bindgen::BindingItemKind::Enum &&
-             small->constants.size() == 2 && small->constants[0].value == -2 &&
-             small->constants[1].value == 7,
-         "enum constants should carry their exact values");
+  expect(
+      small != nullptr && small->kind == lang::bindgen::BindingItemKind::Enum &&
+          small->constants.size() == 2 && small->constants[0].value == "-2" &&
+          small->constants[1].value == "7" && small->aliasSpelling == "c_int",
+      "enum constants should carry their exact values");
   const lang::bindgen::BindingItem *named = findItem(plan, "Named");
   expect(named != nullptr &&
              named->kind == lang::bindgen::BindingItemKind::Enum,
@@ -623,6 +625,138 @@ int uses_enum(enum Small value, Named named, Flags flags, Handle handle);
 
 // -- Writer -----------------------------------------------------------------
 
+void testNativeEnumRepresentations() {
+  const std::string header = R"(
+enum Flags { FLAG_LOW = 1U, FLAG_HIGH = 0x80000000U };
+enum Wide { WIDE_HIGH = 0x8000000000000000ULL,
+            WIDE_ALL = 0xffffffffffffffffULL };
+enum SignedWide { SIGNED_MIN = (-9223372036854775807LL - 1), SIGNED_MAX = 9223372036854775807LL };
+enum __attribute__((packed)) Tiny { TINY_ZERO, TINY_MAX = 255 };
+enum __attribute__((aligned(16))) Aligned { ALIGNED_ZERO };
+struct Packet { enum Flags flags; enum Wide wide; enum SignedWide offset; enum Tiny tiny; };
+enum Wide echo_wide(enum Wide value);
+void write_wide(enum Wide **slot);
+typedef enum Wide (*WideCallback)(enum Wide);
+enum Aligned bad_value(enum Aligned value);
+void bad_pointer(enum Aligned *value);
+struct BadPacket { enum Aligned value; };
+)";
+  const auto result = lang::bindgen::runCBindgen(header, "enums.h");
+  const auto *flags = findItem(result.plan, "Flags");
+  const auto *wide = findItem(result.plan, "Wide");
+  const auto *signedWide = findItem(result.plan, "SignedWide");
+  const auto *tiny = findItem(result.plan, "Tiny");
+  expect(flags && flags->aliasSpelling == "c_uint" &&
+             flags->constants.size() == 2 &&
+             flags->constants[1].value == "2147483648",
+         "high-bit C flags must retain the unsigned native domain");
+  expect(wide && wide->aliasSpelling == "c_ulong" &&
+             wide->constants.size() == 2 &&
+             wide->constants[1].value == "18446744073709551615",
+         "LP64 wide enums must retain unsigned long and all 64 bits");
+  expect(signedWide && signedWide->aliasSpelling == "c_long" &&
+             signedWide->constants.size() == 2 &&
+             signedWide->constants[0].value == "-9223372036854775808",
+         "signed enum minima must not narrow or overflow in the reader");
+  expect(tiny && tiny->aliasSpelling == "c_uchar",
+         "packed enums whose layout equals their native integer can import");
+  expect(findItem(result.plan, "Packet")->kind ==
+                 lang::bindgen::BindingItemKind::Record &&
+             findItem(result.plan, "WideCallback")->kind ==
+                 lang::bindgen::BindingItemKind::Callback &&
+             findItem(result.plan, "write_wide")->parameters[0].spelling ==
+                 "Wide**",
+         "enum representation must compose through records, callbacks and "
+         "pointers");
+  for (const auto name : {"Aligned", "bad_value", "bad_pointer"}) {
+    const auto *item = findItem(result.plan, name);
+    expect(item && item->kind == lang::bindgen::BindingItemKind::Skipped &&
+               contains(item->reason, "layout different"),
+           std::string(name) + " must not erase native enum alignment");
+  }
+  expect(findItem(result.plan, "BadPacket")->kind ==
+             lang::bindgen::BindingItemKind::Opaque,
+         "a record containing a nonrepresentable enum must degrade to opaque");
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      "native-enums.gti", result.gtiSource + "\nint main() { return 0; }\n",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  for (const auto &diagnostic : frontend.diagnostics) {
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(frontend.canGenerateCode(), "all wide/signed-minimum generated enum "
+                                     "constants must be ordinary valid GTI");
+
+  lang::bindgen::BindingOptions excluded;
+  excluded.deny.push_back({"Wide"});
+  const auto filtered = lang::bindgen::runCBindgen(header, "enums.h", excluded);
+  expect(!contains(filtered.gtiSource, "using Wide =") &&
+             findItem(filtered.plan, "echo_wide")->resultSpelling ==
+                 "c_ulong" &&
+             findItem(filtered.plan, "write_wide")->parameters[0].spelling ==
+                 "c_ulong**",
+         "excluded enum names must canonicalize in uses, never leave missing "
+         "aliases");
+
+  auto malformed = readC("enum Bad { BAD = 1 }; int use_bad(enum Bad value);");
+  for (auto &declaration : malformed.model.declarations) {
+    if (declaration.kind == lang::bindgen::NativeDeclarationKind::Enum) {
+      declaration.enumerators[0].value = std::uint64_t(1) << 40;
+    }
+  }
+  const auto rejected = lang::bindgen::planBindings(malformed.model, {});
+  expect(
+      findItem(rejected, "Bad")->kind ==
+              lang::bindgen::BindingItemKind::Skipped &&
+          findItem(rejected, "use_bad")->kind ==
+              lang::bindgen::BindingItemKind::Skipped,
+      "a model value outside the native domain must reject both enum and uses");
+
+  expect(result.gtiSource ==
+             lang::bindgen::runCBindgen(header, "enums.h").gtiSource,
+         "native enum emission must be deterministic");
+  const auto windows = lang::bindgen::runCBindgen(
+      "enum Flags { HIGH = 0x80000000U };", "windows.h", {},
+      lang::bindgen::CTargetProfile(lang::bindgen::CDataModel::Llp64));
+  expect(
+      findItem(windows.plan, "Flags")->aliasSpelling == "c_int" &&
+          findItem(windows.plan, "Flags")->constants[0].value == "-2147483648",
+      "MSVC-compatible enum rules must come from Clang, not LP64 assumptions");
+  for (auto model :
+       {lang::bindgen::CDataModel::Lp64, lang::bindgen::CDataModel::Llp64}) {
+    const auto fixed = lang::bindgen::runCBindgen(
+        "enum Fixed : unsigned long long { ALL = 0xffffffffffffffffULL };",
+        "fixed.h", {}, lang::bindgen::CTargetProfile(model));
+    const auto *item = findItem(fixed.plan, "Fixed");
+    expect(fixed.usable() && item && item->aliasSpelling == "c_ulonglong" &&
+               item->constants[0].value == "18446744073709551615",
+           "Clang fixed-underlying enums must preserve native identity on both "
+           "profiles");
+  }
+  const auto system = lang::bindgen::runCBindgen(
+      "# 1 \"/work/app.h\"\n"
+      "# 1 \"/usr/include/flags.h\" 1 3\n"
+      "enum SystemFlags { SYSTEM_HIGH = 0x80000000U };\n"
+      "# 1 \"/work/app.h\" 2\n"
+      "enum SystemFlags app_flags(enum SystemFlags value);\n",
+      "app.h");
+  expect(!contains(system.gtiSource, "using SystemFlags") &&
+             contains(system.gtiSource, "c_uint app_flags(c_uint value)"),
+         "system enum uses must retain their native integer without missing "
+         "aliases");
+  const auto badNames =
+      lang::bindgen::runCBindgen("enum BadName { template = 1 };\n"
+                                 "enum BadName use_name(enum BadName value);\n",
+                                 "names.h");
+  expect(findItem(badNames.plan, "BadName")->kind ==
+                 lang::bindgen::BindingItemKind::Skipped &&
+             findItem(badNames.plan, "use_name")->kind ==
+                 lang::bindgen::BindingItemKind::Skipped,
+         "an unspellable enumerator must not leave dependent uses of a missing "
+         "alias");
+}
+
 void testWriterShapeAndDeterminism() {
   const std::string header = R"(
 typedef struct Engine Engine;
@@ -645,7 +779,8 @@ int engine_variadic(const char *format, ...);
          "the opaque handle should emit");
   expect(contains(first.gtiSource, "mut c_float x;"),
          "record fields should emit as mutable");
-  expect(contains(first.gtiSource, "constexpr int32_t ENGINE_CAP_BASIC = 1;") &&
+  expect(contains(first.gtiSource,
+                  "constexpr c_uint ENGINE_CAP_BASIC = c_uint(1);") &&
              !contains(first.gtiSource, "using  ="),
          "anonymous enum constants should emit without an alias line");
   expect(contains(first.gtiSource, "extern \"C\" {"),
@@ -1135,6 +1270,7 @@ int main() {
   testTypeMappingMatrix();
   testTargetDataModels();
   testEnumAndTypedefPlanning();
+  testNativeEnumRepresentations();
   testWriterShapeAndDeterminism();
   testMacroConstantImport();
   testSynthesizedCallbackAliases();
