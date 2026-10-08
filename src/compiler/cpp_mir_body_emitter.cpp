@@ -8608,6 +8608,14 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
       !stage->definedFailure.empty() || stage->operands.size() != 1) {
     return nullptr;
   }
+  const StagedClassResult published = stagedClassResultForResult(body, id);
+  if (published.stage == stage && published.producer != nullptr &&
+      published.producer->kind == MirInstructionKind::Move) {
+    // The exact temporary producer has already populated this argument slot
+    // at Move. Do not also materialize it at CallInput; grouped and direct
+    // forms must use the same single publication schedule.
+    return nullptr;
+  }
   if (stagedTemporarySourceFor(body, *stage).place == nullptr) {
     // A fresh closure has no source binding to move from. Its Closure step
     // publishes directly into this prepared slot, then CallInput reparents
