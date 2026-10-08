@@ -445,7 +445,6 @@ enum class CompilerCapabilityTypeKind {
   UniqueOwner,
   TextView,
   CString,
-  PrefixStorage,
   OptionalStorage,
   ThreadHandle,
   AtomicStorage,

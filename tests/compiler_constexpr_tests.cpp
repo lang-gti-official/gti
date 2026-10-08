@@ -698,17 +698,32 @@ int main() {
          "storage");
 
   const std::string generated = gti_test::emitCppText(valid);
-  expect(
-      generated.find("class string") != std::string::npos &&
-          generated.find("::gti_internal::backend::prefix_storage<"
-                         "char8_t> data") != std::string::npos &&
-          generated.find("string(const string &other) = delete;") !=
-              std::string::npos &&
-          generated.find("string(string &&) = default;") != std::string::npos &&
-          generated.find("::gti_internal::backend::mir_prefix_read_mut_v1") !=
-              std::string::npos,
-      "std::string lowering should retain nominal move-only lifecycle and "
-      "checked mutable storage access");
+  bool checkedMutableCharacters = false;
+  for (const auto &function : valid.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        checkedMutableCharacters |=
+            instruction.intrinsic == lang::IntrinsicKind::RawBorrowMut &&
+            instruction.info.type == lang::SemanticType::Char &&
+            instruction.borrowAccess == lang::AccessMode::Mutable &&
+            instruction.loan.has_value();
+      }
+    }
+  }
+  expect(generated.find("class string") != std::string::npos &&
+             generated.find("class terminated_prefix_owner") !=
+                 std::string::npos &&
+             generated.find("prefix_owner<char8_t>") != std::string::npos &&
+             generated.find("string(const string &other) = delete;") !=
+                 std::string::npos &&
+             generated.find("string(string &&) = default;") !=
+                 std::string::npos &&
+             checkedMutableCharacters &&
+             generated.find("native_pointer_value(") != std::string::npos &&
+             generated.find("::gti_internal::backend::prefix_storage<") ==
+                 std::string::npos,
+         "std::string lowering should retain nominal move-only lifecycle and "
+         "checked mutable storage access");
 
   const lang::FrontendResult invalidCopy = lang::Frontend().analyze(
       entry, R"(

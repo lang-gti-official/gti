@@ -4614,9 +4614,11 @@ private:
     const auto *source = receiver ? findValue(*receiver) : nullptr;
     const auto *retained =
         receiver ? output.findLoan(loanForValue(*receiver)) : nullptr;
-    if (retained != nullptr && retained->kind == MirLoanKind::Local &&
-        (retained->storedDependency == 0 ||
-         (receiver && isRangeIteratorValue(*receiver))))
+    if (retained != nullptr && ((retained->kind == MirLoanKind::Local &&
+                                 retained->storedDependency == 0) ||
+                                ((retained->kind == MirLoanKind::Local ||
+                                  retained->kind == MirLoanKind::CallResult) &&
+                                 receiver && isRangeIteratorValue(*receiver))))
       return false; // An opaque range cursor carries its checked range loan.
     return source != nullptr && source->info.traits.containsBorrowedState;
   }

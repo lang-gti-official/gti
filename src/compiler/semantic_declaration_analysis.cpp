@@ -2472,12 +2472,6 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         } else if (classDecl->name().lexeme == "uninitialized_storage") {
           compilerCapability = CompilerCapabilityTypeKind::UninitializedStorage;
         }
-      } else if (trustedPreludeCapabilityScope &&
-                 classDecl->genericParameters().size() == 1 &&
-                 !classDecl->genericParameters().front().valueType &&
-                 !classDecl->genericParameters().front().pack &&
-                 classDecl->name().lexeme == "prefix_storage") {
-        compilerCapability = CompilerCapabilityTypeKind::PrefixStorage;
       } else if (trustedOptionalCapabilityScope &&
                  classDecl->genericParameters().size() == 1 &&
                  !classDecl->genericParameters().front().valueType &&
@@ -5542,11 +5536,7 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     }
   }
   if (!intrinsic || call->arguments().size() != 1 ||
-      (intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageTextView &&
-       intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageCString &&
-       intrinsic->record().intrinsic !=
-           IntrinsicKind::PrefixStorageTryCString &&
-       intrinsic->record().intrinsic != IntrinsicKind::Move)) {
+      intrinsic->record().intrinsic != IntrinsicKind::Move) {
     return {};
   }
   return predeclaredTextBorrowSource(call->arguments().front(), function);
@@ -5856,8 +5846,6 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerBorrow:
         case IntrinsicKind::UniqueOwnerBorrowMut:
-        case IntrinsicKind::PrefixStorageRead:
-        case IntrinsicKind::PrefixStorageReadMut:
         case IntrinsicKind::OptionalStorageRead:
         case IntrinsicKind::OptionalStorageReadMut:
           return self(self, call->arguments().front(), context, contextOwner);

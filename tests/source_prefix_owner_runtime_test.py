@@ -27,11 +27,12 @@ if __name__ == "__main__":
                            "failure_during_cleanup; primary [GTI-R0002] at "
                            f"{forwarded.name}:{primary_line}; secondary [GTI-R0002]\n")
     runtime_matrix(
-        names=("source_prefix_owner", "source_prefix_vector", "generic_payload_enum",
+        names=("source_prefix_owner", "source_prefix_vector", "source_prefix_expected_range", "generic_payload_enum",
                "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup"),
         cases={
             "source_prefix_owner": [((), (0, "2\n1\n4\n3\n", ""))],
             "source_prefix_vector": [((), (0, "", ""))],
+            "source_prefix_expected_range": [((), (0, "", ""))],
             "generic_payload_enum": [((), (0, "1\n4\n3\n2\n", ""))],
             "source_prefix_drain_failure": [
                 ((), (0, "3\n2\n1\n9\n", "")),

@@ -713,9 +713,10 @@ void testStandardLibraryImports() {
          "unit");
 
   const std::string privateSource =
+      "#include <std/memory>\n"
       "namespace gti_internal { class forged {}; }\n"
       "namespace private_alias = gti_internal;\n"
-      "using forged_storage = gti_internal::prefix_storage<int>;\n"
+      "using forged_storage = gti_internal::unique_owner<int>;\n"
       "int main() { gti_internal::runtime::write_stdout(\"x\"); return 0; }\n";
   const lang::FrontendResult privateAccess = lang::Frontend().analyze(
       root / "private-access.gti", privateSource, {standardLibraryPrelude()},
@@ -756,8 +757,9 @@ void testStandardLibraryImports() {
       "#include <std/array>\n"
       "int main() { auto [capability] = std::Leaky(); return 0; }\n",
       {standardLibraryPrelude()},
-      {{leakyKey, "namespace std { struct Leaky { public: "
-                  "gti_internal::prefix_storage<int> capability; }; }\n"}},
+      {{leakyKey,
+        "#include <std/memory>\nnamespace std { struct Leaky { public: "
+        "gti_internal::unique_owner<int> capability; }; }\n"}},
       {standardLibraryRoot()});
   expect(!leakyDecomposition.canGenerateCode() &&
              countDiagnosticCode(leakyDecomposition.diagnostics, "GTI-S2058") ==
@@ -771,8 +773,8 @@ void testStandardLibraryImports() {
       "#include <std/array>\n"
       "std::leaked value;\nint main() { return 0; }\n",
       {standardLibraryPrelude()},
-      {{leakyKey, "namespace std { using leaked = "
-                  "gti_internal::prefix_storage<int>; }\n"}},
+      {{leakyKey, "#include <std/memory>\nnamespace std { using leaked = "
+                  "gti_internal::unique_owner<int>; }\n"}},
       {standardLibraryRoot()});
   expect(!leakyAlias.canGenerateCode() &&
              countDiagnosticCode(leakyAlias.diagnostics, "GTI-S2058") == 1 &&
@@ -787,15 +789,16 @@ void testStandardLibraryImports() {
       "int main() { std::Mixed value = std::Mixed(); "
       "return value.select(1.0); }\n",
       {standardLibraryPrelude()},
-      {{leakyKey, "namespace std { class Mixed { public: Mixed() {} "
+      {{leakyKey, "#include <std/memory>\nnamespace std { class Mixed { "
+                  "public: Mixed() {} "
                   "int select(int value) { return value; } "
-                  "int select(gti_internal::prefix_storage<int> value) { "
+                  "int select(gti_internal::unique_owner<int> value) { "
                   "return 0; } }; }\n"}},
       {standardLibraryRoot()});
   expect(!mixedOverload.canGenerateCode() &&
              countDiagnosticCode(mixedOverload.diagnostics, "GTI-S2012") == 1 &&
              !hasRelatedDiagnostic(mixedOverload.diagnostics,
-                                   "gti_internal::prefix_storage"),
+                                   "gti_internal::unique_owner<int>"),
          "application overload diagnostics must preserve public siblings "
          "without presenting compiler-private signature candidates");
 
@@ -807,8 +810,9 @@ void testStandardLibraryImports() {
       "int main() { Derived value = Derived(); return value.select(7); }\n",
       {standardLibraryPrelude()},
       {{leakyKey,
-        "namespace std { class PrivateBase { public: PrivateBase() {} "
-        "int select(gti_internal::prefix_storage<int> value) { return 0; } }; "
+        "#include <std/memory>\nnamespace std { class PrivateBase { public: "
+        "PrivateBase() {} "
+        "int select(gti_internal::unique_owner<int> value) { return 0; } }; "
         "}\n"}},
       {standardLibraryRoot()});
   expect(inheritedMixedOverload.canGenerateCode(),
@@ -823,8 +827,9 @@ void testStandardLibraryImports() {
       "return value.secret(1); }\n",
       {standardLibraryPrelude()},
       {{leakyKey,
-        "namespace std { class PrivateMethod { public: PrivateMethod() {} "
-        "int secret(gti_internal::prefix_storage<int> value) { return 0; } }; "
+        "#include <std/memory>\nnamespace std { class PrivateMethod { public: "
+        "PrivateMethod() {} "
+        "int secret(gti_internal::unique_owner<int> value) { return 0; } }; "
         "}\n"}},
       {standardLibraryRoot()});
   const lang::SourceUnitId privateMemberUnit =

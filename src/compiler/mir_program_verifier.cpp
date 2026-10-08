@@ -3101,20 +3101,25 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           receiverPlace && receiverPlace->root == MirPlaceRootKind::Binding
               ? bindingLoans.find(receiverPlace->binding)
               : bindingLoans.end();
-      const bool opaqueRangeCarrier =
+      const auto *receiverLoan =
           receiverLoans != bindingLoans.end() &&
-          receiverLoans->second.size() == 1 &&
-          body.findLoan(receiverLoans->second.front())->kind ==
-              MirLoanKind::Local &&
-          (body.findLoan(receiverLoans->second.front())->storedDependency ==
-               0 ||
-           std::any_of(body.rangeIterations.begin(), body.rangeIterations.end(),
-                       [&](const MirRangeIteration &range) {
-                         const auto *iterator = body.findPlace(range.iterator);
-                         return iterator != nullptr &&
-                                iterator->root == MirPlaceRootKind::Binding &&
-                                iterator->binding == receiverPlace->binding;
-                       }));
+                  receiverLoans->second.size() == 1 && receiverPlace != nullptr
+              ? body.findLoan(receiverLoans->second.front())
+              : nullptr;
+      const bool opaqueRangeCarrier =
+          receiverLoan != nullptr &&
+          ((receiverLoan->kind == MirLoanKind::Local &&
+            receiverLoan->storedDependency == 0) ||
+           ((receiverLoan->kind == MirLoanKind::Local ||
+             receiverLoan->kind == MirLoanKind::CallResult) &&
+            std::any_of(body.rangeIterations.begin(),
+                        body.rangeIterations.end(),
+                        [&](const MirRangeIteration &range) {
+                          const auto *iterator = body.findPlace(range.iterator);
+                          return iterator != nullptr &&
+                                 iterator->root == MirPlaceRootKind::Binding &&
+                                 iterator->binding == receiverPlace->binding;
+                        })));
       const bool receiverStorageResult =
           !opaqueRangeCarrier && instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None && target != nullptr &&

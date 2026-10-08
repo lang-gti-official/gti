@@ -4983,13 +4983,22 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   vector are implemented on the task branch. Focused native matrices cover
   final-address construction, generated relocation, borrowed views and exact
   first/secondary failure cleanup; shared-provider allocation counts are tested.
-  Superseded-path removal, full admission/corpus/performance coverage and final
-  acceptance remain required; existing private prefix machinery is not yet
-  claimed retired.
+  The native prefix engine and trusted prelude type/operation declarations
+  have been removed; regression fixtures are moving onto general lifetime and
+  borrowing operations. Removal of residual prefix-specific IR/backend and
+  optimizer paths, full admission/corpus/performance coverage and final
+  acceptance remain required. Complete retirement is not yet claimed.
   The `source_prefix_complete_elements` composition probe remains unaccepted:
   its owning-payload/expected-vector native entry profile fails with both the
   baseline and source-owner implementations. Preserve that reduction while
   auditing admitted shapes; frontend/MIR success alone is not native evidence.
+  Cutover exposed a general range-origin gap: synthesized cursors backed by
+  an accessor's `CallResult` loan selected their iterator shell instead of the
+  checked range owner. Lowering and the independent source-identity verifier
+  now preserve the exact owner for both local and accessor-backed cursors.
+  `testExpectedPayloadRangeLoans` and an unrelated user-defined range retain
+  that regression; forged iterator-shell sources remain rejected. No loan
+  containment rule or ordinary borrowed-carrier shell rule was relaxed.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

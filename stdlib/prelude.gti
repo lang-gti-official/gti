@@ -6,11 +6,6 @@ namespace gti_internal {
   // Compiler capability type declarations are deliberately empty. Semantics
   // binds their trusted declaration identities to private representations;
   // application declarations with the same spelling remain ordinary types.
-  // Prefix-initialized storage (P-STORAGE-01): the live elements always form
-  // the prefix [0, length). Construction appends exactly at the live length,
-  // destruction removes exactly the last live element, relocation transfers
-  // the complete prefix, and reads check the logical prefix.
-  class prefix_storage<T> {};
   class text_view {};
   class c_string {};
   class c_bool {};
@@ -79,20 +74,6 @@ namespace gti_internal {
   [[noreturn, track_caller]]
   void panic(gti_internal::text_view message);
 
-  gti_internal::prefix_storage<T> allocate_prefix_storage<T>(uint64_t count);
-  void prefix_storage_append<T, Args...>(mut gti_internal::prefix_storage<T>& storage, Args... args);
-  void prefix_storage_pop<T>(mut gti_internal::prefix_storage<T>& storage);
-  T & prefix_storage_read<T>(gti_internal::prefix_storage<T>& storage, uint64_t index);
-  mut T & prefix_storage_read_mut<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
-  uint64_t prefix_storage_length<T>(gti_internal::prefix_storage<T>& storage);
-  void prefix_storage_relocate<T>(mut gti_internal::prefix_storage<T>& source, mut gti_internal::prefix_storage<T>& destination); // Insert and erase preserve the prefix invariant atomically: the element
-  // shift and the construction or destruction happen inside one sealed
-  // operation, so no partially initialized slot is ever observable.
-  void prefix_storage_insert<T, Args...>(mut gti_internal::prefix_storage<T>& storage, uint64_t index, Args... args);
-  void prefix_storage_erase<T>(mut gti_internal::prefix_storage<T>& storage, uint64_t index);
-  gti_internal::text_view prefix_storage_text_view(gti_internal::prefix_storage<char>& storage);
-  gti_internal::c_string prefix_storage_c_string(gti_internal::prefix_storage<char>& storage);
-  gti_internal::c_string prefix_storage_try_c_string(gti_internal::prefix_storage<char>& storage);
 
   namespace runtime {
     extern "C" {

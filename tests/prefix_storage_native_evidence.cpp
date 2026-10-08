@@ -1,5 +1,5 @@
-// P-STORAGE-01 slice 3: the prefix-initialized storage evidence battery.
-// Trusted fixtures exercise the capability's full contract — append order,
+// Source-defined prefix ownership evidence. Ordinary fixtures exercise the
+// owner's full contract — append order,
 // pop-last destruction, complete-prefix relocation, move transfer, reverse
 // destruction at scope exit, and every runtime guard — through natively
 // compiled generated programs across C++20/C++23, -O0/-O2/-O3, and
@@ -41,11 +41,9 @@ lang::FrontendResult analyzeTrusted(const std::string &name,
   const std::filesystem::path stdlibRoot = environmentPath("GTI_STDLIB_PATH");
   const std::filesystem::path entry =
       std::filesystem::temp_directory_path() / ("gti-prefix-" + name);
-  const std::string entryKey =
-      std::filesystem::weakly_canonical(entry).string();
-  return lang::Frontend().analyze(entry, source,
-                                  {stdlibRoot / "prelude.gti", entry},
-                                  {{entryKey, source}}, {stdlibRoot});
+  return lang::Frontend().analyze(entry, "#include <std/memory>\n" + source,
+                                  {stdlibRoot / "prelude.gti"}, {},
+                                  {stdlibRoot});
 }
 
 std::string readFile(const std::filesystem::path &path) {
@@ -120,38 +118,38 @@ public:
 int main() {
   mut int checks = 0;
   {
-    mut gti_internal::prefix_storage<Tracker> values =
-        gti_internal::allocate_prefix_storage<Tracker>(uint64_t(3));
-    gti_internal::prefix_storage_append(values, 1);
-    gti_internal::prefix_storage_append(values, 2);
-    gti_internal::prefix_storage_append(values, 3);
-    if (gti_internal::prefix_storage_length(values) == uint64_t(3)) {
+    mut std::detail::prefix_owner<Tracker> values =
+        std::detail::prefix_owner<Tracker>(uint64_t(3));
+    values.append(1);
+    values.append(2);
+    values.append(3);
+    if (values.length() == uint64_t(3)) {
       checks = checks + 1;
     }
-    if (gti_internal::prefix_storage_read(values, uint64_t(0)).id == 1) {
+    if (values.read(uint64_t(0)).id == 1) {
       checks = checks + 1;
     }
     mut Tracker& second =
-        gti_internal::prefix_storage_read_mut(values, uint64_t(1));
+        values.read_mut(uint64_t(1));
     second.id = 5;
-    if (gti_internal::prefix_storage_read(values, uint64_t(1)).id == 5) {
+    if (values.read(uint64_t(1)).id == 5) {
       checks = checks + 1;
     }
-    gti_internal::prefix_storage_pop(values);
-    if (gti_internal::prefix_storage_length(values) == uint64_t(2)) {
+    values.pop();
+    if (values.length() == uint64_t(2)) {
       checks = checks + 1;
     }
-    mut gti_internal::prefix_storage<Tracker> moved =
-        gti_internal::allocate_prefix_storage<Tracker>(uint64_t(4));
-    gti_internal::prefix_storage_relocate(values, moved);
-    if (gti_internal::prefix_storage_length(values) == uint64_t(0)) {
+    mut std::detail::prefix_owner<Tracker> moved =
+        std::detail::prefix_owner<Tracker>(uint64_t(4));
+    values.relocate_to(moved);
+    if (values.length() == uint64_t(0)) {
       checks = checks + 1;
     }
-    if (gti_internal::prefix_storage_length(moved) == uint64_t(2)) {
+    if (moved.length() == uint64_t(2)) {
       checks = checks + 1;
     }
-    mut gti_internal::prefix_storage<Tracker> taken = std::move(moved);
-    if (gti_internal::prefix_storage_length(taken) == uint64_t(2)) {
+    mut std::detail::prefix_owner<Tracker> taken = std::move(moved);
+    if (taken.length() == uint64_t(2)) {
       checks = checks + 1;
     }
   }
@@ -172,31 +170,31 @@ int main() {
 
 constexpr std::string_view editingSource = R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, 1);
-  gti_internal::prefix_storage_append(values, 2);
-  gti_internal::prefix_storage_append(values, 4);
-  gti_internal::prefix_storage_insert(values, uint64_t(2), 3);
-  if (gti_internal::prefix_storage_length(values) != uint64_t(4)) {
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append(1);
+  values.append(2);
+  values.append(4);
+  values.insert(uint64_t(2), 3);
+  if (values.length() != uint64_t(4)) {
     return 1;
   }
-  if (gti_internal::prefix_storage_read(values, uint64_t(0)) != 1 or
-      gti_internal::prefix_storage_read(values, uint64_t(1)) != 2 or
-      gti_internal::prefix_storage_read(values, uint64_t(2)) != 3 or
-      gti_internal::prefix_storage_read(values, uint64_t(3)) != 4) {
+  if (values.read(uint64_t(0)) != 1 or
+      values.read(uint64_t(1)) != 2 or
+      values.read(uint64_t(2)) != 3 or
+      values.read(uint64_t(3)) != 4) {
     return 2;
   }
-  gti_internal::prefix_storage_erase(values, uint64_t(0));
-  if (gti_internal::prefix_storage_length(values) != uint64_t(3)) {
+  values.erase(uint64_t(0));
+  if (values.length() != uint64_t(3)) {
     return 3;
   }
-  if (gti_internal::prefix_storage_read(values, uint64_t(0)) != 2 or
-      gti_internal::prefix_storage_read(values, uint64_t(2)) != 4) {
+  if (values.read(uint64_t(0)) != 2 or
+      values.read(uint64_t(2)) != 4) {
     return 4;
   }
-  gti_internal::prefix_storage_insert(values, uint64_t(3), 9);
-  if (gti_internal::prefix_storage_read(values, uint64_t(3)) != 9) {
+  values.insert(uint64_t(3), 9);
+  if (values.read(uint64_t(3)) != 9) {
     return 5;
   }
   return 0;
@@ -318,18 +316,20 @@ const int byte_copy_probe = [] {
   mir_object_relocate_v1(address(1), std::launder(address(0)));
   check(*std::launder(address(1)));
   std::destroy_at(std::launder(address(1)));
-  prefix_storage<NativeAddressRecord> prefix;
-  if (!prefix_storage<NativeAddressRecord>::try_allocate(3, &prefix))
-    std::abort();
-  prefix.append(source);
-  prefix.insert_at(0, source);
-  prefix.erase_at(0);
-  check(prefix.read(0));
-  prefix_storage<NativeAddressRecord> destination;
-  if (!prefix_storage<NativeAddressRecord>::try_allocate(3, &destination))
-    std::abort();
-  prefix.relocate_to(destination);
-  check(destination.read(0));
+  // Prefix insertion/erasure now compose these same exact-address lifetime
+  // operations in GTI source. Check the former representation path's inert
+  // pointer bytes through a whole shift/erase/transfer sequence, without
+  // restoring a second native container implementation.
+  construct_representation_at(address(0), source);
+  mir_object_relocate_v1(address(1), std::launder(address(0)));
+  construct_representation_at(address(0), source);
+  check(*std::launder(address(0)));
+  check(*std::launder(address(1)));
+  std::destroy_at(std::launder(address(0)));
+  mir_object_relocate_v1(address(0), std::launder(address(1)));
+  mir_object_relocate_v1(address(2), std::launder(address(0)));
+  check(*std::launder(address(2)));
+  std::destroy_at(std::launder(address(2)));
 
   // The primitive must not bypass a selected nontrivial copy constructor.
   struct Tracked {
@@ -356,10 +356,10 @@ constexpr GuardScenario guards[] = {
     {"append-capacity",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(1));
-  gti_internal::prefix_storage_append(values, 1);
-  gti_internal::prefix_storage_append(values, 2);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(1));
+  values.append(1);
+  values.append(2);
   return 0;
 }
 )",
@@ -367,9 +367,9 @@ int main() {
     {"pop-empty",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(1));
-  gti_internal::prefix_storage_pop(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(1));
+  values.pop();
   return 0;
 }
 )",
@@ -377,23 +377,23 @@ int main() {
     {"read-prefix",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(2));
-  gti_internal::prefix_storage_append(values, 1);
-  return int(gti_internal::prefix_storage_read(values, uint64_t(1)));
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(2));
+  values.append(1);
+  return int(values.read(uint64_t(1)));
 }
 )",
      "index_out_of_bounds in private_storage"},
     {"relocate-occupied",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> source =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(2));
-  gti_internal::prefix_storage_append(source, 1);
-  mut gti_internal::prefix_storage<int32_t> destination =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(2));
-  gti_internal::prefix_storage_append(destination, 9);
-  gti_internal::prefix_storage_relocate(source, destination);
+  mut std::detail::prefix_owner<int32_t> source =
+      std::detail::prefix_owner<int32_t>(uint64_t(2));
+  source.append(1);
+  mut std::detail::prefix_owner<int32_t> destination =
+      std::detail::prefix_owner<int32_t>(uint64_t(2));
+  destination.append(9);
+  source.relocate_to(destination);
   return 0;
 }
 )",
@@ -401,10 +401,10 @@ int main() {
     {"insert-outside",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, 1);
-  gti_internal::prefix_storage_insert(values, uint64_t(2), 9);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append(1);
+  values.insert(uint64_t(2), 9);
   return 0;
 }
 )",
@@ -412,10 +412,10 @@ int main() {
     {"insert-capacity",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(1));
-  gti_internal::prefix_storage_append(values, 1);
-  gti_internal::prefix_storage_insert(values, uint64_t(0), 9);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(1));
+  values.append(1);
+  values.insert(uint64_t(0), 9);
   return 0;
 }
 )",
@@ -423,10 +423,10 @@ int main() {
     {"erase-outside",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(2));
-  gti_internal::prefix_storage_append(values, 1);
-  gti_internal::prefix_storage_erase(values, uint64_t(1));
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(2));
+  values.append(1);
+  values.erase(uint64_t(1));
   return 0;
 }
 )",
@@ -434,13 +434,13 @@ int main() {
     {"relocate-capacity",
      R"(
 int main() {
-  mut gti_internal::prefix_storage<int32_t> source =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(2));
-  gti_internal::prefix_storage_append(source, 1);
-  gti_internal::prefix_storage_append(source, 2);
-  mut gti_internal::prefix_storage<int32_t> destination =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(1));
-  gti_internal::prefix_storage_relocate(source, destination);
+  mut std::detail::prefix_owner<int32_t> source =
+      std::detail::prefix_owner<int32_t>(uint64_t(2));
+  source.append(1);
+  source.append(2);
+  mut std::detail::prefix_owner<int32_t> destination =
+      std::detail::prefix_owner<int32_t>(uint64_t(1));
+  source.relocate_to(destination);
   return 0;
 }
 )",
@@ -487,10 +487,16 @@ int main(int argc, char **argv) {
       emitArtifact("behavior", behaviorSource);
   if (!behavior.empty()) {
     for (const std::string standard : {"c++20", "c++23"}) {
+      const auto selected = standard == "c++20"
+                                ? emitArtifact("behavior-20", behaviorSource,
+                                               lang::CppStandard::Cpp20)
+                                : behavior;
+      if (selected.empty())
+        continue;
       for (const std::string optimization : {"-O0", "-O2", "-O3"}) {
         const std::string label =
             "behavior-" + standard.substr(3) + optimization;
-        const RunResult run = buildAndRun(compiler, behavior, directory, label,
+        const RunResult run = buildAndRun(compiler, selected, directory, label,
                                           standard, optimization, "");
         expect(run.built && run.exitStatus == 0,
                "the behavior fixture must pass at " + standard + " " +
@@ -508,15 +514,21 @@ int main(int argc, char **argv) {
            "the behavior fixture must run clean under ASan/UBSan");
   }
 
-  // The sealed insert/erase primitives preserve the prefix invariant
-  // atomically across the same native matrix.
+  // Ordinary source insert/erase composes checked general lifetime operations.
+  // Emit the matching representation for each native language mode.
   const std::filesystem::path editing = emitArtifact("editing", editingSource);
   if (!editing.empty()) {
     for (const std::string standard : {"c++20", "c++23"}) {
+      const auto selected = standard == "c++20"
+                                ? emitArtifact("editing-20", editingSource,
+                                               lang::CppStandard::Cpp20)
+                                : editing;
+      if (selected.empty())
+        continue;
       for (const std::string optimization : {"-O0", "-O3"}) {
         const std::string label =
             "editing-" + standard.substr(3) + optimization;
-        const RunResult run = buildAndRun(compiler, editing, directory, label,
+        const RunResult run = buildAndRun(compiler, selected, directory, label,
                                           standard, optimization, "");
         expect(run.built && run.exitStatus == 0,
                "the editing fixture must pass at " + standard + " " +
@@ -561,8 +573,8 @@ int main(int argc, char **argv) {
   }
 
   // Every misuse scenario trips exactly the surface that reaches it first:
-  // MIR-emitted mains route storage misuse through defined failure; sealed
-  // runtime guards remain defense in depth behind those defined checks.
+  // MIR-emitted source guards select the same defined-failure outcomes as the
+  // surviving general lifetime operations.
   for (const GuardScenario &guard : guards) {
     const std::filesystem::path artifact =
         emitArtifact(std::string(guard.name), guard.source);

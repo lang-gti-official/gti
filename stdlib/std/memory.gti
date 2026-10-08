@@ -513,7 +513,8 @@ public:
     this.live = uint64_t(0);
   }
   void insert(uint64_t index, T value) mut requires std::relocatable<T> {
-    require_relocation_capacity(index <= this.live && this.live < this.slots);
+    if (index > this.live) index_bounds_check(index, this.live);
+    require_relocation_capacity(this.live < this.slots);
     unsafe {
       mut uint64_t destination = this.live;
       while (destination > index) {
