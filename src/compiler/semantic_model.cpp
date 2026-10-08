@@ -1270,6 +1270,49 @@ SemanticModel::findConstruction(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findConstruction(expression);
 }
 
+bool SemanticModel::isFreshClassResult(const Expr &expression) const {
+  const auto *info = findExpression(expression);
+  if (info == nullptr || info->type.kind != SemanticType::Class ||
+      info->category != ValueCategory::Value)
+    return false;
+  if (const auto *group = exprAs<Grouping>(&expression))
+    return isFreshClassResult(*group->expression());
+  if (const auto *construction = findConstruction(expression))
+    return construction->constructedType == info->type;
+  if (const auto *operation = findOperator(expression))
+    return operation->returnType == info->type;
+  if (const auto *call = exprAs<Call>(&expression)) {
+    if (const auto *lambda = findLambdaCall(*call))
+      return lambda->returnType == info->type;
+    if (const auto *deferred = findDeferredCallableCall(*call))
+      return deferred->returnType == info->type;
+    const auto *resolved = findCall(*call);
+    return resolved != nullptr && resolved->returnType == info->type &&
+           resolved->intrinsic != IntrinsicKind::Move;
+  }
+  return false;
+}
+
+const Expr *
+SemanticModel::directInitializationSource(const Expr &expression) const {
+  if (const auto *group = exprAs<Grouping>(&expression)) {
+    const auto *info = findExpression(expression);
+    if (info != nullptr && info->type.kind == SemanticType::Class &&
+        info->category == ValueCategory::Value)
+      return group->expression().get();
+  }
+  const auto *construction = findConstruction(expression);
+  if (construction == nullptr || !construction->directInitialization)
+    return nullptr;
+  if (const auto *call = exprAs<Call>(&expression);
+      call != nullptr && call->arguments().size() == 1)
+    return call->arguments().front().get();
+  if (const auto *direct = exprAs<DirectInitializer>(&expression);
+      direct != nullptr && direct->arguments().size() == 1)
+    return direct->arguments().front().get();
+  return nullptr;
+}
+
 [[nodiscard]] const ResolvedConstructionInfo *
 SemanticModel::findArrayElementConstruction(
     const ArrayInitializer &initializer) const {

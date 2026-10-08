@@ -852,6 +852,17 @@ coordinate integration and select an independent adoption row.
 
 ### L-UP-18: Immovable Payload Eligibility After Direct Construction
 
+- **Fresh-result prerequisite delivered (#150):** exact same-type wrappers of
+  class-valued constructions/calls now denote their producer directly; local
+  and return publication can therefore retain an immovable object's final
+  address without an extra lifecycle move. This does not make a completed
+  immovable object movable, remove container constraints, or deliver the
+  optional/storage parity goals below. Remaining fresh-result breadth includes
+  conditional/comma result construction and immovable by-value parameter
+  transport. The latter needs a verified final-place parameter storage protocol
+  with stable identity through later argument failure and callee cleanup;
+  acceptance must prove address identity and once-only cleanup, not merely
+  relax the current movable argument check.
 - **Prerequisite/client:** `L-UP-12`. The public storage owner requires
   `movable<T>`; public/private optional requires `move_constructible<T>` and its
   private traits currently permit generated movement. Direct emplacement alone

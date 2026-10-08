@@ -44,6 +44,38 @@ before refreshing repository expectations. The remaining three-body difference
 is unchanged in scalar atomics and optionals. Final reconciled-head full-suite
 and installed-consumer acceptance is still required.
 
+The merged #150 candidate additionally passes all 127 examples in both native
+oracle endpoints and the complete emitted/LoweredProgram censuses: 21,103
+emitted body identities, 63,607 declarations, 21,106 lowered bodies and 3,879
+generated items. Example 130 has 51 generated items rather than its standalone
+branch's 54 because the reconciled iterator surface removes the same three
+reference-specific sentinel adapters noted above. Tree-sitter passes all 76
+grammar cases, queries/source-text contracts and 193 shipped sources without
+generated-parser drift. These results precede final construction-provenance
+verifier hardening; they are not final release acceptance.
+
+## Guaranteed fresh-result direct initialization
+
+`prvalue_direct_initialization` covers the original #150 class factory, nested
+typed/braced/grouped wrappers, genuine existing-object copy/move, deleted real
+movement, borrowed-owner escape rejection, exact generic instances, constexpr
+producer parity, HIR source-alias mutations (including forged real transfers,
+missing construction-owner evidence, and an observable ordinary factory),
+verified MIR and both C++ backend
+standards. It also checks field-wise mixed borrowed factories/relays and rejects
+owner mutation before last use, conflicting exclusive inputs, and local-owner
+escape. `prvalue_direct_initialization_runtime` runs example 130, method,
+operator and lambda factories, mixed borrowed results, and owning constructor
+failure rollback in the shared eight-mode matrix: C++20/C++23 at
+O0/O1/O3, no-elide and generated-program ASan/UBSan. Final-address self-pointers
+and exact destructor output distinguish direct initialization from hidden
+relocation or extra temporary cleanup. The LSP gate checks current diagnostics,
+compiler-owned hover/definition, UTF-16 source positions, invalid edits and
+repaired snapshots. Syntax/formatter/Tree-sitter grammar is unchanged.
+
+These focused gates supplement the full production and installed-consumer
+acceptance; they do not claim the combined feature/release is verified alone.
+
 ## Combined lifetime/storage and payload-enum release gate
 
 Historically, PR #94 was the single integration point for the S-ALLOC-06/07 and generic

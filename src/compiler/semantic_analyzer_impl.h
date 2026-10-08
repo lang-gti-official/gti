@@ -2273,6 +2273,8 @@ private:
   void recordSelectedCallOccurrence(const Call &call,
                                     ResolvedCallInfo resolved);
 
+  void recordSelectedConstructionOccurrence(const Expr &construction);
+
   void bindIntrinsicCallDeclaration(const Call &call,
                                     const CallableCandidate &function);
 
@@ -3731,8 +3733,8 @@ private:
     SemanticType type = SemanticType::Unknown;
   };
 
-  [[nodiscard]] static const Expr *
-  transparentTemporaryProducer(const ExprPtr &expression);
+  [[nodiscard]] const Expr *
+  transparentTemporaryProducer(const ExprPtr &expression) const;
 
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;

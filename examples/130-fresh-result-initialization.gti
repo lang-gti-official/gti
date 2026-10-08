@@ -1,0 +1,33 @@
+#include <std/string>
+
+// Fresh results initialize their destination directly, even when the type
+// cannot move. Typed wrappers and parentheses do not create another object.
+class Anchor {
+  std::string label;
+  int value;
+  mut const int* original = nullptr;
+public:
+  Anchor(std::string label, int value)
+      : label(std::move(label)), value(value) {
+    this.original = &this.value;
+  }
+  Anchor(Anchor& other) = delete;
+  Anchor(Anchor&& other) = delete;
+  bool stable() { return this.original == &this.value; }
+  std::string_view name() { return this.label.view(); }
+  int read() { return this.value; }
+};
+
+Anchor make_anchor() { return Anchor(std::string("final address"), 42); }
+Anchor relay() { return Anchor((make_anchor())); }
+
+int main() {
+  Anchor direct = make_anchor();
+  Anchor wrapped = Anchor(Anchor((relay())));
+  if (!direct.stable() || !wrapped.stable() ||
+      direct.read() != 42 || wrapped.name() != "final address") { return 1; }
+  if (!Anchor(make_anchor()).stable()) { return 2; }
+  // std::move(direct) would still request a real move and is rejected.
+  // A named return is also a real copy/move, not optional NRVO.
+  return 0;
+}

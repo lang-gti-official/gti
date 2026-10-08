@@ -1,0 +1,27 @@
+class Fixed {
+public:
+  int value;
+  Fixed(int value) : value(value) {}
+  Fixed(Fixed&) = delete;
+  Fixed(Fixed&&) = delete;
+  Fixed add(int delta) { return Fixed(this.value + delta); }
+  Fixed operator+(int delta) { return Fixed(this.value + delta); }
+};
+
+class Factory {
+public:
+  Factory() {}
+  Fixed operator()() { return Fixed(5); }
+};
+
+int main() {
+  Fixed source{7};
+  Fixed from_member = Fixed((source.add(2)));
+  Fixed from_operator{Fixed(source + 3)};
+  Factory factory{};
+  Fixed from_callable = Fixed((factory()));
+  auto lambda = []() -> Fixed { return Fixed(4); };
+  Fixed from_lambda = Fixed(lambda());
+  return from_member.value + from_operator.value + from_callable.value +
+      from_lambda.value == 28 ? 0 : 1;
+}

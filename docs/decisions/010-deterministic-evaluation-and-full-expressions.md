@@ -13,6 +13,15 @@ endpoint, including borrowed-carrier parameters; borrow-before-mutation remains
 invalid. The historical context below records why that order was originally
 rejected.
 
+Revision (issue #150): exact same-type fresh-result wrappers now have guaranteed
+direct initialization. `T(make())` names the producer's result, not an optional
+backend optimization of an extra move/destructor pair. This refines the
+top-level-result rule below and supersedes #150's interim real-move direction.
+Explicit movement from existing storage remains observable and mandatory;
+named-return elision is not introduced. Semantics selects this distinction,
+HIR preserves source aliases, and verified MIR owns the single resulting
+lifetime and failure-cleanup schedule.
+
 ## Context
 
 GTI promises deterministic cleanup and backend-independent behavior, but the

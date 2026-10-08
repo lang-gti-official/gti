@@ -962,6 +962,9 @@ struct ResolvedConstructionInfo {
   std::vector<BorrowedFieldOrigin> borrowFields;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
+  // Exact same-type fresh-result initialization names the existing result
+  // object. It selects no copy/move constructor and creates no second lifetime.
+  bool directInitialization = false;
 };
 
 enum class ConstructorInitializerTargetKind {
@@ -1778,6 +1781,13 @@ public:
 
   [[nodiscard]] const ResolvedConstructionInfo *
   findConstruction(const Expr &expression) const;
+
+  // A fresh class result is a newly produced object, not a value-category
+  // transfer from an existing place (notably the Move intrinsic).
+  [[nodiscard]] bool isFreshClassResult(const Expr &expression) const;
+  // Class-value grouping or a selected fresh-result construction wrapper.
+  [[nodiscard]] const Expr *
+  directInitializationSource(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedConstructionInfo *
   findArrayElementConstruction(const ArrayInitializer &initializer) const;
