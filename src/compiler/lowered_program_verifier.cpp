@@ -554,7 +554,7 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
 
 } // namespace
 std::vector<LoweredProgramIssue>
-verifyLoweredProgram(const LoweredProgram &program) {
+lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
   std::vector<LoweredProgramIssue> issues;
   if (!program.target_.supported()) {
     addIssue(issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -1519,6 +1519,13 @@ verifyLoweredProgram(const LoweredProgram &program) {
     }
   }
 
+  return issues;
+}
+
+std::vector<LoweredProgramIssue>
+verifyLoweredProgram(const LoweredProgram &program) {
+  std::vector<LoweredProgramIssue> issues =
+      lowered_detail::verifyLoweredProgramContents(program);
   const std::uint64_t currentSeal =
       fingerprint(LoweredProgramPrinter().print(program));
   if (!program.constructionSeal_ || *program.constructionSeal_ != currentSeal) {
@@ -1526,6 +1533,16 @@ verifyLoweredProgram(const LoweredProgram &program) {
              "lowered program differs from its immutable construction seal");
   }
   return issues;
+}
+
+std::optional<VerifiedLoweredProgram>
+verifiedLoweredProgram(const LoweredProgram &program,
+                       std::vector<LoweredProgramIssue> &issues) {
+  issues = verifyLoweredProgram(program);
+  if (!issues.empty()) {
+    return std::nullopt;
+  }
+  return VerifiedLoweredProgram(program);
 }
 
 } // namespace lang

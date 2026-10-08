@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -683,6 +684,15 @@ struct LoweredProgramIssue {
   std::optional<LoweredGeneratedItemIdentity> generatedItem;
 };
 
+class LoweredProgram;
+
+namespace lowered_detail {
+// Builder-only: every verifier check except the construction seal, which the
+// builder establishes from the same value once these checks pass.
+[[nodiscard]] std::vector<LoweredProgramIssue>
+verifyLoweredProgramContents(const LoweredProgram &program);
+} // namespace lowered_detail
+
 class LoweredProgram final {
 public:
   LoweredProgram(const LoweredProgram &) = default;
@@ -765,6 +775,9 @@ public:
 private:
   LoweredProgram() = default;
 
+  // Rebuilds the lookup hints from the completed declaration and symbol rows.
+  void indexDeclarations();
+
   TargetInfo target_;
   MirProgram mir_;
   ProgramKind programKind_ = ProgramKind::Executable;
@@ -779,14 +792,54 @@ private:
   std::vector<LoweredLambdaInstance> lambdaInstances_;
   std::vector<LoweredGeneratedItem> generatedItems_;
   std::optional<std::uint64_t> constructionSeal_;
+  // Derived row hints keyed by semantic identity, never part of the printed
+  // contract. A lookup uses a hint only after confirming that its row still
+  // carries the requested identity, and otherwise scans, so emission does
+  // not repeatedly scan every declaration of an imported library.
+  std::unordered_map<std::size_t, std::size_t> classRows_;
+  std::unordered_map<std::size_t, std::size_t> functionRows_;
+  std::unordered_map<std::size_t, std::size_t> constructorRows_;
+  std::unordered_map<std::size_t, std::size_t> storageRows_;
+  std::unordered_map<std::size_t, std::size_t> symbolRows_;
 
   friend class LoweredProgramBuilder;
   friend struct LoweredProgramTestAccess;
   friend std::vector<LoweredProgramIssue>
   verifyLoweredProgram(const LoweredProgram &program);
+  friend std::vector<LoweredProgramIssue>
+  lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program);
 };
 
 [[nodiscard]] std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program);
+
+class VerifiedLoweredProgram;
+
+// Verifies one value for a consumer and returns evidence of that only when
+// no issue exists.
+[[nodiscard]] std::optional<VerifiedLoweredProgram>
+verifiedLoweredProgram(const LoweredProgram &program,
+                       std::vector<LoweredProgramIssue> &issues);
+
+// Evidence that verifyLoweredProgram accepted this exact value. A
+// LoweredProgram is immutable through its public interface, so the stages of
+// one consumer pass this evidence along instead of repeating the complete
+// inventory and seal check, which prints the whole program each time.
+class VerifiedLoweredProgram final {
+public:
+  [[nodiscard]] const LoweredProgram &program() const noexcept {
+    return *program_;
+  }
+
+private:
+  explicit VerifiedLoweredProgram(const LoweredProgram &program) noexcept
+      : program_(&program) {}
+
+  const LoweredProgram *program_;
+
+  friend std::optional<VerifiedLoweredProgram>
+  verifiedLoweredProgram(const LoweredProgram &program,
+                         std::vector<LoweredProgramIssue> &issues);
+};
 
 } // namespace lang

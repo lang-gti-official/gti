@@ -1024,16 +1024,24 @@ void appendLoweredDeclarationRows(const LoweredProgram &program,
 CppMirRepresentationSnapshotBuild
 buildCppMirRepresentationSnapshot(const LoweredProgram &program,
                                   CppStandard standard, bool debugInfo) {
-  CppMirRepresentationSnapshotBuild build;
-  const std::vector<LoweredProgramIssue> loweredIssues =
-      verifyLoweredProgram(program);
-  if (!loweredIssues.empty()) {
+  std::vector<LoweredProgramIssue> loweredIssues;
+  const std::optional<VerifiedLoweredProgram> verified =
+      verifiedLoweredProgram(program, loweredIssues);
+  if (!verified) {
+    CppMirRepresentationSnapshotBuild build;
     addIssue(build,
              CppMirRepresentationSnapshotIssueKind::InvalidLoweredProgram,
              "invalid LoweredProgram: " + loweredIssues.front().detail);
     return build;
   }
+  return buildCppMirRepresentationSnapshot(*verified, standard, debugInfo);
+}
 
+CppMirRepresentationSnapshotBuild
+buildCppMirRepresentationSnapshot(const VerifiedLoweredProgram &verified,
+                                  CppStandard standard, bool debugInfo) {
+  const LoweredProgram &program = verified.program();
+  CppMirRepresentationSnapshotBuild build;
   CppMirRepresentationSnapshot snapshot;
   std::optional<CppMirProgramEmissionPlan> emissionPlan;
   snapshot.mir = program.mir();

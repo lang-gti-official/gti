@@ -35,20 +35,12 @@ namespace lang {
 
 class CppProgramEmissionPlanner final {
 public:
-  explicit CppProgramEmissionPlanner(const LoweredProgram &program,
+  explicit CppProgramEmissionPlanner(const VerifiedLoweredProgram &verified,
                                      CppStandard standard, bool debugInfo)
-      : standard(standard), mir(program.mir()), loweredProgram(program),
-        debugInfo(debugInfo) {
-    const std::vector<LoweredProgramIssue> loweredIssues =
-        verifyLoweredProgram(loweredProgram);
-    if (!loweredIssues.empty()) {
-      throw std::logic_error(
-          "C++ emitter requires a verified lowered program: " +
-          loweredIssues.front().detail);
-    }
-
+      : standard(standard), mir(verified.program().mir()),
+        loweredProgram(verified.program()), debugInfo(debugInfo) {
     CppMirRepresentationSnapshotBuild snapshot =
-        buildCppMirRepresentationSnapshot(loweredProgram, standard, debugInfo);
+        buildCppMirRepresentationSnapshot(verified, standard, debugInfo);
     if (!snapshot.valid()) {
       const auto internal =
           std::find_if(snapshot.issues.begin(), snapshot.issues.end(),
@@ -9097,6 +9089,19 @@ public:
 CppProgramEmissionPlan
 buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
                             bool debugInfo) {
+  std::vector<LoweredProgramIssue> issues;
+  const std::optional<VerifiedLoweredProgram> verified =
+      verifiedLoweredProgram(program, issues);
+  if (!verified) {
+    throw std::logic_error("C++ emitter requires a verified lowered program: " +
+                           issues.front().detail);
+  }
+  return buildCppProgramEmissionPlan(*verified, standard, debugInfo);
+}
+
+CppProgramEmissionPlan
+buildCppProgramEmissionPlan(const VerifiedLoweredProgram &program,
+                            CppStandard standard, bool debugInfo) {
   return CppProgramEmissionPlanner(program, standard, debugInfo).build();
 }
 

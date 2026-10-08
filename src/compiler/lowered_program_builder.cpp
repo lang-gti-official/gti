@@ -1362,10 +1362,13 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     return build;
   }
 
-  lowered.constructionSeal_ =
-      fingerprint(LoweredProgramPrinter().print(lowered));
-  build.issues = verifyLoweredProgram(lowered);
+  // Checking a seal immediately after computing it from the same value would
+  // print the whole program a second time without testing anything.
+  lowered.indexDeclarations();
+  build.issues = lowered_detail::verifyLoweredProgramContents(lowered);
   if (build.issues.empty()) {
+    lowered.constructionSeal_ =
+        fingerprint(LoweredProgramPrinter().print(lowered));
     build.program.emplace(std::move(lowered));
   }
   return build;
