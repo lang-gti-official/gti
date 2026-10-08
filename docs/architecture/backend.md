@@ -534,6 +534,17 @@ publication classifier and the proof that no MIR `Drop` governs the slot. It
 does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
 cleanup-owning slot replace or conceal a missing `Drop`.
 
+Local class-valued conditional publication uses one shared uninitialized
+temporary followed by the MIR move into its binding. The exact two-arm CFG,
+unique storage use, publication order and terminal representation teardown are
+shared between cleanup-owning and passive classes. Owning values must retain
+their exact activation/reparent obligations. Passive values instead require a
+generated passive destructor, no borrowed state and a generated move proved
+defined-failure-free by MIR type facts; no value or temporary cleanup obligation
+is synthesized. Both modes reject additional temporary aliases, readers or
+writers. The native moved-from shell is retired after the binding construction,
+including when the same CFG executes again through a loop.
+
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact
 source place by value when the sealed representation row proves copy
