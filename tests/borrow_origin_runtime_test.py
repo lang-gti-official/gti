@@ -12,7 +12,8 @@ if __name__ == "__main__":
              "a58-ref-to-owner-field-pointee-via-local-ref",
              "a58-map-unique-ptr-value-deref", "borrow_nested_readonly",
              "borrow_nested_map", "a59-readonly-ref-into-mut-nested-container",
-             "a59-map-at-then-element-ref", "borrow_projected_parameter_return")
+             "a59-map-at-then-element-ref", "borrow_projected_parameter_return",
+             "borrow_direct_projected_return")
     # The original map is deliberately empty: compilation must succeed, but
     # its checked at() call must retain the defined missing-key failure.
     map_lines = (root.parent / "stdlib/std/map.gti").read_text().splitlines()
