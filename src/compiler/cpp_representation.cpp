@@ -150,7 +150,18 @@ concreteClassPrimaryRow(const LoweredProgram &program,
       }
     }
     if (std::holds_alternative<LoweredClassDeclaration>(candidate.payload) ||
-        std::holds_alternative<LoweredEnumDeclaration>(candidate.payload)) {
+        std::holds_alternative<LoweredEnumDeclaration>(candidate.payload) ||
+        (std::holds_alternative<LoweredTypeAliasDeclaration>(
+             candidate.payload) &&
+         std::none_of(declaration.genericParameters.begin(),
+                      declaration.genericParameters.end(),
+                      [](const LoweredGenericParameter &parameter) {
+                        return parameter.value;
+                      }))) {
+      // Keep the established shared source-template identity of type-only
+      // alias carriers and their transitive signatures. Value-generic aliases
+      // instead need the verified concrete alias catalog: dependent arithmetic
+      // and finite layout must not be re-evaluated by native instantiation.
       return false;
     }
   }
