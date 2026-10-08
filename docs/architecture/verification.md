@@ -3051,6 +3051,17 @@ remain metadata and do not demand layouts or introduce executable bodies.
 This is candidate evidence; the unfiltered full suite, final integration-bound
 validation and installed-consumer acceptance remain separate obligations.
 
+That frozen PR133 full-suite run completed all 535 gates: 521 passed and 14
+failed. Five HTTP/package/debugger failures passed unchanged permission-
+appropriate retries; the original failed results remain recorded. The remaining
+failures reduce to constrained-out field defaults, nullable-pointer selected
+publication, private optional-constructor alternate admission, concrete-empty
+signature-pack fields, and diagnostic expectations for the incoming selected
+callee span. Focused repair validation retains the original assertions and
+eight-mode native matrices; it is not a retrospective full-suite pass. Final
+cross-branch reconciliation and full combined acceptance are deferred to the
+owner's separate integration goal.
+
 The `native_packages` CTest runs offline preparation-safety and inventory
 checks without acquiring upstream code. After explicitly preparing the optional
 packages, `gti test` in `packages/examples/smoke` exercises real native bindings:

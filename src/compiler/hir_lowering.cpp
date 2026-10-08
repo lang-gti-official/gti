@@ -1381,7 +1381,10 @@ private:
                           snapshot.typeArguments, snapshot.valueArguments);
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    if (!snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
+    // An empty concrete pack is still an instance. Its recorded field and
+    // alias bindings must come from concrete reanalysis, not the open primary.
+    if (!declaration->genericParameters.empty() ||
+        !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);

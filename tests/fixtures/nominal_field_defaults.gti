@@ -1,4 +1,5 @@
 #include <std/io>
+#include <std/memory>
 
 mut int trace = 0;
 mut int live = 0;
@@ -67,6 +68,20 @@ public:
   }
 };
 
+struct OwnedCounts { int identity = 37; };
+[[no_transfer, no_share]] class BorrowedOwner<R> {
+  R& source;
+  int limit;
+  mut std::unique_ptr<OwnedCounts> counts;
+  mut OwnedCounts* state = nullptr;
+public:
+  BorrowedOwner(R& source, int limit) : source(source), limit(limit),
+    counts(std::make_unique<OwnedCounts>()) {
+    this.state = &*this.counts;
+  }
+  int read() { unsafe { return this.state->identity; } }
+};
+
 int main() {
   { Generated object{}; }
   if (trace != 1221 || live != 0) return 1;
@@ -79,5 +94,8 @@ int main() {
   mut int source = 0;
   ReferenceOverride selected{source, 2};
   if (source != 6) return 4;
+  PlainValue provider{};
+  BorrowedOwner<PlainValue> counted{provider, 2};
+  if (counted.read() != 37) return 5;
   return 0;
 }

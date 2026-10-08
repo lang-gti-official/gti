@@ -2491,7 +2491,8 @@ private:
   fixedArrayClassLeafType(const SemanticType &type);
 
   [[nodiscard]] std::optional<ResolvedConstructionInfo>
-  resolveArrayElementDefaultConstruction(const SemanticType &type) const;
+  resolveDefaultConstruction(const SemanticType &type,
+                             bool baseSubobject = false) const;
 
   [[nodiscard]] static std::size_t genericTypeParameterCount(
       const std::vector<GenericParameterInfo> &parameters);
@@ -2534,6 +2535,8 @@ private:
   [[nodiscard]] static bool containsRawPointer(const TypeRef &type);
 
   [[nodiscard]] bool isActiveTypePack(const TypeRef &type) const;
+  [[nodiscard]] std::optional<GenericParameterId>
+  activeTypePackIdentity(const TypeRef &type) const;
 
   void validateReferencePlacement(
       const TypeRef &type, bool allowTopLevel, std::string_view context,
@@ -4344,7 +4347,8 @@ private:
         typeParameterScopes;
     std::vector<std::unordered_map<std::string, CompileTimeValue>>
         valueParameterScopes;
-    std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
+    std::vector<std::unordered_map<std::string, GenericParameterId>>
+        typePackScopes;
     std::vector<std::vector<AppliedConceptRequirement>> requirementScopes;
     std::vector<MutableLocalCandidate> mutableLocalCandidates;
     std::unordered_set<SymbolId> mutableBindingUses;
@@ -4503,8 +4507,8 @@ private:
       &typeParameterScopes = requestSession.typeParameterScopes;
   std::vector<std::unordered_map<std::string, CompileTimeValue>>
       &valueParameterScopes = requestSession.valueParameterScopes;
-  std::vector<std::unordered_set<GenericParameterId>> &typePackScopes =
-      requestSession.typePackScopes;
+  std::vector<std::unordered_map<std::string, GenericParameterId>>
+      &typePackScopes = requestSession.typePackScopes;
   std::vector<std::vector<AppliedConceptRequirement>> &requirementScopes =
       requestSession.requirementScopes;
   TypeSubstitution &instanceTypeSubstitution =

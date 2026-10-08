@@ -1879,6 +1879,15 @@ and mandatory; selected-schedule coverage does not authorize an empty native
 representation by itself. An overridden default is neither evaluated nor
 replayed by native field initialization.
 
+Nullable raw-pointer declaration defaults retain MIR's `NullPtr` literal value
+and the field's distinct typed pointer destination. The selected-schedule proof
+admits only the exact null literal conversion, with matching producer/value
+identity, publication operand and destination; arbitrary mismatched values do
+not qualify. A sealed optional-storage construction independently proves its
+selected private constructor's instruction-free, unborrowed void-return body on
+every aggregate/status admission route. Field order or an empty native shell
+alone cannot replace that witness.
+
 Generated/defaulted construction still uses the separate declaration schedule.
 Fallible ordinary class-value calls on that route remain `GTI-B0003`: generated
 construction has no concrete constructor body to carry propagation to callers.
