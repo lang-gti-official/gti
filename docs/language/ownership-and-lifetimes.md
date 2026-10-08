@@ -343,6 +343,9 @@ store, so an overlapping owner read or mutation in the right operand is
 rejected. This does not grant ordinary calls the two-phase reservation used
 by checked operator projections. Read-only results, owned value results,
 immutable owners, and temporary mutable receivers are not writable targets.
+This expression-target slice admits calls (including grouped calls) and
+grouping of existing variable, field, index and dereference targets. It does
+not add comma/conditional targets or whole-`this` replacement.
 
 References may be parameters and non-escaping local bindings. They require an
 addressable initializer, and mutable references require a mutable place.

@@ -2562,8 +2562,11 @@ private:
         return std::make_unique<DereferenceSet>(
             unary->oper(), unary->takeRight(), oper, std::move(value));
       }
-      return std::make_unique<PlaceSet>(std::move(expr), oper,
-                                        std::move(value));
+      if (exprAs<Call>(ungrouped)) {
+        return std::make_unique<PlaceSet>(std::move(expr), oper,
+                                          std::move(value));
+      }
+      throw error(oper, "Invalid assignment target.");
     }
 
     return expr;
