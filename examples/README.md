@@ -25,7 +25,7 @@ You do not need to read the entire sequence to find an API pattern:
 
 | I want to… | Start here |
 | --- | --- |
-| Use the standard library through imports instead of includes | [133: standard-library modules](133-standard-library-modules.gti) |
+| Use the standard library through imports instead of includes | [134: standard-library modules](134-standard-library-modules.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
@@ -183,7 +183,7 @@ is a teaching helper, not a production server.
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
 | `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and JSON lookup through borrowed `expected::expect` |
-| `133-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
+| `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

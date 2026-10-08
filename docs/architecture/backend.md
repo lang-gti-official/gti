@@ -354,8 +354,8 @@ between consumer stages. Acquiring it copies an lvalue program or moves an
 rvalue program. `Backend::generate` accepts a value, and the driver moves its
 finished program into this boundary; C++ emission moves that value into the
 proof without another full-program copy. Callers that need to retain their
-input can still pass an lvalue. Later assignment, movement or destruction of the caller's
-original value cannot detach the proof from the checked contents. Merely
+input can still pass an lvalue. Later assignment, movement or destruction of
+the caller's original value cannot detach the proof from the checked contents. Merely
 holding a const pointer to a caller-owned program would not establish this:
 `LoweredProgram` itself remains an assignable value. The builder runs every
 check except the seal and then computes the seal; it never re-checks one just

@@ -1,4 +1,4 @@
-// Every public <std/name> unit is also the module std.name. An import makes
+// Every public <std/name> unit is also the module std.name. Importing makes
 // that unit's declarations visible without an #include, and only that unit:
 // <std/vector> uses <std/span> internally, but std::span stays invisible here
 // until this file imports std.span as well. Application interfaces can pass a
