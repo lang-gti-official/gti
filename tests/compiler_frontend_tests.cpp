@@ -1,6 +1,8 @@
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
 
+#include <set>
+
 namespace {
 
 void testDefiniteReturnAnalysis() {
@@ -2794,6 +2796,108 @@ int main() {
          "package aliases");
 }
 
+void testReachableExecutableLowering() {
+  const auto entry = std::filesystem::weakly_canonical(
+      std::filesystem::temp_directory_path() / "gti-reachable-lowering.gti");
+  const auto analyze = [&](const std::string &source,
+                           bool reachableOnly = true) {
+    lang::FrontendOptions options;
+    options.lowerReachableOnly = reachableOnly;
+    return lang::Frontend(options).analyze(
+        entry, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  };
+  const std::string fixture = R"(
+class Used {
+  int value = 1;
+public:
+  int read() { return this.value; }
+  int unread() { return 2; }
+};
+class Unused {
+  int value = 3;
+public:
+  int read() { return this.value; }
+};
+int unused_helper() {
+  Unused unused{};
+  return unused.read();
+}
+int used_helper() {
+  Used used{};
+  return used.read();
+}
+[[c_abi]] struct NativeRecord {
+  int32_t value;
+};
+extern "C" {
+  int32_t native_declared(NativeRecord record);
+}
+int main() { return used_helper() - 1; }
+)";
+  const auto lowered = analyze(fixture);
+  if (!lowered.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : lowered.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(lowered.canGenerateCode(),
+         "the reachable-lowering fixture should pass the frontend");
+  std::set<std::string> functions;
+  for (const lang::MirFunctionInstance &instance :
+       lowered.mir.functionInstances()) {
+    if (const lang::FunctionInfo *info =
+            lowered.semantics.findFunction(instance.declaration)) {
+      functions.insert(info->qualifiedName);
+    }
+  }
+  std::set<std::string> classes;
+  for (const lang::MirClassInstance &instance : lowered.mir.classInstances()) {
+    if (const lang::ClassTypeInfo *info =
+            lowered.semantics.findClassType(instance.declaration)) {
+      classes.insert(info->qualifiedName);
+    }
+  }
+  expect(functions.contains("main") && functions.contains("used_helper") &&
+             functions.contains("Used::read") && classes.contains("Used"),
+         "code reachable from the hosted entry is lowered");
+  expect(!functions.contains("unused_helper") &&
+             !functions.contains("Unused::read") &&
+             !functions.contains("Used::unread") && !classes.contains("Unused"),
+         "unreferenced functions, methods and classes are not lowered");
+  expect(functions.contains("native_declared") &&
+             classes.contains("NativeRecord"),
+         "the C boundary is lowered whether or not GTI uses it");
+  const auto complete = analyze(fixture, false);
+  const bool completeHasUnused = std::any_of(
+      complete.mir.functionInstances().begin(),
+      complete.mir.functionInstances().end(),
+      [&](const lang::MirFunctionInstance &instance) {
+        const lang::FunctionInfo *info =
+            complete.semantics.findFunction(instance.declaration);
+        return info != nullptr && info->qualifiedName == "unused_helper";
+      });
+  expect(complete.canGenerateCode() && completeHasUnused,
+         "without the option every declaration is lowered");
+
+  const auto deadInstanceError = analyze(R"(
+class Plain {
+public:
+  Plain() {}
+};
+T twice<T>(T value) { return value + value; }
+int never_called() {
+  Plain plain = Plain();
+  Plain doubled = twice(plain);
+  return 0;
+}
+int main() { return 0; }
+)");
+  expect(!deadInstanceError.canGenerateCode() &&
+             lang::hasErrorDiagnostics(deadInstanceError.diagnostics),
+         "a generic instance required only by unreachable code is still "
+         "analyzed and reports its error");
+}
+
 void testSupportFacilities() {
   bool ran = false;
   expect(lang::runGuarded([&ran] { ran = true; }) && ran,
@@ -2813,6 +2917,7 @@ constexpr NamedTest kTests[] = {
      testSourceModuleConfigurationDomains},
     {"testStandardLibraryImports", testStandardLibraryImports},
     {"testStandardLibraryModules", testStandardLibraryModules},
+    {"testReachableExecutableLowering", testReachableExecutableLowering},
     {"testPackageImports", testPackageImports},
     {"testLoopControlStatements", testLoopControlStatements},
     {"testDoWhileStatements", testDoWhileStatements},

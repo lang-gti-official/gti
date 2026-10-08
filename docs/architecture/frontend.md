@@ -127,6 +127,13 @@ kinds.
 HIR/MIR and C++ emission use existing executable contracts; this is not binary
 or separate compilation.
 
+Artifact builds set `FrontendOptions::lowerReachableOnly`. The complete program
+is still analyzed and lowered to HIR, so diagnostics are unchanged, but MIR
+and everything after it receive only the instances reachable from the program
+roots; see [HIR](hir.md#reachable-executable-prefix). An imported or included
+library therefore costs lowering, optimization, and emission only for what the
+program uses.
+
 ### Reusable lexical and parsed units
 
 `FrontendCache` is an optional frontend input owned by a coordinator such as

@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.393.0 — Compile only what the program uses
+
+- Builds lower, optimize and natively compile only code reachable from the
+  program: its entry point, library exports, global initialization and the C
+  boundary, plus everything those reach. Every declaration is still checked,
+  so an error in unused code, including in a generic it instantiates, is
+  still reported. Including or importing a large library now costs little
+  more than the parts you call. For example, a program that includes every
+  standard-library unit builds in about a second instead of about ten.
+- `extern "C"` declarations and C records stay in the generated native header
+  and layout checks whether or not GTI code uses them.
+- Less compiler work per build: whole-program C++ representation facts are
+  computed once per build, the lowered program's seal is hashed as it is
+  printed, backends admit a sealed program without re-checking its
+  inventory, and the remaining declaration lookups no longer scan the whole
+  program.
+
 ## 0.392.0 — Standard-library modules
 
 - Import the standard library instead of including it: `import std.vector;`

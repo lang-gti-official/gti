@@ -1040,6 +1040,7 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
 CppMirRepresentationSnapshotBuild
 buildCppMirRepresentationSnapshot(const VerifiedLoweredProgram &verified,
                                   CppStandard standard, bool debugInfo) {
+  const CppRepresentationScope representation(verified);
   const LoweredProgram &program = verified.program();
   CppMirRepresentationSnapshotBuild build;
   CppMirRepresentationSnapshot snapshot;

@@ -317,6 +317,21 @@ In particular, an implementation shall not expose as GTI semantics:
 Resource exhaustion may prevent successful translation, but an implementation
 should diagnose it distinctly from an ill-formed program.
 
+Every declaration in a program, including every concrete generic instance it
+requires, is checked whether or not the program uses it. An unused function
+with an error therefore still makes the program ill-formed. The executable,
+however, need not contain code the program cannot reach. The reference
+compiler emits only what is reachable from the program roots:
+
+- the hosted entry;
+- library exports;
+- global and static initialization;
+- the C boundary, meaning every `extern "C"` declaration and C record.
+
+Everything those roots reach is emitted too, including virtual members of the
+classes that are used. Code that is never reached costs no lowering,
+optimization, or native compilation.
+
 ## 6.4 Diagnostics
 
 An implementation shall diagnose an ill-formed program. It should identify the
