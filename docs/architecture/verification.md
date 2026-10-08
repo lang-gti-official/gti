@@ -4452,9 +4452,10 @@ corpus census/oracle must still be run by the combined acceptance campaign.
 
 ### Bounded case workers and development selections
 
-The standard-library surface harness and all clients of the shared callable
-runtime matrix support bounded case workers. `GTI_TEST_CASE_JOBS` is a CMake
-cache setting (default `2`), not a compiler or installed CLI option. CTest
+The standard-library surface harness, generic payload enum matrix and all clients
+of the shared callable runtime matrix support bounded case workers.
+`GTI_TEST_CASE_JOBS` is a CMake cache setting (default `2`), not a compiler or
+installed CLI option. CTest
 reserves that many `PROCESSORS` for each participating suite and supplies the
 matching environment value. Increase the outer CTest budget independently;
 do not give each test the entire host's CPU count. Existing suite names,
@@ -4493,6 +4494,17 @@ disabled or forged registrations. It queries a scratch copy of registration
 files so nested CTest discovery cannot truncate the active suite's log.
 Discovery restores build-relative default working directories and preserves
 explicit ones, so repeated inventories describe the same execution context.
+
+`generic_payload_enum_runtime` uses the same compile-only workers and ordered
+parent-thread execution, retaining all 19 fixtures across eight native modes
+(152 outcomes), four source-negative checks, exact construction-only failure
+origins, cleanup output, disabled elision and ASan/UBSan. Its 300-second timeout
+is unchanged. `test_case_jobs` pins that census, compares serial/parallel source
+text, compile arguments and execution order, and rejects injected failures in
+each negative check as well as compilation, exit status, cleanup output, failure
+origin and sanitizer observations. Registration discovers direct `case_jobs`
+clients as well as callable-matrix wrappers, so this suite cannot silently lose
+its worker reservation or full-coverage label.
 
 All registered tests automatically carry `coverage-full`. A deliberately
 partial group of in-process compiler/IR/model contracts carries

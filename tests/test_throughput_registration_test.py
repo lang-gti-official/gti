@@ -37,11 +37,12 @@ def inventory(build):
 
 
 def verify(tests, repository):
-    wrappers = {"lambda_pack_invocation_runtime_test.py", "stdlib_surface_test.py"}
+    wrappers = set()
     for path in (repository / "tests").glob("*.py"):
         nodes = ast.walk(ast.parse(path.read_text()))
         if any(isinstance(node, ast.ImportFrom) and
-               node.module == "lambda_pack_invocation_runtime_test" for node in nodes):
+               node.module in {"case_jobs", "lambda_pack_invocation_runtime_test"}
+               for node in nodes):
             wrappers.add(path.name)
     found = set()
     names = set()
@@ -115,9 +116,11 @@ def main():
     repository, build = map(lambda value: pathlib.Path(value).resolve(), sys.argv[1:])
     tests = inventory(build)
     clients = verify(tests, repository)
-    for mutation in ("allocation", "full", "disabled", "cost"):
+    for target_name, mutation in ((name, kind)
+                                 for name in ("stdlib_surface", "generic_payload_enum_runtime")
+                                 for kind in ("allocation", "full", "disabled", "cost")):
         changed = copy.deepcopy(tests)
-        target = next(test for test in changed if test["name"] == "stdlib_surface")
+        target = next(test for test in changed if test["name"] == target_name)
         properties = target["properties"]
         if mutation == "allocation":
             properties.append({"name": "PROCESSORS", "value": 999})

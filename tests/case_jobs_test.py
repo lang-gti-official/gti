@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import case_jobs
+import generic_payload_enum_runtime_test as payload_matrix
 import lambda_pack_invocation_runtime_test as matrix
 import stdlib_surface_test as surface
 
@@ -176,6 +177,113 @@ class CaseJobsTests(unittest.TestCase):
         for corrupt in ("build", "run"):
             with self.assertRaises(RuntimeError):
                 self.matrix_calls(2, corrupt)
+
+    def payload_calls(self, jobs, corrupt=None):
+        builds, negatives, executions = [], [], []
+        expected = {}
+        lock = threading.Lock()
+        rejection = {"implicit-copy": "GTI-S2018 copy",
+                     "live-borrow": "GTI-S2017 borrow",
+                     "moved-owner": "GTI-S2018 moved",
+                     "construction-only-assignment": "GTI-S2003 assign"}
+
+        def process(command):
+            if "-o" in command:
+                output = pathlib.Path(command[command.index("-o") + 1])
+                source = pathlib.Path(command[1])
+                normalized = tuple(pathlib.Path(arg).name
+                                   if pathlib.Path(arg).parent == output.parent else arg
+                                   for arg in command)
+                if "--emit-cpp" in command:
+                    negatives.append((normalized, source.read_text()))
+                    return subprocess.CompletedProcess(
+                        command, 0 if corrupt == source.stem else 65, "",
+                        rejection[source.stem])
+                with lock:
+                    builds.append((normalized, source.read_text()))
+                return subprocess.CompletedProcess(command, 1 if corrupt == "build" else 0,
+                                                   "", "compile rejection")
+            binary = pathlib.Path(command[0]).name
+            code, stdout, stderr = expected[binary]
+            if binary == "construction-only-callee-secondary-failure-7":
+                if corrupt == "exit":
+                    code = 0
+                elif corrupt == "stdout":
+                    stdout += "duplicate cleanup\n"
+                elif corrupt == "stderr":
+                    stderr = stderr.replace("primary", "incorrect origin")
+            if binary == "non-failing-cleanup-after-move-7":
+                if corrupt == "reason":
+                    stderr = "incorrect reason"
+                elif corrupt == "sanitizer":
+                    stderr += "AddressSanitizer"
+                elif corrupt == "ubsan":
+                    stderr += "runtime error:"
+            executions.append((binary, code, stdout, stderr, threading.get_ident()))
+            return subprocess.CompletedProcess(command, code, stdout, stderr)
+
+        def run_plan(plan, work, workers, observe):
+            for _, case in plan:
+                name, index, _, _, _, code, stdout, stderr = case
+                expected[f"{name}-{index}"] = (
+                    code, stdout, stderr if stderr is not None else
+                    "division_by_zero" if code == 70 else "")
+            return case_jobs.run_cases(plan, work, workers, observe)
+
+        with patch.object(sys, "argv", ["payload", "fake-gti", "--jobs", str(jobs)]), \
+                patch.object(payload_matrix, "run", process), \
+                patch.object(payload_matrix, "run_cases", run_plan), \
+                patch.dict(os.environ, {"GTI_TEST_CASE_JOBS": "1"}), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            result = payload_matrix.main()
+        return result, sorted(builds), negatives, executions
+
+    def test_payload_exact_matrix_negatives_and_order_preserved(self):
+        serial = self.payload_calls(1)
+        parallel = self.payload_calls(2)
+        self.assertEqual(serial, parallel)
+        result, builds, negatives, executions = serial
+        self.assertEqual(result, 0)
+        self.assertEqual(len(builds), 19 * 8)
+        self.assertEqual(len(negatives), 4)
+        self.assertEqual(len(executions), 19 * 8)
+        self.assertTrue(all(row[-1] == threading.get_ident() for row in executions))
+        self.assertEqual({pathlib.Path(row[0][1]).stem for row in builds}, {
+            "success", "generic-owner-capture", "partial-owner",
+            "container-cleanup-failure", "later-argument-failure",
+            "later-argument-after-move", "callee-failure",
+            "constructor-later-argument-failure", "non-failing-cleanup-after-move",
+            "construction-only-success", "construction-only-parameter-field-failure",
+            "construction-only-fresh-field-failure", "construction-only-destructor-failure",
+            "construction-only-secondary-failure", "construction-only-called-field-failure",
+            "construction-only-called-destructor-failure",
+            "construction-only-called-secondary-failure", "construction-only-callee-failure",
+            "construction-only-callee-secondary-failure"})
+        self.assertEqual(sum("-fno-elide-constructors" in row[0] for row in builds), 19)
+        self.assertEqual(sum("-fsanitize=address,undefined" in row[0] for row in builds), 19)
+        expected_modes = [(standard, optimization, ())
+                          for standard in ("c++20", "c++23")
+                          for optimization in ("-O0", "-O1", "-O3")]
+        expected_modes += [("c++23", "-O0", ("-fno-elide-constructors",)),
+                           ("c++23", "-O1", ("-fsanitize=address,undefined",
+                                              "-fno-omit-frame-pointer"))]
+        by_fixture = {}
+        for command, _ in builds:
+            native = command[command.index("--") + 1:] if "--" in command else ()
+            mode = (command[command.index("--std") + 1],
+                    command[command.index("--std") + 2], native)
+            by_fixture.setdefault(pathlib.Path(command[1]).stem, []).append(mode)
+        for modes in by_fixture.values():
+            self.assertEqual(sorted(modes), sorted(expected_modes))
+
+    def test_payload_all_negative_and_native_failures_remain_fatal(self):
+        for corrupt in ("implicit-copy", "live-borrow", "moved-owner",
+                        "construction-only-assignment"):
+            self.assertEqual(self.payload_calls(2, corrupt)[0], 1)
+        for corrupt in ("build", "exit", "stdout", "stderr", "reason", "sanitizer", "ubsan"):
+            with self.assertRaises(RuntimeError):
+                self.payload_calls(2, corrupt)
 
     def surface_cases(self, jobs, corrupt=False):
         repository = pathlib.Path(__file__).resolve().parent.parent
