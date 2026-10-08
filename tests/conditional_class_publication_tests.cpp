@@ -229,5 +229,100 @@ int main() {
   }
   expect(groupedBodies == 6,
          "all grouped producer and conditional-move bodies were exercised");
+  std::size_t argumentStages = 0;
+  for (const std::string fixture :
+       {"conditional_class_argument", "conditional_class_argument_failure"}) {
+    const auto path = std::filesystem::path(__FILE__).parent_path() /
+                      "fixtures" / (fixture + ".gti");
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(), "conditional arguments have valid MIR");
+    if (!frontend.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &block : function.body.blocks) {
+        for (const auto &stage : block.instructions) {
+          if (stage.kind != lang::MirInstructionKind::CallInput ||
+              !stage.preparedParameterDrop || !stage.destination ||
+              stage.info.type.kind != lang::SemanticType::Class ||
+              stage.operands.size() != 1 ||
+              stage.operands.front().kind != lang::MirOperandKind::Value)
+            continue;
+          // Follow only exact identity records to select a moved temporary,
+          // without depending on a library or user-defined class spelling.
+          const auto *value =
+              function.body.findValue(stage.operands.front().value);
+          const lang::MirInstruction *move = nullptr;
+          for (std::size_t depth = 0;
+               value && depth < function.body.values.size(); ++depth) {
+            const lang::MirInstruction *definition = nullptr;
+            const auto *definitionBlock =
+                function.body.findBlock(value->definitionBlock);
+            if (definitionBlock)
+              for (const auto &candidate : definitionBlock->instructions)
+                if (candidate.id == value->definition)
+                  definition = &candidate;
+            if (!definition)
+              break;
+            if (definition->kind == lang::MirInstructionKind::Move) {
+              move = definition;
+              break;
+            }
+            if (definition->kind != lang::MirInstructionKind::Compute ||
+                definition->operation != lang::MirOperation::Identity ||
+                definition->operands.size() != 1 ||
+                definition->operands.front().kind !=
+                    lang::MirOperandKind::Value)
+              break;
+            value = function.body.findValue(definition->operands.front().value);
+          }
+          if (!move || move->operands.size() != 1)
+            continue;
+          const auto *place =
+              function.body.findPlace(move->operands.front().place);
+          if (!place || place->root != lang::MirPlaceRootKind::Temporary)
+            continue;
+          ++argumentStages;
+          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                             function.id};
+          expect(lang::CppMirBodyEmitter(frontend.mir, rows)
+                     .supportsFailureBodyText(address),
+                 "conditional argument body emits through prepared storage");
+          for (int mutation = 0; mutation != 6; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &changedBlock : changed->body.blocks)
+              for (auto &instruction : changedBlock.instructions) {
+                if (instruction.id == stage.id) {
+                  if (mutation == 0)
+                    instruction.preparedParameterDrop.reset();
+                  else if (mutation == 1)
+                    instruction.lifecycle.clear();
+                  else if (mutation == 2)
+                    instruction.destination = place->id;
+                  else if (mutation == 3)
+                    instruction.operands.front().type =
+                        lang::SemanticType::Unknown;
+                  else if (mutation == 4)
+                    instruction.lifecycle.front().conditional = true;
+                }
+                if (mutation == 5 && instruction.id == move->id)
+                  instruction.operands.front().kind =
+                      lang::MirOperandKind::Copy;
+              }
+            (void)lang::rebuildMirValueUses(changed->body);
+            expect(!lang::CppMirBodyEmitter(malformed, rows)
+                        .supportsFailureBodyText(address),
+                   "conditional argument rejects forged staging and transfer");
+          }
+        }
+      }
+    }
+  }
+  expect(argumentStages == 5, "four direct/grouped argument stages and the "
+                              "later-failure stage were exercised");
   return failures ? 1 : 0;
 }

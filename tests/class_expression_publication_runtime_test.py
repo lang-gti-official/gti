@@ -14,6 +14,7 @@ CASES = (
     "conditional_class_passive_failure",
     "grouped_class_argument",
     "conditional_class_argument",
+    "conditional_class_argument_failure",
 )
 
 
@@ -31,8 +32,9 @@ def execute(executable, source):
         line = next(index for index, text in enumerate(source.read_text().splitlines(), 1)
                     if "// failure-site" in text)
         kind = "grouped" if source.stem.startswith("grouped") else "conditional"
+        operation = "argument" if source.stem.endswith("argument_failure") else "construction"
         expected = (f'{source.name}:{line}: runtime error[GTI-R0017]: panic: '
-                    f'"{kind} construction failed"\n')
+                    f'"{kind} {operation} failed"\n')
         arguments = ([], ["right"]) if kind == "conditional" else ([],)
         for args in arguments:
             result = run([str(executable), *args], expected=70)
