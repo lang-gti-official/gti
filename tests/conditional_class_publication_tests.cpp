@@ -156,7 +156,8 @@ int main() {
   std::size_t groupedBodies = 0;
   for (const std::string fixture :
        {"grouped_class_passive", "grouped_class_cleanup",
-        "grouped_class_failure", "grouped_class_argument"}) {
+        "grouped_class_failure", "grouped_class_argument",
+        "conditional_class_passive", "conditional_class_cleanup"}) {
     const auto path = std::filesystem::path(__FILE__).parent_path() /
                       "fixtures" / (fixture + ".gti");
     std::ifstream input(path);
@@ -188,7 +189,8 @@ int main() {
           expect(lang::CppMirBodyEmitter(frontend.mir, rows)
                      .supportsFailureBodyText(address),
                  "grouped body preserves exact publication");
-          for (int mutation = 0; mutation != 4; ++mutation) {
+          const int mutationCount = identity.lifecycle.empty() ? 4 : 6;
+          for (int mutation = 0; mutation != mutationCount; ++mutation) {
             auto malformed = frontend.mir;
             auto *changed = const_cast<lang::MirFunctionInstance *>(
                 malformed.findFunctionInstance(function.id));
@@ -203,23 +205,29 @@ int main() {
                   instruction.operands.front().value = *instruction.result;
                 else if (mutation == 2)
                   instruction.operands.push_back(instruction.operands.front());
-                else
+                else if (mutation == 3)
                   instruction.lifecycle.push_back(
                       {.kind = lang::MirLifecycleEventKind::Reparent,
                        .source = 999998,
                        .target = 999999});
+                else if (mutation == 4)
+                  instruction.lifecycle.clear();
+                else
+                  instruction.lifecycle.front().source =
+                      instruction.lifecycle.front().target;
               }
             }
             (void)lang::rebuildMirValueUses(changed->body);
             expect(!lang::CppMirBodyEmitter(malformed, rows)
                         .supportsFailureBodyText(address),
                    "grouped publication rejects wrong types, cycles, extra "
-                   "operands and forged lifecycle transfers");
+                   "operands and forged or missing lifecycle transfers");
           }
         }
       }
     }
   }
-  expect(groupedBodies == 4, "all four grouped class bodies were exercised");
+  expect(groupedBodies == 6,
+         "all grouped producer and conditional-move bodies were exercised");
   return failures ? 1 : 0;
 }
