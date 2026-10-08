@@ -4035,6 +4035,12 @@ struct StagedClassResult {
   const MirDropObligation *drop = nullptr;
 };
 
+[[nodiscard]] const MirValue *
+classPublicationIdentityInput(const MirBody &body,
+                              const MirInstruction &identity);
+[[nodiscard]] const MirInstruction *
+classPublicationOrigin(const MirBody &body, const MirValue &value);
+
 [[nodiscard]] bool invokePairedInstruction(const MirBody &body,
                                            MirInstructionId id);
 
@@ -4253,8 +4259,31 @@ invokeProducerBlock(const MirBody &body, const MirInstruction &producer);
 [[nodiscard]] StagedClassResult
 stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
   const MirValue *source = body.findValue(sourceId);
-  const MirInstruction *producer =
+  if (source == nullptr || source->info.type.kind != SemanticType::Class)
+    return {};
+  // Grouping is transparent to the existing prepared-parameter protocol.
+  // Keep the original producer and terminal source distinct so publication
+  // stays at the producer while CallInput retains the final drop identity.
+  for (std::size_t depth = 0; source != nullptr && depth < body.values.size();
+       ++depth) {
+    const auto uses = nonRootRecordUses(body, source->id);
+    const MirInstruction *identity =
+        uses.size() == 1 &&
+                uses.front().kind == MirValueUseKind::InstructionOperand
+            ? findInstruction(body, uses.front().instruction)
+            : nullptr;
+    const MirValue *input =
+        identity == nullptr ? nullptr
+                            : classPublicationIdentityInput(body, *identity);
+    if (input == nullptr || input != source)
+      break;
+    sourceId = *identity->result;
+    source = body.findValue(sourceId);
+  }
+  const MirInstruction *sourceDefinition =
       source == nullptr ? nullptr : findInstruction(body, source->definition);
+  const MirInstruction *producer =
+      source == nullptr ? nullptr : classPublicationOrigin(body, *source);
   const bool functionCallProducer =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
       (producer->functionTarget || producer->nativeCalleeType) &&
@@ -4325,7 +4354,8 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       (!functionCallProducer && !ownedExpectedCallProducer &&
        !cleanupFreeExpectedCallProducer && !ordinaryConstructionProducer &&
        !defaultConstructionProducer) ||
-      !producer->result || *producer->result != sourceId ||
+      !producer->result || sourceDefinition == nullptr ||
+      sourceDefinition->result != sourceId ||
       producer->info.type != source->info.type) {
     return {};
   }
@@ -4363,6 +4393,16 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       stage->lifecycle.size() != 1) {
     return {};
   }
+  if (sourceDefinition != producer) {
+    const MirBlock *block = body.findBlock(source->definitionBlock);
+    bool adjacent = false;
+    if (block != nullptr)
+      for (std::size_t i = 1; i < block->instructions.size(); ++i)
+        adjacent |= block->instructions[i - 1].id == sourceDefinition->id &&
+                    block->instructions[i].id == stage->id;
+    if (!adjacent)
+      return {};
+  }
   const MirPlace *slot = body.findPlace(*stage->destination);
   const MirDropObligation *drop =
       body.findDropObligation(*stage->preparedParameterDrop);
@@ -4382,11 +4422,29 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
         sourceDrop->initiallyActive || sourcePlace == nullptr ||
         sourcePlace->root != MirPlaceRootKind::Value ||
         sourcePlace->value != sourceId || !sourcePlace->projections.empty() ||
-        sourcePlace->type != source->info.type ||
-        (producer->successResultDrop &&
-         *producer->successResultDrop != sourceDrop->id)) {
+        sourcePlace->type != source->info.type) {
       return nullptr;
     }
+
+    const MirDropObligation *activationDrop = sourceDrop;
+    const MirInstruction *link = sourceDefinition;
+    for (std::size_t depth = 0; link != producer && depth < body.values.size();
+         ++depth) {
+      const MirValue *input = link == nullptr
+                                  ? nullptr
+                                  : classPublicationIdentityInput(body, *link);
+      if (input == nullptr || link->lifecycle.size() != 1 ||
+          link->lifecycle.front().target != activationDrop->id)
+        return nullptr;
+      activationDrop = body.findDropObligation(link->lifecycle.front().source);
+      if (activationDrop == nullptr)
+        return nullptr;
+      link = findInstruction(body, input->definition);
+    }
+    if (link != producer ||
+        (producer->successResultDrop &&
+         *producer->successResultDrop != activationDrop->id))
+      return nullptr;
 
     std::vector<MirDropObligationId> inputDrops;
     const auto collectInputDrop = [&](const MirOperand &operand) {
@@ -4446,8 +4504,8 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
     std::vector<bool> transferred(inputDrops.size(), false);
     std::size_t activations = 0;
     if (producer->successResultDrop) {
-      if (*producer->successResultDrop != sourceDrop->id ||
-          !invokeSuccessActivates(body, *producer, sourceDrop->id)) {
+      if (*producer->successResultDrop != activationDrop->id ||
+          !invokeSuccessActivates(body, *producer, activationDrop->id)) {
         return nullptr;
       }
       activations = 1;
@@ -4457,7 +4515,7 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
         return nullptr;
       }
       if (event.kind == MirLifecycleEventKind::Initialize &&
-          event.source == 0 && event.target == sourceDrop->id) {
+          event.source == 0 && event.target == activationDrop->id) {
         ++activations;
         continue;
       }
