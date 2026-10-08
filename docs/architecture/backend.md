@@ -467,12 +467,27 @@ identical.
 
 Generated support is likewise a compiled backend component rather than a
 mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
-selected C++ standard and exact Expected, storage, managed-thread,
-atomic, defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
+selected C++ standard and exact Expected, storage, managed-thread, C-thread,
+atomic, mutex, SIMD, defined-failure, runtime-binding, and C-ABI text-view
+needs. The preamble and
 failure-support writers receive those explicit values and an output sink;
 they do not query program meaning. Storage and defined-failure support remain
 universal only because that is the current artifact contract, not because the
 writers infer their use.
+
+Capability support has two levels. A lowered class declaration whose
+compiler capability kind is shared owner, atomic storage, mutex storage, or
+mutex lock token selects only a forward declaration of the backend class
+template that represents it. Declarations retained without an instance, such
+as the generic library classes left by an unused `#include`, still emit
+uninstantiated C++ class templates whose members spell those qualified
+template names, and C++ resolves a qualified template name where the
+template is defined. The complete definitions and their native headers
+(`<atomic>`, `<mutex>`) require a concrete MIR capability instance or a
+verified capability operation. The managed-thread handle representation is
+not a template, so a retained thread-handle declaration selects its complete
+support. `dormant_capability_runtime` builds and runs each family's
+include-only program natively.
 
 ### Executable Bodies
 

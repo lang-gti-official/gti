@@ -773,8 +773,12 @@ records retain legal order dimensions. MIR rejects these records in the
 single-threaded execution profile except in an exact, lowering-marked dormant
 compiler-trusted thread-, atomic-, or mutex-wrapper body. That exception lets
 complete unused `<std/thread>`, `<std/atomic>`, and `<std/mutex>` declaration
-inventories exist; it cannot create a task adapter or executable
-synchronization use and does not bypass the public semantic profile check.
+inventories exist and build natively in either profile; it cannot create a
+task adapter or executable synchronization use and does not bypass the public
+semantic profile check. Their retained generic classes name the private
+storage representations, so the backend forward-declares those templates for
+each retained capability declaration without selecting native atomic or mutex
+support.
 Optimizer effects preserve every record as a barrier. The concurrent profile
 plus target `threads` capability admits the implemented operations. Spawn
 transfers one exact
@@ -783,7 +787,8 @@ completion-before-return, and no public detach operation exists.
 
 The mutex surface follows the same policy split. Exact private storage and
 lock-token declarations lower to the native mutex preamble only when a
-concrete capability instance exists. `std::mutex<T>` remains source policy;
+concrete capability instance exists; without one they contribute only the
+forward declarations of their representation templates. `std::mutex<T>` remains source policy;
 its guard carries a verified owner dependency and lock token, guard reads
 publish only owner-tied MIR loans, and reverse deterministic cleanup emits the
 one unlock before normal return or failure propagation. The runtime has no

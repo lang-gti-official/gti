@@ -29,6 +29,9 @@ for what minor and patch releases mean.
   value without a full-program copy, and common declaration lookups use
   identity-checked indices. These reduce compiler work without changing GTI
   checks or the generated program; gains depend on the imported workload.
+- Fix native build failures when a program includes `<std/atomic>` or
+  `<std/mutex>` without using their types, in either execution profile. Such
+  includes still add no native atomic or mutex support to the executable.
 
 ## 0.390.0 — Target and profile configuration flags
 

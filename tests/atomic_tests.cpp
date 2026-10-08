@@ -166,30 +166,41 @@ lang::MirInstruction *findAtomic(lang::MirProgram &program,
 void testDormantImport() {
   lang::TargetInfo single = concurrentTarget();
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
-  const lang::FrontendResult frontend =
-      analyze("dormant-atomic-import.gti",
-              "#include <std/atomic>\nint main() { return 0; }\n", single);
-  if (!frontend.canGenerateCode()) {
-    printDiagnostics(frontend);
+  for (const lang::TargetInfo &target : {single, concurrentTarget()}) {
+    const lang::FrontendResult frontend =
+        analyze("dormant-atomic-import.gti",
+                "#include <std/atomic>\nint main() { return 0; }\n", target);
+    if (!frontend.canGenerateCode()) {
+      printDiagnostics(frontend);
+    }
+    expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
+               lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                   .valid() &&
+               lang::verifyMirProgram(frontend.mir).valid(),
+           "an unused atomic import should remain valid in both execution "
+           "profiles");
+    if (!frontend.canGenerateCode()) {
+      continue;
+    }
+    const lang::LoweredProgram lowered =
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
+    const std::string cpp =
+        lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+    expect(lang::verifyLoweredProgram(lowered).empty() &&
+               cpp.find("#include <atomic>") == std::string::npos &&
+               cpp.find("class atomic_value final") == std::string::npos,
+           "a dormant import should cross the backend without enabling its "
+           "atomic support vocabulary");
+    // The retained generic library class names the representation template,
+    // so the template must be declared for the native compiler (#164).
+    const std::size_t declaration =
+        cpp.find("template <typename T> class atomic_value;");
+    expect(declaration != std::string::npos &&
+               declaration <
+                   cpp.find("::gti_internal::backend::atomic_value<T>"),
+           "a dormant atomic import should declare, but not define, the "
+           "atomic representation before generic declarations name it");
   }
-  expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
-             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
-                 .valid() &&
-             lang::verifyMirProgram(frontend.mir).valid(),
-         "an unused atomic import should remain valid in the default "
-         "single-threaded profile");
-  if (!frontend.canGenerateCode()) {
-    return;
-  }
-  const lang::LoweredProgram lowered =
-      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, single);
-  const std::string cpp =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  expect(lang::verifyLoweredProgram(lowered).empty() &&
-             cpp.find("#include <atomic>") == std::string::npos &&
-             cpp.find("class atomic_value") == std::string::npos,
-         "a dormant import should cross the backend without enabling its "
-         "atomic support vocabulary");
 }
 
 void testPublicPipeline() {
@@ -267,7 +278,7 @@ void testPublicPipeline() {
       lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
   for (const std::string *cpp : {&cpp20, &cpp23}) {
     expect(cpp->find("#include <atomic>") != std::string::npos &&
-               cpp->find("class atomic_value") != std::string::npos &&
+               cpp->find("class atomic_value final") != std::string::npos &&
                cpp->find("atomic_compare_exchange(") != std::string::npos &&
                cpp->find("std::memory_order_seq_cst") != std::string::npos,
            "both native standards should consume the verified atomic "
