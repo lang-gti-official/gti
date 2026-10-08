@@ -61,6 +61,11 @@ alias references, function shapes, fixed arrays, and an explicit
 tagged by kind (record, enum, typedef, function). Every declaration carries a
 `SourceOrigin` and a `NativeScopeId`.
 
+Function typedefs retain their function node and function-pointer typedefs
+retain the pointer node; typedef handling no longer strips the latter. This
+distinction is necessary for callback slots (`Callback*`) to preserve ABI pointer
+depth. Function-typed parameters receive C's pointer adjustment in the reader.
+
 Enum declarations additionally retain their compatible native integer type,
 the reader's enum/integer size-and-alignment agreement, and signed or unsigned
 64-bit enumerator values without narrowing. These are native facts; the
@@ -160,19 +165,18 @@ methods, overloads) lands without touching the reader. Two passes:
    enumerators; a bare anonymous enum contributes constants only), object
    typedefs, and callback typedefs map through one
    shared type-mapping authority implementing the documented ABI allowlist:
-   fixed-width scalars, `float`/`double`, `void*`, one-level pointers with
-   admitted pointees, `const char*` as `c_string`, by-value bindable
-   records, named callback shapes, `const char**` as `c_string*`, and one exact
-   `OpaqueHandle**` direct function-parameter form. The latter is position
-   aware: callback shapes, fields, aliases, and returns do not inherit it.
-   Record-field positions are equally position aware: `c_string` and nested
-   pointers have no GTI field representation, so a record using one degrades
-   to an opaque handle with the reason recorded instead of emitting source
-   the frontend rejects. Fields otherwise cover the frontend's full admitted
-   set, including callback aliases and fixed arrays with multiple extents or
-   record, pointer, callback, and scalar elements.
-   Read-only string arrays (`const char* const*`) share the `c_string*`
-   spelling with `const char**` out parameters. An inline function-pointer
+   target-native scalar families, `float`/`double`, `void*`, qualified recursive
+   pointers, by-value bindable records and named callback shapes. This revises
+   the historical one-level/opaque-out-parameter restriction: ordinary GTI
+   recursive pointers now own the rule for fields, aliases, parameters and
+   results. Callback slots preserve every extra pointer level. Bare C function
+   typedefs provide callback signatures at pointer and adjusted-parameter uses.
+   `const char*` uses `c_string` only at direct call boundaries; record fields,
+   nested pointers and reusable text typedefs preserve raw `const c_char*`
+   storage. Qualifiers on named pointer aliases apply to the pointer slot.
+   Fixed-array typedefs and record fields compose multiple extents with record,
+   pointer, callback and scalar elements; C parameters decay in the reader.
+   An inline function-pointer
    use binds through a *synthesized named callback alias* — the language's
    own admitted form — deduplicated by shape, named deterministically from
    the first committing declaration (`<owner>_<member>_fn`, ordinals on
@@ -191,8 +195,11 @@ methods, overloads) lands without touching the reader. Two passes:
    uses canonicalize to their compatible integer rather than a missing alias.
    This supersedes the original unconditional `int32_t` enum mapping. It adds
    no compiler-private capability or frontend/MIR/backend exception.
-   Everything else — variadics, plain `char`/`bool`, other multi-level
-   pointers, native variables, reserved or GTI-invalid identifiers — becomes a
+   Filtered/system callback names synthesize an admitted signature at the use
+   instead of leaving a dangling alias. This expands import policy using
+   existing GTI facilities, with no new frontend or backend exception.
+   Remaining inexpressible shapes — variadics, pointers to whole arrays,
+   zero-length array extensions, native variables, reserved or GTI-invalid identifiers — become a
    `SkippedItem{origin, name, reason}`.
 
 The plan is an ordered value type: inspectable, testable, and the future

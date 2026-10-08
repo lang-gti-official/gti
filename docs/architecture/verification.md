@@ -661,6 +661,19 @@ enabled throughout the direct matrix. Native C validates the values transported
 in records and supplies their size/alignment; pointer writeback and a native
 function pointer round-trip the same enum representations.
 
+`native_typedef_bindgen` applies the same project/cache/determinism and seven-mode
+native runtime harness to `examples/native-callback-slots`: C replaces callback
+slots, passes a bare function-typed parameter, returns a native record containing
+qualified callback/text pointers and typedef-defined arrays, and independently
+checks layout and values. `bindgen_pipeline` also checks typedef chains,
+filtered/system callback aliases, non-writable const slots, zero-array rejection,
+and retained rejection of whole-array pointers, variadic and prototype-less
+callbacks. These imports use existing language capabilities; there is no new
+syntax or numbered-example census change. Matrix transport is checked in C;
+GTI nested indexing of native array fields is separately tracked in
+[#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175), not claimed
+as passing by this importer gate.
+
 The native-record/header/callback pipelines and runtime oracles, compiler/backend/
 driver library boundaries, LLVM link-policy checks, complete CLI/project
 workflows and relocated installed macOS toolchain check also pass. Formatting
