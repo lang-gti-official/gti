@@ -4984,8 +4984,9 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   final-address construction, generated relocation, borrowed views and exact
   first/secondary failure cleanup; shared-provider allocation counts are tested.
   The native prefix engine and trusted prelude type/operation declarations
-  have been removed; regression fixtures are moving onto general lifetime and
-  borrowing operations. Removal of residual prefix-specific IR/backend and
+  have been removed, together with prefix-specific native emission and private
+  handle cleanup shortcuts. Regression fixtures now exercise general lifetime
+  and borrowing operations. Removal of residual prefix-specific IR/type and
   optimizer paths, full admission/corpus/performance coverage and final
   acceptance remain required. Complete retirement is not yet claimed.
   The `source_prefix_complete_elements` composition probe remains unaccepted:
@@ -4999,6 +5000,14 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   `testExpectedPayloadRangeLoans` and an unrelated user-defined range retain
   that regression; forged iterator-shell sources remain rejected. No loan
   containment rule or ordinary borrowed-carrier shell rule was relaxed.
+  Source-owned field rollback has a represented destructor-failure edge in
+  addition to the constructor edges. Lifecycle tests verify that exact field
+  and temporary result cleanup rather than requiring obsolete private-handle
+  helper spellings. The optimized ownership, frontend, declaration, backend
+  preflight and lifecycle suites pass on the task branch; the source-prefix
+  runtime and native prefix evidence also pass. Complete corpus admission,
+  optimizer retirement, performance and installed-consumer evidence remain
+  acceptance gates, not consequences of those focused proofs.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

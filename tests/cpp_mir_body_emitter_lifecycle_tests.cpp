@@ -3224,8 +3224,35 @@ int main() {
       fieldConstructor == nullptr) {
     return;
   }
+  std::size_t rollbackFailures = 0;
+  for (const auto &record : owner->fieldInitializers.failureRecords) {
+    const auto *block =
+        owner->fieldInitializers.findBlock(record.producerBlock);
+    if (block == nullptr)
+      continue;
+    for (const auto &instruction : block->instructions) {
+      if (instruction.id != record.producerInstruction ||
+          instruction.kind != lang::MirInstructionKind::Drop)
+        continue;
+      const auto *place =
+          instruction.destination
+              ? owner->fieldInitializers.findPlace(*instruction.destination)
+              : nullptr;
+      expect(place && place->root == lang::MirPlaceRootKind::Binding &&
+                 place->projections.empty() &&
+                 place->symbol == owner->declaredFields.front().symbol &&
+                 instruction.definedFailure.propagation ==
+                     lang::FailurePropagationKind::Destructor &&
+                 block->terminator.kind == lang::MirTerminatorKind::Invoke &&
+                 block->terminator.invokeInstruction == instruction.id,
+             "rollback of the first source-owned field retains its own "
+             "checked destructor failure edge");
+      ++rollbackFailures;
+    }
+  }
   expect(owner->fieldInitializers.dropObligations.size() == 4 &&
-             owner->fieldInitializers.failureRecords.size() == 2 &&
+             owner->fieldInitializers.failureRecords.size() == 3 &&
+             rollbackFailures == 1 &&
              owner->fieldInitializers.cleanupBoundaries.size() == 1 &&
              std::any_of(
                  owner->fieldInitializers.blocks.begin(),
@@ -3433,7 +3460,9 @@ int main() {
         text.find("std::move(__gti_mir_p_", clone);
     expect(clone != std::string::npos && parameterMove != std::string::npos &&
                clone < parameterMove &&
-               text.find("mir_rollback_field_v1(") != std::string::npos &&
+               text.find("// GTI MIR field rollback") != std::string::npos &&
+               text.find(".template __gti_mir_unique_cleanup_failure<") !=
+                   std::string::npos &&
                text.find("construction rollback deferred") == std::string::npos,
            "the emitted constructor should clone before moving the parameter "
            "and retain exact later-failure rollback");
@@ -8786,6 +8815,36 @@ int32_t main() {
   const std::string text =
       emitter.emitFailureBodyText(address, "class-return-receiver-test-v0", 1)
           .text;
+  lang::MirDropObligationId resultDrop = 0;
+  for (const auto &block : entry->body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.info.type.kind == lang::SemanticType::Class &&
+          instruction.successResultDrop)
+        resultDrop = *instruction.successResultDrop;
+  std::size_t normalDrops = 0;
+  std::size_t failureDrops = 0;
+  for (const auto &block : entry->body.blocks) {
+    for (const auto &instruction : block.instructions) {
+      if (!resultDrop || instruction.kind != lang::MirInstructionKind::Drop ||
+          instruction.lifecycle.size() != 1 ||
+          instruction.lifecycle.front().source != resultDrop)
+        continue;
+      const bool failure = instruction.lifecycle.front().failureCleanup;
+      normalDrops += !failure;
+      failureDrops += failure;
+      auto forged = frontend.mir;
+      auto *changed = lang::findMirBody(forged, address);
+      for (auto &changedBlock : changed->blocks)
+        for (auto &drop : changedBlock.instructions)
+          if (drop.id == instruction.id)
+            drop.lifecycle.clear();
+      expect(!lang::verifyMirProgram(forged).valid(),
+             "source-owned temporary cleanup cannot disappear on either path");
+    }
+  }
+  expect(normalDrops != 0 && failureDrops != 0,
+         "one exact result lifetime is retired on success and failure");
   expect(text.find("mir_lifetime_slot<") != std::string::npos &&
              text.find("to_string__gti_mir_failure(") != std::string::npos &&
              text.find(".construction_address()") != std::string::npos &&
@@ -8793,8 +8852,9 @@ int32_t main() {
              text.find("string::__gti_mir_op_ne__gti_mir_failure(") !=
                  std::string::npos &&
              text.find(".get().") != std::string::npos &&
-             text.find(".destroy();") != std::string::npos &&
-             text.find("failure cleanup drop-obligation") != std::string::npos,
+             text.find("destroy_unique_aggregate_with_failure") !=
+                 std::string::npos &&
+             text.find("mir_failure_cleanup_scope_v1") != std::string::npos,
          "the returned class should publish into one MIR lifetime slot, serve "
          "as the operator receiver, and retire on success and failure");
 
@@ -9828,7 +9888,8 @@ void testBoundPassiveClassFieldRollback() {
   std::size_t checked = 0;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     const auto *owner = frontend.mir.findClassInstance(constructor.owner);
-    if (!owner || !owner->destructor || owner->declaredFields.size() != 2)
+    if (!owner || owner->sourceUnit != frontend.sourceGraph.entryUnit() ||
+        !owner->destructor || owner->declaredFields.size() != 2)
       continue;
     const auto copied =
         lang::cppMirCopyParameterFieldBindings(frontend.mir, constructor);
@@ -10683,6 +10744,8 @@ void testBorrowedFieldCompoundAssignment() {
   };
   std::size_t assignments = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.entryKind != lang::ProgramEntryKind::NoArguments)
+      continue;
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Assign ||
@@ -10739,7 +10802,8 @@ void testBorrowedFieldCompoundAssignment() {
     }
   }
   expect(assignments == 1,
-         "one projected compound assignment must exercise this route");
+         "one projected compound assignment must exercise this route: " +
+             std::to_string(assignments));
 }
 
 void testBorrowedTemporaryOperatorReceiver() {
@@ -11011,7 +11075,8 @@ void testNestedOwnedFieldAssignment() {
           continue;
         const bool owning = selectedField->requiresActiveCleanup;
         if (owning) {
-          ++restoredFields;
+          restoredFields += owner != nullptr &&
+                            owner->sourceUnit == fresh.sourceGraph.entryUnit();
           expect(instruction.replacementPair != 0 &&
                      instruction.lifecycle.size() == 1 &&
                      instruction.lifecycle.front().kind ==
@@ -11418,6 +11483,11 @@ void testCleanupFreeConstructorFieldFailure() {
          "compose through the same constructor status boundary");
   std::size_t checkedFields = 0;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *constructedOwner =
+        frontend.mir.findClassInstance(constructor.owner);
+    if (constructedOwner == nullptr ||
+        constructedOwner->sourceUnit != frontend.sourceGraph.entryUnit())
+      continue;
     for (const auto &block : constructor.body.blocks) {
       for (const auto &instruction : block.instructions) {
         const auto *target = instruction.constructorTarget
