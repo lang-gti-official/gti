@@ -1,9 +1,9 @@
 using Length = (c_string) -> uint64_t;
 namespace foreign {
   extern "C" {
-    [[link_name("gti_external_length")]] uint64_t length(c_string);
+    [[link_name("gti_external_length")]] uint64_t length(c_string text);
     [[link_name("gti_external_length_factory")]] Length factory();
-    [[link_name("gti_external_apply")]] uint64_t apply(Length, c_string);
+    [[link_name("gti_external_apply")]] uint64_t apply(Length callback, c_string text);
   }
 }
 uint64_t adapted_length(c_string text) {
