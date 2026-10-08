@@ -908,6 +908,20 @@ no move lifecycle effects, no active cleanup, and exactly one receiver use.
 The scalar path retains the checked wrong-state failure edge and reads that
 binding directly instead of default-constructing a second Expected. Owning
 receivers requiring cleanup continue to require their explicit lifetime slot.
+
+The failure-free `StringViewSize` and `StringViewEmpty` observers admit either
+a borrowed view place or an ordinary SSA view value, such as the result of a
+call returning a view. A counted view is a by-value descriptor, so the observer
+reads only that descriptor. Any owner dependency belongs to the producing
+call's verified MIR result loan, which spans every use of the value; the
+backend does not extend, end or reinterpret it. The admission keys on the
+verified intrinsic, the `Value` operand category with no place or loan, an
+exact receiver value type with the `StringView` representation, and a
+producer other than a staged `CallInput`; observers carrying failure sites or
+a defined failure are not admitted. MIR constant evaluation already observes
+either operand category. When `std::string_view` becomes a source-defined
+class (PR #109), these become ordinary member calls on a class value and this
+intrinsic route is subsumed.
 Their existing value-rooted moved-Expected slot admits either its one state
 test or a sole checked scalar observer, preserving the same source-to-value
 drop transfer and full-expression destruction. Trivial scalar-only Expected

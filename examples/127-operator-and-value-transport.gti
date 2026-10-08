@@ -1,4 +1,5 @@
 // Ordinary user types retain exact element addresses and receiver-tied views.
+// A view returned by a call can be observed in the same expression.
 // Boxing an existing value uses its selected copy/move operation, not a wrapper.
 #include <std/memory>
 #include <std/string>
@@ -35,11 +36,18 @@ int main() {
   Names names{};
   std::string_view name = names.at(std::size_t(0));
   if (name[std::size_t(0)] != 'a') { return 2; }
+  if (names.at(std::size_t(0)).size() != std::size_t(5) ||
+      names.at(std::size_t(0)).empty()) {
+    return 3;
+  }
   // This view protects names; moving/mutating the owner while it is used
   // remains invalid. A local or temporary owner cannot supply an escaping view.
 
   auto counter = std::make_unique<Counter>(Counter(total));
   auto text = std::make_unique<std::string>(std::string("asset"));
   std::string_view owned_name = text->view();
-  return counter->count == 9 && owned_name[std::size_t(0)] == 'a' ? 0 : 3;
+  return counter->count == 9 && owned_name[std::size_t(0)] == 'a' &&
+                 text->view().size() == std::size_t(5)
+             ? 0
+             : 4;
 }
