@@ -8268,8 +8268,7 @@ public:
       writeIndent();
       const LoweredFunctionDeclaration *declaration =
           loweredProgram.findFunctionDeclaration(target->declaration);
-      const LoweredDeclaration *row =
-          loweredFunctionRow(target->declaration);
+      const LoweredDeclaration *row = loweredFunctionRow(target->declaration);
       if (declaration == nullptr || row == nullptr) {
         throw std::logic_error(
             "hosted C-thread boundary lost its declaration identity");
