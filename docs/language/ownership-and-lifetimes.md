@@ -1942,7 +1942,10 @@ temporary's own borrow. One shape is not yet supported and currently stops at
 internal backend verification rather than a semantic diagnostic: explicitly
 constructing a view from a temporary view, `std::string_view(owned.view())`,
 which shares the general gap for explicit construction from a class prvalue.
-Bind or pass the view directly instead.
+Bind or pass the view directly instead. Explicit construction from a view
+binding, `std::string_view(first)`, copies the descriptor with its owner
+dependency. Before `std::string_view` became a source-defined class, every
+explicit `std::string_view(...)` construction was rejected with `GTI-S2030`.
 
 An owning wrapper may relay a field's text accessor, for example
 `return text.view();` or `return this.text.view();`. Both spellings retain

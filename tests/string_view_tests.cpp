@@ -52,6 +52,12 @@ void checkAcceptedLifetimes() {
       "std::string_view part = tail(owned.view());\n"
       "std::string_view word = first_word(owned);\n"
       "return part.size() == std::size_t(9) && word == \"owned\" ? 0 : 1;",
+      // Explicit construction from a view binding copies the descriptor and
+      // its owner dependency.
+      "std::string owned = std::string(\"abc\");\n"
+      "std::string_view first = owned.view();\n"
+      "std::string_view second = std::string_view(first);\n"
+      "return second == \"abc\" ? 0 : 1;",
       // A temporary view shell can end while its derived view lives.
       "std::string owned = std::string(\"abcdef\");\n"
       "std::string_view derived = owned.view().substr(std::size_t(2));\n"
@@ -115,6 +121,12 @@ void checkRejectedLifetimes() {
        "std::string_view part = owned.view().substr(std::size_t(1));\n"
        "owned.push_back('x');\n"
        "return int(part.size());",
+       "GTI-S2017", ""},
+      {"mut std::string owned = std::string(\"abc\");\n"
+       "std::string_view first = owned.view();\n"
+       "std::string_view second = std::string_view(first);\n"
+       "owned.push_back('x');\n"
+       "return int(second.size());",
        "GTI-S2017", ""},
       {"mut std::string owned = std::string(\"abc\");\n"
        "Token token = Token(owned.view(), 1);\n"
