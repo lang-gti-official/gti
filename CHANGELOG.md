@@ -18,6 +18,26 @@ for what minor and patch releases mean.
   `-D` additions. Cached builds and editor snapshots invalidate when the
   configuration changes. See `examples/scoped-configuration`.
 
+## 0.389.0 — Qualified generic type members
+
+- Name public member aliases directly through generic owners, such as
+  `std::vector<T>::const_iterator` or `Box<int>::value_type`, including nested
+  alias qualifiers. The same spelling works in generic signatures, fields,
+  aliases and local declarations, with existing access and ownership checks.
+- Editor navigation, completion, highlighting and formatting retain the
+  specialized owner and selected alias. Example 132 demonstrates a range
+  wrapper over unique-owned layers.
+
+## 0.388.0 — Public names for container iterators
+
+- Name the iterator and sentinel types of standard containers and views
+  without `std::detail`: `const_iterator` (from `begin()`), `iterator` (from
+  `begin_mut()`) and `sentinel` (from `end()`) are now public member aliases
+  on `vector`, `array`, `deque`, `list`, `forward_list`, `span`,
+  `mutable_span`, `string`, `resource_vector`, and the maps and sets. Name them
+  through an alias of a concrete type, for example
+  `using Ints = std::vector<int>;` then `Ints::iterator`.
+
 ## 0.384.0 — Program installation and quieter builds
 
 - Install a project's executable with `gti install` and remove it with

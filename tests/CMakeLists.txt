@@ -2,6 +2,25 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_qualified_type_member_tests qualified_type_member_tests.cpp)
+target_link_libraries(gti_qualified_type_member_tests PRIVATE gti_compiler)
+add_test(NAME qualified_type_members COMMAND gti_qualified_type_member_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME qualified_type_member_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/qualified_type_member_runtime_test.py"
+      $<TARGET_FILE:gti>
+      "${PROJECT_SOURCE_DIR}/examples/132-qualified-type-members.gti")
+  set_tests_properties(qualified_type_member_runtime PROPERTIES TIMEOUT 600)
+  if(TARGET gti_lsp)
+    add_test(NAME qualified_type_member_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/qualified_type_member_lsp_test.py"
+        $<TARGET_FILE:gti_lsp>)
+    set_tests_properties(qualified_type_member_lsp PROPERTIES TIMEOUT 60)
+  endif()
+endif()
+
 add_executable(gti_prvalue_direct_initialization_tests
                prvalue_direct_initialization_tests.cpp)
 target_link_libraries(gti_prvalue_direct_initialization_tests PRIVATE gti_cpp_backend)

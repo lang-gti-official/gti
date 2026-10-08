@@ -1,0 +1,57 @@
+==================
+Generic owner type aliases
+==================
+using Value = demo::Box<int>::nested::value_type;
+demo::Box<demo::Box<int>>::value_type read(demo::Box<int>::value_type item) {
+  return item;
+}
+
+---
+
+(source_file
+  (type_alias_declaration
+    (identifier)
+    (type
+      (user_type
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (type_argument_clause
+          (type
+            (primitive_type)))
+        (identifier)
+        (identifier))))
+  (function_declaration
+    (type
+      (user_type
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (type_argument_clause
+          (type
+            (user_type
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type_argument_clause
+                (type
+                  (primitive_type))))))
+        (identifier)))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type_argument_clause
+              (type
+                (primitive_type)))
+            (identifier)))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))
