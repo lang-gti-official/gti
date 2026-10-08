@@ -37,8 +37,7 @@ public:
   [[nodiscard]] virtual std::string_view name() const = 0;
   // Consumes a detached value. Drivers hand off their finished program without
   // copying it; a caller retaining its input may deliberately pass an lvalue.
-  [[nodiscard]] virtual BackendArtifact
-  generate(LoweredProgram program) = 0;
+  [[nodiscard]] virtual BackendArtifact generate(LoweredProgram program) = 0;
 };
 
 } // namespace lang

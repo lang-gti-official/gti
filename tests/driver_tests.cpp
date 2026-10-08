@@ -148,8 +148,7 @@ public:
     return "throwing-test";
   }
 
-  [[nodiscard]] lang::BackendArtifact
-  generate(lang::LoweredProgram) override {
+  [[nodiscard]] lang::BackendArtifact generate(lang::LoweredProgram) override {
     invoked = true;
     if (standardException) {
       throw std::runtime_error("deliberate backend failure");
@@ -171,8 +170,7 @@ public:
     return "unsupported-test";
   }
 
-  [[nodiscard]] lang::BackendArtifact
-  generate(lang::LoweredProgram) override {
+  [[nodiscard]] lang::BackendArtifact generate(lang::LoweredProgram) override {
     invoked = true;
     throw lang::BackendUnsupportedError("missing bounded test capability");
   }

@@ -17,8 +17,7 @@ public:
     return "native-header";
   }
 
-  [[nodiscard]] BackendArtifact
-  generate(LoweredProgram program) override;
+  [[nodiscard]] BackendArtifact generate(LoweredProgram program) override;
 };
 
 } // namespace lang
