@@ -37,7 +37,7 @@ materializableProgramConstant(const std::optional<ConstantValue> &constant) {
 }
 
 [[nodiscard]] bool containsUnresolvedGeneric(const CompileTimeValue &value) {
-  return value.kind == CompileTimeValue::Parameter;
+  return value.kind != CompileTimeValue::UInt64;
 }
 
 [[nodiscard]] bool containsUnresolvedGeneric(const SemanticType &type) {
@@ -154,6 +154,86 @@ HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
   HirProgramPlanVerificationResult result;
+  std::unordered_map<SymbolId, const SymbolRecord *> instanceSymbols;
+  for (const SymbolRecord &symbol : program.instanceSymbols()) {
+    if (symbol.id == 0 ||
+        semantics.database().findSymbol(symbol.id) != nullptr ||
+        !instanceSymbols.emplace(symbol.id, &symbol).second ||
+        symbol.name.empty() || symbol.sourceUnit == 0 ||
+        symbol.nameSpan.end <= symbol.nameSpan.start) {
+      result.errors.emplace_back(
+          "HIR concrete symbol inventory has invalid or overlapping identity");
+    }
+  }
+  const auto verifyConcreteBindings = [&](const HirBody &body) {
+    for (const HirBinding &binding : body.bindings) {
+      const auto found = instanceSymbols.find(binding.info.symbol);
+      if (found != instanceSymbols.end() &&
+          (found->second->type != binding.info.type ||
+           found->second->traits != binding.info.traits ||
+           found->second->mutableBinding !=
+               (binding.info.access == AccessMode::Mutable))) {
+        result.errors.emplace_back(
+            "HIR concrete binding differs from its semantic symbol record");
+      }
+    }
+  };
+  verifyConcreteBindings(program.module());
+  for (const auto &instance : program.functionInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.constructorInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.destructorInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.lambdaInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.classInstances()) {
+    const ClassTypeInfo *owner = semantics.findClassType(instance.declaration);
+    if (owner == nullptr ||
+        owner->typeAliases.size() != instance.typeAliases.size()) {
+      result.errors.emplace_back(
+          "HIR class alias inventory differs from semantics");
+      continue;
+    }
+    GenericSubstitution substitution;
+    std::size_t typeIndex = 0, valueIndex = 0;
+    for (const auto &parameter : owner->genericParameters) {
+      if (!parameter.typeArgumentPath.empty()) {
+        if (auto type = projectGenericTypeArgument(
+                instance.typeArguments, parameter.typeArgumentPath,
+                parameter.id, parameter.pack))
+          substitution.types.emplace(parameter.id, std::move(*type));
+      } else if (parameter.value) {
+        if (valueIndex < instance.valueArguments.size())
+          substitution.values.emplace(parameter.id,
+                                      instance.valueArguments[valueIndex++]);
+      } else if (parameter.pack) {
+        std::vector<SemanticType> elements(
+            instance.typeArguments.begin() +
+                static_cast<std::ptrdiff_t>(typeIndex),
+            instance.typeArguments.end());
+        substitution.types.emplace(
+            parameter.id,
+            SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+        typeIndex = instance.typeArguments.size();
+      } else if (typeIndex < instance.typeArguments.size()) {
+        substitution.types.emplace(parameter.id,
+                                   instance.typeArguments[typeIndex++]);
+      }
+    }
+    for (std::size_t index = 0; index < instance.typeAliases.size(); ++index) {
+      const auto &alias = instance.typeAliases[index];
+      const TypeAliasInfo *primary =
+          semantics.findTypeAlias(*owner->typeAliases[index]);
+      if (primary == nullptr || alias.source != owner->typeAliases[index] ||
+          alias.declaration != primary->id || alias.declaration == 0 ||
+          containsUnresolvedGeneric(alias.type) ||
+          alias.type !=
+              substituteSemanticType(primary->type, substitution, &semantics))
+        result.errors.emplace_back(
+            "HIR class alias differs from its exact semantic owner/type");
+    }
+  }
   if (program.analysisSeal() != semantics.analysisSeal()) {
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");
@@ -360,6 +440,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       exact &= selectedValues == instance.initializerValues &&
                instance.initializers.size() == position + owner->fields.size();
       for (const auto &field : owner->fields) {
+        const Expr *selectedSource =
+            field.declaration == nullptr
+                ? nullptr
+                : (field.declaration->initializer()
+                       ? field.declaration->initializer().get()
+                       : semantics.implicitFieldInitializer(*field.declaration)
+                             .get());
         const auto *initializer = position < instance.initializers.size()
                                       ? &instance.initializers[position]
                                       : nullptr;
@@ -367,24 +454,22 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             initializer != nullptr && initializer->arguments.size() == 1
                 ? instance.body.findValue(initializer->arguments.front())
                 : nullptr;
-        exact &= field.declaration != nullptr &&
-                 field.declaration->initializer() != nullptr &&
-                 initializer != nullptr &&
-                 initializer->kind == ConstructorInitializerTargetKind::Field &&
-                 initializer->source == nullptr &&
-                 initializer->field == field.info.symbol &&
-                 initializer->targetType == field.info.type &&
-                 initializer->explicitArgumentCount == 1 &&
-                 !initializer->base && !initializer->constructorTarget &&
-                 !initializer->generatedDefault &&
-                 !initializer->storesReference &&
-                 !initializer->ownedParameter && value != nullptr &&
-                 value->source == field.declaration->initializer().get() &&
-                 (value->info.type == field.info.type ||
-                  isImplicitScalarInitializationConversion(field.info.type,
-                                                           value->info.type) ||
-                  isImplicitExpectedInitializationConversion(field.info.type,
-                                                             value->info.type));
+        exact &=
+            field.declaration != nullptr && selectedSource != nullptr &&
+            initializer != nullptr &&
+            initializer->kind == ConstructorInitializerTargetKind::Field &&
+            initializer->source == nullptr &&
+            initializer->field == field.info.symbol &&
+            initializer->targetType == field.info.type &&
+            initializer->explicitArgumentCount == 1 && !initializer->base &&
+            !initializer->constructorTarget && !initializer->generatedDefault &&
+            !initializer->storesReference && !initializer->ownedParameter &&
+            value != nullptr && value->source == selectedSource &&
+            (value->info.type == field.info.type ||
+             isImplicitScalarInitializationConversion(field.info.type,
+                                                      value->info.type) ||
+             isImplicitExpectedInitializationConversion(field.info.type,
+                                                        value->info.type));
         ++position;
       }
       if (!exact)

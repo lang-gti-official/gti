@@ -1,0 +1,101 @@
+#include <std/io>
+#include <std/memory>
+
+mut int trace = 0;
+mut int live = 0;
+
+class Leaf {
+  mut int identity = 0;
+public:
+  Leaf() {
+    live += 1;
+    identity = live;
+    trace = trace * 10 + identity;
+  }
+  ~Leaf() {
+    trace = trace * 10 + identity;
+    live -= 1;
+  }
+};
+
+struct Generated { Leaf first; Leaf second; };
+class Declared {
+  Leaf first;
+  Leaf second;
+public:
+  Declared() { trace = trace * 10 + 3; }
+};
+
+class Base {
+public:
+  int stamp = 5;
+  Base() {}
+  virtual int read() = 0;
+};
+class Derived : public Base {
+public:
+  int read() override { return this.stamp; }
+};
+struct NominalDerived { Derived value; };
+
+class PlainValue {
+public:
+  int number = 4;
+  PlainValue() {}
+};
+PlainValue unused_value() {
+  std::println("must not evaluate overridden value default");
+  int32_t[1] values = {1};
+  int32_t index = 2;
+  std::println(values[index]);
+  return PlainValue();
+}
+class ExplicitOverride {
+  PlainValue value = unused_value();
+public:
+  ExplicitOverride() : value(PlainValue()) {}
+};
+
+class ReferenceOverride {
+  mut int& source;
+  PlainValue value = unused_value();
+  int tail = 7;
+public:
+  ReferenceOverride(mut int& source, int divisor) :
+    source(source), value(PlainValue()) {
+    this.source += 12 / divisor;
+    if (value.number != 4 || tail != 7) this.source += 100;
+  }
+};
+
+struct OwnedCounts { int identity = 37; };
+[[no_transfer, no_share]] class BorrowedOwner<R> {
+  R& source;
+  int limit;
+  mut std::unique_ptr<OwnedCounts> counts;
+  mut OwnedCounts* state = nullptr;
+public:
+  BorrowedOwner(R& source, int limit) : source(source), limit(limit),
+    counts(std::make_unique<OwnedCounts>()) {
+    this.state = &*this.counts;
+  }
+  int read() { unsafe { return this.state->identity; } }
+};
+
+int main() {
+  { Generated object{}; }
+  if (trace != 1221 || live != 0) return 1;
+  trace = 0;
+  { Declared object{}; }
+  if (trace != 12321 || live != 0) return 2;
+  NominalDerived owner{};
+  if (owner.value.read() != 5) return 3;
+  ExplicitOverride overridden{};
+  mut int source = 0;
+  ReferenceOverride selected{source, 2};
+  if (source != 6) return 4;
+  PlainValue provider{};
+  BorrowedOwner<PlainValue> counted{provider, 2};
+  if (counted.read() != 37) return 5;
+  return 0;
+}

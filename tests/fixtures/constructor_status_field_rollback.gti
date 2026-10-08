@@ -19,9 +19,16 @@ public:
   Leaf() {}
   ~Leaf() { std::println(40); }
 };
+std::unique_ptr<Leaf> unused_metadata() {
+  std::println("must not evaluate overridden metadata default");
+  int32_t[1] values = {1};
+  int32_t index = 2;
+  std::println(values[index]);
+  return std::make_unique<Leaf>();
+}
 class Outer {
   Guard guard;
-  std::unique_ptr<Leaf> metadata;
+  std::unique_ptr<Leaf> metadata = unused_metadata();
 public:
   Outer(Resource& resource, int divisor)
       : guard(Guard(resource)), metadata(std::make_unique<Leaf>()) {

@@ -568,7 +568,13 @@ class substitution preserves that identity through symbolic base forwarding.
 Method selection groups the owner's prescribed concrete list by source argument
 expression and reuses exact argument and ownership checks, including forwarding
 and `operator()`. It does not infer owner arguments from the call. Concrete
-class reanalysis validates member pack object positions even for uncalled
+lexical pack scopes retain the declaring name/ID independently of a substituted
+pack's canonical type identity. Signature-pattern forwarding does not rewrite
+that type identity to impersonate the receiving declaration, and a nearer
+non-pack generic shadows the enclosing pack normally. Concrete field reanalysis
+also runs for zero-element owner packs, preserving the same canonical selected
+field types as their constructor schedules. Concrete class reanalysis validates
+member pack object positions even for uncalled
 methods. Empty owner packs still trigger concrete method reanalysis. HIR
 instance signatures flatten concrete packs independently of discovery path,
 while body bindings retain source pack identity for cleanup and forwarding.
@@ -666,6 +672,44 @@ destructors, field/base initialization, and cleanup. An ordinary bodyless GTI
 declaration, open generic cleanup shape, or other missing summary is unknown;
 `GTI-S2068` rejects a later-storage access or unknown transitive effect before
 HIR. This proof does not infer safety from a backend or from `findConstant()`.
+
+Closed generic calls use request-local concrete effect queries keyed by the
+declaration, concrete owner, and type/value substitutions. A reused isolated
+semantic instance worker analyzes only initializer-reachable selected bodies;
+discarded `if constexpr` arms do not contribute effects. Nongeneric bridge
+calls retain their graph edges, and source constructor/destructor/field effects
+use the same exact instance identity. Query expansion is bounded by 64 generic
+ancestry steps and 16,384 analyzed distinct instances, with located `GTI-S2105`
+diagnostics. Open substitutions, dynamic dispatch, and protocol/combinator paths
+without exact selected generic arguments remain conservatively unknown.
+
+Value-generic arithmetic needed before complete program HIR/MIR is retained as
+an immutable declaration-ID-bound expression tree, never a borrowed AST pointer.
+Substitution reuses the checked constant-operation kernel and exact-specialization
+selection. Complete MIR cannot yet own this early type-formation query because
+array/value arguments and class field layout shape the semantic instance itself;
+the remaining L-CONST-01 staged/query-driven MIR evaluator remains the migration
+goal, not a separate permanent runtime interpreter.
+
+Missing nominal-field defaults use semantic-owned empty construction anchors,
+retained across snapshots and deltas. Ordinary contextual construction analysis
+publishes the exact selected operation and effects; HIR lowers that typed field
+initializer, and MIR owns final-address construction, stage activation, ordering,
+and rollback. Other omitted field categories do not gain an implicit initializer.
+An open nominal field defers construction until concrete analysis; recursively
+unresolved type arguments, value expressions, and extents are not an invitation
+to check a constructor requirement outside its selected constructor's context.
+Concrete selection still enforces every zero-argument operation and requirement.
+Default-availability queries apply those requirements under the exact owner
+substitution; a constrained-out zero-argument constructor is not queried as an
+omitted default when a different constructor explicitly initializes the field.
+Abstract owners remain constructible only in base-subobject position, never as
+implicitly defaulted value fields.
+New omitted-nominal defaults do not manufacture an extra argument-free overload
+beside an owner's declared argument-taking construction API. Constructor-free
+owners can use the structural default; declared zero-argument operations keep
+their ordinary selection rules. The earlier generated overload for completely
+written declaration-default state remains available unchanged.
 
 `SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
 active-statement preorder, and exact ordered source-graph/prelude provenance.
@@ -925,7 +969,13 @@ base facts through the fallback, loan tables deliberately restart rather
 than fall back, and record mutators copy a base record into the delta before
 updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
-unchanged from the previous whole-model-copy design.
+unchanged for inherited declarations. New declarations found only in a selected
+dependent branch receive IDs above a request-wide symbol identity ceiling. The
+ceiling advances in sequential analysis order and resets with the request; it
+is not restored with body-local counters. Thus distinct concrete-only locals
+cannot collide even when instances have identical source names or different
+types. These delta symbol records remain concrete and are handed to HIR without
+mutating the immutable primary snapshot. Discarded arms are still unanalyzed.
 
 A complete-range requirement is checked symbolically before its concrete
 iterator and sentinel types exist. The primary analysis therefore uses private

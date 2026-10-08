@@ -1,0 +1,24 @@
+namespace shapes {
+  struct Layer<uint64_t N> { Layer<N - 1> inner; int value = int(N); };
+}
+struct shapes::Layer<0> { int value = 100; };
+
+struct Box<uint64_t N = 2, uint64_t Extent = N + 1> {
+  using Previous = shapes::Layer<N - 1>;
+  Previous inner;
+  int values[Extent] = {};
+};
+
+int main() {
+  Box<1> shallow{};
+  Box<> object{};
+  Box<3> deeper{};
+  uint64_t runtime_count = 2;
+  if (object.values.size() != runtime_count + 1) return 3;
+  if (object.inner.inner.value != 100 || object.inner.value != int(runtime_count - 1)) return 1;
+  if (object.values[0] != 0 || object.values[2] != 0) return 2;
+  if (shallow.inner.value != 100 || shallow.values.size() != 2) return 4;
+  if (deeper.inner.value != 2 || deeper.inner.inner.value != 1 ||
+      deeper.inner.inner.inner.value != 100 || deeper.values.size() != 4) return 5;
+  return 0;
+}

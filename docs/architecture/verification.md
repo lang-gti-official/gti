@@ -3051,6 +3051,42 @@ emitter tests reject missing/duplicate constructor initializer coverage, removed
 floating and enum publication stages, and forged cleanup/call targets. Generated
 constructor propagation remains a tracked limitation, not a tested success.
 
+The generic-instance runtime matrix also checks nominal defaults, finite
+value-generic layouts and exact aliases at C++20/C++23 O0/O1/O3. Its mixed
+reference/class/scalar constructor overrides a panicking declaration default;
+successful execution must produce no output from that unselected function.
+The selected-default emitter test mutates field coverage/order/types, MIR
+publication and full-expression endpoints, and the stored reference origin.
+Separate implicit/explicit default-failure cases check once-only reverse
+cleanup, while native status-field rollback tests retain child and later-body
+failure controls. Coverage alone never replaces empty-shell or rollback proof.
+
+The PR133 generic initialization/layout candidate reconciled through canonical
+`b08acfc8` passes all optimized production build targets, all six compiler
+partitions, the concrete query/layout/discovery and detached representation
+contracts, current definition-diagnostic CLI/LSP checks, complete lifecycle
+emitter checks, and the 42-cell generic-instance native matrix. The two complete
+125-example corpus gates pass before inventory promotion: all 19,926 lowered
+bodies are ready, all 11,996 applicable general emissions agree, and both native
+endpoints retain all 19,919 reviewed MIR identities with identical observations.
+The reviewed inventory adds fourteen declarations and twenty-four bodies:
+fifteen bodies in expanded example 23 and nine selected nominal defaults in
+seven existing examples. Generated-item counts are unchanged. Unused aliases
+remain metadata and do not demand layouts or introduce executable bodies.
+This is candidate evidence; the unfiltered full suite, final integration-bound
+validation and installed-consumer acceptance remain separate obligations.
+
+That frozen PR133 full-suite run completed all 535 gates: 521 passed and 14
+failed. Five HTTP/package/debugger failures passed unchanged permission-
+appropriate retries; the original failed results remain recorded. The remaining
+failures reduce to constrained-out field defaults, nullable-pointer selected
+publication, private optional-constructor alternate admission, concrete-empty
+signature-pack fields, and diagnostic expectations for the incoming selected
+callee span. Focused repair validation retains the original assertions and
+eight-mode native matrices; it is not a retrospective full-suite pass. Final
+cross-branch reconciliation and full combined acceptance are deferred to the
+owner's separate integration goal.
+
 The `native_packages` CTest runs offline preparation-safety and inventory
 checks without acquiring upstream code. After explicitly preparing the optional
 packages, `gti test` in `packages/examples/smoke` exercises real native bindings:
