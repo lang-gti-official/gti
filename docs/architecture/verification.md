@@ -234,17 +234,19 @@ cleanup without destruction of the unpublished object.
 The gate runs C++20/C++23 at O0/O1/O3 with native optional elision disabled,
 followed by ASan/UBSan. Its `--case` selector is for focused development;
 `--emit-only` checks C++ admission only and is not runtime validation. This
-regression gate is being added before the repair: the existing compiler still
-rejects valid class-expression MIR during backend admission. No passing native
-or sanitizer evidence is claimed for the repair yet. Malformed-MIR mutation
-coverage must accompany the eventual representation change.
+regression gate also retains the still-failing grouped-construction cases;
+the complete gate is not passing yet.
 
 `conditional_class_publication` adds production C++ admission and malformed-MIR
 checks for the passive conditional repair, retaining an active-cleanup control.
 Its mutations rebuild use records before checking rejection of forged initial
-availability, borrowed traits, operand types, copies, and lifecycle targets.
-The passive representation implementation and these tests are pending build and
-execution; their presence alone is not passing evidence.
+availability, borrowed traits, operand types, copies, lifecycle targets and
+forged constructor-success publication edges. The optimized macOS arm64
+checkpoint `98763e94` passes this gate (seven mutations) and all three
+conditional fixtures in six C++20/C++23 O0/O1/O3 no-elide modes plus ASan/UBSan.
+The original S02 binding reproducer also compiles and prints `1`. This is focused
+conditional-binding evidence, not completion of all S02 consumer positions,
+the grouped-expression repair, broader regressions or final release acceptance.
 
 ## Class field value publication and declaration defaults
 

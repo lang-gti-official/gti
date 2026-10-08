@@ -1079,7 +1079,7 @@ struct Record {
 int main() {
   mut int32_t value = 1;
   value = 2;
-  Record record(value);
+  Record record{value};
   return record.value + zeroed - 2;
 }
 )");

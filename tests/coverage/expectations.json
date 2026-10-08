@@ -2209,7 +2209,7 @@
     "s02-ternary-class-value": {
       "finding": "S02",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "s03-method-on-moved-value": {
       "outcome": "pass"

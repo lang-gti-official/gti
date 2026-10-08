@@ -853,6 +853,14 @@ int32_t x = flag ? 1 : 2;             // ok
 ICEs in all eight consumer positions tried, so it is the ternary itself and
 not what is done with the result.
 
+Partial repair at `98763e94`: the original binding reproducer now compiles and
+prints `1`; passive move-only, cleanup-owning and failing-constructor binding
+fixtures pass C++20/C++23 O0/O1/O3 with elision disabled and ASan/UBSan. Exact
+publication and success-edge mutations remain rejected. The historical matrix
+wraps its ternary in parentheses and exercises additional consumer positions;
+those remain part of the S01/S02 reconciliation, not implied passing coverage
+from the binding fix. Issue #103 remains open.
+
 ## S03 — ICE: a method call directly on `std::move(x)`
 
 `reproducers/s03-method-on-moved-value.gti`
