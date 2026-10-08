@@ -84,7 +84,12 @@ def main() -> int:
     failures = []
     with tempfile.TemporaryDirectory(prefix="gti-payload-fresh-") as directory:
         root = pathlib.Path(directory)
-        programs = {"fixture": fixture}
+        # Keep the exact original composition: fresh passive sibling operands,
+        # mixed shared/copied payload bindings, and nested payload switches.
+        programs = {
+            "fixture": fixture,
+            "original": fixture.with_name("payload_fresh_class_operands_original.gti"),
+        }
         for name, text in (("cleanup", ACTIVE_CLEANUP), ("fail", SIBLING_FAILURE)):
             path = root / f"{name}.gti"
             path.write_text(text, encoding="utf-8")
@@ -103,7 +108,8 @@ def main() -> int:
                     if name != "fail":
                         ran = subprocess.run([str(executable)], text=True,
                                              capture_output=True, check=False)
-                        if ran.returncode != 0:
+                        if (ran.returncode != 0 or
+                                (name == "original" and (ran.stdout or ran.stderr))):
                             failures.append(
                                 f"{name} {label}: exit {ran.returncode} "
                                 f"{ran.stdout!r} {ran.stderr!r}")
