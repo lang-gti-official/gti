@@ -9,6 +9,12 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.390.1 — Unused atomic and mutex includes
+
+- Fix native build failures when a program includes `<std/atomic>` or
+  `<std/mutex>` without using their types, in either execution profile. Such
+  includes still add no native atomic or mutex support to the executable.
+
 ## 0.390.0 — Target and profile configuration flags
 
 - Set `defines` in individual `gti.toml` targets and profiles. Build, check,

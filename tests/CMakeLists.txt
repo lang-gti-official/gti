@@ -3322,6 +3322,13 @@ if(Python3_Interpreter_FOUND)
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME dormant_capability_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/dormant_capability_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(dormant_capability_runtime PROPERTIES TIMEOUT 300)
     if(GTI_ENABLE_THREAD_SANITIZER_TESTS)
       set(gti_tsan_supported 1)
     else()
