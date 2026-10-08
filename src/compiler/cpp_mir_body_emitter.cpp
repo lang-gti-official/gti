@@ -4407,8 +4407,9 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       stage->operands.size() != 1 ||
       stage->operands.front().kind != MirOperandKind::Value ||
       stage->operands.front().value != sourceId ||
-      !stage->preparedParameterDrop || !stage->localFailureSites.empty() ||
-      stage->lifecycle.size() != 1) {
+      stage->operands.front().type != source->info.type ||
+      stage->info.type != source->info.type || !stage->preparedParameterDrop ||
+      !stage->localFailureSites.empty() || stage->lifecycle.size() != 1) {
     return {};
   }
   if (sourceDefinition != producer || temporaryMoveProducer) {
@@ -46904,6 +46905,47 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             place) {
       return false;
     }
+    std::vector<ConditionalClassBindingJoin> conditionalArguments;
+    for (const MirOperand &operand : consumer->operands) {
+      if (operand.kind != MirOperandKind::Value ||
+          operand.type.kind != SemanticType::Class)
+        continue;
+      const StagedClassResult argument =
+          stagedClassResultForResult(body, operand.value);
+      if (argument.consumer != consumer || argument.producer == nullptr ||
+          argument.producer->kind != MirInstructionKind::Move ||
+          argument.producer->operands.size() != 1 ||
+          argument.stage->callSite != consumer->callSite ||
+          argument.stage->callInputRole != MirCallInputRole::Argument)
+        continue;
+      const MirPlace *temporary =
+          body.findPlace(argument.producer->operands.front().place);
+      if (temporary == nullptr)
+        continue;
+      ConditionalClassBindingJoin conditional =
+          conditionalClassBindingJoin(program_, body, *temporary);
+      if (!conditional || conditional.move != argument.producer ||
+          conditional.initialize != argument.stage)
+        continue;
+      const bool scalarInputs = std::all_of(
+          conditional.arms.begin(), conditional.arms.end(),
+          [&](const ConditionalClassBindingJoinArm &arm) {
+            return !arm.construct->receiver && !arm.construct->loan &&
+                   !arm.construct->rawMemoryAccess &&
+                   arm.construct->unsafeOperation ==
+                       UnsafeOperationKind::None &&
+                   std::all_of(
+                       arm.construct->operands.begin(),
+                       arm.construct->operands.end(),
+                       [&](const MirOperand &input) {
+                         return input.kind == MirOperandKind::Value &&
+                                cppMirExpectedTypeRepresentation(input.type) ==
+                                    CppMirTypeRepresentationKind::Scalar;
+                       });
+          });
+      if (scalarInputs)
+        conditionalArguments.push_back(std::move(conditional));
+    }
     // A bare local or exact full-expression slot has a stable native address.
     // Erasing its borrowed input
     // across an acyclic argument diamond is exact only when all normal paths
@@ -46971,6 +47013,28 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             peerConsumer->functionTarget &&
             peerConsumer->callSite == instruction.callSite;
         if (nestedReadReceiver)
+          continue;
+        const bool conditionalArgumentOperation = std::any_of(
+            conditionalArguments.begin(), conditionalArguments.end(),
+            [&](const ConditionalClassBindingJoin &conditional) {
+              if (&instruction == conditional.move ||
+                  &instruction == conditional.initialize ||
+                  std::any_of(conditional.arms.begin(), conditional.arms.end(),
+                              [&](const ConditionalClassBindingJoinArm &arm) {
+                                return &instruction == arm.construct ||
+                                       &instruction == arm.initialize;
+                              }))
+                return true;
+              if (classPublicationIdentityInput(body, instruction) == nullptr)
+                return false;
+              const StagedClassResult argument =
+                  stagedClassResultForSource(body, *instruction.result);
+              return argument.producer == conditional.move &&
+                     argument.stage == conditional.initialize;
+            });
+        if (conditionalArgumentOperation && !instruction.loan &&
+            !instruction.rawMemoryAccess &&
+            instruction.unsafeOperation == UnsafeOperationKind::None)
           continue;
         const auto nestedResult =
             instruction.result
@@ -48997,6 +49061,37 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           {
             return false;
           }
+        }
+        const MirValue *argumentValue =
+            instruction.operands.front().kind == MirOperandKind::Value
+                ? body.findValue(instruction.operands.front().value)
+                : nullptr;
+        const MirInstruction *argumentOrigin =
+            argumentValue != nullptr &&
+                    argumentValue->info.type.kind == SemanticType::Class &&
+                    !argumentValue->info.traits.containsBorrowedState
+                ? classPublicationOrigin(body, *argumentValue)
+                : nullptr;
+        const MirPlace *argumentTemporary =
+            argumentOrigin != nullptr &&
+                    argumentOrigin->kind == MirInstructionKind::Move &&
+                    argumentOrigin->operands.size() == 1 &&
+                    argumentOrigin->operands.front().kind ==
+                        MirOperandKind::Move
+                ? body.findPlace(argumentOrigin->operands.front().place)
+                : nullptr;
+        if (argumentTemporary != nullptr &&
+            argumentTemporary->root == MirPlaceRootKind::Temporary &&
+            argumentTemporary->projections.empty() &&
+            argumentOrigin->lifecycle.empty() &&
+            argumentOrigin->definedFailure.empty()) {
+          // A moved temporary is already a real object before argument
+          // staging. An incomplete prepared-ownership schedule must not fall
+          // back to deferred copy staging at the consuming native call.
+          if (stagedClassResultForResult(body, *instruction.result).stage !=
+              &instruction)
+            return false;
+          continue;
         }
         if (directTemporaryReceiverStage(body, instruction)) {
           continue;
