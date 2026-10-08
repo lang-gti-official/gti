@@ -1,0 +1,77 @@
+#include <std/panic>
+#include <std/string>
+#include <std/vector>
+
+mut int mode = 0;
+
+class ScopeGuard {
+  int id;
+public:
+  ScopeGuard(int id) : id(id) {}
+  ~ScopeGuard() {
+    std::println(this.id);
+    if (this.id == 48 && mode != 0) {
+      std::panic("first cleanup failure");
+    }
+    if (this.id == 46 && mode == 2) {
+      std::panic("second cleanup failure");
+    }
+  }
+};
+
+int guarded() {
+  ScopeGuard guard1{1};
+  ScopeGuard guard2{2};
+  ScopeGuard guard3{3};
+  ScopeGuard guard4{4};
+  ScopeGuard guard5{5};
+  ScopeGuard guard6{6};
+  ScopeGuard guard7{7};
+  ScopeGuard guard8{8};
+  ScopeGuard guard9{9};
+  ScopeGuard guard10{10};
+  ScopeGuard guard11{11};
+  ScopeGuard guard12{12};
+  ScopeGuard guard13{13};
+  ScopeGuard guard14{14};
+  ScopeGuard guard15{15};
+  ScopeGuard guard16{16};
+  ScopeGuard guard17{17};
+  ScopeGuard guard18{18};
+  ScopeGuard guard19{19};
+  ScopeGuard guard20{20};
+  ScopeGuard guard21{21};
+  ScopeGuard guard22{22};
+  ScopeGuard guard23{23};
+  ScopeGuard guard24{24};
+  ScopeGuard guard25{25};
+  ScopeGuard guard26{26};
+  ScopeGuard guard27{27};
+  ScopeGuard guard28{28};
+  ScopeGuard guard29{29};
+  ScopeGuard guard30{30};
+  ScopeGuard guard31{31};
+  ScopeGuard guard32{32};
+  ScopeGuard guard33{33};
+  ScopeGuard guard34{34};
+  ScopeGuard guard35{35};
+  ScopeGuard guard36{36};
+  ScopeGuard guard37{37};
+  ScopeGuard guard38{38};
+  ScopeGuard guard39{39};
+  ScopeGuard guard40{40};
+  ScopeGuard guard41{41};
+  ScopeGuard guard42{42};
+  ScopeGuard guard43{43};
+  ScopeGuard guard44{44};
+  ScopeGuard guard45{45};
+  ScopeGuard guard46{46};
+  ScopeGuard guard47{47};
+  ScopeGuard guard48{48};
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mode = argc - 1;
+  return guarded();
+}

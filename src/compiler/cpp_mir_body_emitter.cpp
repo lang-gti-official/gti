@@ -29860,6 +29860,7 @@ public:
              << "{};\n";
     }
     if (failureForm) {
+      bool cleanupFailureRecordDeclared = false;
       for (const MirBlock &block : facts.body.blocks) {
         if (preparingBase &&
             std::find(preparation->blocks.begin(), preparation->blocks.end(),
@@ -30035,11 +30036,11 @@ public:
             writeIndent();
             output << "bool __gti_mir_drop_success_" << instruction.id
                    << " = false;\n";
-            if (block.activeFailure != 0) {
+            if (block.activeFailure != 0 && !cleanupFailureRecordDeclared) {
               writeIndent();
               output << "::gti_failure_record_v2 "
-                        "__gti_mir_cleanup_failure_record_"
-                     << instruction.id << "{};\n";
+                        "__gti_mir_cleanup_failure_record{};\n";
+              cleanupFailureRecordDeclared = true;
             }
           }
         }
@@ -32852,9 +32853,7 @@ private:
                    "__gti_mir_p_" +
                        std::to_string(canonicalSlotPlaceId(facts.body, *slot)) +
                        ".get()",
-                   fallible ? "&__gti_mir_cleanup_failure_record_" +
-                                  std::to_string(instruction.id)
-                            : "nullptr",
+                   fallible ? "&__gti_mir_cleanup_failure_record" : "nullptr",
                    "true")
             << "; // GTI MIR prepared argument cleanup; retain source shell\n";
         return;
@@ -32875,8 +32874,7 @@ private:
                    << " = __gti_mir_p_"
                    << canonicalSlotPlaceId(facts.body, *unexpected.slot)
                    << ".destroy_cleanup_with_failure(&__gti_mir_cleanup_"
-                      "failure_record_"
-                   << instruction.id
+                      "failure_record"
                    << ", false, true, [](auto &__gti_cleanup_value, "
                       "::gti_failure_record_v2 *__gti_record, bool "
                       "__gti_unwinding) { return "
@@ -32914,9 +32912,7 @@ private:
                         program, drop->dropType,
                         expectedPayload ? payloadValue
                                         : "*__gti_mir_out_result",
-                        "&__gti_mir_cleanup_failure_record_" +
-                            std::to_string(instruction.id),
-                        "true")
+                        "&__gti_mir_cleanup_failure_record", "true")
                  << ";\n";
           writeIndent();
           output << "if (__gti_mir_drop_success_" << instruction.id << ") ";
@@ -32943,8 +32939,7 @@ private:
       if (instruction.definedFailure.propagation ==
           FailurePropagationKind::Destructor) {
         const std::string record = block.activeFailure != 0
-                                       ? "&__gti_mir_cleanup_failure_record_" +
-                                             std::to_string(instruction.id)
+                                       ? "&__gti_mir_cleanup_failure_record"
                                        : "__gti_mir_failure_record";
         output << "__gti_mir_drop_success_" << instruction.id << " = "
                << cppMirCleanupValueExpression(
@@ -33037,9 +33032,7 @@ private:
                << " = [&](auto &__gti_cleanup_value) { return "
                << cppMirCleanupValueExpression(
                       program, drop->dropType, "__gti_cleanup_value",
-                      "&__gti_mir_cleanup_failure_record_" +
-                          std::to_string(instruction.id),
-                      "true")
+                      "&__gti_mir_cleanup_failure_record", "true")
                << "; }(";
         emitPlaceExpression(facts, *field);
         output << "); // GTI MIR field rollback\n";
@@ -33117,7 +33110,7 @@ private:
         }
         output << ">(";
         if (block.activeFailure != 0) {
-          output << "&__gti_mir_cleanup_failure_record_" << instruction.id;
+          output << "&__gti_mir_cleanup_failure_record";
         } else {
           output << "__gti_mir_failure_record";
         }
@@ -33138,8 +33131,7 @@ private:
         output << "(void)";
       const auto record = !fallible ? "nullptr"
                           : block.activeFailure != 0
-                              ? "&__gti_mir_cleanup_failure_record_" +
-                                    std::to_string(instruction.id)
+                              ? "&__gti_mir_cleanup_failure_record"
                               : "__gti_mir_failure_record";
       output << cppMirCleanupValueExpression(
                     program, drop->dropType,
@@ -33169,8 +33161,7 @@ private:
              obligation->dropType.type.kind == SemanticType::Unexpected) &&
             !obligation->dropType.aggregate.empty()))) {
         const std::string record = block.activeFailure != 0
-                                       ? "&__gti_mir_cleanup_failure_record_" +
-                                             std::to_string(instruction.id)
+                                       ? "&__gti_mir_cleanup_failure_record"
                                        : "__gti_mir_failure_record";
         output << "__gti_mir_drop_success_" << instruction.id
                << " = __gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
@@ -33207,7 +33198,7 @@ private:
                                     : "_with_failure(");
       }
       if (block.activeFailure != 0) {
-        output << "&__gti_mir_cleanup_failure_record_" << instruction.id;
+        output << "&__gti_mir_cleanup_failure_record";
       } else {
         output << "__gti_mir_failure_record";
       }
@@ -34722,6 +34713,20 @@ private:
     if (instruction.tombstone) {
       return;
     }
+    if (failureForm && block.activeFailure != 0 &&
+        instruction.kind == MirInstructionKind::Drop &&
+        failureDestructorTarget(program, facts.body, instruction) != nullptr) {
+      // Verified cleanup executes sequentially. A secondary failure takes an
+      // immediate terminal edge, never another Drop that could overwrite it.
+      // Give each attempted Drop a fresh record without reserving one record
+      // for every alternative cleanup path in the native stack frame.
+      writeIndent();
+      // The fixed C failure ABI is an all-integer/byte record. Reset it in
+      // place: aggregate assignment can create another large temporary per
+      // statement at native -O0, recreating the same stack problem.
+      output << "std::memset(&__gti_mir_cleanup_failure_record, 0, "
+                "sizeof(__gti_mir_cleanup_failure_record));\n";
+    }
     if (instruction.result && (instruction.kind == MirInstructionKind::Move ||
                                instruction.kind == MirInstructionKind::Load)) {
       const auto temporary =
@@ -34989,8 +34994,7 @@ private:
         output << "(*this)." << typeSpelling(drop->dropType.type)
                << "::template __gti_mir_unique_cleanup_failure<"
                << *drop->dropType.classInstance
-               << ">(&__gti_mir_cleanup_failure_record_" << instruction.id
-               << ", true);\n";
+               << ">(&__gti_mir_cleanup_failure_record, true);\n";
         return;
       }
       output << "// GTI MIR base rollback ends with unpublished object "
@@ -39353,7 +39357,7 @@ private:
                 "mir_check_incoming_cleanup_failure_v1(";
       if (source.activeFailure != 0 && producer != nullptr &&
           producer->kind == MirInstructionKind::Drop)
-        output << "&__gti_mir_cleanup_failure_record_" << producer->id;
+        output << "&__gti_mir_cleanup_failure_record";
       else
         output << "__gti_mir_failure_record";
       output << ", &::gti_internal::backend::"
@@ -39759,26 +39763,15 @@ private:
             "secondary records");
       }
       writeIndent();
-      output << "::gti_failure_emergency_v2 __gti_mir_failure_emergency_"
-             << block.id << "{\n";
-      ++indentation;
-      writeIndent();
-      output << "GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0),\n";
-      writeIndent();
-      output << "*__gti_mir_failure_record,\n";
-      writeIndent();
-      output << "__gti_mir_cleanup_failure_record_" << producer->id << "\n";
-      --indentation;
-      writeIndent();
-      output << "};\n";
-      writeIndent();
       // A cleanup-emergency terminator never rejoins an enclosing cleanup
       // schedule. The managed-worker boundary transports its exact envelope;
       // returning from a destructor here would incorrectly run later Drops.
-      output << "::gti_rt_failure_terminate_cleanup_v2(\n";
+      output << "::gti_internal::backend::"
+                "mir_terminate_cleanup_failure_v2(\n";
       ++indentation;
       writeIndent();
-      output << "&__gti_mir_failure_emergency_" << block.id << ",\n";
+      output << "__gti_mir_failure_record, "
+                "&__gti_mir_cleanup_failure_record,\n";
       writeIndent();
       output << "&::gti_internal::backend::"
                 "__gti_failure_artifact_descriptor_v1,\n";

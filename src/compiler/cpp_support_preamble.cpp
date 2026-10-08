@@ -62,6 +62,12 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "mir_failure_cleanup_scope_v1",
       "mir_incoming_failure_cleanup_v1",
       "mir_check_incoming_cleanup_failure_v1",
+      "mir_terminate_cleanup_failure_v2",
+      "primary",
+      "secondary",
+      "primary_artifact",
+      "secondary_artifact",
+      "memset",
       "activate",
       "context_",
       "active_",
@@ -1178,6 +1184,28 @@ private:
   mir_failure_cleanup_context_v1 context_{};
   bool active_ = false;
 };
+// This envelope exists only on a terminal secondary-failure edge. Keeping it
+// in a separate native frame bounds caller stack storage independently of the
+// number of alternative cleanup paths. Managed-worker handoff may unwind out
+// of this call, so it must not be noexcept.
+[[noreturn]]
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+inline void mir_terminate_cleanup_failure_v2(
+    const ::gti_failure_record_v2 *primary,
+    const ::gti_failure_record_v2 *secondary,
+    const ::gti_failure_artifact_descriptor_v1 *primary_artifact,
+    const ::gti_failure_artifact_descriptor_v1 *secondary_artifact) {
+  if (primary == nullptr || secondary == nullptr) std::abort();
+  const ::gti_failure_emergency_v2 emergency{
+      GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0), *primary, *secondary};
+  ::gti_rt_failure_terminate_cleanup_v2(
+      &emergency, primary_artifact, secondary_artifact);
+}
+
 // This helper is reached only after a MIR operation fails. Keep its emergency
 // record/TLS work out of the successful caller's native inlining cost. It may
 // return for a first failure or unwind through the managed-worker handoff;

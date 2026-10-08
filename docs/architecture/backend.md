@@ -815,6 +815,18 @@ constructor/callback/call/join adapters preserve the same check. No public type
 spelling, reconstructed expression, allocation, or native source exception selects
 this behavior; verified MIR active-failure and edge identities own the schedule.
 
+Each native body invocation reserves at most one secondary cleanup record,
+independent of the number of alternative cleanup paths. Every attempted
+fallible Drop under an active primary zeroes that record in place before calling
+its selected cleanup recipe. A failed attempt immediately checks the inherited
+context and takes the verified emergency terminal path; no later Drop can
+overwrite its secondary record. Successful attempts do not modify the primary.
+Recursion and nested calls have separate invocation-local storage, and the fixed
+failure ABI is unchanged. The terminal envelope is constructed in a private
+out-of-line helper frame, not in one caller-frame local per terminal block.
+GNU-compatible compilers use cold/noinline hints; MSVC uses noinline. The helper
+is not noexcept because managed-worker emergency handoff can unwind through it.
+
 Aggregate, array, prefix, optional, shared/unique, closure and polymorphic cleanup
 recipes inherit that scope. A cleanup sequence arms its own scope after its first
 failure so later child calls stop before local cleanup on a second failure; the
@@ -2459,12 +2471,12 @@ a direct namespace call; MIR has already scheduled callee-expression effects.
 
 ### Defined Failure
 
-Private prefix-storage results use a default-empty native handle at a
-status-returning call boundary. A successful MIR Return moves the exact handle
-through the out-parameter; it is not copied or default-constructed as an element
-value. If destination replacement later fails, the activated result's MIR Drop
-drains the held storage before the empty native carrier leaves scope. Missing
-representation rows or success activation fail admission. Owned class results
+Source-owned prefix results use ordinary class-result lifetime slots at a
+status-returning call boundary. A successful MIR Return moves the exact owner
+through the out-parameter. If destination replacement later fails, the activated
+result's MIR Drop executes its source cleanup before the representation leaves
+scope. Missing representation rows or success activation fail admission.
+Owned class results
 from source member calls use the existing value-rooted replacement slot only
 when the receiver has its exact unique staged borrow and matching owner and
 mutability; result activation, input transfers, replacement, and shell cleanup

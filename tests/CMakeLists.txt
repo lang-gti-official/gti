@@ -473,6 +473,10 @@ if(Python3_Interpreter_FOUND)
       $<TARGET_FILE:gti> "${CMAKE_CXX_COMPILER}" $<TARGET_FILE:gti_runtime>
       $<TARGET_FILE:gti_runtime_thread_tests>)
   set_tests_properties(cleanup_context_scope_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME many_fallible_scope_guards_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/many_fallible_scope_guards_runtime_test.py"
+      $<TARGET_FILE:gti>)
+  set_tests_properties(many_fallible_scope_guards_runtime PROPERTIES TIMEOUT 300)
 
   add_test(NAME object_destroy_scalar_runtime
            COMMAND ${Python3_EXECUTABLE}
