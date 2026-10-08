@@ -23,11 +23,11 @@ namespace {
 
 using lowered_detail::addIssue;
 using lowered_detail::bodyRole;
+using lowered_detail::constructionSeal;
 using lowered_detail::DerivedGeneratedGraph;
 using lowered_detail::deriveGeneratedGraph;
 using lowered_detail::findBody;
 using lowered_detail::findDeclaration;
-using lowered_detail::fingerprint;
 
 [[nodiscard]] const HirBody *debugHirBody(const HirProgram &hir,
                                           MirBodyAddress address) {
@@ -1367,8 +1367,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.indexDeclarations();
   build.issues = lowered_detail::verifyLoweredProgramContents(lowered);
   if (build.issues.empty()) {
-    lowered.constructionSeal_ =
-        fingerprint(LoweredProgramPrinter().print(lowered));
+    lowered.constructionSeal_ = constructionSeal(lowered);
     build.program.emplace(std::move(lowered));
   }
   return build;

@@ -8,7 +8,8 @@
 namespace lang {
 
 BackendArtifact MirBackend::generate(const LoweredProgram &program) {
-  if (!verifyLoweredProgram(program).empty()) {
+  std::vector<LoweredProgramIssue> issues;
+  if (!verifiedLoweredProgram(program, issues)) {
     throw std::logic_error(
         "MIR backend refuses to serialize an invalid lowered program");
   }
