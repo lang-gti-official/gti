@@ -6518,7 +6518,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
 ### L-CALL-01: Foundational Owned Callables And Captures
 
 - **State/role:** in progress; `D-CALL-01`, `M-LIFE-01`, explicit confined
-  boundary records, exact context-supplied value results, repeatable read/mut
+  boundary records, exact context-supplied and directly nested callable value
+  results (concretized before HIR), repeatable read/mut
   invocation, consuming once-callable cardinality, and ordered local
   copy/move closure environments are done. Exact same-type generic return and
   the bounded one-field generic owner are also done. A repeatable confined

@@ -195,6 +195,9 @@ struct CallableSignatureRequirement {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
+  // Only a direct argument of another open callable may defer its result.
+  // Concrete semantic reanalysis must resolve a non-borrowing value before HIR.
+  bool inferResultFromInstantiation = false;
 };
 
 struct CallableForwardingRequirement {
@@ -1134,6 +1137,7 @@ struct DeferredCallableCallInfo {
   // A stored receiver is checked again against its concrete field type.
   // It is not a confined parameter or an ownership-transfer boundary.
   SymbolId receiverField = 0;
+  bool inferResultFromInstantiation = false;
 };
 
 struct ResolvedOperatorInfo {

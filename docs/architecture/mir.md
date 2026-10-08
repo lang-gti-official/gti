@@ -1411,6 +1411,9 @@ all later index side effects and reports the prefix's source location.
 Element receivers and direct reference/copy arguments also finish their terminal
 selection before invocation or later arguments. Their address-only transport
 must not erase the bounds check merely because no scalar load is emitted.
+The constant evaluator validates an unused safe checked-address projection
+against its existing constant aggregate place. It publishes no pointer and
+does not admit used or raw-memory addresses into the constant profile.
 
 Because the entry loan is self-sourced at the carrier binding — MIR cannot
 name the caller's owner storage — its canonical protected place collides with

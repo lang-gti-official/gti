@@ -1421,6 +1421,10 @@ constexpr int array_write_bounds(int index) {
   values[index] = 4;
   return values[0];
 }
+constexpr int nested_bounds(int row) {
+  int values[2][2] = {};
+  return values[row][1 / (row - row)];
+}
 constexpr int large_array(int seed) {
   int values[10000] = {};
   return values[seed];
@@ -1506,6 +1510,31 @@ int main() { return twice<int32_t>(21) == 42 ? 0 : 1; }
                             lang::ConstantEvaluationFailure::InvalidOperands,
            "MIR array reads and writes reject negative indices");
   }
+  const auto earlyBounds = evaluate("nested_bounds", integer(2));
+  const auto laterDivision = evaluate("nested_bounds", integer(0));
+  expect(!earlyBounds &&
+             earlyBounds.failure ==
+                 lang::ConstantEvaluationFailure::InvalidOperands &&
+             !laterDivision &&
+             laterDivision.failure ==
+                 lang::ConstantEvaluationFailure::DivisionByZero,
+         "constant array prefixes fail before later index effects using the "
+         "same canonical checked-place schedule as runtime");
+  const auto *nestedBody =
+      frontend.mir.findFunctionInstance(functionId("nested_bounds"));
+  bool checkedAddress = false;
+  if (nestedBody != nullptr) {
+    for (const auto &block : nestedBody->body.blocks)
+      for (const auto &instruction : block.instructions)
+        checkedAddress |=
+            instruction.id == earlyBounds.instruction &&
+            instruction.operation == lang::MirOperation::AddressOf &&
+            instruction.result &&
+            nestedBody->body.usesOf(*instruction.result).empty();
+  }
+  expect(checkedAddress,
+         "constant prefix failures identify the unused checked address stage "
+         "without creating a constant raw pointer");
   const auto large = evaluate("large_array", integer(0));
   expect(!large &&
              large.failure == lang::ConstantEvaluationFailure::ResourceLimit,

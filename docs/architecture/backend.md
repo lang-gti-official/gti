@@ -1375,7 +1375,11 @@ captures and caller obligations after one failure, or preserve primary and
 secondary records on failure during cleanup. Native object destruction ends
 the disarmed representation lifetimes; it does not select capture cleanup or
 replace the MIR failure edge. Passive materialized environments retain trivial
-cleanup. Fused non-escaping closures can still use native lambdas.
+cleanup. Re-entered passive local bindings and passive value-root slots retire
+only their representation before reconstructing the next loop iteration's
+environment. Owning closures and prepared argument temporaries keep their
+verified explicit lifetime protocol. Fused non-escaping closures can still
+use native lambdas.
 Each materialized environment carries a private type alias for its exact
 artifact-local MIR lambda identity. Source-template member families use this
 identity alongside signature and cleanup selectors when distinct closure

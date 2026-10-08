@@ -508,8 +508,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
                contract->signatures) {
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
                                              signature.capability) ||
-                !exactMatch(exactMatch, signature.returnType,
-                            candidate.returnType, substitution)) {
+                (!signature.inferResultFromInstantiation &&
+                 !exactMatch(exactMatch, signature.returnType,
+                             candidate.returnType, substitution))) {
               matchesContract = false;
               break;
             }

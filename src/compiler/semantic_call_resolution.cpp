@@ -238,7 +238,8 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
           .returnType =
               substituteType(stored->returnType, instanceTypeSubstitution),
           .parameterTypes = stored->parameterTypes,
-          .capability = stored->capability};
+          .capability = stored->capability,
+          .inferResultFromInstantiation = stored->inferResultFromInstantiation};
       for (SemanticType &type : result.parameterTypes) {
         type = substituteType(type, instanceTypeSubstitution);
       }
@@ -287,9 +288,12 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       receiverInfo->type.kind == SemanticType::TypeParameter;
   bool valid = true;
   SemanticType returnType = SemanticType::Void;
+  bool inferResultFromInstantiation = false;
   if (contextualCallableResult && contextualCallableResult->call == &call) {
     returnType = contextualCallableResult->type;
-    if (returnType == SemanticType::Unknown) {
+    inferResultFromInstantiation =
+        contextualCallableResult->inferResultFromInstantiation;
+    if (returnType == SemanticType::Unknown && !inferResultFromInstantiation) {
       Diagnostic diagnostic =
           makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics,
                          expressionToken(call.callee()),
@@ -363,16 +367,18 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
 
   if (storedReceiver) {
     semanticModel.recordDeferredCallableCall(
-        call, DeferredCallableCallInfo{
-                  .genericParameter = calleeType.genericParameterId,
-                  .returnType = returnType,
-                  .parameterTypes = argumentTypes,
-                  .access = receiverInfo->access,
-                  .capability = consuming ? CallableInvocationCapability::Once
-                                          : callableInvocationCapability(
-                                                receiverInfo->access),
-                  .boundary = std::nullopt,
-                  .receiverField = receiverSymbol->id});
+        call,
+        DeferredCallableCallInfo{
+            .genericParameter = calleeType.genericParameterId,
+            .returnType = returnType,
+            .parameterTypes = argumentTypes,
+            .access = receiverInfo->access,
+            .capability =
+                consuming ? CallableInvocationCapability::Once
+                          : callableInvocationCapability(receiverInfo->access),
+            .boundary = std::nullopt,
+            .receiverField = receiverSymbol->id,
+            .inferResultFromInstantiation = inferResultFromInstantiation});
     currentType = returnType;
     return;
   }
@@ -394,23 +400,26 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       consuming ? CallableInvocationCapability::Once
                 : callableInvocationCapability(access);
   semanticModel.recordDeferredCallableCall(
-      call, DeferredCallableCallInfo{.genericParameter =
-                                         calleeType.genericParameterId,
-                                     .returnType = returnType,
-                                     .parameterTypes = argumentTypes,
-                                     .access = access,
-                                     .capability = capability});
+      call, DeferredCallableCallInfo{
+                .genericParameter = calleeType.genericParameterId,
+                .returnType = returnType,
+                .parameterTypes = argumentTypes,
+                .access = access,
+                .capability = capability,
+                .inferResultFromInstantiation = inferResultFromInstantiation});
   semanticModel.recordCallableRequirement(
       *function->declaration,
-      CallableParameterContract{.parameterIndex = parameterIndex,
-                                .genericParameter =
-                                    calleeType.genericParameterId,
-                                .callableType = calleeType,
-                                .access = access,
-                                .signatures = {{.source = &call,
-                                                .returnType = returnType,
-                                                .parameterTypes = argumentTypes,
-                                                .capability = capability}}});
+      CallableParameterContract{
+          .parameterIndex = parameterIndex,
+          .genericParameter = calleeType.genericParameterId,
+          .callableType = calleeType,
+          .access = access,
+          .signatures = {
+              {.source = &call,
+               .returnType = returnType,
+               .parameterTypes = argumentTypes,
+               .capability = capability,
+               .inferResultFromInstantiation = inferResultFromInstantiation}}});
   currentType = returnType;
 }
 
@@ -418,6 +427,25 @@ auto SemanticVisitor::Impl::validateCallableReturn(
     const Call &call, const SemanticType &returnType) -> bool {
   const std::optional<CallableSignatureRequirement> requirement =
       callableSignatureRequirement(call);
+  if (requirement && requirement->inferResultFromInstantiation &&
+      returnType != SemanticType::Unknown) {
+    if (returnType != SemanticType::Void &&
+        returnType.kind != SemanticType::Reference &&
+        !typeTraits(returnType).containsBorrowedState &&
+        !containsLambdaType(returnType))
+      return true;
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2046", DiagnosticPhase::Semantics, expressionToken(call.callee()),
+        "A nested generic callable argument must produce a non-void value "
+        "without references, tracked borrowed state, or lambda identity; "
+        "the selected callable returns '" +
+            typeSpelling(returnType) + "'.");
+    diagnostic.hints.emplace_back(
+        "Use an explicit result binding and a supported ownership contract "
+        "for reference, borrowed, or callable results.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
   if (!requirement || requirement->returnType == returnType ||
       returnType == SemanticType::Unknown) {
     return true;

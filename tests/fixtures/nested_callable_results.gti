@@ -1,0 +1,54 @@
+mut int trace = 0;
+
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));
+}
+
+int twice<Operation>(Operation operation, int value) {
+  return operation(operation(value));
+}
+
+double widen(int value) {
+  trace = trace * 10 + 1;
+  return double(value) + 0.5;
+}
+
+class Narrow {
+public:
+  int operator()(double value) {
+    trace = trace * 10 + 2;
+    return int(value);
+  }
+};
+
+class Owner {
+  int value;
+public:
+  Owner(int value) : value(value) {}
+  Owner(Owner&) = delete;
+  Owner(Owner&&) = default;
+  int read() { return this.value; }
+};
+
+class Advance {
+public:
+  Owner operator()(Owner value) { return Owner(value.read() + 1); }
+};
+
+T twice_owned<T, Operation>(T value, Operation operation) {
+  return operation(operation(std::move(value)));
+}
+
+int main() {
+  Narrow narrow{};
+  // The inner result is double, not the enclosing function's int result.
+  if (compose(narrow, widen, 7) != 7 || trace != 12) return 1;
+  auto inner = [](int value) -> double { return double(value) + 0.5; };
+  auto outer = [](double value) -> int { return int(value); };
+  if (compose(outer, inner, 9) != 9) return 2;
+  auto double_it = [](int value) -> int { return value * 2; };
+  if (twice(double_it, 3) != 12) return 3;
+  Advance advance{};
+  Owner result = twice_owned(Owner(4), advance);
+  return result.read() == 6 ? 0 : 4;
+}

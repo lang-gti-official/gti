@@ -2781,15 +2781,18 @@ auto SemanticVisitor::Impl::analyze(const ExprPtr &expr, OccurrenceRole roles)
 }
 
 auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
-    const ExprPtr &expr, const SemanticType &expectedType) -> SemanticType {
+    const ExprPtr &expr, const SemanticType &expectedType,
+    bool inferFromInstantiation) -> SemanticType {
   const Call *call = directCall(expr);
   if (call == nullptr) {
     return analyze(expr);
   }
   const std::optional<ContextualCallableResult> enclosingResult =
       contextualCallableResult;
-  contextualCallableResult =
-      ContextualCallableResult{.call = call, .type = expectedType};
+  contextualCallableResult = ContextualCallableResult{
+      .call = call,
+      .type = expectedType,
+      .inferResultFromInstantiation = inferFromInstantiation};
   const SemanticType result = analyze(expr);
   contextualCallableResult = enclosingResult;
   return result;

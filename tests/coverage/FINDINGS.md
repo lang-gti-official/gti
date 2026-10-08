@@ -611,6 +611,17 @@ Corpus program: `c48_ownership_breadth`.
 
 ## F14 — Wrong diagnostic: a callable parameter invoked in argument position
 
+**Resolved in the reconciliation audit.** Direct nested open-callable results
+now have an explicit semantic inference obligation, resolved against the
+selected concrete callable before HIR. The intermediate need not match the
+outer result type. Void, reference, and tracked-borrowed results remain rejected
+without weakening lifetime checks. The complete c52 program also exposed a
+passive local closure slot reused across loop iterations; representation-only
+retirement now preserves both trivial and owning closure lifetimes.
+The reduced reproducer and complete corpus program pass all eight native modes
+(C++20/23 O0/O1/O3, no-elide, and ASan/UBSan), and their expectations now require
+the exact successful output. The diagnostic below is historical.
+
 `reproducers/f14-nested-callable-invocation.gti`
 
 ```gti

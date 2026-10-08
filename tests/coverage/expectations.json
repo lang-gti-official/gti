@@ -307,10 +307,10 @@
       ]
     },
     "c52_higher_order_lambdas": {
-      "code": "GTI-S2015",
       "finding": "F14",
       "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "5 12 5 42 33\n", "stderr": "^$"}]
     },
     "c55_iterator_utilities": {
       "outcome": "pass",
@@ -2130,10 +2130,10 @@
       "outcome": "pass"
     },
     "f14-nested-callable-invocation": {
-      "code": "GTI-S2015",
       "finding": "F14",
       "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "12\n", "stderr": "^$"}]
     },
     "f15-method-on-operator-result": {
       "outcome": "pass"
