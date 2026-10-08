@@ -243,14 +243,17 @@ look like this (counts and timings are illustrative):
      Cache  checking build cache
    Parsing  24 source units
   Checking  tea
-  Lowering  HIR
-  Lowering  MIR
 Optimizing  program (-O2)
-  Emitting  backend representation
-    Native  compiling and linking
 Publishing  executable and build cache
   Finished  tea (2.81s)
 ```
+
+HIR/MIR lowering, backend emission, native compilation and linking, and native
+dependency preparation are backend detail. They are still observed, but they
+get rows only under `--verbose`, which restores `Lowering`, `Emitting` and
+`Native` between `Checking` and `Publishing`. While one of these hidden stages
+runs, the live display shows `Building  <name>` with the build's total elapsed
+time instead, so a long native link does not look like a hang.
 
 `--progress=auto` is the default: a capable stderr terminal updates one active
 row in place, refreshing elapsed time every 200 ms. Redirected streams and
@@ -274,11 +277,12 @@ and dependencies. Parsing publishes actual per-unit events; `--verbose` exposes
 those paths and a slow interactive parse shows the current path. Semantic
 analysis, HIR/MIR lowering, optimization, and backend emission remain
 whole-program stages: the CLI does not invent a per-file semantic or object
-compilation counter. Declared native sources report their exact source paths;
-the final representation compilation and link are honestly one `Native` stage.
-Native dependency build scripts and Darwin symbol collection have separate
-rows. Neither the emission row nor the native row names the selected backend
-or its compiler executable. Exact commands remain available under `--verbose`.
+compilation counter. Under `--verbose`, declared native sources report their
+exact source paths; the final representation compilation and link are honestly
+one `Native` stage, and native dependency build scripts have a separate row.
+Darwin symbol collection always has its own row. Neither the emission row nor
+the native row names the selected backend or its compiler executable. Exact
+commands remain available under `--verbose`.
 
 Human-readable build output describes GTI work rather than exposing the current
 representation language. Retention summaries say `Kept backend representation`.

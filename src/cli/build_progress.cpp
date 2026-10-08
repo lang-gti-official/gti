@@ -48,6 +48,17 @@ std::string duration(std::chrono::nanoseconds elapsed) {
   return text.str();
 }
 
+// Lowering, backend emission and native compilation describe how GTI builds a
+// program, not progress a user acts on. They get rows only under --verbose.
+bool backendDetail(ProgressPhase phase) {
+  return phase == ProgressPhase::HirLowering ||
+         phase == ProgressPhase::MirLowering ||
+         phase == ProgressPhase::Emitting ||
+         phase == ProgressPhase::NativeSource ||
+         phase == ProgressPhase::NativeLink ||
+         phase == ProgressPhase::NativeDependency;
+}
+
 } // namespace
 
 BuildProgress::BuildProgress(const TerminalStyle &style, ProgressMode mode,
@@ -79,6 +90,10 @@ BuildProgress::~BuildProgress() {
 
 ProgressObserver *BuildProgress::observer() {
   return enabled_ ? this : nullptr;
+}
+
+bool BuildProgress::phaseShown() const {
+  return verbose_ || !backendDetail(phase_);
 }
 
 std::string_view BuildProgress::phaseVerb() const {
@@ -210,7 +225,8 @@ void BuildProgress::onProgress(const ProgressEvent &event) noexcept {
     total_ = event.total;
     phaseStart_ = lastHeartbeat_ = std::chrono::steady_clock::now();
     active_ = true;
-    row(phaseVerb(), phaseDetail(false), Style::Note, interactive_);
+    if (phaseShown())
+      row(phaseVerb(), phaseDetail(false), Style::Note, interactive_);
   } else if (event.kind == ProgressKind::Update) {
     const std::string previous = detail_;
     detail_ = safeText(event.detail);
@@ -218,13 +234,15 @@ void BuildProgress::onProgress(const ProgressEvent &event) noexcept {
       completed_ = event.completed;
     if (event.total)
       total_ = event.total;
-    if (interactive_ || (verbose_ && !detail_.empty() && detail_ != previous)) {
+    if (phaseShown() && (interactive_ || (verbose_ && !detail_.empty() &&
+                                          detail_ != previous))) {
       row(phaseVerb(), phaseDetail(verbose_), Style::Note, interactive_);
     }
   } else {
     active_ = false;
-    if (interactive_ || event.elapsed >= std::chrono::seconds(1) ||
-        phase_ == ProgressPhase::Loading || phase_ == ProgressPhase::Cache) {
+    if (phaseShown() &&
+        (interactive_ || event.elapsed >= std::chrono::seconds(1) ||
+         phase_ == ProgressPhase::Loading || phase_ == ProgressPhase::Cache)) {
       row(phaseVerb(), phaseDetail(false), Style::Note, false,
           event.elapsed >= std::chrono::milliseconds(interactive_ ? 100 : 1000)
               ? event.elapsed
@@ -242,9 +260,16 @@ void BuildProgress::heartbeat() {
       continue;
     const auto now = std::chrono::steady_clock::now();
     if (interactive_ || now - lastHeartbeat_ >= std::chrono::seconds(10)) {
-      row(phaseVerb(),
-          phaseDetail(verbose_ || now - phaseStart_ >= std::chrono::seconds(1)),
-          Style::Note, interactive_, now - phaseStart_);
+      if (phaseShown()) {
+        row(phaseVerb(),
+            phaseDetail(verbose_ ||
+                        now - phaseStart_ >= std::chrono::seconds(1)),
+            Style::Note, interactive_, now - phaseStart_);
+      } else {
+        // A hidden phase can still be the slowest one; the overall build
+        // row keeps it from looking like a hang.
+        row("Building", name_, Style::Note, interactive_, now - start_);
+      }
       lastHeartbeat_ = now;
     }
   }
