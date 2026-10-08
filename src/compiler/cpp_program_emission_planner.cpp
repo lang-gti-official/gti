@@ -110,6 +110,14 @@ public:
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
         .cThreads = mir.requiresCThreadRuntime(),
+        .sharedOwnerDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::SharedOwner),
+        .atomicStorageDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::AtomicStorage),
+        .mutexStorageDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::MutexStorage),
+        .mutexLockTokenDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::MutexLockToken),
         .atomics = loweredProgramContainsAtomics(),
         .mutexes = loweredProgramContainsMutexes(),
         .simd = loweredProgramContainsSimd(),
@@ -274,16 +282,25 @@ public:
         });
   }
 
+  // A retained capability class declaration is the structural fact that lets
+  // an emitted declaration spell the backend representation of that class.
+  [[nodiscard]] bool
+  loweredProgramDeclaresCapability(CompilerCapabilityTypeKind kind) const {
+    return std::any_of(
+        loweredProgram.declarations().begin(),
+        loweredProgram.declarations().end(),
+        [kind](const LoweredDeclaration &row) {
+          const auto *type = std::get_if<LoweredClassDeclaration>(&row.payload);
+          return type != nullptr && type->compilerCapability == kind;
+        });
+  }
+
   [[nodiscard]] bool loweredProgramContainsManagedThreads() const {
-    if (std::any_of(loweredProgram.declarations().begin(),
-                    loweredProgram.declarations().end(),
-                    [](const LoweredDeclaration &row) {
-                      const auto *type =
-                          std::get_if<LoweredClassDeclaration>(&row.payload);
-                      return type != nullptr &&
-                             type->compilerCapability ==
-                                 CompilerCapabilityTypeKind::ThreadHandle;
-                    })) {
+    // The handle representation is not a template, so even an uninstantiated
+    // generic definition names it non-dependently and needs it complete; a
+    // retained declaration therefore selects the complete support.
+    if (loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::ThreadHandle)) {
       return true;
     }
     for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
@@ -310,9 +327,11 @@ public:
   }
 
   [[nodiscard]] bool loweredProgramContainsAtomics() const {
-    // Generic library declarations survive a dormant import. Native atomic
-    // support is needed only once semantic instantiation creates a concrete
-    // sealed storage capability (including construct-without-operation).
+    // Generic library declarations survive a dormant import; they need only
+    // the forward declaration selected by loweredProgramDeclaresCapability.
+    // Native atomic support is needed only once semantic instantiation creates
+    // a concrete sealed storage capability (including
+    // construct-without-operation).
     if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
                     [](const MirClassInstance &instance) {
                       return instance.compilerCapability ==
@@ -346,9 +365,10 @@ public:
 
   [[nodiscard]] bool loweredProgramContainsMutexes() const {
     // Generic standard-library declarations are present after a dormant
-    // import but do not require native support. Concrete MIR capability
-    // instances are created only once a mutex owner/guard is instantiated,
-    // including the construct-without-lock case.
+    // import; they need only the forward declarations selected by
+    // loweredProgramDeclaresCapability, not native support. Concrete MIR
+    // capability instances are created only once a mutex owner/guard is
+    // instantiated, including the construct-without-lock case.
     if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
                     [](const MirClassInstance &instance) {
                       return instance.compilerCapability ==

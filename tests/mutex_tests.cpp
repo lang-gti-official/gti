@@ -192,29 +192,44 @@ lang::MirInstruction *findMutex(lang::MirProgram &program,
 void testDormantImport() {
   lang::TargetInfo single = concurrentTarget();
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
-  const lang::FrontendResult frontend =
-      analyze("dormant-mutex-import.gti",
-              "#include <std/mutex>\nint main() { return 0; }\n", single);
-  if (!frontend.canGenerateCode()) {
-    printDiagnostics(frontend);
+  for (const lang::TargetInfo &target : {single, concurrentTarget()}) {
+    const lang::FrontendResult frontend =
+        analyze("dormant-mutex-import.gti",
+                "#include <std/mutex>\nint main() { return 0; }\n", target);
+    if (!frontend.canGenerateCode()) {
+      printDiagnostics(frontend);
+    }
+    expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
+               lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
+                   .valid() &&
+               lang::verifyMirProgram(frontend.mir).valid(),
+           "an unused mutex import should remain valid in both execution "
+           "profiles");
+    if (!frontend.canGenerateCode()) {
+      continue;
+    }
+    const lang::LoweredProgram lowered =
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
+    const std::string cpp =
+        lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+    expect(lang::verifyLoweredProgram(lowered).empty() &&
+               cpp.find("#include <mutex>") == std::string::npos &&
+               cpp.find("class mutex_value final") == std::string::npos &&
+               cpp.find("class mutex_lock_token final") == std::string::npos,
+           "a dormant mutex import should not enable native mutex support");
+    // Retained generic library classes name both representation templates,
+    // so the templates must be declared for the native compiler (#164).
+    const std::size_t firstUse =
+        cpp.find("::gti_internal::backend::mutex_value<T>");
+    const std::size_t storage =
+        cpp.find("template <typename T> class mutex_value;");
+    const std::size_t token =
+        cpp.find("template <typename T> class mutex_lock_token;");
+    expect(storage != std::string::npos && token != std::string::npos &&
+               storage < firstUse && token < firstUse,
+           "a dormant mutex import should declare, but not define, the mutex "
+           "representations before generic declarations name them");
   }
-  expect(frontend.canGenerateCode() && frontend.diagnostics.empty() &&
-             lang::verifyHirProgramPlans(frontend.semantics, frontend.hir)
-                 .valid() &&
-             lang::verifyMirProgram(frontend.mir).valid(),
-         "an unused mutex import should remain valid in the default "
-         "single-threaded profile");
-  if (!frontend.canGenerateCode()) {
-    return;
-  }
-  const lang::LoweredProgram lowered =
-      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, single);
-  const std::string cpp =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  expect(lang::verifyLoweredProgram(lowered).empty() &&
-             cpp.find("#include <mutex>") == std::string::npos &&
-             cpp.find("class mutex_value") == std::string::npos,
-         "a dormant mutex import should not enable native mutex support");
 }
 
 void testPublicPipeline() {
@@ -281,8 +296,8 @@ void testPublicPipeline() {
       lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
   for (const std::string *cpp : {&cpp20, &cpp23}) {
     expect(cpp->find("#include <mutex>") != std::string::npos &&
-               cpp->find("class mutex_value") != std::string::npos &&
-               cpp->find("class mutex_lock_token") != std::string::npos &&
+               cpp->find("class mutex_value final") != std::string::npos &&
+               cpp->find("class mutex_lock_token final") != std::string::npos &&
                cpp->find("mutex_lock(") != std::string::npos &&
                cpp->find("mutex_unlock(") != std::string::npos,
            "both native standards should consume the sealed mutex and guard "
