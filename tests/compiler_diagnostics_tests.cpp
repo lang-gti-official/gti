@@ -872,8 +872,19 @@ int main() {
              !immutable->hints.empty(),
          "immutability diagnostics should explain the declaration and remedy");
   expect(mismatch != nullptr &&
-             mismatch->message.find("int32_t") != std::string::npos &&
-             mismatch->message.find("std::string_view") != std::string::npos,
+             mismatch->message.find("int32_t") != std::string::npos,
+         "type mismatches should name the expected GTI type");
+  // std::string_view is source-defined in the prelude, so the literal's
+  // user-facing type is checked through a frontend that loads it.
+  const auto literalMismatch = lang::Frontend().analyze(
+      "semantic-mismatch.gti", "int main() { int value = \"text\"; return 0; }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::Diagnostic *literal =
+      findDiagnosticByCode(literalMismatch.diagnostics, "GTI-S2003");
+  expect(literal != nullptr &&
+             literal->message.find("int32_t") != std::string::npos &&
+             literal->message.find("std::string_view") != std::string::npos &&
+             literal->message.find("gti_internal") == std::string::npos,
          "type mismatches should name expected and actual GTI types");
 }
 
