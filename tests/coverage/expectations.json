@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/memory>:476: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/memory>:475: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:285: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/memory>:473: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:268: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:441: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:268: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/memory>:442: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:425: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:807: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:275: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/memory>:461: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -85,7 +85,7 @@
         {
           "exit": 70,
           "stderr": "<std/resource_vector>:87: runtime error\\[GTI-R0017\\]: panic: \"resource_vector\\ could\\ not\\ grow\"\\n",
-          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 1\ndrop 100\ndrop 200\n"
+          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 2\nrelease 1\ndrop 100\ndrop 200\n"
         }
       ]
     },
@@ -284,16 +284,16 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:161: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
-          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+          "stderr": "<std/memory>:194: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 2\nrelease 1\ntag 9\n"
         },
         {
           "args": [
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:169: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
-          "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
+          "stderr": "<std/memory>:202: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stdout": "tag 3\ntag 2\ntag 1\nrelease 2\nrelease 1\ntag 9\n"
         }
       ]
     },
@@ -327,19 +327,15 @@
       "contains": [
         "Failed counts-failures"
       ],
-      "exit": "nonzero",
-      "finding": "A02",
-      "issue": 54,
-      "outcome": "wrong-result"
+      "exit": 1,
+      "outcome": "pass"
     },
     "a04-dependency-defines": {
       "command": [
         "run"
       ],
       "exit": 0,
-      "finding": "A04",
-      "issue": 56,
-      "outcome": "wrong-result"
+      "outcome": "pass"
     },
     "probe-i01-import-cycle": {
       "steps": [
@@ -1353,9 +1349,7 @@
       "outcome": "rejected"
     },
     "diag-p10-unknown-attribute": {
-      "code": "GTI-P0001",
-      "finding": "A07",
-      "issue": 58,
+      "code": "GTI-S2099",
       "outcome": "rejected"
     },
     "diag-p11-unclosed-attribute": {
@@ -1687,17 +1681,17 @@
     "a01-call-result-into-field": {
       "finding": "A01",
       "issue": 53,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a01-class-value-into-field": {
       "finding": "A01",
       "issue": 53,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a01-field-assign-from-call-result-method": {
       "finding": "A01",
       "issue": 53,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a03-generic-call-in-global-initializer": {
       "code": "GTI-S2068",
@@ -1707,81 +1701,65 @@
     },
     "a05-string-view-help-suggests-invalid-form": {
       "code": "GTI-S2003",
-      "finding": "A05",
       "forbid": [
         "std::string_view(value)"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a06-polymorphic-recursion-hang": {
-      "finding": "A06",
-      "issue": 57,
-      "outcome": "hang",
+      "code": "GTI-S2105",
+      "outcome": "rejected",
       "timeout": 20
     },
     "a07-unknown-function-attribute": {
-      "code": "GTI-P0001",
-      "finding": "A07",
-      "issue": 58,
+      "code": "GTI-S2099",
       "outcome": "rejected"
     },
     "a08-unknown-type-cascade": {
       "code": "GTI-S2000",
-      "finding": "A08",
       "forbid": [
         "of type 'unknown'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a09-bad-if-condition-cascade": {
       "code": "GTI-P0003",
-      "finding": "A09",
       "forbid": [
         "without a matching '#if'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a10-payload-arity-cascade": {
       "code": "GTI-S2067",
-      "finding": "A10",
       "forbid": [
         "can reach the end"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a11-explicit-generic-argument-messages": {
-      "finding": "A11",
       "forbid": [
         "Conflicting types inferred",
         "from a fixed-array argument extent"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a12-extern-c-overload-duplicate": {
       "at_most": {
         "error[GTI-S2054]": 1
       },
       "code": "GTI-S2054",
-      "finding": "A12",
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a13-mir-field-symbol-order": {
       "deterministic": "--emit-mir",
-      "finding": "A13",
       "issue": 59,
-      "outcome": "nondeterministic",
+      "outcome": "pass",
       "runs": 20
     },
     "a14-generated-ctor-field-in-user-ctor": {
       "finding": "A14",
       "issue": 60,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a15-dependent-if-constexpr-local": {
       "finding": "A15",
@@ -1789,51 +1767,41 @@
       "outcome": "ice"
     },
     "a16-relay-copyable-lambda": {
-      "finding": "A16",
       "issue": 62,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a17-narrow-negative-array-literal": {
-      "finding": "A17",
       "issue": 63,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a18-function-item-pack-invoke": {
-      "code": "GTI-S2090",
-      "finding": "A18",
       "issue": 64,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a19-trailing-clause-dependent-compound": {
-      "code": "GTI-S2029",
-      "finding": "A19",
       "issue": 65,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a20-unnecessary-mut-per-instance": {
-      "finding": "A20",
       "forbid": [
         "warning[GTI-S2096]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a21-value-argument-resolved-as-type": {
-      "finding": "A21",
+      "code": "GTI-S2026",
       "forbid": [
         "Unknown type 'runtime'"
       ],
-      "issue": 69,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a22-spurious-s2068-after-constexpr-failure": {
       "code": "GTI-S2057",
-      "finding": "A22",
       "forbid": [
         "GTI-S2068"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a23-recursive-value-generic-layout": {
       "code": "GTI-S2082",
@@ -1842,12 +1810,11 @@
       "outcome": "rejected"
     },
     "a24-unreachable-warning-per-instance": {
-      "finding": "A24",
       "forbid": [
         "warning[GTI-S2095]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a25-expected-ref-relay-wrong-referent": {
       "finding": "A25",
@@ -1860,14 +1827,12 @@
       "outcome": "ice"
     },
     "a26-overloaded-deref-store-reads-owner": {
-      "finding": "A26",
       "issue": 71,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a27-compound-assign-overloaded-deref": {
-      "finding": "A27",
       "issue": 72,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-map-range-for-key-view": {
       "finding": "A28",
@@ -1897,30 +1862,27 @@
     "a30-assign-consuming-call-result": {
       "finding": "A30",
       "issue": 75,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a31-move-on-break-path-then-reinit": {
       "finding": "A31",
       "issue": 76,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a32-optional-emplace-move-only-function": {
-      "finding": "A32",
       "issue": 77,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a32-vector-push-back-move-only-function": {
-      "finding": "A32",
       "issue": 77,
-      "outcome": "backend"
+      "outcome": "pass"
     },
     "a33-unnecessary-mut-deref-store": {
-      "finding": "A33",
       "forbid": [
         "warning[GTI-S2096]"
       ],
       "issue": 66,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a34-view-relay-through-subscript": {
       "code": "GTI-S2045",
@@ -1929,12 +1891,14 @@
       "outcome": "rejected"
     },
     "a35-expected-ref-field-stale-message": {
-      "finding": "A35",
+      "code": "GTI-S2045",
+      "at_most": {
+        "error[GTI-S2045]": 1
+      },
       "forbid": [
         "may contain only one stored-reference dependency"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a36-unique-ptr-member-init-nullptr": {
       "code": "GTI-S2003",
@@ -1955,17 +1919,17 @@
     "a38-return-call-value-class": {
       "finding": "A38",
       "issue": 81,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a38-return-expected-value-class": {
       "finding": "A38",
       "issue": 81,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a39-ctor-address-of-struct-field": {
       "finding": "A39",
       "issue": 82,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a40-c-abi-record-pointer-array-field": {
       "finding": "A40",
@@ -1980,103 +1944,94 @@
     "a41-storage-emplace-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
       "finding": "A41",
       "issue": 84,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a42-c-abi-record-array-from-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "native_sources": ["native/passive_records.c"],
+      "outcome": "pass"
     },
     "a42-struct-array-from-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a42-struct-array-two-named-values": {
-      "finding": "A42",
       "issue": 85,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a43-callback-argument-unknown-type": {
-      "finding": "A43",
+      "code": "GTI-S2076",
       "forbid": [
         "type 'unknown'"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "rejected"
     },
     "a44-raw-audit-duplicate-warning": {
       "at_most": {
-        "warning[GTI-S2102]": 1
+        "a44-raw-audit-duplicate-warning.gti:15:42: warning[GTI-S2102]": 1
       },
-      "finding": "A44",
       "flags": [
         "--raw-pointer-audit=warn"
       ],
-      "issue": 68,
-      "outcome": "bad-diagnostic"
+      "outcome": "pass"
     },
     "a45-base-plus-string-field-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-base-state-rollback-unsupported": {
-      "code": "GTI-B0003",
       "finding": "A45",
       "issue": 86,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a45-derived-destructor-explicit-base": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a45-derived-destructor-generated-ctor": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "link"
+      "outcome": "pass"
     },
     "a45-literal-base-argument": {
       "finding": "A45",
       "issue": 86,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a46-chained-subscript-compound": {
-      "finding": "A46",
       "issue": 87,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a46-chained-subscript-self-read": {
-      "finding": "A46",
       "issue": 87,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a47-mut-payload-binding-through-mut-ref": {
       "finding": "A47",
       "issue": 88,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a48-switch-on-owning-enum-field": {
       "finding": "A48",
       "issue": 89,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a49-owning-enum-call-result-argument": {
       "finding": "A49",
       "issue": 90,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a50-designated-omitted-brace-default": {
       "finding": "A50",
       "issue": 91,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a51-binding-over-class-array": {
       "finding": "A51",
@@ -2089,14 +2044,12 @@
       "outcome": "backend"
     },
     "a52-struct-with-union-array": {
-      "finding": "A52",
       "issue": 93,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a52-union-array": {
-      "finding": "A52",
       "issue": 93,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a53-operator-temporary-ref-diagnostic": {
       "code": "GTI-S2022",
@@ -2108,26 +2061,20 @@
       "outcome": "bad-diagnostic"
     },
     "a54-alias-constrained-generic-class-argument": {
-      "code": "GTI-S2029",
-      "finding": "A54",
-      "issue": 95,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a54-alias-constrained-generic-user-class": {
-      "code": "GTI-S2029",
-      "finding": "A54",
-      "issue": 95,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a55-ctor-pack-move-only-field-init": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a55-list-emplace-move-only-argument": {
       "finding": "A55",
       "issue": 96,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a56-make-unique-same-type": {
       "finding": "A56",
@@ -2140,14 +2087,10 @@
       "outcome": "ice"
     },
     "a57-generic-member-field-range-for-silent": {
-      "finding": "A57",
-      "issue": 98,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a57-generic-nondependent-range-for-silent": {
-      "finding": "A57",
-      "issue": 98,
-      "outcome": "silent"
+      "outcome": "pass"
     },
     "a58-map-unique-ptr-value-deref": {
       "finding": "A58",
@@ -2238,22 +2181,19 @@
       "outcome": "pass"
     },
     "f7-declaration-only-weak-ptr": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "link"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f7-json-decode-without-codec": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "ice"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f7-scaffold-operation-link-error": {
       "outcome": "pass"
     },
     "f7-undefined-user-function": {
-      "finding": "F7",
-      "issue": 51,
-      "outcome": "link"
+      "code": "GTI-S2106",
+      "outcome": "rejected"
     },
     "f8-view-from-returned-owner": {
       "outcome": "pass"
@@ -2313,7 +2253,7 @@
     "s15-payload-enum-plain-class": {
       "finding": "S15",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     }
   }
 }

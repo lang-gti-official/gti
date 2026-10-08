@@ -648,11 +648,115 @@ int main() { auto value = Box(work); return 0; }
          "not as an unresolved MIR value");
 }
 
+void testPackInvocationContracts() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/function_item_pack_contracts.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyze("pack-function-items.gti", source);
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+  }
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "pack deduction precedes exact contextual function-item selection");
+  if (frontend.canGenerateCode()) {
+    expect(
+        lang::verifyHirProgramPlans(frontend.semantics, frontend.hir).valid() &&
+            lang::verifyMirProgram(frontend.mir).valid(),
+        "closed and forwarded packs preserve verified callable identities and "
+        "ordered call inputs");
+    auto broken = frontend.mir;
+    auto *item = firstFunctionItem(broken);
+    if (item != nullptr && item->functionTarget) {
+      item->functionTarget.reset();
+    }
+    expect(item != nullptr && !lang::verifyMirProgram(broken).valid(),
+           "pack invocation cannot execute a function item without its exact "
+           "MIR target");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = frontend.hir,
+           .mir = frontend.mir,
+           .level = level,
+           .target = lang::TargetInfo::host()});
+      expect(optimized.valid(),
+             "pack invocation survives verified optimization");
+      if (!optimized.valid()) {
+        continue;
+      }
+      const auto lowered = gti_test::lowerProgram(
+          frontend, optimized.sourceMir, optimized.mir,
+          lang::TargetInfo::host(), optimized.report.transformations);
+      expect(lang::verifyLoweredProgram(lowered).empty(),
+             "pack invocation has one closed LoweredProgram representation");
+      for (const auto standard :
+           {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+        const auto snapshot =
+            lang::buildCppMirRepresentationSnapshot(lowered, standard);
+        expect(snapshot.valid(),
+               "pack invocation satisfies production MIR backend preflight");
+        if (snapshot.valid()) {
+          const auto cpp =
+              lang::CppBackend(standard).generate(lowered).contents;
+          expect(cpp.find("GTI verified-MIR body") != std::string::npos,
+                 "production emission consumes verified MIR for the new "
+                 "accepted program");
+        }
+      }
+    }
+  }
+  const std::string wrapper = R"(
+int invoke_with<Function, Args...>(Function function, Args... args) { return function(args...); }
+)";
+  for (const std::string declaration :
+       {"int work(int a, int b) { return a + b; }",
+        "bool work(int a) { return true; }",
+        "int work(mut int& a) { a++; return a; }",
+        "unsafe int work(int a) { return a; }",
+        "int work(int a) { return a; } int work(int& a) { return a; }"}) {
+    const auto invalid = analyze(
+        "invalid-pack-item.gti",
+        declaration + wrapper + "int main() { return invoke_with(work, 1); }");
+    expect(!invalid.canGenerateCode() && hasCode(invalid, "GTI-S2090") &&
+               !hasCode(invalid, "GTI-B0001") && !hasCode(invalid, "GTI-S2023"),
+           "wrong shape, unsafe, mutable-pack borrow and ambiguous items fail "
+           "in semantics without impossible F advice");
+    const auto diagnostic = std::find_if(
+        invalid.diagnostics.begin(), invalid.diagnostics.end(),
+        [](const auto &entry) { return entry.code == "GTI-S2090"; });
+    if (diagnostic != invalid.diagnostics.end()) {
+      expect(!diagnostic->related.empty() && diagnostic->fixes.empty(),
+             "failed contextual selection relates candidates and invents no "
+             "unsafe edit");
+    }
+  }
+  const auto forwarded = analyze("invalid-forwarded-pack.gti", wrapper + R"(
+int work(int a, int b) { return a + b; }
+int forward<Args...>(Args... args) { return invoke_with(work, args...); }
+int main() { return forward(1, true); }
+)");
+  expect(!forwarded.canGenerateCode() && !hasCode(forwarded, "GTI-B0001"),
+         "unique symbolic forwarding is still checked against each concrete "
+         "invocation");
+  const auto ordinaryMismatch = analyze("ordinary-generic-mismatch.gti", R"(
+int same<T>(T first, T second) { return 0; }
+int main() { return same(1, true); }
+)");
+  expect(!ordinaryMismatch.canGenerateCode() &&
+             !ordinaryMismatch.diagnostics.empty() &&
+             !hasCode(ordinaryMismatch, "GTI-B0001"),
+         "ordinary failed deduction still receives its owning semantic "
+         "diagnostic");
+}
+
 } // namespace
 
 int main() {
   testGenericAndManagedPipeline();
   testContextualDiagnosticsAndBoundaries();
   testConstructorValueArguments();
+  testPackInvocationContracts();
   return failures == 0 ? 0 : 1;
 }

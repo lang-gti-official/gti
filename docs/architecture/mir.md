@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v91`, `mir-body-v77`).
+instruction, body, and caller-assignment facts (`mir-v95`, `mir-body-v80`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,7 +236,29 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-It also copies the artifact program kind and a pointer-free
+The combined deterministic serialization is currently `mir-v95`/`mir-body-v80`,
+with `lowered-program-v15` declaration metadata. It retains exact concrete
+integral and payload enum identities, including their type/value arguments,
+alternative fields and lifecycle facts. Version 95 also records
+generated-default constructor identity explicitly on each constructor instance
+and the independent generated-schedule obligation on concrete class rows;
+backends must not infer that identity from its parameter count. Version 15
+retains both exact enum identity and that obligation in detached declarations,
+so removing both a constructor row and its selected target cannot authorize a
+native default call. The combined revision preserves the retirement of sparse
+capability/intrinsic and initialized-slot proof identities and deterministic
+per-function NUL-result policy. Older version descriptions below record their
+original additions, not an alternative current schema.
+
+Concrete class rows retain transfer/share policy and any substituted unsafe
+capability condition. The verifier checks that a conditional policy retains
+its condition and that its result agrees with the payload's concrete MIR
+capabilities; nominal facts remain frontend-owned, while real builtin aggregate
+components compose those facts. Removing the condition or changing the derived
+capability is invalid MIR. The declaration catalog preserves the generic
+condition in `lowered-program-v15`, and optimization replay includes these facts.
+
+MIR also copies the artifact program kind and a pointer-free
 `MirEmbeddingPlan`. Each canonical row names the exact source
 `MirFunctionInstance`, semantic declaration, signature, public symbol, and
 request span selected by HIR. Program verification requires a non-empty ABI-v1
@@ -247,11 +269,16 @@ plan as immutable non-body policy. `LoweredProgramBuilder` exact-compares the
 semantic/HIR/MIR chain and copies the rows into `LoweredEmbeddingPlan`, where
 future wrapper and header backends can consume one sealed source of truth.
 
-Dormant library snapshots extend the current executable serialization with
-`mir-v92` and `lowered-program-v12` embedding rows; ordinary snapshots retain
-`mir-v91`/`mir-body-v77` and `lowered-program-v11`.
-
-The deterministic serialization is currently `mir-v91`/`mir-body-v77`.
+Exact generic enum identity and dormant embedding rows share the current
+combined schema, which preserves embedding rows for dormant library snapshots
+and uses the same current version for executable and library programs.
+Storage ownership and conditional capability verification query enum traits by
+the full concrete `SemanticType`, including type/value arguments. A primary
+enum declaration ID does not identify a generic instance. Payload catalogs
+provide the authoritative ownership, borrowing and concurrency facts folded
+from actual alternative fields; nominal generic metadata does not become a
+stored component. Missing exact rows remain invalid rather than granting a
+storage or capability exemption.
 The program header retains the selected target's identity, pointer width and
 execution profile. Every serialized type retains its native C primitive
 discriminator separately from its numeric kind; equal-width `long` and
@@ -384,11 +411,12 @@ verification compares the semantic fact against exact generated movement,
 concrete bases, fields, borrowed state, and cleanup; interface bases contribute
 dispatch requirements, not stored value state. Passive primitive kinds are
 explicitly admitted; an unknown or newly added type kind is unavailable until
-classified, including when nested inside a fixed array. Production
-sparse/prefix-storage relocation selects its bulk candidate only from this
-verified proof. Existing intrinsic identities retain exclusive accesses,
-liveness/capacity failure sites, and source/destination lifetime behavior;
-there is no backend-only relocation operation. C++ representation traits may
+classified, including when nested inside a fixed array. General typed and
+prefix-storage relocation select their bulk candidate only from this verified
+proof. Prefix intrinsics retain their checked liveness/capacity protocol;
+general raw relocation instead requires explicit unsafe validity. Both preserve
+source/destination lifetime behavior. There is no backend-only relocation
+operation. C++ representation traits may
 decline the bytewise candidate, never grant language eligibility.
 
 Restoring exchange and swap are separate sealed call intrinsics, bound to
@@ -404,6 +432,20 @@ failure paths outside the indivisible transfer. Optimization treats the
 operations as explicit mutable-memory/ownership barriers. The C++ consumer
 uses verified result slots and generated relocation; it does not grant
 reference consumption or use native move assignment as semantic authority.
+
+Ownership and scalar-initialization dataflow follow only the executable edge
+of a typed literal boolean branch, including its exact same-typed identity
+chain. Structural CFG edges remain intact for dominance, loan endpoints and
+cleanup validation. This prevents an impossible natural exit of `while (true)`
+from changing a post-break moved-state assignment into a live replacement.
+Unknown conditions still join both edges; this proof does not evaluate calls,
+loads, arithmetic or constant contexts, and does not relax loop-backedge or
+use-after-move checking. Ownership dataflow first solves the complete executable
+CFG, then validates each instruction against stable block-entry states. This
+retains exact `Available|Moved` reinitialization facts at a conditional break
+without rejecting an intermediate worklist state before its other predecessor
+arrives; transfer states remain derived from MIR operations, not asserted event
+results.
 
 Checked indexed swap is a third sealed intrinsic over one mutable fixed-array
 or initialized-prefix storage reference and two staged `uint64_t` indices.
@@ -474,6 +516,28 @@ derives and compares the complete recipe. Borrowed `PayloadExtract` values are
 places, not owning copies: the verifier checks the exact selected switch edge,
 payload type/access, and source loan; backends spell an address into that original
 variant. Loan conflicts conservatively protect the whole matched enum.
+Projected payload reborrows name their immediate live parent loan as the
+`Borrow` operand, rather than a read of the parent's value. Identity-only
+canonical containment follows place-valued reference forwarding while still
+checking the selected variant/field. A shared local child may reborrow a shared
+parent without gaining mutable access; parent activity, CFG containment,
+non-escape and child-before-parent endpoints remain mandatory and independently
+verified.
+
+Canonical storage identity preserves the concrete executable place and its
+field projections through address-preserving place-valued SSA operations.
+This is distinct from a lifetime dependency origin, which may deliberately
+refer to an enclosing owner. A call's receiver is not automatically its result
+storage. Traversal is bounded by the place/value/loan graph it follows;
+cyclic forged forwarding remains ambiguous and is rejected. Exact enum
+relocation traversal similarly distinguishes concrete instances rather than
+treating every occurrence of a generic primary as the same recursive type.
+
+Canonical checked-place forwarding does not cross `RawDereference` or
+`RawIndex`. Such projections designate pointee storage, not the storage holding
+the pointer; a read-only carrier shell therefore does not make the raw pointee
+read-only. Ordinary pointer type/access and lexical unsafe obligations remain
+separate from checked loan ancestry.
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in
@@ -634,13 +698,14 @@ owning constructor followed immediately by publication of its initialized
 value obligation, retaining the same field rollback for later failures. Neither
 case invents a cleanup obligation for a cleanup-free result.
 
-Prefix append and sparse storage retain an exact selected source constructor for final-slot
+Prefix append retains an exact selected source constructor for final-slot
 construction, including its reference/value parameter roles after concrete pack
-expansion. All arguments are staged before `StorageConstructPreflight`, which reads
-the staged storage (and exact sparse index) and owns only the capacity or
-bounds/duplicate-slot failures. Prepared owning arguments
-remain active on that failure edge. The unique success continuation begins with
-the paired construction, transfers prepared parameters once into the constructor, and
+expansion. All arguments are staged before `StorageConstructPreflight`, which
+reads the single staged prefix-storage operand and owns its capacity failure.
+The retired sparse variant's index and duplicate-slot preflight are not accepted.
+Prepared owning arguments remain active on that failure edge. The unique success
+continuation begins with the paired construction, transfers prepared parameters
+once into the constructor, and
 publishes the slot as live only after construction succeeds. This applies even
 when the constructor itself is proved failure-free.
 
@@ -691,8 +756,8 @@ store them until its contract can distinguish static text from an owner loan.
 Empty optional text storage remains permitted.
 
 Reset of the same inline capability uses the shared element-removal cleanup
-recipe also used by sparse and prefix storage. MIR independently derives the
-payload recipe and its destructor failure effect. Fallible reset has an Invoke
+recipe also used by general raw destruction and prefix storage. MIR independently
+derives the payload recipe and its destructor failure effect. Fallible reset has an Invoke
 edge, with no new local failure site: the payload destructor's original record
 propagates through caller cleanup. The representation retires engagement
 before running that recipe and ends the disarmed native shell afterward;
@@ -715,16 +780,67 @@ failure changes no live state and retains the erase site's ordinary diagnostic.
 The collection matrix covers first/middle/last removal, append after success,
 direct leaves, owning aggregates, nested collections, and inherited elements.
 
-Program v62/body v54 carry an exact `elementCleanup` recipe on private
+Historically, program v62/body v54 added an exact `elementCleanup` recipe on private
 `StorageDestroy` and `PrefixStoragePop` calls when the element belongs to the
 represented cleanup family. Lowering derives it from the concrete operand;
 the MIR verifier independently rederives and compares the entire recipe and
 its destructor propagation. These calls retain both their local bounds/state
 outcomes and source-destructor effects. Proving a local check safe does not
 prove element cleanup safe. Effect composition includes every source destructor
-in the recipe, and unrelated instructions cannot carry a recipe.
+in the recipe, and unrelated instructions cannot carry a recipe. The sparse
+`StorageDestroy` operation is now retired: source sparse policy invokes general
+`ObjectDestroy` below, while prefix removal retains this recipe contract.
 
-Explicit removal retires the sparse live bit or prefix length before cleanup,
+`ObjectConstruct` records unsafe final-address construction with the exact
+selected constructor, concrete input types, prepared-parameter handoffs and
+constructor-failure edge. It reuses the ordinary constructor body and rollback
+schedule. Unlike prefix construction it has no container preflight:
+alignment, extent and vacancy belong to the unsafe caller. The verifier rejects
+forged storage preflights, borrowed destination authority and mismatched
+constructor/failure metadata. Scalar construction and generated transfer retain
+their exact typed selection. The backend supplies the address to the selected
+verified constructor; it does not infer lifetime permission from C++ traits.
+
+The declaration-bound `UninitializedStorage` class capability supplies only
+layout and inert representation. Concrete semantic traits derive copy/move
+eligibility from the payload's bitwise relocation contract and propagate its
+concurrency capabilities. MIR independently verifies those facts, empty field
+shape, generated special members and absence of payload cleanup. The backend
+implements a byte representation with no engagement state; source wrappers
+use ordinary address formation and existing typed/erased pointer conversions.
+
+`ObjectRelocate` is an unsafe, failure-free `Call` over two identical writable
+complete-object pointer types. Verification checks the exact metadata shape
+and rederives failure-free relocation eligibility from concrete MIR type facts.
+It permits no constructor override, cleanup recipe, storage preflight, loan or
+failure edge. Its effects conservatively read/write unknown memory, move and
+initialize a value, forming an optimization barrier. The backend performs the
+verified generated transfer, then ends the inactive source representation;
+it must not invoke source GTI cleanup or acquire/release a byte region.
+
+`ObjectDestroy` generalizes this exact `elementCleanup` contract to one writable
+raw pointer. Semantics requires explicit `ObjectLifetime` unsafe permission and
+an inferred complete pointee type. HIR seeds the concrete lifecycle declaration;
+MIR independently checks the raw operation shape, rederives its entire cleanup
+recipe and preserves destructor propagation. It has no local bounds/vacancy
+detector or storage owner: raw validity is the caller's unsafe obligation.
+The backend invokes only the verified recipe, retires the disarmed native
+representation, and returns its boolean cleanup result through `Invoke` without
+replacing the original failure record. No byte release occurs. Effect analysis
+includes the same exact destructor targets and synchronization effects; the
+optimizer classifies raw lifetime end as a conservative memory/cleanup barrier.
+
+Source-defined sparse policy uses private boolean checks for vacancy, liveness,
+relocation capacity, source initialization and destination vacancy. Source GTI
+computes each condition; the intrinsic only raises its exact existing
+`InvalidStorageState` detail when false. The shared intrinsic failure mapping
+feeds semantics, MIR verification and lowering, just as the key/container
+argument checks do. These calls have no storage inspection or lifecycle side
+effects. They remain trapping optimization barriers without a supported
+discharge proof, and forged outcome families are rejected independently.
+
+Explicit removal retires the sparse live byte in source, or prefix length in
+the retained prefix capability, before cleanup,
 ends the disarmed element representation once, and returns to the same MIR
 `Invoke` failure edge. The backend-private checked status distinguishes local
 errors, which create a record at the removal site, from propagated destructor
@@ -733,21 +849,18 @@ cleanup drains the remaining live elements. Source-defined vector/storage
 `clear()` loops use these same operations. The v63 extension supplies the
 arbitrary-index prefix erase hole/shift protocol for the represented family.
 
-`StorageTryAdopt` is a declaration-bound, status-returning call with the
-mandatory `StorageAdoption` unsafe marker. It requires an exact mutable private
-storage destination, writable erased address, count, byte extent and alignment.
-The shared verification query is consumed independently by whole-program MIR
-verification and backend admission. Adoption is an optimizer barrier: it may
-allocate bookkeeping and publishes storage authority, even if its returned
-status is discarded. It has no defined-failure edge and must not inherit
-constructor or destructor effects. Full-expression markers cannot claim this
-unsafe operation. The adopted slots use the existing preflight, initialization
-map, element-drop recipes and checked loans. Releasing this private storage
-releases its bitmap but never the external region; an enclosing source-defined
-lease owns that separate release after element cleanup.
+The former `StorageTryAdopt`/`StorageAdoption` capability and its private
+sparse destination type are retired. Descriptor validation, two-region lease
+publication and metadata initialization are ordinary source operations.
+The unsafe binding contract establishes provider obligations; general
+`ObjectLifetime` calls establish typed construction, relocation and destruction.
+No MIR instruction adopts a sparse bitmap or implicitly allocates bookkeeping.
 
-Program v61/body v53 extend the cleanup tree with one unprojected element
-recipe for owning storage and prefix storage. A collection drop walks live
+Historically, program v61/body v53 extended the cleanup tree with one unprojected
+element recipe for owning storage and prefix storage. The sparse recipe and
+native live-slot walker are now replaced by ordinary source reverse traversal
+and general `ObjectDestroy`; the remaining paragraph records the original
+protocol and its retained prefix implementation. A collection drop walks live
 elements in reverse index order (skipping uninitialized sparse slots), runs
 the exact child recipe, ends the element representation lifetime, and finally
 releases the allocation. The live bit/prefix length is retired before entering
@@ -856,11 +969,13 @@ Program v45 adds concrete fixed-array drop schedules: every array drop retains
 its ordered extents, exact leaf type, and leaf class instance when applicable.
 This lets verification and backends consume reverse element cleanup without
 recovering array lifecycle meaning from a source type or target spelling.
-Program v44/body v42 add exact proof-carrying safety discharges to instructions
-and transformation records. A discharge names one bounds, storage-state, or
+Program v44/body v42 added exact proof-carrying safety discharges to instructions
+and transformation records. At that stage a discharge named bounds, storage-state, or
 arithmetic-overflow family plus the exact local defined-failure origin and
 outcome; records retain all related MIR block, instruction, value, and place
-identities used by independent replay. Program v42 adds complete verified
+identities used by independent replay. The storage-state family and its
+initialized-slot proof are retired with the sparse engine; current supported
+families are documented in [optimization](optimization.md). Program v42 adds complete verified
 effect summaries for functions,
 constructors, destructors, and lambdas. Program v43/body v41 add scalar block
 parameters, edge arguments, optimizer instruction tombstones, and edge-value
@@ -1023,6 +1138,18 @@ storage under a single merged owner. Loan conflicts, scalar-promotion admission,
 and alias/escape analysis inspect the entire set. Shared reference/subview
 projections conservatively preserve that complete set rather than independently
 shortening one owner's endpoint.
+When a result composes several single-path shared entry carriers, compact
+source identity is decided per selected input, not by the result's field count.
+Each mapping preserves its own opaque entry source and destination field path;
+the verifier independently rejects substitution or collapse of those sources.
+Two distinct result fields may intentionally name the same concrete owner.
+Their field paths remain distinct in `additionalDependencies`; equality of the
+source place is not permission to discard either path. Typed field projection
+preserves its semantic overlap key so local publication can reconcile every
+dependency. A cleanup-bound construction from one shared input retains that
+input's ancestry while recording the full result map. Multi-input composition
+does not invent a common parent. Independent mutations reject missing or
+collapsed result paths and premature release of the guarded pair.
 Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's
@@ -1048,6 +1175,10 @@ For a cleanup-free, generated-copy read-only carrier parameter, native member
 initialization may copy that shell only when the copy binding also proves its
 exact entry-to-field `Stored` publication. The same proof admits the parameter's
 representation slot; it does not turn the by-value shell into the referent.
+After exact field-mapped publication, cleanup of a copied formal shell is also
+distinct from destruction of its external referent. The verifier recognizes
+this only through the entry's checked reference-field/dereference path; an
+ordinary owned field does not receive the exemption, even when its type matches.
 
 A nested shared-view value return binds the actual `Load` operand's field
 prefix to the source entry dependency and publishes result-relative stored
@@ -1117,6 +1248,19 @@ reseating, forged ancestry, parent use while suspended, or an escaping child
 shape. The C++ backend merely represents the already-verified reference field
 and schedule.
 
+A by-value call that consumes a complete borrowed carrier retires the input
+loan on the call-success continuation before initializing the returned carrier.
+If HIR also records that loan's last-use endpoint on the enclosing statement,
+lowering acknowledges the already-emitted endpoint exactly once for that
+statement. It must not emit a second `EndBorrow` or ignore arbitrary inactive
+loans. For a conditional statement, only HIR's exact declared enclosing endpoint
+can be acknowledged by nested transfers. Each arm has independent endpoint
+state; the join retains an acknowledgment only when every normally reaching
+arm supplies the same identity. A terminating arm supplies no fallthrough
+evidence. Loop and switch bodies cannot export an unproved path-only transfer
+acknowledgment. The result still retains every source dependency; live child
+reborrows and unrelated overlapping loans remain conflicts.
+
 Version 49 makes a summarized reference return runtime-exact. When a body
 returns the borrowed result of a reference-returning call (a transient
 `CallResult` chain whose tail matches the declared receiver, argument, or
@@ -1164,6 +1308,37 @@ exclusive loan because body-local MIR cannot prove that an intervening call
 does not mutate the same global. The C++ representation consumes the verified
 schedule and erases activation as a no-op; it does not reconstruct evaluation
 order or loan state from source syntax.
+
+Nested plain stores retain one terminal two-phase loan. Loan-flow verification
+derives its reservation group from the exact unretained mutable `CallResult`
+parent chain; it never infers a group from public container names. Intermediate
+loans enter the reserved flow state together, leaving a lexical mutable parent
+active. Terminal activation checks the entire group, suspends its ancestors,
+and must still be followed immediately by the terminal assignment. An
+unactivated failure restores the original exclusive ancestry before ordinary
+child-first cleanup. A live sibling, retained carrier, escape, stored
+dependency or ambiguous authority prevents this conversion. Every origin and
+exact physical referent remains represented by the existing loan records.
+Eligibility follows that ancestry to its canonical root; a global cannot gain
+reservation access merely by being hidden behind an intermediate loan place.
+
+HIR preserves a separately selected dereference/subscript projection operator
+even when the mutation itself is built-in scalar arithmetic. MIR stages that
+accessor result as one loan-rooted place and uses the ordinary ordered
+load/arithmetic/conversion/assign schedule. The propagation of the target call
+belongs to the call; it does not force the scalar update back into an opaque
+compound helper or make a backend manufacture the target from syntax.
+
+Checked fixed-array reference formation retains its semantic bounds origin on
+the `Borrow` itself, not on an omitted scalar load or an eventual return. It
+has an exact `Invoke` and failure record before reference publication. A failed
+producer retires its provisional loan before receiver ancestry and callee
+locals drain; successful reference return publishes the already-checked
+pointer. The backend uses the existing typed-place bound-status operation and
+the same success/failure routing as checked address formation. It does not
+call a terminal aborting array helper to perform an unproven reference return.
+Scalar and class referents use the same rule, preserving `GTI-R0007`, status
+70 and deterministic cleanup in the caller as well as the accessor.
 
 Because the entry loan is self-sourced at the carrier binding — MIR cannot
 name the caller's owner storage — its canonical protected place collides with
@@ -1647,6 +1822,12 @@ Valid passive unions retain their checked size, ABI alignment, and ordered
 field layout on semantic, HIR, and MIR class records. MIR does not infer an
 active field or add a union operation: member access remains an ordinary place
 operation carrying the frontend's unsafe classification.
+Their verified generated movement is failure-free, including when composed
+inside another passive record. A fixed-array aggregate of staged copyable
+passive records constructs its final storage directly in MIR operand order.
+Its lexical result/binding tokens and exact publication remain mandatory, but
+no active per-element cleanup is invented. Named inputs are copied when their
+MIR Loads execute; native default construction is not used as SSA staging.
 
 Each defined integer operation lowers as an ordinary call with one of nine
 exact intrinsic identities. Its effect-table entry is speculatable, removable
@@ -1877,6 +2058,13 @@ publish into an owned Expected binding: its Invoke success activates the
 payload obligation, then the binding Initialize transfers it into the
 wrapper. Generated lifecycle-guarded movement reuses MIR's failure-free
 relocation proof; it does not execute the disarmed source destructor.
+Constructor fields use that same typed publication protocol when an already
+permitted success/error value initializes an Expected field. The source
+payload is transferred out and the completed target wrapper receives its own
+rollback obligation; the field must not inherit the payload's narrower drop
+type. Verification checks the selected alternative, target cleanup recipe and
+publication events independently. This does not admit new borrowed-success
+conversions or defer conversion policy to native C++.
 An owning Expected call result passed into a constructor retains its exact
 value-rooted slot across subsequent argument evaluation. Its producer's Invoke
 success dominates the consumer, and one shared owned-argument CFG proof checks
@@ -1890,31 +2078,48 @@ Emission preserves the MIR argument order and only retires the moved-from
 native shell at the consuming operation; it does not defer argument evaluation
 into a C++ call expression.
 
-The first base-subobject family now uses an entry `InitializeBase` followed by
-an `Invoke`. It covers a selected zero-argument base constructor,
-parameterless derived construction, cleanup-free derived fields, and generated
-base/derived destruction. Both trivial-cleanup and owning bases carry the exact
+The base-subobject family uses one `InitializeBase` after its exact typed
+argument values. A fallible selected constructor has an `Invoke`; a
+failure-free constructor or passive generated default arms the rollback token
+at the instruction itself. Scalar parameter reads and literals are supported
+base arguments, including derived constructors with owning fields and declared
+base/derived cleanup bodies. Both trivial-cleanup and owning bases carry the exact
 base cleanup bit in their rollback descriptor. The bounded source-free
 generated-derived HIR constructor lowers through the same body schedule; it is
 not a native-only default constructor or a terminal containment adapter.
 A base that fails is not armed in the derived body;
 later derived failure drains the completed base last, while successful
 construction transfers its obligation to the enclosing object. Independent
-verification binds the exact base relation, constructor, place, rollback type,
-entry position, activation and retirement, and forbids aliases or ordinary
-value/borrow uses of the base place. Interprocedural effect analysis follows
+verification binds the exact base relation, constructor, arguments, place, rollback type,
+activation and retirement, and forbids aliases or ordinary
+value/borrow uses of the base place. Base success must dominate both derived
+field publication and observable field-argument evaluation. The verifier follows
+SSA and place dependencies, including scalar joins and their controlling
+conditions, using existing MIR effects to allow only harmless preparation before
+the base. Selected generated base constructors retain their exact executable
+target; targetless native defaults cannot satisfy a required generated schedule.
+Every selected base initializer's generated-default flag must match the selected
+constructor, including when the derived constructor is explicitly declared.
+Base-argument cleanup and borrow eligibility use concrete class and enum traits.
+Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
 remain visible in the derived constructor's summary and to the optimizer.
 
-The C++ backend fuses this operation into the exact native base status overload
-and branches on the retained result before executing derived MIR. Passive
+The C++ backend fuses observation-free scalar parameter/literal prefixes into
+the exact native base initializer, using its status overload when fallible,
+and branches on the retained result before executing derived MIR. Its independent
+prefix proof rejects any checked operation or other effect; those require a
+pre-native-base MIR preparation runner, not reconstructed C++ expressions.
+Passive
 field defaults include plain read-only enum values. For the selected
-aggregate schedule, a fallible base cleanup runs at the explicit MIR `Drop`
+aggregate schedule, observable base cleanup runs at the explicit MIR `Drop`
 and returns its secondary record before the caller tears down the empty native
 representation. Other admitted base rollback finishes when the allocation
 caller destroys the unpublished native object. That deferral is bounded to
-constructors without owning parameters or derived fields; it cannot cross
-their cleanup order. No base is destroyed and placement-reconstructed as an
+trivial-cleanup bases; it cannot cross any observable cleanup order. Declared
+base cleanup disarms its native lifecycle guard, and owning base fields retain
+the existing emptied-shell proof, preventing duplicate native destruction.
+No base is destroyed and placement-reconstructed as an
 ordinary field.
 
 `tests/fixtures/inherited_constructor_cleanup_failure.gti` covers the original
@@ -1926,9 +2131,12 @@ complete aggregate schedule rather than deferred native cleanup. Generated
 pointees may themselves contain several supported active fields. Collection
 destruction now composes through the v61 element recipe, including the
 vector-owning base in `inherited_collection_cleanup_failure.gti`. This still
-does not establish cyclic ownership-type graphs, base arguments, owning derived
-fields, declared base/derived destructors, or
-static-field initializer bodies. Those remain M-FAIL-01 work.
+does not establish cyclic ownership-type graphs, owning or borrowed base
+arguments, checked/effectful base-argument prefixes, or static-field initializer
+bodies. Constructors with historical entry-active declaration-field rollback
+tokens remain ineligible: each declared field needs the typed constructor
+schedule that arms it only after the base and that field successfully complete.
+Those remain M-FAIL-01 prerequisites, rather than native representation exemptions.
 
 M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters
@@ -2074,8 +2282,13 @@ movement and drop use the ordinary lambda lifecycle obligation, including
 recursively cleanup-owning captured values. For captures with complete cleanup
 recipes, the obligation retains their exact reverse-order aggregate schedule,
 including nested class/owner/collection cleanup. Destruction failure therefore
-belongs to the enclosing MIR cleanup edge, not native closure teardown. Class
-lifecycle metadata contains every lexically dropped field in
+belongs to the enclosing MIR cleanup edge, not native closure teardown.
+The caller's active failure remains authoritative across calls made by cleanup;
+a callee's next failure cannot enter its own local-cleanup schedule before the
+existing cleanup-emergency path consumes the exact primary and secondary records.
+This inherited dynamic fact does not require a second source-level control-flow
+rule or a public failure-context type.
+Class lifecycle metadata contains every lexically dropped field in
 declaration order; its independently retained drop projection must be the exact
 reverse order. Trivial fields remain structural HIR/layout facts rather than
 lifecycle-verifier authority.
@@ -2618,11 +2831,11 @@ occurs after both checks succeed. Postfix retains the original narrow value;
 prefix and compound assignment retain the committed narrow result. Bare
 instance-field destinations and explicit receiver projections use the same
 primitive schedule. The general C++ MIR emitter consumes every
-physical-place operation in this family. A non-array indexed class projection
-still denotes a selected subscript call, not a physical element address; it
-retains the checked closed compound boundary until one exact returned
-reference can be staged. Splitting that projection into read/write would
-duplicate the accessor or require an unselected overload. The emitter admits
+physical-place operation in this family. A selected class subscript stages its
+exact returned reference as one loan-rooted place before the primitive update;
+the accessor is evaluated once, not separately for the read and write. The
+older unstaged class-index representation retains its closed compound boundary
+only where no returned-reference place has been staged. The emitter admits
 each operation in this fixed-integer allowlist only after both MIR verification
 and representation preflight.
 

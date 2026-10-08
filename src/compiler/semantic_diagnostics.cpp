@@ -97,7 +97,11 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
 }
 
 void SemanticDiagnosticReporter::reportConstraintFailure(
-    const Token &site, const SemanticConstraintFailure &failure) {
+    const Token &site, const SemanticConstraintFailure &failure,
+    const std::function<std::string(const SemanticType &)> &spelling) {
+  const auto typeSpelling = [&](const SemanticType &type) {
+    return spelling ? spelling(type) : this->typeSpelling(type);
+  };
   const auto applicationSpelling = [&](const SemanticConstraintContext &item) {
     std::string spelling = item.name + "<";
     for (std::size_t index = 0; index < item.arguments.size(); ++index) {
@@ -429,6 +433,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "The type must be a scalar, raw pointer, integral enum, positive "
           "concrete array, or complete non-abstract class, struct or passive "
           "union. Copying and moving are not required.");
+      break;
+    case StructuralConstraintKind::IndependentObject:
+      diagnostic.hints.emplace_back(
+          "The element must be a complete object type without checked borrowed "
+          "state. Raw pointers remain nonowning and retain their unsafe "
+          "validity "
+          "obligations; copying or moving the element is not required.");
       break;
     case StructuralConstraintKind::Adds:
       diagnostic.hints.emplace_back(

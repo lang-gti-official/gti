@@ -34,6 +34,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
+  requestSession.recoveredExhaustiveSwitches.clear();
   semanticModel.clear();
   semanticModel.setExecutionProfile(target.executionProfile);
   semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
@@ -58,6 +59,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   allowPayloadEnumeratorReference = false;
   currentStaticMemberFunction = false;
   allowPackTypeReference = false;
+  deferringTypeAliasConstraints = false;
   loanFlow = {};
   instanceClassContextActive = false;
   instanceAnalysisActive = false;
@@ -101,8 +103,13 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerTypeAliases(program.declarations(), {});
   registerEnums(program.declarations(), {});
   registerConcepts(program.declarations(), {});
+  registerEnumGenericParameters();
   genericDefaultConstants.clear();
   registerClasses(program.declarations(), {});
+  for (ClassId id = 1; id <= classes.size(); ++id)
+    resolveClassGenericDefaults(id);
+  for (EnumId id = 1; id <= enums.size(); ++id)
+    resolveEnumGenericDefaults(id);
   resolveTypeAliases();
   for (ClassId id = 1; id <= classes.size(); ++id) {
     resolveClassArgumentPatterns(id);
@@ -120,6 +127,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   registerNamespaceSymbols(program.declarations(), {});
   collectRootNativeStorageSymbols(program.declarations());
   collectClassMembers(program.declarations(), {});
+  recordClassFieldSymbols();
   validateOrdinaryClassLayouts();
   registerGlobalBorrowStorage(program.declarations(), {});
   resolveInheritedMembers();
@@ -130,6 +138,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   validateInterfaceCapabilities();
   recordClassTypes();
   recordClassLifecycles();
+  validateTypeAliasConstraints();
   registerDesignatedConstructors();
   catalog.seal();
   valueFlow.beginBody(catalog);
@@ -530,6 +539,9 @@ auto SemanticVisitor::Impl::visitAccessSpecifierDecl(
 
 auto SemanticVisitor::Impl::visitEnumDecl(const EnumDecl &stmt) -> void {
   const EnumTypeInfo *info = semanticModel.findEnumType(stmt);
+  if (info != nullptr) {
+    beginTypeParameterScope(info->genericParameters);
+  }
   const SemanticType type = info == nullptr ? SemanticType::Unknown
                                             : SemanticType::enumType(info->id);
   const SymbolId symbol = recordToolingSymbol(
@@ -564,6 +576,7 @@ auto SemanticVisitor::Impl::visitEnumDecl(const EnumDecl &stmt) -> void {
     for (std::size_t payloadIndex = 0; payloadIndex < enumerator.payload.size();
          ++payloadIndex) {
       const Parameter &parameter = enumerator.payload[payloadIndex];
+      recordTypeUse(parameter.type);
       if (parameter.defaultArgument) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2077", DiagnosticPhase::Semantics,
@@ -595,6 +608,9 @@ auto SemanticVisitor::Impl::visitEnumDecl(const EnumDecl &stmt) -> void {
            .name = parameter.name.lexeme,
            .type = fieldType});
     }
+  }
+  if (info != nullptr) {
+    endTypeParameterScope();
   }
 }
 
@@ -2562,6 +2578,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   const SwitchLabel *firstDefault = nullptr;
   std::vector<std::pair<ScopeStack, FlowSummary>> armResults;
   std::unordered_set<std::size_t> coveredPayloadVariants;
+  std::unordered_set<std::size_t> flowCoveredPayloadVariants;
   bool invalidPayloadPattern = false;
   bool hasDefault = false;
 
@@ -2589,6 +2606,15 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       }
 
       if (payloadEnum != nullptr) {
+        const auto *patternCall = exprAs<Call>(label.value.get());
+        const auto *variantName = exprAs<QualifiedName>(
+            patternCall ? patternCall->callee().get() : label.value.get());
+        if (variantName != nullptr) {
+          if (const auto *variant = resolveEnumerator(variantName->name());
+              variant != nullptr && variant->symbol.type == subjectType) {
+            flowCoveredPayloadVariants.insert(variant->variantIndex);
+          }
+        }
         scopes = beforeSwitch;
         std::optional<ResolvedPayloadPatternInfo> pattern =
             analyzePayloadSwitchPattern(label.value, subjectType);
@@ -2778,6 +2804,10 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   const bool exhaustivePayload =
       payloadEnum != nullptr && !invalidPayloadPattern &&
       coveredPayloadVariants.size() == payloadEnum->enumerators.size();
+  if (payloadEnum != nullptr && invalidPayloadPattern &&
+      flowCoveredPayloadVariants.size() == payloadEnum->enumerators.size()) {
+    requestSession.recoveredExhaustiveSwitches.insert(&stmt);
+  }
   if (hasDefault || exhaustivePayload) {
     semanticModel.recordExhaustiveSwitch(stmt);
   }
@@ -3032,6 +3062,7 @@ auto SemanticVisitor::Impl::visitTypeAliasDecl(const TypeAliasDecl &stmt)
   const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
   const SemanticType type =
       info == nullptr ? SemanticType::Unknown : info->type;
+  validateConcreteEnumPayloads(type, stmt.name());
   const SymbolId symbol = recordToolingSymbol(
       stmt.name(), SymbolKind::TypeAlias,
       info == nullptr ? qualifiedName(currentNamespace, stmt.name().lexeme)
@@ -3193,15 +3224,13 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Compiler-private unique owners can only be local bindings, "
            "function values, or class fields.",
            "GTI-S2018");
-  } else if ((declaredType.kind == SemanticType::Storage ||
-              declaredType.kind == SemanticType::PrefixStorage) &&
+  } else if (declaredType.kind == SemanticType::PrefixStorage &&
              globalStorage) {
     report(stmt.name(),
            "Compiler-private storage can only be used as a local binding or "
            "class field.",
            "GTI-S2019");
-  } else if ((declaredType.kind == SemanticType::Storage ||
-              declaredType.kind == SemanticType::PrefixStorage) &&
+  } else if (declaredType.kind == SemanticType::PrefixStorage &&
              functionDepth > 0 && !stmt.initializer()) {
     report(stmt.name(),
            "Compiler-private storage bindings require an allocation "
@@ -3249,10 +3278,17 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              (!currentClass ||
               storedReferencePaths(SemanticType::classType(*currentClass))
                   .empty())) {
-    report(stmt.name(),
-           "A class or struct may contain only one stored-reference "
-           "dependency, through direct or nested nominal fields.",
-           "GTI-S2045");
+    if (std::none_of(diagnostics.begin(), diagnostics.end(),
+                     [&](const Diagnostic &diagnostic) {
+                       return diagnostic.code == "GTI-S2045" &&
+                              diagnostic.primary == tokenSpan(stmt.name());
+                     })) {
+      report(stmt.name(),
+             "Borrowed field state must use checked stored-reference paths "
+             "through ordinary nominal fields; fallible and other non-nominal "
+             "carriers cannot be stored as fields.",
+             "GTI-S2045");
+    }
   } else if (declaredType.kind == SemanticType::Reference &&
              !stmt.initializer() && !instanceField) {
     report(stmt.name(), "Reference bindings require an initializer.",
@@ -3412,11 +3448,14 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       recordRetainedBorrow(stmt, stmt.initializer());
     }
   } else if (stmt.initializer()) {
-    if (typeTraits(declaredType).containsBorrowedState || ownerDependentText) {
+    if (initializerType != SemanticType::Unknown &&
+        (typeTraits(declaredType).containsBorrowedState ||
+         ownerDependentText)) {
       validateStoredBorrowInitialization(declaredType, stmt.initializer());
       recordRetainedBorrow(stmt, stmt.initializer());
     }
-    if (!initializerAssignable) {
+    if (!initializerAssignable && declaredType != SemanticType::Unknown &&
+        initializerType != SemanticType::Unknown) {
       report(expressionToken(stmt.initializer()),
              "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
                  typeSpelling(declaredType) + "' with a value of type '" +
@@ -4154,8 +4193,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     analyzeMoveCall(expr, nullptr, immediateReceiver);
     return;
   }
-  if (const EnumeratorRecord *enumerator =
-          payloadEnumeratorForCallee(expr.callee())) {
+  if (const auto enumerator = payloadEnumeratorForCallee(expr.callee())) {
     analyzePayloadConstruction(expr, *enumerator);
     return;
   }
@@ -4367,14 +4405,30 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
+  const std::optional<Symbol> callee = resolveExpressionSymbol(expr.callee());
+  const std::size_t genericDiagnosticStart = diagnostics.size();
   std::vector<SemanticType> explicitTypeArguments;
   explicitTypeArguments.reserve(expr.typeArguments().size());
   std::vector<CompileTimeValue> explicitValueArguments;
   explicitValueArguments.reserve(expr.typeArguments().size());
   bool sawExplicitValueArgument = false;
+  std::size_t explicitArgumentIndex = 0;
   for (const TypeRef &argument : expr.typeArguments()) {
+    // The target's parameter kind is authoritative. In particular a runtime
+    // identifier in a value slot is a failed constant, not an unknown type.
+    const bool targetRequiresValue =
+        callee && !callee->overloads.empty() &&
+        std::all_of(callee->overloads.begin(), callee->overloads.end(),
+                    [&](const CallableCandidate &candidate) {
+                      const auto &parameters =
+                          candidate.record().genericParameters;
+                      return explicitArgumentIndex < parameters.size() &&
+                             parameters[explicitArgumentIndex].value;
+                    });
+    ++explicitArgumentIndex;
     std::optional<CompileTimeValue> value;
-    if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value ||
+    if (targetRequiresValue ||
+        argument.genericArgumentSyntax == GenericArgumentSyntax::Value ||
         (argument.genericArgumentSyntax ==
              GenericArgumentSyntax::UnresolvedIdentifier &&
          (value = genericValueArgument(argument)).has_value())) {
@@ -4414,6 +4468,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
   const bool hasExplicitGenericArguments =
       !explicitTypeArguments.empty() || !explicitValueArguments.empty();
+  if (hasErrorDiagnostics(
+          std::span(diagnostics).subspan(genericDiagnosticStart))) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
 
   if (const auto *member = exprAs<Get>(expr.callee().get())) {
     const SemanticType *objectType = semanticModel.findType(*member->object());
@@ -4549,8 +4608,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
   }
 
-  const std::optional<Symbol> callee = resolveExpressionSymbol(expr.callee());
-
   if (calleeType != SemanticType::Unknown &&
       calleeType != SemanticType::Function) {
     report(expr.paren(), "Can only call functions.");
@@ -4579,9 +4636,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (callee->overloads.size() == 1) {
     const CallableCandidate &candidate = callee->overloads.front();
     CallableCandidate resolved = candidate;
+    const std::size_t contextualDiagnostics = diagnostics.size();
     bool valid = contextualizeFunctionItemArguments(
         candidate, explicitTypeArguments, explicitValueArguments,
         expr.arguments(), argumentAnalysis, true);
+    if (!valid && diagnostics.size() != contextualDiagnostics) {
+      // Context selection already owns this failure. A function item's type
+      // has no source spelling, so a subsequent request to write F explicitly
+      // is neither an independent error nor an actionable repair.
+      currentType = SemanticType::Unknown;
+      return;
+    }
     valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
                                        explicitValueArguments, argumentTypes,
                                        expr.arguments(), expr.paren()) &&
@@ -5580,9 +5645,18 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
       compoundOperator(expr.oper().kind);
   const bool overloadedMutation = !simpleAssignment && mutationOperator &&
                                   valueTarget.kind == SemanticType::Class;
+  const bool preferReadOnlyRhsProjection =
+      simpleAssignment && ownerType.kind != SemanticType::RawPointer &&
+      mutableTarget;
+  if (preferReadOnlyRhsProjection) {
+    ++preferReadOnlySubscriptReceiverDepth;
+  }
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), valueTarget)
                        : analyze(expr.value());
+  if (preferReadOnlyRhsProjection) {
+    --preferReadOnlySubscriptReceiverDepth;
+  }
   if (!mutableTarget) {
     report(expr.dereference(),
            ownerType.kind == SemanticType::RawPointer
@@ -7064,6 +7138,16 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
   }
 
   if (valid) {
+    // The fixed prefix's mutable-reference access is independent of the pack
+    // element type. Preserve that source use even in primary analysis, where
+    // no concrete element calls exist yet.
+    for (std::size_t index = 0; index < packIndex; ++index) {
+      const SemanticType &parameter = candidate.parameterTypes[index];
+      if (parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::Mutable) {
+        recordMutableBindingUse(call->arguments()[index]);
+      }
+    }
     semanticModel.record(expr, std::move(fold));
     ResolvedCallInfo symbolic{.function = candidate.id,
                               .declaration = candidate.declaration,
@@ -7158,12 +7242,29 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     return;
   }
   if (expr.name().last().completion) {
-    captureQualifiedCompletion(expr.name());
+    captureQualifiedCompletion(expr.name(),
+                               expr.ownerType() ? &*expr.ownerType() : nullptr);
     currentType = SemanticType::Unknown;
     return;
   }
   recordQualifiedPathUses(expr.name());
-  const Symbol *symbol = resolveQualified(expr.name());
+  if (expr.ownerType()) {
+    validateType(*expr.ownerType());
+    recordTypeUse(*expr.ownerType());
+  }
+  const auto concreteEnumerator = resolveEnumerator(expr);
+  const Symbol *symbol = concreteEnumerator ? &concreteEnumerator->symbol
+                                            : resolveQualified(expr.name());
+  if (symbol && !concreteEnumerator &&
+      symbol->type.kind == SemanticType::Enum && symbol->type.enumId != 0 &&
+      symbol->type.enumId <= enums.size() &&
+      !enums[symbol->type.enumId - 1].genericParameters.empty()) {
+    report(expr.name().last(),
+           "A generic payload variant requires a concrete enum owner type.",
+           "GTI-S2067");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (symbol == nullptr) {
     if (expr.name().segments.size() >= 2) {
       const NamePath ownerPath(std::vector<Token>(
@@ -7222,10 +7323,20 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
         {tokenSpan(symbol->declaration), "Static member declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  if (const EnumeratorRecord *enumerator = resolveEnumerator(expr.name())) {
+  if (const auto &enumerator = concreteEnumerator) {
     const SemanticType &type = enumerator->symbol.type;
+    if (type.enumId != 0 && type.enumId <= enums.size() &&
+        !enums[type.enumId - 1].genericParameters.empty() &&
+        type.arguments.empty() && type.valueArguments.empty()) {
+      report(expr.name().last(),
+             "A generic payload variant requires a concrete enum owner type.",
+             "GTI-S2067");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     semanticModel.record(
         expr, ResolvedEnumeratorInfo{.owner = type.enumId,
+                                     .type = type,
                                      .declaration = enumerator->declaration,
                                      .value = enumerator->value,
                                      .variantIndex = enumerator->variantIndex});
@@ -7740,9 +7851,14 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
                (rightType.kind == SemanticType::TypeParameter &&
                 hasSymbolicOperatorRequirement(OverloadedOperator::Dereference,
                                                rightType))) {
-      const std::optional<CallableCandidate> selected =
-          resolveOperator(expr, OverloadedOperator::Dereference, expr.right(),
-                          rightType, expr.oper());
+      const std::optional<CallableCandidate> selected = resolveOperator(
+          expr, OverloadedOperator::Dereference, expr.right(), rightType,
+          expr.oper(), {}, {}, false, std::nullopt, std::nullopt, false,
+          preferReadOnlySubscriptReceiverDepth != 0 &&
+              !(contextualInitializerType &&
+                contextualInitializerType->kind == SemanticType::Reference &&
+                contextualInitializerType->referenceAccess ==
+                    AccessMode::Mutable));
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
     } else {
@@ -10486,7 +10602,9 @@ auto SemanticVisitor::Impl::summarizeFlow(const Stmt *statement) const
     if (expressionNeverReturns(switchStatement->expression().get())) {
       return {.canFallThrough = false};
     }
-    bool coversEveryValue = semanticModel.isExhaustiveSwitch(*switchStatement);
+    bool coversEveryValue =
+        semanticModel.isExhaustiveSwitch(*switchStatement) ||
+        requestSession.recoveredExhaustiveSwitches.contains(switchStatement);
     bool reachesAfterSwitch = false;
     bool continuesEnclosingLoop = false;
     const ReturnStmt *normalReturn = nullptr;

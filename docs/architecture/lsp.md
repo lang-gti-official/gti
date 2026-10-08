@@ -3,6 +3,14 @@
 Status: Current implementation, with future symbol/index work explicitly
 separated below.
 
+Generic payload enum variant hover and completion use exact occurrence and
+candidate types with the retained semantic instance signatures. Defaults and
+transparent aliases print the same canonical owner and substituted payload
+types. Definition and documentation still target the primary declaration.
+Generic binder identities, optional `class` spelling and dirty dependency
+overlays follow the existing snapshot/navigation protocol; the LSP does not
+perform generic substitution itself.
+
 The LSP is an adapter over compiler-owned semantics:
 
 ```text
@@ -139,6 +147,13 @@ qualified class; the protocol adapter does not infer class membership from the
 written `::` path. Tree-sitter accepts the alias as a class member and supplies
 the syntax-level type-definition capture while semantic tokens retain the exact
 class-versus-namespace meaning.
+
+Conditional unsafe class capability assertions use the same generic-parameter
+symbol as their declaration. Navigation, references and rename therefore cover
+the attribute argument without protocol-side name matching. Class hover labels
+the policy as conditional instead of suggesting an unconditional assertion;
+invalid, misplaced and conflicting policies publish the shared `GTI-S2059`
+diagnostic. Neither CLI nor LSP offers a fix that accepts an unsafe promise.
 
 Function-declaration and selected-call signatures retain `[[noreturn]]`,
 `[[track_caller]]`, `[[discardable]]`, explicit `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`,
@@ -435,6 +450,9 @@ compiler work.
 - Completed analysis is published only if the document and dependency
   generations still match. Only then may its source digests be learned. Stale
   semantic requests and stale digest publications are rejected.
+  Diagnostic aggregation also excludes retained roots whose snapshot generation
+  is obsolete, rather than republishing their old errors under a newer document
+  version while replacement analysis is queued.
 - The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
   A manifest or lockfile change invalidates semantic-token caches and
   reanalyses every open document, so configuration, package aliases, and

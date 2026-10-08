@@ -74,6 +74,20 @@ public:
   ~TrackedOwner() { ++owner_drops; }
 };
 
+int multiply(int left, int right) { return left * right; }
+
+struct CallbackField {
+  std::function<int(int, int)> calculate{};
+};
+
+struct Reading { int value = 7; };
+interface ReadingSource<T> { T read(); };
+class ReadingFactory : public ReadingSource<Reading> {
+public:
+  Reading read() override { return Reading(); }
+};
+int inspect_reading(Reading value) { return value.value; }
+
 int main() {
   mut NativeAddress original = empty_address();
   {
@@ -148,5 +162,16 @@ int main() {
   mut int count = 0;
   update(live, count);
   if (count != 1) return 19;
+  // Both lambda and function-item specializations must agree with the
+  // retained virtual pack signature, including on GCC (issue #130).
+  mut std::function<int(int, int)> calculate{
+      [](int left, int right) -> int { return left + right; }};
+  if (calculate(2, 3) != 5) return 20;
+  calculate.replace(multiply);
+  if (calculate(2, 3) != 6) return 21;
+  // The class definition must precede callback field initialization (#129).
+  CallbackField field{};
+  ReadingFactory factory{};
+  if (inspect_reading(factory.read()) != 7) return 22;
   return assigned.code - 18;
 }

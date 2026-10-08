@@ -24,8 +24,8 @@ Compiler-capability types and operations bind by an exact selected declaration
 identity, never by qualified spelling or a public wrapper name. Shared prefix
 storage, text, and core constraint identities live in the trusted prelude.
 Module-specific identities live only in their exact trusted source units:
-unique ownership and sparse storage in `<std/memory>`, managed threads in
-`<std/thread>`, checked one-slot storage in `<std/optional>`, atomics in
+unique ownership and general object-lifetime operations in `<std/memory>`,
+managed threads in `<std/thread>`, checked one-slot storage in `<std/optional>`, atomics in
 `<std/atomic>`, mutexes in `<std/mutex>`, defined integer arithmetic in
 `<std/numeric>`, iterators in `<std/iterator>`, and callable relations in
 `<std/functional>`. Unrelated programs therefore do not carry those private
@@ -752,7 +752,11 @@ Both allocator operations return
 host allocation. An explicit alignment must be a nonzero power of two, and the
 effective alignment is never weaker than `alignof(T)`. Allocation is
 failure-atomic and the resulting storage owner, rather than the allocator,
-carries release authority. Typed allocation derives size and alignment from
+carries release authority. Nonempty storage acquires two separate regions from
+the same process provider: object bytes followed by one live-state byte per slot.
+Second-region failure rolls back the first; zero capacity acquires neither.
+Element cleanup precedes metadata release and then object-region release.
+Typed allocation derives size and alignment from
 the concrete `T`, including owning classes, without requiring application-supplied
 byte sizes. Custom-resource requests can separately use `std::layout_of<T>()`;
 neither operation exposes a stable C ABI.
@@ -797,6 +801,15 @@ typed ownership. It is separate from the process-backed
 not require a resource binding. Resource types are selected by generic type
 arguments, without runtime type erasure or allocator-propagation traits.
 
+`process_resource` is the hosted byte provider: its ordinary GTI implementation
+validates power-of-two alignment and native-size conversion, handles zero bytes
+without an allocation, and maps native failure to `alloc_errc`. POSIX uses
+`posix_memalign`/`free`; Windows uses `_aligned_malloc`/`_aligned_free`. The
+descriptor retains the requested alignment even when POSIX normalization yields
+stronger alignment. Direct calls remain unsafe: a descriptor is passive metadata,
+not duplicate release authority, and live objects must end before release.
+The generic resource protocol does not require libc or a process heap.
+
 `memory_resource<R>` requires read-only `allocate(layout)` and
 `release(raw_allocation)` calls under an explicit unsafe requirement.
 `raw_allocation` carries `address`, `bytes`, `alignment` and provider-defined
@@ -812,17 +825,20 @@ multiplication and requested power-of-two alignment, and verifies the reported
 region before typed adoption. Requested over-alignment is retained across
 prefix growth. A fresh-only allocation attempt reports `invalid_state` for an
 occupied owner; provider errors are preserved, and malformed region metadata
-is not silently converted to exhaustion. Adoption allocates only a slot
-liveness bitmap. The typed storage never frees the external region: ordinary
-reverse field cleanup destroys elements first, then the resource lease returns
-the original descriptor. These checks do not establish provenance, actual
+is not silently converted to exhaustion. A nonempty request makes two separate
+requests to the same bound resource: object bytes first, then one metadata byte
+per slot. Zero capacity requests neither. If the second request or its validation
+fails, both acquired descriptors are returned through their original leases.
+Ordinary reverse field cleanup destroys elements first, then releases metadata
+and object regions. These checks do not establish provenance, actual
 extent, non-overlap, writability or race freedom.
 
-`resource_storage<T,R>` owns sparse element lifetimes in one provider-selected
-region. `try_allocate` is recoverable; `emplace` constructs directly at the final
+`resource_storage<T,R>` owns sparse element lifetimes in a provider-selected
+object region, with separately leased metadata. `try_allocate` is recoverable;
+`emplace` constructs directly at the final
 address, `get`/`get_mut` borrow initialized elements, and `destroy` ends one
 element lifetime without returning the region. `clear` destroys live elements;
-`release` destroys them and returns the original descriptor to the original
+`release` destroys them and returns both original descriptors to the original
 resource. Moving the owner transfers this release obligation without moving
 elements, so deleted element movement is compatible with fixed-address storage.
 `relocate_to` and `try_reserve_prefix` instead require movable, structurally
@@ -868,7 +884,8 @@ The unrelated `engine::Arena` in
 [`examples/allocator-support/arena.gti`](../../examples/allocator-support/arena.gti)
 is a single-threaded monotonic resource, not a heap-free arena implementation.
 It obtains one backing region and separately heap-allocates stable bookkeeping;
-typed adoption also needs its liveness bitmap. Suballocations use checked
+each typed owner requests both its object region and liveness bytes from that
+arena. Suballocations use checked
 padding/extent arithmetic, remain disjoint while live, and are reclaimed for
 reuse only by reset after all releases. Its read-only methods mutate separately
 owned bookkeeping through reviewed unsafe pointers; read-only receiver access

@@ -193,10 +193,8 @@ private:
       return typedDeclaration(true);
     }
 
-    throw error(
-        peek(),
-        "Expect a namespace, concept, enum class, class, struct, interface, "
-        "union, function, or variable declaration.");
+    throw error(peek(), "Expect a namespace, concept, enum, class, struct, "
+                        "interface, union, function, or variable declaration.");
   }
 
   StmtPtr attributedDeclaration() {
@@ -561,6 +559,14 @@ private:
           attribute.argument = previous();
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the borrowed_from owner.");
+        } else if ((attribute.name.lexeme == "unsafe_transfer" ||
+                    attribute.name.lexeme == "unsafe_share") &&
+                   match({TokenKind::LEFT_PAREN})) {
+          attribute.argument = consume(TokenKind::IDENTIFIER,
+                                       "Expect a generic type parameter in the "
+                                       "conditional unsafe assertion.");
+          consume(TokenKind::RIGHT_PAREN,
+                  "Expect ')' after the capability type parameter.");
         } else if (check(TokenKind::LEFT_PAREN)) {
           throw error(attribute.name, "Unknown function attribute '[[" +
                                           attribute.name.lexeme + "(...)]]'.");
@@ -577,7 +583,10 @@ private:
               "Expect ']]' after declaration attributes.");
       consume(TokenKind::RIGHT_BRACKET,
               "Expect ']]' after declaration attributes.");
-      bool functionAttributeList = !functionAttributes.empty();
+      // Attribute spelling is semantic policy. A typed declaration identifies
+      // the function-attribute context even when every attribute is unknown.
+      bool functionAttributeList =
+          !functionAttributes.empty() || isTypedDeclaration();
       for (const FunctionAttribute &attribute : attributes) {
         if (parsedNativeFunctionAttribute &&
             attribute.name.lexeme != "discardable") {
@@ -614,15 +623,18 @@ private:
         throw error(peek(), "These attributes apply only to class, "
                             "struct, interface, or union declarations.");
       }
-      std::vector<Token> classAttributes;
+      std::vector<ClassAttribute> classAttributes;
       for (FunctionAttribute &attribute : attributes) {
-        classAttributes.emplace_back(std::move(attribute.name));
+        classAttributes.push_back(
+            {.name = std::move(attribute.name),
+             .capabilityParameter = std::move(attribute.argument)});
       }
       return classDeclaration(std::move(classAttributes), previous());
     }
   }
 
-  StmtPtr classDeclaration(std::vector<Token> attributes, Token keyword) {
+  StmtPtr classDeclaration(std::vector<ClassAttribute> attributes,
+                           Token keyword) {
     const ClassKind kind =
         keyword.kind == TokenKind::STRUCT      ? ClassKind::Struct
         : keyword.kind == TokenKind::INTERFACE ? ClassKind::Interface
@@ -700,11 +712,15 @@ private:
   }
 
   StmtPtr enumDeclaration(Token keyword) {
-    Token classKeyword =
-        consume(TokenKind::CLASS,
-                "Scoped enums use 'enum class'; unscoped enums are not "
-                "supported.");
+    std::optional<Token> classKeyword;
+    if (match({TokenKind::CLASS})) {
+      classKeyword = previous();
+    }
     Token name = consume(TokenKind::IDENTIFIER, "Expect scoped enum name.");
+    std::vector<GenericParameter> genericParameters;
+    if (check(TokenKind::LESS)) {
+      genericParameters = genericParameterList();
+    }
     std::optional<TypeRef> underlyingType;
     if (match({TokenKind::COLON})) {
       underlyingType = parseType();
@@ -733,7 +749,8 @@ private:
     consume(TokenKind::SEMICOLON, "Expect ';' after scoped enum declaration.");
     return std::make_shared<EnumDecl>(
         std::move(keyword), std::move(classKeyword), std::move(name),
-        std::move(underlyingType), std::move(enumerators));
+        std::move(underlyingType), std::move(enumerators),
+        std::move(genericParameters));
   }
 
   StmtPtr typedDeclaration(
@@ -1953,13 +1970,33 @@ private:
     const NestingGuard conditional(conditionalDepth);
     Token directive = previous();
     std::vector<ConditionalBranch> branches;
+    const auto recoverCondition = [&](const Token &branchDirective) {
+      try {
+        return compileCondition(branchDirective);
+      } catch (const ParseError &) {
+        // Keep this opener alive while recovering its failed condition. The
+        // branch collector, not outer declaration recovery, owns #endif.
+        try {
+          synchronize(context != ItemContext::Declaration,
+                      context == ItemContext::Block,
+                      context == ItemContext::Declaration,
+                      context == ItemContext::ClassMember);
+        } catch (const ConditionalBoundary &) {
+          missingTokenError = false;
+        }
+        CompileCondition invalid;
+        invalid.token = branchDirective;
+        invalid.resolved = false;
+        return invalid;
+      }
+    };
     branches.push_back(
-        {compileCondition(directive), conditionalItems(context)});
+        {recoverCondition(directive), conditionalItems(context)});
 
     while (match({TokenKind::HASH_ELIF})) {
       Token branchDirective = previous();
       branches.push_back(
-          {compileCondition(branchDirective), conditionalItems(context)});
+          {recoverCondition(branchDirective), conditionalItems(context)});
     }
     if (match({TokenKind::HASH_ELSE})) {
       branches.push_back({std::nullopt, conditionalItems(context)});
@@ -2639,7 +2676,24 @@ private:
     ExprPtr expr = primary();
 
     while (true) {
-      if (isExplicitGenericCallStart()) {
+      if (isGenericOwnerStart()) {
+        std::vector<TypeRef> arguments = typeArgumentList();
+        NamePath owner = [&]() {
+          if (auto *qualified = exprAs<QualifiedName>(expr.get()))
+            return NamePath(qualified->name().segments);
+          if (auto *variable = exprAs<Variable>(expr.get()))
+            return NamePath(variable->name());
+          throw error(peek(),
+                      "A qualified generic owner requires a type name.");
+        }();
+        consume(TokenKind::SCOPE, "Expect '::' after generic owner type.");
+        Token member = consume(TokenKind::IDENTIFIER,
+                               "Expect member name after generic owner.");
+        NamePath path(owner.segments);
+        path.segments.push_back(std::move(member));
+        expr = std::make_unique<QualifiedName>(
+            std::move(path), TypeRef(std::move(owner), std::move(arguments)));
+      } else if (isExplicitGenericCallStart()) {
         std::vector<TypeRef> typeArguments = typeArgumentList();
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after explicit generic arguments.");
@@ -3065,6 +3119,26 @@ private:
     }
     return peekAt(next).kind == TokenKind::GREATER &&
            peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+  }
+
+  [[nodiscard]] bool isGenericOwnerStart() const {
+    if (!check(TokenKind::LESS))
+      return false;
+    std::size_t next = 1;
+    if (peekAt(next).kind == TokenKind::GREATER)
+      return peekAt(next + 1).kind == TokenKind::SCOPE;
+    auto end = genericArgumentEnd(next);
+    if (!end)
+      return false;
+    next = *end;
+    while (peekAt(next).kind == TokenKind::COMMA) {
+      end = genericArgumentEnd(next + 1);
+      if (!end)
+        return false;
+      next = *end;
+    }
+    return peekAt(next).kind == TokenKind::GREATER &&
+           peekAt(next + 1).kind == TokenKind::SCOPE;
   }
 
   [[nodiscard]]

@@ -793,6 +793,9 @@ auto SemanticVisitor::Impl::registerTypeAliases(const StmtList &statements,
 }
 
 auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
+  // Alias identities are needed by member/signature registration. Structural
+  // constraints, however, require the completed member/lifecycle inventory.
+  deferringTypeAliasConstraints = true;
   for (RegisteredTypeAlias &alias : typeAliases) {
     if (alias.ownerDeclaration == nullptr) {
       continue;
@@ -838,6 +841,34 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
                        alias.compilerPrivate);
     }
   }
+  deferringTypeAliasConstraints = false;
+}
+
+auto SemanticVisitor::Impl::validateTypeAliasConstraints() -> void {
+  const SourceUnitId enclosingUnit = currentSourceUnit;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingClass = currentClass;
+  for (const RegisteredTypeAlias &alias : typeAliases) {
+    if (alias.resolution != TypeAliasResolution::Resolved) {
+      continue;
+    }
+    currentSourceUnit = alias.sourceUnit;
+    currentNamespace = alias.lookupScope;
+    currentClass = alias.ownerClass == 0
+                       ? std::nullopt
+                       : std::optional<ClassId>(alias.ownerClass);
+    if (currentClass) {
+      beginTypeParameterScope(classInfo(*currentClass).genericParameters);
+    }
+    validateType(alias.declaration->target(),
+                 alias.declaration->target().isNativeFunction());
+    if (currentClass) {
+      endTypeParameterScope();
+    }
+  }
+  currentSourceUnit = enclosingUnit;
+  currentNamespace = enclosingNamespace;
+  currentClass = enclosingClass;
 }
 
 auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
@@ -985,7 +1016,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         binding.name == "atomic_scalar";
     const bool trustedMemoryConstraint =
         isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
-        binding.name == "object_layout";
+        (binding.name == "object_layout" ||
+         binding.name == "independent_object");
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
@@ -1573,6 +1605,11 @@ auto SemanticVisitor::Impl::registerEnums(const StmtList &statements,
                                      [](const EnumeratorDecl &enumerator) {
                                        return !enumerator.payload.empty();
                                      });
+    if (!payload && !enumDecl->genericParameters().empty()) {
+      report(enumDecl->name(),
+             "Generic enum declarations require a payload alternative.",
+             "GTI-S2067");
+    }
     if (payload && enumDecl->underlyingType()) {
       report(enumDecl->underlyingType()->name.last(),
              "Payload enums use compiler-defined variant indices and "
@@ -1729,6 +1766,75 @@ auto SemanticVisitor::Impl::payloadTypeAllowed(const SemanticType &type,
   }
 }
 
+auto SemanticVisitor::Impl::registerEnumGenericParameters() -> void {
+  const auto enclosingNamespace = currentNamespace;
+  for (auto &info : enums) {
+    if (!info.payload || info.declaration == nullptr)
+      continue;
+    currentSourceUnit = info.sourceUnit;
+    currentNamespace = info.namespaceScope;
+    info.genericParameters =
+        makeGenericParameters(info.declaration->genericParameters(), info.name,
+                              info.namespaceScope, true, false);
+    for (std::size_t index = 0; index < info.genericParameters.size();
+         ++index) {
+      const auto &parameter = info.genericParameters[index];
+      if (parameter.pack &&
+          (index + 1 != info.genericParameters.size() ||
+           genericValueParameterCount(info.genericParameters) != 0))
+        report(parameter.name,
+               "A nominal type pack must be the final generic parameter and "
+               "cannot be combined with value parameters.",
+               "GTI-S2023");
+    }
+  }
+  currentNamespace = enclosingNamespace;
+}
+
+auto SemanticVisitor::Impl::resolveEnumGenericDefaults(EnumId id) -> void {
+  if (id == 0 || id > enums.size())
+    return;
+  auto &info = enums[id - 1];
+  if (info.defaultsState == EnumInfo::DefaultsState::Resolved ||
+      info.defaultsState == EnumInfo::DefaultsState::Invalid)
+    return;
+  if (info.defaultsState == EnumInfo::DefaultsState::Resolving) {
+    report(info.name, "Generic enum defaults form a recursive dependency.",
+           "GTI-S2023");
+    info.defaultsState = EnumInfo::DefaultsState::Invalid;
+    return;
+  }
+  if (!info.payload || !info.declaration) {
+    info.defaultsState = EnumInfo::DefaultsState::Resolved;
+    return;
+  }
+  info.defaultsState = EnumInfo::DefaultsState::Resolving;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingSource = currentSourceUnit;
+  auto enclosingTypes = std::move(typeParameterScopes);
+  auto enclosingValues = std::move(valueParameterScopes);
+  auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingRequirements = std::move(requirementScopes);
+  typeParameterScopes.clear();
+  valueParameterScopes.clear();
+  typePackScopes.clear();
+  requirementScopes.clear();
+  currentNamespace = info.namespaceScope;
+  currentSourceUnit = info.sourceUnit;
+  const auto before = diagnostics.size();
+  resolveGenericParameterDefaults(info.declaration->genericParameters(),
+                                  info.genericParameters, info.namespaceScope);
+  info.defaultsState = diagnostics.size() == before
+                           ? EnumInfo::DefaultsState::Resolved
+                           : EnumInfo::DefaultsState::Invalid;
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingSource;
+  typeParameterScopes = std::move(enclosingTypes);
+  valueParameterScopes = std::move(enclosingValues);
+  typePackScopes = std::move(enclosingPacks);
+  requirementScopes = std::move(enclosingRequirements);
+}
+
 auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   for (EnumInfo &info : enums) {
@@ -1737,6 +1843,7 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
     }
     currentSourceUnit = info.sourceUnit;
     currentNamespace = info.namespaceScope;
+    beginTypeParameterScope(info.genericParameters);
     std::vector<EnumeratorInfo> modelEnumerators;
     modelEnumerators.reserve(info.declaration->enumerators().size());
     for (std::size_t variantIndex = 0;
@@ -1780,6 +1887,7 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                  "or fixed arrays.",
                  "GTI-S2067");
         } else if (type != SemanticType::Unknown &&
+                   !containsOpenTypeParameter(type) &&
                    !payloadTypeAllowed(type, info.id)) {
           report(location,
                  "Payload field type '" + typeSpelling(type) +
@@ -1809,16 +1917,62 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                      .qualifiedName =
                          qualifiedName(info.namespaceScope, info.name.lexeme),
                      .namespaceScope = info.namespaceScope,
+                     .genericParameters = info.genericParameters,
                      .underlyingType = info.underlyingType,
                      .enumerators = std::move(modelEnumerators),
                      .payload = true,
                      .compilerPrivate = info.compilerPrivate});
+    endTypeParameterScope();
   }
   currentNamespace = enclosingNamespace;
 }
 
+auto SemanticVisitor::Impl::validateConcreteEnumPayloads(
+    const SemanticType &type, const Token &site) -> void {
+  std::vector<SemanticType> visiting;
+  const auto validate = [&](const auto &self,
+                            const SemanticType &current) -> void {
+    if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+      return;
+    visiting.push_back(current);
+    for (const auto &argument : current.arguments)
+      self(self, argument);
+    if (current.kind == SemanticType::Enum) {
+      if (const auto info = enumTypeFor(current)) {
+        for (const auto &variant : info->enumerators) {
+          for (std::size_t index = 0; index < variant.payloadTypes.size();
+               ++index) {
+            const auto &payload = variant.payloadTypes[index];
+            if (containsOpenTypeParameter(payload) ||
+                payload == SemanticType::Unknown)
+              continue;
+            if (!payloadTypeAllowed(payload, current.enumId) ||
+                typeTraits(payload).containsBorrowedState) {
+              auto diagnostic = makeDiagnostic(
+                  "GTI-S2067", DiagnosticPhase::Semantics, site,
+                  "Payload field type '" + typeSpelling(payload) +
+                      "' is not a supported owning or passive enum payload.");
+              if (variant.declaration &&
+                  index < variant.declaration->payload.size())
+                diagnostic.related.push_back(
+                    {tokenSpan(
+                         variant.declaration->payload[index].type.name.last()),
+                     "Payload field declared here."});
+              diagnostics.push_back(std::move(diagnostic));
+            }
+          }
+        }
+      }
+    }
+    visiting.pop_back();
+  };
+  validate(validate, type);
+}
+
 auto SemanticVisitor::Impl::registerClassAttributes(
-    const ClassDecl &declaration) -> CapabilityPolicyRegistration {
+    const ClassDecl &declaration,
+    const std::vector<GenericParameterInfo> &parameters)
+    -> CapabilityPolicyRegistration {
   CapabilityPolicyRegistration result;
   const bool interface = declaration.kind() == ClassKind::Interface;
   const auto reportInvalid = [&](const Token &attribute, std::string message) {
@@ -1829,7 +1983,10 @@ auto SemanticVisitor::Impl::registerClassAttributes(
                     "requirements."
                   : "Classes and structs may use [[no_transfer]], "
                     "[[no_share]], "
-                    "[[unsafe_transfer]], and [[unsafe_share]]; a passive "
+                    "[[unsafe_transfer]], and [[unsafe_share]], optionally "
+                    "conditioning an unsafe assertion on a type parameter "
+                    "with [[unsafe_transfer(T)]] or [[unsafe_share(T)]]; a "
+                    "passive "
                     "struct may instead opt into [[c_abi]], while an "
                     "incomplete native handle uses [[c_opaque]].");
     diagnostics.emplace_back(std::move(diagnostic));
@@ -1855,7 +2012,48 @@ auto SemanticVisitor::Impl::registerClassAttributes(
     stored = policy;
   };
 
-  for (const Token &attribute : declaration.attributes()) {
+  for (const ClassAttribute &syntax : declaration.attributes()) {
+    const Token &attribute = syntax.name;
+    if (syntax.capabilityParameter) {
+      const Token &parameter = *syntax.capabilityParameter;
+      if (interface || (attribute.lexeme != "unsafe_transfer" &&
+                        attribute.lexeme != "unsafe_share")) {
+        reportInvalid(
+            attribute,
+            "Conditional unsafe assertions apply only to classes and structs.");
+        continue;
+      }
+      const auto found =
+          std::find_if(parameters.begin(), parameters.end(),
+                       [&](const GenericParameterInfo &candidate) {
+                         return candidate.name.lexeme == parameter.lexeme;
+                       });
+      if (found == parameters.end() || found->value || found->pack) {
+        reportInvalid(
+            parameter,
+            "A conditional unsafe assertion must name one non-pack type "
+            "parameter of this declaration.");
+        continue;
+      }
+      const bool transfer = attribute.lexeme == "unsafe_transfer";
+      const bool duplicate = transfer ? result.transferSource.has_value()
+                                      : result.shareSource.has_value();
+      setPolicy(attribute, transfer,
+                ConcurrencyCapabilityPolicy::UnsafeConditional);
+      if (!duplicate) {
+        (transfer ? result.transferCondition : result.shareCondition) =
+            SemanticType::typeParameter(found->id);
+      }
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(parameter),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbolForDeclaration(found->name),
+           .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+           .name = parameter.lexeme,
+           .type = SemanticType::typeParameter(found->id)});
+      continue;
+    }
     if (attribute.lexeme == "c_abi") {
       if (result.cAbiSource) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -2204,7 +2402,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       std::vector<GenericParameterInfo> genericParameters =
           classDecl->genericArgumentPatterns().empty()
               ? makeGenericParameters(classDecl->genericParameters(),
-                                      classDecl->name(), scope, true)
+                                      classDecl->name(), scope, true, false)
               : makeClassPatternParameters(*classDecl, scope);
       for (std::size_t index = 0; index < genericParameters.size(); ++index) {
         if (genericParameters[index].pack &&
@@ -2263,8 +2461,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           compilerCapability = CompilerCapabilityTypeKind::UniqueOwner;
         } else if (classDecl->name().lexeme == "shared_owner") {
           compilerCapability = CompilerCapabilityTypeKind::SharedOwner;
-        } else if (classDecl->name().lexeme == "storage") {
-          compilerCapability = CompilerCapabilityTypeKind::Storage;
+        } else if (classDecl->name().lexeme == "uninitialized_storage") {
+          compilerCapability = CompilerCapabilityTypeKind::UninitializedStorage;
         }
       } else if (trustedPreludeCapabilityScope &&
                  classDecl->genericParameters().size() == 1 &&
@@ -2321,14 +2519,15 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       }
       CapabilityPolicyRegistration capabilityPolicies;
       if (classDecl->kind() == ClassKind::Union) {
-        for (const Token &attribute : classDecl->attributes()) {
-          report(attribute,
+        for (const ClassAttribute &attribute : classDecl->attributes()) {
+          report(attribute.name,
                  "Unions do not accept class capability or native-record "
                  "attributes.",
                  "GTI-S2066");
         }
       } else {
-        capabilityPolicies = registerClassAttributes(*classDecl);
+        capabilityPolicies =
+            registerClassAttributes(*classDecl, genericParameters);
       }
       classes.push_back(ClassInfo{
           .id = id,
@@ -2347,6 +2546,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           .sharePolicy = capabilityPolicies.share,
           .transferPolicySource = capabilityPolicies.transferSource,
           .sharePolicySource = capabilityPolicies.shareSource,
+          .transferCondition = capabilityPolicies.transferCondition,
+          .shareCondition = capabilityPolicies.shareCondition,
           .compilerPrivate =
               compilerPrivateDeclaration(currentSourceUnit, scope),
           .compilerCapability = compilerCapability,
@@ -2369,6 +2570,51 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       scope.pop_back();
     }
   }
+}
+
+auto SemanticVisitor::Impl::resolveClassGenericDefaults(ClassId id) -> void {
+  if (id == 0 || id > classes.size())
+    return;
+  auto &info = classInfo(id);
+  if (info.defaultsState == ClassInfo::DefaultsState::Resolved ||
+      info.defaultsState == ClassInfo::DefaultsState::Invalid)
+    return;
+  if (info.defaultsState == ClassInfo::DefaultsState::Resolving) {
+    report(info.name, "Generic class defaults form a recursive dependency.",
+           "GTI-S2023");
+    info.defaultsState = ClassInfo::DefaultsState::Invalid;
+    return;
+  }
+  if (!info.declaration || info.genericParameters.empty() ||
+      !info.declaration->genericArgumentPatterns().empty()) {
+    info.defaultsState = ClassInfo::DefaultsState::Resolved;
+    return;
+  }
+  info.defaultsState = ClassInfo::DefaultsState::Resolving;
+  const auto enclosingNamespace = currentNamespace;
+  const auto enclosingSource = currentSourceUnit;
+  auto enclosingTypes = std::move(typeParameterScopes);
+  auto enclosingValues = std::move(valueParameterScopes);
+  auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingRequirements = std::move(requirementScopes);
+  typeParameterScopes.clear();
+  valueParameterScopes.clear();
+  typePackScopes.clear();
+  requirementScopes.clear();
+  currentNamespace = info.namespaceScope;
+  currentSourceUnit = info.sourceUnit;
+  const auto before = diagnostics.size();
+  resolveGenericParameterDefaults(info.declaration->genericParameters(),
+                                  info.genericParameters, info.namespaceScope);
+  info.defaultsState = diagnostics.size() == before
+                           ? ClassInfo::DefaultsState::Resolved
+                           : ClassInfo::DefaultsState::Invalid;
+  currentNamespace = enclosingNamespace;
+  currentSourceUnit = enclosingSource;
+  typeParameterScopes = std::move(enclosingTypes);
+  valueParameterScopes = std::move(enclosingValues);
+  typePackScopes = std::move(enclosingPacks);
+  requirementScopes = std::move(enclosingRequirements);
 }
 
 auto SemanticVisitor::Impl::canonicalExactSpecializationType(
@@ -3060,25 +3306,37 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
 
 auto SemanticVisitor::Impl::byValueTypeReachesClass(
     const SemanticType &type, ClassId target,
-    std::unordered_set<ClassId> &visiting,
-    std::unordered_set<EnumId> &visitingEnums) const -> bool {
+    std::vector<SemanticType> &visiting,
+    std::vector<SemanticType> &visitingEnums) const -> bool {
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
     return byValueTypeReachesClass(type.arguments.front(), target, visiting,
                                    visitingEnums);
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
-    if (!visitingEnums.insert(type.enumId).second) {
+    if (std::find(visitingEnums.begin(), visitingEnums.end(), type) !=
+        visitingEnums.end()) {
       return false;
     }
+    visitingEnums.push_back(type);
     bool reaches = false;
-    for (const auto &[_, enumerator] : enums[type.enumId - 1].enumerators) {
+    const auto concrete = enumTypeFor(type);
+    if (!concrete) {
+      visitingEnums.pop_back();
+      return false;
+    }
+    for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
-        reaches = reaches || byValueTypeReachesClass(payload, target, visiting,
-                                                     visitingEnums);
+        // Direct payload sums are outside the admitted field family. Do not
+        // expand an already-invalid symbolic sum recurrence here. Every
+        // admitted enum recursion crosses a class, whose existing nominal
+        // traversal guard bounds structurally growing instances.
+        if (payloadTypeAllowed(payload, type.enumId))
+          reaches = reaches || byValueTypeReachesClass(payload, target,
+                                                       visiting, visitingEnums);
       }
     }
-    visitingEnums.erase(type.enumId);
+    visitingEnums.pop_back();
     return reaches;
   }
   if (type.kind != SemanticType::Class || type.classId == 0 ||
@@ -3088,9 +3346,10 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
   if (type.classId == target) {
     return true;
   }
-  if (!visiting.insert(type.classId).second) {
+  if (nonDecreasingNominalRecurrence(type, visiting)) {
     return false;
   }
+  visiting.push_back(type);
 
   const ClassInfo &nested = classInfo(type.classId);
   const GenericSubstitution substitution = classSubstitution(type);
@@ -3105,12 +3364,12 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     const SemanticType fieldType =
         substituteType(member->second.symbol.type, substitution);
     if (byValueTypeReachesClass(fieldType, target, visiting, visitingEnums)) {
-      visiting.erase(type.classId);
+      visiting.pop_back();
       return true;
     }
   }
 
-  visiting.erase(type.classId);
+  visiting.pop_back();
   return false;
 }
 
@@ -3150,8 +3409,8 @@ auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
       }
       const SemanticType fieldType =
           substituteType(member->second.symbol.type, substitution);
-      std::unordered_set<ClassId> visiting;
-      std::unordered_set<EnumId> visitingEnums;
+      std::vector<SemanticType> visiting;
+      std::vector<SemanticType> visitingEnums;
       if (!byValueTypeReachesClass(fieldType, owner.id, visiting,
                                    visitingEnums)) {
         continue;
@@ -4844,10 +5103,12 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       if (member != owner.members.end() &&
           typeTraits(member->second.symbol.type).containsBorrowedState &&
           !storedReferencePath(SemanticType::classType(owner.id))) {
-        report(field.declaration->name(),
-               "A class or struct may contain only one stored-reference "
-               "dependency, through direct or nested nominal fields.",
-               "GTI-S2045");
+        report(
+            field.declaration->name(),
+            "Borrowed field state must use checked stored-reference paths "
+            "through ordinary nominal fields; fallible and other non-nominal "
+            "carriers cannot be stored as fields.",
+            "GTI-S2045");
       }
     }
     if (!owner.storedReference) {
@@ -5505,8 +5766,6 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         case IntrinsicKind::Move:
         case IntrinsicKind::UniqueOwnerBorrow:
         case IntrinsicKind::UniqueOwnerBorrowMut:
-        case IntrinsicKind::StorageRead:
-        case IntrinsicKind::StorageReadMut:
         case IntrinsicKind::PrefixStorageRead:
         case IntrinsicKind::PrefixStorageReadMut:
         case IntrinsicKind::OptionalStorageRead:
@@ -6067,8 +6326,7 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             SpecialMemberSpecifierKind::Deleted;
     ConstructorId generatedBaseConstructor = 0;
     if (defaultStatus == SpecialMemberStatus::Generated &&
-        owner.fields.empty() && !owner.destructor &&
-        owner.genericParameters.empty()) {
+        owner.fields.empty() && owner.genericParameters.empty()) {
       if (const auto *base = concreteBase(owner);
           base != nullptr && base->type.arguments.empty() &&
           base->type.valueArguments.empty()) {
@@ -6091,6 +6349,10 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             .declaredDestructor = owner.destructor,
             .defaultConstructor = defaultStatus,
             .generatedDefaultBaseConstructor = generatedBaseConstructor,
+            .generatedDefaultFieldInitializers =
+                defaultStatus == SpecialMemberStatus::Generated &&
+                owner.kind != ClassKind::Union && !owner.fields.empty() &&
+                fieldsHaveDeclarationInitializers(owner),
             .copyConstructor = copyStatus,
             .moveConstructor = moveStatus,
             .copyAssignment = traits.copyAssignable
@@ -6920,6 +7182,34 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
   }
 }
 
+auto SemanticVisitor::Impl::recordClassFieldSymbols() -> void {
+  for (const ClassInfo &owner : classes) {
+    if (owner.declaration == nullptr)
+      continue;
+    // The catalog owns active declaration order. Reserve physical field
+    // identities before summaries/layout queries can first-reference them in
+    // pointer-keyed lookup order; inherited lookup aliases reuse the same ID.
+    const auto visit = [&](const auto &self, const StmtList &members) -> void {
+      for (const StmtPtr &statement : members) {
+        if (const auto *conditional =
+                stmtAs<ConditionalStmt>(statement.get())) {
+          if (const StmtList *active = conditional->activeBranch(target))
+            self(self, *active);
+        } else if (const auto *field = stmtAs<VariableDecl>(statement.get())) {
+          const auto member = owner.members.find(field->name().lexeme);
+          if (member != owner.members.end() &&
+              (member->second.symbol.bindingKind ==
+                   SemanticBindingKind::Field ||
+               member->second.symbol.bindingKind ==
+                   SemanticBindingKind::StaticField))
+            toolingSymbolFor(member->second.symbol);
+        }
+      }
+    };
+    visit(visit, owner.declaration->members());
+  }
+}
+
 auto SemanticVisitor::Impl::recordClassTypes() -> void {
   for (const ClassInfo &owner : classes) {
     if (owner.declaration == nullptr) {
@@ -6987,6 +7277,8 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .traits = typeTraits(openClassType(owner.id)),
             .transferPolicy = owner.transferPolicy,
             .sharePolicy = owner.sharePolicy,
+            .transferCondition = owner.transferCondition,
+            .shareCondition = owner.shareCondition,
             .compilerPrivate = owner.compilerPrivate,
             .compilerCapability = owner.compilerCapability});
   }

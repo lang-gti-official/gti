@@ -138,10 +138,19 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             return False
     for name in FAILURE_MIGRATED_FUNCTIONS:
         body = function_definition(generated, f"{name}__gti_mir_failure")
+        stages = [body.find(spelling) for spelling in (
+            ".construction_address()",
+            "if (__gti_mir_construct_success_",
+            ".mark_constructed()",
+            ".destroy()",
+        )]
         if (
             "// GTI verified-MIR body: scalar-cfg-failure-v1" not in body
-            or ".construct()" not in body
-            or ".destroy()" not in body
+            or any(position < 0 for position in stages)
+            or stages != sorted(stages)
+            or "::new (" not in body
+            or "mir_failure_constructor_tag_v1<" not in body
+            or "return false;" not in body
             or function_definition(generated, name)
         ):
             sys.stderr.write(

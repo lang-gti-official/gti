@@ -302,11 +302,24 @@ void expectSelectedDefinitions(std::string_view generated) {
   }
   const std::string_view fieldOwner = functionDefinition(
       generated, "compatibility_field_owner__gti_mir_failure");
+  const auto construction = fieldOwner.find(".construction_address()");
+  const auto successGuard = fieldOwner.find("if (__gti_mir_construct_success_");
+  const auto activation = fieldOwner.find(".mark_constructed()");
+  const auto destruction = fieldOwner.find(".destroy()");
   expect(fieldOwner.find(failureFunctionMarker) != std::string_view::npos &&
-             fieldOwner.find(".construct()") != std::string_view::npos &&
-             fieldOwner.find(".destroy()") != std::string_view::npos &&
+             construction != std::string_view::npos &&
+             successGuard != std::string_view::npos &&
+             activation != std::string_view::npos &&
+             destruction != std::string_view::npos &&
+             construction < successGuard && successGuard < activation &&
+             activation < destruction &&
+             fieldOwner.find("::new (") != std::string_view::npos &&
+             fieldOwner.find("mir_failure_constructor_tag_v1<") !=
+                 std::string_view::npos &&
+             fieldOwner.find("return false;") != std::string_view::npos &&
              functionDefinition(generated, "compatibility_field_owner").empty(),
-         "the field-owning function should preserve its slot schedule only "
+         "the field-owning function must placement-construct its selected "
+         "generated body, activate only on success, and drain its slot only "
          "through the explicit failure-form body");
   expect(functionDefinition(generated, "compatibility_checked_cleanup")
                  .find(".construct()") == std::string_view::npos,

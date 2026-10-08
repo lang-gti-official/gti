@@ -90,6 +90,15 @@
     "arguments": 1
   },
   {
+    "id": "MissingFunctionDefinition",
+    "code": "GTI-S2106",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "function-definition",
+    "format": "GTI function '{0}' is called but has no definition in this program.",
+    "arguments": 1
+  },
+  {
     "id": "RawAuditIncomplete",
     "code": "GTI-S2103",
     "phase": "Semantics",
@@ -97,5 +106,14 @@
     "group": "raw-pointer-incomplete",
     "format": "{0}",
     "arguments": 1
+  },
+  {
+    "id": "GenericInstantiationLimit",
+    "code": "GTI-S2105",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "generic-instantiation",
+    "format": "Generic instantiation exceeded the compiler's {0} limit ({1}).",
+    "arguments": 2
   }
 ]

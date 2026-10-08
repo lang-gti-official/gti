@@ -1,0 +1,46 @@
+#include <std/string>
+#include <std/vector>
+
+// One closed message family serves unrelated payload types. The optional
+// `class` spelling would give this declaration exactly the same meaning.
+enum Message<T, uint64_t Channel = 3> {
+  idle,
+  received(T payload),
+  stopped(int32_t reason)
+};
+
+T relay<T>(T value) { return std::move(value); }
+
+using TextMessage = Message<std::string>;
+using CountMessage = Message<int32_t, 7>;
+
+int main() {
+  mut std::vector<TextMessage> inbox{};
+  inbox.push_back(relay(TextMessage::received(std::string("hello"))));
+  inbox.push_back(TextMessage::idle);
+  inbox.push_back(TextMessage::stopped(0));
+
+  for (auto& message : inbox) {
+    switch (message) {
+      case TextMessage::idle: std::println("idle"); break;
+      case TextMessage::received(auto& payload):
+        std::println(payload.view());
+        break;
+      case TextMessage::stopped(reason): std::println(reason); break;
+    }
+  }
+
+  // Different arguments select different exact enum types, not a common
+  // erased message representation. Mutable patterns borrow original storage.
+  mut CountMessage count = CountMessage::received(4);
+  switch (count) {
+    case CountMessage::received(mut auto& payload): payload = payload + 3; break;
+    case CountMessage::idle: return 1;
+    case CountMessage::stopped(reason): return reason;
+  }
+  switch (count) {
+    case CountMessage::received(value): return value == 7 ? 0 : 2;
+    case CountMessage::idle: return 3;
+    case CountMessage::stopped(reason): return reason;
+  }
+}

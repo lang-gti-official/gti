@@ -9,11 +9,24 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <string_view>
 #include <type_traits>
 
 namespace {
 
 int failures = 0;
+
+bool sameFailureRecord(const gti_failure_record_v2 &left,
+                       const gti_failure_record_v2 &right) {
+  return left.abi_version == right.abi_version && left.code == right.code &&
+         left.detail == right.detail && left.site_index == right.site_index &&
+         left.reserved == right.reserved &&
+         std::memcmp(left.artifact_identity, right.artifact_identity,
+                     sizeof(left.artifact_identity)) == 0 &&
+         left.message_size == right.message_size &&
+         left.message_flags == right.message_flags &&
+         std::memcmp(left.message, right.message, sizeof(left.message)) == 0;
+}
 
 void expect(bool condition, const char *message) {
   if (!condition) {
@@ -451,6 +464,11 @@ struct TaskCleanupFailureContext {
 
 void runTaskThenFail(void *opaque) {
   auto &context = *static_cast<TaskCleanupFailureContext *>(opaque);
+  gti_failure_record_v2 unavailable{};
+  const gti_failure_artifact_descriptor_v1 *unavailableArtifact = nullptr;
+  expect(!gti_runtime_detail::copy_managed_task_cleanup_primary_v2(
+             unavailable, unavailableArtifact),
+         "worker execution cannot borrow a pending task-cleanup failure");
   gti_runtime_detail::run_managed_task_adapter([&] {
     gti_rt_failure_terminate_v1(&context.primary, context.primaryArtifact,
                                 observeFailure, context.observers);
@@ -459,6 +477,19 @@ void runTaskThenFail(void *opaque) {
 
 void destroyTaskWithFailure(void *opaque) {
   auto *context = static_cast<TaskCleanupFailureContext *>(opaque);
+  gti_failure_record_v2 copied{};
+  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+  expect(gti_runtime_detail::copy_managed_task_cleanup_primary_v2(copied,
+                                                                  artifact) &&
+             copied.abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
+             copied.code == context->primary.code &&
+             copied.detail == context->primary.detail &&
+             copied.site_index == context->primary.site_index &&
+             std::memcmp(copied.artifact_identity,
+                         context->primary.artifact_identity,
+                         sizeof(copied.artifact_identity)) == 0 &&
+             artifact == context->primaryArtifact,
+         "cleanup-frame copy retains promoted primary and exact descriptor");
   gti_runtime_detail::run_managed_task_adapter([&] {
     gti_rt_failure_terminate_v1(&context->secondary, context->secondaryArtifact,
                                 observeFailure, context->observers);
@@ -545,6 +576,17 @@ void runPanicTask(void *opaque) {
 void destroyPanicTask(void *opaque) {
   auto *context = static_cast<PanicContext *>(opaque);
   context->destructions->fetch_add(1, std::memory_order_relaxed);
+  gti_failure_record_v2 copied{};
+  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+  expect(gti_runtime_detail::copy_managed_task_cleanup_primary_v2(copied,
+                                                                  artifact) &&
+             sameFailureRecord(copied, context->primary) && artifact == nullptr,
+         "task cleanup copies the exact pending primary and its descriptor");
+  copied.code = GTI_FAILURE_CODE_NONE_V1;
+  expect(gti_runtime_detail::copy_managed_task_cleanup_primary_v2(copied,
+                                                                  artifact) &&
+             sameFailureRecord(copied, context->primary),
+         "mutating a cleanup-frame copy cannot modify worker-owned failure");
   if (context->failCleanup) {
     expect(gti_runtime_detail::record_managed_task_cleanup_failure(
                context->secondary, nullptr),
@@ -559,6 +601,11 @@ void destroyPanicTask(void *opaque) {
 }
 
 void testPanicHandoff() {
+  gti_failure_record_v2 outside{};
+  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+  expect(!gti_runtime_detail::copy_managed_task_cleanup_primary_v2(outside,
+                                                                   artifact),
+         "pending primary is unavailable outside managed task cleanup");
   std::atomic<int> destructions{0};
   std::atomic<int> observers{0};
   gti_failure_record_v2 primary{.abi_version = GTI_FAILURE_ABI_VERSION_V2,
@@ -738,7 +785,95 @@ static_assert(offsetof(gti_thread_join_result_v1, failure) == 16);
 static_assert(offsetof(gti_thread_value_join_result_v1, result_context) ==
               sizeof(gti_thread_join_result_v1));
 
-int main() {
+struct EnvelopeProbe {
+  gti_failure_record_v2 primary{};
+  gti_failure_record_v2 secondary{};
+  gti_failure_artifact_descriptor_v1 primaryArtifact{};
+  gti_failure_artifact_descriptor_v1 secondaryArtifact{};
+  std::string_view mutation;
+};
+
+void runEnvelopeProbe(void *opaque) {
+  auto &probe = *static_cast<EnvelopeProbe *>(opaque);
+  gti_runtime_detail::run_managed_task_adapter([&] {
+    gti_rt_failure_terminate_v2(&probe.primary, &probe.primaryArtifact, nullptr,
+                                nullptr);
+  });
+  if (probe.mutation == "body") {
+    const gti_failure_emergency_v2 emergency{GTI_FAILURE_ABI_VERSION_V2, 0,
+                                             probe.primary, probe.secondary};
+    gti_runtime_detail::run_managed_task_adapter([&] {
+      gti_rt_failure_terminate_cleanup_v2(&emergency, &probe.primaryArtifact,
+                                          &probe.secondaryArtifact);
+    });
+  }
+}
+
+void destroyEnvelopeProbe(void *opaque) {
+  auto &probe = *static_cast<EnvelopeProbe *>(opaque);
+  gti_failure_record_v2 primary{};
+  const gti_failure_artifact_descriptor_v1 *artifact = nullptr;
+  if (!gti_runtime_detail::copy_managed_task_cleanup_primary_v2(primary,
+                                                                artifact)) {
+    expect(false, "envelope probe needs a pending primary in task cleanup");
+    return;
+  }
+  if (probe.mutation == "code")
+    primary.code = GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1;
+  else if (probe.mutation == "site")
+    ++primary.site_index;
+  else if (probe.mutation == "message")
+    primary.message[0] ^= 1;
+  else if (probe.mutation == "descriptor")
+    artifact = &probe.secondaryArtifact;
+  else if (probe.mutation == "third")
+    expect(gti_runtime_detail::record_managed_task_cleanup_failure(
+               probe.secondary, &probe.secondaryArtifact),
+           "third-record probe first completes the pending emergency");
+  const gti_failure_emergency_v2 emergency{GTI_FAILURE_ABI_VERSION_V2, 0,
+                                           primary, probe.secondary};
+  if (probe.mutation == "stored") {
+    expect(gti_runtime_detail::record_managed_task_cleanup_emergency(
+               &emergency, artifact, &probe.secondaryArtifact),
+           "task cleanup can store the exact emergency without a handoff");
+    return;
+  }
+  gti_runtime_detail::run_managed_task_adapter([&] {
+    gti_rt_failure_terminate_cleanup_v2(&emergency, artifact,
+                                        &probe.secondaryArtifact);
+  });
+}
+
+int main(int argc, char **argv) {
+  if (argc == 2) {
+    EnvelopeProbe probe;
+    probe.mutation = argv[1];
+    probe.primary.abi_version = GTI_FAILURE_ABI_VERSION_V2;
+    probe.primary.code = GTI_FAILURE_CODE_PANIC_V2;
+    probe.primary.detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2;
+    (void)gti_rt_failure_capture_panic_v2(
+        &probe.primary, {.data = "first primary", .length = 13});
+    probe.secondary = probe.primary;
+    (void)gti_rt_failure_capture_panic_v2(
+        &probe.secondary, {.data = "second failure", .length = 14});
+    const auto spawned =
+        gti_rt_thread_spawn_v1(runEnvelopeProbe, &probe, destroyEnvelopeProbe);
+    auto state = spawned.state;
+    if (spawned.status != GTI_THREAD_SPAWN_OK_V1)
+      return 1;
+    const auto joined = gti_rt_thread_join_v2(&state);
+    expect(
+        joined.failure_kind == GTI_THREAD_WORKER_FAILURE_CLEANUP_V1 &&
+            sameFailureRecord(joined.failure, gti_failure_record_v2{}) &&
+            sameFailureRecord(joined.cleanup_failure.primary, probe.primary) &&
+            sameFailureRecord(joined.cleanup_failure.secondary,
+                              probe.secondary) &&
+            joined.primary_artifact == &probe.primaryArtifact &&
+            joined.secondary_artifact == &probe.secondaryArtifact,
+        "exact emergency promotion clears the ordinary payload and preserves "
+        "both records and descriptors");
+    return failures == 0 ? 0 : 1;
+  }
   testSpawnJoinAndConsumption();
   testJoinPublishesWorkerWrites();
   testValueJoinTakeAndAbandon();

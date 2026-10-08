@@ -160,16 +160,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
     if (!enumeration.payload) {
       result.program.integralEnums_.push_back(
           {.declaration = enumeration.declaration,
+           .type = enumeration.type,
            .sourceUnit = enumeration.sourceUnit,
            .underlyingType = enumeration.underlyingType});
       continue;
     }
-    MirPayloadEnum lowered{
-        .declaration = enumeration.declaration,
-        .sourceUnit = enumeration.sourceUnit,
-        .type = SemanticType::enumType(enumeration.declaration),
-        .traits = enumeration.traits,
-        .requiresActiveCleanup = enumeration.requiresActiveCleanup};
+    MirPayloadEnum lowered{.declaration = enumeration.declaration,
+                           .sourceUnit = enumeration.sourceUnit,
+                           .type = enumeration.type,
+                           .traits = enumeration.traits,
+                           .requiresActiveCleanup =
+                               enumeration.requiresActiveCleanup};
     lowered.variants.reserve(enumeration.enumerators.size());
     for (const HirEnumerator &variant : enumeration.enumerators) {
       lowered.variants.push_back({.variantIndex = variant.variantIndex,
@@ -201,6 +202,10 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .declaration = instance.declaration,
         .type = instance.type,
         .traits = instance.traits,
+        .transferPolicy = instance.transferPolicy,
+        .sharePolicy = instance.sharePolicy,
+        .transferCondition = instance.transferCondition,
+        .shareCondition = instance.shareCondition,
         .compilerCapability = instance.compilerCapability,
         .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
         .mutexGuardBorrowCarrier = instance.mutexGuardBorrowCarrier,
@@ -215,6 +220,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .cAbiLayout = lowerCAbiRecordLayout(instance),
         .unionLayout = lowerUnionLayout(instance),
         .defaultConstructor = instance.defaultConstructor,
+        .generatedDefaultRequiresSchedule =
+            instance.generatedDefaultRequiresSchedule,
         .copyConstructor = instance.copyConstructor,
         .moveConstructor = instance.moveConstructor,
         .copyAssignment = instance.copyAssignment,
@@ -430,6 +437,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         {.id = instance.id,
          .owner = instance.owner,
          .constexprConstructor = instance.constexprConstructor,
+         .generatedDefault = instance.generatedDefault,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,

@@ -306,14 +306,18 @@ const int byte_copy_probe = [] {
   check(optional.read());
   optional_storage<NativeAddressRecord> moved_optional(std::move(optional));
   check(moved_optional.read());
-  storage<NativeAddressRecord> sparse;
-  if (storage<NativeAddressRecord>::try_allocate(3, 64, &sparse) != 0)
-    std::abort();
-  sparse.construct(1, source);
-  sparse.shift_left(0, 2);
-  check(sparse.read(0));
-  sparse.shift_right(0, 1);
-  check(sparse.read(1));
+  // Sparse policy is source-defined. Its shifts now use the general typed
+  // lifetime primitives, which must preserve the same inert pointer bytes.
+  uninitialized_storage<NativeAddressRecord, true, true> slots[3];
+  const auto address = [&](std::size_t index) {
+    return reinterpret_cast<NativeAddressRecord *>(&slots[index]);
+  };
+  construct_representation_at(address(1), source);
+  mir_object_relocate_v1(address(0), std::launder(address(1)));
+  check(*std::launder(address(0)));
+  mir_object_relocate_v1(address(1), std::launder(address(0)));
+  check(*std::launder(address(1)));
+  std::destroy_at(std::launder(address(1)));
   prefix_storage<NativeAddressRecord> prefix;
   if (!prefix_storage<NativeAddressRecord>::try_allocate(3, &prefix))
     std::abort();

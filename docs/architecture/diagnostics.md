@@ -9,6 +9,20 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2106` rejects a selected ordinary GTI call without a source definition
+in a closed executable/library request, before native code generation. The
+call token is primary and its bodyless declaration is related. Semantic
+resolution preserves the selected signature for recovery; it does not guess
+a replacement body or offer an automatic foreign-linkage edit. Pure virtual
+contracts, registered runtime bindings and compiler intrinsics retain their
+separate definition policies. Fragment analysis can still resolve declarations
+without claiming executable closure.
+Generic primary bodies defer this closure requirement while their enclosing
+type or value formals remain unresolved. Concrete reanalysis checks the selected
+specialization and active `if constexpr` branch; an instantiated body still
+rejects every selected missing definition, even for a nondependent call. A
+concrete class context does not resolve a generic method's own open formals.
+
 ## Terminal colour
 
 The CLI accepts `--color=auto|always|never` (also `--color <mode>`), before a
@@ -78,6 +92,14 @@ body-local field-expression identities, but does not republish the class-owned
 records. Concrete constructor-body errors remain independently published with
 their own instantiation sites; no message-based deduplication hides distinct
 diagnostics or notes.
+
+`GTI-S2105` reports deterministic concrete-instance discovery exhaustion (64
+new-instance levels or 16,384 distinct generic instances in one HIR request). It anchors
+the requesting source, relates the declaration and explains that runtime
+branches do not bound generic instantiation. There is no safe automatic edit.
+An invalid HIR result with no earlier error always produces a located
+`GTI-B0001`, including up to five plan-verifier details when available; the
+frontend cannot silently return a failed compilation.
 
 `WarningPolicy` is the immutable driver-boundary filter for compiler warning
 groups. Direct compilation accepts repeatable `-Wno-<group>` (or
@@ -264,6 +286,9 @@ target boundary.
 unsupported native, polymorphic, operator or bodyless declarations, caller tracking on
 the hosted entry point, reachable normal completion of a terminal function,
 and loss of caller-location transport at a native callback boundary.
+The following typed declaration determines function-attribute context even
+when the list contains no recognized attribute; unknown plain names therefore
+reach semantic validation rather than a misleading class-attribute parse error.
 The normal-return diagnostic points at the `return` keyword; fallthrough
 points at the function name. A body with an earlier semantic error does not
 receive a speculative terminal-flow cascade. The LSP publishes the same
@@ -273,6 +298,44 @@ Incomplete bracketed declaration attributes retain parser-owned `GTI-P0001`
 at the first unexpected token. The missing-`]]` message is declaration-neutral,
 and recovery retains following declarations with the existing exact delimiter
 insertion fix, without changing the declared contract.
+
+Malformed `#if`/`#elif` conditions retain their conditional owner during
+recovery: the parser publishes the original `GTI-P0003`, consumes the matching
+branch boundaries, and preserves later declarations instead of falsely
+reporting an unmatched `#endif`. Genuinely stray directives remain errors.
+Unknown initializer or binary-operand types are poison from their owning
+lookup/type error, not evidence for an additional assignment or operator
+mismatch. Unrelated, fully known type errors remain reportable.
+
+For invalid payload-pattern bindings, known variant names still inform
+recovery-only return-flow coverage. These facts never become a valid exhaustive
+switch in the semantic model or enable code generation. All-returning arms
+avoid a false missing-return error; an arm that breaks or a missing variant
+still permits a genuine fallthrough diagnostic. A rejected required constexpr
+initializer has no executable initialization step to validate for runtime
+storage effects; its evaluation error remains authoritative. Ordinary runtime
+initializer dependencies still receive `GTI-S2068`.
+
+The external C-symbol catalog owns duplicate external-symbol declarations;
+GTI overload validation still owns mixed-linkage and distinct-link-name
+conflicts. Unsupported borrowed fields receive `GTI-S2045` at the field,
+without the obsolete single-reference limit or repeats at constructions that
+depend on that rejected field. This does not admit fallible-borrow fields.
+Exact native callback conversion failures use `GTI-S2076` and candidate
+signature notes rather than an internal unknown-type argument mismatch.
+Direct and transitive raw lifetime checks share publication for an identical
+access, message, origin and context; different accesses/origins remain distinct,
+and audit off/warn/strict modes keep their existing meaning.
+
+Explicit function value slots are resolved from the target's generic parameter
+kind, so a runtime identifier or a type written there receives `GTI-S2026` at
+the written argument. Explicitly bound types are not conflicting *inferred*
+types; actual argument mismatches retain their exact type diagnostic. Missing
+value inference describes the supplied arguments rather than claiming that
+every call supplied an array extent. Conversion guidance never assumes an
+arbitrary target constructor exists. An exact public safe read-only `view()`
+accessor may be suggested from ordinary member facts, including user-defined
+types; it is not a fix-it and does not waive the view's lifetime obligations.
 
 `GTI-S2094` owns an executable request without a resolved global `main`
 definition in its entry source unit. It is opt-in executable policy, checked
@@ -450,14 +513,17 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   for unsupported storage and escape; mutation or movement of their source
   owner while live remains `GTI-S2017`.
 - `GTI-S2019` owns invalid payloads of declaration-bound private storage.
-  Sparse and prefix storage reject borrowed-state elements even when empty;
+  Prefix storage rejects borrowed-state elements even when empty;
   optional storage additionally requires move construction and excludes void,
   references and raw-pointer payloads. This boundary does not require move
   assignment. Point at the concrete payload type, or retain the precise user
   instantiation as related information when the private field is instantiated
   from library source. Name the concrete payload and explain that this storage
   does not retain external-owner dependencies. No fix-it chooses a different
-  ownership model. Invalid storage must not reach `GTI-B0001`.
+  ownership model. Source-defined sparse storage instead expresses its payload
+  boundary through the ordinary `storage_element<T>` constraint and receives
+  `GTI-S2029` on an unsupported application. Invalid storage must not reach
+  `GTI-B0001`.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a
   by-value argument. When constructor search finds one accessible candidate
   whose parameter types match and rejects it only because the written value
@@ -570,6 +636,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   useful diagnostics and tooling. It carries group `unreachable-code` and the
   LSP `Unnecessary` tag, but no deletion fix: deleting source can remove
   declarations, documentation, or deliberately retained code.
+  Emit this advisory from primary analysis only: a concrete `if constexpr`
+  branch cannot establish declaration-wide unreachability. Instance reanalysis
+  still checks the retained tail for semantic errors.
 - `GTI-S2096` warns when an explicitly `mut` ordinary local value is never
   written, addressed mutably, passed by mutable reference, or used as a mutable
   receiver. Mutable-reference parameters of the selected constructor count as
@@ -580,6 +649,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   bindings. It carries group `unused-mut`, the LSP `Unnecessary` tag, and one
   preferred fix that removes exactly the `mut` token without consuming nearby
   comments or whitespace.
+  Mutable operator receiver selection records the same source use as method
+  selection, including overloaded dereference stores. Symbolic pack folds
+  record fixed mutable-reference prefix arguments, and deferred callable calls
+  conservatively retain mutable argument places. These primary-body facts
+  prevent an edit that fails for a valid concrete instance; independent generic
+  unused locals still receive one source warning and a safe removal fix.
 - `GTI-S2009` retains the error for an implicitly ignored non-void call result.
   Its `unused-result` group provides one non-preferred fix that inserts
   `[[discard]]` at the parser-recorded start of the complete expression. The

@@ -652,6 +652,128 @@ int main() {
                 << diagnostic.message << '\n';
 }
 
+void checkCompactInputComposition() {
+  const auto unsupported =
+      lang::Frontend().analyze("single-input-reshape.gti", R"(
+struct Reading {
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+struct Readings {
+  Reading first;
+  Reading second;
+  Readings(Reading left, Reading right) : first(left), second(right) {}
+};
+Readings repeat(Reading input) { return Readings(input, input); }
+)");
+  expect(!unsupported.canGenerateCode() &&
+             std::any_of(unsupported.diagnostics.begin(),
+                         unsupported.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2085";
+                         }),
+         "single-input by-value return remains bounded to its exact carrier "
+         "dependency");
+  const auto frontend =
+      lang::Frontend().analyze("compact-input-composition.gti", R"(
+struct Reading {
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+struct Readings {
+  Reading first;
+  Reading second;
+  Readings(Reading left, Reading right) : first(left), second(right) {}
+};
+Readings combine(Reading left, Reading right) { return Readings(left, right); }
+Readings reverse(Reading left, Reading right) { return Readings(right, left); }
+int main() {
+  int a = 17; int b = 25;
+  Reading left{a}; Reading right{b};
+  auto combined = combine(left, right);
+  auto reversed = reverse(left, right);
+  auto repeated = combine(left, left);
+  return combined.first.value + reversed.first.value + repeated.second.value - 59;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "composing compact inputs preserves each exact external identity");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << "compact composition: " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+    return;
+  }
+  bool inspected = false;
+  bool mutatedIndependentSources = false;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.constructorTarget || !instruction.loan ||
+            instruction.borrowFields.size() != 2)
+          continue;
+        const auto *result = function.body.findLoan(*instruction.loan);
+        if (result == nullptr || result->additionalDependencies.size() != 1)
+          continue;
+        const auto entry =
+            std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                         [&](const auto &loan) {
+                           return loan.entry &&
+                                  loan.kind == lang::MirLoanKind::Stored &&
+                                  loan.source == result->source;
+                         });
+        if (entry == function.body.loans.end())
+          continue;
+        inspected = true;
+        expect(
+            function.body.findPlace(result->source)->projections.empty(),
+            "compact input retains its opaque entry rather than shell fields");
+        if (result->source == result->additionalDependencies.front().source)
+          continue;
+        mutatedIndependentSources = true;
+        auto changed = frontend.mir;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            changed.findFunctionInstance(function.id));
+        instance->body.loans[result->id - 1].source =
+            result->additionalDependencies.front().source;
+        expect(!lang::verifyMirProgram(changed).valid(),
+               "composed result cannot substitute the other compact input");
+        changed = frontend.mir;
+        instance = const_cast<lang::MirFunctionInstance *>(
+            changed.findFunctionInstance(function.id));
+        instance->body.loans[result->id - 1]
+            .additionalDependencies.front()
+            .source = result->source;
+        expect(!lang::verifyMirProgram(changed).valid(),
+               "composed result cannot collapse its second independent input");
+        changed = frontend.mir;
+        instance = const_cast<lang::MirFunctionInstance *>(
+            changed.findFunctionInstance(function.id));
+        for (auto &changedBlock : instance->body.blocks)
+          for (auto &changedInstruction : changedBlock.instructions)
+            if (changedInstruction.id == instruction.id)
+              std::swap(changedInstruction.borrowFields[0].parameter,
+                        changedInstruction.borrowFields[1].parameter);
+        expect(!lang::verifyMirProgram(changed).valid(),
+               "composed result cannot forge reordered constructor input "
+               "mappings");
+        changed = frontend.mir;
+        instance = const_cast<lang::MirFunctionInstance *>(
+            changed.findFunctionInstance(function.id));
+        for (auto &changedBlock : instance->body.blocks)
+          for (auto &changedInstruction : changedBlock.instructions)
+            if (changedInstruction.id == instruction.id)
+              std::swap(changedInstruction.borrowFields[0].resultFields,
+                        changedInstruction.borrowFields[1].resultFields);
+        expect(!lang::verifyMirProgram(changed).valid(),
+               "composed result cannot relabel destination field identities");
+      }
+  expect(inspected,
+         "compact input composition exercised an entry-backed result");
+  expect(mutatedIndependentSources,
+         "compact input mutations exercised distinct external owners");
+}
+
 void checkMixedOperatorOrigins() {
   const auto analyze = [](std::string_view body) {
     return lang::Frontend().analyze("mixed-operator.gti", R"(
@@ -696,6 +818,7 @@ constexpr NamedTest kTests[] = {
     {"mixed_return_origins", checkMixedReturnOrigins},
     {"mixed_return_composition", checkMixedReturnComposition},
     {"generic_mixed_return_composition", checkGenericMixedReturnComposition},
+    {"compact_input_composition", checkCompactInputComposition},
     {"mixed_operator_origins", checkMixedOperatorOrigins},
 };
 

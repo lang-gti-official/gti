@@ -189,17 +189,20 @@ def main() -> int:
                     encoding="utf-8"
                 )
                 required = (
-                    "std::align(effective_alignment, bytes, aligned, available)",
-                    "void *allocation_ = nullptr;",
+                    "gti_rt_native_size_max_v1(",
+                    "gti_rt_address_is_aligned_v1(",
+                    "::gti_internal::backend::native_pointer_value(",
+                )
+                missing = [fragment for fragment in required if fragment not in generated]
+                retired = [fragment for fragment in (
                     "::gti_internal::backend::storage_try_allocate(",
                     "::gti_internal::backend::storage_capacity(",
                     "::gti_internal::backend::storage_initialized(",
-                )
-                missing = [fragment for fragment in required if fragment not in generated]
-                if missing:
+                ) if fragment in generated]
+                if missing or retired:
                     sys.stderr.write(
                         "generated allocator/storage boundary is incomplete: "
-                        f"missing={missing}\n"
+                        f"missing={missing}, retired={retired}\n"
                     )
                     return 1
 

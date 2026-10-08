@@ -51,35 +51,35 @@ is a teaching helper, not a production server.
 | `02-control-flow.gti` | conditions, `for`, `while`, `break`, and `continue` |
 | `03-functions.gti` | typed parameters, return values, and calls |
 | `04-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
-| `05-objects.gti` | structs, classes, constructors, access, and mutable methods |
+| `05-objects.gti` | structs, classes, constructors, state-bearing bases, declared cleanup, access, and mutable methods |
 | `06-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
 | `09-target-selection.gti` | compile-time host selection and active `#error` guards |
 | `10-modules/main.gti` | loading another GTI source file with `#include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
-| `12-fixed-arrays.gti` | bounded value arrays, initialization, indexing, and size |
+| `12-fixed-arrays.gti` | bounded arrays, signed contextual literals, named passive records, passive unions, indexing, and size |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
-| `14-operators.gti` | restricted member operators for safe wrappers |
-| `15-variadic-generics.gti` | confined type packs and explicit forwarding |
+| `14-operators.gti` | restricted member operators; self-read dereference stores, nested subscripts and once-formed compound targets |
+| `15-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
 | `16-move-generics.gti` | ownership-aware concrete generic instances |
 | `17-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
 | `18-lambdas.gti` | typed lambdas with explicit immutable value captures |
 | `19-auto.gti` | local type inference, inferred mutability, and ownership traits |
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
-| `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
+| `21-scoped-enums.gti` | nominal scoped enums with optional `class` spelling, fixed backing types, aliases, and equality |
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
-| `23-direct-initialization.gti` | exact class construction without repeated declared types |
+| `23-direct-initialization.gti` | exact class construction, class field replacement, generated field defaults and omitted designated defaults |
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
-| `27-copy-move-policies.gti` | explicit structural default construction/destruction and defaulted or deleted copy/move policy |
+| `27-copy-move-policies.gti` | explicit structural default construction/destruction, copy/move policy, and reinitialization after a consuming loop break |
 | `28-callable-parameters.gti` | confined generic operations with lambdas and function objects |
 | `29-callable-predicates.gti` | exact bool predicate results from confined generic callables |
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 | `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
-| `33-source-concepts.gti` | unary capabilities and exact structural class contracts, including destructor bodies |
+| `33-source-concepts.gti` | unary capabilities, structural class contracts, and trailing-clause admission of dependent compound arguments |
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
@@ -126,14 +126,14 @@ is a teaching helper, not a production server.
 | `77-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
 | `78-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `79-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
-| `80-function-items.gti` | exact namespace free functions passed to confined generic callables |
+| `80-function-items.gti` | exact namespace free functions passed to confined generic callables, including deduced argument packs |
 | `83-complete-ranges.gti` | structural whole-range algorithms over application ranges and fixed arrays |
 | `84-optional-values.gti` | allocation-free optional storage, checked access, reset, emplacement, and move-only payloads |
 | `85-payload-enum-fields.gti` | ordinary class and struct fields that directly own active-cleanup payload enums |
 | `86-owning-callbacks.gti` | retained lambda callbacks, `std::function`, cloning/replacement, mutable state, move-only captures, and one-shot invocation |
 | `87-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 | `88-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
-| `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, and owning work queues/history/sets |
+| `89-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `90-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
 | `91-json-documents.gti` | parsing, typed access, missing versus null, builders, array traversal, and deep cloning |
 | `92-json-codecs.gti` | exact codec specialization, owned application values, arrays, and JSON Pointer errors |
@@ -167,7 +167,12 @@ is a teaching helper, not a production server.
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
-| `125-string-views.gti` | allocation-free search and slicing through the source-defined `std::string_view`, owner-backed views keeping their string borrowed, and a user-defined text carrier relaying its owner |
+| `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
+| `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
+| `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
+| `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
+| `130-string-views.gti` | allocation-free search and slicing through the source-defined `std::string_view`, owner-backed views keeping their string borrowed, and a user-defined text carrier relaying its owner |
+| `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
 
@@ -406,6 +411,8 @@ inherit aliases through base classes, or add a `Box<int>::value_type` spelling.
 `80-function-items.gti` passes exact namespace free functions directly to
 confined generic callables and standard algorithms. Function items are
 zero-state GTI callable identities; they are not native function pointers.
+Its `invoke_with` client deduces the value pack before selecting the exact
+three-argument function item.
 The owning callback example below also demonstrates retaining one in a wrapper.
 
 `83-complete-ranges.gti` defines an application-owned range with the exact
@@ -467,6 +474,21 @@ while any allocation from it remains live.
 ./build/gti examples/121-programmable-allocators.gti -o /tmp/gti-allocators
 /tmp/gti-allocators
 ```
+
+## Manual object lifetimes
+
+[`125-manual-object-lifetimes.gti`](125-manual-object-lifetimes.gti) builds a source-defined inline owner around
+`std::uninitialized<T>`, constructs an immovable object at its final address,
+returns checked owner-bound references, and explicitly relocates an owning
+string between fixed carriers. Raw validity stays inside the owner's `unsafe`
+implementation; ordinary callers use checked methods.
+
+[`128-inline-object-pool.gti`](128-inline-object-pool.gti) applies the same
+facilities to an unrelated fixed-address, two-slot application pool. It owns
+slot bytes inline, returns a recoverable error when full, reuses erased slots,
+and relies on ordinary reverse field cleanup. Its immovable nodes own strings;
+the compiler does not recognize the pool or cell names. A slot index is not a
+generation-checked handle: after erasure and reuse it names the replacement.
 
 ## Complete projects
 

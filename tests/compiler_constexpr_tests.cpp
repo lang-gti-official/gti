@@ -125,7 +125,9 @@ int main() {
           generated.find("static_cast<std::uint8_t>(4)") != std::string::npos &&
           generated.find("program-initialization-v1 module-instance 0") !=
               std::string::npos &&
-          generated.find("mir_checked_negate_v1<std::int32_t>") !=
+          generated.find("static_cast<std::int8_t>(-127 - 1)") !=
+              std::string::npos &&
+          generated.find("static_cast<std::int16_t>(-32767 - 1)") !=
               std::string::npos &&
           generated.find("static_cast<std::int64_t>("
                          "-9223372036854775807 - 1)") != std::string::npos &&
@@ -4299,15 +4301,18 @@ class PlatformInfo {
 #else
   int bits = 32;
 #endif
+public:
+  int selected_bits() { return this.bits; }
 };
 
 int main() {
+  PlatformInfo info{};
 #if target.os != "windows"
   int value = platform_value();
 #else
   int value = platform_value();
 #endif
-  return value;
+  return value + info.selected_bits();
 }
 )";
 
@@ -4518,8 +4523,8 @@ int main() { return selected_value() + local_state(); }
   expect(
       appleCpp.find("static_cast<std::int32_t>(101)") != std::string::npos &&
           appleCpp.find("static_cast<std::int32_t>(64)") != std::string::npos &&
-          appleCpp.find("std::int32_t bits = "
-                        "static_cast<std::int32_t>(64)") != std::string::npos &&
+          appleCpp.find("std::int32_t bits;") != std::string::npos &&
+          appleCpp.find("PlatformInfo::PlatformInfo()") != std::string::npos &&
           appleCpp.find("missing_name") == std::string::npos &&
           appleCpp.find("#include <expected>") == std::string::npos &&
           appleCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
@@ -4534,8 +4539,10 @@ int main() { return selected_value() + local_state(); }
   const std::string windowsCpp = emitAnalyzedSource(source, windows);
   expect(windowsCpp.find("static_cast<std::int32_t>(202)") !=
                  std::string::npos &&
-             windowsCpp.find("std::int32_t bits = "
-                             "static_cast<std::int32_t>(32)") !=
+             windowsCpp.find("std::int32_t bits;") != std::string::npos &&
+             windowsCpp.find("PlatformInfo::PlatformInfo()") !=
+                 std::string::npos &&
+             windowsCpp.find("static_cast<std::int32_t>(32)") !=
                  std::string::npos &&
              windowsCpp.find("nested_value") == std::string::npos &&
              windowsCpp.find("static_cast<std::int32_t>(101)") ==

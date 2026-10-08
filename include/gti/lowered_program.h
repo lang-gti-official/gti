@@ -225,7 +225,10 @@ struct LoweredClassDeclaration {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
+  std::optional<SemanticType> transferCondition;
+  std::optional<SemanticType> shareCondition;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  bool generatedDefaultRequiresSchedule = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
@@ -261,6 +264,7 @@ struct LoweredEnumerator {
 
 struct LoweredEnumDeclaration {
   EnumId id = 0;
+  SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
   SemanticType underlyingType = SemanticType::Int32;
@@ -734,6 +738,8 @@ public:
   findClassDeclaration(ClassId id) const;
   [[nodiscard]] const LoweredEnumDeclaration *
   findEnumDeclaration(EnumId id) const;
+  [[nodiscard]] const LoweredEnumDeclaration *
+  findEnumDeclaration(const SemanticType &type) const;
   [[nodiscard]] const LoweredFunctionDeclaration *
   findFunctionDeclaration(FunctionId id) const;
   [[nodiscard]] const LoweredConstructorDeclaration *

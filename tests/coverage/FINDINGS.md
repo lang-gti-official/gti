@@ -58,10 +58,40 @@ had no regression protection.
 | Resolved, now gated as passing | F8, F9, F11, F12, F13, F15 (its `(a + b).value()` form), S03, S05, S07, S10, S11 |
 | Improved | S08: the 40-link chain compiles in about 1.2s (was 6.5s) |
 | Still reproduced, gated as known | F10, F14, F16, F17, S01, S02, S04, S06, S09, S12, S15, tracked together in [#103](https://git.internal.howetotech.dev/gti-lang/gti/issues/103) (F14's wrong diagnostic is now GTI-S2015 rather than GTI-S2046) |
-| Still reproduced, new reproducers | F7 ([#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51)): the original `std::optional` reproducer passes because `optional` gained bodies, but declaration-only `std::weak_ptr` members and any user-declared GTI function without a body still fail at the native link |
+| Fixed in the issue campaign, gated as located rejection | F7 ([#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51)): selected bodyless ordinary GTI functions, declaration-only `std::weak_ptr` members and primary JSON codecs now produce `GTI-S2106` in closed programs before backend/native entry; the original optional reproducer remains passing |
 | Not gated (resource or tooling inputs) | F18, F19, F20, S13, S14 |
 
 ## Test-gap audit (A-series, 0.379.2)
+
+### Payload enum composition repair
+
+A47 (#88), A48 (#89), and A49 (#90) now require native success. Their original
+reproducers pass C++20/C++23 at O0/O1/O3, no-elide construction, and ASan/UBSan.
+The generic enum campaign repairs general checked-reference reborrowing,
+verified owning-field reads, and fresh call-result argument placement rather
+than recognizing a particular enum or wrapper. Focused generic and nongeneric
+cases also check mutation, exact active-payload cleanup, and failure rollback.
+This is focused evidence; full combined-campaign validation remains separate.
+
+S15 (#103) is also repaired: the passive-class SSA prelude now respects the
+same exact fused construction and extraction proofs as admission and body
+emission. Its original reproducer prints `1` and exits successfully; generic
+and nongeneric cases cover fresh class payloads, named copies, and copied or
+borrowed patterns across all eight native configurations. Its gate now requires
+native success rather than an internal compiler error.
+
+### Fixed-array construction repair
+
+A17 (#63), A42 (#85), and A52 (#93) are resolved and their six original
+reproducers now require native success. Signed literal elements preserve their
+contextual type, passive record copies construct final array storage without
+extra default construction, and verified passive union movement is
+failure-free. The C ABI reproducer links an independent C17 fixture rather
+than merely passing emission. The focused array gate also checks no-default
+records, observable default-constructor counts, representability/unsafe
+negatives, malformed publication/type proofs, both C++ standards at O0/O1/O3,
+and ASan/UBSan. Other A-series outcomes below remain historical until their
+own fixes land; this is not full-campaign verification.
 
 A third campaign looked for areas where the existing suites do not reach, using
 features added since the 0.329.0 audit. Seven probes each wrote ordinary,
@@ -89,72 +119,72 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | Kind | Findings |
 | --- | --- |
 | Silent miscompile | A25: an `expected<T&, E>` relay returns the parameter, not the referent |
-| Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256; A13: nondeterministic `--emit-mir` |
-| Compiler hang or silent failure | A06: unbounded polymorphic recursion; A41 and A57: compile fails with no diagnostic |
-| ICE or invalid generated C++ on valid code | A01, A14–A17, A26–A32, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
-| Valid code rejected | A03, A18, A19, A23, A34, A36, A54 |
+| Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256 |
+| Compiler hang or silent failure | A06 and A57 resolved; A41 now reports a located internal failure but its forwarding defect remains unresolved |
+| ICE or invalid generated C++ on valid code | A01, A14, A15, A17, A26–A31, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
+| Valid code rejected | A03, A18, A19, A23, A34, A36 |
 | Specification gap | A04: a dependency's own `[build] defines` is ignored |
 | Diagnostic quality | A05, A07–A12, A20–A22, A24, A33, A35, A43, A44, A53, A60, A61 |
 
 | Finding | Issue | Gated outcome today | Tests |
 | --- | --- | --- | --- |
-| A01 | [#53](https://git.internal.howetotech.dev/gti-lang/gti/issues/53) C++ backend ICE assigning a class value into a class-typed field | ice | `reproducers/a01-call-result-into-field`<br>`reproducers/a01-class-value-into-field`<br>`reproducers/a01-field-assign-from-call-result-method` |
-| A02 | [#54](https://git.internal.howetotech.dev/gti-lang/gti/issues/54) main's int result is truncated to 8 bits, so gti test reports a failing test as passed | wrong-result | `projects/a02-test-status-truncation` |
+| A01 | [#53](https://git.internal.howetotech.dev/gti-lang/gti/issues/53) C++ backend ICE assigning a class value into a class-typed field | fixed; focused native and representation checks | `reproducers/a01-call-result-into-field`<br>`reproducers/a01-class-value-into-field`<br>`reproducers/a01-field-assign-from-call-result-method` |
+| A02 | [#54](https://git.internal.howetotech.dev/gti-lang/gti/issues/54) hosted entry maps results outside 0..255 to failure status 1 after cleanup | fixed; passing regression | `projects/a02-test-status-truncation` |
 | A03 | [#55](https://git.internal.howetotech.dev/gti-lang/gti/issues/55) Program-wide initializer proof rejects any generic call (GTI-S2068) | rejected | `reproducers/a03-generic-call-in-global-initializer` |
-| A04 | [#56](https://git.internal.howetotech.dev/gti-lang/gti/issues/56) A dependency's own [build] defines are silently ignored | wrong-result | `projects/a04-dependency-defines` |
-| A05 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a05-string-view-help-suggests-invalid-form` |
-| A06 | [#57](https://git.internal.howetotech.dev/gti-lang/gti/issues/57) Compiler hangs on unbounded polymorphic generic recursion | hang | `reproducers/a06-polymorphic-recursion-hang` |
-| A07 | [#58](https://git.internal.howetotech.dev/gti-lang/gti/issues/58) Unknown function attribute is misparsed as a class attribute (GTI-P0001 instead of GTI-S2099) | rejected | `rejections/diag-p10-unknown-attribute`<br>`reproducers/a07-unknown-function-attribute` |
-| A08 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a08-unknown-type-cascade` |
-| A09 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a09-bad-if-condition-cascade` |
-| A10 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a10-payload-arity-cascade` |
-| A11 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a11-explicit-generic-argument-messages` |
-| A12 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a12-extern-c-overload-duplicate` |
-| A13 | [#59](https://git.internal.howetotech.dev/gti-lang/gti/issues/59) --emit-mir output is not deterministic (field symbol IDs vary between runs) | nondeterministic | `reproducers/a13-mir-field-symbol-order` |
-| A14 | [#60](https://git.internal.howetotech.dev/gti-lang/gti/issues/60) C++ backend ICE: constructor-less struct field initializer inside a class with a user constructor | ice | `reproducers/a14-generated-ctor-field-in-user-ctor` |
+| A04 | [#56](https://git.internal.howetotech.dev/gti-lang/gti/issues/56) dependency defines participate in the selected program's shared configuration | fixed; passing regression | `projects/a04-dependency-defines` |
+| A05 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Resolved: conversion guidance uses a proven exact public view accessor, not an invalid constructor | rejected, fixed regression | `reproducers/a05-string-view-help-suggests-invalid-form` |
+| A06 | [#57](https://git.internal.howetotech.dev/gti-lang/gti/issues/57) Resolved: unbounded polymorphic recursion is resource-bounded | rejected (GTI-S2105) | `reproducers/a06-polymorphic-recursion-hang` |
+| A07 | [#58](https://git.internal.howetotech.dev/gti-lang/gti/issues/58) Resolved: unknown function attributes receive GTI-S2099 at the attribute name, including lists containing no recognized attribute | rejected, fixed regression | `rejections/diag-p10-unknown-attribute`<br>`reproducers/a07-unknown-function-attribute` |
+| A08 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: unknown initializer and operand types do not produce secondary type-mismatch errors; independent errors remain visible | rejected, fixed regression | `reproducers/a08-unknown-type-cascade` |
+| A09 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: malformed conditional expressions retain their matching directive owner during recovery | rejected, fixed regression | `reproducers/a09-bad-if-condition-cascade` |
+| A10 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: malformed bindings do not turn known variant coverage into a false missing-return error | rejected, fixed regression | `reproducers/a10-payload-arity-cascade` |
+| A11 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Resolved: explicit arguments describe the written type/value contract, not inferred conflicts or nonexistent array extents | rejected, fixed regression | `reproducers/a11-explicit-generic-argument-messages` |
+| A12 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: the external-symbol catalog publishes one duplicate C declaration error | rejected, fixed regression | `reproducers/a12-extern-c-overload-duplicate` |
+| A13 | [#59](https://git.internal.howetotech.dev/gti-lang/gti/issues/59) Resolved: physical field identities are published in active declaration order before borrow/layout queries | pass | `reproducers/a13-mir-field-symbol-order`, `field_symbol_identity`, `mir_field_determinism`, `mir_associative_determinism` |
+| A14 | [#60](https://git.internal.howetotech.dev/gti-lang/gti/issues/60) C++ backend ICE: constructor-less struct field initializer inside a class with a user constructor | fixed; focused native and representation checks | `reproducers/a14-generated-ctor-field-in-user-ctor` |
 | A15 | [#61](https://git.internal.howetotech.dev/gti-lang/gti/issues/61) ICE: local declared inside a dependent if constexpr branch (absent lowered symbol) | ice | `reproducers/a15-dependent-if-constexpr-local` |
-| A16 | [#62](https://git.internal.howetotech.dev/gti-lang/gti/issues/62) Documented relay<T> example fails in the C++ backend for a copyable lambda | backend | `reproducers/a16-relay-copyable-lambda` |
-| A17 | [#63](https://git.internal.howetotech.dev/gti-lang/gti/issues/63) Negative literal in an int8_t/int16_t fixed-array initializer emits invalid C++ | backend | `reproducers/a17-narrow-negative-array-literal` |
-| A18 | [#64](https://git.internal.howetotech.dev/gti-lang/gti/issues/64) Function item rejected as a callable argument invoked with a parameter pack | rejected | `reproducers/a18-function-item-pack-invoke` |
-| A19 | [#65](https://git.internal.howetotech.dev/gti-lang/gti/issues/65) Trailing requires-clause facts are ignored when validating a dependent compound argument | rejected | `reproducers/a19-trailing-clause-dependent-compound` |
-| A20 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a20-unnecessary-mut-per-instance` |
-| A21 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a21-value-argument-resolved-as-type` |
-| A22 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a22-spurious-s2068-after-constexpr-failure` |
+| A16 | [#62](https://git.internal.howetotech.dev/gti-lang/gti/issues/62) Resolved: copyable lambda return retains its verified Load SSA publication | pass | `reproducers/a16-relay-copyable-lambda`, `testCopyableLambdaReturnRetainsSsa`, `generic_callable_transport_runtime` |
+| A17 | [#63](https://git.internal.howetotech.dev/gti-lang/gti/issues/63) Contextual signed fixed-array literals | resolved: pass | `reproducers/a17-narrow-negative-array-literal` |
+| A18 | [#64](https://git.internal.howetotech.dev/gti-lang/gti/issues/64) Function item rejected as a callable argument invoked with a parameter pack | resolved: pass | `reproducers/a18-function-item-pack-invoke` |
+| A19 | [#65](https://git.internal.howetotech.dev/gti-lang/gti/issues/65) Trailing requires-clause facts are ignored when validating a dependent compound argument | resolved: pass | `reproducers/a19-trailing-clause-dependent-compound` |
+| A20 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | resolved: pass | `reproducers/a20-unnecessary-mut-per-instance` |
+| A21 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Resolved: a runtime identifier in a value slot fails the compile-time contract, not type lookup | rejected, fixed regression | `reproducers/a21-value-argument-resolved-as-type` |
+| A22 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: failed required constant evaluation does not cascade into runtime initialization-effect proof | rejected, fixed regression | `reproducers/a22-spurious-s2068-after-constexpr-failure` |
 | A23 | [#67](https://git.internal.howetotech.dev/gti-lang/gti/issues/67) Finite value-generic recursion ended by a specialization is rejected as self-containing | rejected | `reproducers/a23-recursive-value-generic-layout` |
-| A24 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a24-unreachable-warning-per-instance` |
+| A24 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | resolved: pass | `reproducers/a24-unreachable-warning-per-instance` |
 | A25 | [#70](https://git.internal.howetotech.dev/gti-lang/gti/issues/70) Miscompile: returning a local reference through expected<T&, E> yields the parameter, not the referent | ice, runtime | `reproducers/a25-expected-ref-relay-wrong-referent`<br>`reproducers/a25-ref-return-from-expected-value` |
-| A26 | [#71](https://git.internal.howetotech.dev/gti-lang/gti/issues/71) MIR ICE: overloaded dereference store whose right side reads the same owner | ice | `reproducers/a26-overloaded-deref-store-reads-owner` |
-| A27 | [#72](https://git.internal.howetotech.dev/gti-lang/gti/issues/72) C++ backend ICE: compound assignment through an overloaded operator* or a subscript on a call result | ice | `reproducers/a27-compound-assign-overloaded-deref` |
+| A26 | [#71](https://git.internal.howetotech.dev/gti-lang/gti/issues/71) Overloaded dereference self-read store | resolved: pass | `reproducers/a26-overloaded-deref-store-reads-owner` |
+| A27 | [#72](https://git.internal.howetotech.dev/gti-lang/gti/issues/72) Compound assignment through overloaded dereference or indexed call result | resolved: pass | `reproducers/a27-compound-assign-overloaded-deref` |
 | A28 | [#73](https://git.internal.howetotech.dev/gti-lang/gti/issues/73) C++ backend ICE: overloaded operator on a field of a range-for element | ice | `reproducers/a28-map-range-for-key-view`<br>`reproducers/a28-range-element-field-overloaded-operator`<br>`reproducers/a28-range-element-field-ref-method` |
 | A29 | [#74](https://git.internal.howetotech.dev/gti-lang/gti/issues/74) C++ backend ICE: calling a method on a string_view returned by a call | ice | `reproducers/a29-method-on-returned-string-view`<br>`reproducers/a29-string-view-size-on-dynamic-view` |
-| A30 | [#75](https://git.internal.howetotech.dev/gti-lang/gti/issues/75) C++ backend ICE: assigning a consuming (&&) call result to an existing cleanup-owning binding | ice | `reproducers/a30-assign-consuming-call-result` |
-| A31 | [#76](https://git.internal.howetotech.dev/gti-lang/gti/issues/76) MIR ICE: move on a loop's break path, then reinitialization after the loop | ice | `reproducers/a31-move-on-break-path-then-reinit` |
-| A32 | [#77](https://git.internal.howetotech.dev/gti-lang/gti/issues/77) move_only_function cannot be stored in vector (invalid C++) or optional (MIR ICE) | backend, ice | `reproducers/a32-optional-emplace-move-only-function`<br>`reproducers/a32-vector-push-back-move-only-function` |
-| A33 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | bad-diagnostic | `reproducers/a33-unnecessary-mut-deref-store` |
+| A30 | [#75](https://git.internal.howetotech.dev/gti-lang/gti/issues/75) Consuming member results stage before replacing existing owning bindings, retaining receiver and replacement failure cleanup | pass | `reproducers/a30-assign-consuming-call-result` |
+| A31 | [#76](https://git.internal.howetotech.dev/gti-lang/gti/issues/76) Resolved: literal loop exit ownership agrees with post-break reinitialization; native cleanup and safety negatives covered | pass | `reproducers/a31-move-on-break-path-then-reinit` |
+| A32 | [#77](https://git.internal.howetotech.dev/gti-lang/gti/issues/77) Resolved: same-owner value construction preserves selected copy/move lifecycle instead of a generic converting constructor | pass | `reproducers/a32-optional-emplace-move-only-function`<br>`reproducers/a32-vector-push-back-move-only-function`, `constructor_transport`, `generic_callable_transport_runtime` |
+| A33 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | resolved: pass | `reproducers/a33-unnecessary-mut-deref-store` |
 | A34 | [#78](https://git.internal.howetotech.dev/gti-lang/gti/issues/78) string_view relayed through a receiver-tied subscript is rejected (GTI-S2045) | rejected | `reproducers/a34-view-relay-through-subscript` |
-| A35 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a35-expected-ref-field-stale-message` |
+| A35 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: unsupported fallible-borrow fields receive one structural storage error without the obsolete single-reference limit | rejected, fixed regression | `reproducers/a35-expected-ref-field-stale-message` |
 | A36 | [#79](https://git.internal.howetotech.dev/gti-lang/gti/issues/79) unique_ptr member-initializer ': child_(nullptr)' is rejected while '= nullptr' is accepted | rejected | `reproducers/a36-unique-ptr-member-init-nullptr` |
 | A37 | [#80](https://git.internal.howetotech.dev/gti-lang/gti/issues/80) Binding libc functions whose C prototypes use size_t fails in native C++ compilation | backend | `reproducers/a37-libc-qsort-link-name-conflict`<br>`reproducers/a37-libc-strlen-prototype-conflict` |
-| A38 | [#81](https://git.internal.howetotech.dev/gti-lang/gti/issues/81) C++ backend ICE: returning a class extracted from expected directly in a return statement | ice | `reproducers/a38-return-call-value-class`<br>`reproducers/a38-return-expected-value-class` |
-| A39 | [#82](https://git.internal.howetotech.dev/gti-lang/gti/issues/82) C++ backend ICE: taking the address of a struct-typed field inside a constructor body | ice | `reproducers/a39-ctor-address-of-struct-field` |
+| A38 | [#81](https://git.internal.howetotech.dev/gti-lang/gti/issues/81) Checked class payload extraction publishes the exact return result, preserving wrong-state detection and unpublished-result cleanup | pass | `reproducers/a38-return-call-value-class`<br>`reproducers/a38-return-expected-value-class` |
+| A39 | [#82](https://git.internal.howetotech.dev/gti-lang/gti/issues/82) Taking the address of a struct-typed field inside a constructor body | pass after general constructor reconciliation; original runs without an additional feature change | `reproducers/a39-ctor-address-of-struct-field` |
 | A40 | [#83](https://git.internal.howetotech.dev/gti-lang/gti/issues/83) C++ backend ICE: indexing a fixed-array field through a raw pointer | ice | `reproducers/a40-c-abi-record-pointer-array-field`<br>`reproducers/a40-raw-pointer-fixed-array-field-index` |
-| A41 | [#84](https://git.internal.howetotech.dev/gti-lang/gti/issues/84) Silent compile failure: fixed-array argument passed through storage::emplace or vector::emplace_back | silent | `reproducers/a41-storage-emplace-fixed-array-silent`<br>`reproducers/a41-vector-emplace-back-fixed-array-silent` |
-| A42 | [#85](https://git.internal.howetotech.dev/gti-lang/gti/issues/85) ICE: fixed array of a passive struct or [[c_abi]] record initialized from named values | ice | `reproducers/a42-c-abi-record-array-from-named-values`<br>`reproducers/a42-struct-array-from-named-values`<br>`reproducers/a42-struct-array-two-named-values` |
-| A43 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a43-callback-argument-unknown-type` |
-| A44 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Diagnostic cascades after an earlier error: unknown-type leaks, false #endif, false missing-return, duplicates | bad-diagnostic | `reproducers/a44-raw-audit-duplicate-warning` |
-| A45 | [#86](https://git.internal.howetotech.dev/gti-lang/gti/issues/86) Derived classes with state-bearing bases: GTI-B0003, backend ICEs, and an undefined Base::Base() at link | ice, link, rejected | `reproducers/a45-base-plus-string-field-unsupported`<br>`reproducers/a45-base-state-rollback-unsupported`<br>`reproducers/a45-derived-destructor-explicit-base`<br>`reproducers/a45-derived-destructor-generated-ctor`<br>`reproducers/a45-literal-base-argument` |
-| A46 | [#87](https://git.internal.howetotech.dev/gti-lang/gti/issues/87) Chained user subscripts g[i][j]: compound assignment and self-read are ICEs | ice | `reproducers/a46-chained-subscript-compound`<br>`reproducers/a46-chained-subscript-self-read` |
-| A47 | [#88](https://git.internal.howetotech.dev/gti-lang/gti/issues/88) MIR ICE: 'mut auto&' payload binding when the switch subject is a mut T& parameter or range element | ice | `reproducers/a47-mut-payload-binding-through-mut-ref` |
-| A48 | [#89](https://git.internal.howetotech.dev/gti-lang/gti/issues/89) C++ backend ICE: switch on an owning payload enum held in a field (obj.field) | ice | `reproducers/a48-switch-on-owning-enum-field` |
-| A49 | [#90](https://git.internal.howetotech.dev/gti-lang/gti/issues/90) C++ backend ICE: an owning payload enum call result passed directly as an argument | ice | `reproducers/a49-owning-enum-call-result-argument` |
-| A50 | [#91](https://git.internal.howetotech.dev/gti-lang/gti/issues/91) C++ backend ICE: designated construction omitting a field whose default is 'Inner inner{};' | ice | `reproducers/a50-designated-omitted-brace-default` |
+| A41 | [#84](https://git.internal.howetotech.dev/gti-lang/gti/issues/84) Resolved: exact passive fixed-array values retain typed by-value forwarding through storage and vector emplacement; originals and independent-copy observations pass all eight native modes | pass | `reproducers/a41-storage-emplace-fixed-array-silent`<br>`reproducers/a41-vector-emplace-back-fixed-array-silent`, `storage_final_address_runtime` |
+| A42 | [#85](https://git.internal.howetotech.dev/gti-lang/gti/issues/85) Fixed arrays of named passive records | resolved: pass | `reproducers/a42-c-abi-record-array-from-named-values`<br>`reproducers/a42-struct-array-from-named-values`<br>`reproducers/a42-struct-array-two-named-values` |
+| A43 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: mismatched native callbacks show the exact required and candidate signatures | rejected, fixed regression | `reproducers/a43-callback-argument-unknown-type` |
+| A44 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: identical direct and transitive raw lifetime observations publish one warning at the application access; distinct included-library findings remain visible | pass, exact source-location duplicate guard | `reproducers/a44-raw-audit-duplicate-warning` |
+| A45 | [#86](https://git.internal.howetotech.dev/gti-lang/gti/issues/86) Selected state-bearing base construction, owning derived fields, literal arguments and declared cleanup: five originals pass; checked/effectful base-argument preparation remains pending | partial: five pass; prefix pending | `reproducers/a45-base-plus-string-field-unsupported`<br>`reproducers/a45-base-state-rollback-unsupported`<br>`reproducers/a45-derived-destructor-explicit-base`<br>`reproducers/a45-derived-destructor-generated-ctor`<br>`reproducers/a45-literal-base-argument` |
+| A46 | [#87](https://git.internal.howetotech.dev/gti-lang/gti/issues/87) Chained user subscript compound and self-read stores | resolved: pass | `reproducers/a46-chained-subscript-compound`<br>`reproducers/a46-chained-subscript-self-read` |
+| A47 | [#88](https://git.internal.howetotech.dev/gti-lang/gti/issues/88) Repaired: mutable payload binding through a checked mutable reference or range element | pass | `reproducers/a47-mut-payload-binding-through-mut-ref` |
+| A48 | [#89](https://git.internal.howetotech.dev/gti-lang/gti/issues/89) Repaired: switch on an owning payload enum held in a field (obj.field) | pass | `reproducers/a48-switch-on-owning-enum-field` |
+| A49 | [#90](https://git.internal.howetotech.dev/gti-lang/gti/issues/90) Repaired: an owning payload enum call result passed directly as an argument | pass | `reproducers/a49-owning-enum-call-result-argument` |
+| A50 | [#91](https://git.internal.howetotech.dev/gti-lang/gti/issues/91) C++ backend ICE: designated construction omitting a field whose default is 'Inner inner{};' | fixed; focused native and representation checks | `reproducers/a50-designated-omitted-brace-default` |
 | A51 | [#92](https://git.internal.howetotech.dev/gti-lang/gti/issues/92) Structured binding over a fixed array of class elements: ICE, or invalid C++ emitted | backend, ice | `reproducers/a51-binding-over-class-array`<br>`reproducers/a51-binding-over-class-array-invalid-cpp` |
-| A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) ICE: fixed arrays of passive unions, or of structs with a union field | ice | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
+| A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) Fixed arrays of passive unions and union-containing records | resolved: pass | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
 | A53 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a53-operator-temporary-ref-diagnostic` |
-| A54 | [#95](https://git.internal.howetotech.dev/gti-lang/gti/issues/95) Type alias of a constrained generic over a class type is rejected ('unknown class') | rejected | `reproducers/a54-alias-constrained-generic-class-argument`<br>`reproducers/a54-alias-constrained-generic-user-class` |
-| A55 | [#96](https://git.internal.howetotech.dev/gti-lang/gti/issues/96) C++ backend ICE: list/deque/queue emplacement forwarding a move-only constructor argument | ice | `reproducers/a55-ctor-pack-move-only-field-init`<br>`reproducers/a55-list-emplace-move-only-argument` |
+| A54 | [#95](https://git.internal.howetotech.dev/gti-lang/gti/issues/95) Resolved: alias constraints inspect completed class facts | pass | `reproducers/a54-alias-constrained-generic-class-argument`<br>`reproducers/a54-alias-constrained-generic-user-class` |
+| A55 | [#96](https://git.internal.howetotech.dev/gti-lang/gti/issues/96) Resolved: exact constructor-pack entry cleanup supports move-only field construction and container emplacement; ordered rollback covered | pass | `reproducers/a55-ctor-pack-move-only-field-init`<br>`reproducers/a55-list-emplace-move-only-argument` |
 | A56 | [#97](https://git.internal.howetotech.dev/gti-lang/gti/issues/97) C++ backend ICE: std::make_unique<T>(T value) | ice | `reproducers/a56-make-unique-same-type`<br>`reproducers/a56-make-unique-string-from-string` |
-| A57 | [#98](https://git.internal.howetotech.dev/gti-lang/gti/issues/98) Silent compile failure: range-for over a non-dependent range inside a generic function or method | silent | `reproducers/a57-generic-member-field-range-for-silent`<br>`reproducers/a57-generic-nondependent-range-for-silent` |
+| A57 | [#98](https://git.internal.howetotech.dev/gti-lang/gti/issues/98) Resolved: non-dependent generic ranges preserve instance-local loans | pass | `reproducers/a57-generic-member-field-range-for-silent`<br>`reproducers/a57-generic-nondependent-range-for-silent` |
 | A58 | [#99](https://git.internal.howetotech.dev/gti-lang/gti/issues/99) MIR ICE: reference to a unique_ptr field's pointee reached through a local reference | ice | `reproducers/a58-map-unique-ptr-value-deref`<br>`reproducers/a58-ref-to-owner-field-pointee-via-local-ref` |
 | A59 | [#100](https://git.internal.howetotech.dev/gti-lang/gti/issues/100) MIR ICE: read-only reference into an element of a mutable nested container | ice | `reproducers/a59-map-at-then-element-ref`<br>`reproducers/a59-readonly-ref-into-mut-nested-container` |
 | A60 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a60-println-format-missing-include` |
@@ -170,6 +200,9 @@ gated, because they report rather than assert.
 
 | Finding | Resolution |
 | --- | --- |
+| A06 | Canonical HIR discovery stops at 64 new-instance levels or 16,384 distinct generic instances with located GTI-S2105; ordinary roots, exact recursion and finite chains through the depth boundary remain valid. The original growing Box recursion rejects in about 4.5 seconds on the optimized macOS arm64 build, within its unchanged 20-second gate limit. |
+| A54 | Alias identities remain available during registration; target constraints are obligatorily rechecked after complete class/member/lifecycle publication, including unused aliases. |
+| A57 | Non-dependent range types remain exact, while numeric loan IDs are compared within the correct concrete reanalysis domain. Access/loan/carrier/protocol mutations remain rejected. Every silent invalid-HIR result now produces a located internal diagnostic. |
 | F1 | HIR verification now compares concrete generic range facts and stable loan provenance rather than declaration-level types and per-analysis loan IDs. |
 | F2 | Already fixed on the integration base by exact generic callable-reference lowering. |
 | F3 | MIR full-expression verification distinguishes a loop's next dynamic evaluation from two reachable markers in one evaluation. |
@@ -938,7 +971,9 @@ by value deliberately.
 
 ## S15 — ICE: a payload enum carrying a class without a destructor
 
-`reproducers/s15-payload-enum-plain-class.gti`
+`reproducers/s15-payload-enum-plain-class.gti` — repaired by the generic enum
+composition campaign; now gated as passing. The following records the original
+failure, not the current compiler behavior.
 
 ```gti
 class P { mut int32_t n = 0; public: P(int32_t n) : n(n) {} };

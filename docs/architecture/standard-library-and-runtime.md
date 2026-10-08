@@ -31,12 +31,18 @@ replacing a provider must preserve matching release, extent, alignment and
 failure contracts. An erased address alone establishes neither initialization
 nor checked ownership.
 
-The current process resource calls a C ABI implemented with aligned C++
-allocation. That host implementation is replaceable without changing GTI
-semantics. Typed region adoption remains private, and its slot bitmap currently
-uses the process heap. General public lifecycle facilities and provider-controlled
-bookkeeping are explicit extension goals, not claims of current support and not
-operations made inherently private by C++ generation.
+The process resource now validates alignment and native-size limits, handles
+zero-size requests, selects its target provider and maps failures in GTI source.
+POSIX uses `posix_memalign`/`free`; Windows uses the matching CRT
+`_aligned_malloc`/`_aligned_free` family. Narrow forwarding adapters still bridge
+the currently unsupported native `size_t`, POSIX `void**` and reserved CRT symbol
+spellings; they contain no GTI allocation policy. Sparse typed owners now keep
+their slot state in ordinary GTI and lease its bytes from the same provider as
+their object region. Public unsafe manual-lifetime operations supply typed
+construction, destruction and relocation; raw validity remains the programmer's
+obligation. The specialized sparse capability type, intrinsic family, adoption
+marker, native bitmap and backend storage helpers are retired. This implementation
+change does not by itself claim completion of the campaign's broader validation.
 
 ## Public Library
 
@@ -195,8 +201,9 @@ Semantic analysis grants intrinsic behavior by exact trusted declaration
 identity. The shared private `prefix_storage<T>`, `text_view`, and `c_string`
 type declarations receive compiler-capability identities only when the exact
 trusted prelude declarations are selected. Module-specific capabilities bind
-to one exact installed standard-library unit: `unique_owner<T>`, `shared_owner<T>`, and
-`storage<T>` to `<std/memory>`, `optional_storage<T>` to `<std/optional>`,
+to one exact installed standard-library unit: `unique_owner<T>`, `shared_owner<T>`,
+`uninitialized_storage<T>` and general object-lifetime operations to `<std/memory>`,
+`optional_storage<T>` to `<std/optional>`,
 managed threads to `<std/thread>`, atomics to `<std/atomic>`, mutexes to
 `<std/mutex>`, and defined integer arithmetic to `<std/numeric>`. Iterator and
 callable structural constraints are similarly owned by `<std/iterator>` and
@@ -250,11 +257,14 @@ cleanup itself has already produced an emergency before returning to the adapter
 
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI
-wrappers. The sparse-storage allocation extent and initialized-slot bitmap are
-the exception in kind, not in authority: narrow private observers let the
-source-defined `std::storage<T>` wrapper expose checked `capacity()` and
-`initialized(index)` without exposing an address, bitmap, raw mutation, or
-deallocation operation.
+wrappers. Sparse-storage capacity, live-slot state, traversal and validation
+are ordinary GTI fields and algorithms. The source owner obtains two regions
+through matching leases, initializes one metadata byte per slot, and exposes
+checked `capacity()` and `initialized(index)` without exposing its raw state.
+Final-address construction, typed destruction and relocation use the general
+manual-lifetime operations; checked access uses the existing owner-witness
+bridge. Retiring a live byte precedes potentially failing element destruction,
+and a source drain guard resumes reverse traversal after the first failure.
 
 Allocated character `prefix_storage<char>` reserves one additional
 representation-private slot and maintains NUL at the logical length. A
@@ -298,8 +308,11 @@ The public `unique_ptr::swap` delegates to one declaration-bound private
 capability operation over two matching mutable owner tokens. MIR verifies both
 places and emits native owner swap directly, so exchanging owners cannot copy a
 pointee or trigger replacement cleanup.
-The stateless allocator calls one recoverable private allocation operation; a
-successful storage owner carries allocation extent, alignment, per-slot live
+The stateless allocator calls source-defined process-resource policy. A nonempty
+request obtains object bytes, then one metadata byte per slot, through two
+separate leases from the same provider; zero capacity acquires neither. Failure
+of the second acquisition or validation returns acquired regions before an owner
+is published. A successful storage owner carries extent, alignment, per-slot live
 state, reverse cleanup, and release authority together. Allocation failure is
 returned as `expected`, while bounds and invalid slot-state operations use the
 normal defined-failure route. The public owner rejects borrowed element state
@@ -308,8 +321,9 @@ movable element and consumes one completed `T`,
 so failure while creating the argument remains under ordinary MIR cleanup.
 `emplace<Args...>(index, args...)` also supports construction at the final slot
 address: semantics selects the constructor, HIR preserves its concrete
-parameters, and MIR schedules non-consuming slot preflight before parameter
-handoff. The slot becomes live only after that constructor succeeds; partial
+parameters, and ordinary source checks establish bounds and vacancy before the
+general `construct_at` handoff. The slot becomes live only after that constructor
+succeeds; partial
 members are rolled back with the original constructor failure record. The
 backend implements this verified schedule rather than independently selecting
 a native constructor or cleanup policy. Immovable ordinary objects can use this
@@ -317,18 +331,49 @@ path; storage handle movement does not relocate elements. Relocation separately
 requires the existing element capabilities. ADR 022 owns the public provenance
 and failure contract.
 
-The private `storage_try_adopt` capability accepts a writable external region,
-count, extent and alignment only inside an explicit unsafe block. Semantics
-records `StorageAdoption`; HIR/MIR preserve it, and verification rejects a
-missing marker or a forged destination/address/extent contract. The backend
-checks numeric extent and actual address alignment, allocates the existing slot
-bitmap, and publishes only on success. It never frees the external region.
-Source-defined resource leases must retain region release authority until the
-ordinary MIR element cleanup and bitmap destruction finish. This is not a
-second construction/destruction engine, nor proof of an allocator algorithm.
-The narrow `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` C ABI supplies
-nonthrowing aligned process allocation for those source-defined policies;
-zero bytes allocate nothing and invalid alignment is a recoverable status.
+Sparse region validation, live-slot bytes and reverse traversal are ordinary GTI
+policy. Numeric extent/alignment checks and the narrow native address-alignment
+query reject malformed descriptors; they do not prove actual memory validity,
+provenance or disjointness. The one-time unsafe resource binding establishes
+those caller obligations. General typed lifetime operations carry explicit
+`ObjectLifetime` authority and verified constructor/destructor recipes. Source
+leases retain both regions through element cleanup, then release metadata before
+object bytes. No compiler-private sparse adoption or hidden bitmap remains.
+`process_resource` supplies nonthrowing aligned process allocation through
+ordinary target-selected C declarations. Its GTI body checks nonzero
+power-of-two alignment, native `size_t` conversion and zero size before byte
+acquisition. POSIX alignment is raised to the actual native pointer size;
+the published descriptor retains the requested alignment. Error constants
+come from the target's headers, not hard-coded errno numbers. Windows validates
+before calling the CRT, avoiding its invalid-parameter handler for rejected
+requests. Empty release performs no native call. No GTI object is constructed
+or destroyed by the byte provider.
+
+The old `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` pair has no remaining
+repository consumer and is retired rather than retaining a second validation
+policy. The replacement native ABI in `<gti/memory.h>` exposes only target facts
+and forwarding operations with documented caller preconditions. Native `size_t`
+is not GTI's `std::size_t = uint64_t`; adapters perform that conversion only after
+source validation. POSIX's unsupported `void**` stays local to its adapter.
+CRT leading-underscore symbols are inaccessible through the current native-name
+rules, so Windows release also uses a forwarding adapter. Remove these adapters
+when general exact native scalar/output-pointer/symbol binding support can
+express their signatures. `free(void*)` is expressible directly, but the stdlib
+uses a uniquely named forwarding release adapter: the current C ABI rejects
+compatible duplicate symbol declarations, and a hidden private `free` declaration
+would otherwise prevent applications from declaring their own libc binding.
+Canonical reusable native declarations are the removal prerequisite for this
+last forwarding seam. The independent libc-region example uses ordinary `free`.
+
+Sparse object regions and live metadata now use this source-owned provider
+policy, including default typed factories. Other generated-program allocations
+remain in prefix storage (vectors/strings), unique-owner
+construction and shared-owner/control-block representations in the generated
+support code. These retain their current allocation families until their own
+source/lifecycle migration is validated. Native HTTP/filesystem/thread handles
+also allocate host implementation objects behind their existing C ABI. Compiler
+host allocations such as emission-plan `std::make_unique` are not GTI-program
+allocations and are outside this migration.
 
 `std::arena<T>`, `std::pool<T>`, `std::try_make_arena`, and
 `std::try_make_pool` are the first bounded allocation-policy clients. They are
@@ -338,13 +383,14 @@ constructors consume newly allocated `std::storage<T>` behind an ordinary
 source-defined `gti_internal::empty_storage_adoption` seal. The private
 namespace makes the precondition unavailable to applications; the seal itself
 has no intrinsic identity or backend behavior. HIR therefore selects ordinary
-public factories and methods, then reaches exact private storage operations
-only inside their bodies.
+public factories and methods, then reaches the same general typed lifetime and
+owner-witness operations available to unrelated source-defined owners.
 
 The unique-owner upcast capability consumes one private owner after semantics
 has proved an exact public derived-to-base relationship and polymorphic
-destruction. The storage shift capabilities move initialized slots through a
-verified empty slot. Public `std::upcast_unique`, `vector::insert`, and
+destruction. Sparse shifts are source loops over checked slot state and general
+typed relocation; prefix insert/erase retain their own capability protocol.
+Public `std::upcast_unique`, `vector::insert`, and
 `vector::erase` remain ordinary GTI policy; neither public name is recognized
 by the compiler or backend.
 

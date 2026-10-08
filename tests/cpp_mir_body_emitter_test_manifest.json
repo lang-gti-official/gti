@@ -2,6 +2,10 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testExplicitVirtualResultChannel",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testGeneratedMoveReferenceBindings",
       "suite": "lifecycle"
     },
@@ -10,7 +14,19 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testConstructedPrvalueCheckedFieldReplacement",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testNonFailingOwningDeclarationInitializer",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDeclarationFailureRollback",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testGeneratedDefaultScheduleObligation",
       "suite": "lifecycle"
     },
     {
@@ -194,6 +210,10 @@
       "suite": "text"
     },
     {
+      "name": "testCopyableLambdaReturnRetainsSsa",
+      "suite": "text"
+    },
+    {
       "name": "testForwardedConcretePackLayout",
       "suite": "text"
     },
@@ -274,7 +294,7 @@
       "suite": "lifecycle"
     },
     {
-      "name": "testContainedOwningStringFieldConstructor",
+      "name": "testGeneratedOwningStringFieldConstructor",
       "suite": "lifecycle"
     },
     {
@@ -323,6 +343,10 @@
     },
     {
       "name": "testDefaultConstructionPreparedParameterStaging",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testCheckedPassiveExpectedConstruction",
       "suite": "lifecycle"
     },
     {

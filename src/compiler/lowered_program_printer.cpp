@@ -498,6 +498,14 @@ private:
     }
     output << "];";
     traits(value.traits);
+    if (value.transferCondition) {
+      output << ";transfer-condition=";
+      type(*value.transferCondition);
+    }
+    if (value.shareCondition) {
+      output << ";share-condition=";
+      type(*value.shareCondition);
+    }
     output << ";transfer=" << number(value.transferPolicy)
            << ";share=" << number(value.sharePolicy)
            << ";special=" << number(value.defaultConstructor) << ':'
@@ -505,7 +513,8 @@ private:
            << number(value.moveConstructor) << ':'
            << number(value.copyAssignment) << ':'
            << number(value.moveAssignment) << ':' << number(value.destructor)
-           << ";c-abi-layout=";
+           << ";generated-default-requires-schedule="
+           << value.generatedDefaultRequiresSchedule << ";c-abi-layout=";
     cAbiLayout(value.cAbiLayout);
     output << ";union-layout=";
     unionLayout(value.unionLayout);
@@ -520,8 +529,9 @@ private:
 
   void printValue(const LoweredEnumDeclaration &value) {
     output << "enum(id=" << value.id << ";unit=" << value.sourceUnit
-           << ";qualified=" << std::quoted(value.qualifiedName)
-           << ";underlying=";
+           << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
+    type(value.type);
+    output << ";underlying=";
     type(value.underlyingType);
     output << ";payload=" << value.payload << ";traits=";
     traits(value.traits);
@@ -791,8 +801,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << (program.embeddingPlan() ? "lowered-program-v12\n"
-                                     : "lowered-program-v11\n");
+  output << "lowered-program-v15\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

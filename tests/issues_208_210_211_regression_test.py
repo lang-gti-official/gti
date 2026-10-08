@@ -7,6 +7,22 @@ import sys
 import tempfile
 
 
+INCOMING_CLEANUP_CHECK = (
+    r"::gti_internal::backend::mir_check_incoming_cleanup_failure_v1\("
+    r"__gti_mir_failure_record, "
+    r"&::gti_internal::backend::__gti_failure_artifact_descriptor_v1\);"
+)
+
+
+def cleanup_scope(block: str) -> str:
+    ordinal = re.escape(block.removeprefix("__gti_mir_bb_"))
+    return (
+        r"::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+        r"__gti_mir_cleanup_context_" + ordinal + r"\(__gti_mir_failure_record, "
+        r"&::gti_internal::backend::__gti_failure_artifact_descriptor_v1\);\s*"
+    )
+
+
 FIXTURES = (
     "issue_208_literal_field_initializer.gti",
     "issue_208_vector_field_initializer.gti",
@@ -148,15 +164,17 @@ def main() -> int:
         # destroy only the empty representation, construct in place, and
         # publish on the successful Invoke edge. No moved temporary survives.
         destination = re.escape(destination_match.group("destination"))
-        vector_schedule = re.search(
+        vector_schedule_pattern = re.compile(
             r"std::destroy_at\(std::addressof\(" + destination + r"\)\);\s*"
             r"::new \(static_cast<void \*>\(std::addressof\(" + destination + r"\)\)\) "
             r"[\w:]+\("
             r"::gti_internal::backend::mir_failure_constructor_tag_v1<\d+>\{\}, "
             r"&(?P<status>__gti_mir_construct_success_\d+), __gti_mir_failure_record\);\s*"
             r"if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);\s*"
-            r"\} else \{\s*goto (?P<failure>__gti_mir_bb_\d+);", vector_body
+            r"\} else \{\s*" + INCOMING_CLEANUP_CHECK +
+            r"\s*goto (?P<failure>__gti_mir_bb_\d+);"
         )
+        vector_schedule = vector_schedule_pattern.search(vector_body)
         if vector_schedule is None:
             sys.stderr.write(
                 "generated C++ lost the vector field's "
@@ -171,13 +189,21 @@ def main() -> int:
             r"// GTI MIR cleanup boundary \d+\s*"
             r"\*__gti_mir_constructor_success = true;\s*return;", vector_body
         )
-        failure = re.search(
+        failure_pattern = re.compile(
             re.escape(vector_schedule.group("failure")) + r": \{\s*"
+            + cleanup_scope(vector_schedule.group("failure")) +
             r"// GTI MIR failure-record \d+ cleanup\s*"
-            r"// GTI MIR propagate failure-record \d+ after cleanup\s*return;", vector_body
+            r"// GTI MIR propagate failure-record \d+ after cleanup\s*return;"
         )
+        failure = failure_pattern.search(vector_body)
         if success is None or failure is None or " = std::move(" in vector_body:
             sys.stderr.write("vector field must publish only on success, without a second move\n")
+            return 1
+        missing_guard = re.sub(INCOMING_CLEANUP_CHECK, "", vector_schedule.group(0), count=1)
+        missing_scope = re.sub(cleanup_scope(vector_schedule.group("failure")), "", failure.group(0), count=1)
+        if (vector_schedule_pattern.search(missing_guard) is not None or
+                failure_pattern.search(missing_scope) is not None):
+            sys.stderr.write("field publication proof accepts missing inherited-cleanup protection\n")
             return 1
 
         reads_cpp = emit_cpp(
@@ -213,7 +239,8 @@ def main() -> int:
             r"(?P<status>__gti_mir_replacement_success_\d+) = [^\n]+"
             r"\}\(\(\*__gti_mir_loan_(?P=loan)\)\);\s*"
             r"if \((?P=status)\) \{\s*goto (?P<success>__gti_mir_bb_\d+);"
-            r"\s*\} else \{\s*goto (?P<failure>__gti_mir_bb_\d+);",
+            r"\s*\} else \{\s*" + INCOMING_CLEANUP_CHECK +
+            r"\s*goto (?P<failure>__gti_mir_bb_\d+);",
             replacement_cpp,
         )
         if cleanup is None:
@@ -236,6 +263,7 @@ def main() -> int:
             return 1
         rollback = re.search(
             re.escape(cleanup.group("failure")) + r": \{\s*"
+            + cleanup_scope(cleanup.group("failure")) +
             r"// GTI MIR failure-record \d+ cleanup\s*"
             r"// GTI MIR end-borrow loan " + cleanup.group("loan") + r"\s*"
             r"__gti_mir_drop_success_\d+ = "

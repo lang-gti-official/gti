@@ -353,7 +353,6 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
     }
     finish();
     return;
-  case SemanticType::Storage:
   case SemanticType::PrefixStorage:
     // Compiler-private raw storage cleanup cannot execute a GTI body.
     finish();
@@ -922,6 +921,14 @@ auto SemanticVisitor::Impl::validateProgramInitializationEffects(
     if (initializer.role == ProgramInitializationStepRole::DataOnly) {
       continue;
     }
+    if (initializer.declaration->isConstexpr()) {
+      const auto *binding = semanticModel.findBinding(*initializer.declaration);
+      if (binding == nullptr || !binding->constant) {
+        // A rejected required constant has no executable initializer. Its
+        // evaluation diagnostic owns the failure, not runtime effect proof.
+        continue;
+      }
+    }
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visiting;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash> visited;
     const std::function<bool(ProgramEffectOwner, std::optional<SourceSpan>)>
@@ -1043,6 +1050,9 @@ auto SemanticVisitor::Impl::statementSourceUnit(const Stmt &statement) const
   if (const auto *classDecl = stmtAs<ClassDecl>(&statement)) {
     return sourceUnitFor(classDecl->name());
   }
+  if (const auto *enumDecl = stmtAs<EnumDecl>(&statement)) {
+    return sourceUnitFor(enumDecl->name());
+  }
   if (const auto *function = stmtAs<FunctionDecl>(&statement)) {
     return sourceUnitFor(function->name());
   }
@@ -1101,7 +1111,11 @@ auto SemanticVisitor::Impl::analyze(const StmtList &statements) -> void {
       reachable = summarizeFlow(statement.get()).canFallThrough;
     } else {
       if (!hasUnreachableTail) {
-        if (statement != nullptr && statement->extent()) {
+        // One specialization's selected constexpr branch cannot make shared
+        // source unreachable. Declaration-wide tails are diagnosed by primary
+        // analysis; concrete reanalysis still checks the tail's semantics.
+        if (!instanceAnalysisActive && statement != nullptr &&
+            statement->extent()) {
           Diagnostic diagnostic = makeDiagnostic(
               DiagnosticId::UnreachableStatement, *statement->extent());
           diagnostic.tags.push_back(DiagnosticTag::Unnecessary);
@@ -1733,6 +1747,23 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                              .end = span.end,
                              .line = span.line});
   };
+  const auto selectedConstructor = [&] {
+    const auto *construction = semanticModel.findConstruction(expr);
+    if (construction == nullptr ||
+        construction->kind != ConstructorKind::Ordinary ||
+        construction->constructedType.kind != SemanticType::Class)
+      return false;
+    if (!construction->generatedDefault)
+      return construction->constructor != 0;
+    const auto *owner = classInfo(construction->constructedType);
+    const auto *lifecycle =
+        owner == nullptr || owner->declaration == nullptr
+            ? nullptr
+            : semanticModel.findClassLifecycle(*owner->declaration);
+    return lifecycle != nullptr &&
+           (lifecycle->generatedDefaultBaseConstructor != 0 ||
+            lifecycle->generatedDefaultFieldInitializers);
+  };
 
   if (const ResolvedOperatorInfo *resolved = semanticModel.findOperator(expr)) {
     const bool assignmentExpression =
@@ -1749,22 +1780,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
     return operation;
   }
 
-  if (const ResolvedConstructionInfo *construction =
-          semanticModel.findConstruction(expr);
-      construction != nullptr &&
-      construction->kind == ConstructorKind::Ordinary &&
-      construction->constructedType.kind == SemanticType::Class &&
-      ((construction->constructor != 0 && !construction->generatedDefault) ||
-       (construction->generatedDefault &&
-        [&] {
-          const auto *owner = classInfo(construction->constructedType);
-          const auto *lifecycle =
-              owner == nullptr || owner->declaration == nullptr
-                  ? nullptr
-                  : semanticModel.findClassLifecycle(*owner->declaration);
-          return lifecycle != nullptr &&
-                 lifecycle->generatedDefaultBaseConstructor != 0;
-        }())) &&
+  if (selectedConstructor() &&
       (callResolution == nullptr ||
        callResolution->intrinsic == IntrinsicKind::None)) {
     operation.propagation = FailurePropagationKind::Constructor;
@@ -1850,36 +1866,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::EmptyOwnerAccess,
                             uniqueOwnerAccessDetail());
           break;
-        case IntrinsicKind::AllocateStorage:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
-                            DefinedFailureDetail::PrivateStorage);
-          break;
-        case IntrinsicKind::StorageConstruct:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
-                            DefinedFailureDetail::PrivateStorage);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::DuplicateConstruction);
-          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
-                            DefinedFailureDetail::ElementConstruction);
-          if (const auto *construction = semanticModel.findConstruction(expr);
-              construction != nullptr &&
-              construction->kind == ConstructorKind::Ordinary &&
-              construction->constructor != 0 &&
-              construction->constructedType.kind == SemanticType::Class &&
-              !construction->generatedDefault) {
+        case IntrinsicKind::ObjectConstruct:
+          // Raw validity is the unsafe caller's obligation. Only the selected
+          // GTI constructor may fail; there is no allocation or slot preflight.
+          if (selectedConstructor())
             operation.propagation = FailurePropagationKind::Constructor;
-          }
-          break;
-        case IntrinsicKind::StorageRead:
-        case IntrinsicKind::StorageReadMut:
-        case IntrinsicKind::StorageDestroy:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
-                            DefinedFailureDetail::PrivateStorage);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::UninitializedAccess);
           break;
         case IntrinsicKind::AllocatePrefixStorage:
           anchor(token);
@@ -1894,12 +1885,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::ElementConstruction);
           // MIR checks capacity while prepared parameters are still owned by
           // the caller, then transfers them into this exact final-slot ctor.
-          if (const auto *construction = semanticModel.findConstruction(expr);
-              construction != nullptr &&
-              construction->kind == ConstructorKind::Ordinary &&
-              construction->constructor != 0 &&
-              construction->constructedType.kind == SemanticType::Class &&
-              !construction->generatedDefault) {
+          if (selectedConstructor()) {
             operation.propagation = FailurePropagationKind::Constructor;
           }
           break;
@@ -1950,16 +1936,14 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::EmptyOwnerAccess,
                             DefinedFailureDetail::MemberAccess);
           break;
-        case IntrinsicKind::StorageTryAllocate:
-        case IntrinsicKind::StorageTryAdopt:
-        case IntrinsicKind::StorageCapacity:
-        case IntrinsicKind::StorageInitialized:
         case IntrinsicKind::PrefixStorageLength:
         case IntrinsicKind::PrefixStorageTextView:
         case IntrinsicKind::PrefixStorageCString:
         case IntrinsicKind::PrefixStorageTryCString:
         case IntrinsicKind::OptionalStorageHasValue:
         case IntrinsicKind::OptionalStorageReset:
+        case IntrinsicKind::ObjectDestroy:
+        case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         case IntrinsicKind::TextViewSlice:
@@ -2011,28 +1995,17 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             storageBoundsCheckDetail());
           break;
         case IntrinsicKind::RequireKey:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::KeyNotFound,
-                            DefinedFailureDetail::KeyLookup);
-          break;
         case IntrinsicKind::RequireContainerArgument:
+        case IntrinsicKind::RequireVacantStorage:
+        case IntrinsicKind::RequireLiveStorage:
+        case IntrinsicKind::RequireRelocationCapacity:
+        case IntrinsicKind::RequireRelocationSource:
+        case IntrinsicKind::RequireRelocationDestination: {
           anchor(token);
-          addFailureOutcome(operation,
-                            DefinedFailureCode::InvalidContainerArgument,
-                            DefinedFailureDetail::ContainerArgument);
+          const auto outcome = *intrinsicBooleanFailureOutcome(intrinsic);
+          addFailureOutcome(operation, outcome.code, outcome.detail);
           break;
-        case IntrinsicKind::StorageRelocate:
-        case IntrinsicKind::StorageShiftRight:
-        case IntrinsicKind::StorageShiftLeft:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::RelocationCapacity);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::InvalidRelocationSource);
-          addFailureOutcome(
-              operation, DefinedFailureCode::InvalidStorageState,
-              DefinedFailureDetail::OccupiedRelocationDestination);
-          break;
+        }
         case IntrinsicKind::ExactTypeParameterConstruction:
         case IntrinsicKind::RawPointerConversion:
         case IntrinsicKind::DefaultTypeParameterConstruction:
@@ -2312,10 +2285,22 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       if (origin.pointeeType != SemanticType::Unknown &&
           !containsOpenTypeParameter(origin.pointeeType) &&
           origin.pointeeType != info.type.arguments.front()) {
-        report(expressionToken(expr),
-               "Raw pointer result contradicts the known pointee type '" +
-                   typeSpelling(origin.pointeeType) + "'.",
-               "GTI-S2014");
+        // These origins are optional audit evidence, not the source type of
+        // the call. In particular, a source allocator may erase byte-address
+        // arithmetic before constructing a different object in its region.
+        // Preserve the finding (and Strict promotion), without making Warn
+        // change acceptance. Static pointer shape/constness remain mandatory
+        // checks in analyzeAliasConversion, independently of this metadata.
+        diagnostics.push_back(makeDiagnostic(
+            origin.possible ? DiagnosticId::RawAuditPotential
+                            : DiagnosticId::RawAuditViolation,
+            expressionToken(expr),
+            {std::string(origin.possible
+                             ? "Raw pointer result may contradict a possible "
+                               "pointee type '"
+                             : "Raw pointer result contradicts the known "
+                               "pointee type '") +
+             typeSpelling(origin.pointeeType) + "'."}));
         diagnostics.back().related.push_back(
             {origin.addressSite, "Pointee type retained at this conversion."});
         break;
@@ -2348,6 +2333,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   bool mutableBinding = false;
   bool staticMember = false;
   SymbolId symbolId = 0;
+  bool enumeratorOccurrence = false;
   OccurrenceRole roles = requestedRoles;
   if (kind == ExprKind::Variable) {
     const Variable &variable = static_cast<const Variable &>(expr);
@@ -2399,6 +2385,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     if (const ResolvedEnumeratorInfo *enumerator =
             semanticModel.findEnumerator(qualified);
         enumerator != nullptr && enumerator->declaration != nullptr) {
+      enumeratorOccurrence = true;
       symbolId = symbolForDeclaration(enumerator->declaration->name);
       if (symbolId == 0) {
         const EnumTypeInfo *owner =
@@ -2491,9 +2478,10 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(token),
-         .kind = functionItemDeclaration == nullptr
-                     ? SemanticOccurrenceKind::Expression
-                     : SemanticOccurrenceKind::Function,
+         .kind = functionItemDeclaration != nullptr
+                     ? SemanticOccurrenceKind::Function
+                 : enumeratorOccurrence ? SemanticOccurrenceKind::Symbol
+                                        : SemanticOccurrenceKind::Expression,
          .symbol = symbolId,
          .roles = roles,
          .name = token.lexeme,
@@ -2597,7 +2585,15 @@ auto SemanticVisitor::Impl::analyzeInitializer(const ExprPtr &expr,
   const Expr *enclosingExpression = contextualInitializerExpression;
   contextualInitializerType = expectedType;
   contextualInitializerExpression = expr.get();
-  SemanticType result = analyzeExpectedCallableResult(expr, expectedType);
+  const auto literal =
+      isIntegral(expectedType) && isContextualIntegerLiteral(expr.get())
+          ? integerConstant(expr.get())
+          : std::nullopt;
+  SemanticType result =
+      literal &&
+              (!isInteger(expectedType) || integerFits(expectedType, *literal))
+          ? analyzeContextualIntegerOperand(expr, expectedType)
+          : analyzeExpectedCallableResult(expr, expectedType);
   if (allowExactNullConstruction && expr &&
       expectedType.kind == SemanticType::Class &&
       result == SemanticType::NullPtr) {
@@ -2736,10 +2732,8 @@ auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
          (isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
           owner.storedReference->type.kind == SemanticType::Reference &&
           !owner.storedReference->type.arguments.empty() &&
-          (owner.storedReference->type.arguments.front().kind ==
-               SemanticType::Storage ||
-           owner.storedReference->type.arguments.front().kind ==
-               SemanticType::PrefixStorage));
+          owner.storedReference->type.arguments.front().kind ==
+              SemanticType::PrefixStorage);
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryMutexGuardCarrier(
@@ -2976,6 +2970,16 @@ auto SemanticVisitor::Impl::toolingSymbolFor(const Symbol &symbol) -> SymbolId {
 
 auto SemanticVisitor::Impl::genericParameterInfo(GenericParameterId id) const
     -> const GenericParameterInfo * {
+  for (const EnumInfo &owner : enums) {
+    const auto found = std::find_if(
+        owner.genericParameters.begin(), owner.genericParameters.end(),
+        [id](const GenericParameterInfo &parameter) {
+          return parameter.id == id;
+        });
+    if (found != owner.genericParameters.end()) {
+      return &*found;
+    }
+  }
   for (const ClassInfo &owner : classes) {
     const auto found = std::find_if(
         owner.genericParameters.begin(), owner.genericParameters.end(),
@@ -3479,6 +3483,14 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
     const bool candidateC = candidate.declaration != nullptr &&
                             candidate.declaration->hasCLinkage();
     if (previousC || candidateC) {
+      // The external-symbol catalog owns duplicate C symbol diagnostics,
+      // including this same-name case. Keep the GTI overload rule for mixed
+      // linkage and distinct native link names.
+      if (previousC && candidateC &&
+          previous.record().externalSymbol ==
+              candidate.record().externalSymbol) {
+        return true;
+      }
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2054", DiagnosticPhase::Semantics, name,
           "extern \"C\" functions cannot be overloaded or share their "
@@ -3999,7 +4011,8 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
   semanticModel.recordCompletion(std::move(context));
 }
 
-auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
+auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
+                                                       const TypeRef *ownerType)
     -> void {
   const Token &completion = path.last();
   SemanticCompletionContext context{.kind = SemanticCompletionKind::Namespace,
@@ -4032,10 +4045,12 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
       }
     }
   }
-  if (const std::optional<EnumId> owner =
-          resolveEnumPath(ownerPath, currentNamespace)) {
+  const SemanticType selectedEnum =
+      typeOf(ownerType ? *ownerType : TypeRef(ownerPath));
+  if (selectedEnum.kind == SemanticType::Enum && selectedEnum.enumId != 0 &&
+      selectedEnum.enumId <= enums.size() && enumTypeFor(selectedEnum)) {
     context.kind = SemanticCompletionKind::Enum;
-    const EnumInfo &enumeration = enums.at(*owner - 1);
+    const EnumInfo &enumeration = enums.at(selectedEnum.enumId - 1);
     for (const auto &[name, enumerator] : enumeration.enumerators) {
       context.candidates.push_back(
           {.kind = SemanticCompletionCandidateKind::Enumerator,
@@ -4043,9 +4058,9 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path)
            .qualifiedName = qualifiedName(enumeration.namespaceScope,
                                           enumeration.name.lexeme) +
                             "::" + name,
-           .type = enumerator.symbol.type,
+           .type = selectedEnum,
            .scopeDistance = 0,
-           .enumType = *owner});
+           .enumType = selectedEnum.enumId});
     }
   } else if (const std::optional<ClassId> owner = completionOwner) {
     context.kind = SemanticCompletionKind::Member;
@@ -4925,21 +4940,44 @@ auto SemanticVisitor::Impl::resolveEnumerator(const NamePath &path,
   return found == owner.enumerators.end() ? nullptr : &found->second;
 }
 
+auto SemanticVisitor::Impl::resolveEnumerator(
+    const QualifiedName &expression) const -> std::optional<EnumeratorRecord> {
+  if (expression.name().segments.size() < 2)
+    return std::nullopt;
+  const auto ownerType = expression.ownerType()
+                             ? typeOf(*expression.ownerType())
+                             : typeOf(TypeRef(NamePath(std::vector<Token>(
+                                   expression.name().segments.begin(),
+                                   expression.name().segments.end() - 1))));
+  if (ownerType.kind != SemanticType::Enum || ownerType.enumId == 0 ||
+      ownerType.enumId > enums.size())
+    return std::nullopt;
+  const auto &owner = enums[ownerType.enumId - 1];
+  const auto found = owner.enumerators.find(expression.name().last().lexeme);
+  if (found == owner.enumerators.end())
+    return std::nullopt;
+  auto result = found->second;
+  result.symbol.type = ownerType;
+  const auto substitution = enumSubstitution(ownerType);
+  for (auto &payload : result.payloadTypes)
+    payload = substituteType(payload, substitution);
+  return result;
+}
+
 auto SemanticVisitor::Impl::payloadEnumeratorForCallee(
-    const ExprPtr &callee) const -> const EnumeratorRecord * {
+    const ExprPtr &callee) const -> std::optional<EnumeratorRecord> {
   const auto *qualified = exprAs<QualifiedName>(callee.get());
   if (qualified == nullptr) {
-    return nullptr;
+    return std::nullopt;
   }
-  const EnumeratorRecord *enumerator = resolveEnumerator(qualified->name());
-  if (enumerator == nullptr ||
-      enumerator->symbol.type.kind != SemanticType::Enum) {
-    return nullptr;
+  const auto enumerator = resolveEnumerator(*qualified);
+  if (!enumerator || enumerator->symbol.type.kind != SemanticType::Enum) {
+    return std::nullopt;
   }
   const EnumId owner = enumerator->symbol.type.enumId;
   return owner != 0 && owner <= enums.size() && enums[owner - 1].payload
              ? enumerator
-             : nullptr;
+             : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::analyzePayloadConstruction(
@@ -4969,7 +5007,7 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
            "Unit variant '" + enumerator.declaration->name.lexeme +
                "' is a value; write it without '()'.",
            "GTI-S2067");
-    currentType = SemanticType::enumType(owner);
+    currentType = enumerator.symbol.type;
     return;
   }
 
@@ -5032,10 +5070,11 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
   }
   semanticModel.recordPayloadConstruction(
       call, {.owner = owner,
+             .type = enumerator.symbol.type,
              .declaration = enumerator.declaration,
              .variantIndex = enumerator.variantIndex,
              .parameterTypes = enumerator.payloadTypes});
-  currentType = SemanticType::enumType(owner);
+  currentType = enumerator.symbol.type;
 }
 
 auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
@@ -5051,8 +5090,8 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
            "GTI-S2067");
     return std::nullopt;
   }
-  const EnumeratorRecord *enumerator = resolveEnumerator(qualified->name());
-  if (enumerator == nullptr || enumerator->symbol.type != subjectType) {
+  const auto enumerator = resolveEnumerator(*qualified);
+  if (!enumerator || enumerator->symbol.type != subjectType) {
     report(qualified->name().last(),
            "Switch case must name a variant of '" + typeSpelling(subjectType) +
                "'.",
@@ -5069,6 +5108,7 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
   analyzingCallCallee = enclosingCallCallee;
 
   ResolvedPayloadPatternInfo result{.owner = subjectType.enumId,
+                                    .type = subjectType,
                                     .declaration = enumerator->declaration,
                                     .variantIndex = enumerator->variantIndex};
   if (call == nullptr) {
@@ -6053,7 +6093,30 @@ auto SemanticVisitor::Impl::resolveMember(const SemanticType &objectType,
 
 auto SemanticVisitor::Impl::typeSpelling(const SemanticType &type) const
     -> std::string {
-  return semantic_spelling::typeSpelling(semanticModel, type);
+  // Registration may report before FunctionInfo is complete. Supply the
+  // canonical declaration record to the same printer used by finished models.
+  return SemanticTypePrinter(semanticModel)
+      .print(type, [&](GenericParameterId id) {
+        for (const auto &[declaration, parameters] :
+             functionGenericParameters) {
+          if (const auto *parameter = findGenericParameter(parameters, id)) {
+            return parameter;
+          }
+        }
+        for (const auto &[declaration, parameters] :
+             constructorGenericParameters) {
+          if (const auto *parameter = findGenericParameter(parameters, id)) {
+            return parameter;
+          }
+        }
+        for (const auto &owner : classes) {
+          if (const auto *parameter =
+                  findGenericParameter(owner.genericParameters, id)) {
+            return parameter;
+          }
+        }
+        return static_cast<const GenericParameterInfo *>(nullptr);
+      });
 }
 
 auto SemanticVisitor::Impl::tracksValueState(const Symbol &symbol) const
@@ -7289,7 +7352,7 @@ auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
             result.push_back(std::move(path));
       };
       if (current.kind == SemanticType::Enum) {
-        if (const auto *info = semanticModel.findEnumType(current.enumId))
+        if (const auto info = enumTypeFor(current))
           for (const auto &variant : info->enumerators)
             for (const auto &payload : variant.payloadTypes)
               append(payload);
@@ -7380,7 +7443,7 @@ auto SemanticVisitor::Impl::rawPointerTypesAt(
       return;
     }
     if (current.kind == SemanticType::Enum) {
-      if (const auto *info = semanticModel.findEnumType(current.enumId))
+      if (const auto info = enumTypeFor(current))
         for (const auto &variant : info->enumerators)
           for (const auto &payload : variant.payloadTypes)
             self(self, payload, index);
@@ -7408,7 +7471,11 @@ auto SemanticVisitor::Impl::rawPointerTypesAt(
       }
     } else if (const auto *owner = classInfo(current)) {
       for (const auto &[_, member] : owner->members)
-        if (toolingSymbolFor(member.symbol) == projection.field)
+        // This is a lookup of an already-identified field, not symbol
+        // discovery. Registering every member here gives optional auditing
+        // authority over later method/local SymbolIds and mandatory MIR.
+        if (member.symbol.bindingKind == SemanticBindingKind::Field &&
+            symbolForDeclaration(member.symbol.declaration) == projection.field)
           self(self, substituteSymbol(member.symbol, current).type, index + 1);
       for (const auto &base : owner->bases)
         if (!base.interface)
@@ -8643,8 +8710,6 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   case IntrinsicKind::UniqueOwnerBorrow:
   case IntrinsicKind::UniqueOwnerBorrowMut:
   case IntrinsicKind::SharedOwnerBorrow:
-  case IntrinsicKind::StorageRead:
-  case IntrinsicKind::StorageReadMut:
   case IntrinsicKind::PrefixStorageRead:
   case IntrinsicKind::PrefixStorageReadMut:
   case IntrinsicKind::OptionalStorageRead:
@@ -8720,7 +8785,6 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
     // compiler-owned resource mutation can replace objects or backing storage.
     if (!key.valid() ||
         (type.kind != SemanticType::Class && type.kind != SemanticType::Array &&
-         type.kind != SemanticType::Storage &&
          type.kind != SemanticType::PrefixStorage &&
          type.kind != SemanticType::UniqueOwner &&
          type.kind != SemanticType::SharedPointer))
@@ -9217,6 +9281,31 @@ auto SemanticVisitor::Impl::rawPointerLifetimeDiagnostic(
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::publishRawLifetimeDiagnostic(
+    const Diagnostic &diagnostic) -> void {
+  // A direct primitive and its checked-owner summary can check the same
+  // access. Only identical reports in this analysis context are duplicates;
+  // different origin/access spans or generic context notes stay visible.
+  const bool published = std::any_of(
+      diagnostics.begin(), diagnostics.end(), [&](const Diagnostic &previous) {
+        return previous.code == diagnostic.code &&
+               previous.severity == diagnostic.severity &&
+               previous.primary == diagnostic.primary &&
+               previous.message == diagnostic.message &&
+               previous.hints == diagnostic.hints &&
+               previous.related.size() == diagnostic.related.size() &&
+               std::equal(previous.related.begin(), previous.related.end(),
+                          diagnostic.related.begin(),
+                          [](const RelatedDiagnostic &left,
+                             const RelatedDiagnostic &right) {
+                            return left.span == right.span &&
+                                   left.message == right.message;
+                          });
+      });
+  if (!published)
+    diagnostics.push_back(diagnostic);
+}
+
 auto SemanticVisitor::Impl::validateRawPointerAccess(const ExprPtr &pointer,
                                                      const Token &site,
                                                      AccessMode access)
@@ -9612,7 +9701,7 @@ auto SemanticVisitor::Impl::validateRawPointerOrigins(
     if (origin.parameterPointee || origin.loopInput != 0)
       continue;
     if (auto diagnostic = rawPointerLifetimeDiagnostic(origin, site)) {
-      diagnostics.emplace_back(std::move(*diagnostic));
+      publishRawLifetimeDiagnostic(*diagnostic);
       continue;
     }
     if (checksLoans)
@@ -9849,7 +9938,7 @@ auto SemanticVisitor::Impl::endRawPointerLoop(const ScopeStack &backedge,
           if (use.deferred)
             use.deferred->diagnostics.emplace_back(std::move(*diagnostic));
           else
-            diagnostics.emplace_back(std::move(*diagnostic));
+            publishRawLifetimeDiagnostic(*diagnostic);
         } else if (use.memoryAccess && use.loanContext &&
                    !origin.parameterPointee && origin.loopInput == 0) {
           // Resolve the new place against the loans and sequence at the use,
@@ -10076,8 +10165,8 @@ auto SemanticVisitor::Impl::analyzeBinaryOperands(const Binary &expression)
 auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isNumeric(left)) ||
-      (right != SemanticType::Unknown && !isNumeric(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isNumeric(left) || !isNumeric(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires numeric operands but found '" + typeSpelling(left) +
@@ -10089,8 +10178,8 @@ auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
 auto SemanticVisitor::Impl::requireOrdered(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isOrdered(left)) ||
-      (right != SemanticType::Unknown && !isOrdered(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isOrdered(left) || !isOrdered(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires ordered operands but found '" + typeSpelling(left) +
@@ -10102,8 +10191,8 @@ auto SemanticVisitor::Impl::requireOrdered(SemanticType left,
 auto SemanticVisitor::Impl::requireInteger(SemanticType left,
                                            SemanticType right,
                                            const Token &token) -> void {
-  if ((left != SemanticType::Unknown && !isIntegral(left)) ||
-      (right != SemanticType::Unknown && !isIntegral(right))) {
+  if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
+      (!isIntegral(left) || !isIntegral(right))) {
     report(token,
            "Operator '" + token.lexeme +
                "' requires integer operands but found '" + typeSpelling(left) +
@@ -10594,7 +10683,7 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
     const SemanticType &target, const SemanticType &value,
     const ExprPtr &expression) const -> bool {
   if (target.kind == SemanticType::UniqueOwner &&
-      value == SemanticType::NullPtr) {
+      target.acceptsNullInitialization() && value == SemanticType::NullPtr) {
     return true;
   }
   if (!isAssignable(target, value, expression.get())) {
@@ -10651,24 +10740,12 @@ auto SemanticVisitor::Impl::isAssignable(SemanticType target,
   if (target == SemanticType::Unknown || value == SemanticType::Unknown) {
     return true;
   }
-  if (target == SemanticType::Double &&
-      (isInteger(value) || value == SemanticType::Float)) {
-    return true;
-  }
-  if (target == SemanticType::Float && isInteger(value)) {
-    return true;
-  }
-  if (target == SemanticType::CString && value == SemanticType::NullPtr) {
-    return true;
-  }
-  if (target.kind == SemanticType::NativeFunction &&
-      value == SemanticType::NullPtr) {
+  if (target.kind != SemanticType::UniqueOwner &&
+      (isImplicitScalarInitializationConversion(target, value) ||
+       isImplicitExpectedInitializationConversion(target, value))) {
     return true;
   }
   if (target.kind == SemanticType::RawPointer) {
-    if (value == SemanticType::NullPtr) {
-      return true;
-    }
     if (value.kind != SemanticType::RawPointer ||
         target.arguments.size() != 1 || value.arguments.size() != 1 ||
         target.arguments.front() != value.arguments.front()) {
@@ -10795,11 +10872,6 @@ auto SemanticVisitor::Impl::baseTypeOf(
                                             type.arguments[0], fromScope))
                                       : SemanticType::Unknown;
   }
-  if (compilerCapability == CompilerCapabilityTypeKind::Storage) {
-    return type.arguments.size() == 1
-               ? SemanticType::storageOf(typeOf(type.arguments[0], fromScope))
-               : SemanticType::Unknown;
-  }
   if (compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
     return type.arguments.size() == 1 ? SemanticType::prefixStorageOf(typeOf(
                                             type.arguments[0], fromScope))
@@ -10868,8 +10940,13 @@ auto SemanticVisitor::Impl::baseTypeOf(
     }
     if (const std::optional<EnumId> id =
             resolveEnumPath(type.name, fromScope)) {
-      return type.arguments.empty() ? SemanticType::enumType(*id)
-                                    : SemanticType::Unknown;
+      if (*id == 0 || *id > enums.size())
+        return SemanticType::Unknown;
+      const auto arguments = nominalArguments(enums[*id - 1].genericParameters,
+                                              type.arguments, fromScope);
+      return arguments ? SemanticType::enumType(*id, arguments->types,
+                                                arguments->values)
+                       : SemanticType::Unknown;
     }
     if (const std::optional<ClassId> id =
             resolveClassPath(type.name, fromScope)) {

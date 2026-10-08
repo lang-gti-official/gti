@@ -82,10 +82,12 @@ public:
   explicit Impl(TargetInfo target, const SourceGraph *sourceGraph,
                 bool toolingOccurrences, FrontendWorkMetrics *workMetrics,
                 const SourceManager *sources,
-                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off)
+                RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+                bool requireFunctionDefinitions = false)
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
-        rawPointerAudit(rawPointerAudit) {
+        rawPointerAudit(rawPointerAudit),
+        requireFunctionDefinitions(requireFunctionDefinitions) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
   }
 
@@ -122,6 +124,8 @@ public:
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
+  [[nodiscard]] std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &type) const override;
 
   [[nodiscard]] bool textCarrierFor(const SemanticType &type) const override {
     return isTextCarryingType(type);
@@ -955,6 +959,7 @@ private:
   };
 
   struct ClassInfo {
+    enum class DefaultsState { Unresolved, Resolving, Resolved, Invalid };
     ClassId id = 0;
     SourceUnitId sourceUnit = 0;
     const ClassDecl *declaration = nullptr;
@@ -969,6 +974,7 @@ private:
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
+    DefaultsState defaultsState = DefaultsState::Unresolved;
     std::vector<SemanticType> genericArgumentPatterns;
     bool argumentPatternsResolving = false;
     bool argumentPatternsResolved = false;
@@ -997,6 +1003,8 @@ private:
         ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferPolicySource;
     std::optional<Token> sharePolicySource;
+    std::optional<SemanticType> transferCondition;
+    std::optional<SemanticType> shareCondition;
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
@@ -1016,6 +1024,8 @@ private:
     ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferSource;
     std::optional<Token> shareSource;
+    std::optional<SemanticType> transferCondition;
+    std::optional<SemanticType> shareCondition;
     bool cAbiRecord = false;
     std::optional<Token> cAbiSource;
     bool cOpaqueHandle = false;
@@ -1041,11 +1051,14 @@ private:
   };
 
   struct EnumInfo {
+    enum class DefaultsState { Unresolved, Resolving, Resolved, Invalid };
     EnumId id = 0;
     SourceUnitId sourceUnit = 0;
     const EnumDecl *declaration = nullptr;
     Token name;
     std::vector<std::string> namespaceScope;
+    std::vector<GenericParameterInfo> genericParameters;
+    DefaultsState defaultsState = DefaultsState::Unresolved;
     SemanticType underlyingType = SemanticType::Int32;
     std::unordered_map<std::string, EnumeratorRecord> enumerators;
     bool payload = false;
@@ -1841,32 +1854,18 @@ private:
   void analyzeStorageBoundsCheckCall(const Call &expr);
   void analyzeTextViewSliceCall(const Call &expr);
 
-  void analyzeStorageIntrinsicCall(const Call &expr, IntrinsicKind intrinsic);
-
-  void analyzeStorageAllocation(const Call &expr,
-                                const std::vector<SemanticType> &argumentTypes);
-
   [[nodiscard]] static bool isStorageElementType(const SemanticType &type);
   [[nodiscard]] bool isAllocatedScalarType(const SemanticType &type) const;
 
   void requireMutableStorage(const ExprPtr &argument,
                              std::string_view operation);
 
-  void requireStorageIndex(const ExprPtr &argument, const SemanticType &type,
-                           IntrinsicKind intrinsic);
-
   void validateStorageValueConstruction(
       const Call &expr, const SemanticType &elementType,
       const std::vector<AnalyzedCallArgument> &arguments);
 
-  void reportStorageArity(const Call &expr, IntrinsicKind intrinsic,
-                          std::size_t expected);
-
   [[nodiscard]] static std::string
   uniqueOwnerIntrinsicName(IntrinsicKind intrinsic);
-
-  [[nodiscard]] static std::string
-  storageIntrinsicName(IntrinsicKind intrinsic);
 
   [[nodiscard]] std::optional<ResolvedTypeAlias>
   typeAliasForCallee(const ExprPtr &callee) const;
@@ -2282,6 +2281,9 @@ private:
                      std::vector<CallableArgumentBoundary> callableArguments,
                      CallReceiverMode receiverMode);
 
+  void requireFunctionDefinition(const CallableCandidate &function,
+                                 const Token &location);
+
   [[nodiscard]] static SemanticType
   callExpressionType(const SemanticType &returnType);
 
@@ -2422,6 +2424,11 @@ private:
   resolveClassArguments(ClassId classId, const std::vector<TypeRef> &arguments,
                         const Token &site,
                         std::string diagnosticCode = "GTI-S2026");
+  ResolvedClassArguments
+  resolveNominalArguments(const std::vector<GenericParameterInfo> &parameters,
+                          const Token &name,
+                          const std::vector<TypeRef> &arguments,
+                          const Token &site, std::string diagnosticCode);
 
   void
   analyzeConstructorCall(const Expr &construction, ClassId classId,
@@ -2510,8 +2517,6 @@ private:
 
   [[nodiscard]] bool isGtiInternalUniqueOwner(const TypeRef &type) const;
 
-  [[nodiscard]] bool isGtiInternalStorage(const TypeRef &type) const;
-
   [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const;
 
   [[nodiscard]] bool containsReference(const TypeRef &type) const;
@@ -2598,11 +2603,14 @@ private:
   hasStableBorrowStorage(const ExprPtr &expression,
                          std::unordered_set<const Expr *> &visiting) const;
 
-  std::vector<GenericParameterInfo>
-  makeGenericParameters(const std::vector<GenericParameter> &parameters,
-                        const Token &declarationName,
-                        const std::vector<std::string> &fromScope,
-                        bool allowStructural = false);
+  std::vector<GenericParameterInfo> makeGenericParameters(
+      const std::vector<GenericParameter> &parameters,
+      const Token &declarationName, const std::vector<std::string> &fromScope,
+      bool allowStructural = false, bool resolveDefaults = true);
+  void resolveGenericParameterDefaults(
+      const std::vector<GenericParameter> &parameters,
+      std::vector<GenericParameterInfo> &result,
+      const std::vector<std::string> &fromScope);
 
   [[nodiscard]] std::shared_ptr<const GenericValueExpression>
   normalizeGenericValueDefault(const ArrayExtentExpr &expression,
@@ -2682,6 +2690,12 @@ private:
 
   [[nodiscard]] GenericSubstitution
   classSubstitution(const SemanticType &objectType) const;
+  [[nodiscard]] GenericSubstitution
+  enumSubstitution(const SemanticType &type) const;
+  [[nodiscard]] std::optional<ResolvedClassArguments>
+  nominalArguments(const std::vector<GenericParameterInfo> &parameters,
+                   const std::vector<TypeRef> &arguments,
+                   const std::vector<std::string> &fromScope) const;
 
   [[nodiscard]] SemanticType openClassType(ClassId id) const;
 
@@ -2912,6 +2926,7 @@ private:
                          const ClassDecl *owner, AccessModifier access);
 
   void resolveTypeAliases();
+  void validateTypeAliasConstraints();
 
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope);
@@ -2941,12 +2956,18 @@ private:
                                         EnumId owner) const;
 
   void resolveEnumPayloads();
+  void registerEnumGenericParameters();
+  void resolveEnumGenericDefaults(EnumId id);
+  void validateConcreteEnumPayloads(const SemanticType &type,
+                                    const Token &site);
 
-  [[nodiscard]] CapabilityPolicyRegistration
-  registerClassAttributes(const ClassDecl &declaration);
+  [[nodiscard]] CapabilityPolicyRegistration registerClassAttributes(
+      const ClassDecl &declaration,
+      const std::vector<GenericParameterInfo> &parameters = {});
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope);
+  void resolveClassGenericDefaults(ClassId id);
 
   [[nodiscard]] std::vector<GenericParameterInfo>
   makeClassPatternParameters(const ClassDecl &declaration,
@@ -3004,8 +3025,8 @@ private:
 
   [[nodiscard]] bool
   byValueTypeReachesClass(const SemanticType &type, ClassId target,
-                          std::unordered_set<ClassId> &visiting,
-                          std::unordered_set<EnumId> &visitingEnums) const;
+                          std::vector<SemanticType> &visiting,
+                          std::vector<SemanticType> &visitingEnums) const;
 
   void validateOrdinaryClassLayouts();
 
@@ -3203,6 +3224,7 @@ private:
 
   void recordClassTypeIdentities();
 
+  void recordClassFieldSymbols();
   void recordClassTypes();
 
   [[nodiscard]] static bool
@@ -3533,7 +3555,8 @@ private:
 
   void captureUnqualifiedCompletion(const Token &completion);
 
-  void captureQualifiedCompletion(const NamePath &path);
+  void captureQualifiedCompletion(const NamePath &path,
+                                  const TypeRef *ownerType = nullptr);
 
   void captureMemberCompletion(const Token &completion,
                                const SemanticType &objectType,
@@ -3618,8 +3641,10 @@ private:
 
   [[nodiscard]] const EnumeratorRecord *
   resolveEnumerator(const NamePath &path, bool global = false) const;
+  [[nodiscard]] std::optional<EnumeratorRecord>
+  resolveEnumerator(const QualifiedName &expression) const;
 
-  [[nodiscard]] const EnumeratorRecord *
+  [[nodiscard]] std::optional<EnumeratorRecord>
   payloadEnumeratorForCallee(const ExprPtr &callee) const;
 
   void analyzePayloadConstruction(const Call &call,
@@ -3959,6 +3984,7 @@ private:
   [[nodiscard]] std::optional<Diagnostic>
   rawPointerLifetimeDiagnostic(const RawPointerOrigin &origin,
                                const Token &site);
+  void publishRawLifetimeDiagnostic(const Diagnostic &diagnostic);
 
   [[nodiscard]] static bool containsRawPointer(const SemanticType &type);
 
@@ -4340,6 +4366,8 @@ private:
     std::vector<std::string> currentNamespace;
     SourceUnitId currentSourceUnit = 0;
     std::unordered_set<const VariableDecl *> structuredBindingElements;
+    // Recovery-only flow facts: never published as valid exhaustive matches.
+    std::unordered_set<const SwitchStmt *> recoveredExhaustiveSwitches;
     std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
     bool measureTopLevelStatements = false;
     SemanticType currentType = SemanticType::Unknown;
@@ -4363,6 +4391,7 @@ private:
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
     bool resolvingGenericTypeDefault = false;
+    bool deferringTypeAliasConstraints = false;
     LoanFlowState loanFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
@@ -4531,6 +4560,8 @@ private:
   bool &allowPackTypeReference = requestSession.allowPackTypeReference;
   bool &resolvingGenericTypeDefault =
       requestSession.resolvingGenericTypeDefault;
+  bool &deferringTypeAliasConstraints =
+      requestSession.deferringTypeAliasConstraints;
   LoanFlowState &loanFlow = requestSession.loanFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
       requestSession.valueFlow.controlFlow;
@@ -4587,6 +4618,9 @@ private:
   bool toolingOccurrences = true;
   FrontendWorkMetrics *workMetrics = nullptr;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  // Fragment analysis may resolve declarations without publishing executable
+  // code. Closed executable/library requests need every actual GTI call target.
+  bool requireFunctionDefinitions = false;
 };
 
 } // namespace lang

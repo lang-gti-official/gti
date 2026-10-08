@@ -1,7 +1,7 @@
 // Valid (failure path): empty-owner access (GTI-R0008) for both `*` and `->`
-// on a reset unique_ptr, while a resource_vector of owning strings and a
-// typed storage are live. Cleanup must destroy the elements, return the
-// resource region (printed by the verbose bump resource), then the outer
+// on a reset unique_ptr, while a resource_vector of owning Tags is live.
+// Cleanup must destroy the elements, return the metadata region then object
+// region (printed by the verbose bump resource), then the outer
 // guard -- all before the report.
 #include <std/resource_vector>
 #include <std/resource>

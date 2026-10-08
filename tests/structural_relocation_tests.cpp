@@ -51,8 +51,9 @@ int main() {
   }
   const auto serialized = lang::MirPrinter().print(frontend.mir);
   expect(serialized.find('\0') == std::string::npos &&
-             serialized.starts_with("mir-v91"),
-         "all relocation kinds serialize as textual integers, not bytes");
+             serialized.starts_with("mir-v95"),
+         "relocation and conditional thread policies serialize as textual "
+         "integers, not bytes");
   const lang::MirClassInstance *particle = nullptr;
   const lang::MirClassInstance *resource = nullptr;
   for (const auto &item : frontend.hir.classInstances()) {
@@ -83,12 +84,29 @@ int main() {
              lang::RelocationKind::Bitwise,
          "zero-length concrete arrays retain element relocation eligibility");
   const auto cpp = gti_test::emitCppText(frontend);
-  expect(cpp.find("mir_storage_relocate_v1<true>(") != std::string::npos &&
-             cpp.find("mir_storage_relocate_v1<false>(") != std::string::npos &&
+  bool rawBitwise = false;
+  bool rawStructural = false;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::ObjectRelocate ||
+            instruction.parameterTypes.empty() ||
+            instruction.parameterTypes.front().arguments.size() != 1)
+          continue;
+        const auto kind = lang::mirTypeRelocationKind(
+            frontend.mir, instruction.parameterTypes.front().arguments.front());
+        rawBitwise |= kind == lang::RelocationKind::Bitwise;
+        rawStructural |= kind == lang::RelocationKind::Structural;
+      }
+  expect(rawBitwise && rawStructural,
+         "source sparse relocation retains both exact typed strategies");
+  expect(cpp.find("mir_storage_relocate_v1") == std::string::npos &&
+             cpp.find("::gti_internal::backend::mir_object_relocate_v1(") !=
+                 std::string::npos &&
              cpp.find("mir_prefix_relocate_v1<true>(") != std::string::npos &&
              cpp.find("mir_prefix_relocate_v1<false>(") != std::string::npos,
-         "production sparse storage and vector growth consume verified "
-         "eligibility");
+         "source sparse storage uses general typed relocation while vector "
+         "growth retains its verified prefix strategy");
   for (int mutation = 0; mutation != 5; ++mutation) {
     auto malformed = frontend.mir;
     auto *passive = const_cast<lang::MirClassInstance *>(

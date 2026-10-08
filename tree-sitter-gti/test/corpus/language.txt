@@ -1198,19 +1198,19 @@ int intact() { return 0; }
             (identifier)))
         (identifier)))
     (block
-      (expression_statement
-        (primary_expression
-          (parenthesized_expression
-            (primary_expression
+      (ERROR
+        (type
+          (user_type
+            (identifier)))
+        (ERROR)
+        (type
+          (function_signature
+            (user_type
               (identifier))
-            (ERROR))))
-      (expression_statement
-        (call_expression
-          (primary_expression
-            (identifier))
-          (argument_list
-            (pack_expansion
-              (identifier)))))))
+            (type
+              (user_type
+                (identifier))))))
+      (expression_statement)))
   (function_declaration
     (type
       (primitive_type))
@@ -3342,6 +3342,7 @@ Class and interface attributes
 [[transfer, share]] interface ConcurrentValue {};
 [[c_abi]] struct NativePoint { float x = 0.0; float y = 0.0; };
 [[c_opaque]] struct NativeHandle;
+[[unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {};
 
 ---
 
@@ -3382,7 +3383,18 @@ Class and interface attributes
   (class_declaration
     (class_attribute_list
       (identifier))
-    (identifier)))
+    (identifier))
+  (class_declaration
+    (class_attribute_list
+      (identifier)
+      (identifier)
+      (identifier)
+      (identifier))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (class_body)))
 
 ==================
 Layout queries

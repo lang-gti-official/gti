@@ -61,6 +61,11 @@ namespace gti_internal {
   void index_bounds_check(uint64_t index, uint64_t size);
   void require_key(bool found);
   void require_container_argument(bool valid);
+  void require_vacant_storage(bool valid);
+  void require_live_storage(bool valid);
+  void require_relocation_capacity(bool valid);
+  void require_relocation_source(bool valid);
+  void require_relocation_destination(bool valid);
   T restoring_exchange<T>(mut T& destination, T replacement);
   U enum_underlying_value<U, T>(T value);
   void restoring_swap<T>(mut T& left, mut T& right);

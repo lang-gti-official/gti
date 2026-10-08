@@ -322,7 +322,16 @@ SignaturePrinter::classType(const ClassTypeInfo &info) const {
 
 [[nodiscard]] std::string
 SignaturePrinter::enumType(const EnumTypeInfo &info) const {
-  std::string result = "enum class " + info.qualifiedName;
+  std::string result = "enum ";
+  if (info.declaration != nullptr && info.declaration->classKeyword()) {
+    result += "class ";
+  }
+  result += info.qualifiedName;
+  if (!info.genericParameters.empty()) {
+    result += '<';
+    appendGenericParameters(result, info.genericParameters);
+    result += '>';
+  }
   if (!info.payload) {
     result += " : " + types.print(info.underlyingType);
   }
@@ -824,9 +833,18 @@ public:
         result.signature = types.print(symbol->type);
         break;
       case SymbolKind::Enumerator:
+        if (occurrence->type.kind == SemanticType::Enum) {
+          if (auto owner = semantics.enumTypeFor(occurrence->type)) {
+            // Resolution owns the concrete signature. The primary symbol
+            // still supplies declaration identity and documentation, not the
+            // payload types selected by this application.
+            owner->qualifiedName = types.print(occurrence->type);
+            result.signature = signatures.enumerator(*owner, symbol->name);
+            break;
+          }
+        }
         if (symbol->type.kind == SemanticType::Enum) {
-          if (const EnumTypeInfo *owner =
-                  semantics.findEnumType(symbol->type.enumId)) {
+          if (const auto *owner = semantics.findEnumType(symbol->type.enumId)) {
             result.signature = signatures.enumerator(*owner, symbol->name);
             break;
           }
@@ -904,6 +922,8 @@ public:
           note += " (explicit opt-out)";
         } else if (policy == ConcurrencyCapabilityPolicy::UnsafeAsserted) {
           note += " (unsafe nominal assertion)";
+        } else if (policy == ConcurrencyCapabilityPolicy::UnsafeConditional) {
+          note += " (conditional unsafe nominal assertion)";
         } else if (policy == ConcurrencyCapabilityPolicy::Required) {
           note += " (interface requirement)";
         }
@@ -1964,6 +1984,13 @@ private:
       }
     }
     if (record.enumType != 0) {
+      if (record.kind == SemanticCompletionCandidateKind::Enumerator &&
+          record.type.kind == SemanticType::Enum) {
+        if (auto type = semantics.enumTypeFor(record.type)) {
+          type->qualifiedName = types.print(record.type);
+          return signatures.enumerator(*type, record.qualifiedName);
+        }
+      }
       if (const EnumTypeInfo *type = semantics.findEnumType(record.enumType)) {
         if (record.kind == SemanticCompletionCandidateKind::Enumerator) {
           return signatures.enumerator(*type, record.qualifiedName);

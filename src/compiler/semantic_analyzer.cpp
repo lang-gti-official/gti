@@ -2,15 +2,13 @@
 
 namespace lang {
 
-SemanticVisitor::SemanticVisitor(TargetInfo target,
-                                 const SourceGraph *sourceGraph,
-                                 bool toolingOccurrences,
-                                 FrontendWorkMetrics *workMetrics,
-                                 const SourceManager *sources,
-                                 RawPointerAuditMode rawPointerAudit)
-    : impl(std::make_unique<Impl>(std::move(target), sourceGraph,
-                                  toolingOccurrences, workMetrics, sources,
-                                  rawPointerAudit)) {}
+SemanticVisitor::SemanticVisitor(
+    TargetInfo target, const SourceGraph *sourceGraph, bool toolingOccurrences,
+    FrontendWorkMetrics *workMetrics, const SourceManager *sources,
+    RawPointerAuditMode rawPointerAudit, bool requireFunctionDefinitions)
+    : impl(std::make_unique<Impl>(
+          std::move(target), sourceGraph, toolingOccurrences, workMetrics,
+          sources, rawPointerAudit, requireFunctionDefinitions)) {}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;
@@ -52,6 +50,11 @@ bool SemanticVisitor::requiresActiveCleanupFor(const SemanticType &type) const {
 
 bool SemanticVisitor::textCarrierFor(const SemanticType &type) const {
   return impl->textCarrierFor(type);
+}
+
+std::optional<EnumTypeInfo>
+SemanticVisitor::enumTypeFor(const SemanticType &type) const {
+  return impl->enumTypeFor(type);
 }
 
 SemanticInstanceAnalysis SemanticVisitor::analyzeFunctionInstance(

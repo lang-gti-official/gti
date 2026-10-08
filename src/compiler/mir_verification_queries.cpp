@@ -1,4 +1,5 @@
 #include "mir_verification_queries.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <climits>
@@ -64,89 +65,8 @@ bool bindingReceivedStoredLoan(const MirBody &body, HirBindingId binding,
                                    depth + 1);
 }
 
-const MirPlace *storageAdoptionDestination(const MirBody &body,
-                                           const MirInstruction &instruction) {
-  if (instruction.kind != MirInstructionKind::Call ||
-      instruction.intrinsic != IntrinsicKind::StorageTryAdopt ||
-      !instruction.result || instruction.info.type != SemanticType::Int32 ||
-      instruction.info.category != ValueCategory::Value ||
-      instruction.info.access != AccessMode::ReadOnly ||
-      instruction.info.traits != semanticTraits(SemanticType::Int32) ||
-      instruction.info.updateArithmeticType != SemanticType::Unknown ||
-      instruction.unsafeOperation != UnsafeOperationKind::StorageAdoption ||
-      instruction.operands.size() != 5 ||
-      instruction.parameterTypes.size() != 5)
-    return nullptr;
-  // Adoption only establishes slot bookkeeping for an unsafe external region.
-  // It cannot also claim an owner/loan transfer, failure, cleanup, or other
-  // invocation capability. Default comparison fails closed for new metadata.
-  const MirInstruction exact{.id = instruction.id,
-                             .kind = MirInstructionKind::Call,
-                             .hirValue = instruction.hirValue,
-                             .hirStatement = instruction.hirStatement,
-                             .callSite = instruction.callSite,
-                             .unsafeOperation =
-                                 UnsafeOperationKind::StorageAdoption,
-                             .result = instruction.result,
-                             .operands = instruction.operands,
-                             .parameterTypes = instruction.parameterTypes,
-                             .intrinsic = IntrinsicKind::StorageTryAdopt,
-                             .info = instruction.info};
-  if (instruction != exact)
-    return nullptr;
-  const auto &storage = instruction.parameterTypes.front();
-  if (storage.kind != SemanticType::Storage || storage.arguments.size() != 1 ||
-      instruction.parameterTypes[1] !=
-          SemanticType::rawPointerTo(SemanticType::Void))
-    return nullptr;
-  for (std::size_t index = 0; index < 5; ++index) {
-    if (instruction.operands[index].kind != MirOperandKind::Value ||
-        instruction.operands[index].type != instruction.parameterTypes[index] ||
-        (index >= 2 &&
-         instruction.parameterTypes[index] != SemanticType::UInt64))
-      return nullptr;
-  }
-  const auto *stage = definitionFor(body, instruction.operands.front().value);
-  // Private storage uses a place-valued Load/Copy as its capability staging,
-  // not an owning copy. Ordinary call staging may instead use BorrowWrite.
-  // The source place's mutable access remains mandatory in both shapes.
-  if (!stage || stage->info.type != storage || stage->operands.size() != 1 ||
-      ((stage->kind != MirInstructionKind::Load ||
-        stage->info.category != ValueCategory::Place ||
-        stage->operands.front().kind != MirOperandKind::Copy) &&
-       (stage->kind != MirInstructionKind::CallInput ||
-        stage->operands.front().kind != MirOperandKind::BorrowWrite)))
-    return nullptr;
-  const auto *place = body.findPlace(stage->operands.front().place);
-  return place && place->type == storage && place->access == AccessMode::Mutable
-             ? place
-             : nullptr;
-}
-
-bool objectLayoutQuery(const MirProgram &program,
-                       const MirInstruction &instruction) {
-  if ((instruction.intrinsic != IntrinsicKind::ObjectSize &&
-       instruction.intrinsic != IntrinsicKind::ObjectAlignment) ||
-      !instruction.objectLayoutType ||
-      instruction.kind != MirInstructionKind::Call || !instruction.result ||
-      instruction.info.type != SemanticType::UInt64 ||
-      instruction.info.category != ValueCategory::Value ||
-      instruction.info.access != AccessMode::ReadOnly ||
-      instruction.info.traits != semanticTraits(SemanticType::UInt64))
-    return false;
-  // All unlisted fields must remain neutral, including future ownership,
-  // failure and invocation metadata. Provenance IDs do not grant authority.
-  const MirInstruction exact{.id = instruction.id,
-                             .kind = MirInstructionKind::Call,
-                             .hirValue = instruction.hirValue,
-                             .hirStatement = instruction.hirStatement,
-                             .callSite = instruction.callSite,
-                             .result = instruction.result,
-                             .intrinsic = instruction.intrinsic,
-                             .objectLayoutType = instruction.objectLayoutType,
-                             .info = instruction.info};
-  if (instruction != exact)
-    return false;
+bool completeObjectType(const MirProgram &program,
+                        const SemanticType &selected) {
   const auto eligible = [&](const auto &self, const SemanticType &type,
                             std::size_t depth) -> bool {
     if (depth > 128 || type.arrayLengthParameterId != 0)
@@ -173,7 +93,7 @@ bool objectLayoutQuery(const MirProgram &program,
              type.arguments.front().kind != SemanticType::TypeParameter &&
              type.arguments.front().kind != SemanticType::Unknown;
     case SemanticType::Enum:
-      return program.findIntegralEnum(type.enumId) != nullptr;
+      return program.findIntegralEnum(type) != nullptr;
     case SemanticType::Array:
       return type.arguments.size() == 1 && type.arrayLength > 0 &&
              self(self, type.arguments.front(), depth + 1);
@@ -194,7 +114,195 @@ bool objectLayoutQuery(const MirProgram &program,
       return false;
     }
   };
-  return eligible(eligible, *instruction.objectLayoutType, 0);
+  return eligible(eligible, selected, 0);
+}
+
+bool objectRelocate(const MirProgram &program,
+                    const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectRelocate ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.info.type != SemanticType::Void ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Void) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2)
+    return false;
+  const auto &pointer = instruction.parameterTypes.front();
+  if (pointer.kind != SemanticType::RawPointer ||
+      pointer.pointerAccess != AccessMode::Mutable ||
+      pointer.arguments.size() != 1 ||
+      !completeObjectType(program, pointer.arguments.front()) ||
+      !mirTypeRelocationIsDefinedFailureFree(program,
+                                             pointer.arguments.front()) ||
+      instruction.parameterTypes[1] != pointer ||
+      !std::all_of(instruction.operands.begin(), instruction.operands.end(),
+                   [&](const MirOperand &operand) {
+                     return operand.kind == MirOperandKind::Value &&
+                            operand.type == pointer;
+                   }))
+    return false;
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::ObjectLifetime,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::ObjectRelocate,
+                             .info = instruction.info};
+  return instruction == exact;
+}
+
+bool objectDestroy(const MirProgram &program,
+                   const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectDestroy ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.result || instruction.info.type != SemanticType::Void ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Void) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1)
+    return false;
+  const auto &pointer = instruction.parameterTypes.front();
+  if (pointer.kind != SemanticType::RawPointer ||
+      pointer.pointerAccess != AccessMode::Mutable ||
+      pointer.arguments.size() != 1 ||
+      !completeObjectType(program, pointer.arguments.front()) ||
+      instruction.operands.front().kind != MirOperandKind::Value ||
+      instruction.operands.front().type != pointer ||
+      !instruction.definedFailure.localOrigins.empty() ||
+      (instruction.definedFailure.propagation != FailurePropagationKind::None &&
+       instruction.definedFailure.propagation !=
+           FailurePropagationKind::Destructor))
+    return false;
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::ObjectLifetime,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::ObjectDestroy,
+                             .definedFailure = instruction.definedFailure,
+                             .elementCleanup = instruction.elementCleanup,
+                             .info = instruction.info};
+  return instruction == exact;
+}
+
+bool objectLayoutQuery(const MirProgram &program,
+                       const MirInstruction &instruction) {
+  if ((instruction.intrinsic != IntrinsicKind::ObjectSize &&
+       instruction.intrinsic != IntrinsicKind::ObjectAlignment) ||
+      !instruction.objectLayoutType ||
+      instruction.kind != MirInstructionKind::Call || !instruction.result ||
+      instruction.info.type != SemanticType::UInt64 ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::UInt64))
+    return false;
+  // All unlisted fields must remain neutral, including future ownership,
+  // failure and invocation metadata. Provenance IDs do not grant authority.
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .result = instruction.result,
+                             .intrinsic = instruction.intrinsic,
+                             .objectLayoutType = instruction.objectLayoutType,
+                             .info = instruction.info};
+  if (instruction != exact)
+    return false;
+  return completeObjectType(program, *instruction.objectLayoutType);
+}
+
+bool objectConstruct(const MirProgram &program,
+                     const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.result || instruction.info.type != SemanticType::Void ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits != semanticTraits(SemanticType::Void) ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.parameterTypes.empty() ||
+      instruction.parameterTypes.size() != instruction.operands.size())
+    return false;
+  const auto &pointer = instruction.parameterTypes.front();
+  if (pointer.kind != SemanticType::RawPointer ||
+      pointer.pointerAccess != AccessMode::Mutable ||
+      pointer.arguments.size() != 1 ||
+      !completeObjectType(program, pointer.arguments.front()) ||
+      !instruction.definedFailure.localOrigins.empty() ||
+      (instruction.definedFailure.propagation != FailurePropagationKind::None &&
+       instruction.definedFailure.propagation !=
+           FailurePropagationKind::Constructor))
+    return false;
+  // Call-input/lifecycle verification proves every prepared parameter and its
+  // handoff; the program verifier binds constructor identity/signature/failure.
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index)
+    if (instruction.operands[index].kind != MirOperandKind::Value ||
+        instruction.operands[index].type != instruction.parameterTypes[index])
+      return false;
+  const auto &element = pointer.arguments.front();
+  if (element.kind == SemanticType::Class) {
+    for (const auto &owner : program.classInstances()) {
+      if (owner.type != element)
+        continue;
+      if (owner.traits.containsBorrowedState)
+        return false;
+      if (!instruction.constructorTarget) {
+        const bool transfer =
+            instruction.parameterTypes.size() == 2 &&
+            instruction.parameterTypes[1] == element &&
+            ((instruction.constructorKind == ConstructorKind::Copy &&
+              owner.traits.copyable) ||
+             (instruction.constructorKind == ConstructorKind::Move &&
+              owner.traits.movable));
+        const bool defaultConstruction =
+            instruction.parameterTypes.size() == 1 &&
+            instruction.constructorKind == ConstructorKind::Ordinary &&
+            owner.defaultConstructor == SpecialMemberStatus::Generated &&
+            !owner.generatedDefaultRequiresSchedule;
+        if (!transfer && !defaultConstruction)
+          return false;
+      }
+    }
+  } else if (instruction.constructorTarget || !instruction.lifecycle.empty() ||
+             instruction.constructorKind != ConstructorKind::Ordinary ||
+             !instruction.definedFailure.empty() ||
+             instruction.parameterTypes.size() > 2 ||
+             (instruction.parameterTypes.size() == 2 &&
+              instruction.parameterTypes[1] != element)) {
+    return false;
+  }
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::ObjectLifetime,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = IntrinsicKind::ObjectConstruct,
+                             .definedFailure = instruction.definedFailure,
+                             .constructorTarget = instruction.constructorTarget,
+                             .constructorKind = instruction.constructorKind,
+                             .info = instruction.info,
+                             .lifecycle = instruction.lifecycle};
+  return instruction == exact;
 }
 
 bool rawPointerConversion(const MirInstruction &instruction) {

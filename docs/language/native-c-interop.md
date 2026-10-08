@@ -942,6 +942,24 @@ tree, file, or environment value.
 
 ## Runtime Relationship
 
+The process byte provider in `<std/resource>` is ordinary GTI over target-selected
+native calls. Its remaining `<gti/memory.h>` adapters expose native `size_t`
+limits, POSIX alignment/error constants and minimal allocation forwarding.
+Fixed-width `uint64_t` is not declared as if it were native `size_t`; source
+checks the limit before the adapter narrows. POSIX `void**` and Windows reserved
+CRT symbol spellings also require adapters under the current bounded ABI.
+`free(void*)` is expressible directly, but the provider's uniquely named release
+adapter avoids monopolizing that public symbol while compatible repeated C
+declarations are unsupported. Applications can declare ordinary `free` alongside
+`<std/resource>`. None of these functions confers
+ownership, initialization or safety merely by name.
+
+The runnable [`libc-region-provider`](../../examples/libc-region-provider/)
+project demonstrates a separate application byte owner with a minimal native
+size bridge, ordinary `free`, source-owned empty/exhaustion policy and move-only
+exactly-once cleanup. It does not pretend that raw bytes are initialized GTI
+objects. Run `gti run` in the project directory.
+
 The standard prelude now declares its output and file host calls through the
 same bounded `extern "C"` syntax. Their native definitions live behind
 `runtime/include/gti/runtime.h` and use `gti_c_string_view` for text inputs.

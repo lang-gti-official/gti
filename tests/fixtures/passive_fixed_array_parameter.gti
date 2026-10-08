@@ -1,0 +1,28 @@
+#include <std/array>
+
+mut int32_t constructions = 0;
+
+// There is no default constructor: staging must not create extra elements.
+struct Entry {
+  int32_t key;
+  Entry(int32_t value) : key(value) { constructions += 1; }
+};
+
+Entry make_entry(int32_t value) { return Entry(value); }
+
+// The same fixed-array parameter rule applies to ordinary user declarations.
+struct Table {
+  Entry values[2];
+  Table(Entry incoming[2]) : values(std::move(incoming)) {}
+  Entry& front() { return this.values[0]; }
+  Entry& back() { return this.values[1]; }
+};
+
+int main() {
+  Table table = Table({Entry(3), make_entry(4)});
+  std::array<Entry, 2> array = std::array<Entry, 2>({make_entry(5), Entry(6)});
+  return table.front().key == 3 && table.back().key == 4 &&
+                 array.front().key == 5 && array.back().key == 6 &&
+                 constructions == 4
+             ? 0 : 1;
+}

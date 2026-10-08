@@ -22,6 +22,12 @@ public:
   // A text carrier holds counted text by value (directly or through fields)
   // and relays that text's owner dependency per value.
   [[nodiscard]] virtual bool textCarrierFor(const SemanticType &type) const = 0;
+  // Concrete enum descriptions are produced by semantic generic substitution;
+  // HIR must not reinterpret the declaration's dependent payload syntax.
+  [[nodiscard]] virtual std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &) const {
+    return std::nullopt;
+  }
 
   // A borrowed nominal value with executable cleanup must retain its external
   // dependencies until that cleanup completes, not merely its last source use.
@@ -60,7 +66,8 @@ public:
       const SourceGraph *sourceGraph = nullptr, bool toolingOccurrences = true,
       FrontendWorkMetrics *workMetrics = nullptr,
       const SourceManager *sources = nullptr,
-      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off);
+      RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
+      bool requireFunctionDefinitions = false);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;
@@ -85,6 +92,8 @@ public:
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
   [[nodiscard]] bool textCarrierFor(const SemanticType &type) const override;
+  [[nodiscard]] std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &type) const override;
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,

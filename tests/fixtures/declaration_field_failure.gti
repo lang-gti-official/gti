@@ -61,9 +61,126 @@ public:
   GenericOwner() {}
 };
 
+// These declaration defaults have no source constructor. They must share the
+// same checked initialization/rollback schedule, including concrete generics.
+class DefaultResource {
+  int32_t id;
+public:
+  DefaultResource(int32_t value) : id(value) {
+    if (value == 2 && ((phase >= 8 && phase <= 12) || phase == 15 || phase == 17 ||
+                      phase == 19 || phase == 21 || phase == 22)) {
+      int32_t zero = 0;
+      int32_t generated_failure = 5 / zero;
+    }
+    std::println(value);
+  }
+  ~DefaultResource() {
+    std::println(this.id + 10);
+    if (phase == 11 && this.id == 1) {
+      int32_t zero = 0;
+      int32_t generated_cleanup_failure = 7 / zero;
+    }
+  }
+};
+
+class DefaultApplication {
+  DefaultResource first = DefaultResource(1);
+  DefaultResource second = DefaultResource(2);
+public:
+  ~DefaultApplication() { std::println(30); }
+};
+
+class GenericDefault<T> {
+  std::unique_ptr<T> first = std::make_unique<T>(1);
+  std::unique_ptr<T> second = std::make_unique<T>(2);
+public:
+  ~GenericDefault() { std::println(30); }
+};
+
+class DefaultBase {
+public:
+  DefaultBase() { std::println(5); }
+  ~DefaultBase() { std::println(15); }
+};
+
+class DefaultDerived : public DefaultBase {
+  DefaultResource first = DefaultResource(1);
+  DefaultResource second = DefaultResource(2);
+public:
+  ~DefaultDerived() { std::println(30); }
+};
+
+class NestedDefault {
+  DefaultApplication nested = DefaultApplication();
+public:
+  ~NestedDefault() { std::println(40); }
+};
+
+class ExpectedSuccessDefault<T> {
+  expected<std::unique_ptr<T>, int> first = std::make_unique<T>(1);
+  DefaultResource second = DefaultResource(2);
+public:
+  ~ExpectedSuccessDefault() { std::println(30); }
+};
+
+class ExpectedErrorDefault<T> {
+  expected<int, std::unique_ptr<T>> first = unexpected(std::make_unique<T>(1));
+  DefaultResource second = DefaultResource(2);
+public:
+  ~ExpectedErrorDefault() { std::println(30); }
+};
+
+class ExpectedPassiveDefault<T> {
+  expected<int, std::unique_ptr<T>> first = 1;
+  DefaultResource second = DefaultResource(2);
+public:
+  ~ExpectedPassiveDefault() { std::println(30); }
+};
+
 int main(int argc, std::vector<std::string> argv) {
   phase = int32_t(argc - 1);
   Resource caller{9};
+  if (phase == 18 || phase == 19) {
+    ExpectedSuccessDefault<DefaultResource> application{};
+    return 0;
+  }
+  if (phase == 20 || phase == 21) {
+    ExpectedErrorDefault<DefaultResource> application{};
+    return 0;
+  }
+  if (phase == 22 || phase == 23) {
+    ExpectedPassiveDefault<DefaultResource> application{};
+    return 0;
+  }
+  if (phase == 14 || phase == 15) {
+    std::allocator allocator{};
+    mut auto allocated = allocator.try_storage<DefaultApplication>(std::size_t(1));
+    if (!allocated) { return 1; }
+    mut auto slots = std::move(allocated).value();
+    [[discard]] slots.emplace(std::size_t(0));
+    return 0;
+  }
+  if (phase == 16 || phase == 17) {
+    mut std::vector<DefaultApplication> values{};
+    [[discard]] values.emplace_back();
+    return 0;
+  }
+  if (phase == 7 || phase == 8 || phase == 11) {
+    DefaultApplication application{};
+    return 0;
+  }
+  if (phase == 9 || phase == 13) {
+    GenericDefault<DefaultResource> generic{};
+    return 0;
+  }
+  if (phase == 10) {
+    DefaultDerived derived{};
+    return 0;
+  }
+  if (phase == 12) {
+    NestedDefault nested{};
+    return 0;
+  }
   if (phase == 6) {
     GenericOwner<GenericResource> generic{};
     return 0;

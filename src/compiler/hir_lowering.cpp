@@ -1,5 +1,6 @@
 #include "gti/hir.h"
 
+#include "diagnostic_registry.h"
 #include "gti/semantic_analyzer.h"
 
 namespace lang {
@@ -153,6 +154,14 @@ private:
     processedFunctions = 0;
     processedConstructors = 0;
     processedDestructors = 0;
+    discoveryDepth = 0;
+    discoverySite.reset();
+    discoveryLimitReached = false;
+    discoveredGenericInstances = 0;
+    classDiscoveryDepths.clear();
+    functionDiscoveryDepths.clear();
+    constructorDiscoveryDepths.clear();
+    destructorDiscoveryDepths.clear();
     lambdaTargets.clear();
     loweredProgramStorage.clear();
     functionAnalyses.clear();
@@ -167,6 +176,59 @@ private:
     std::optional<HirValueId> initializer;
     HirStatementId statement = 0;
   };
+
+  // These are compilation resource bounds, not a termination proof or a
+  // semantic restriction on exact recursive calls. Existing canonical
+  // instances never consume another step in the discovery chain.
+  static constexpr std::size_t maximumDiscoveryDepth = 64;
+  static constexpr std::size_t maximumDiscoveredInstances = 16384;
+
+  struct DiscoveryScope {
+    DiscoveryScope(std::size_t &depth, std::optional<SourceSpan> &site,
+                   std::size_t next, std::optional<SourceSpan> nextSite)
+        : depth(depth), site(site), previous(depth), previousSite(site) {
+      depth = next;
+      site = std::move(nextSite);
+    }
+    ~DiscoveryScope() {
+      depth = previous;
+      site = std::move(previousSite);
+    }
+    std::size_t &depth;
+    std::optional<SourceSpan> &site;
+    std::size_t previous;
+    std::optional<SourceSpan> previousSite;
+  };
+
+  [[nodiscard]] bool admitInstance(const Token &declaration,
+                                   const std::optional<SourceSpan> &site,
+                                   bool generic) {
+    if (discoveryLimitReached) {
+      return false;
+    }
+    if (discoveryDepth < maximumDiscoveryDepth &&
+        (!generic || discoveredGenericInstances < maximumDiscoveredInstances)) {
+      return true;
+    }
+    const bool depthLimit = discoveryDepth >= maximumDiscoveryDepth;
+    const std::string limit = std::to_string(
+        depthLimit ? maximumDiscoveryDepth : maximumDiscoveredInstances);
+    auto diagnostic = makeDiagnostic(
+        DiagnosticId::GenericInstantiationLimit,
+        site.value_or(discoverySite.value_or(tokenSpan(declaration))),
+        {depthLimit ? "discovery-depth" : "distinct-instance", limit});
+    diagnostic.related.push_back(
+        {tokenSpan(declaration),
+         "Declaration requiring this concrete instance."});
+    diagnostic.hints.emplace_back(
+        "Ensure type/value-changing generic recursion terminates through a "
+        "selected compile-time branch or exact specialization; runtime "
+        "conditions do not limit instantiation.");
+    output.diagnostics.push_back(std::move(diagnostic));
+    discoveryLimitReached = true;
+    lifecycleValid = false;
+    return false;
+  }
 
   [[nodiscard]] SemanticType
   substitute(const SemanticType &type,
@@ -186,6 +248,7 @@ private:
       argument = substitute(argument, substitution);
     }
     if (result.kind == SemanticType::Class ||
+        result.kind == SemanticType::Enum ||
         result.kind == SemanticType::FunctionSignature) {
       std::vector<SemanticType> expanded;
       for (SemanticType &argument : result.arguments) {
@@ -294,7 +357,11 @@ private:
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
     for (const SemanticType &argument : resolvedType.arguments) {
-      (void)enqueueClass(argument);
+      (void)enqueueClass(argument, site);
+    }
+    if (resolvedType.kind == SemanticType::Enum) {
+      enqueueEnum(resolvedType);
+      return std::nullopt;
     }
     if (resolvedType.kind != SemanticType::Class || resolvedType.classId == 0) {
       return std::nullopt;
@@ -319,6 +386,10 @@ private:
         CompilerCapabilityTypeKind::NativeCScalar) {
       return std::nullopt;
     }
+    const bool generic = !declaration->genericParameters.empty();
+    if (!admitInstance(declaration->declaration->name(), site, generic)) {
+      return std::nullopt;
+    }
     const ClassLifecycleInfo *lifecycle =
         baseModel->findClassLifecycle(*declaration->declaration);
     const bool lifecycleBoundBorrowCarrier =
@@ -335,6 +406,15 @@ private:
       return std::nullopt;
     }
     const HirClassInstanceId id = output.program.classes.size() + 1;
+    const GenericSubstitution capabilitySubstitution = classSubstitution(
+        *declaration, resolvedType.arguments, resolvedType.valueArguments);
+    const auto concreteCondition =
+        [&](const std::optional<SemanticType> &condition)
+        -> std::optional<SemanticType> {
+      return condition
+                 ? std::optional(substitute(*condition, capabilitySubstitution))
+                 : std::nullopt;
+    };
     SemanticTypeTraits instanceTraits =
         instanceProvider->traitsFor(resolvedType);
     if (declaration->compilerCapability ==
@@ -365,6 +445,8 @@ private:
          .textCarrier = instanceProvider->textCarrierFor(resolvedType),
          .transferPolicy = declaration->transferPolicy,
          .sharePolicy = declaration->sharePolicy,
+         .transferCondition = concreteCondition(declaration->transferCondition),
+         .shareCondition = concreteCondition(declaration->shareCondition),
          .kind = declaration->kind,
          .abstract = declaration->abstract,
          .polymorphic = declaration->polymorphic,
@@ -375,6 +457,10 @@ private:
          .defaultConstructor = lifecycle == nullptr
                                    ? SpecialMemberStatus::Deleted
                                    : lifecycle->defaultConstructor,
+         .generatedDefaultRequiresSchedule =
+             lifecycle != nullptr &&
+             (lifecycle->generatedDefaultFieldInitializers ||
+              lifecycle->generatedDefaultBaseConstructor != 0),
          .copyConstructor =
              lifecycle == nullptr
                  ? SpecialMemberStatus::Deleted
@@ -403,6 +489,8 @@ private:
              instanceProvider->requiresActiveCleanupFor(resolvedType)});
     instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,
                               resolvedType.valueArguments, id);
+    classDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     return id;
   }
 
@@ -467,6 +555,16 @@ private:
              : (declarationToken.lexeme.empty()
                     ? std::optional<SourceSpan>{}
                     : std::optional<SourceSpan>{tokenSpan(declarationToken)});
+    const ClassTypeInfo *genericOwner =
+        declaration.ownerClass == 0
+            ? nullptr
+            : baseModel->findClassType(declaration.ownerClass);
+    const bool generic =
+        !declaration.genericParameters.empty() ||
+        (genericOwner != nullptr && !genericOwner->genericParameters.empty());
+    if (!admitInstance(declarationToken, site, generic)) {
+      return 0;
+    }
     if (declaration.ownerClass != 0) {
       owner = enqueueClass(SemanticType::classType(declaration.ownerClass,
                                                    classTypeArguments,
@@ -477,7 +575,14 @@ private:
     for (const SemanticType &parameter : parameterTypes) {
       (void)enqueueClass(parameter, classUse);
     }
+    // Discovering signature classes may consume the final inventory entry.
+    // Recheck immediately before publication, as well as before expansion.
+    if (!admitInstance(declarationToken, site, generic)) {
+      return 0;
+    }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
+    functionDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     if (freeFunction || owner.has_value()) {
       // An instance whose owner failed to resolve was never matchable by the
       // previous scan; leave it out of the index for exact equivalence.
@@ -630,16 +735,17 @@ private:
         ownerType != nullptr && ownerType->declaration != nullptr
             ? baseModel->findClassLifecycle(*ownerType->declaration)
             : nullptr;
-    const bool generatedBase =
+    const bool generatedBody =
         construction.generatedDefault && ownerLifecycle != nullptr &&
-        ownerLifecycle->generatedDefaultBaseConstructor != 0;
+        (ownerLifecycle->generatedDefaultBaseConstructor != 0 ||
+         ownerLifecycle->generatedDefaultFieldInitializers);
     if (!owner || construction.kind != ConstructorKind::Ordinary ||
-        (!generatedBase && (construction.generatedDefault ||
+        (!generatedBody && (construction.generatedDefault ||
                             construction.declaration == nullptr ||
                             construction.constructor == 0))) {
       return 0;
     }
-    const ConstructorId identity = generatedBase ? 0 : construction.constructor;
+    const ConstructorId identity = generatedBody ? 0 : construction.constructor;
     if (const std::optional<std::size_t> existing =
             instanceIndex.findConstructor(identity, *owner,
                                           construction.typeArguments,
@@ -655,12 +761,23 @@ private:
       return instance.id;
     }
     const HirConstructorInstanceId id = output.program.constructors.size() + 1;
+    const Token &declarationToken = construction.declaration == nullptr
+                                        ? ownerType->declaration->name()
+                                        : construction.declaration->name();
+    const bool generic =
+        !ownerType->genericParameters.empty() ||
+        (declaration != nullptr && !declaration->genericParameters.empty());
+    if (!admitInstance(declarationToken, site, generic)) {
+      return 0;
+    }
+    constructorDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     output.program.constructors.push_back(
         {.id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
          .declaration = identity,
-         .source = generatedBase ? nullptr : construction.declaration,
-         .generatedDefault = generatedBase,
+         .source = generatedBody ? nullptr : construction.declaration,
+         .generatedDefault = generatedBody,
          .constexprConstructor = constant,
          .owner = *owner,
          .typeArguments = construction.typeArguments,
@@ -700,6 +817,13 @@ private:
       return *existing;
     }
     const HirDestructorInstanceId id = output.program.destructors.size() + 1;
+    const bool generic = !classType->genericParameters.empty();
+    if (!admitInstance(lifecycle->declaredDestructor->declaration->name(),
+                       classInstance.instantiationSite, generic)) {
+      return std::nullopt;
+    }
+    destructorDiscoveryDepths.push_back(discoveryDepth + 1);
+    discoveredGenericInstances += generic;
     output.program.destructors.push_back(
         {.id = id,
          .sourceUnit = classInstance.sourceUnit,
@@ -740,6 +864,77 @@ private:
     });
   }
 
+  // An alias needs an exact enum identity for declaration spelling, but is
+  // not itself a request for a concrete class layout or executable lifecycle.
+  // Walk its argument graph without using the representation-bearing class
+  // discovery path. An enum's actual alternative fields still discover their
+  // required class layouts through enqueueEnum.
+  bool seedAliasEnumIdentities(const SemanticType &type) {
+    bool concrete =
+        type != SemanticType::Unknown &&
+        type.kind != SemanticType::TypeParameter &&
+        (type.kind != SemanticType::TypePack || type.concretePack) &&
+        type.arrayLengthParameterId == 0;
+    for (const CompileTimeValue &value : type.valueArguments)
+      concrete = concrete && value.kind != CompileTimeValue::Parameter;
+    for (const SemanticType &argument : type.arguments) {
+      const bool argumentConcrete = seedAliasEnumIdentities(argument);
+      concrete = concrete && argumentConcrete;
+    }
+    if (concrete && type.kind == SemanticType::Enum)
+      enqueueEnum(type);
+    return concrete;
+  }
+
+  void enqueueEnum(const SemanticType &type) {
+    if (std::any_of(output.program.enums.begin(), output.program.enums.end(),
+                    [&](const HirEnum &item) { return item.type == type; })) {
+      return;
+    }
+    std::optional<EnumTypeInfo> info = instanceProvider->enumTypeFor(type);
+    // Nongeneric declarations are already concrete semantic descriptors.
+    // Lightweight provider clients need no instantiation service for them.
+    if (!info) {
+      const EnumTypeInfo *declaration = baseModel->findEnumType(type.enumId);
+      if (declaration != nullptr && declaration->genericParameters.empty() &&
+          type == SemanticType::enumType(declaration->id))
+        info = *declaration;
+    }
+    if (!info) {
+      return;
+    }
+    HirEnum lowered{.declaration = info->id,
+                    .type = type,
+                    .sourceUnit = info->sourceUnit,
+                    .source = info->declaration,
+                    .qualifiedName = info->qualifiedName,
+                    .underlyingType = info->underlyingType,
+                    .traits = instanceProvider->traitsFor(type),
+                    .requiresActiveCleanup =
+                        instanceProvider->requiresActiveCleanupFor(type),
+                    .payload = info->payload};
+    lowered.enumerators.reserve(info->enumerators.size());
+    for (const EnumeratorInfo &enumerator : info->enumerators) {
+      HirEnumerator variant{.source = enumerator.declaration,
+                            .value = enumerator.value,
+                            .variantIndex = enumerator.variantIndex,
+                            .payloadTypes = enumerator.payloadTypes};
+      for (const SemanticType &payload : enumerator.payloadTypes) {
+        variant.payloadRequiresActiveCleanup.push_back(
+            instanceProvider->requiresActiveCleanupFor(payload));
+      }
+      lowered.enumerators.push_back(std::move(variant));
+    }
+    // Publish the identity before discovering contained types: finite owning
+    // recursion may revisit this enum through a concrete class's fields.
+    output.program.enums.push_back(std::move(lowered));
+    for (const EnumeratorInfo &enumerator : info->enumerators) {
+      for (const SemanticType &payload : enumerator.payloadTypes) {
+        (void)enqueueClass(payload);
+      }
+    }
+  }
+
   void seedDeclarations(const StmtList &declarations,
                         std::optional<ClassId> enclosingClass) {
     for (const StmtPtr &statement : declarations) {
@@ -756,6 +951,11 @@ private:
       }
       if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
         seedDeclarations(externC->declarations(), enclosingClass);
+        continue;
+      }
+      if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
+        if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
+          seedAliasEnumIdentities(info->type);
         continue;
       }
       if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
@@ -783,37 +983,8 @@ private:
       }
       if (const auto *enumDeclaration = stmtAs<EnumDecl>(statement.get())) {
         const EnumTypeInfo *info = baseModel->findEnumType(*enumDeclaration);
-        if (info != nullptr) {
-          HirEnum lowered{.declaration = info->id,
-                          .sourceUnit = info->sourceUnit,
-                          .source = enumDeclaration,
-                          .qualifiedName = info->qualifiedName,
-                          .underlyingType = info->underlyingType,
-                          .traits = instanceProvider->traitsFor(
-                              SemanticType::enumType(info->id)),
-                          .requiresActiveCleanup =
-                              instanceProvider->requiresActiveCleanupFor(
-                                  SemanticType::enumType(info->id)),
-                          .payload = info->payload};
-          lowered.enumerators.reserve(info->enumerators.size());
-          for (const EnumeratorInfo &enumerator : info->enumerators) {
-            HirEnumerator variant{.source = enumerator.declaration,
-                                  .value = enumerator.value,
-                                  .variantIndex = enumerator.variantIndex,
-                                  .payloadTypes = enumerator.payloadTypes};
-            variant.payloadRequiresActiveCleanup.reserve(
-                enumerator.payloadTypes.size());
-            for (const SemanticType &payload : enumerator.payloadTypes) {
-              // An alternative is representation-bearing even if no source
-              // construction mentions it. Discover its exact concrete class
-              // before lifecycle verification and detached backend planning.
-              (void)enqueueClass(payload);
-              variant.payloadRequiresActiveCleanup.push_back(
-                  instanceProvider->requiresActiveCleanupFor(payload));
-            }
-            lowered.enumerators.push_back(std::move(variant));
-          }
-          output.program.enums.push_back(std::move(lowered));
+        if (info != nullptr && info->genericParameters.empty()) {
+          enqueueEnum(SemanticType::enumType(info->id));
         }
         continue;
       }
@@ -1070,27 +1241,59 @@ private:
   }
 
   void processPendingInstances() {
-    while (processedClasses < output.program.classes.size() ||
-           processedFunctions < output.program.functions.size() ||
-           processedConstructors < output.program.constructors.size() ||
-           processedDestructors < output.program.destructors.size()) {
-      while (processedClasses < output.program.classes.size()) {
+    while (!discoveryLimitReached &&
+           (processedClasses < output.program.classes.size() ||
+            processedFunctions < output.program.functions.size() ||
+            processedConstructors < output.program.constructors.size() ||
+            processedDestructors < output.program.destructors.size())) {
+      while (!discoveryLimitReached &&
+             processedClasses < output.program.classes.size()) {
+        DiscoveryScope scope(
+            discoveryDepth, discoverySite,
+            classDiscoveryDepths[processedClasses],
+            output.program.classes[processedClasses].instantiationSite);
         processClass(processedClasses++);
       }
       enqueueVirtualContractRoots();
-      while (processedFunctions < output.program.functions.size()) {
+      while (!discoveryLimitReached &&
+             processedFunctions < output.program.functions.size()) {
+        DiscoveryScope scope(
+            discoveryDepth, discoverySite,
+            functionDiscoveryDepths[processedFunctions],
+            output.program.functions[processedFunctions].instantiationSite);
         processFunction(processedFunctions++);
       }
-      while (processedConstructors < output.program.constructors.size()) {
+      while (!discoveryLimitReached &&
+             processedConstructors < output.program.constructors.size()) {
         // Function bodies and earlier constructors can discover concrete
         // generic owners. Their field/default catalogs must be complete
         // before the next constructor selects its initialization schedule.
-        while (processedClasses < output.program.classes.size()) {
+        while (!discoveryLimitReached &&
+               processedClasses < output.program.classes.size()) {
+          DiscoveryScope scope(
+              discoveryDepth, discoverySite,
+              classDiscoveryDepths[processedClasses],
+              output.program.classes[processedClasses].instantiationSite);
           processClass(processedClasses++);
         }
+        if (discoveryLimitReached) {
+          break;
+        }
+        DiscoveryScope scope(discoveryDepth, discoverySite,
+                             constructorDiscoveryDepths[processedConstructors],
+                             output.program.constructors[processedConstructors]
+                                 .instantiationSite);
         processConstructor(processedConstructors++);
       }
-      while (processedDestructors < output.program.destructors.size()) {
+      while (!discoveryLimitReached &&
+             processedDestructors < output.program.destructors.size()) {
+        DiscoveryScope scope(
+            discoveryDepth, discoverySite,
+            destructorDiscoveryDepths[processedDestructors],
+            output.program
+                .classes
+                    [output.program.destructors[processedDestructors].owner - 1]
+                .instantiationSite);
         processDestructor(processedDestructors++);
       }
     }
@@ -1697,63 +1900,17 @@ private:
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
     const ClassTypeInfo *ownerInfo =
         baseModel->findClassType(owner.declaration);
-    if (snapshot.generatedDefault) {
-      // Select the same implicit state-bearing base as an ordinary constructor.
-      // Keep the first executable structural family closed: no derived fields
-      // or destructor means there is no additional partial-object schedule.
-      const auto base = std::find_if(owner.bases.begin(), owner.bases.end(),
-                                     [](const HirBaseInstance &candidate) {
-                                       return !candidate.interface;
-                                     });
-      const ClassTypeInfo *baseType =
-          base == owner.bases.end()
-              ? nullptr
-              : baseModel->findClassType(base->type.classId);
-      const ClassLifecycleInfo *lifecycle =
-          baseType == nullptr || baseType->declaration == nullptr
-              ? nullptr
-              : baseModel->findClassLifecycle(*baseType->declaration);
-      if (!owner.fields.empty() || owner.destructor || lifecycle == nullptr ||
-          ownerInfo == nullptr || ownerInfo->declaration == nullptr) {
-        lifecycleValid = false;
-        return;
-      }
-      const auto *ownerLifecycle =
-          baseModel->findClassLifecycle(*ownerInfo->declaration);
-      const auto selected = std::find_if(
-          lifecycle->constructors.begin(), lifecycle->constructors.end(),
-          [&](const ConstructorInfo &candidate) {
-            return ownerLifecycle != nullptr &&
-                   candidate.id ==
-                       ownerLifecycle->generatedDefaultBaseConstructor;
-          });
-      if (selected == lifecycle->constructors.end() ||
-          !selected->parameterTypes.empty()) {
-        lifecycleValid = false;
-        return;
-      }
-      const HirConstructorInstanceId target =
-          enqueueConstructor({.constructor = selected->id,
-                              .declaration = selected->declaration,
-                              .constructedType = base->type});
-      if (target == 0) {
-        lifecycleValid = false;
-        return;
-      }
-      output.program.constructors[index].initializers.push_back(
-          {.kind = ConstructorInitializerTargetKind::Base,
-           .targetType = base->type,
-           .base = base->instance,
-           .constructorTarget = target});
-      return;
-    }
     currentSourceFunctionName =
         (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
-        "::" + snapshot.source->name().lexeme;
+        "::" +
+        (snapshot.generatedDefault ? owner.source->name().lexeme
+                                   : snapshot.source->name().lexeme);
     currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
-    SemanticInstanceAnalysis *analysis = ensureConstructorAnalysis(snapshot.id);
-    if (analysis == nullptr) {
+    SemanticInstanceAnalysis *analysis =
+        snapshot.generatedDefault ? nullptr
+                                  : ensureConstructorAnalysis(snapshot.id);
+    if (analysis == nullptr && !snapshot.generatedDefault) {
       lifecycleValid = false;
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
@@ -1766,83 +1923,87 @@ private:
     seedLambdaTargets(snapshot.typeArguments);
     HirBody body;
     std::vector<HirBindingId> parameterBindings;
-    parameterBindings.reserve(snapshot.source->parameters().size());
-    for (const Parameter &parameter : snapshot.source->parameters()) {
-      parameterBindings.push_back(
-          lowerBinding(parameter, analysis->model, body));
+    if (!snapshot.generatedDefault) {
+      parameterBindings.reserve(snapshot.source->parameters().size());
+      for (const Parameter &parameter : snapshot.source->parameters()) {
+        parameterBindings.push_back(
+            lowerBinding(parameter, analysis->model, body));
+      }
     }
     std::vector<HirConstructorInitializer> initializers;
     std::vector<HirValueId> initializerValues;
     bool hasExplicitBase = false;
-    for (const ConstructorInitializer &initializer :
-         snapshot.source->initializers()) {
-      HirConstructorInitializer lowered{.source = &initializer,
-                                        .explicitArgumentCount =
-                                            initializer.arguments.size()};
-      const ResolvedConstructorInitializerInfo *resolved =
-          analysis->model.findConstructorInitializer(initializer);
-      if (resolved != nullptr) {
-        lowered.kind = resolved->kind;
-        lowered.targetType = resolved->targetType;
-        lowered.field = resolved->field;
-        lowered.storesReference = resolved->storesReference;
-        lowered.borrowAccess = resolved->borrowAccess;
-        lowered.generatedDefault = resolved->generatedDefault;
-        lowered.ownedParameter = resolved->ownedParameter;
-        if (resolved->kind == ConstructorInitializerTargetKind::Base) {
-          hasExplicitBase = true;
-          lowered.base = enqueueClass(resolved->targetType);
-          const HirConstructorInstanceId target =
-              enqueueConstructor(ResolvedConstructionInfo{
-                  .constructor = resolved->constructor,
-                  .declaration = resolved->declaration,
-                  .constructedType = resolved->targetType,
-                  .parameterTypes = resolved->parameterTypes,
-                  .defaultArguments = resolved->defaultArguments,
-                  .generatedDefault = resolved->generatedDefault});
-          if (target != 0) {
-            lowered.constructorTarget = target;
+    if (!snapshot.generatedDefault) {
+      for (const ConstructorInitializer &initializer :
+           snapshot.source->initializers()) {
+        HirConstructorInitializer lowered{.source = &initializer,
+                                          .explicitArgumentCount =
+                                              initializer.arguments.size()};
+        const ResolvedConstructorInitializerInfo *resolved =
+            analysis->model.findConstructorInitializer(initializer);
+        if (resolved != nullptr) {
+          lowered.kind = resolved->kind;
+          lowered.targetType = resolved->targetType;
+          lowered.field = resolved->field;
+          lowered.storesReference = resolved->storesReference;
+          lowered.borrowAccess = resolved->borrowAccess;
+          lowered.generatedDefault = resolved->generatedDefault;
+          lowered.ownedParameter = resolved->ownedParameter;
+          if (resolved->kind == ConstructorInitializerTargetKind::Base) {
+            hasExplicitBase = true;
+            lowered.base = enqueueClass(resolved->targetType);
+            const HirConstructorInstanceId target =
+                enqueueConstructor(ResolvedConstructionInfo{
+                    .constructor = resolved->constructor,
+                    .declaration = resolved->declaration,
+                    .constructedType = resolved->targetType,
+                    .parameterTypes = resolved->parameterTypes,
+                    .defaultArguments = resolved->defaultArguments,
+                    .generatedDefault = resolved->generatedDefault});
+            if (target != 0) {
+              lowered.constructorTarget = target;
+            }
           }
         }
-      }
-      for (const ExprPtr &argument : initializer.arguments) {
-        if (const std::optional<HirValueId> value =
-                lowerExpression(argument, analysis->model, classArguments,
-                                classValueArguments, body)) {
-          lowered.arguments.push_back(*value);
-          initializerValues.push_back(*value);
-        }
-      }
-      if (resolved != nullptr &&
-          resolved->kind == ConstructorInitializerTargetKind::Base &&
-          !resolved->defaultArguments.empty() && lowered.constructorTarget) {
-        const HirConstructorInstanceId target = *lowered.constructorTarget;
-        const HirConstructorInstance &targetInstance =
-            output.program.constructors[target - 1];
-        std::vector<SemanticType> targetClassArguments;
-        std::vector<CompileTimeValue> targetClassValueArguments;
-        if (targetInstance.owner != 0 &&
-            targetInstance.owner <= output.program.classes.size()) {
-          const HirClassInstance &targetOwner =
-              output.program.classes[targetInstance.owner - 1];
-          targetClassArguments = targetOwner.typeArguments;
-          targetClassValueArguments = targetOwner.valueArguments;
-        }
-        const SemanticInstanceAnalysis *targetAnalysis =
-            ensureConstructorAnalysis(target);
-        const SemanticModel &defaultModel =
-            targetAnalysis == nullptr ? *baseModel : targetAnalysis->model;
-        for (const Expr *defaultArgument : resolved->defaultArguments) {
-          if (const std::optional<HirValueId> value = lowerDefaultArgument(
-                  defaultArgument, defaultModel, targetClassArguments,
-                  targetClassValueArguments, body,
-                  sourceLocationAt(initializer.target.name.last()))) {
+        for (const ExprPtr &argument : initializer.arguments) {
+          if (const std::optional<HirValueId> value =
+                  lowerExpression(argument, analysis->model, classArguments,
+                                  classValueArguments, body)) {
             lowered.arguments.push_back(*value);
             initializerValues.push_back(*value);
           }
         }
+        if (resolved != nullptr &&
+            resolved->kind == ConstructorInitializerTargetKind::Base &&
+            !resolved->defaultArguments.empty() && lowered.constructorTarget) {
+          const HirConstructorInstanceId target = *lowered.constructorTarget;
+          const HirConstructorInstance &targetInstance =
+              output.program.constructors[target - 1];
+          std::vector<SemanticType> targetClassArguments;
+          std::vector<CompileTimeValue> targetClassValueArguments;
+          if (targetInstance.owner != 0 &&
+              targetInstance.owner <= output.program.classes.size()) {
+            const HirClassInstance &targetOwner =
+                output.program.classes[targetInstance.owner - 1];
+            targetClassArguments = targetOwner.typeArguments;
+            targetClassValueArguments = targetOwner.valueArguments;
+          }
+          const SemanticInstanceAnalysis *targetAnalysis =
+              ensureConstructorAnalysis(target);
+          const SemanticModel &defaultModel =
+              targetAnalysis == nullptr ? *baseModel : targetAnalysis->model;
+          for (const Expr *defaultArgument : resolved->defaultArguments) {
+            if (const std::optional<HirValueId> value = lowerDefaultArgument(
+                    defaultArgument, defaultModel, targetClassArguments,
+                    targetClassValueArguments, body,
+                    sourceLocationAt(initializer.target.name.last()))) {
+              lowered.arguments.push_back(*value);
+              initializerValues.push_back(*value);
+            }
+          }
+        }
+        initializers.push_back(std::move(lowered));
       }
-      initializers.push_back(std::move(lowered));
     }
     if (!hasExplicitBase) {
       const auto base = std::find_if(owner.bases.begin(), owner.bases.end(),
@@ -1902,7 +2063,9 @@ private:
               if (const std::optional<HirValueId> value = lowerDefaultArgument(
                       defaultArgument, defaultModel, base->type.arguments,
                       base->type.valueArguments, body,
-                      sourceLocationAt(snapshot.source->name()))) {
+                      sourceLocationAt(snapshot.generatedDefault
+                                           ? owner.source->name()
+                                           : snapshot.source->name()))) {
                 lowered.arguments.push_back(*value);
                 implicitBaseValues.push_back(*value);
               }
@@ -1934,11 +2097,7 @@ private:
       fieldModel = &fieldAnalysis.model;
     }
     for (const HirClassField &field : owner.fields) {
-      // Generated defaults still execute the declaration schedule, rather
-      // than a concrete constructor MIR body. Keep that route intact until
-      // generated construction has its own selected initialization body.
-      if (owner.defaultConstructor == SpecialMemberStatus::Generated ||
-          field.declaration == nullptr || !field.declaration->initializer() ||
+      if (field.declaration == nullptr || !field.declaration->initializer() ||
           std::any_of(initializers.begin(), initializers.end(),
                       [&](const HirConstructorInitializer &initializer) {
                         return initializer.kind ==
@@ -1977,11 +2136,14 @@ private:
       initializerValues.insert(initializerValues.end(),
                                initializer.arguments.begin(),
                                initializer.arguments.end());
-    body.roots =
-        lowerStatements(snapshot.source->body()->statements(), analysis->model,
-                        classArguments, classValueArguments, body);
-    finalizeLifetimes(body, analysis->model, true, initializers);
-    lowerLoans(analysis->model, body);
+    const SemanticModel &bodyModel =
+        analysis == nullptr ? *fieldModel : analysis->model;
+    if (!snapshot.generatedDefault)
+      body.roots =
+          lowerStatements(snapshot.source->body()->statements(), bodyModel,
+                          classArguments, classValueArguments, body);
+    finalizeLifetimes(body, bodyModel, true, initializers);
+    lowerLoans(bodyModel, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].parameterBindings =
@@ -3180,6 +3342,21 @@ private:
     case SemanticType::NullPtr:
     case SemanticType::RawPointer:
       return true;
+    case SemanticType::Array: {
+      // A concrete, cleanup-free array is an ordinary by-value snapshot, not
+      // a decayed pointer or a borrowed pack element. Owning/borrow-carrying
+      // arrays still require their explicit lifetime transport representation.
+      const SemanticType *leaf = &type;
+      while (leaf->kind == SemanticType::Array) {
+        if (leaf->arguments.size() != 1 || leaf->arrayLength == 0 ||
+            leaf->arrayLengthParameterId != 0)
+          return false;
+        leaf = &leaf->arguments.front();
+      }
+      const auto traits = instanceProvider->traitsFor(type);
+      return traits.copyable && !traits.containsBorrowedState &&
+             !instanceProvider->requiresActiveCleanupFor(type);
+    }
     case SemanticType::NativeFunction:
       // A named native callback value is a passive pointer, not a confined
       // GTI callable. Packs retain its exact native signature by value.
@@ -5003,6 +5180,14 @@ private:
     const ResolvedOperatorInfo *resolvedValueOperator =
         model.findOperator(*raw);
     if (resolvedValueOperator == nullptr &&
+        (value.kind == HirValueKind::DereferenceSet ||
+         value.kind == HirValueKind::IndexSet)) {
+      // A built-in compound update still has a separately selected target
+      // accessor. Preserve that exact call instead of manufacturing a raw
+      // dereference/index projection of the accessor's class receiver.
+      resolvedValueOperator = model.findProjectionOperator(*raw);
+    }
+    if (resolvedValueOperator == nullptr &&
         value.kind == HirValueKind::MemberSet) {
       const ResolvedOperatorInfo *projection =
           model.findProjectionOperator(*raw);
@@ -5047,6 +5232,11 @@ private:
         if (value.nativeCalleeType)
           value.callableInvocation = CallableInvocationCapability::Read;
         value.intrinsic = resolved->intrinsic;
+        if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
+             value.intrinsic == IntrinsicKind::ObjectRelocate ||
+             value.intrinsic == IntrinsicKind::ObjectConstruct) &&
+            resolved->typeArguments.size() == 1)
+          (void)seedConcreteDeclarationType(resolved->typeArguments.front());
         if ((value.intrinsic == IntrinsicKind::ObjectSize ||
              value.intrinsic == IntrinsicKind::ObjectAlignment) &&
             resolved->typeArguments.size() == 1) {
@@ -5312,7 +5502,7 @@ private:
             rawTextLiteral ? nullptr : model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
       const bool inPlaceStorageConstruction =
-          value.intrinsic == IntrinsicKind::StorageConstruct ||
+          value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
           value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
@@ -5649,8 +5839,8 @@ private:
         }
       }
     }
-    if ((value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-         value.intrinsic == IntrinsicKind::StorageConstruct) &&
+    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
+         value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
         ((value.constructorTarget &&
           value.constructorKind == ConstructorKind::Ordinary) ||
          (!value.constructorTarget &&
@@ -5667,8 +5857,9 @@ private:
               static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
           value.operands.end());
       std::vector<SemanticType> roles = value.parameterTypes;
-      roles.front() =
-          SemanticType::referenceTo(roles.front(), AccessMode::Mutable);
+      if (value.intrinsic != IntrinsicKind::ObjectConstruct)
+        roles.front() =
+            SemanticType::referenceTo(roles.front(), AccessMode::Mutable);
       if (auto planned = orderedArguments(arguments, roles, body)) {
         // Storage is a capability-place input, not a source reference formal.
         planned->front().parameterType = value.parameterTypes.front();
@@ -5807,6 +5998,14 @@ private:
   std::size_t nextPlaceBodyId = 1;
   bool lifecycleValid = true;
   bool constantClosure = false;
+  std::size_t discoveryDepth = 0;
+  std::optional<SourceSpan> discoverySite;
+  bool discoveryLimitReached = false;
+  std::size_t discoveredGenericInstances = 0;
+  std::vector<std::size_t> classDiscoveryDepths;
+  std::vector<std::size_t> functionDiscoveryDepths;
+  std::vector<std::size_t> constructorDiscoveryDepths;
+  std::vector<std::size_t> destructorDiscoveryDepths;
   std::vector<FunctionId> constantFunctions;
   std::vector<ConstructorId> constantConstructors;
   std::size_t processedClasses = 0;

@@ -1913,7 +1913,6 @@ bool MirOwnedFailureClosure::proveSingleFieldTransferConstructor(
   const bool intrinsicTransferField =
       field.type.kind == SemanticType::UniqueOwner ||
       field.type.kind == SemanticType::SharedPointer ||
-      field.type.kind == SemanticType::Storage ||
       field.type.kind == SemanticType::PrefixStorage;
   const MirConstructorInitializer &initializer =
       constructor.initializers.front();
@@ -2349,7 +2348,6 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
       return true;
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
-    case SemanticType::Storage:
     case SemanticType::PrefixStorage:
       // These compiler capabilities move only their control/storage handle;
       // they do not move or destroy the represented element.
@@ -2383,8 +2381,7 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
           instance->destructorStatus != SpecialMemberStatus::Generated ||
           instance->destructor || instance->requiresActiveDropState ||
           instance->abstract || instance->polymorphic ||
-          instance->unionLayout || !instance->bases.empty() ||
-          !instance->structuralBases.empty() ||
+          !instance->bases.empty() || !instance->structuralBases.empty() ||
           !visiting.insert(instance->id).second) {
         return false;
       }

@@ -345,9 +345,9 @@ int main() {
 
 int main() {
   mut std::string text = std::string("abc");
-  mut gti_internal::storage<std::string_view> stored =
-      gti_internal::allocate_storage<std::string_view>(uint64_t(1));
-  gti_internal::storage_construct(stored, uint64_t(0), text.view());
+  mut gti_internal::prefix_storage<std::string_view> stored =
+      gti_internal::allocate_prefix_storage<std::string_view>(uint64_t(1));
+  gti_internal::prefix_storage_append(stored, text.view());
   return 0;
 }
 )",
@@ -828,6 +828,11 @@ public:
 
 int open(mut Vault vault) { return vault.reveal(); }
 int read(Reading reading) { return reading.value; }
+int main() {
+  Vault vault{};
+  Reading reading{};
+  return vault.reveal() + reading.total() - 10;
+}
 )";
   auto validTokens = lexer.scan(validSource);
   expect(!lexer.hadError(), "class and struct access syntax should lex");
@@ -841,15 +846,47 @@ int read(Reading reading) { return reading.value; }
   expect(validSemantic.check(validProgram),
          "public members and same-class private access should resolve");
 
-  const std::string generated = emitAnalyzedSource(validSource);
+  const lang::FrontendResult classFrontend = lang::Frontend().analyze(
+      "classes-and-access.gti", validSource, {standardLibraryPrelude()});
+  expect(classFrontend.canGenerateCode(),
+         "access-controlled declaration defaults should retain verified MIR");
+  if (!classFrontend.canGenerateCode())
+    return;
+  const auto *readingDeclaration =
+      findTopLevelClass(classFrontend.program, "Reading");
+  const auto *readingType =
+      readingDeclaration == nullptr
+          ? nullptr
+          : classFrontend.semantics.findClassType(*readingDeclaration);
+  const auto reading = std::find_if(
+      classFrontend.mir.classInstances().begin(),
+      classFrontend.mir.classInstances().end(), [&](const auto &owner) {
+        return readingType != nullptr && owner.declaration == readingType->id;
+      });
+  expect(reading != classFrontend.mir.classInstances().end() &&
+             reading->declaredFields.size() == 2 &&
+             std::all_of(reading->declaredFields.begin(),
+                         reading->declaredFields.end(),
+                         [](const auto &field) {
+                           return field.access == lang::AccessMode::ReadOnly;
+                         }) &&
+             std::any_of(classFrontend.mir.constructorInstances().begin(),
+                         classFrontend.mir.constructorInstances().end(),
+                         [&](const auto &constructor) {
+                           return constructor.owner == reading->id &&
+                                  constructor.generatedDefault &&
+                                  constructor.initializers.size() == 2;
+                         }),
+         "immutable fields retain read-only MIR identity and execute their "
+         "defaults through the selected generated constructor");
+  const std::string generated = gti_test::emitCppText(classFrontend);
   expect(generated.find("class Vault;") != std::string::npos &&
              generated.find("struct Reading;") != std::string::npos &&
              generated.find("class Vault {") != std::string::npos &&
              generated.find("struct Reading {") != std::string::npos &&
              generated.find("std::int32_t __gti_fn_") != std::string::npos &&
              generated.find("_reveal() const;") != std::string::npos &&
-             generated.find("private:\n    std::int32_t hidden = "
-                            "static_cast<std::int32_t>(2)") !=
+             generated.find("private:\n    std::int32_t hidden;") !=
                  std::string::npos &&
              generated.find("= (*this).hidden;") != std::string::npos,
          "emitter should preserve declaration kinds, access labels, and "
@@ -1521,7 +1558,8 @@ int main() {
          "generated default construction should remain explicit at the call "
          "site");
   expect(
-      lifecycleGenerated.find("Origin() = default;") != std::string::npos &&
+      lifecycleGenerated.find("Origin();") != std::string::npos &&
+          lifecycleGenerated.find("Origin::Origin()") != std::string::npos &&
           lifecycleGenerated.find("Counter(const Counter &other) = default;") !=
               std::string::npos &&
           lifecycleGenerated.find("Counter(Counter &&) = default;") !=
@@ -1930,11 +1968,15 @@ int main() {
          "a concrete override call should retain its exact target, virtual "
          "dispatch, and concrete dispatch owner in semantics");
 
+  const lang::HirClassInstance *entityHir = nullptr;
   const lang::HirClassInstance *spriteHir = nullptr;
   const lang::HirFunctionInstance *invokeHir = nullptr;
   const lang::HirFunctionInstance *invokeDirectHir = nullptr;
   const lang::HirFunctionInstance *boxReadHir = nullptr;
   for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == entity) {
+      entityHir = &instance;
+    }
     if (instance.source == sprite) {
       spriteHir = &instance;
     }
@@ -2033,6 +2075,61 @@ int main() {
          "MIR should preserve the exact concrete target, virtual owner, and "
          "contract identity without devirtualizing the call");
 
+  const lang::MirConstructorInstance *spriteConstructor = nullptr;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    if (spriteMir != nullptr && constructor.owner == spriteMir->id) {
+      expect(spriteConstructor == nullptr,
+             "Sprite should have exactly one selected constructor");
+      spriteConstructor = &constructor;
+    }
+  }
+  const lang::MirConstructorInitializer *baseInitializer =
+      spriteConstructor != nullptr &&
+              spriteConstructor->initializers.size() == 1
+          ? &spriteConstructor->initializers.front()
+          : nullptr;
+  const lang::MirConstructorInstance *entityConstructor =
+      baseInitializer != nullptr && baseInitializer->constructorTarget
+          ? frontend.mir.findConstructorInstance(
+                *baseInitializer->constructorTarget)
+          : nullptr;
+  expect(
+      baseInitializer != nullptr && entityConstructor != nullptr &&
+          entityHir != nullptr &&
+          baseInitializer->kind ==
+              lang::ConstructorInitializerTargetKind::Base &&
+          baseInitializer->base == entityHir->id &&
+          baseInitializer->targetType == entityHir->type &&
+          entityConstructor->owner == entityHir->id &&
+          baseInitializer->explicitArgumentCount == 1 &&
+          entityConstructor->parameterTypes ==
+              spriteConstructor->parameterTypes,
+      "Sprite should retain the exact selected Entity constructor and scalar "
+      "base argument signature");
+  std::size_t baseStages = 0;
+  if (spriteConstructor != nullptr && entityConstructor != nullptr) {
+    for (const auto &block : spriteConstructor->body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::InitializeBase)
+          continue;
+        ++baseStages;
+        expect(instruction.constructorInitializer == 1 &&
+                   instruction.constructorTarget == entityConstructor->id &&
+                   instruction.parameterTypes ==
+                       entityConstructor->parameterTypes &&
+                   instruction.operands.size() == 1 &&
+                   instruction.definedFailure.propagation ==
+                       lang::FailurePropagationKind::Constructor &&
+                   block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id,
+               "the selected base stage should preserve constructor failure "
+               "propagation through an explicit MIR invoke");
+      }
+    }
+  }
+  expect(baseStages == 1,
+         "Sprite should initialize its Entity base exactly once");
+
   const lang::BackendArtifact generatedArtifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
                         lang::OptimizationPipeline().run(
@@ -2041,6 +2138,21 @@ int main() {
   constexpr std::string_view nameIdDefinition =
       "std::int32_t Sprite::name_id() const {";
   const std::size_t firstNameIdDefinition = generated.find(nameIdDefinition);
+  // The verified base stage now uses the status-result constructor overload,
+  // not a plain C++ base call. Derive both tags from selected MIR identities.
+  const std::string selectedBaseDefinition =
+      spriteConstructor != nullptr && entityConstructor != nullptr
+          ? "Sprite::Sprite(::gti_internal::backend::mir_failure_constructor_"
+            "tag_v1<" +
+                std::to_string(spriteConstructor->id) +
+                ">, std::int32_t __gti_mir_arg_0, bool "
+                "*__gti_mir_constructor_success, ::gti_failure_record_v2 "
+                "*__gti_mir_failure_record) : ::__gti_program::Entity("
+                "::gti_internal::backend::mir_failure_constructor_tag_v1<" +
+                std::to_string(entityConstructor->id) +
+                ">{}, __gti_mir_arg_0, __gti_mir_constructor_success, "
+                "__gti_mir_failure_record)"
+          : std::string{};
   expect(
       generated.find(
           "class Sprite : public ::__gti_program::Entity, public "
@@ -2057,9 +2169,8 @@ int main() {
               std::string::npos &&
           generated.find("explicit Sprite(const std::int32_t id);") !=
               std::string::npos &&
-          generated.find("Sprite::Sprite(std::int32_t __gti_mir_arg_0) : "
-                         "::__gti_program::Entity(__gti_mir_arg_0)") !=
-              std::string::npos &&
+          !selectedBaseDefinition.empty() &&
+          generated.find(selectedBaseDefinition) != std::string::npos &&
           generated.find("virtual bool read__gti_mir_failure(") !=
               std::string::npos &&
           generated.find("read__gti_mir_failure(std::int32_t "
@@ -7669,7 +7780,8 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "wrong number of explicit value arguments") &&
           hasDiagnostic(invalid.diagnostics,
-                        "type arguments must appear before value") &&
+                        "A function value generic argument must be an "
+                        "in-scope uint64_t compile-time value") &&
           hasDiagnostic(
               invalid.diagnostics,
               "Non-generic functions do not take generic arguments") &&
@@ -7683,6 +7795,28 @@ int main() {
       "contextual arrays and explicit value arguments should reject duplicate "
       "generic shapes, missing array context, invalid argument kinds/counts, "
       "and ambiguous overloads at the GTI layer");
+
+  // Resolution knows that the written 'int' occupies a value slot. Retain
+  // PR111's owning value-kind diagnostic rather than the old syntactic-order
+  // message; accepting the program or moving its anchor to the whole call
+  // would still fail this regression.
+  const auto wrongValueKind = std::find_if(
+      invalid.diagnostics.begin(), invalid.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2026" &&
+               diagnostic.message ==
+                   "A function value generic argument must be an in-scope "
+                   "uint64_t compile-time value.";
+      });
+  const auto valueKindOffset = invalidSource.find("int>({1, 2})");
+  expect(wrongValueKind != invalid.diagnostics.end() &&
+             valueKindOffset != std::string::npos &&
+             wrongValueKind->primary.source.ends_with(
+                 "invalid-contextual-arrays.gti") &&
+             wrongValueKind->primary.start == valueKindOffset &&
+             wrongValueKind->primary.end == valueKindOffset + 3,
+         "a type in an explicit value slot has the exact owning diagnostic "
+         "and written-argument span");
 
   const auto wrongExtent =
       std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
@@ -10392,9 +10526,8 @@ int main() {
   lang::Parser parser(
       lexer.scan("enum Legacy { Value }; int main() { return 0; }"));
   const lang::Program recovered = parser.parse();
-  expect(parser.hadError() && recovered.declarations().size() == 1,
-         "unscoped enums should be rejected without preventing parser "
-         "recovery");
+  expect(!parser.hadError() && recovered.declarations().size() == 2,
+         "optional class spelling parses as the same scoped enum construct");
 
   const std::string formatted = lang::Formatter().format(
       "enum class State:uint8_t{Idle,Running=4,Stopped,};");
@@ -11199,7 +11332,97 @@ int main() {
   }
 }
 
+void testDependentRequiresArgumentAdmission() {
+  const std::string prefix = R"(
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+)";
+  const auto analyze = [&](std::string source) {
+    const auto root =
+        std::filesystem::path(__FILE__).parent_path().parent_path();
+    return lang::Frontend().analyze("dependent-requires.gti", prefix + source,
+                                    {root / "stdlib/prelude.gti"}, {},
+                                    {root / "stdlib"});
+  };
+  for (const std::string clause : {"std::copyable<T> && boxed_int<Box<T>>",
+                                   "boxed_int<Box<T>> && std::copyable<T>",
+                                   "(std::copyable<T> && boxed_int<Box<T>>) || "
+                                   "(boxed_int<Box<T>> && std::copyable<T>)"}) {
+    const auto result = analyze(
+        "int read<T>(Box<T>& box) requires " + clause +
+        " { return box.get(); }\n"
+        "int main() { Box<int> box{7}; return read(box) == 7 ? 0 : 1; }");
+    expect(result.canGenerateCode() && result.diagnostics.empty(),
+           "compound clause arguments use complete guaranteed facts "
+           "independent of conjunct order");
+  }
+  for (const std::string clause :
+       {"boxed_int<Box<T>>",
+        "(std::copyable<T> && boxed_int<Box<T>>) || boxed_int<Box<T>>"}) {
+    const auto result =
+        analyze("int read<T>(Box<T>& box) requires " + clause +
+                " { return box.get(); }\nint main() { return 0; }");
+    const auto *failure = findDiagnosticByCode(result.diagnostics, "GTI-S2029");
+    expect(!result.canGenerateCode() && failure != nullptr &&
+               failure->message.find("Type 'T'") != std::string::npos &&
+               failure->message.find("type parameter") == std::string::npos &&
+               failure->fixes.empty(),
+           "a branch-local or absent copyability fact cannot admit Box<T>; "
+           "diagnostics name T");
+  }
+  const auto concrete = analyze(R"(
+int read<T>(Box<T>& box) requires std::copyable<T> && boxed_int<Box<T>> { return box.get(); }
+int main() { Box<bool> box{true}; return read(box); }
+)");
+  expect(
+      !concrete.canGenerateCode() &&
+          hasDiagnosticCode(concrete.diagnostics, "GTI-S2029") &&
+          !hasDiagnosticCode(concrete.diagnostics, "GTI-B0001"),
+      "concrete arguments recheck the exact structural member result contract");
+  const auto unknown = analyze(R"(
+int read<T>(T value) requires std::copyable<NoSuchType> { return 0; }
+int main() { return 0; }
+)");
+  expect(!unknown.canGenerateCode() &&
+             hasDiagnosticCode(unknown.diagnostics, "GTI-S2000"),
+         "pure first-pass clause formation must not lose unknown argument "
+         "diagnostics");
+  const auto closed = analyze(R"(
+class Immovable {
+public:
+  Immovable() = default;
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+};
+int read<T>(T value) requires std::copyable<Immovable> && boxed_int<Box<Immovable>> { return 0; }
+int main() { return read(1); }
+)");
+  expect(!closed.canGenerateCode() &&
+             hasDiagnosticCode(closed.diagnostics, "GTI-S2029"),
+         "concrete viability cannot replace a closed class's actual lifecycle "
+         "capabilities");
+  // Primitive capabilities are complete even during declaration registration;
+  // unlike the later-resolved class lifecycle above, this isolates formation
+  // of a closed compound argument inside the provisional clause scope.
+  const auto closedPrimitive = analyze(R"(
+class IntegerBox<std::integral T> { public: int get() { return 0; } };
+int read<T>(T value) requires std::integral<bool> && boxed_int<IntegerBox<bool>> { return 0; }
+int main() { return 0; }
+)");
+  expect(!closedPrimitive.canGenerateCode() &&
+             hasDiagnosticCode(closedPrimitive.diagnostics, "GTI-S2029"),
+         "a false closed primitive assertion cannot admit another closed "
+         "argument type");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testDependentRequiresArgumentAdmission",
+     testDependentRequiresArgumentAdmission},
     {"testStructuralClassConstraints", testStructuralClassConstraints},
     {"testFunctionContracts", testFunctionContracts},
     {"testContainerScaffoldSurfaces", testContainerScaffoldSurfaces},

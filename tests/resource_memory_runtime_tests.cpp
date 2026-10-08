@@ -1,8 +1,11 @@
 #include "gti/memory.h"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
 
 int main() {
   int failures = 0;
@@ -12,20 +15,37 @@ int main() {
       std::cerr << message << '\n';
     }
   };
-  std::int32_t status = -1;
-  for (const std::uint64_t alignment : {0, 3, 6}) {
-    auto *address = gti_rt_memory_allocate_v1(0, alignment, &status);
-    expect(!address && status == 1,
-           "invalid alignment is recoverable, even empty");
-  }
-  for (const std::uint64_t alignment : {1, 2, 8, 64, 4096}) {
-    auto *empty = gti_rt_memory_allocate_v1(0, alignment, &status);
-    expect(!empty && status == 0,
-           "empty allocation performs no host allocation");
-    gti_rt_memory_release_v1(empty, alignment);
+  expect(gti_rt_native_size_max_v1() ==
+             (std::numeric_limits<std::size_t>::max)(),
+         "native size conversion uses the target size_t limit");
+  expect(!gti_rt_address_is_aligned_v1(nullptr, 1),
+         "null does not satisfy nonempty-region alignment");
+  alignas(64) unsigned char aligned[128]{};
+  expect(gti_rt_address_is_aligned_v1(aligned, 64) &&
+             !gti_rt_address_is_aligned_v1(aligned + 1, 64) &&
+             gti_rt_address_is_aligned_v1(aligned + 1, 1) &&
+             !gti_rt_address_is_aligned_v1(aligned, 0) &&
+             !gti_rt_address_is_aligned_v1(aligned, 3),
+         "address observer checks actual alignment without dereferencing");
+#if !defined(_WIN32)
+  expect(gti_rt_posix_pointer_size_v1() == sizeof(void *),
+         "POSIX alignment normalization uses the actual pointer size");
+  expect(gti_rt_posix_einval_v1() == EINVAL &&
+             gti_rt_posix_enomem_v1() == ENOMEM,
+         "POSIX errors use native constants, not guessed values");
+#endif
+  // Invalid/zero requests belong to source policy and are tested with an
+  // injected adapter. These native calls satisfy the adapter preconditions.
+  for (const std::uint64_t alignment : {8, 64, 4096}) {
     for (const std::uint64_t bytes : {1, 13, 128}) {
-      auto *address = gti_rt_memory_allocate_v1(bytes, alignment, &status);
+#if defined(_WIN32)
+      auto *address = gti_rt_aligned_malloc_v1(bytes, alignment);
+      expect(address != nullptr, "valid CRT allocation succeeds");
+#else
+      std::int32_t status = -1;
+      auto *address = gti_rt_posix_memalign_v1(bytes, alignment, &status);
       expect(address && status == 0, "valid host allocation succeeds");
+#endif
       if (!address)
         continue;
       expect(reinterpret_cast<std::uintptr_t>(address) % alignment == 0,
@@ -36,7 +56,11 @@ int main() {
       for (std::size_t index = 0; index < bytes; ++index)
         expect(data[index] == static_cast<unsigned char>(index),
                "the complete extent is writable");
-      gti_rt_memory_release_v1(address, alignment);
+#if defined(_WIN32)
+      gti_rt_aligned_free_v1(address);
+#else
+      gti_rt_posix_free_v1(address);
+#endif
     }
   }
   return failures ? 1 : 0;

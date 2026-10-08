@@ -898,7 +898,7 @@ int main() { return 0; }
   const auto owningPayload = [&](const lang::SemanticType &type) {
     const lang::MirPayloadEnum *enumeration =
         type.kind == lang::SemanticType::Enum
-            ? frontend.mir.findPayloadEnum(type.enumId)
+            ? frontend.mir.findPayloadEnum(type)
             : nullptr;
     return enumeration != nullptr && enumeration->requiresActiveCleanup;
   };
@@ -3402,42 +3402,50 @@ int main() {
     expect(!emitter.supportsBodyText(constructorAddress) &&
                emitter.supportsFailureBodyText(constructorAddress),
            "infallible field placement must retain its status-only body");
-    std::optional<lang::MirBodyAddress> requiredInitializer;
-    for (const auto &owner : frontend.mir.classInstances()) {
-      const lang::MirBodyAddress fields{
-          .kind = lang::MirBodyKind::FieldInitializers, .owner = owner.id};
-      const auto schedule = emitter.initializerSchedule(fields);
-      if (schedule.supported &&
-          std::any_of(schedule.fields.begin(), schedule.fields.end(),
-                      [&](const auto &field) {
-                        return field.spelling.find(row.tagSpelling) !=
-                               std::string::npos;
-                      })) {
-        requiredInitializer = fields;
-        break;
-      }
+    std::optional<lang::MirBodyAddress> requiredConstructor;
+    for (const auto &consumer : frontend.mir.constructorInstances()) {
+      bool consumesTarget = false;
+      for (const auto &block : consumer.body.blocks)
+        for (const auto &instruction : block.instructions)
+          consumesTarget |=
+              instruction.kind == lang::MirInstructionKind::Construct &&
+              instruction.constructorTarget == row.constructor;
+      if (!consumesTarget)
+        continue;
+      const auto schedule = emitter.initializerSchedule(
+          {.kind = lang::MirBodyKind::FieldInitializers,
+           .owner = consumer.owner});
+      expect(schedule.supported && !schedule.fields.empty() &&
+                 std::all_of(
+                     schedule.fields.begin(), schedule.fields.end(),
+                     [](const auto &field) { return field.spelling.empty(); }),
+             "constructor-owned defaults must not also execute as native "
+             "field initializers");
+      requiredConstructor = {.kind = lang::MirBodyKind::Constructor,
+                             .owner = consumer.id};
+      expect(emitter.supportsFailureBodyText(*requiredConstructor),
+             "the exact constructor executes its status-only field target");
+      break;
     }
-    if (!requiredInitializer)
+    if (!requiredConstructor)
       continue;
     sawRequiredContainedWrapper = true;
     auto missingRows =
         buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23);
-    std::erase_if(missingRows.containedConstructors,
-                  [&](const auto &candidate) {
-                    return candidate.constructor == row.constructor;
-                  });
+    std::erase_if(missingRows.types, [&](const auto &candidate) {
+      return candidate.type == row.ownerType;
+    });
     const lang::CppMirBodyEmissionMap missingMap(std::move(missingRows));
     expect(!lang::CppMirBodyEmitter(frontend.mir, missingMap)
-                .initializerSchedule(*requiredInitializer)
-                .supported,
-           "removing a status-only initializer wrapper must fail closed even "
-           "when its exact constructor cannot fail");
+                .supportsFailureBodyText(*requiredConstructor),
+           "removing the selected field target's type representation must "
+           "fail closed even when its exact constructor cannot fail");
   }
   expect(sawInfallibleStatusOnly,
          "fixture must retain an infallible status-only initializer wrapper");
-  expect(
-      sawRequiredContainedWrapper,
-      "a concrete declaration schedule must consume the status-only wrapper");
+  expect(sawRequiredContainedWrapper,
+         "a concrete constructor schedule must execute the status-only field "
+         "construction");
   const auto rejectMutation = [&](const auto &mutate,
                                   std::string_view message) {
     auto changed = frontend.mir;
@@ -4336,12 +4344,24 @@ int main() {
        frontend.mir.functionInstances()) {
     for (const lang::MirBlock &block : function.body.blocks) {
       for (const lang::MirInstruction &producer : block.instructions) {
-        if (producer.kind != lang::MirInstructionKind::Call ||
-            !producer.result || producer.functionTarget ||
-            producer.constructorTarget || producer.receiver ||
+        if ((producer.kind != lang::MirInstructionKind::Call &&
+             producer.kind != lang::MirInstructionKind::Construct) ||
+            !producer.result || producer.functionTarget || producer.receiver ||
             !producer.operands.empty() ||
             producer.info.type.kind != lang::SemanticType::Class) {
           continue;
+        }
+        if (producer.constructorTarget) {
+          const auto *constructor =
+              frontend.mir.findConstructorInstance(*producer.constructorTarget);
+          const auto *owner =
+              constructor == nullptr
+                  ? nullptr
+                  : frontend.mir.findClassInstance(constructor->owner);
+          expect(owner != nullptr && owner->type == producer.info.type &&
+                     constructor->parameterTypes.empty(),
+                 "selected default construction retains its exact owner and "
+                 "empty parameter signature");
         }
         for (const lang::MirBlock &candidate : function.body.blocks) {
           for (const lang::MirInstruction &consumer : candidate.instructions) {
@@ -4805,51 +4825,99 @@ int main() {
              "boundary");
     }
   }
-  expect(selectedBoundaries == 1 && readOnlyInstances == 1,
-         "the explicit read-only call remains ordinary MIR while compound "
-         "places select one mutable boundary");
+  expect(selectedBoundaries == 0 && readOnlyInstances == 1,
+         "staged accessor results need no implicit-index terminal wrapper; "
+         "the explicit read-only overload remains selected");
 
-  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
-  std::size_t normalDefinitions = 0;
-  bool checkedReferenceCompound = false;
-  std::istringstream lines(artifact.contents);
-  for (std::string line; std::getline(lines, line);) {
-    normalDefinitions +=
-        line.find("Indexed::__gti_fn_") != std::string::npos &&
-        line.find("___gti_operator_subscript(") != std::string::npos &&
-        line.find(" {") != std::string::npos;
-    checkedReferenceCompound =
-        checkedReferenceCompound ||
-        (line.find("mir_checked_compound_multiply_v1(") != std::string::npos &&
-         line.find("___gti_operator_subscript(") != std::string::npos);
-  }
-  expect(normalDefinitions == 1,
-         "the C++ artifact should define the required mutable subscript "
-         "boundary without inventing a second accessor call");
-  expect(checkedReferenceCompound,
-         "a reference-projected class subscript should preserve the checked "
-         "single-call compound boundary instead of duplicating its accessor");
-  bool checkedSchedule = false;
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  std::size_t accessorCalls = 0;
+  std::size_t checkedReferences = 0;
+  std::size_t checkedSchedules = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
+    expect(emitter.supportsFailureBodyText(
+               {.kind = lang::MirBodyKind::Function, .owner = function.id}),
+           "the backend admits the exact staged accessor and primitive update "
+           "schedule");
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.kind != lang::MirInstructionKind::Assign ||
-            instruction.operation != lang::MirOperation::MultiplyAssign ||
-            instruction.operands.size() != 1 || !instruction.destination)
+        const auto *target =
+            instruction.functionTarget
+                ? frontend.mir.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (instruction.kind == lang::MirInstructionKind::Call && target &&
+            target->overloadedOperator == lang::OverloadedOperator::Subscript)
+          ++accessorCalls;
+        if (instruction.kind == lang::MirInstructionKind::Borrow &&
+            !instruction.localFailureSites.empty()) {
+          ++checkedReferences;
+          expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                     block.terminator.invokeInstruction == instruction.id,
+                 "bounds checks precede reference publication on the exact "
+                 "Borrow/Invoke edge");
+        }
+        if (instruction.kind != lang::MirInstructionKind::Compute ||
+            instruction.operation != lang::MirOperation::Multiply ||
+            instruction.operands.size() != 2 || !instruction.result)
           continue;
-        const auto *place = function.body.findPlace(*instruction.destination);
-        checkedSchedule |=
-            place && !place->projections.empty() &&
-            place->projections.back().kind == lang::MirProjectionKind::Index &&
-            instruction.localFailureSites.size() == 1 &&
-            instruction.definedFailure.localOrigins.size() == 1 &&
-            block.terminator.kind == lang::MirTerminatorKind::Invoke &&
-            block.terminator.invokeInstruction == instruction.id;
+        const auto *prior =
+            instruction.operands.front().kind == lang::MirOperandKind::Value
+                ? function.body.findValue(instruction.operands.front().value)
+                : nullptr;
+        const auto *load =
+            prior ? findPreflightInstruction(function.body, prior->definition)
+                  : nullptr;
+        const auto *place =
+            load && load->operands.size() == 1
+                ? function.body.findPlace(load->operands.front().place)
+                : nullptr;
+        const auto *loan = place && place->root == lang::MirPlaceRootKind::Loan
+                               ? function.body.findLoan(place->loan)
+                               : nullptr;
+        expect(load && load->kind == lang::MirInstructionKind::Load && loan &&
+                   loan->kind == lang::MirLoanKind::CallResult &&
+                   loan->access == lang::AccessMode::Mutable &&
+                   load->id < instruction.id &&
+                   instruction.localFailureSites.size() == 1 &&
+                   instruction.definedFailure.localOrigins.size() == 1 &&
+                   block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == instruction.id,
+               "multiply reads one staged mutable referent and owns its "
+               "overflow failure before committing");
+        std::size_t commits = 0;
+        for (const auto &success : function.body.blocks)
+          for (const auto &assign : success.instructions)
+            if (assign.kind == lang::MirInstructionKind::Assign &&
+                assign.operation == lang::MirOperation::Assign &&
+                assign.operands.size() == 1 &&
+                assign.operands.front().kind == lang::MirOperandKind::Value &&
+                assign.operands.front().value == *instruction.result) {
+              ++commits;
+              expect(place && assign.destination == place->id &&
+                         assign.id > instruction.id,
+                     "the only committing write retains the exact loaded "
+                     "referent after successful arithmetic");
+            }
+        expect(commits == 1, "the staged multiplication commits exactly once");
+        ++checkedSchedules;
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto *producerBlock = changed->body.findBlock(block.id);
+        producerBlock->terminator = {.kind = lang::MirTerminatorKind::Goto,
+                                     .target =
+                                         producerBlock->terminator.target};
+        lang::rebuildMirReachability(changed->body);
+        (void)lang::rebuildMirValueUses(changed->body);
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "staged multiplication cannot erase its checked failure edge");
       }
     }
   }
-  expect(checkedSchedule,
-         "called subscript update retains its checked MIR compound boundary");
+  expect(accessorCalls == 4 && checkedReferences == 2 && checkedSchedules == 1,
+         "each source subscript evaluates once, both overloads check their "
+         "reference, and the multiplication has one primitive schedule");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "the verified accessor schedules produce the detached artifact");
 }
 
 constexpr NamedTest kTests[] = {

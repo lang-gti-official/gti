@@ -47,6 +47,13 @@ well-formed but produces warning `GTI-S2096`. Removing that token is a
 semantics-preserving quick fix. The compiler is conservative at boundaries it
 cannot prove: generated range/reference bindings and compiler-trusted library
 implementation locals do not receive this advisory warning.
+Mutable operator receivers count like ordinary method receivers. A fixed
+mutable-reference argument in a pack fold also counts during primary generic
+analysis. Passing a mutable place to an unresolved callable conservatively
+retains `mut`, because its concrete parameter may require writable access.
+Advice is declaration-wide: one concrete `if constexpr` branch does not make
+shared source unreachable for other specializations. Independent unused
+mutable locals and unconditional unreachable tails still receive warnings.
 
 `T&` denotes a non-null read-only borrow of `T`. `mut T&` denotes a non-null
 writable borrow. Reference binding and escape are subject to the ownership
@@ -250,6 +257,15 @@ an empty expansion. It does not pass a pack object as one lambda argument.
 Declaration-wide symbolic packs defer target publication until that check.
 Nominal operator overloads compare the expanded arguments in exact order;
 this does not expand operands of non-call operators or add implicit conversions.
+
+Concrete fixed-array values also retain their exact element type and every
+extent through by-value parameter-pack forwarding and constructor emplacement.
+The implemented array staging family is copyable, contains no tracked borrowed
+state, and requires no active element cleanup. Each forwarded array is a value
+snapshot: it does not decay to a pointer, acquire an implicit reference, or erase
+an element lifetime dependency. Fixed-array arguments before a final pack follow
+the same rule. Owning or borrow-carrying array transport is not enabled by this
+passive-array staging rule.
 Read-only reference elements forward to the same exact read-only reference
 parameter type. They are not copied, moved, or given callee cleanup obligations;
 the ordinary caller-side borrow rules apply for the invocation. Mutable
@@ -287,6 +303,22 @@ members; a derived class does not acquire a base alias. Alias templates,
 C++ `using Base::member` exposure, constructor inheritance, and access
 reshaping are not part of this declaration form. Native callback aliases remain
 namespace-only under the native C interoperation contract.
+
+Aliases preserve exact type identity during registration, but constraints on
+their target applications are checked only after class members and lifecycle
+facts are complete. This applies to unused aliases too; aliases cannot bypass
+the target generic's constraints. A class argument therefore has the same
+constraint meaning in an alias and in an ordinary declaration.
+
+Concrete generic discovery has deterministic compilation-resource bounds: 64
+new-instance levels in a request chain and 16,384 distinct generic class, function,
+constructor and destructor instances per HIR request (including generic-owner
+members and empty packs, not ordinary declaration roots). Exact recursion reuses
+one instance. Type- or value-changing recursion must terminate within those
+bounds through a selected compile-time branch or exact specialization; a
+runtime `if` does not prevent instantiation of the other branch. Exceeding a
+bound is diagnosed as `GTI-S2105`, not a hang or backend failure. These are
+compiler resource bounds rather than a termination proof for generic programs.
 
 Class members follow their declared access and the default associated with
 `class` or `struct`. `interface` members are public contracts. Namespace
@@ -450,6 +482,11 @@ explicit write to a `mut` field through a mutable union value inside `unsafe`.
 
 Fixed arrays require complete initialization. Empty braces value-initialize all
 elements; a non-empty initializer supplies exactly one value per element.
+Representable signed integer literals, including a parenthesized single unary
+`+` or `-`, receive the exact element type. Passive records and unions can be
+copied from named values into arrays under their ordinary copyability rules;
+this does not introduce extra default-constructor calls. Union member accesses
+still require `unsafe`.
 
 Inside an ordinary named function, method, or constructor call, the same brace
 syntax may initialize one exact by-value fixed-array parameter. It is a
@@ -690,6 +727,13 @@ call-argument rules. There is no
 conversion ranking, overload-set value, ADL, or backend overload resolution.
 Exactly one viable declaration forms the item; zero candidates are a signature
 mismatch and multiple candidates are ambiguous.
+
+For a confined call such as `invoke_with(handler, args...)`, fixed arguments
+and the final value pack are deduced before matching the handler's expanded
+invocation signature. Pack elements use the existing value/read-only-reference
+binding rules; they do not acquire mutable-reference access. An open forwarding
+pack cannot distinguish overloads by its unknown arity. A unique eligible item
+may be retained symbolically, and every concrete invocation is checked again.
 
 The resulting semantic type contains the selected nominal function identity,
 exact parameter types, and exact result type. It is a zero-state read-callable
@@ -972,7 +1016,58 @@ Union copies are passive byte-representation copies; unions do not acquire
 hidden lifecycle behavior. `GTI-S2066` owns declaration-shape failures, while
 the ordinary unsafe diagnostic owns safe member access.
 
-An `enum class` with at least one parameterized alternative is a closed tagged
+The declaration spellings `enum Name` and `enum class Name` have identical
+meaning. Both declare scoped nominal enums; neither injects enumerators into
+the enclosing namespace or permits implicit conversion to integers.
+
+A payload enum may declare ordinary nominal generic parameters:
+
+```gti
+enum Message<T, uint64_t Channel = 3> {
+  idle,
+  received(T payload),
+  stopped(int32_t reason)
+};
+using TextMessage = Message<std::string>;
+```
+
+Type parameters, a suffix of immutable `uint64_t` parameters, inline
+constraints, defaults and one final type pack use the existing nominal generic
+argument rules. A pack may expand in nominal type metadata, not into a variable
+number of alternatives or payload fields; it cannot coexist with value
+parameters or defaults. Every argument contributes to exact enum identity,
+including metadata unused by a payload. Transparent aliases, defaulted
+arguments and equivalent primitive spellings denote the same instance.
+Generic integral-only declarations remain unsupported.
+
+The owner must be concrete at a value use: `Message<int, 7>::received(4)` or
+`TextMessage::received(std::string("hello"))`. A bare owner is accepted only
+when all required arguments are defaulted. Arguments cannot be attached to the
+alternative, and construction does not infer owner arguments from payloads.
+Exact nominal argument deduction through ordinary generic function parameters
+can decompose enum type/value arguments and a final metadata pack, just as it
+does other nominal types. Patterns must name the subject's exact enum instance;
+sharing a primary declaration is not enough.
+
+Semantic substitution validates actual payload signatures, constraints,
+copy/move/cleanup and concurrency capabilities before executable lowering.
+An unused generic primary is not a concrete runtime representation. Forward
+class/enum type-default dependencies are resolved against complete nominal
+identities without declaration-order-dependent acceptance; cyclic defaults are
+ill-formed. Value defaults still require earlier visible constant bindings.
+Aliases do not bypass instantiated
+payload validation. Generic arguments are metadata, not ownership edges: an
+unused `void` or reference type argument does not become a payload. An actual
+field substituted to an unsupported type is still ill-formed, including when
+constructing another alternative.
+
+By-value layout checks distinguish concrete generic instances when traversing
+class fields and enum alternatives. A cycle cannot be hidden by visiting the
+same generic primary with different arguments. Finite nested class payloads
+remain valid; direct recursive layouts and structurally growing by-value
+recurrence remain ill-formed.
+
+An enum with at least one parameterized alternative is a closed tagged
 sum. It cannot declare an integral backing type or explicit enumerator values.
 Every payload field is named, immutable, and non-variadic. The admitted field
 types are primitive scalars, `std::string_view`, `nullptr_t`, one-level raw

@@ -1,5 +1,5 @@
-// A43: passing an unsafe function as a native callback reports the internal 'unknown' type
-// instead of saying the function is unsafe.
+// A43: a callback signature mismatch used to report the internal 'unknown'
+// type instead of the exact required signature and the int64_t candidate.
 [[c_opaque]] struct FileStat;
 using Visitor = (c_string, const FileStat*, int32_t) -> int32_t;
 extern "C" {

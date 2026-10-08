@@ -27,7 +27,7 @@ for what minor and patch releases mean.
   narrow trusted conversions; the C ABI record is unchanged.
 - An out-of-range constant index on a string view is now reported by
   constant evaluation at the library index, with the exact valid range,
-  rather than as a separate semantic error. See example 125.
+  rather than as a separate semantic error. See example 130.
 
 ## 0.379.0 — Programmable allocators
 

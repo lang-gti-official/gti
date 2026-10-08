@@ -1,0 +1,28 @@
+namespace operations {
+  int add3(int a, int b, int c) { return a + b + c; }
+  bool add3(bool a, bool b, bool c) { return a && b && c; }
+  int ordered(int a, int b, int c) { return a * 100 + b * 10 + c; }
+  int read(int& value) { return value; }
+  int empty() { return 9; }
+  int mixed(int a, bool enabled, int b) { return enabled ? a + b : 0; }
+  int unique_add(int a, int b, int c) { return a + b + c; }
+}
+
+int invoke_with<Function, Args...>(Function function, Args... args) {
+  return function(args...);
+}
+int forward<Args...>(Args... args) {
+  return invoke_with(operations::unique_add, args...);
+}
+int next(mut int& counter) { counter++; return counter; }
+
+int main() {
+  if (invoke_with(operations::add3, 1, 2, 3) != 6) { return 1; }
+  if (invoke_with(operations::read, 7) != 7) { return 2; }
+  if (invoke_with(operations::empty) != 9) { return 3; }
+  if (invoke_with(operations::mixed, 3, true, 4) != 7) { return 4; }
+  if (forward(1, 2, 3) != 6) { return 5; }
+  mut int counter = 0;
+  if (invoke_with(operations::ordered, next(counter), next(counter), next(counter)) != 123) { return 6; }
+  return counter == 3 ? 0 : 7;
+}

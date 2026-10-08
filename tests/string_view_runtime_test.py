@@ -29,7 +29,7 @@ def main():
         for level in ("O0", "O3"):
             example = root / f"example-{level}"
             built = run([str(compiler),
-                         str(repository / "examples/125-string-views.gti"),
+                         str(repository / "examples/130-string-views.gti"),
                          f"-{level}", "-o", str(example)])
             assert built.returncode == 0, built.stderr
             executed = run([str(example)])

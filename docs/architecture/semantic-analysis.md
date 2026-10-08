@@ -2,6 +2,44 @@
 
 Status: Current implementation.
 
+## Generic payload enum signatures
+
+Nominal registration inventories class and enum identities and their ordinary
+generic binders before resolving defaults and payloads. Demand-resolved class
+and enum defaults share recursion detection and avoid declaration-order-dependent
+type acceptance. Value defaults retain the existing earlier-visible constant
+rule. A concrete enum type retains its
+primary identity and complete canonical arguments; existing substitution
+produces its exact alternative types. Payload admissibility is revalidated
+through aliases after field facts are available. Ownership, cleanup and
+concurrency traits fold actual substituted fields, not generic metadata.
+
+`SemanticModel::enumTypeFor` exposes retained exact signature rows to immutable
+snapshot consumers. Semantic resolution and concrete instance discovery record
+these rows through the existing substitution service; compiler-owned hover and
+completion therefore use the same signatures without implementing generic
+substitution in tooling. Replacing a primary descriptor invalidates its earlier
+signature rows so pre-payload registration cannot leave stale field metadata.
+Request reset clears those rows with the rest of the snapshot-owned catalog.
+
+By-value layout traversal distinguishes exact class and enum instances, so
+repeated use of a generic primary cannot hide a cycle through different
+arguments. Growing class recurrence uses the existing structural nominal-growth
+guard; finite decreasing nesting remains traversable. Owning-indirection
+metadata is not a by-value containment edge.
+
+## Exact-owner construction
+
+For one completed value of a class's exact owner type, semantic construction
+selects that owner's copy or move lifecycle according to the analyzed value
+category. A generic by-value converting constructor instantiated with that
+same owner type cannot outrank or resurrect a deleted lifecycle operation;
+unrelated argument types retain ordinary inference/constraint selection. The
+selected `ConstructorKind`, declaration and argument facts continue through
+HIR/MIR. Completed-value optional publication therefore transports the selected
+lifecycle value rather than invoking another converting constructor at the
+private storage boundary. No public callable/container name defines this rule.
+
 ## Native C scalar target facts
 
 `NativeCScalarKind` identifies a C declaration family independently of numeric
@@ -66,6 +104,8 @@ requested frontend phases for Strict; promotion cannot poison query summaries.
 Audit-only conflicts are excluded from mandatory loan endpoint planning and
 inspect its completed liveness facts only for diagnostics. No checked loan,
 cleanup schedule or native output may depend on audit mode.
+Audit-only field-type queries look up existing declaration identities; they do
+not register unrelated methods or change mandatory MIR symbol/place identities.
 
 The remaining section describes the optional analyzer, not extra mandatory
 conditions for compiling an unsafe implementation.
@@ -86,8 +126,13 @@ summary imports conservatively retain this flag; exact direct linear copies
 can retain definite evidence. Potential facts cannot become demonstrated
 violations merely because merging removed duplicate origins.
 
-Class field symbols are established with declaration-owned field types before
-the catalog is sealed, in every audit mode. Isolated workers therefore retain
+Class field symbols are established in active declaration order immediately
+after member collection, before layout, stored-reference, borrow-summary, or
+instance queries can first-reference them through lookup maps. This includes
+interleaved static and instance fields; inherited lookup aliases and concrete
+instances reuse the primary declaration identity. Hash/address iteration cannot
+assign identities later consumed by printed IR. Symbols retain declaration-owned
+field types before the catalog is sealed, in every audit mode. Isolated workers therefore retain
 canonical projected field identities even when a constructor's class body has
 not yet been visited by the caller; worker-local symbol allocation cannot
 silently lose a returned field's provenance.
@@ -336,9 +381,13 @@ constructor selected for the bounded executable generated-default family:
 nongeneric owners/bases, no derived instance fields or destructor, and an
 exact zero-parameter source base constructor. Construction carries ordinary
 constructor-failure propagation; HIR consumes this identity rather than
-reselecting a constructor. A zero identity retains the existing generated
-declaration schedule for other shapes. This fact changes representation of an
-already permitted construction, not source overload availability.
+reselecting a constructor. Independently, `generatedDefaultFieldInitializers`
+selects a concrete generated constructor schedule when the ordinary structural
+default is already available and all instance fields have declaration
+initializers. Those defaults carry constructor failure propagation even without
+a source constructor declaration. HIR preserves each exact initializer and MIR
+owns partial-object rollback. These facts change representation of already
+permitted construction, not source overload availability or omitted-field policy.
 
 ## Analysis Order
 
@@ -346,7 +395,8 @@ already permitted construction, not source overload availability.
 on declaration-wide registration. It currently:
 
 1. registers namespaces, aliases, namespace/class type aliases, enums,
-   concepts, and primary classes;
+   concepts, and primary class/enum generic binders, then resolves nominal
+   defaults against the complete primary identity inventory;
 2. resolves concepts and aliases after primary class identities exist, then
    registers canonical exact class specializations before resolving
    inheritance;
@@ -357,7 +407,8 @@ on declaration-wide registration. It currently:
    summaries;
 6. derives transfer/share facts and validates inherited interface capability
    requirements;
-7. records class types and lifecycle facts, then seals the declaration catalog;
+7. records class types and lifecycle facts, validates alias target constraints,
+   then seals the declaration catalog;
 8. copies namespace-symbol value state into the body-owned value-flow session
    and analyzes declaration bodies in lexical scopes;
 9. finalizes callable forwarding and argument contracts; and
@@ -372,6 +423,16 @@ and publishes a public-symbol-sorted `SemanticEmbeddingPlan`. This is artifact
 policy rather than GTI source meaning, but semantics remains the sole authority
 for declaration identity and boundary-type eligibility. HIR and later phases
 consume the selected `FunctionId`; they never repeat lookup by spelling.
+
+Closed executable requests (the explicit `requireEntryPoint` policy) and
+embedding library requests enable source-definition checks in the semantic
+visitor, including concrete instance reanalysis. Once call/operator resolution
+selects an exact ordinary GTI declaration, `GTI-S2106` diagnoses a missing body
+at the use and relates the declaration. Unused declarations, pure virtual
+contracts, registered runtime bindings and compiler intrinsic definitions are
+not rejected. Default fragment analysis still resolves bodyless signatures
+without promising executable closure. Function items/native callbacks already
+require bodies through their structural eligibility rules.
 
 This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
@@ -419,7 +480,12 @@ walks active conditional members while tracking access labels and records the
 owner declaration before alias targets are resolved. Once primary class IDs
 exist, resolution binds each alias to its direct owner, enters the owner's
 generic-parameter scope, resolves the transparent target, and installs a
-separate type-member map. Value and callable collection consults that map for
+separate type-member map. Constraint checks on these alias targets defer until
+the class member and lifecycle inventory is complete; every resolved target is
+then validated before catalog sealing, even if the alias is never used. This
+separates exact type registration from structural constraint validity without
+changing alias identity or making constraints optional.
+Value and callable collection consults that map for
 same-owner name collisions but does not turn aliases into storage members or
 inherit them with base value/function members. Type lookup, concrete generic
 reanalysis, and tooling all consume the same resolved target. Type lookup
@@ -1008,6 +1074,18 @@ fully general allocation and failure cleanup through erased owners remain
 incomplete. This does not claim that
 public owning wrappers are implemented.
 
+Contextual namespace-function selection deduces ordinary fixed arguments and
+the final value pack before comparing a confined invocation signature.
+Substitution precedes `concreteCallArguments` expansion; forwarded elements
+use the same value/read-only-reference matching as ordinary pack invocation.
+An effect-free function name may defer its own selection without postponing
+later typed arguments. Effectful contextual producers still defer their suffix,
+and concrete HIR/MIR retain source-order call-input stages. An open forwarding
+pack cannot distinguish overload arities; a unique eligible item can remain
+symbolic until the ordinary concrete invocation check. Failed contextual
+selection owns its diagnostic instead of suggesting an unspellable explicit
+function-item type.
+
 Each exact callable signature also retains a `Read`, `Mutable`, or `Once`
 invocation capability. An immutable by-value generic callable parameter
 requires read-callable invocation. A `mut` by-value parameter permits mutable
@@ -1190,8 +1268,15 @@ remain ordinary source-defined generic bodies and verified-MIR calls.
 A function or constructor's trailing clause is resolved once into
 `AppliedConceptRequirement` records containing the selected `ConceptId`, AST
 application, and exact semantic type arguments. Arguments may be visible
-non-pack parameters or closed concrete types; unresolved dependent compound
-types fail before candidate selection. During symbolic body analysis, a
+non-pack parameters, closed concrete types, or dependent compounds.
+`resolveRequirements` first forms the complete application identities and
+types, then validates the written arguments within that same clause's ordinary
+guaranteed-fact scope. This makes conjunction order irrelevant without assuming
+facts from only one disjunction alternative. Invalid and unknown arguments
+still receive ordinary type diagnostics; concrete admission is rechecked.
+Only dependent applications supply provisional admission facts; a closed
+clause assertion cannot replace a closed argument's actual capabilities.
+During symbolic body analysis, a
 requirement scope contributes unary facts to ordinary constrained operations
 and supplies synthetic exact operator or callable candidates for the bounded
 structural relationships. Callable requirements carry unary/binary argument
@@ -1200,6 +1285,12 @@ capability; iterator-aware predicate and operation relations derive the exact
 checked-dereference referent privately. This is semantic proof, not text-based
 operator guessing. The AST application is retained for source-facing
 diagnostics and tooling occurrences.
+
+Registration-time constraint diagnostics use the canonical semantic type
+printer with a read-only lookup into declaration-owned generic parameter
+records when completed model rows are not available yet. The reporter consumes
+that spelling operation without owning proof or registration state; it does
+not manufacture incomplete `FunctionInfo` rows to obtain a parameter name.
 
 Unary structural annotations on class generic parameters reuse those same
 applications. The parameter's resolved `conceptId` remains the concrete
