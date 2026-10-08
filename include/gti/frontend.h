@@ -60,6 +60,11 @@ struct FrontendOptions {
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
   bool suggestIncludes = true;
   std::vector<IncludeSearchRoot> includeSearchRoots;
+  // Lower to MIR only the instances reachable from the program roots. The
+  // complete program is still analyzed, so diagnostics are unchanged; artifact
+  // builds set this, while inspection of every declaration's lowering does
+  // not.
+  bool lowerReachableOnly = false;
 };
 
 struct FrontendResult {

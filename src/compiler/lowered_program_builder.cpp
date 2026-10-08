@@ -511,7 +511,17 @@ class DeclarationCollector final {
 public:
   DeclarationCollector(const SemanticModel &semantics, const TargetInfo &target,
                        const HirProgram &hir)
-      : semantics_(semantics), target_(target), hir_(hir) {}
+      : semantics_(semantics), target_(target), hir_(hir) {
+    for (const HirClassInstance &instance : hir.classInstances()) {
+      classes_.insert(instance.declaration);
+    }
+    for (const HirFunctionInstance &instance : hir.functionInstances()) {
+      functions_.insert(instance.declaration);
+    }
+    for (const HirConstructorInstance &instance : hir.constructorInstances()) {
+      constructors_.insert(instance.declaration);
+    }
+  }
 
   [[nodiscard]] std::vector<LoweredDeclaration>
   collect(const StmtList &declarations) {
@@ -520,6 +530,36 @@ public:
   }
 
 private:
+  [[nodiscard]] bool nonGenericClass(ClassId id) const {
+    const ClassTypeInfo *owner = semantics_.findClassType(id);
+    return owner != nullptr && owner->genericParameters.empty();
+  }
+
+  // A non-generic class, function, or constructor has exactly one possible
+  // concrete instance. Without one, HIR discovery from the program roots did
+  // not reach it, so no executable code can use it and it is not lowered.
+  // Generic declarations remain: retained templates can mention them.
+  [[nodiscard]] bool
+  unreachableConcreteDeclaration(const Stmt &statement) const {
+    if (const auto *declaration = stmtAs<ClassDecl>(&statement)) {
+      const ClassTypeInfo *info = semantics_.findClassType(*declaration);
+      return info != nullptr && info->genericParameters.empty() &&
+             !classes_.contains(info->id);
+    }
+    if (const auto *declaration = stmtAs<FunctionDecl>(&statement)) {
+      const FunctionInfo *info = semantics_.findFunction(*declaration);
+      return info != nullptr && info->genericParameters.empty() &&
+             (info->ownerClass == 0 || nonGenericClass(info->ownerClass)) &&
+             !functions_.contains(info->id);
+    }
+    if (const auto *declaration = stmtAs<ConstructorDecl>(&statement)) {
+      const ConstructorInfo *info = semantics_.findConstructor(*declaration);
+      return info != nullptr && info->genericParameters.empty() &&
+             nonGenericClass(info->owner) && !constructors_.contains(info->id);
+    }
+    return false;
+  }
+
   void collectList(const StmtList &statements, LoweredDeclarationId parent,
                    ClassId ownerClass,
                    const std::vector<std::string> &namespaceScope) {
@@ -543,7 +583,8 @@ private:
       collectList(group->members(), parent, ownerClass, namespaceScope);
       return;
     }
-    if (stmtAs<StaticAssertDecl>(&statement) != nullptr) {
+    if (stmtAs<StaticAssertDecl>(&statement) != nullptr ||
+        unreachableConcreteDeclaration(statement)) {
       return;
     }
     if (const auto *declaration = stmtAs<EnumDecl>(&statement)) {
@@ -855,6 +896,9 @@ private:
   const SemanticModel &semantics_;
   const TargetInfo &target_;
   const HirProgram &hir_;
+  std::unordered_set<ClassId> classes_;
+  std::unordered_set<FunctionId> functions_;
+  std::unordered_set<ConstructorId> constructors_;
   std::vector<LoweredDeclaration> result_;
   std::unordered_map<LoweredDeclarationId, std::size_t> nextOrdinal_;
 };
