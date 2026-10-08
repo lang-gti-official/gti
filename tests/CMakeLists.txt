@@ -943,7 +943,21 @@ add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
 add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
 target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend)
 add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
+add_executable(gti_conditional_class_publication_tests conditional_class_publication_tests.cpp)
+target_link_libraries(gti_conditional_class_publication_tests PRIVATE gti_cpp_backend)
+add_test(NAME conditional_class_publication COMMAND gti_conditional_class_publication_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME class_expression_publication_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_expression_publication_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(class_expression_publication_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME class_expression_consumers_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/class_expression_consumers_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}" --jobs 2)
+  set_tests_properties(class_expression_consumers_runtime
+    PROPERTIES TIMEOUT 600 PROCESSORS 2)
   add_test(NAME class_field_value_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"

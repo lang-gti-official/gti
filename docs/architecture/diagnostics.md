@@ -9,6 +9,14 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2000` rejects a mutable local value declaration without an initializer at
+the binding name, before executable lowering. Its hint explains that a later
+assignment does not initialize that declaration. No automatic fix chooses an
+initial value. Existing specific reference, pointer, array, class, enum and
+constexpr diagnostics retain priority; unresolved types do not receive a second
+speculative initializer error. CLI and LSP publish the same record, including
+the exact source range and clearing after an initializer is supplied.
+
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition
 in a closed executable/library or C++ representation request, before backend
 generation. The call token is primary and its bodyless declaration is related. Semantic

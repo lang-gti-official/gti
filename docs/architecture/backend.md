@@ -534,6 +534,70 @@ publication classifier and the proof that no MIR `Drop` governs the slot. It
 does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
 cleanup-owning slot replace or conceal a missing `Drop`.
 
+Grouping a class value does not construct another object. For a nonborrowed
+class value immediately published into a binding, the backend follows exact
+MIR `Identity` links to the original producer and uses one destination slot.
+Each link must have the same complete expression facts, a unique executable
+consumer, and either no value obligations or the exact same-type `Reparent`.
+Links are adjacent instructions or the first instruction on a unique Invoke
+success edge; the last link is adjacent to binding initialization. MIR source
+identities, failure edges, and lifecycle events remain present and execute in
+order. No copy, default constructor, extra move, or cleanup is inferred from
+parentheses. This binding-publication proof does not by itself cover grouped
+borrowed carriers or other consumer shapes.
+
+The same identity-link proof also composes with the existing prepared-argument
+slot protocol. It distinguishes the original call/constructor producer from the
+terminal grouped value consumed by `CallInput`, validates every intervening
+drop transfer back to the producer's activation, and requires adjacency to the
+argument stage. Admission and computation emission use the same publication
+query. The prepared argument remains live through later argument evaluation;
+its existing transfer and failure-cleanup schedule is unchanged. This does not
+admit arbitrary moves as constructor producers. An exact nonborrowed temporary
+Move may instead publish into its prepared argument slot: its source and target
+are distinct typed places, intervening identities are adjacent, and either the
+source's exact obligation reaches the prepared parameter by reparenting or both
+source and payload are cleanup-free. The original native shell is retired after
+the move. The materialized-input fallback does not construct the argument again,
+and incomplete temporary transfer schedules fail closed instead of falling
+back to deferred copying at the call.
+
+Local class-valued conditional publication uses one shared uninitialized
+temporary followed by the MIR move into its binding. The exact two-arm CFG,
+unique storage use, publication order and terminal representation teardown are
+shared between cleanup-owning and passive classes. Owning values must retain
+their exact activation/reparent obligations. Passive values instead require a
+generated passive destructor, no borrowed state and a generated move proved
+defined-failure-free by MIR type facts; no value or temporary cleanup obligation
+is synthesized. Both modes reject additional temporary aliases, readers or
+writers. The native moved-from shell is retired after the binding construction,
+including when the same CFG executes again through a loop.
+Transparent identity links between the conditional move and binding publication
+retain the same storage and exact drop-reparent chain. Moved-from shell retirement
+traces that chain back to the original move's obligation; comparing only the
+final binding's immediate source obligation would miss retirement through
+parentheses and leave the slot engaged on loop re-entry. This retirement uses
+the already-validated identity links and does not execute an additional GTI
+destructor.
+The same conditional join may end in the exact prepared argument stage. A
+receiver staged before that diamond keeps its stable address while the arms
+construct and transfer their argument. The cross-branch proof admits only the
+matched arm publications, move/identity chain and argument stage, with primitive
+constructor inputs. A later source call producing a primitive argument is also
+permitted when its exact result stage feeds that same consuming call. Raw
+memory, pointers, borrowed carriers and unrelated stores are not admitted by
+this extension. Calls and their failure edges retain their original MIR order.
+The passive proof uses the class's generated destructor and active-cleanup
+facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
+without requiring an active cleanup operation. A constructor `Invoke` may
+separate an arm from publication only when its unique success block contains
+only that publication. The selected status constructor writes the slot at the
+original Invoke and engages it only on success; its original failure edge and
+cleanup remain intact. Ordinary constructor-boundary admission still verifies
+the selected constructor. The shared class-publication query is used by both
+transformed constructor admission and emission; recognizing storage in the
+prologue alone is insufficient.
+
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact
 source place by value when the sealed representation row proves copy

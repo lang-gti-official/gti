@@ -841,6 +841,17 @@ parenthesizing a built-in operator result is fine.
 
 This is what F15 actually was.
 
+The binding reproducer is repaired at `1891ce4e` and prints `4`. Passive
+move-only and cleanup-owning grouped constructors pass the six-mode native
+matrix and ASan/UBSan, including nesting, loop re-entry and failure rollback.
+Grouped operator, free-call and member-call results also pass, with exact
+construction/destruction counts. MIR identity links retain their lifecycle
+transfers while sharing one physical publication slot. At `801adc7a`, the
+48-case constructor/operator/conditional matrix passes all six C++20/C++23
+O0/O1/O3 native modes with elision disabled. The eight consumers are binding,
+receiver, argument, relay, container insertion, operator, chained call and
+discard. Broader reconciliation remains required; this is not closure of #103.
+
 ## S02 — ICE: a ternary producing a class value
 
 `reproducers/s02-ternary-class-value.gti`
@@ -852,6 +863,24 @@ int32_t x = flag ? 1 : 2;             // ok
 
 ICEs in all eight consumer positions tried, so it is the ternary itself and
 not what is done with the result.
+
+Partial repair at `98763e94`: the original binding reproducer now compiles and
+prints `1`; passive move-only, cleanup-owning and failing-constructor binding
+fixtures pass C++20/C++23 O0/O1/O3 with elision disabled and ASan/UBSan. Exact
+publication and success-edge mutations remain rejected. The historical matrix
+wraps its ternary in parentheses and exercises additional consumer positions;
+those remain part of the S01/S02 reconciliation, not implied passing coverage
+from the binding fix. Issue #103 remains open.
+
+The expanded repair at `801adc7a` passes all eight consumers in both branch
+outcomes, as part of the 48-case native matrix described under S01. Passive and
+cleanup-owning conditional arguments additionally pass the native/sanitizer
+matrix with repeated execution, frozen mutable receivers and later-argument
+evaluation. A later-argument panic preserves exact source attribution and
+destroys the prepared argument before its enclosing guard. Structural tests
+reject missing parameter obligations, missing/conditional activation, source
+aliasing, wrong operand types and forged copy transfers. Full-suite and
+current-main reconciliation remain required before integration.
 
 ## S03 — ICE: a method call directly on `std::move(x)`
 
@@ -1034,6 +1063,14 @@ the parser validates the first two fields and then discards the rest.
 ## S09 — ICE: an uninitialized `mut` scalar local
 
 `reproducers/s09-uninitialized-mut-scalar.gti`
+
+**Repaired:** a mutable local without an initializer now receives `GTI-S2000`
+at its name, before HIR/backend entry. The hint explains that later assignment
+does not initialize the declaration; no fix invents a default value. The corpus
+requires a located rejection, and compiler/LSP regressions cover scalar types,
+later assignments, exact UTF-16 ranges and diagnostic clearing. This does not
+change program-wide scalar data initialization or constructor-initialized fields.
+The following describes the historical failure.
 
 ```gti
 int main(){mut int32_t r;}
