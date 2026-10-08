@@ -666,6 +666,10 @@ ordinary default constructor once and a distinct status overload for each
 selected MIR constructor. Out-of-line specializations execute those bodies;
 an inline native default or `noexcept` body must not replace them. Direct
 concrete representations retain their single exact-owner declaration.
+The retained primary likewise declares a source-generic constructor's identical
+native parameter list only once across concrete owners. This shares only the
+declaration: each selected owner retains its own verified-MIR definition and
+every fallible instance retains its distinct status-tag overload.
 
 Constructor fields of `Expected<T, E>` can publish a separately produced
 success value, owned unexpected value, or passive scalar alternative into a
