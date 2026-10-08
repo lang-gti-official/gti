@@ -2235,9 +2235,8 @@
       "outcome": "pass"
     },
     "s09-uninitialized-mut-scalar": {
-      "finding": "S09",
-      "issue": 103,
-      "outcome": "ice"
+      "code": "GTI-S2000",
+      "outcome": "rejected"
     },
     "s10-ctor-by-value-copy": {
       "outcome": "pass"
