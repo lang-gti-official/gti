@@ -2,6 +2,10 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testCheckedReferenceClassAssignment",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testContainedClosureConstructorPlan",
       "suite": "lifecycle"
     },
@@ -547,10 +551,6 @@
     },
     {
       "name": "testNestedOwnedFieldAssignment",
-      "suite": "lifecycle"
-    },
-    {
-      "name": "testCheckedReferenceClassAssignment",
       "suite": "lifecycle"
     },
     {
