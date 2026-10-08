@@ -160,7 +160,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
   LoweredProgram loweredProgram = std::move(*loweredBuild.program);
 
   try {
-    result.artifact = backend.generate(loweredProgram);
+    result.artifact = backend.generate(std::move(loweredProgram));
   } catch (const BackendUnsupportedError &exception) {
     return backendLimitation(exception.what());
   } catch (const std::exception &exception) {

@@ -642,6 +642,40 @@ census.
 
 ## Native scalar, recursive pointer and callable integration
 
+### Native enum importer follow-up
+
+The native enum binding slice is validated with an optimized Release/Ninja
+compiler on macOS arm64 (LLVM/libclang 22.1.8). `bindgen_pipeline` covers high-bit
+unsigned flags, signed minima and unsigned maxima through 64 bits, fixed
+underlying types through typedefs, anonymous and filtered/system enums, native
+records/callbacks/nested pointers, compatible packed enums, independent alignment
+rejection, invalid emitted names, and unsupported 128-bit enum integers. CLI
+checks select both LP64 Unix and LLP64 MSVC-compatible profiles; those are
+cross-profile generation checks, not Windows runtime evidence.
+
+`native_enum_bindgen` generates bindings for the runnable
+`examples/native-enum-bindings` project, builds/runs it, checks cache reuse and
+byte-stable regeneration, then links independently compiled C17 in six
+C++20/C++23 O0/O1/O3 modes and one ASan/UBSan mode. No-elide construction is
+enabled throughout the direct matrix. Native C validates the values transported
+in records and supplies their size/alignment; pointer writeback and a native
+function pointer round-trip the same enum representations.
+
+The native-record/header/callback pipelines and runtime oracles, compiler/backend/
+driver library boundaries, LLVM link-policy checks, complete CLI/project
+workflows and relocated installed macOS toolchain check also pass. Formatting
+checks the curated first-party C/C++ surface. This is selected local evidence,
+not a full repository-suite run or Linux/Windows runtime certification.
+
+No GTI syntax, borrow contract, HIR/MIR operation, runtime capability or LSP
+publication rule changes: generated bindings are ordinary source. The project
+has its own CTest gate and example-index entry; it is not part of the numbered
+top-level `.gti` body census, whose expectations are unchanged. Existing CLI
+fixture expectations now require native-typed enum constants and an explicit
+conversion when passing one to a separately declared `int` parameter.
+
+### Earlier scalar and pointer integration
+
 The combined candidate uses a Release compiler on macOS arm64 with LLVM
 22.1.8. Focused scalar checks cover six selected target profiles, including
 native callback signatures and forged scalar identity in callee metadata.
@@ -3539,6 +3573,7 @@ upstream code.
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
 | `stdlib_modules` | every public `<std/name>` unit has exactly one canonical `stdlib/modules/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
+| `dormant_capability_runtime` | include-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |
 | `encoding_runtime` | strict standard-alphabet padded Base64 and lowercase/dual-case hexadecimal across every byte value, RFC 4648 tail vectors, malformed length/character/padding/canonical-bit rejection, and C++20/C++23 O0/O1/O3 plus no-elide and ASan/UBSan execution |
 | `forward_list_runtime` | source-defined resize/merge/remove/unique/reverse/stable sort with scalar and move-only elements; 30,000-node iterative clear/destruction; exact cleanup on failing comparisons and checked owner-field assignment; verified-MIR emission at O0/O1/O3 under C++20/C++23 plus ASan/UBSan |
 | `unique_owner_access_runtime` | all four unique-owner dereference/arrow overloads; successful read/write, empty and reset access, nested caller cleanup, staged-RHS cleanup, and exact `GTI-R0008`/`GTI-R0014` reports at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` independently rejects forged owner detectors, missing edges, and mismatched loans |
@@ -4738,6 +4773,17 @@ hover/definition, incomplete code, unsaved interfaces, close/reload, and
 inferred private result types. Grammar corpus and highlight checks include
 module declarations, all import forms and exported namespaces. These gates
 supplement rather than replace the unchanged include and package regressions.
+
+The standard-library module audit also checks verification-evidence ownership.
+`lowered_program_contract` replaces a caller's already-verified program through
+public value assignment, rejects newly acquired evidence for that invalid
+replacement, and proves the original evidence still owns the accepted snapshot
+after the caller destroys its value. Copies of the evidence share that same
+const snapshot. An owning handoff additionally proves the accepted snapshot
+retains the original declaration storage without copying it. A borrowed
+pointer alone failed the replacement regression. The module
+grammar is regenerated with the pinned Tree-sitter 0.25.10; all 78 grammar
+corpus cases pass. These focused checks are not a full-suite acceptance claim.
 
 Use the existing CMake targets and test filters to keep the development loop
 proportional to the edit. A broad verification plan describes the evidence

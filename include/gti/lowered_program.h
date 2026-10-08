@@ -6,9 +6,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -817,40 +819,47 @@ private:
   friend std::vector<LoweredProgramIssue>
   lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program);
   friend std::optional<VerifiedLoweredProgram>
-  verifiedLoweredProgram(const LoweredProgram &program,
+  verifiedLoweredProgram(LoweredProgram program,
                          std::vector<LoweredProgramIssue> &issues);
 };
 
 [[nodiscard]] std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program);
 
-// Admits one value to a consumer. The builder seals a program only after its
-// complete contents verify, and the seal covers the whole printed program, so
-// a matching seal proves this is that verified value; this checks the seal
-// instead of repeating the inventory for every consumer. verifyLoweredProgram
-// remains the complete check.
+// Takes an independent value for a consumer and returns owning evidence only
+// when it carries a valid construction seal. Lvalues copy; rvalues move. The
+// builder seals a program only after its complete contents verify, and the
+// seal covers the whole printed program, so a matching seal proves this is
+// that verified value; verifyLoweredProgram remains the complete check.
 [[nodiscard]] std::optional<VerifiedLoweredProgram>
-verifiedLoweredProgram(const LoweredProgram &program,
+verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues);
 
-// Evidence that this exact value carries a valid construction seal. A
-// LoweredProgram is immutable through its public interface, so the stages of
-// one consumer pass this evidence along instead of checking the seal again,
-// which prints the whole program each time.
+// Evidence that this exact, owned const value carries a valid construction
+// seal. A caller may replace or destroy its original LoweredProgram without
+// making this proof stale. Consumer stages share the snapshot rather than
+// checking the seal again, which prints the whole program, or copying another
+// complete program.
 class VerifiedLoweredProgram final {
 public:
+  // Deliberately copy shared ownership even for an rvalue: there is no empty
+  // or moved-from evidence object with a dangling/absent program.
+  VerifiedLoweredProgram(const VerifiedLoweredProgram &) = default;
+  VerifiedLoweredProgram &operator=(const VerifiedLoweredProgram &) = default;
+
   [[nodiscard]] const LoweredProgram &program() const noexcept {
     return *program_;
   }
 
 private:
-  explicit VerifiedLoweredProgram(const LoweredProgram &program) noexcept
-      : program_(&program) {}
+  explicit VerifiedLoweredProgram(
+      std::shared_ptr<const LoweredProgram> program) noexcept
+      : program_(std::move(program)) {}
 
-  const LoweredProgram *program_;
+  std::shared_ptr<const LoweredProgram> program_;
 
   friend std::optional<VerifiedLoweredProgram>
-  verifiedLoweredProgram(const LoweredProgram &program,
+  verifiedLoweredProgram(LoweredProgram program,
                          std::vector<LoweredProgramIssue> &issues);
 };
 

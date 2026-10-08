@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.391.0 — Standard-library modules
+## 0.392.0 — Standard-library modules
 
 - Import the standard library instead of including it: `import std.vector;`
   makes `<std/vector>` visible, in direct compilation and in projects alike.
@@ -24,10 +24,14 @@ for what minor and patch releases mean.
   with a module. Sharing is rejected only when the flag selects different
   code in the shared unit.
 - `std` can no longer be registered as a `[modules]` name.
-- The compiler's own work, before the native C++ compiler runs, takes about
-  20–30% less time. The lowered program is now verified once instead of once
-  per backend stage, and declaration lookups no longer scan the whole program.
-  Programs that use much of the standard library gain the most.
+- Backend stages share owning verification evidence for the exact accepted
+  lowered program instead of repeating full checks. The driver transfers this
+  value without a full-program copy, and common declaration lookups use
+  identity-checked indices. These reduce compiler work without changing GTI
+  checks or the generated program; gains depend on the imported workload.
+- Fix native build failures when a program includes `<std/atomic>` or
+  `<std/mutex>` without using their types, in either execution profile. Such
+  includes still add no native atomic or mutex support to the executable.
 
 ## 0.390.0 — Target and profile configuration flags
 

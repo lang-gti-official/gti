@@ -814,15 +814,17 @@ private:
 
 } // namespace
 
-BackendArtifact NativeHeaderBackend::generate(const LoweredProgram &program) {
+BackendArtifact NativeHeaderBackend::generate(LoweredProgram program) {
   std::vector<LoweredProgramIssue> issues;
-  if (!verifiedLoweredProgram(program, issues)) {
+  const std::optional<VerifiedLoweredProgram> verified =
+      verifiedLoweredProgram(std::move(program), issues);
+  if (!verified) {
     throw std::logic_error("native-header backend requires a verified lowered "
                            "program: " +
                            issues.front().detail);
   }
   return {.kind = BackendArtifactKind::Source,
-          .contents = NativeHeaderEmitter(program).emit(),
+          .contents = NativeHeaderEmitter(verified->program()).emit(),
           .extension = ".h"};
 }
 

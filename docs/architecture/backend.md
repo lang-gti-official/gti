@@ -345,14 +345,24 @@ provides deterministic full text for comparison and independent tooling.
 The builder runs every inventory check and seals the value only if they all
 pass; it never re-checks a seal it has just computed. Consumers are admitted
 by the seal alone. `verifiedLoweredProgram` recomputes the seal, and on a match
-returns a `VerifiedLoweredProgram`, evidence about that exact immutable value.
-A match proves the value is the one whose inventory the builder verified,
-because the seal covers the complete printed program. The C++, MIR, and
-native-header backends admit programs this way. `CppBackend` hands the
+returns a `VerifiedLoweredProgram`, owning evidence about that exact immutable
+value. A match proves the value is the one whose inventory the builder
+verified, because the seal covers the complete printed program. The C++, MIR,
+and native-header backends admit programs this way. `CppBackend` hands the
 evidence to the emitter, emission planner, and representation snapshot, so no
 stage checks again. The `LoweredProgram` overloads of those stages still check
 first, so a direct or test caller cannot bypass rejection. `verifyLoweredProgram`
 remains the complete inventory and seal check for tooling and tests.
+
+Evidence owns a const snapshot, shared between consumer stages. Acquiring it
+copies an lvalue program or moves an rvalue program. `Backend::generate`
+accepts a value, and the driver moves its finished program into this boundary;
+C++ emission moves that value into the proof without another full-program
+copy. Callers that need to retain their input can still pass an lvalue. Later
+assignment, movement or destruction of the caller's original value cannot
+detach the proof from the checked contents. Merely holding a const pointer to
+a caller-owned program would not establish this, because `LoweredProgram`
+itself remains an assignable value.
 
 The seal is a 64-bit hash of the deterministic print. Both printers write to a
 stream, and the seal hashes the text as it arrives, eight bytes at a time,
@@ -483,12 +493,27 @@ identical.
 
 Generated support is likewise a compiled backend component rather than a
 mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
-selected C++ standard and exact Expected, storage, managed-thread,
-atomic, defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
+selected C++ standard and exact Expected, storage, managed-thread, C-thread,
+atomic, mutex, SIMD, defined-failure, runtime-binding, and C-ABI text-view
+needs. The preamble and
 failure-support writers receive those explicit values and an output sink;
 they do not query program meaning. Storage and defined-failure support remain
 universal only because that is the current artifact contract, not because the
 writers infer their use.
+
+Capability support has two levels. A lowered class declaration whose
+compiler capability kind is shared owner, atomic storage, mutex storage, or
+mutex lock token selects only a forward declaration of the backend class
+template that represents it. Declarations retained without an instance, such
+as the generic library classes left by an unused `#include`, still emit
+uninstantiated C++ class templates whose members spell those qualified
+template names, and C++ resolves a qualified template name where the
+template is defined. The complete definitions and their native headers
+(`<atomic>`, `<mutex>`) require a concrete MIR capability instance or a
+verified capability operation. The managed-thread handle representation is
+not a template, so a retained thread-handle declaration selects its complete
+support. `dormant_capability_runtime` builds and runs each family's
+include-only program natively.
 
 ### Executable Bodies
 

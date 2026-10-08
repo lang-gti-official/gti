@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <variant>
 #include <vector>
 
 // The language-neutral native declaration model produced by a
@@ -101,7 +102,8 @@ struct NativeRecordField {
 
 struct NativeEnumerator {
   std::string name;
-  std::int64_t value = 0;
+  // Keep the native integer domain: unsigned enum values may exceed INT64_MAX.
+  std::variant<std::int64_t, std::uint64_t> value = std::int64_t(0);
 };
 
 struct NativeParameter {
@@ -154,6 +156,10 @@ struct NativeDeclaration {
   // Layout attributes the record declares, when any.
   NativeRecordLayout layout;
   // Enum.
+  NativeTypeId enumIntegerType = 0;
+  // Clang's size/alignment facts agree for the enum and its compatible integer.
+  // A custom enum alignment must not disappear in an ordinary GTI alias.
+  bool enumLayoutMatchesInteger = false;
   std::vector<NativeEnumerator> enumerators;
   // Typedef: the aliased type.
   NativeTypeId aliased = 0;
