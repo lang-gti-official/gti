@@ -24138,7 +24138,7 @@ checkedStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
 // GTI expected<T&, E> has a pointer-backed native carrier even though native
 // std::expected rejects reference payloads. This exact checked extraction is
 // the only operation that may publish that stored pointer as a CallResult
-// loan; MIR still owns the lifetime proof through the named Expected place.
+// loan; MIR still owns the lifetime proof through the exact Expected carrier.
 [[nodiscard]] const MirInstruction *
 fallibleExpectedBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
@@ -24159,18 +24159,42 @@ fallibleExpectedBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
           instruction.receiver && instruction.receiver->place != 0
               ? body.findPlace(instruction.receiver->place)
               : nullptr;
-      if (found != nullptr || carrier == nullptr || !instruction.result ||
+      const MirValue *ssa =
+          instruction.receiver &&
+                  instruction.receiver->kind == MirOperandKind::Value
+              ? body.findValue(instruction.receiver->value)
+              : nullptr;
+      const MirInstruction *ssaProducer =
+          ssa ? findInstruction(body, ssa->definition) : nullptr;
+      const MirLoan *dependency = ssaProducer && ssaProducer->loan
+                                      ? body.findLoan(*ssaProducer->loan)
+                                      : nullptr;
+      const bool named =
+          carrier != nullptr && instruction.receiver &&
+          instruction.receiver->kind == MirOperandKind::BorrowRead &&
+          carrier->type == instruction.receiver->type;
+      const bool fresh =
+          ssa && ssaProducer && dependency &&
+          ssa->info.type == instruction.receiver->type &&
+          ssa->info.category == ValueCategory::Value &&
+          uniqueValueDrop(body, ssa->id, ssa->info.type) == nullptr &&
+          ssaProducer->kind == MirInstructionKind::Call &&
+          ssaProducer->result == ssa->id &&
+          ssaProducer->info.type == ssa->info.type &&
+          dependency->kind == MirLoanKind::Stored &&
+          dependency->source == loan.source &&
+          dependency->access == AccessMode::ReadOnly;
+      if (found != nullptr || (!named && !fresh) || !instruction.result ||
           !instruction.receiver ||
-          instruction.receiver->kind != MirOperandKind::BorrowRead ||
-          carrier->type != instruction.receiver->type ||
-          carrier->type.kind != SemanticType::Expected ||
-          carrier->type.arguments.size() != 2 ||
-          carrier->type.arguments.front().kind != SemanticType::Reference ||
-          carrier->type.arguments.front().referenceAccess !=
+          instruction.receiver->type.kind != SemanticType::Expected ||
+          instruction.receiver->type.arguments.size() != 2 ||
+          instruction.receiver->type.arguments.front().kind !=
+              SemanticType::Reference ||
+          instruction.receiver->type.arguments.front().referenceAccess !=
               AccessMode::ReadOnly ||
-          carrier->type.arguments.front().arguments.size() != 1 ||
+          instruction.receiver->type.arguments.front().arguments.size() != 1 ||
           instruction.info.type !=
-              carrier->type.arguments.front().arguments.front() ||
+              instruction.receiver->type.arguments.front().arguments.front() ||
           instruction.borrowOrigin != BorrowOriginKind::Receiver ||
           instruction.borrowAccess != AccessMode::ReadOnly ||
           !instruction.operands.empty() ||
@@ -24183,6 +24207,13 @@ fallibleExpectedBorrowLoanProducer(const MirBody &body, const MirLoan &loan) {
     }
   }
   return found;
+}
+
+[[nodiscard]] bool fallibleExpectedSsaReceiver(const MirBody &body,
+                                               const MirInstruction &call) {
+  const MirLoan *loan = call.loan ? body.findLoan(*call.loan) : nullptr;
+  return call.receiver && call.receiver->kind == MirOperandKind::Value &&
+         loan && fallibleExpectedBorrowLoanProducer(body, *loan) == &call;
 }
 
 // A local expected<T&, E> may be formed directly from a stable referent. MIR
@@ -27240,6 +27271,7 @@ provenanceOnlyReceiverPlace(const MirProgram &program,
       destination->type.kind != SemanticType::Reference ||
       destination->type.arguments.size() != 1 || address == nullptr ||
       retained == nullptr || address->type != source.type ||
+      !mir_detail::referenceAddressRetainsLoan(body, *address, *retained) ||
       loanCarriedByBinding(body, destination->binding) != retained) {
     return nullptr;
   }
@@ -28354,6 +28386,15 @@ public:
         // the destination back would invent a copy, which is ill-formed for
         // move-only storage and not present in MIR.
         continue;
+      }
+      if (valueDefinition && valueDefinition->loan) {
+        const auto *loan = facts.body.findLoan(*valueDefinition->loan);
+        if (loan && fallibleExpectedBorrowLoanProducer(facts.body, *loan) ==
+                        valueDefinition) {
+          // The result denotes the checked referent, not a second scalar or
+          // class object. Every use reads through the published loan pointer.
+          continue;
+        }
       }
       if (valueDefinition != nullptr &&
           fusedSignedMinimumNegation(facts.body, *valueDefinition) != nullptr) {
@@ -30087,6 +30128,15 @@ private:
       const MirInstruction *producer =
           value == nullptr ? nullptr
                            : findInstruction(*currentBody, value->definition);
+      const MirLoan *referent = producer && producer->loan
+                                    ? currentBody->findLoan(*producer->loan)
+                                    : nullptr;
+      if (referent && value->info.type == operand.type &&
+          fallibleExpectedBorrowLoanProducer(*currentBody, *referent) ==
+              producer) {
+        output << "(*__gti_mir_loan_" << referent->id << ')';
+        return;
+      }
       const bool passiveCopy =
           producer != nullptr &&
           passiveCopiedCallInput(program, *currentBody, *producer);
@@ -36936,7 +36986,8 @@ private:
               : scalarExpectedExtractionPlace(program, representations,
                                               facts.body, instruction);
       const bool scalarSsa =
-          scalarExpectedSsaReceiver(program, facts.body, instruction);
+          scalarExpectedSsaReceiver(program, facts.body, instruction) ||
+          fallibleExpectedSsaReceiver(facts.body, instruction);
       if ((expectedPlace == nullptr && !scalarSsa) ||
           instruction.localFailureSites.size() != 1) {
         throw std::logic_error(
@@ -37089,7 +37140,8 @@ private:
               : scalarExpectedExtractionPlace(program, representations,
                                               facts.body, instruction);
       const bool scalarSsa =
-          scalarExpectedSsaReceiver(program, facts.body, instruction);
+          scalarExpectedSsaReceiver(program, facts.body, instruction) ||
+          fallibleExpectedSsaReceiver(facts.body, instruction);
       const bool terminalVoidExpectedValue =
           instruction.intrinsic == IntrinsicKind::ExpectedValue &&
           instruction.receiver->type.kind == SemanticType::Expected &&
@@ -47312,6 +47364,41 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
         }
+        if (loan->kind == MirLoanKind::Return &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Loan) {
+          const auto &operand = instruction.operands.front();
+          const auto *retained = body.findLoan(operand.loan);
+          const auto *runtime = body.findPlace(operand.place);
+          if (!retained || retained->id == loan->id ||
+              retained->source != loan->source ||
+              retained->storedDependency != loan->storedDependency ||
+              (loan->access == AccessMode::Mutable &&
+               retained->access != AccessMode::Mutable) ||
+              operand.type != instruction.info.type ||
+              (operand.place != 0 &&
+               (!runtime || runtime->type != operand.type)))
+            return false;
+          if (retained->kind == MirLoanKind::Parameter &&
+              operand.type != body.returnType) {
+            const auto *parameter = body.findPlace(retained->source);
+            if (!parameter)
+              return false;
+            const bool selectedAlias = std::any_of(
+                body.places.begin(), body.places.end(),
+                [&](const MirPlace &place) {
+                  return place.root == MirPlaceRootKind::Binding &&
+                         place.binding != parameter->binding &&
+                         place.sourceValue == instruction.hirValue &&
+                         place.type == operand.type &&
+                         std::find(retained->carriers.begin(),
+                                   retained->carriers.end(),
+                                   place.binding) != retained->carriers.end();
+                });
+            if (selectedAlias && operand.place == 0)
+              return false;
+          }
+        }
         if (loan->kind == MirLoanKind::Stored) {
           // The reference field binds in the member initializer list;
           // the Borrow spells as a comment only.
@@ -49184,7 +49271,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   : scalarExpectedExtractionPlace(program_, representations_,
                                                   body, instruction);
           const bool scalarSsa =
-              scalarExpectedSsaReceiver(program_, body, instruction);
+              scalarExpectedSsaReceiver(program_, body, instruction) ||
+              fallibleExpectedSsaReceiver(body, instruction);
           if ((viewPlace == nullptr && ownedExtraction == nullptr &&
                !directExtraction && !scalarSsa) ||
               (ownedExtraction != nullptr && !expectedExtraction) ||

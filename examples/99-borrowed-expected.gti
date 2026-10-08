@@ -4,6 +4,25 @@
 // existing owner; the error carries the reason no reference could be returned.
 enum class lookup_errc { missing };
 
+struct Reading {
+  mut int32_t sentinel = 71;
+  mut int32_t value = 29;
+  int32_t& operator[](std::size_t index) { return this.value; }
+};
+
+struct Station {
+  mut int32_t sentinel = 83;
+  mut Reading reading{};
+  mut Reading& operator[](std::size_t index) mut { return this.reading; }
+};
+
+expected<int32_t&, lookup_errc> selected_reading(Station& station, bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  int32_t& selected = station.reading[std::size_t(0)];
+  int32_t& alias = selected;
+  return alias;
+}
+
 class Entry {
   std::string name;
 public:
@@ -25,6 +44,19 @@ expected<bool, lookup_errc> is_login(Entry& entry, bool present) {
 }
 
 int main() {
+  // A mutable owner can expose nested read-only references. The address is
+  // the selected reading, not either owner's sentinel; aliases keep the same
+  // owner alive and do not permit mutation or movement while still in use.
+  Station lookup_owner{};
+  auto reading = selected_reading(lookup_owner, true);
+  if (!reading || reading.value() != 29) { return 3; }
+
+  mut Station station{};
+  Reading& row = station[std::size_t(0)];
+  int32_t& selected = row[std::size_t(0)];
+  int32_t& alias = selected;
+  if (alias != 29) { return 4; }
+
   Entry entry{"login"};
   auto success = is_login(entry, true);
   auto missing = is_login(entry, false);
