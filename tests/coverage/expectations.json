@@ -307,7 +307,6 @@
       ]
     },
     "c52_higher_order_lambdas": {
-      "finding": "F14",
       "issue": 103,
       "outcome": "pass",
       "cases": [{"args": [], "exit": 0, "stdout": "5 12 5 42 33\n", "stderr": "^$"}]
@@ -1677,22 +1676,18 @@
   },
   "reproducers": {
     "a01-call-result-into-field": {
-      "finding": "A01",
       "issue": 53,
       "outcome": "pass"
     },
     "a01-class-value-into-field": {
-      "finding": "A01",
       "issue": 53,
       "outcome": "pass"
     },
     "a01-field-assign-from-call-result-method": {
-      "finding": "A01",
       "issue": 53,
       "outcome": "pass"
     },
     "a03-generic-call-in-global-initializer": {
-      "finding": "A03",
       "issue": 55,
       "outcome": "pass"
     },
@@ -1754,7 +1749,6 @@
       "runs": 20
     },
     "a14-generated-ctor-field-in-user-ctor": {
-      "finding": "A14",
       "issue": 60,
       "outcome": "pass"
     },
@@ -1799,7 +1793,6 @@
       "outcome": "rejected"
     },
     "a23-recursive-value-generic-layout": {
-      "finding": "A23",
       "issue": 67,
       "outcome": "pass"
     },
@@ -1827,37 +1820,30 @@
       "outcome": "pass"
     },
     "a28-map-range-for-key-view": {
-      "finding": "A28",
       "issue": 73,
       "outcome": "pass"
     },
     "a28-range-element-field-overloaded-operator": {
-      "finding": "A28",
       "issue": 73,
       "outcome": "pass"
     },
     "a28-range-element-field-ref-method": {
-      "finding": "A28",
       "issue": 73,
       "outcome": "pass"
     },
     "a29-method-on-returned-string-view": {
-      "finding": "A29",
       "issue": 74,
       "outcome": "pass"
     },
     "a29-string-view-size-on-dynamic-view": {
-      "finding": "A29",
       "issue": 74,
       "outcome": "pass"
     },
     "a30-assign-consuming-call-result": {
-      "finding": "A30",
       "issue": 75,
       "outcome": "pass"
     },
     "a31-move-on-break-path-then-reinit": {
-      "finding": "A31",
       "issue": 76,
       "outcome": "pass"
     },
@@ -1877,7 +1863,6 @@
       "outcome": "pass"
     },
     "a34-view-relay-through-subscript": {
-      "finding": "A34",
       "issue": 78,
       "outcome": "pass"
     },
@@ -1904,38 +1889,31 @@
       "outcome": "pass"
     },
     "a38-return-call-value-class": {
-      "finding": "A38",
       "issue": 81,
       "outcome": "pass"
     },
     "a38-return-expected-value-class": {
-      "finding": "A38",
       "issue": 81,
       "outcome": "pass"
     },
     "a39-ctor-address-of-struct-field": {
-      "finding": "A39",
       "issue": 82,
       "outcome": "pass"
     },
     "a40-c-abi-record-pointer-array-field": {
-      "finding": "A40",
       "issue": 83,
       "native_sources": ["native/projection_records.c"],
       "outcome": "pass"
     },
     "a40-raw-pointer-fixed-array-field-index": {
-      "finding": "A40",
       "issue": 83,
       "outcome": "pass"
     },
     "a41-storage-emplace-fixed-array-silent": {
-      "finding": "A41",
       "issue": 84,
       "outcome": "pass"
     },
     "a41-vector-emplace-back-fixed-array-silent": {
-      "finding": "A41",
       "issue": 84,
       "outcome": "pass"
     },
@@ -1969,27 +1947,22 @@
       "outcome": "pass"
     },
     "a45-base-plus-string-field-unsupported": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-base-state-rollback-unsupported": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-derived-destructor-explicit-base": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-derived-destructor-generated-ctor": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
     "a45-literal-base-argument": {
-      "finding": "A45",
       "issue": 86,
       "outcome": "pass"
     },
@@ -2002,32 +1975,26 @@
       "outcome": "pass"
     },
     "a47-mut-payload-binding-through-mut-ref": {
-      "finding": "A47",
       "issue": 88,
       "outcome": "pass"
     },
     "a48-switch-on-owning-enum-field": {
-      "finding": "A48",
       "issue": 89,
       "outcome": "pass"
     },
     "a49-owning-enum-call-result-argument": {
-      "finding": "A49",
       "issue": 90,
       "outcome": "pass"
     },
     "a50-designated-omitted-brace-default": {
-      "finding": "A50",
       "issue": 91,
       "outcome": "pass"
     },
     "a51-binding-over-class-array": {
-      "finding": "A51",
       "issue": 92,
       "outcome": "pass"
     },
     "a51-binding-over-class-array-invalid-cpp": {
-      "finding": "A51",
       "issue": 92,
       "outcome": "pass"
     },
@@ -2054,22 +2021,18 @@
       "outcome": "pass"
     },
     "a55-ctor-pack-move-only-field-init": {
-      "finding": "A55",
       "issue": 96,
       "outcome": "pass"
     },
     "a55-list-emplace-move-only-argument": {
-      "finding": "A55",
       "issue": 96,
       "outcome": "pass"
     },
     "a56-make-unique-same-type": {
-      "finding": "A56",
       "issue": 97,
       "outcome": "pass"
     },
     "a56-make-unique-string-from-string": {
-      "finding": "A56",
       "issue": 97,
       "outcome": "pass"
     },
@@ -2108,7 +2071,7 @@
     },
     "a61-designated-argument-diagnostic": {
       "code": "GTI-S2091",
-      "finding": "A61",
+      "forbid": ["no declared constructors"],
       "issue": 69,
       "outcome": "rejected"
     },
@@ -2129,7 +2092,6 @@
       "outcome": "pass"
     },
     "f14-nested-callable-invocation": {
-      "finding": "F14",
       "issue": 103,
       "outcome": "pass",
       "cases": [{"args": [], "exit": 0, "stdout": "12\n", "stderr": "^$"}]
@@ -2183,12 +2145,10 @@
       "outcome": "pass"
     },
     "s01-parenthesized-constructor": {
-      "finding": "S01",
       "issue": 103,
       "outcome": "pass"
     },
     "s02-ternary-class-value": {
-      "finding": "S02",
       "issue": 103,
       "outcome": "pass"
     },
@@ -2230,7 +2190,6 @@
       "cases": [{"args": [], "exit": 0, "stdout": "16777217 16777216\n", "stderr": "^$"}]
     },
     "s15-payload-enum-plain-class": {
-      "finding": "S15",
       "issue": 103,
       "outcome": "pass"
     }

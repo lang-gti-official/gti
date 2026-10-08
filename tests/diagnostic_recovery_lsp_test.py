@@ -83,6 +83,26 @@ def main():
                 "context": {"diagnostics": errors, "only": ["quickfix"]}}})
             assert not session.receive_until(lambda message: message.get("id") == 3)["result"]
             assert change(local.replace("value;", "value = 0;", 1), 8) == []
+
+            designated = ("struct Point { int x; };\n"
+                          "int read(Point value) { return value.x; }\n"
+                          "int main() { /* 😀 */ return read({.x = 1}); }\n")
+            errors = change(designated, 9)
+            assert len(errors) == 1 and errors[0]["code"] == "GTI-S2091", errors
+            offset = designated.index("{.x")
+            assert errors[0]["range"] == {
+                "start": lsp_position(designated, offset),
+                "end": lsp_position(designated, offset + 1)}, errors
+            assert "destination struct type" in errors[0]["message"], errors
+            assert "explicit struct type" in errors[0]["message"], errors
+            assert "no declared constructors" not in errors[0]["message"], errors
+            session.send({"jsonrpc": "2.0", "id": 4, "method": "textDocument/codeAction", "params": {
+                "textDocument": {"uri": uri}, "range": errors[0]["range"],
+                "context": {"diagnostics": errors, "only": ["quickfix"]}}})
+            assert not session.receive_until(lambda message: message.get("id") == 4)["result"]
+            fixed = designated.replace("return read({.x = 1});",
+                                       "Point point = {.x = 1}; return read(point);")
+            assert change(fixed, 10) == []
         finally:
             session.close()
 
