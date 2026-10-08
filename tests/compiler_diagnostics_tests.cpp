@@ -1035,6 +1035,86 @@ int main() {
          "immutable bindings should reject mutation");
   expect(invalidSemantic.errors().size() == 4,
          "members, parameters, locals, and missing initializers should fail");
+
+  for (const auto &[type, initial] :
+       std::array<std::pair<std::string_view, std::string_view>, 7>{
+           {{"int8_t", "1"},
+            {"int32_t", "1"},
+            {"uint64_t", "1"},
+            {"float", "1.0"},
+            {"double", "1.0"},
+            {"bool", "false"},
+            {"char", "'x'"}}}) {
+    for (const bool assign : {false, true}) {
+      const std::string source =
+          "int main() { mut " + std::string(type) + " value; " +
+          (assign ? "value = " + std::string(initial) + "; " : "") +
+          "return 0; }";
+      const auto result =
+          lang::Frontend().analyze("uninitialized-local.gti", source);
+      const auto *diagnostic =
+          findDiagnosticByCode(result.diagnostics, "GTI-S2000");
+      expect(!result.semanticValid && !result.canGenerateCode() && diagnostic &&
+                 diagnostic->primary.source ==
+                     std::filesystem::absolute("uninitialized-local.gti")
+                         .string() &&
+                 diagnostic->primary.start == source.find("value") &&
+                 diagnostic->primary.end == source.find("value") + 5 &&
+                 diagnostic->message.find("requires an initializer") !=
+                     std::string::npos &&
+                 !diagnostic->hints.empty() && diagnostic->fixes.empty() &&
+                 !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
+             "mutable scalar declarations require a located initializer "
+             "diagnostic even when followed by assignment");
+    }
+  }
+
+  const auto boundaries =
+      lang::Frontend().analyze("initialized-boundaries.gti", R"(
+mut int32_t zeroed;
+struct Record {
+  mut int32_t value;
+  Record(int32_t initial) : value(initial) {}
+};
+int main() {
+  mut int32_t value = 1;
+  value = 2;
+  Record record(value);
+  return record.value + zeroed - 2;
+}
+)");
+  expect(boundaries.canGenerateCode(),
+         "initialized mutable locals, constructor-initialized fields and "
+         "program-wide scalar data initialization remain valid");
+
+  for (const std::string_view source : {
+           "struct Record { int read() { mut int value; return 0; } };",
+           "int main() { auto action = []() -> int { mut int value; return 0; "
+           "}; return action(); }",
+           "constexpr int compute() { mut int value; value = 1; return value; "
+           "}",
+           "int compute<T>() { mut T value; return 0; }",
+       }) {
+    const auto result =
+        lang::Frontend().analyze("local-context.gti", std::string(source));
+    const auto *diagnostic =
+        findDiagnosticByCode(result.diagnostics, "GTI-S2000");
+    expect(!result.semanticValid && diagnostic &&
+               diagnostic->primary.start == source.find("value") &&
+               diagnostic->primary.end == source.find("value") + 5 &&
+               diagnostic->message.find("requires an initializer") !=
+                   std::string::npos,
+           "method, lambda, constexpr and generic bodies obey the same "
+           "local-initialization rule");
+  }
+
+  const auto unknown = lang::Frontend().analyze(
+      "unknown-local.gti", "int main() { mut Missing value; return 0; }");
+  expect(!unknown.semanticValid &&
+             hasDiagnostic(unknown.diagnostics, "Unknown type") &&
+             !hasDiagnostic(unknown.diagnostics, "requires an initializer"),
+         "an unknown local type does not acquire a speculative initialization "
+         "diagnostic");
 }
 
 void testDefaultNodiscard() {

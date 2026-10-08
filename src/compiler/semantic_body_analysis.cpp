@@ -3294,6 +3294,16 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
              "GTI-S2036");
     } else if (!field && !stmt.isMutable()) {
       report(stmt.name(), "Immutable variable must have an initializer.");
+    } else if (!field && !globalStorage && !stmt.isRangeBinding() &&
+               declaredType.kind != SemanticType::Unknown) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2000", DiagnosticPhase::Semantics, stmt.name(),
+                         "Mutable local variable '" + stmt.name().lexeme +
+                             "' requires an initializer.");
+      diagnostic.hints.emplace_back(
+          "Initialize the binding where it is declared. A later assignment "
+          "does not initialize an otherwise uninitialized local declaration.");
+      diagnostics.emplace_back(std::move(diagnostic));
     }
   }
   if (stmt.initializer()) {

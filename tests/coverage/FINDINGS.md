@@ -1035,6 +1035,14 @@ the parser validates the first two fields and then discards the rest.
 
 `reproducers/s09-uninitialized-mut-scalar.gti`
 
+**Repaired:** a mutable local without an initializer now receives `GTI-S2000`
+at its name, before HIR/backend entry. The hint explains that later assignment
+does not initialize the declaration; no fix invents a default value. The corpus
+requires a located rejection, and compiler/LSP regressions cover scalar types,
+later assignments, exact UTF-16 ranges and diagnostic clearing. This does not
+change program-wide scalar data initialization or constructor-initialized fields.
+The following describes the historical failure.
+
 ```gti
 int main(){mut int32_t r;}
 ```
