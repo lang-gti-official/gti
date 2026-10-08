@@ -2327,6 +2327,68 @@ int main() {
       "ordinary concrete C++ declarations after GTI selects them");
 }
 
+void testRetainedConstructorDeclarations() {
+  const auto frontend = lang::Frontend().analyze("alias-constructors.gti", R"(
+struct Cursor<T> {};
+struct Packet<T> {
+  using cursor = Cursor<T>;
+  T value;
+  Packet<Args...>(Args... args) : value(T(args...)) {}
+};
+struct Wrapped {
+  int value;
+  Wrapped(int input) : value(input) {}
+};
+int main() {
+  Packet<int> scalar{4};
+  Packet<Wrapped> record{5};
+  Packet<int> zero{};
+  Packet<bool> flag{true};
+  if (!flag.value) { return 1; }
+  return scalar.value + record.value.value + zero.value - 9;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "alias-bearing generic owners select independent constructors");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto generated = gti_test::emitCpp(frontend, standard).contents;
+    for (const std::string_view declaration :
+         {"explicit Packet(std::int32_t __gti_mir_arg_0);",
+          "explicit Packet(bool __gti_mir_arg_0);", "explicit Packet();"}) {
+      const auto first = generated.find(declaration);
+      expect(first != std::string::npos &&
+                 generated.find(declaration, first + 1) == std::string::npos,
+             "the retained primary declares each native parameter list once");
+    }
+    std::size_t constructors = 0;
+    for (const auto &instance : frontend.mir.constructorInstances()) {
+      const auto *owner = frontend.mir.findClassInstance(instance.owner);
+      const auto *declaration =
+          owner ? frontend.semantics.findClassType(owner->declaration)
+                : nullptr;
+      if (!declaration || !declaration->declaration ||
+          declaration->declaration->name().lexeme != "Packet" ||
+          instance.definitionKind != lang::MirDefinitionKind::Source)
+        continue;
+      ++constructors;
+      expect(generated.find("constructor-instance " +
+                            std::to_string(instance.id) + "\n") !=
+                 std::string::npos,
+             "declaration sharing retains every exact verified-MIR body");
+      if (instance.mayRaiseDefinedFailure)
+        expect(generated.find("mir_failure_constructor_tag_v1<" +
+                              std::to_string(instance.id) + ">") !=
+                   std::string::npos,
+               "each fallible constructor retains its own failure adapter");
+    }
+    expect(constructors == 4,
+           "equal and different parameter lists retain four concrete bodies");
+  }
+}
+
 void testTypeOnlyConcreteAliases() {
   const auto frontend = lang::Frontend().analyze("type-only-aliases.gti", R"(
 namespace sample {
@@ -2342,22 +2404,36 @@ class Chain<T> {
   using Next = Chain<Chain<T>>;
   using Entry = Box<Value>;
 };
+struct ShelfItem<T, uint64_t N> { T value; };
+class Shelf<T, uint64_t N> {
+  using Entry = ShelfItem<T, N>;
+  using NestedEntry = Box<ShelfItem<T, N>>;
+public:
+  Shelf() {}
+};
 }
-int main() { sample::Catalog catalog{}; return 0; }
+int main() {
+  sample::Catalog catalog{};
+  sample::Shelf<int, 3> first{};
+  sample::Shelf<int, 4> second{};
+  return 0;
+}
 )");
   expect(frontend.canGenerateCode(),
          "unused namespace/member and recursive aliases pass the frontend");
   if (!frontend.canGenerateCode())
     return;
-  expect(std::none_of(frontend.hir.classInstances().begin(),
-                      frontend.hir.classInstances().end(),
-                      [&](const lang::HirClassInstance &instance) {
-                        const auto *info = frontend.semantics.findClassType(
-                            instance.declaration);
-                        return info && info->declaration &&
-                               info->declaration->name().lexeme == "Box";
-                      }),
-         "namespace/member aliases name types without requesting HIR layouts");
+  expect(
+      std::none_of(frontend.hir.classInstances().begin(),
+                   frontend.hir.classInstances().end(),
+                   [&](const lang::HirClassInstance &instance) {
+                     const auto *info =
+                         frontend.semantics.findClassType(instance.declaration);
+                     return info && info->declaration &&
+                            (info->declaration->name().lexeme == "Box" ||
+                             info->declaration->name().lexeme == "ShelfItem");
+                   }),
+      "namespace/member aliases name types without requesting HIR layouts");
   expect(std::any_of(frontend.hir.classInstances().begin(),
                      frontend.hir.classInstances().end(),
                      [&](const lang::HirClassInstance &instance) {
@@ -2387,6 +2463,10 @@ int main() { sample::Catalog catalog{}; return 0; }
       expect(forward != std::string::npos &&
                  forward < generated.find("using Nested ="),
              "every concrete alias component has its exact forward identity");
+      expect(forward == std::string::npos ||
+                 generated.find("struct " + *name + ";", forward + 1) ==
+                     std::string::npos,
+             "repeated alias components share one forward declaration");
       expect(generated.find("struct " + *name + " {") == std::string::npos,
              "a type-only alias does not invent a concrete class layout");
     };
@@ -2394,6 +2474,19 @@ int main() { sample::Catalog catalog{}; return 0; }
       if (const auto *alias =
               std::get_if<lang::LoweredTypeAliasDeclaration>(&row.payload))
         checkType(checkType, alias->type);
+    std::size_t concreteMemberAliases = 0;
+    for (const auto &instance : frontend.mir.classInstances()) {
+      const auto *info = frontend.semantics.findClassType(instance.declaration);
+      if (!info || !info->declaration ||
+          info->declaration->name().lexeme != "Shelf")
+        continue;
+      for (const auto &alias : instance.typeAliases) {
+        ++concreteMemberAliases;
+        checkType(checkType, alias.type);
+      }
+    }
+    expect(concreteMemberAliases == 4,
+           "two value-generic owners retain separate exact member aliases");
     expect(checked >= 2, "the test checks nested concrete alias applications");
   }
 }
@@ -2576,6 +2669,7 @@ int main() {
   testReferenceReceiverCompoundAssignPlaceCoherence();
   testConcreteGenericFreeFunctionIdentity();
   testConcreteGenericClassAndMemberIdentity();
+  testRetainedConstructorDeclarations();
   testTypeOnlyConcreteAliases();
   testNativeCarrierExactSpecializations();
   testCleanupFreeConstructorArguments();

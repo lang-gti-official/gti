@@ -9,6 +9,15 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+Inferred move-only copy errors (`GTI-S2003`) distinguish plain `auto` value
+construction from checked `auto&` borrowing when the initializer has stable
+storage. Movement advice is limited to available movable whole local/parameter
+owners without overlapping loans, never a checked accessor's borrowed result.
+An explicit clone remains an option if the type provides it. These alternatives
+are hints, not automatic ownership-changing edits; the LSP publishes the same
+source-anchored diagnostic. Invalid inferred references use the existing
+explicit-reference diagnostics (`GTI-S2017` and related structural families).
+
 `GTI-S2091` distinguishes an untyped designated initializer from an ineligible
 destination struct. With no contextual destination, it anchors the opening
 brace and recommends an explicitly typed binding, without guessing the type

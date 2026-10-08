@@ -40,6 +40,14 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+A staged call receiver can cross the existing scalar conditional-argument
+control flow when its exact origin remains unchanged. Checked numeric alias
+and concrete type-parameter conversions use MIR's numeric-intrinsic `Call`
+representation; they receive the same staging admission as `Compute/Convert`.
+The conversion still executes at its own instruction, with its original Invoke
+and failure cleanup before later arguments. This does not admit arbitrary
+intervening calls, receiver mutation, raw memory operations or new loan shapes.
+
 Signature-pattern primaries retain both their resolved public argument shapes
 and binder projections in sealed lowered declarations. Native template carriers
 spell a primary with the public arity and one patterned definition; GTI has
@@ -673,6 +681,10 @@ ordinary default constructor once and a distinct status overload for each
 selected MIR constructor. Out-of-line specializations execute those bodies;
 an inline native default or `noexcept` body must not replace them. Direct
 concrete representations retain their single exact-owner declaration.
+The retained primary likewise declares a source-generic constructor's identical
+native parameter list only once across concrete owners. This shares only the
+declaration: each selected owner retains its own verified-MIR definition and
+every fallible instance retains its distinct status-tag overload.
 
 Constructor fields of `Expected<T, E>` can publish a separately produced
 success value, owned unexpected value, or passive scalar alternative into a
@@ -1233,6 +1245,9 @@ Type-only aliases also require forward declarations for any direct concrete
 class names in their resolved type argument graph, even when no executable
 MIR class instance uses them. Declaration planning uses the same concrete-name
 authority as runtime uses and emits each forward identity once before aliases.
+This includes the exact member-alias catalog of each concrete MIR class
+instance: a dependent declaration-level alias alone cannot name its resolved
+type/value argument application. Repeated targets share one forward declaration.
 It does not instantiate layouts, constructors, or methods merely for an alias,
 and does not recursively expand the alias members of a referenced generic
 class. Dependent aliases retain their existing native-template spelling. This
@@ -1308,6 +1323,13 @@ obligation; repeated evaluation resets only their representation storage.
 Class captures retain their lexical lifetime obligation even when destruction
 is passive. Thus scalar moves and class copies occur before the branch too.
 Other frozen passive closures still use the existing checked fused representation.
+Taking a checked local reference prevents that fusion: the closure factory
+materializes its environment once, and the ordinary MIR loan/pointer carrier
+aliases it. The body-local closure type also names reference carriers and
+their dereference places. Invocations through these places reuse that exact
+environment; they neither repeat captures nor acquire a cleanup obligation.
+Borrow endpoints and owner cleanup remain the verified MIR schedule, including
+reborrows and failure cleanup.
 Exact lambdas with owned class parameters use the shared parameter-slot prelude;
 class results publish into the same verified destination slots as function
 results. Prepared argument shells are retired after invocation, including its

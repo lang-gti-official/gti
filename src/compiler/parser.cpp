@@ -1648,7 +1648,28 @@ private:
         }
         consumeGenericClose("Expect '>' after generic arguments.");
       }
-      return TypeRef(std::move(name), std::move(arguments));
+      TypeRef type(std::move(name), std::move(arguments));
+      std::size_t qualifierDepth = 0;
+      while (match({TokenKind::SCOPE})) {
+        Token member = consume(TokenKind::IDENTIFIER,
+                               "Expect a type member name after '::'.");
+        checkNestingDepth(member, ++qualifierDepth);
+        std::vector<Token> segments = type.name.segments;
+        segments.emplace_back(std::move(member));
+        TypeRef selected(NamePath(std::move(segments)));
+        selected.qualifiedOwner =
+            std::make_shared<const TypeRef>(std::move(type));
+        if (match({TokenKind::LESS})) {
+          if (!check(TokenKind::GREATER)) {
+            do {
+              selected.arguments.emplace_back(parseGenericArgument());
+            } while (match({TokenKind::COMMA}));
+          }
+          consumeGenericClose("Expect '>' after type member arguments.");
+        }
+        type = std::move(selected);
+      }
+      return type;
     }
     throw error(peek(), "Expect a type name.");
   }
@@ -3282,28 +3303,30 @@ private:
     }
 
     std::size_t next = offset + 1;
-    while (peekAt(next).kind == TokenKind::SCOPE &&
-           isIdentifierUseToken(peekAt(next + 1).kind)) {
+    while (true) {
+      if (peekAt(next).kind == TokenKind::LESS) {
+        if (peekAt(next + 1).kind == TokenKind::GREATER) {
+          next += 2;
+        } else {
+          do {
+            const auto argumentEnd = genericArgumentEnd(next + 1);
+            if (!argumentEnd) {
+              return std::nullopt;
+            }
+            next = *argumentEnd;
+          } while (peekAt(next).kind == TokenKind::COMMA);
+          if (peekAt(next).kind != TokenKind::GREATER) {
+            return std::nullopt;
+          }
+          ++next;
+        }
+      }
+      if (peekAt(next).kind != TokenKind::SCOPE ||
+          !isIdentifierUseToken(peekAt(next + 1).kind)) {
+        return signatureTypeEnd(next);
+      }
       next += 2;
     }
-    if (peekAt(next).kind != TokenKind::LESS) {
-      return signatureTypeEnd(next);
-    }
-
-    if (peekAt(next + 1).kind == TokenKind::GREATER) {
-      return signatureTypeEnd(next + 2);
-    }
-
-    do {
-      const std::optional<std::size_t> argumentEnd =
-          genericArgumentEnd(next + 1);
-      if (!argumentEnd) {
-        return std::nullopt;
-      }
-      next = *argumentEnd;
-    } while (peekAt(next).kind == TokenKind::COMMA);
-    return peekAt(next).kind == TokenKind::GREATER ? signatureTypeEnd(next + 1)
-                                                   : std::nullopt;
   }
 
   [[nodiscard]] std::optional<std::size_t>

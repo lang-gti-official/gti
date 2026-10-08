@@ -3312,7 +3312,10 @@ def main():
         assert "Cannot initialize inferred binding 'copied'" in (
             rejected_auto.stderr
         )
-        assert "help: Move-only owners cannot be copied" in rejected_auto.stderr
+        assert "help: Plain 'auto' creates a value, not a reference." in rejected_auto.stderr
+        assert "auto& copied = ...;" in rejected_auto.stderr
+        assert "help: Transfer ownership explicitly with std::move(owner)" in rejected_auto.stderr
+        assert "use an explicit clone operation if the type provides one" in rejected_auto.stderr
 
         integer_print = root / "integer-print.gti"
         integer_print.write_text(

@@ -10823,6 +10823,9 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   const TypeRef &type = declaration.type();
   const bool local = functionDepth > 0;
+  const bool ordinaryReference = type.reference &&
+                                 !declaration.isRangeBinding() &&
+                                 !type.name.last().generated;
   if (!local) {
     report(type.name.last(), "'auto' inference is limited to local bindings.",
            "GTI-S2028");
@@ -10832,11 +10835,11 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
            "'auto' cannot have generic arguments or array extents.",
            "GTI-S2028");
   }
-  if (type.reference && !declaration.isRangeBinding() &&
-      !type.name.last().generated) {
-    report(type.name.last(),
-           "'auto&' inference is limited to range-for element bindings.",
-           "GTI-S2028");
+  if (type.reference && type.reference->kind == TokenKind::AND) {
+    report(*type.reference,
+           "'&&' is currently confined to a class or struct's exact "
+           "move constructor policy.",
+           "GTI-S2020");
   }
   if (!declaration.initializer()) {
     report(declaration.name(), "An 'auto' binding requires an initializer.",
@@ -10849,11 +10852,24 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
       declaration.initializer()) {
     expectedPayloadRangeCandidate = declaration.initializer().get();
   }
+  // A written reference establishes a loan, just like an explicit T& local.
+  // Do not treat its initializer as an independent value read before ordinary
+  // reference/reborrow validation records the actual access and dependency.
+  if (ordinaryReference && declaration.initializer()) {
+    ++suppressLoanPlaceAccessDepth;
+    ++programStoragePlaceUseDepth;
+  }
   const SemanticType initializerType =
       declaration.initializer()
           ? analyzeExpectedCallableResult(declaration.initializer(),
                                           SemanticType::Unknown)
           : SemanticType::Unknown;
+  if (ordinaryReference && declaration.initializer()) {
+    if (declaration.isMutable())
+      recordMutableBindingUse(declaration.initializer());
+    --suppressLoanPlaceAccessDepth;
+    --programStoragePlaceUseDepth;
+  }
   expectedPayloadRangeCandidate = enclosingExpectedPayloadRangeCandidate;
   SemanticType inferredType = initializerType;
   const ExpressionInfo *initializerInfo =
@@ -10895,6 +10911,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     inferredType = SemanticType::referenceTo(
         initializerType,
         declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly);
+    if (ordinaryReference)
+      validateReferenceReferent(inferredType, *type.reference);
     if (declaration.initializer()) {
       validateReferenceBinding(inferredType, initializerType,
                                declaration.initializer());
@@ -10922,9 +10940,39 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                "' by copying move-only type '" + typeSpelling(inferredType) +
                "'.",
            "GTI-S2003");
-    diagnostics.back().hints.emplace_back(
-        "Move-only owners cannot be copied; transfer ownership explicitly "
-        "with std::move(owner).");
+    Diagnostic &diagnostic = diagnostics.back();
+    if (initializerInfo != nullptr &&
+        initializerInfo->category == ValueCategory::Place &&
+        hasStableBorrowStorage(declaration.initializer())) {
+      diagnostic.hints.emplace_back(
+          "Plain 'auto' creates a value, not a reference. To retain a checked "
+          "borrow instead, write 'auto& " +
+          declaration.name().lexeme + " = ...;' and keep its owner alive.");
+    }
+    // Moving a borrowed result (for example a checked accessor's result) is
+    // not a repair for an attempted copy. Offer movement only for an available
+    // whole local/parameter owner for which the ordinary move checks permit it.
+    const SemanticPlace source = semanticPlace(declaration.initializer());
+    if (movedVariable(declaration.initializer()) != nullptr &&
+        source.root != nullptr && !source.receiver &&
+        source.projections.empty() &&
+        (source.root->bindingKind == SemanticBindingKind::LocalVariable ||
+         source.root->bindingKind == SemanticBindingKind::Parameter) &&
+        source.root->type.kind != SemanticType::Reference &&
+        source.root->valueState == ValueState::Available &&
+        typeTraits(source.root->type).movable &&
+        (source.root->variableDeclaration == nullptr ||
+         !structuredBindingElements.contains(
+             source.root->variableDeclaration)) &&
+        unavailableProjectedState(source, true) == nullptr &&
+        conflictingLoans(loanPlace(source), AccessMode::Mutable).empty()) {
+      diagnostic.hints.emplace_back(
+          "Transfer ownership explicitly with std::move(owner) if the "
+          "original binding is no longer needed.");
+    }
+    diagnostic.hints.emplace_back(
+        "For an independent value, use an explicit clone operation if the "
+        "type provides one.");
   }
   if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
       (typeTraits(inferredType).containsBorrowedState || ownerDependentText)) {

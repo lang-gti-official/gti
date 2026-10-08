@@ -10302,10 +10302,18 @@ materializedCallableReceiverPlace(const MirProgram &program,
     return nullptr;
   }
   const MirPlace *source = body.findPlace(load->operands.front().place);
-  if (source == nullptr || source->type != value->info.type ||
-      !source->projections.empty()) {
+  if (source == nullptr || source->type != value->info.type) {
     return nullptr;
   }
+  // A checked local reference denotes the existing environment. Its carrier
+  // is a pointer, not another closure or a fresh capture evaluation. The MIR
+  // loan verifies availability/access; the exact closure factory supplies the
+  // otherwise unnameable body-local referent type.
+  if (directReferenceCarrier(body, *source) != nullptr &&
+      materializedClosureForType(program, body, source->type))
+    return source;
+  if (!source->projections.empty())
+    return nullptr;
   const bool localMaterialized =
       source->root == MirPlaceRootKind::Binding &&
       (source->traits.drop == DropKind::Lexical ||
@@ -47750,7 +47758,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           std::find(parameterBindings->begin(), parameterBindings->end(),
                     place.binding) != parameterBindings->end();
       const MirLoan *carrier = loanCarriedByBinding(body, place.binding);
-      if (!typeRow(place.type) || place.type.arguments.size() != 1 ||
+      if (!lambdaDependentTypeRepresentable(program_, representations_, body,
+                                            place.type) ||
+          place.type.arguments.size() != 1 ||
           (!parameter && carrier == nullptr)) {
         {
           return false;
@@ -47774,7 +47784,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   base->type.arguments.size() == 1
               ? &base->type.arguments.front()
               : nullptr;
-      if (referent == nullptr || !typeRow(place.type) ||
+      if (referent == nullptr ||
+          !lambdaDependentTypeRepresentable(program_, representations_, body,
+                                            place.type) ||
           !exactFieldProjectionRows(program_, representations_, *referent,
                                     place.projections, 1, place.type, true)) {
         {
@@ -48710,6 +48722,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           return false;
         }
         switch (instruction.kind) {
+        case MirInstructionKind::Call:
+          // Alias and concrete type-parameter conversions use the same
+          // checked numeric detector as Compute/Convert. They cannot carry or
+          // replace the frozen receiver, and keep their exact MIR Invoke and
+          // failure cleanup before any later conditional argument executes.
+          if ((instruction.intrinsic != IntrinsicKind::NumericAliasConversion &&
+               instruction.intrinsic !=
+                   IntrinsicKind::NumericTypeParameterConversion) ||
+              instruction.functionTarget || instruction.constructorTarget ||
+              instruction.lambdaTarget || instruction.bodyTarget ||
+              instruction.callableInvocation || !instruction.result ||
+              instruction.destination || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Value ||
+              !isPassiveScalarValueType(instruction.operands.front().type) ||
+              !isPassiveScalarValueType(instruction.info.type) ||
+              (!instruction.definedFailure.empty() &&
+               !invokePairedInstruction(body, instruction.id))) {
+            return false;
+          }
+          break;
         case MirInstructionKind::Compute:
         case MirInstructionKind::Load:
         case MirInstructionKind::CallInput:
@@ -49497,7 +49529,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         const MirPlace *source = body.findPlace(loan->source);
-        if (source == nullptr || !typeRow(source->type)) {
+        if (source == nullptr ||
+            !lambdaDependentTypeRepresentable(program_, representations_, body,
+                                              source->type)) {
           {
             return false;
           }

@@ -1382,6 +1382,129 @@ with moved-binding reuse rejection, a later successful argument before capture
 cleanup, and malformed eager-input HIR plans. The 0.361.0 and 0.362.0 combined
 runs also retain these regressions.
 
+## L-INFER-01: Local Inferred Reference Bindings
+
+**Status: Complete in 0.387.0; combined acceptance passed for 0.390.0.** Local
+reference inference shares ordinary referent/binding validation and retained
+loans. Paired semantic, HIR/MIR, native cleanup and LSP checks pass, including
+borrowed closures and external borrowed-expected extraction. Example 131 is the
+runnable client. The reconciled candidate passed all 565 local CTests and the
+staged SDK/consumer checks described in the canonical verification document.
+Whole-array and raw-pointer references retain their existing explicit-reference
+boundary; no backend inference or new owner is introduced.
+
+**Outcome:** Applications can retain a checked borrow without spelling a long
+concrete type. For example, reading an array nested in a parsed JSON document
+permits:
+
+```gti
+auto& scopes_array = parsed.get("scopes").expect("scopes are required");
+for (auto& scope : scopes_array.elements()) {
+  auto text = scope.as_string().expect("scope must be a string");
+  scopes.push_back(std::move(text));
+}
+```
+
+### Evidence And Prerequisites
+
+At proposal time `SemanticVisitor::Impl::analyzeInferredVariable` explicitly rejected
+ordinary local `auto&`. Its reference path already constructed a
+resolved reference type, calls `validateReferenceBinding`, and records retained
+borrows. Explicit local `T&` declarations use the same reference validation and
+retained-borrow machinery. This overlap supports a bounded generalization;
+removing the diagnostic alone is not sufficient implementation evidence.
+
+Borrowed `expected<T&, E>` extraction through `.expect()` is implemented and
+documented in [expected values](../language/expected.md). It yields a place tied
+to the original owner, even after destruction of the temporary expected shell.
+`std::json::value::get` returns this shape; it does not yield an owned JSON node.
+The move-only-copy diagnostic on `mut auto value = borrowed_result` rejects a
+real attempted copy. The old unconditional movement hint has been replaced:
+current guidance explains `auto&` and conditional explicit cloning, and suggests
+movement only for a legally transferable whole owner. It does not offer an
+ownership-changing fix-it.
+
+### Language Rule
+
+An initialized ordinary local declaration `auto& name = expression;` infers
+the exact complete referent type and requests a read-only checked reference.
+`mut auto& name = expression;` infers that same type and requests mutable
+access. Each form must accept exactly the initializer shapes accepted by the
+corresponding explicit `T&` or `mut T&` declaration, subject to existing generic
+instance analysis. Expression referent types and value categories must be used
+without accidentally creating a reference-to-reference type.
+
+Plain `auto` continues to infer a value binding. The written `&` is what
+requests borrowing; `mut` cannot upgrade a read-only result to mutable access.
+Inference performs no copy, movement, conversion ranking, lifetime extension,
+or independent ownership creation. The initializer is evaluated once.
+
+The origin place or dependency set, access mode, permitted escape boundary,
+and loan endpoint must be identical to those of an explicit reference binding.
+Borrowed referents remain owned and dropped by their original owner. Existing
+last-use, invalidation, reborrow, and escape rules remain authoritative.
+Fresh owned temporaries remain invalid local reference initializers; a
+temporary carrier that returns a checked borrow of stable external storage is
+judged by that storage's established lifetime, not merely by call syntax.
+
+The initial scope is ordinary initialized local declarations, including locals
+in concretely analyzed generic bodies. It adds no inference for fields,
+namespace/global declarations, function parameters, returns, structured
+bindings, `auto&&`, untyped braces, or explicit `auto` array declarators.
+Reference inference from an existing fixed-array place must follow explicit
+array-reference support and preserve extents rather than decay to a pointer.
+
+Prove the general rule with an unrelated application type as well as JSON:
+
+```gti
+struct Record { mut int count = 1; };
+
+int main() {
+  mut Record owner{};
+  auto& observed = owner;
+  int snapshot = observed.count;
+  mut auto& writable = owner; // shared borrow has reached its last use
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+```
+
+### Implementation And Acceptance
+
+1. Semantics must resolve inferred references through the ordinary reference
+   contract. Audit inferred/range/generated-local special cases and factor
+   only the shared logic needed to prevent explicit and inferred drift.
+2. HIR and MIR must preserve the same concrete binding types, origin/dependency
+   facts, access, loan endpoints, and cleanup behavior as explicit references.
+   The backend consumes these resolved facts; it must not delegate inference
+   or borrow permission to generated C++ `auto&`.
+3. Add paired explicit/inferred positive and negative tests for stable locals,
+   fields, supported array places, checked reference-returning calls, borrowed
+   expected extraction, concrete generic instances, mutation conflicts,
+   read-only-to-mutable upgrades, moved owners, temporary owners, and escaping
+   local storage. Unsupported retained reborrow families remain rejected in
+   both spellings. Exercise later failure and exactly-once owner cleanup.
+4. Improve copy-attempt hints where a stable read-only initializer can be
+   borrowed: explain `auto&` and explicit cloning where applicable. Offer
+   movement only when it represents a legal ownership transfer. Do not
+   automatically change owning code into borrowing code through a fix-it.
+5. LSP diagnostics and hover must use compiler facts, display the inferred
+   referent/access accurately, and retain definition/navigation identity.
+   Test edits from `auto` to `auto&` and `mut auto&`, incomplete source, recovery,
+   and dirty dependency overlays. Confirm formatter and Tree-sitter support
+   the syntax without introducing separate inference rules.
+6. Add a runnable example under `examples/` and update its index, corpus and
+   census registrations. Update current static semantics, ownership and grammar
+   docs, revise `R-INFERENCE`, and apply the user-visible language version policy
+   only when the implementation lands. This proposal itself changes no VERSION.
+
+**Exit gate:** The inferred and explicit forms agree on semantic admission and
+borrow effects for the tested structural families; valid examples execute with
+an optimized host compiler across C++20/C++23 and GTI O0/O3; invalid cases stop
+with frontend diagnostics; relevant MIR verification and LSP gates pass. Any
+missing structural family must name its prerequisite and remain rejected in
+both forms rather than gaining a nominal exception for one library type.
+
 ## Explicit Cloning And Native Bridge Follow-Up
 
 The explicit-duplication slice supplies source-defined `std::clone`,
@@ -4200,9 +4323,12 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-06: General Object Lifetimes And Source-Defined Storage
 
-- **State/role:** implementation consolidated into the PR #94 release candidate,
-  following completed `S-ALLOC-04/05`. Completion requires the combined
-  [release gate](../architecture/verification.md#combined-lifetimestorage-and-payload-enum-release-gate).
+- **State/role:** implemented through PR #94 and the subsequent issue-campaign
+  integration, following completed `S-ALLOC-04/05`. The combined
+  [release gate](../architecture/verification.md#combined-lifetimestorage-and-payload-enum-release-gate)
+  records its original reconciliation evidence; the
+  [S-ALLOC-07 completion acceptance](../architecture/verification.md#completion-acceptance-2026-10-08)
+  also reruns the source-storage/resource integration on current main.
   This brief records the accepted direction; canonical language documentation
   and source describe the implemented API and its structural bounds.
 - **Outcome:** an application can implement inline typed storage and an
@@ -4213,7 +4339,7 @@ do not expose C++ object layout as GTI semantics.
   This is a generalization of the completed work, not a restart of Phase 2.
   Reconcile current source before using historical progress descriptions.
 
-#### Implementation Audit And Accepted Choices (2026-10-07)
+#### Historical Implementation Audit And Accepted Choices (2026-10-07)
 
 The source sparse/resource-owner integration now passes the focused resource
 contract and native allocator matrix, including same-resource metadata failure
@@ -4621,15 +4747,16 @@ unless requested.
 
 ### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
 
-- **State/role:** in progress. The owner authorized provider-layer preparation
-  in parallel with `S-ALLOC-06`. This independent slice moves process
-  request validation, native-size/zero handling, target selection and failure
-  mapping into GTI, using POSIX/CRT forwarding adapters. The combined candidate
-  now routes default sparse storage and its metadata through that provider and
-  retires generated sparse allocation. Final acceptance remains coupled to
-  `S-ALLOC-06`; this checkpoint does not complete the campaign. The owner delegates the
-  source/compiler/platform split described here. This is not a claim that
-  every allocation client has migrated or every ABI adapter is removable.
+- **State/role:** source-provider migration and completion acceptance are done
+  through PR #94, the issue reconciliation release and PR #162. The final local
+  gates pass; unavailable native-platform evidence and the measured performance
+  regression remain explicitly reported below and in follow-up #169.
+  Process request validation, native-size/zero handling, target selection and
+  failure mapping are GTI source policy over POSIX/CRT forwarding adapters.
+  Default sparse storage and its metadata both use that provider; generated
+  sparse allocation is retired. The completion audit below records the
+  evidence. This does not claim every allocation client has migrated or every
+  ABI adapter is removable.
 - **Outcome:** the default typed-storage and process-resource paths acquire
   bytes through source-defined GTI policy and ordinary native bindings, rather
   than specialized C++ allocation policy. Application pools and resource-backed
@@ -4637,6 +4764,30 @@ unless requested.
 - **Continuation:** reuse the preceding campaign and Phase 2 context. Do not
   reopen their accepted lifetime or unsafe boundaries, or duplicate their
   construction/destruction/relocation machinery.
+
+#### Completion Audit (2026-10-08)
+
+The audit starts from canonical main `f0ba8383`, after the issue campaign was
+integrated. The implementation already satisfied the named source-provider
+migration. PR #162 completes its acceptance evidence and corrects stale boundary
+descriptions, rather than introducing a second allocator implementation. It also
+fixes the general checked-numeric-argument admission defect exposed by the final
+cleanup fixture (#165); the fully tested implementation revision is `fa72b523`.
+
+| Required outcome | Owning implementation and evidence |
+| --- | --- |
+| Source request policy and canonical platform boundary | `gti_internal::process_resource` is an ordinary class in `stdlib/std/memory.gti`; no compiler source recognises its name. `process_provider_target_contract` selects POSIX/CRT calls for macOS, Linux and Windows; the C ABI smoke fixes their exact signatures. |
+| Default typed clients and source metadata | `std::allocator::try_storage`, process leases and `try_allocate_sparse` use two same-provider regions. `process_storage_policy.gti` observes their exact requests, one metadata byte per slot, zero/invalid/overflow requests, first/second acquisition failure, rollback, simultaneous owners, immovable owning elements, slot reuse, owner movement and element-before-region release. |
+| Existing custom resources and checked safety | `resource_protocol_contract`, `programmable_allocators_runtime`, `storage_adoption_contract`, source-storage/lifetime matrices and allocator Off/Warn parity retain resource/element borrow rejection, malformed descriptor checks, failed growth, constructor/destructor failure and original release authority. |
+| Retired and remaining mechanisms | Production `include`, `src`, `stdlib` and `runtime` contain no old `gti_rt_memory_allocate_v1`/`release_v1`, sparse capability or sparse backend allocator. The [allocation inventory](../architecture/standard-library-and-runtime.md#allocation-inventory-and-remaining-boundaries) identifies remaining prefix, unique/shared and host-service families. |
+| Installed and runnable clients | The provider matrix has an explicit installed mode that rejects missing stage resources and pins their exact paths, preventing build-tree fallback. CI and release staging run it; the installed library smoke links the native memory boundary. Examples 119–121, 125–126, 128–129 and `libc-region-provider` exercise the existing public APIs. Their source, example index and census identities are unchanged. |
+| Broad, platform and performance acceptance | The clean optimized `fa72b523` candidate passes the full 558-test production/tooling suite, 13 installed consumers, both native/installed provider matrices and 14 staged example executions. A quiet-host frozen comparison records a material runtime regression (process 3.68×, resource 2.12× baseline), unchanged scalar/destructor state and the deliberate doubling of resource acquisitions for source metadata. [Completion evidence](../architecture/verification.md#completion-acceptance-2026-10-08) includes the investigation and [performance follow-up #169](https://git.internal.howetotech.dev/gti-lang/gti/issues/169). Local execution is macOS arm64; Linux native CI is queued without a runner and Windows native execution is unavailable. Target/ABI checks are retained without claiming native execution on those platforms. |
+
+The ABI-adapter rationale is revised explicitly in ADR 022: native `c_size_t`
+and nested `void**` are now supported. Unique forwarding symbols still avoid
+occupying applications' C declarations, while Windows reserved symbols and
+target facts justify the remaining small adapters. No semantics or allocation
+policy change is required for that correction.
 
 #### Starting Point And Architectural Purpose
 
@@ -8572,7 +8723,7 @@ owned by the rows and domain plans above.
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
 | LSP project index/process isolation | client/risk-gated | project facts or stronger containment requirement |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | Source interfaces implemented; standard-library modules implemented in 0.387.0 | ADR 024 defines imports, explicit exports/re-exports, package maps, and `export #include` republication; every public `<std/name>` unit is importable as `std.name`, and legacy includes remain unchanged. Remaining: an aggregate `import std;`, which needs lowering that skips unreferenced library declarations (an importer currently pays for each imported unit in full); migrating standard units from republished legacy sources to real exports; separate compilation and independent module linkage identities. |
+| Module vocabulary | Source interfaces implemented; standard-library modules implemented in 0.391.0 | ADR 024 defines imports, explicit exports/re-exports, package maps, and `export #include` republication; every public `<std/name>` unit is importable as `std.name`, and legacy includes remain unchanged. Remaining: an aggregate `import std;`, which needs lowering that skips unreferenced library declarations (an importer currently pays for each imported unit in full); migrating standard units from republished legacy sources to real exports; separate compilation and independent module linkage identities. |
 
 ## Required Architectural Corrections
 

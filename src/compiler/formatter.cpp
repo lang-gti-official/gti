@@ -2218,7 +2218,8 @@ private:
     const Lexeme *next = nextSyntaxLexeme(lexemes, *close);
     if (next == nullptr || next->kind == Kind::LeftParen ||
         next->kind == Kind::LeftBrace || next->kind == Kind::Comma ||
-        next->kind == Kind::RightParen || next->kind == Kind::Greater) {
+        next->kind == Kind::RightParen || next->kind == Kind::Greater ||
+        next->kind == Kind::Scope || next->kind == Kind::Semicolon) {
       return true;
     }
     if (next->kind == Kind::Operator &&

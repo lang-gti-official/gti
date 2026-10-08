@@ -98,6 +98,9 @@ struct TypeRef {
 
   NamePath name;
   std::vector<TypeRef> arguments;
+  // A specialized qualifier retains its own arguments instead of attaching
+  // them to the final member: Container<T>::value_type.
+  std::shared_ptr<const TypeRef> qualifiedOwner;
   struct PointerLayer {
     Token star;
     // Qualifies this layer's pointee, including another pointer object.
