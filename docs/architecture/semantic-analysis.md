@@ -637,6 +637,16 @@ for that resolved function. It does not rescan every namespace/member overload
 table once per function. The index is request-local and contains no durable or
 process-global identity.
 
+Pre-body stored-field summaries compose unambiguous exact-result factory calls
+and same-type construction/grouping wrappers field by field. Each result field
+retains its source parameter or receiver projection and its own shared or
+exclusive access; a mixed result is not flattened to its first parameter.
+Recursive, ambiguous, and unresolved generic-call paths remain conservative.
+This declaration inference only proposes a contract: selected call analysis and
+return-body validation independently check every actual owner, field, access
+permission, and permitted escape. The direct-initialization rule does not grant
+new borrowing or escape authority.
+
 Mutable field groups are source-only declaration containers. Member collection
 recurses through the active group items with the surrounding access state,
 registering every child as an ordinary mutable direct field in textual order.

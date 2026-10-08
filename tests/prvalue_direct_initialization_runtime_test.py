@@ -15,9 +15,11 @@ if __name__ == "__main__":
                "division_by_zero in integer_division\n")
     run_runtime_matrix(
         names=("fresh_result_example", "prvalue_direct_initialization_cleanup",
-               "prvalue_direct_initialization_borrows"),
+               "prvalue_direct_initialization_borrows",
+               "prvalue_direct_initialization_factories"),
         cases={"fresh_result_example": [((), (0, "", ""))],
                "prvalue_direct_initialization_borrows": [((), (0, "", ""))],
+               "prvalue_direct_initialization_factories": [((), (0, "", ""))],
                "prvalue_direct_initialization_cleanup": [
                    ((), (0, "7\n1\n201\n99\n", "")),
                    (("fail",), (70, "201\n99\n", failure))]},

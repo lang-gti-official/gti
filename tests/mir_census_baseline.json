@@ -41,6 +41,7 @@
     "128-inline-object-pool.gti": 520,
     "129-generic-payload-enums.gti": 398,
     "13-ownership.gti": 75,
+    "130-fresh-result-initialization.gti": 384,
     "14-operators.gti": 51,
     "15-variadic-generics.gti": 49,
     "16-move-generics.gti": 71,
@@ -126,5 +127,5 @@
     "98-shared-ownership.gti": 390,
     "99-borrowed-expected.gti": 382
   },
-  "total": 19895
+  "total": 20279
 }

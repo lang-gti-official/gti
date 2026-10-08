@@ -141,6 +141,11 @@ int main() {
                Fixed(Fixed&&) = delete; };
                int main() { Fixed source{};
                  Fixed result = Fixed(std::move(source)); return 0; })",
+          R"(class Fixed { public: Fixed() {} Fixed(Fixed&) = delete;
+               Fixed(Fixed&&) = delete; };
+               Fixed make() { return Fixed(); }
+               void consume(Fixed value) {}
+               int main() { consume(Fixed(make())); return 0; })",
           R"(class Lens { int& value; public: Lens(int& value) : value(value) {} };
                Lens bad() { int local = 4; return Lens(Lens(local)); }
                int main() { return 0; })"}) {
@@ -175,6 +180,8 @@ class Number {
 public:
   int value;
   constexpr Number(int value) : value(value) {}
+  Number(Number&) = delete;
+  Number(Number&&) = delete;
 };
 constexpr Number number() { return Number(Number(4)); }
 constexpr Number constant = Number(number());
@@ -192,9 +199,81 @@ int main() {
            "constant and concrete results retain production MIR execution");
 }
 
+void checkBorrowedResultComposition() {
+  const std::string declarations = R"(
+class Update {
+  int& step;
+  mut int& value;
+public:
+  Update(int& step, mut int& value) : step(step), value(value) {}
+  void apply() mut { this.value += this.step; }
+};
+Update relay(int& step, mut int& value) {
+  return Update(Update((view(step, value))));
+}
+Update view(int& step, mut int& value) { return Update(step, value); }
+)";
+  const auto positive = lang::Frontend().analyze("fresh-borrow-composition.gti",
+                                                 declarations + R"(
+int main() {
+  int step = 4;
+  mut int value = 3;
+  mut Update result{Update((relay(step, value)))};
+  result.apply();
+  value += 1;
+  return value == 8 ? 0 : 1;
+}
+)");
+  expect(positive.canGenerateCode(),
+         "nested direct initialization preserves mixed owners independent of "
+         "factory declaration order");
+  if (positive.canGenerateCode()) {
+    std::size_t composed = 0;
+    for (const auto &function : positive.hir.functionInstances()) {
+      if (function.returnBorrowFields.size() != 2)
+        continue;
+      expect(function.returnBorrowFields[0].parameter == 0 &&
+                 function.returnBorrowFields[0].access ==
+                     lang::AccessMode::ReadOnly &&
+                 function.returnBorrowFields[1].parameter == 1 &&
+                 function.returnBorrowFields[1].access ==
+                     lang::AccessMode::Mutable,
+             "field-wise return facts preserve both exact owners and access");
+      ++composed;
+    }
+    expect(composed == 2,
+           "both factory and relay publish field-wise contracts");
+    expect(lang::verifyMirProgram(positive.mir).valid(),
+           "mixed result dependencies survive independent MIR verification");
+  }
+
+  for (const auto &body : {
+           R"(int main() { int step = 4; mut int value = 3;
+                mut Update result = Update(relay(step, value));
+                value += 1; result.apply(); return value; })",
+           R"(Update bad(int& step) { mut int local = 3;
+                return Update(relay(step, local)); }
+                int main() { return 0; })",
+           R"(int main() { mut int value = 3;
+                mut Update result = Update(relay(value, value));
+                result.apply(); return 0; })"}) {
+    const auto negative = lang::Frontend().analyze(
+        "invalid-fresh-borrow-composition.gti", declarations + body);
+    expect(!negative.semanticValid &&
+               std::any_of(negative.diagnostics.begin(),
+                           negative.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code.starts_with("GTI-S");
+                           }),
+           "direct initialization neither hides a local owner nor weakens "
+           "exclusive access");
+  }
+}
+
 int main() {
   checkFreshResults();
   checkImmovableAndBorrowedResults();
   checkConcreteAndConstantResults();
+  checkBorrowedResultComposition();
   return failures == 0 ? 0 : 1;
 }
