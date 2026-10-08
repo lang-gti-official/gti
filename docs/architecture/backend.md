@@ -1427,6 +1427,24 @@ generated-base chains remain outside this generated-body slice and retain
 their existing structural construction representation or the separately
 verified declaration-field schedule described above.
 
+Checked/effectful scalar base arguments now execute through a pre-native-base
+partition of the same verified constructor MIR. The immutable body plan retains
+its exact CFG, stage, operands and scalar values/places crossing the boundary;
+the text writer does not reconstruct source expressions. A private delegation
+carrier forwards the selected arguments and original failure record, then the
+remaining constructor schedule resumes after that prefix. Global effects are
+not copied or restored. Prefix failure disables the selected base gate, leaving
+its passive native shell unpublished and suppressing the source base body and
+declared destructor. Native base success remains the existing MIR activation and
+rollback witness.
+
+This preparation family requires scalar derived parameters and scalar base
+arguments, with a passive non-borrowing base whose declared cleanup is guarded
+and whose representation has no state-bearing ancestor. Owned/borrowed inputs,
+generic carrier families and recursively inactive owning/nested bases need the
+frame, transfer/loan and shell prerequisites recorded in the implementation
+sequence. They are not accepted through native C++ delegation shortcuts.
+
 When a field or static initializer selects a failure-capable source
 constructor, the private C++ representation snapshot derives one exact
 contained-constructor row from the lowered initializer schedule and constructor
