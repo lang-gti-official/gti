@@ -4613,6 +4613,120 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
   return result.stage == stage ? result : StagedClassResult{};
 }
 
+// Transparent class identities carry source/lifecycle identities, not another
+// native object. Admit a link only when no executable work can occur between
+// its input and result and the exact value obligation is reparented unchanged.
+[[nodiscard]] const MirValue *
+classPublicationIdentityInput(const MirBody &body,
+                              const MirInstruction &identity) {
+  if (identity.kind != MirInstructionKind::Compute ||
+      identity.operation != MirOperation::Identity || !identity.result ||
+      identity.destination || identity.receiver || identity.loan ||
+      identity.info.type.kind != SemanticType::Class ||
+      identity.info.category != ValueCategory::Value ||
+      identity.info.traits.containsBorrowedState ||
+      identity.operands.size() != 1 ||
+      identity.operands.front().kind != MirOperandKind::Value ||
+      identity.operands.front().type != identity.info.type ||
+      !identity.localFailureSites.empty() || !identity.definedFailure.empty() ||
+      identity.successResultDrop || identity.successResultDestination)
+    return nullptr;
+  const MirValue *input = body.findValue(identity.operands.front().value);
+  const MirValue *result = body.findValue(*identity.result);
+  const MirInstruction *producer =
+      input == nullptr ? nullptr : findInstruction(body, input->definition);
+  if (input == nullptr || result == nullptr || producer == nullptr ||
+      input->id == result->id || input->info != result->info ||
+      result->info != identity.info || result->definition != identity.id)
+    return nullptr;
+  const auto uses = nonRootRecordUses(body, input->id);
+  if (uses.size() != 1 ||
+      uses.front().kind != MirValueUseKind::InstructionOperand ||
+      uses.front().instruction != identity.id || uses.front().operandIndex != 0)
+    return nullptr;
+  const MirBlock *before = body.findBlock(input->definitionBlock);
+  const MirBlock *after = body.findBlock(result->definitionBlock);
+  if (before == nullptr || after == nullptr)
+    return nullptr;
+  bool adjacent = false;
+  if (before == after) {
+    for (std::size_t i = 1; i < before->instructions.size(); ++i)
+      adjacent |= before->instructions[i - 1].id == producer->id &&
+                  before->instructions[i].id == identity.id;
+  } else if (!before->instructions.empty() &&
+             before->instructions.back().id == producer->id &&
+             before->terminator.kind == MirTerminatorKind::Invoke &&
+             before->terminator.invokeInstruction == producer->id &&
+             before->terminator.target == after->id &&
+             before->terminator.targetArguments.empty() &&
+             after->id != body.entry && after->parameters.empty() &&
+             after->failureParameter == 0 && after->activeFailure == 0 &&
+             !after->instructions.empty() &&
+             after->instructions.front().id == identity.id) {
+    std::size_t incoming = 0;
+    for (const MirBlock &block : body.blocks) {
+      incoming += block.terminator.target == after->id;
+      incoming += block.terminator.elseTarget == after->id;
+      for (const auto &target : block.terminator.switchTargets)
+        incoming += target.target == after->id;
+    }
+    adjacent = incoming == 1;
+  }
+  if (!adjacent)
+    return nullptr;
+  bool validDrops = true;
+  const auto valueDrop = [&](MirValueId id) -> const MirDropObligation * {
+    const MirDropObligation *found = nullptr;
+    for (const MirDropObligation &drop : body.dropObligations) {
+      const MirPlace *place = body.findPlace(drop.place);
+      if (place == nullptr || place->root != MirPlaceRootKind::Value ||
+          place->value != id)
+        continue;
+      if (found != nullptr || !place->projections.empty() ||
+          place->type != identity.info.type || place->initiallyAvailable ||
+          drop.kind != MirDropObligationKind::Value || drop.initiallyActive ||
+          drop.dropType.type != identity.info.type) {
+        validDrops = false;
+        return nullptr;
+      }
+      found = &drop;
+    }
+    return found;
+  };
+  const MirDropObligation *sourceDrop = valueDrop(input->id);
+  const MirDropObligation *targetDrop = valueDrop(result->id);
+  if (!validDrops)
+    return nullptr;
+  if (sourceDrop == nullptr || targetDrop == nullptr) {
+    if (sourceDrop != nullptr || targetDrop != nullptr ||
+        !identity.lifecycle.empty())
+      return nullptr;
+  } else {
+    if (identity.lifecycle.size() != 1 ||
+        sourceDrop->dropType != targetDrop->dropType)
+      return nullptr;
+    const MirLifecycleEvent &event = identity.lifecycle.front();
+    if (event.kind != MirLifecycleEventKind::Reparent ||
+        event.source != sourceDrop->id || event.target != targetDrop->id ||
+        event.conditional || event.failureCleanup)
+      return nullptr;
+  }
+  return input;
+}
+
+[[nodiscard]] const MirInstruction *
+classPublicationOrigin(const MirBody &body, const MirValue &value) {
+  const MirInstruction *definition = findInstruction(body, value.definition);
+  for (std::size_t depth = 0;
+       definition != nullptr && depth < body.values.size(); ++depth) {
+    const MirValue *input = classPublicationIdentityInput(body, *definition);
+    if (input == nullptr)
+      return definition;
+    definition = findInstruction(body, input->definition);
+  }
+  return nullptr;
+}
+
 // A class SSA value whose only executable consumer is one Initialize into an
 // empty class binding or full-expression temporary can publish directly into
 // that destination's lifetime slot. The PlaceRoot record for the produced
@@ -4625,6 +4739,9 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
     return nullptr;
   }
   const MirInstruction *definition = findInstruction(body, value->definition);
+  const bool transparentIdentity =
+      definition != nullptr &&
+      classPublicationIdentityInput(body, *definition) != nullptr;
   const bool directConstruct =
       definition != nullptr &&
       definition->kind == MirInstructionKind::Construct && definition->result &&
@@ -4679,7 +4796,7 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
   if (!directConstruct && !directMove && !directCopy && !directFunctionCall &&
       !directCallableCall && !directNativeCall && !directDefaultConstruction &&
       !restoringExchange && ownedExpectedExtraction == nullptr &&
-      staged.producer != definition) {
+      staged.producer != definition && !transparentIdentity) {
     return nullptr;
   }
   if (ownedExpectedExtraction != nullptr) {
@@ -4688,7 +4805,21 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
   if (staged.producer == definition && staged.slot != nullptr) {
     return staged.slot;
   }
-  const std::vector<MirValueUse> uses = nonRootRecordUses(body, valueId);
+  MirValueId publishedValue = valueId;
+  std::vector<MirValueUse> uses = nonRootRecordUses(body, publishedValue);
+  for (std::size_t depth = 0; depth < body.values.size(); ++depth) {
+    if (uses.size() != 1 ||
+        uses.front().kind != MirValueUseKind::InstructionOperand)
+      break;
+    const auto *identity = findInstruction(body, uses.front().instruction);
+    const auto *input = identity == nullptr
+                            ? nullptr
+                            : classPublicationIdentityInput(body, *identity);
+    if (input == nullptr || input->id != publishedValue)
+      break;
+    publishedValue = *identity->result;
+    uses = nonRootRecordUses(body, publishedValue);
+  }
   if (uses.size() != 1 ||
       uses.front().kind != MirValueUseKind::InstructionOperand) {
     return nullptr;
@@ -4699,12 +4830,25 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
       initialize->kind != MirInstructionKind::Initialize ||
       !initialize->destination || initialize->operands.size() != 1 ||
       initialize->operands.front().kind != MirOperandKind::Value ||
-      initialize->operands.front().value != valueId) {
+      initialize->operands.front().value != publishedValue) {
     return nullptr;
   }
   if (definition->successResultDestination &&
       definition->successResultDestination != initialize->destination) {
     return nullptr;
+  }
+  if (transparentIdentity || publishedValue != valueId) {
+    const MirValue *terminal = body.findValue(publishedValue);
+    const MirBlock *block = terminal == nullptr
+                                ? nullptr
+                                : body.findBlock(terminal->definitionBlock);
+    bool adjacent = false;
+    if (block != nullptr)
+      for (std::size_t i = 1; i < block->instructions.size(); ++i)
+        adjacent |= block->instructions[i - 1].id == terminal->definition &&
+                    block->instructions[i].id == initialize->id;
+    if (!adjacent)
+      return nullptr;
   }
   const MirPlace *destination = body.findPlace(*initialize->destination);
   if (destination == nullptr ||
@@ -4715,6 +4859,8 @@ stagedClassResultForResult(const MirBody &body, MirValueId stagedId) {
     return nullptr;
   }
   if (destination->root == MirPlaceRootKind::Temporary) {
+    if (transparentIdentity || publishedValue != valueId)
+      return nullptr;
     // A passive Expected success still needs uninitialized native storage:
     // its class may be move-only and have no default constructor, even though
     // it has no semantic cleanup obligation. Preserve the exact Move /
@@ -7057,6 +7203,8 @@ constructDestinationSlot(const MirBody &body, const MirInstruction &construct) {
   if (!construct.result) {
     return 0;
   }
+  if (const MirPlace *slot = classValueDestinationSlot(body, *construct.result))
+    return slot->id;
   if (const auto *error =
           unexpectedPayloadPublicationSlot(body, *construct.result))
     return error->id;
@@ -29394,6 +29542,9 @@ private:
     if (!instruction.result) {
       return false;
     }
+    if (const MirPlace *slot =
+            classValueDestinationSlot(facts.body, *instruction.result))
+      return slotPlace(facts.body, *slot);
     for (const MirValueUse &use : facts.body.usesOf(*instruction.result)) {
       const MirInstruction *consumer =
           findInstruction(facts.body, use.instruction);
@@ -30682,6 +30833,13 @@ private:
 
   void emitCompute(const MirInstruction &instruction,
                    const ScalarBodyFacts &facts) {
+    if (instruction.result &&
+        classPublicationIdentityInput(facts.body, instruction) != nullptr &&
+        classValueDestinationSlot(facts.body, *instruction.result) != nullptr) {
+      output
+          << "// transparent class identity; MIR retains lifecycle transfer\n";
+      return;
+    }
     if (instruction.result &&
         borrowedPayloadExtract(facts.body, *instruction.result)) {
       output << "// MIR active payload place publishes at its Borrow\n";
@@ -33118,7 +33276,7 @@ private:
           const MirInstruction *directDefinition =
               directRecord == nullptr
                   ? nullptr
-                  : findInstruction(facts.body, directRecord->definition);
+                  : classPublicationOrigin(facts.body, *directRecord);
           const bool transformedFailureConstruction =
               failureForm && directDefinition != nullptr &&
               directDefinition->kind == MirInstructionKind::Construct &&
@@ -33211,9 +33369,8 @@ private:
           const MirValue *record =
               facts.body.findValue(instruction.operands.front().value);
           const MirInstruction *definition =
-              record == nullptr
-                  ? nullptr
-                  : findInstruction(facts.body, record->definition);
+              record == nullptr ? nullptr
+                                : classPublicationOrigin(facts.body, *record);
           const bool builtInSlot =
               definition != nullptr &&
               definition->kind == MirInstructionKind::Construct &&
