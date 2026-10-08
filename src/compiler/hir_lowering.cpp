@@ -2549,8 +2549,20 @@ private:
         }
         continue;
       }
-      for (const SemanticFullExpression &expression :
-           model.fullExpressionsFor(*initializer.source)) {
+      const auto &expressions = model.fullExpressionsFor(*initializer.source);
+      // An explicit initializer without source arguments, such as `: Base()`,
+      // has no semantic full expression, yet the constructor's omitted
+      // default arguments still evaluate here. Like an implicit base, they
+      // form one full expression so owning defaults receive prepared
+      // parameter obligations.
+      if (expressions.empty()) {
+        if (!initializer.arguments.empty()) {
+          pendingFullExpressions.push_back(
+              {.constructorInitializer = index + 1});
+        }
+        continue;
+      }
+      for (const SemanticFullExpression &expression : expressions) {
         pendingFullExpressions.push_back(
             {.expression = &expression, .constructorInitializer = index + 1});
       }
