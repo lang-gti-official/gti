@@ -31,10 +31,12 @@ for what minor and patch releases mean.
 ## 0.388.0 — Public names for container iterators
 
 - Name the iterator and sentinel types of standard containers and views
-  without `std::detail`: `const_iterator` (from `begin()`), `iterator` (from
-  `begin_mut()`) and `sentinel` (from `end()`) are now public member aliases
-  on `vector`, `array`, `deque`, `list`, `forward_list`, `span`,
-  `mutable_span`, `string`, `resource_vector`, and the maps and sets. Name them
+  without `std::detail`: read-only iteration exposes `const_iterator` (from
+  `begin()`) and `sentinel` (from `end()`); containers supporting mutable
+  iteration also expose `iterator` (from `begin_mut()`). The aliases cover
+  `vector`, `array`, `deque`, `list`, `forward_list`, `span`, `mutable_span`,
+  `string`, `resource_vector`, and the maps and sets. `forward_list` iteration
+  remains declaration-only scaffolding. Name the aliases
   through an alias of a concrete type, for example
   `using Ints = std::vector<int>;` then `Ints::iterator`.
 
