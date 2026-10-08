@@ -27083,8 +27083,7 @@ classSsaLifetimeSlot(const MirProgram &program,
       mirTypeMoveIsDefinedFailureFree(program, value->info.type);
   if (value == nullptr ||
       (value->info.type.kind != SemanticType::Class && !cleanupFreeArray) ||
-      value->info.category != ValueCategory::Value ||
-      !value->info.traits.movable || producer == nullptr ||
+      value->info.category != ValueCategory::Value || producer == nullptr ||
       (callee == nullptr && !defaultConstructionProducer &&
        !directConstructionProducer && !directMoveProducer) ||
       !producer->result || *producer->result != valueId ||
@@ -27114,10 +27113,12 @@ classSsaLifetimeSlot(const MirProgram &program,
       ((directConstructionProducer || directMoveProducer) &&
        (classInstance->requiresActiveDropState ||
         classInstance->traits.containsBorrowedState ||
-        value->info.traits.containsBorrowedState)) ||
-      !classInstance->traits.movable) {
+        value->info.traits.containsBorrowedState))) {
     return {};
   }
+
+  const bool movable =
+      value->info.traits.movable && classInstance->traits.movable;
 
   // A cleanup-free class result may be observed through one exact field
   // projection before the full expression ends. The transformed callee still
@@ -27144,7 +27145,7 @@ classSsaLifetimeSlot(const MirProgram &program,
         exactFieldProjectionRows(program, representations, value->info.type,
                                  projection->projections, 0,
                                  projection->type) &&
-        (!directConstructionProducer ||
+        ((!directConstructionProducer && movable) ||
          expectedTypeRepresentation(projection->type) ==
              CppMirTypeRepresentationKind::Scalar);
     const MirInstruction *consumer = nullptr;
@@ -27205,8 +27206,11 @@ classSsaLifetimeSlot(const MirProgram &program,
     if (consumer != nullptr) {
       const MirValue *loaded =
           consumer->result ? body.findValue(*consumer->result) : nullptr;
-      if (directConstructionProducer &&
+      if ((directConstructionProducer || !movable) &&
           (loaded == nullptr || loaded->info.type != projection->type ||
+           classInstance->requiresActiveDropState ||
+           classInstance->traits.containsBorrowedState ||
+           value->info.traits.containsBorrowedState ||
            consumer->info.traits.drop != DropKind::Trivial ||
            !consumer->info.traits.copyable ||
            loaded->info.traits.drop != DropKind::Trivial ||
@@ -27219,6 +27223,11 @@ classSsaLifetimeSlot(const MirProgram &program,
               .consumerKind = ClassSsaSlotConsumerKind::FieldRead};
     }
   }
+
+  // A fresh immovable result can be observed in place above, but none of the
+  // transfer consumers below may acquire move permission from that fact.
+  if (!movable)
+    return {};
 
   // A cleanup-free construction may also supply one exact source call's
   // by-value parameter. Keep the constructor at its MIR position, even when

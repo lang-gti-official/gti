@@ -8807,12 +8807,18 @@ int32_t main() {
          "verified MIR");
 }
 
-void testFailureCapableClassReturnFieldRead() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-class-return-field-read.gti", R"(
+void checkFailureCapableClassReturnFieldRead(bool immovable) {
+  const std::string source = std::string(R"(
 struct Packet {
   int32_t value;
   Packet(int32_t initial) : value(initial) {}
+)") +
+                             (immovable ? R"(
+  Packet(Packet& other) = delete;
+  Packet(Packet&& other) = delete;
+)"
+                                        : "") +
+                             R"(
 };
 
 Packet make_packet() {
@@ -8820,7 +8826,9 @@ Packet make_packet() {
 }
 
 int32_t main() { return make_packet().value - 7; }
-)");
+)";
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-class-return-field-read.gti", source);
   expect(frontend.canGenerateCode(),
          "a field read from a returned class value should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -8850,6 +8858,9 @@ int32_t main() { return make_packet().value - 7; }
   }
   expect(classResult != 0,
          "the returned-field fixture should retain its class call result");
+  const auto *result = entry->body.findValue(classResult);
+  expect(result && result->info.traits.movable != immovable,
+         "the factory cases must cover both movable and immovable results");
 
   const lang::CppMirBodyEmissionMap map(
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23));
@@ -8928,6 +8939,61 @@ int32_t main() { return make_packet().value - 7; }
            "the class lifetime-slot selector should reject a projected place "
            "with a second direct consumer");
   }
+  if (immovable && result) {
+    const auto escaped =
+        lang::Frontend().analyze("immovable-field-escape.gti",
+                                 source + "\nint32_t& escape(Packet& owner) { "
+                                          "return make_packet().value; }\n");
+    expect(!escaped.canGenerateCode() &&
+               std::any_of(escaped.diagnostics.begin(),
+                           escaped.diagnostics.end(),
+                           [](const auto &item) {
+                             return item.code == "GTI-S2017" &&
+                                    item.message.find("derive from read-only "
+                                                      "parameter 'owner'") !=
+                                        std::string::npos;
+                           }),
+           "observing the scalar must not permit a reference to escape its "
+           "temporary owner");
+    const auto copied = lang::Frontend().analyze(
+        "immovable-copy.gti",
+        source + "\nPacket copy(Packet& value) { return Packet(value); }\n");
+    expect(!copied.canGenerateCode() &&
+               std::any_of(copied.diagnostics.begin(), copied.diagnostics.end(),
+                           [](const auto &item) {
+                             return item.code == "GTI-S2020" &&
+                                    item.message.find("Copy construction of "
+                                                      "'Packet' is deleted") !=
+                                        std::string::npos;
+                           }),
+           "scalar observation must not unlock copying an immovable owner");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto malformed = frontend.mir;
+      auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+          malformed.classInstances());
+      bool changed = false;
+      for (auto &owner : classes) {
+        if (owner.type != result->info.type)
+          continue;
+        changed = true;
+        if (mutation == 0)
+          owner.requiresActiveCleanup = true;
+        else if (mutation == 1)
+          owner.requiresActiveDropState = true;
+        else
+          owner.traits.containsBorrowedState = true;
+      }
+      const lang::CppMirBodyEmitter rejected(malformed, map);
+      expect(changed && !rejected.supportsFailureBodyText(address),
+             "immovable field-read storage must not absorb active cleanup, "
+             "drop state or borrowed-state lifetime obligations");
+    }
+  }
+}
+
+void testFailureCapableClassReturnFieldRead() {
+  checkFailureCapableClassReturnFieldRead(false);
+  checkFailureCapableClassReturnFieldRead(true);
 }
 
 void testDiscardedCleanupFreeClassResult() {
@@ -11438,17 +11504,25 @@ void testNestedCleanupFreeClassResult() {
          "operator()");
 }
 
-void testCleanupFreeConstructorTemporaryFieldRead() {
-  const lang::FrontendResult frontend =
-      analyze("cpp-mir-constructor-temporary-field-read.gti", R"(
+void checkCleanupFreeConstructorTemporaryFieldRead(bool immovable) {
+  const std::string source = std::string(R"(
 class plain_t {
 public:
   plain_t() {}
+)") +
+                             (immovable ? R"(
+  plain_t(plain_t& other) = delete;
+  plain_t(plain_t&& other) = delete;
+)"
+                                        : "") +
+                             R"(
   mut int32_t value = 7;
 };
 
 int32_t main() { return plain_t().value - 7; }
-)");
+)";
+  const lang::FrontendResult frontend =
+      analyze("cpp-mir-constructor-temporary-field-read.gti", source);
   expect(frontend.canGenerateCode(),
          "a direct field read from a cleanup-free constructor temporary "
          "should pass the frontend");
@@ -11534,6 +11608,8 @@ int32_t main() { return plain_t().value - 7; }
           !owner->requiresActiveCleanup,
       "the construction should carry exact target/type/parameter metadata "
       "without semantic cleanup obligations");
+  expect(constructed && constructed->info.traits.movable != immovable,
+         "the constructor cases must cover movable and immovable results");
   expect(uses.size() == 1 && projection != nullptr &&
              projection->root == lang::MirPlaceRootKind::Value &&
              projection->value == classResult &&
@@ -11706,6 +11782,11 @@ int32_t main() { return cleanup_t().value - 7; }
           "outside the cleanup-free slot representation");
     }
   }
+}
+
+void testCleanupFreeConstructorTemporaryFieldRead() {
+  checkCleanupFreeConstructorTemporaryFieldRead(false);
+  checkCleanupFreeConstructorTemporaryFieldRead(true);
 }
 
 constexpr NamedTest kTests[] = {
