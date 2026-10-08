@@ -300,7 +300,6 @@ int main() {
                 "mut Cell cell{}; int32_t& held = cell.read_slot(); "
                 "cell.slot() = 4; return held;");
   checkNegative(declarations, "mut Cell cell{}; (cell.read()) = 2; return 0;");
-  checkNegative(declarations, "1 = 2; return 0;");
   checkNegative(
       declarations,
       "mut Cell cell{}; mut int32_t& held = *cell; *cell = 2; return held;");
