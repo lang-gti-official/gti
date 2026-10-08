@@ -102,7 +102,7 @@ int main() {
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
   expect(serialized.starts_with("lowered-program-v16") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v96"),
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v97"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {

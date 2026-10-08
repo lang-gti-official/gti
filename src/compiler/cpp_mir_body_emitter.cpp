@@ -954,8 +954,6 @@ expectedTypeRepresentation(const SemanticType &type) {
     return CppMirTypeRepresentationKind::UniqueOwner;
   case SemanticType::SharedPointer:
     return CppMirTypeRepresentationKind::SharedPointer;
-  case SemanticType::PrefixStorage:
-    return CppMirTypeRepresentationKind::Storage;
   case SemanticType::TypeParameter:
   case SemanticType::TypePack:
   case SemanticType::TypeName:
@@ -8946,27 +8944,20 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
       consumer->constructorTarget &&
       consumer->constructorKind == ConstructorKind::Ordinary &&
       consumer->intrinsic == IntrinsicKind::None && stage->info.traits.movable;
-  // Final-slot prefix construction uses the same prepared ownership slot.
-  // Its capacity preflight must succeed before the invocation retires this
-  // parameter; a failed check instead follows MIR's prepared-value cleanup.
+  // General final-address construction uses the same prepared ownership slot.
   const bool prefixConstruction =
       consumer && consumer->kind == MirInstructionKind::Call &&
-      (consumer->intrinsic == IntrinsicKind::ObjectConstruct ||
-       consumer->intrinsic == IntrinsicKind::PrefixStorageAppend) &&
+      consumer->intrinsic == IntrinsicKind::ObjectConstruct &&
       consumer->constructorTarget &&
       consumer->constructorKind == ConstructorKind::Ordinary &&
-      (consumer->intrinsic == IntrinsicKind::ObjectConstruct
-           ? consumer->unsafeOperation == UnsafeOperationKind::ObjectLifetime &&
-                 consumer->storagePreflight == 0
-           : mirStorageConstructForPreflight(
-                 body, consumer->storagePreflight) == consumer) &&
+      consumer->unsafeOperation == UnsafeOperationKind::ObjectLifetime &&
       stage->info.traits.movable;
   const bool rawTransfer =
       consumer && consumer->kind == MirInstructionKind::Call &&
       consumer->intrinsic == IntrinsicKind::ObjectConstruct &&
       consumer->unsafeOperation == UnsafeOperationKind::ObjectLifetime &&
-      !consumer->constructorTarget && consumer->storagePreflight == 0 &&
-      consumer->definedFailure.empty() && consumer->localFailureSites.empty() &&
+      !consumer->constructorTarget && consumer->definedFailure.empty() &&
+      consumer->localFailureSites.empty() &&
       consumer->parameterTypes.size() == 2 &&
       consumer->parameterTypes.front().kind == SemanticType::RawPointer &&
       consumer->parameterTypes.front().arguments ==
@@ -9391,8 +9382,7 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
     if (!modeMatches || captured == nullptr ||
         (!bindingCapture && !enclosingLambdaCapture) ||
         !captured->projections.empty() ||
-        captured->type.kind == SemanticType::Lambda ||
-        captured->type.kind == SemanticType::PrefixStorage) {
+        captured->type.kind == SemanticType::Lambda) {
       return false;
     }
     for (const MirLoan &loan : body.loans) {
@@ -11968,8 +11958,7 @@ enum class EmptyFieldUse { Construction, Assignment };
             failureConstructorEmptyDefaultFieldType(
                 program, type.arguments.front(), visiting, use));
   }
-  if (type.kind == SemanticType::PrefixStorage ||
-      type.kind == SemanticType::UniqueOwner ||
+  if (type.kind == SemanticType::UniqueOwner ||
       type.kind == SemanticType::SharedPointer) {
     return true;
   }
@@ -13548,7 +13537,6 @@ inlineFailureConstructorArgument(const MirProgram &program, const MirBody &body,
                   innerOwner->declaredFields.end(),
                   [](const auto &field) {
                     return field.type.kind == SemanticType::UniqueOwner ||
-                           field.type.kind == SemanticType::PrefixStorage ||
                            (field.dropKind == DropKind::Trivial &&
                             !field.requiresActiveCleanup &&
                             passiveConstructorAggregateType(field.type));
@@ -15727,7 +15715,6 @@ passiveFixedArrayConstructAggregate(const MirProgram &program,
           argument.type.kind == SemanticType::Lambda ||
           argument.type.kind == SemanticType::UniqueOwner ||
           argument.type.kind == SemanticType::SharedPointer ||
-          argument.type.kind == SemanticType::PrefixStorage ||
           argument.type.kind == SemanticType::Expected) {
         return {};
       }
@@ -20884,7 +20871,6 @@ lifetimeSlotPlace(const MirProgram &program,
   if (passiveFixedArrayStagedPlace(program, body, place))
     return true;
   if (place.type.kind == SemanticType::Class ||
-      place.type.kind == SemanticType::PrefixStorage ||
       owningPayloadEnumBindingDrop(program, body, place) != nullptr ||
       (place.type.kind == SemanticType::Lambda &&
        place.traits.drop == DropKind::Lexical) ||
@@ -21083,8 +21069,7 @@ loanReferentType(const MirProgram &program, const MirBody &body,
         return producer->info.type;
       }
     }
-    if ((source->type.kind == SemanticType::PrefixStorage ||
-         source->type.kind == SemanticType::UniqueOwner ||
+    if ((source->type.kind == SemanticType::UniqueOwner ||
          source->type.kind == SemanticType::SharedPointer) &&
         source->type.arguments.size() == 1) {
       return source->type.arguments.front();
@@ -22583,7 +22568,6 @@ private:
     case MirInstructionKind::Construct:
     case MirInstructionKind::AllocateObject:
     case MirInstructionKind::InitializeBase:
-    case MirInstructionKind::StorageConstructPreflight:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::CallBody:
@@ -22691,13 +22675,10 @@ private:
           elementPlace = body.findPlace(*instruction.destination);
         }
         // A storage read whose site carries no failure edge is terminally
-        // contained by the sealed runtime guard. Prefix storage reaches this
-        // shape after the enclosing container proves its logical bound.
+        // contained by the sealed runtime guard.
         const bool dischargedStorageRead =
             instruction.kind == MirInstructionKind::Call &&
-            (instruction.intrinsic == IntrinsicKind::PrefixStorageRead ||
-             instruction.intrinsic == IntrinsicKind::PrefixStorageReadMut ||
-             instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||
+            (instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||
              instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut) &&
             !instruction.definedFailure.localOrigins.empty() &&
             instruction.definedFailure.propagation ==
@@ -22729,14 +22710,11 @@ private:
         // exists to demand.
         const bool terminalAllocation =
             instruction.kind == MirInstructionKind::Call &&
-            ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
-              instruction.objectAllocation == 0 &&
-              instruction.info.type.arguments.size() == 1 &&
-              instruction.info.type.arguments.front().kind ==
-                  SemanticType::Class) ||
-             // Prefix-storage allocation aborts inside the backend helper
-             // on exhaustion, exactly like the compatibility call site.
-             instruction.intrinsic == IntrinsicKind::AllocatePrefixStorage);
+            (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+             instruction.objectAllocation == 0 &&
+             instruction.info.type.arguments.size() == 1 &&
+             instruction.info.type.arguments.front().kind ==
+                 SemanticType::Class);
         // An unconsumed constructor-initializer argument publishes into
         // its field: the binding resolves through the initializer's HIR
         // argument, and the field row must exist or the body fails
@@ -22783,9 +22761,7 @@ private:
                   .empty());
         const bool terminalAppendCall =
             instruction.kind == MirInstructionKind::Call &&
-            (instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-             instruction.intrinsic ==
-                 IntrinsicKind::OptionalStorageConstruct) &&
+            instruction.intrinsic == IntrinsicKind::OptionalStorageConstruct &&
             instruction.localFailureSites.size() == 1 &&
             !instructionHasInvoke(block, instruction);
         // The expected extraction's spelled member contains the
@@ -23093,7 +23069,6 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::AllocateObject:
   case MirInstructionKind::InitializeBase:
   case MirInstructionKind::CleanupBeforeAssign:
-  case MirInstructionKind::StorageConstructPreflight:
     return CppMirEmissionEncoding::NeedsCopiedRepresentation;
   case MirInstructionKind::Modify:
     return CppMirEmissionEncoding::MissingMirAuthority;
@@ -29761,8 +29736,7 @@ public:
       }
       // A loan published by a discharged storage read points at the
       // element, not the storage that sources it.
-      if ((source->type.kind == SemanticType::PrefixStorage ||
-           optionalStorageType(program, source->type)) &&
+      if ((optionalStorageType(program, source->type)) &&
           pairedDischargedRead(facts.body, loan.producedBy) != nullptr) {
         if (source->type.arguments.empty()) {
           throw std::logic_error(
@@ -29793,8 +29767,7 @@ public:
       // sources it (ADR 018 §5).
       if (loan.kind == MirLoanKind::CallResult) {
         if (checkedStorageReadLoanProducer(facts.body, loan) != nullptr) {
-          if ((source->type.kind != SemanticType::PrefixStorage &&
-               !optionalStorageType(program, source->type)) ||
+          if ((!optionalStorageType(program, source->type)) ||
               source->type.arguments.empty()) {
             throw std::logic_error(
                 "verified MIR checked storage loan lost its element type");
@@ -29868,8 +29841,6 @@ public:
           if ((instruction.kind == MirInstructionKind::Load ||
                instruction.kind == MirInstructionKind::Borrow ||
                instruction.kind == MirInstructionKind::AllocateObject ||
-               instruction.kind ==
-                   MirInstructionKind::StorageConstructPreflight ||
                instruction.kind == MirInstructionKind::Assign) &&
               instruction.localFailureSites.size() == 1 &&
               failureStatusRequired) {
@@ -31319,10 +31290,8 @@ private:
             output << ')';
             continue;
           }
-          const bool consumed =
-              argument.type.kind == SemanticType::Class ||
-              argument.type.kind == SemanticType::UniqueOwner ||
-              argument.type.kind == SemanticType::PrefixStorage;
+          const bool consumed = argument.type.kind == SemanticType::Class ||
+                                argument.type.kind == SemanticType::UniqueOwner;
           if (consumed) {
             output << "std::move(";
           }
@@ -31401,8 +31370,7 @@ private:
           continue;
         }
         const bool consumed = argument.type.kind == SemanticType::Class ||
-                              argument.type.kind == SemanticType::UniqueOwner ||
-                              argument.type.kind == SemanticType::PrefixStorage;
+                              argument.type.kind == SemanticType::UniqueOwner;
         if (consumed) {
           output << "std::move(";
         }
@@ -31435,14 +31403,7 @@ private:
   void emitReturnOperand(const ScalarBodyFacts &facts,
                          const MirOperand &operand) {
     if (operand.kind == MirOperandKind::Value) {
-      const bool storage = operand.type.kind == SemanticType::PrefixStorage;
-      if (storage) {
-        output << "std::move(";
-      }
       emitOperand(operand);
-      if (storage) {
-        output << ')';
-      }
       return;
     }
     if (operand.kind == MirOperandKind::Constant && operand.literal) {
@@ -32743,8 +32704,7 @@ private:
       // discharged by the enclosing container's logical-size check, so the
       // sealed runtime guard is defense in depth, exactly as on the
       // compatibility path.
-      if (source->type.kind == SemanticType::PrefixStorage ||
-          optionalStorageType(program, source->type)) {
+      if (optionalStorageType(program, source->type)) {
         const MirInstruction *read =
             pairedDischargedRead(facts.body, loan->producedBy);
         const bool optionalRead =
@@ -33140,8 +33100,7 @@ private:
              obligation->dropType.type.kind == SemanticType::Lambda ||
              obligation->dropType.type.kind == SemanticType::Enum ||
              obligation->dropType.type.kind == SemanticType::Expected ||
-             obligation->dropType.type.kind == SemanticType::Unexpected ||
-             obligation->dropType.type.kind == SemanticType::PrefixStorage) &&
+             obligation->dropType.type.kind == SemanticType::Unexpected) &&
             !obligation->dropType.aggregate.empty()))) {
         const std::string record = block.activeFailure != 0
                                        ? "&__gti_mir_cleanup_failure_record_" +
@@ -33272,10 +33231,7 @@ private:
         }
         const bool consumed =
             instruction.operands[index].type.kind == SemanticType::Class ||
-            instruction.operands[index].type.kind ==
-                SemanticType::UniqueOwner ||
-            instruction.operands[index].type.kind ==
-                SemanticType::PrefixStorage;
+            instruction.operands[index].type.kind == SemanticType::UniqueOwner;
         if (consumed) {
           output << "std::move(";
         }
@@ -34098,16 +34054,6 @@ private:
         }
         if (instruction.operands.size() == 1 &&
             instruction.operands.front().kind == MirOperandKind::Value &&
-            (instruction.operands.front().type.kind ==
-             SemanticType::PrefixStorage)) {
-          // A storage value constructs its lifetime slot by move.
-          output << "__gti_mir_p_" << *instruction.destination
-                 << ".construct(std::move(__gti_mir_v_"
-                 << instruction.operands.front().value << "));\n";
-          return;
-        }
-        if (instruction.operands.size() == 1 &&
-            instruction.operands.front().kind == MirOperandKind::Value &&
             instruction.operands.front().type.kind == SemanticType::Class) {
           const auto *sourceValue =
               facts.body.findValue(instruction.operands.front().value);
@@ -34300,9 +34246,7 @@ private:
               const bool consumed = definition->operands[index].type.kind ==
                                         SemanticType::Class ||
                                     definition->operands[index].type.kind ==
-                                        SemanticType::UniqueOwner ||
-                                    definition->operands[index].type.kind ==
-                                        SemanticType::PrefixStorage;
+                                        SemanticType::UniqueOwner;
               if (consumed) {
                 output << "std::move(";
               }
@@ -34579,7 +34523,6 @@ private:
         !storedValue->info.traits.copyable &&
         storedValue->info.type == instruction.operands.front().type;
     const bool movedOperand =
-        instruction.operands.front().type.kind == SemanticType::PrefixStorage ||
         instruction.operands.front().type.kind == SemanticType::UniqueOwner ||
         moveOnlyValueInitialization ||
         (instruction.operands.front().kind == MirOperandKind::Value &&
@@ -35153,21 +35096,6 @@ private:
           output << "// load " << *instruction.result
                  << " rejoins the fused closure chain\n";
         }
-        return;
-      }
-    }
-    if (instruction.kind == MirInstructionKind::Load &&
-        instruction.operands.size() == 1 &&
-        instruction.operands.front().place != 0) {
-      if (const MirPlace *place =
-              facts.body.findPlace(instruction.operands.front().place);
-          place != nullptr &&
-          (place->type.kind == SemanticType::PrefixStorage)) {
-        // The staged storage never materializes; the storage-intrinsic
-        // call spells the place lvalue directly.
-        writeIndent();
-        output << "// load " << (instruction.result ? *instruction.result : 0)
-               << " stages a storage place\n";
         return;
       }
     }
@@ -35749,9 +35677,7 @@ private:
           const bool consumed =
               instruction.operands[index].type.kind == SemanticType::Class ||
               instruction.operands[index].type.kind ==
-                  SemanticType::UniqueOwner ||
-              instruction.operands[index].type.kind ==
-                  SemanticType::PrefixStorage;
+                  SemanticType::UniqueOwner;
           if (consumed) {
             output << "std::move(";
           }
@@ -35800,9 +35726,7 @@ private:
           const bool consumed =
               instruction.operands[index].type.kind == SemanticType::Class ||
               instruction.operands[index].type.kind ==
-                  SemanticType::UniqueOwner ||
-              instruction.operands[index].type.kind ==
-                  SemanticType::PrefixStorage;
+                  SemanticType::UniqueOwner;
           if (consumed) {
             output << "std::move(";
           }
@@ -36096,9 +36020,7 @@ private:
           const bool consumed =
               instruction.operands[index].type.kind == SemanticType::Class ||
               instruction.operands[index].type.kind ==
-                  SemanticType::UniqueOwner ||
-              instruction.operands[index].type.kind ==
-                  SemanticType::PrefixStorage;
+                  SemanticType::UniqueOwner;
           if (consumed) {
             output << "std::move(";
           }
@@ -36200,9 +36122,7 @@ private:
           const bool consumed =
               instruction.operands[index].type.kind == SemanticType::Class ||
               instruction.operands[index].type.kind ==
-                  SemanticType::UniqueOwner ||
-              instruction.operands[index].type.kind ==
-                  SemanticType::PrefixStorage;
+                  SemanticType::UniqueOwner;
           if (consumed) {
             output << "std::move(";
           }
@@ -36360,8 +36280,7 @@ private:
       return;
     }
     if (instruction.kind != MirInstructionKind::CallInput &&
-        instruction.kind != MirInstructionKind::Call &&
-        instruction.kind != MirInstructionKind::StorageConstructPreflight) {
+        instruction.kind != MirInstructionKind::Call) {
       emitPlainInstruction(block, instruction, facts);
       return;
     }
@@ -39508,10 +39427,6 @@ private:
            (producer->intrinsic == IntrinsicKind::AllocateUniqueOwner &&
             producer->objectAllocation == 0 &&
             !scalarUniqueAllocation(*producer)) ||
-           // Plain prefix allocation uses the compatibility helper, which
-           // terminates on exhaustion before publishing its result.
-           (!failureForm &&
-            producer->intrinsic == IntrinsicKind::AllocatePrefixStorage) ||
            (!failureForm && storageBoundsCheckCall(*producer)))) {
         // The fused literal or template callee contains its failure
         // terminally; the edge is a plain goto and the else block never
@@ -39679,7 +39594,6 @@ private:
           (producer->kind == MirInstructionKind::Load ||
            producer->kind == MirInstructionKind::Borrow ||
            producer->kind == MirInstructionKind::AllocateObject ||
-           producer->kind == MirInstructionKind::StorageConstructPreflight ||
            producer->kind == MirInstructionKind::Assign) &&
           producer->localFailureSites.size() == 1;
       const bool storageDetector =
@@ -40306,8 +40220,7 @@ private:
                       }
                       const bool consumed =
                           operand.type.kind == SemanticType::Class ||
-                          operand.type.kind == SemanticType::UniqueOwner ||
-                          operand.type.kind == SemanticType::PrefixStorage;
+                          operand.type.kind == SemanticType::UniqueOwner;
                       if (consumed) {
                         output << "std::move(";
                       }
@@ -40360,8 +40273,7 @@ private:
                     }
                     const bool consumed =
                         operand.type.kind == SemanticType::Class ||
-                        operand.type.kind == SemanticType::UniqueOwner ||
-                        operand.type.kind == SemanticType::PrefixStorage;
+                        operand.type.kind == SemanticType::UniqueOwner;
                     if (consumed) {
                       output << "std::move(";
                     }
@@ -41148,8 +41060,7 @@ private:
       }
       const bool consumed =
           instruction.operands[index].type.kind == SemanticType::Class ||
-          instruction.operands[index].type.kind == SemanticType::UniqueOwner ||
-          instruction.operands[index].type.kind == SemanticType::PrefixStorage;
+          instruction.operands[index].type.kind == SemanticType::UniqueOwner;
       if (consumed) {
         output << "std::move(";
       }
@@ -46310,18 +46221,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                         return row.type == function->returnType &&
                                !row.spelling.empty();
                       });
-      // Private storage has a failure-free empty handle representation.
-      // Callers default-initialize that handle; only a successful MIR Return
-      // transfers into it. Element lifetime and failure cleanup remain MIR's.
-      const bool exactStorageResult =
-          returnKind && *returnKind == CppMirTypeRepresentationKind::Storage &&
-          std::any_of(
-              representations_.types().begin(), representations_.types().end(),
-              [&](const CppMirTypeRepresentation &row) {
-                return row.type == function->returnType &&
-                       row.kind == CppMirTypeRepresentationKind::Storage &&
-                       !row.spelling.empty();
-              });
       const bool exactLambdaResult =
           returnKind && *returnKind == CppMirTypeRepresentationKind::Lambda &&
           std::any_of(representations_.types().begin(),
@@ -46383,7 +46282,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            // A passive fixed array is also default-constructible and
            // assignable through the ordinary typed out-parameter.
            *returnKind != CppMirTypeRepresentationKind::FixedArray &&
-           !exactStorageResult &&
            *returnKind != CppMirTypeRepresentationKind::Void &&
            // A loan-returning body publishes through a `T **`
            // out-parameter (ADR 018 §5); its Return-with-loan rule and
@@ -46769,8 +46667,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const bool optionalRead =
           optionalStorageReadIntrinsic(discharged->intrinsic);
       if (producedCallResultLoan(body, *discharged) == nullptr ||
-          (loanSource->type.kind != SemanticType::PrefixStorage &&
-           !optionalStorageType(program_, loanSource->type)) ||
+          (!optionalStorageType(program_, loanSource->type)) ||
           loanSource->type.arguments.empty() ||
           discharged->operands.size() != (optionalRead ? 1 : 2) ||
           discharged->info.type != loanSource->type.arguments.front()) {
@@ -46781,8 +46678,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     } else if (checkedStorageRead != nullptr) {
       const bool optionalRead =
           optionalStorageReadIntrinsic(checkedStorageRead->intrinsic);
-      if ((loanSource->type.kind != SemanticType::PrefixStorage &&
-           !optionalStorageType(program_, loanSource->type)) ||
+      if ((!optionalStorageType(program_, loanSource->type)) ||
           loanSource->type.arguments.empty() ||
           checkedStorageRead->operands.size() != (optionalRead ? 1 : 2) ||
           checkedStorageRead->info.type != loanSource->type.arguments.front()) {
@@ -48582,7 +48478,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              (instruction.intrinsic == IntrinsicKind::None ||
               (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
                instruction.objectAllocation != 0) ||
-              instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
               instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
               optionalStorageIntrinsic(instruction.intrinsic))) ||
             consumingFailureConstructor ||
@@ -48628,11 +48523,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // staged callable's deferred spelling stays exact. Lifecycle and
         // EndBorrow spell as comments and touch no state, so they are
         // equally inert inside the window.
-        const bool storagePreflight =
-            instruction.kind == MirInstructionKind::StorageConstructPreflight &&
-            mirStorageConstructForPreflight(body, instruction.id) != nullptr;
-        if (!consumingCall && !storagePreflight &&
-            !independentNonRaisingConstruction && !independentScalarTemporary &&
+        if (!consumingCall && !independentNonRaisingConstruction &&
+            !independentScalarTemporary &&
             (instruction.kind != MirInstructionKind::CallInput &&
              instruction.kind != MirInstructionKind::Load &&
              instruction.kind != MirInstructionKind::Compute &&
@@ -48645,25 +48537,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           }
         }
-        if (!consumingCall && !storagePreflight &&
-            referencesPendingStaged(instruction)) {
+        if (!consumingCall && referencesPendingStaged(instruction)) {
           {
             return false;
           }
         }
       }
       switch (instruction.kind) {
-      case MirInstructionKind::StorageConstructPreflight:
-        if (!failureForm ||
-            mirStorageConstructForPreflight(body, instruction.id) == nullptr ||
-            (instruction.operands.size() != 1 &&
-             instruction.operands.size() != 2) ||
-            storageStagedPlace(body, instruction.operands.front()) == nullptr ||
-            instruction.localFailureSites.size() != 1 ||
-            program_.failureMetadata().findSite(
-                instruction.localFailureSites.front()) == nullptr)
-          return false;
-        continue;
       case MirInstructionKind::CleanupBeforeAssign:
         if (!instruction.destination || !instruction.replacementCleanup ||
             (!instruction.definedFailure.empty() &&
@@ -49142,21 +49022,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                               source->type)) {
           {
             return false;
-          }
-        }
-        if (source->type.kind == SemanticType::PrefixStorage) {
-          // A storage-sourced loan publishes a discharged read's element;
-          // the pairing, the staged storage place, and the element type
-          // row must all resolve or the body declines.
-          const MirInstruction *read =
-              pairedDischargedRead(body, loan->producedBy);
-          if (read == nullptr || read->operands.size() != 2 ||
-              storageStagedPlace(body, read->operands.front()) == nullptr ||
-              source->type.arguments.empty() ||
-              !typeRow(source->type.arguments.front())) {
-            {
-              return false;
-            }
           }
         }
         continue;
@@ -51225,7 +51090,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 break;
               case CppMirTypeRepresentationKind::Scalar:
               case CppMirTypeRepresentationKind::StringView:
-              case CppMirTypeRepresentationKind::Storage:
                 returnReady = typeRow(target->returnType);
                 break;
               case CppMirTypeRepresentationKind::FixedArray:
@@ -52219,7 +52083,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         continue;
       }
       if (producer->kind == MirInstructionKind::AllocateObject ||
-          producer->kind == MirInstructionKind::StorageConstructPreflight ||
           producer->kind == MirInstructionKind::InitializeBase ||
           producer->kind == MirInstructionKind::CleanupBeforeAssign ||
           (producer->intrinsic == IntrinsicKind::AllocateUniqueOwner &&
@@ -52282,8 +52145,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                            *producer) ||
             terminallyContainedMemberCallee(program_, representations_,
                                             *producer))) ||
-          (!failureForm &&
-           producer->intrinsic == IntrinsicKind::AllocatePrefixStorage) ||
           (!failureForm && storageBoundsCheckCall(*producer))) {
         // These are compatibility containment points, not explicit MIR
         // propagation. They remain valid only in a plain compatibility

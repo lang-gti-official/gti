@@ -558,15 +558,14 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   for unsupported storage and escape; mutation or movement of their source
   owner while live remains `GTI-S2017`.
 - `GTI-S2019` owns invalid payloads of declaration-bound private storage.
-  Prefix storage rejects borrowed-state elements even when empty;
-  optional storage additionally requires move construction and excludes void,
+  Optional storage requires move construction and excludes void,
   references and raw-pointer payloads. This boundary does not require move
   assignment. Point at the concrete payload type, or retain the precise user
   instantiation as related information when the private field is instantiated
   from library source. Name the concrete payload and explain that this storage
   does not retain external-owner dependencies. No fix-it chooses a different
-  ownership model. Source-defined sparse storage instead expresses its payload
-  boundary through the ordinary `storage_element<T>` constraint and receives
+  ownership model. Source-defined sparse and prefix storage instead express their payload
+  boundary through ordinary `storage_element<T>`/`vector_element<T>` constraints and receive
   `GTI-S2029` on an unsupported application. Invalid storage must not reach
   `GTI-B0001`.
 - `GTI-S2018` owns an unavailable copy, move, or ownership transfer at a

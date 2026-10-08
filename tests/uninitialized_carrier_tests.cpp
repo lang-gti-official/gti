@@ -159,7 +159,7 @@ int main() {
                   lang::FailurePropagationKind::Destructor;
               break;
             case 3:
-              instruction.storagePreflight = instruction.id;
+              instruction.objectAllocation = instruction.id;
               break;
             }
             changed = true;

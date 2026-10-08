@@ -64,9 +64,8 @@ void testPreparedPrefixConstructor() {
         const auto &body = function.body;
         const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                            .owner = function.id};
-        expect(call.storagePreflight == 0 &&
-                   call.unsafeOperation ==
-                       lang::UnsafeOperationKind::ObjectLifetime,
+        expect(call.unsafeOperation ==
+                   lang::UnsafeOperationKind::ObjectLifetime,
                "prefix policy uses general construction without private "
                "preflight");
         for (std::size_t index = 0; index < call.operands.size(); ++index) {
@@ -103,8 +102,8 @@ void testPreparedPrefixConstructor() {
         };
         reject([](auto &, auto &value) { value.callSite = 0; },
                "construction cannot erase ordered call identity");
-        reject([](auto &, auto &value) { value.storagePreflight = value.id; },
-               "construction cannot invent retired storage authority");
+        reject([](auto &, auto &value) { value.objectAllocation = value.id; },
+               "construction cannot invent unrelated allocation authority");
         reject([](auto &, auto &value) { value.constructorTarget.reset(); },
                "construction cannot lose its selected constructor");
         reject(
@@ -262,14 +261,13 @@ void testSparseFinalAddressConstructor() {
         ++checked;
         const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                            .owner = function.id};
-        expect(call.storagePreflight == 0 &&
-                   call.unsafeOperation ==
+        expect(call.unsafeOperation ==
                        lang::UnsafeOperationKind::ObjectLifetime &&
                    !call.parameterTypes.empty() &&
                    call.parameterTypes.front().kind ==
                        lang::SemanticType::RawPointer,
                "source sparse policy uses general typed construction without "
-               "private container preflight authority");
+               "private allocation authority");
         const auto emitted = lang::CppMirBodyEmitter(frontend.mir, map)
                                  .emitFailureBodyText(address, "sparse", 1);
         expect(emitted.emitted() &&
@@ -292,8 +290,8 @@ void testSparseFinalAddressConstructor() {
                  "sparse backend admission independently rejects the forged "
                  "contract");
         };
-        reject([](auto &call) { call.storagePreflight = call.id; },
-               "raw construction cannot invent container preflight authority");
+        reject([](auto &call) { call.objectAllocation = call.id; },
+               "raw construction cannot invent allocation authority");
         reject(
             [](auto &call) {
               call.unsafeOperation = lang::UnsafeOperationKind::None;

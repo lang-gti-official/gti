@@ -268,7 +268,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v96 valid=" << program.valid() << '\n';
+    output << "mir-v97 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -784,7 +784,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v80\n";
+    output << "mir-body-v81\n";
     body(value, 0);
     return output.str();
   }
@@ -1610,8 +1610,7 @@ private:
     }
     output << " constructor=";
     optional(value.constructorTarget);
-    output << " object-allocation=" << value.objectAllocation
-           << " storage-preflight=" << value.storagePreflight;
+    output << " object-allocation=" << value.objectAllocation;
     output << " body-target=";
     if (value.bodyTarget) {
       output << number(value.bodyTarget->kind) << ':'

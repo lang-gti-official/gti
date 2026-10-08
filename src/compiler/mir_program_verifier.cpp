@@ -760,7 +760,6 @@ conditionalCapabilities(const MirProgram &program, const SemanticType &type,
     return std::nullopt;
   if (type.kind == SemanticType::Array ||
       type.kind == SemanticType::UniqueOwner ||
-      type.kind == SemanticType::PrefixStorage ||
       type.kind == SemanticType::Expected ||
       type.kind == SemanticType::Unexpected) {
     if (type.arguments.empty())
@@ -795,13 +794,6 @@ conditionalCapabilities(const MirProgram &program, const SemanticType &type,
 
 [[nodiscard]] bool storageOwnershipTypeValid(const MirProgram &program,
                                              const SemanticType &type) {
-  if (type.kind == SemanticType::PrefixStorage) {
-    const auto traits =
-        type.arguments.size() == 1
-            ? storagePayloadTraits(program, type.arguments.front())
-            : std::nullopt;
-    return traits && !traits->containsBorrowedState;
-  }
   if (type.kind == SemanticType::Class)
     return true; // The exact class's declared fields are checked separately.
   return std::all_of(type.arguments.begin(), type.arguments.end(),
@@ -2339,8 +2331,6 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
       const bool removal =
           instruction.kind == MirInstructionKind::Call &&
           (instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
-           instruction.intrinsic == IntrinsicKind::PrefixStoragePop ||
-           instruction.intrinsic == IntrinsicKind::PrefixStorageErase ||
            instruction.intrinsic == IntrinsicKind::OptionalStorageReset);
       if (removal && !instruction.operands.empty()) {
         const SemanticType &parameter = instruction.operands.front().type;
@@ -2349,15 +2339,13 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                     parameter.arguments.size() == 1
                 ? parameter.arguments.front()
                 : parameter;
-        const auto expectedKind =
-            instruction.intrinsic == IntrinsicKind::ObjectDestroy
-                ? SemanticType::RawPointer
-                : SemanticType::PrefixStorage;
         const bool optionalStorage =
             instruction.intrinsic == IntrinsicKind::OptionalStorageReset &&
             exactMirCapabilityClass(
                 program, storage, CompilerCapabilityTypeKind::OptionalStorage);
-        if ((storage.kind == expectedKind || optionalStorage) &&
+        if (((instruction.intrinsic == IntrinsicKind::ObjectDestroy &&
+              storage.kind == SemanticType::RawPointer) ||
+             optionalStorage) &&
             storage.arguments.size() == 1) {
           elementCleanup =
               mirUniqueCleanupType(program, storage.arguments.front());
@@ -2370,15 +2358,6 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             instruction.id);
       }
       if (removal) {
-        if (elementCleanup &&
-            instruction.intrinsic == IntrinsicKind::PrefixStorageErase &&
-            !mirTypeRelocationIsDefinedFailureFree(program,
-                                                   elementCleanup->type)) {
-          return verificationFailure(
-              body, owner,
-              "element erase lacks failure-free generated relocation", block.id,
-              instruction.id);
-        }
         const auto propagation =
             elementCleanup &&
                     mirDropMayRaiseDefinedFailure(program, *elementCleanup)
@@ -2667,14 +2646,6 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           inPlaceArgumentOffset = 1;
           inPlaceStorageKind = SemanticType::RawPointer;
           break;
-        case IntrinsicKind::PrefixStorageAppend:
-          inPlaceArgumentOffset = 1;
-          inPlaceStorageKind = SemanticType::PrefixStorage;
-          break;
-        case IntrinsicKind::PrefixStorageInsert:
-          inPlaceArgumentOffset = 2;
-          inPlaceStorageKind = SemanticType::PrefixStorage;
-          break;
         case IntrinsicKind::OptionalStorageConstruct:
           inPlaceArgumentOffset = 1;
           inPlaceStorageKind = SemanticType::Class;
@@ -2712,12 +2683,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             instruction.parameterTypes.size() == storageArgumentCount &&
             instruction.constructorKind == ConstructorKind::Ordinary;
         const bool requiredOrdinaryTarget =
-            (rawConstruction ||
-             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
-            (rawConstruction || instruction.storagePreflight != 0 ||
-             std::all_of(
-                 instruction.parameterTypes.begin() + storageArgumentCount,
-                 instruction.parameterTypes.end(), isPassiveScalarValueType)) &&
+            rawConstruction &&
             (instruction.parameterTypes.size() != storageArgumentCount ||
              (elementOwner != program.classInstances().end() &&
               elementOwner->defaultConstructor ==
@@ -2728,7 +2694,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
              (exactDefault &&
               elementOwner->generatedDefaultRequiresSchedule))) {
           return verificationFailure(body, owner,
-                                     "prefix construction is missing "
+                                     "in-place construction is missing "
                                      "its exact constructor target",
                                      block.id, instruction.id);
         }
@@ -2746,14 +2712,11 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
         if (inPlaceArgumentOffset) {
           const MirClassInstance *constructorOwner =
               program.findClassInstance(constructorTarget->owner);
-          const bool hasIndex = *inPlaceArgumentOffset == 2;
           const bool exactStorageSurface =
               instruction.parameterTypes.size() >= *inPlaceArgumentOffset &&
               !instruction.parameterTypes.empty() &&
               instruction.parameterTypes.front().kind == inPlaceStorageKind &&
-              instruction.parameterTypes.front().arguments.size() == 1 &&
-              (!hasIndex ||
-               instruction.parameterTypes[1] == SemanticType::UInt64);
+              instruction.parameterTypes.front().arguments.size() == 1;
           std::vector<SemanticType> constructorArguments;
           if (exactStorageSurface) {
             constructorArguments.assign(
@@ -2828,9 +2791,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             constructorTarget->mayRaiseDefinedFailure
                 ? FailurePropagationKind::Constructor
                 : FailurePropagationKind::None;
-        if (instruction.kind == MirInstructionKind::Call &&
-            (rawConstruction ||
-             instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
+        if (instruction.kind == MirInstructionKind::Call && rawConstruction &&
             !instruction.parameterTypes.empty() &&
             instruction.constructorKind == ConstructorKind::Ordinary &&
             (instruction.operands.size() != instruction.parameterTypes.size() ||
@@ -2840,15 +2801,10 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          constructorTarget->parameterTypes.end(),
                          instruction.parameterTypes.begin() +
                              storageArgumentCount) ||
-             (rawConstruction ? instruction.storagePreflight != 0
-                              : instruction.storagePreflight == 0 ||
-                                    mirStorageConstructForPreflight(
-                                        body, instruction.storagePreflight) !=
-                                        &instruction) ||
              instruction.definedFailure.propagation != expectedPropagation)) {
           return verificationFailure(
               body, owner,
-              "prefix construction does not match its exact "
+              "in-place construction does not match its exact "
               "constructor failure and ownership contract",
               block.id, instruction.id);
         }
@@ -5342,7 +5298,6 @@ verifyMirPayloadEnums(const MirProgram &program) {
     switch (type.kind) {
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
-    case SemanticType::PrefixStorage:
       return true;
     case SemanticType::Array:
     case SemanticType::Unexpected:
@@ -8369,9 +8324,7 @@ exactRestoringIndexedSwapContract(const MirProgram &program,
       reference.arguments.size() != 1)
     return false;
   const auto &storage = reference.arguments.front();
-  if ((storage.kind != SemanticType::Array &&
-       storage.kind != SemanticType::PrefixStorage) ||
-      storage.arguments.size() != 1 ||
+  if (storage.kind != SemanticType::Array || storage.arguments.size() != 1 ||
       mirTypeRelocationKind(program, storage.arguments.front()) ==
           RelocationKind::Unavailable ||
       !mirTypeRelocationIsDefinedFailureFree(program,
@@ -8917,7 +8870,7 @@ exactOptionalStorageIntrinsicContract(const MirProgram &program,
            noLoanResult() && noFailure();
   case IntrinsicKind::OptionalStorageReset:
     // Removal uses the same independently verified element cleanup recipe as
-    // raw objects and prefix storage. It has no local failure: any failure
+    // general raw object destruction. It has no local failure: any failure
     // retains the original destructor's identity and propagates through this
     // call.
     return instruction.lifecycle.empty() && instruction.operands.size() == 1 &&
@@ -10768,7 +10721,6 @@ verifyMirProgramContracts(const MirProgram &program) {
     switch (type.kind) {
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
-    case SemanticType::PrefixStorage:
       return true;
     case SemanticType::Array:
     case SemanticType::Unexpected:

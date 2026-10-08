@@ -211,11 +211,10 @@ synchronization.
 body-local abstract interpreter that propagates checked fixed-width integer
 intervals through CFG edges, refines those intervals from branch predicates,
 tracks fixed-array extents and one scalar element envelope per non-escaping
-fixed-array root, and tracks the supported private prefix-storage facts.
-Sparse live-slot bookkeeping is now ordinary source code: the retired private
-storage initialized-set lattice and `StorageState` discharge proof do not apply
-to it. General raw lifetime calls and unsupported source state checks remain
-conservative barriers; no automatic sparse-state optimization is claimed.
+fixed-array root. Sparse and prefix bookkeeping are ordinary source code:
+the private initialized-set and prefix capacity/length/content lattices are
+retired. General raw lifetime calls and unsupported source state checks remain
+conservative barriers; no automatic container-state optimization is claimed.
 It is a client of the shared deterministic monotone forward-dataflow solver;
 its typed lattice, join, and bounded widening remain safety-analysis policy.
 Unknown or opaque calls, raw/unsafe memory effects, escaping roots, aliasing
@@ -271,10 +270,6 @@ The admitted operations are deliberately narrow:
   chain: each nonterminal index is checked against its own sibling array
   place's extent, and an unresolved or unproven dimension anywhere leaves the
   site checked;
-- private prefix-storage reads whose storage origin and scalar index origin
-  exactly match an earlier successful logical-size check derived from that
-  same storage's length, with no intervening storage mutation, index write,
-  aliasing write, opaque call, or control-flow path lacking the check;
 - checked integer add, subtract, multiply, and unary negate whose complete
   operand intervals prove the result remains in the declared GTI domain; and
 - public logical-size checks whose integer intervals prove
@@ -287,15 +282,13 @@ The admitted operations are deliberately narrow:
 The whole-program `analyzeMirClosedCallSafetyChecks` layer adds one bounded
 contextual family. It starts from executable/module initialization roots and
 propagates exact scalar arguments and returns, mutable receiver/argument object
-fields, private prefix-storage capacity/length/content, and structurally
-admitted indexed-container element envelopes through concrete source-defined
-static calls and constructors. Indexed elements are admitted only when every
-relevant `operator[]` body is verified to return the exact receiver-owned
-prefix-storage element loan through one matching field path; public names never
-participate. A scalar fact returned by reference crosses the call boundary only
-when the returned loan identifies one exact prefix-read producer with the same
-source and access. Prefix length is always constrained to the storage invariant
-`0 <= length <= capacity`; contradictory abstract facts fail closed. Contexts
+fields and direct-index aggregate element envelopes through concrete
+source-defined static calls and constructors. Public container names never
+participate. The retired private prefix accessor/borrowed-return profile does
+not infer summaries for source-defined raw-address owners. Such calls remain
+conservative until their general effects, provenance and value facts are
+represented and independently replayable; native optimization is not GTI proof.
+Contexts
 join monotonically and use the same typed integer/object widening policy as the
 body-local client after four prior per-body context updates. The global
 32-round limit and per-body eight-update limit remain fail-closed budgets; a

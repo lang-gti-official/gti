@@ -3347,15 +3347,14 @@ void testMirEffectClassification() {
 
   const lang::MirEffectTraits allocation = lang::effects(lang::MirInstruction{
       .kind = lang::MirInstructionKind::Call,
-      .intrinsic = lang::IntrinsicKind::AllocatePrefixStorage});
+      .intrinsic = lang::IntrinsicKind::AllocateUniqueOwner});
   expect(allocation.allocates && allocation.invokesRuntime &&
              allocation.writesUnknownMemory && allocation.mayTrap &&
              allocation.maySynchronize,
          "runtime intrinsics should expose allocation and possible "
          "synchronization effects");
-  expect(
-      lang::effects(lang::IntrinsicKind::AllocatePrefixStorage).maySynchronize,
-      "intrinsic summaries should expose possible runtime synchronization");
+  expect(lang::effects(lang::IntrinsicKind::AllocateUniqueOwner).maySynchronize,
+         "intrinsic summaries should expose possible runtime synchronization");
 
   for (const lang::IntrinsicKind guard :
        {lang::IntrinsicKind::RequireVacantStorage,
@@ -3737,7 +3736,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v80\n") &&
+  expect(dump.starts_with("mir-body-v81\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&

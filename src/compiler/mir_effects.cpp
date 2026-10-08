@@ -85,9 +85,6 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .dropsValue = true,
                     .invokesUserCode = true}, // CleanupBeforeAssign.
-    MirEffectTraits{.readsPlace = true,
-                    .mayTrap = true,
-                    .dependsOnLoan = true}, // StorageConstructPreflight.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -184,67 +181,6 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // StorageBoundsCheck: a pure comparison over two staged scalars whose
     // only effect is the defined-failure trap on an out-of-bounds index.
     MirEffectTraits{.mayTrap = true},
-    // AllocatePrefixStorage
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .allocates = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .initializesValue = true},
-    // PrefixStorageAppend
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .initializesValue = true,
-                    .invokesUserCode = true},
-    // PrefixStoragePop
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .dropsValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageRead
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .startsLoan = true},
-    // PrefixStorageReadMut
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .startsLoan = true},
-    // PrefixStorageLength
-    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
-    // PrefixStorageRelocate
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageInsert
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .initializesValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageErase
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .dropsValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageTextView: a read-only owner-dependent view over the live
-    // character prefix.
-    MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
-    // PrefixStorageCString: a read-only owner-dependent NUL-terminated view.
-    MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
-    // PrefixStorageTryCString: validates the logical prefix before producing
-    // the same owner-dependent view, or a null value.
-    MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
     // OptionalStorageHasValue: a pure read of inline engagement state.
     MirEffectTraits{
         .readsPlace = true, .removableWhenUnused = true, .reorderable = true},
@@ -482,7 +418,6 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "allocate-object",
     "initialize-base",
     "cleanup-before-assign",
-    "storage-construct-preflight",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -564,18 +499,6 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "integer-checked-subtract",
     "integer-checked-multiply",
     "storage-bounds-check",
-    "allocate-prefix-storage",
-    "prefix-storage-append",
-    "prefix-storage-pop",
-    "prefix-storage-read",
-    "prefix-storage-read-mut",
-    "prefix-storage-length",
-    "prefix-storage-relocate",
-    "prefix-storage-insert",
-    "prefix-storage-erase",
-    "prefix-storage-text-view",
-    "prefix-storage-c-string",
-    "prefix-storage-try-c-string",
     "optional-storage-has-value",
     "optional-storage-construct",
     "optional-storage-read",
@@ -1023,11 +946,8 @@ struct ExactTargets {
            .owner = static_cast<std::size_t>(destructor)});
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
-             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
-              instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
-             instruction.constructorTarget &&
-             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
-              instruction.storagePreflight != 0)) {
+             instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+             instruction.constructorTarget) {
     // The sealed slot operation also executes the exact source constructor;
     // retain its memory, synchronization and escape effects in the shared
     // interprocedural analysis rather than treating it as only a helper.
@@ -1369,8 +1289,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       result.requiresActiveCleanup = !result.aggregate.empty();
       return result;
     }
-    if ((selected.kind == SemanticType::UniqueOwner ||
-         selected.kind == SemanticType::PrefixStorage) &&
+    if (selected.kind == SemanticType::UniqueOwner &&
         selected.arguments.size() == 1) {
       const auto &value = selected.arguments.front();
       if ((value.kind >= SemanticType::Int8 &&
@@ -1383,14 +1302,6 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
           (value.kind == SemanticType::Enum &&
            program.findPayloadEnum(value) == nullptr)) {
         return MirDropType{.type = selected, .requiresActiveCleanup = true};
-      }
-      if (selected.kind == SemanticType::PrefixStorage) {
-        auto element = self(self, value);
-        if (!element)
-          return std::nullopt;
-        return MirDropType{.type = selected,
-                           .aggregate = {*element},
-                           .requiresActiveCleanup = true};
       }
       const auto *pointee = classFor(selected.arguments.front());
       if (pointee == nullptr)
@@ -1813,17 +1724,6 @@ exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
   }
   if (result && targets.nativeCleanup)
     result->traits.invokesRuntime = true;
-  if (result && instruction.kind == MirInstructionKind::Call &&
-      instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) {
-    // This invocation is the complete slot operation, not just its selected
-    // constructor. The constructor receiver denotes the new element, whereas
-    // the instruction argument denotes its backing storage. Retain the
-    // authoritative intrinsic effects and conservatively map any escape to
-    // that storage rather than exposing the constructor's receiver ABI.
-    result->traits = merge(result->traits, effects(instruction));
-    result->receiverEscapes = false;
-    result->argumentsEscape.assign(instruction.operands.size(), true);
-  }
   if (result)
     result->traits = cleanupEffects(result->traits, targets);
   return result;

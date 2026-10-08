@@ -642,8 +642,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
               : nullptr;
       const bool inPlace =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
-          value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-          value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
       bool exactResult = owner != nullptr && value.info.type == owner->type &&
                          value.intrinsic == IntrinsicKind::None;
@@ -659,15 +657,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             storage.arguments.front() == owner->type &&
             (value.intrinsic == IntrinsicKind::ObjectConstruct
                  ? storage.kind == SemanticType::RawPointer
-             : value.intrinsic == IntrinsicKind::OptionalStorageConstruct
-                 ? storageOwner != nullptr &&
+                 : storageOwner != nullptr &&
                        storageOwner->compilerCapability ==
-                           CompilerCapabilityTypeKind::OptionalStorage
-                 : storage.kind == SemanticType::PrefixStorage);
+                           CompilerCapabilityTypeKind::OptionalStorage);
       }
       const auto propagation =
-          value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
-                  value.intrinsic == IntrinsicKind::OptionalStorageConstruct
+          value.intrinsic == IntrinsicKind::OptionalStorageConstruct
               ? FailurePropagationKind::None
               : FailurePropagationKind::Constructor;
       // Concrete reanalysis owns generic argument substitution. The base
