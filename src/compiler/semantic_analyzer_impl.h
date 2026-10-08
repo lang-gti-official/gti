@@ -1853,13 +1853,6 @@ private:
   void analyzeSharedOwnerIntrinsicCall(const Call &expr,
                                        const CallableCandidate &declaration);
 
-  // The prefix-initialized storage family (P-STORAGE-01): the live
-  // elements always form the prefix [0, length). Construction appends
-  // exactly at the live length, destruction removes exactly the last live
-  // element, relocation transfers the complete prefix, and reads check the
-  // logical prefix.
-  void analyzePrefixStorageIntrinsicCall(const Call &expr,
-                                         IntrinsicKind intrinsic);
   void analyzeOptionalStorageIntrinsicCall(const Call &expr,
                                            IntrinsicKind intrinsic);
 
@@ -2542,15 +2535,13 @@ private:
   [[nodiscard]] std::optional<GenericParameterId>
   activeTypePackIdentity(const TypeRef &type) const;
 
-  void validateReferencePlacement(
-      const TypeRef &type, bool allowTopLevel, std::string_view context,
-      bool allowRvalueReference = false,
-      bool allowDefaultLibraryStorageReference = false,
-      bool typeMetadata = false, bool genericFunctionParameter = false);
+  void validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
+                                  std::string_view context,
+                                  bool allowRvalueReference = false,
+                                  bool typeMetadata = false,
+                                  bool genericFunctionParameter = false);
 
-  void
-  validateReferenceReferent(const SemanticType &type, const Token &site,
-                            bool allowDefaultLibraryStorageReference = false);
+  void validateReferenceReferent(const SemanticType &type, const Token &site);
 
   [[nodiscard]] bool containsOwningPayloadEnum(const SemanticType &type) const;
 

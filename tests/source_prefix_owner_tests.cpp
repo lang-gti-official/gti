@@ -33,13 +33,20 @@ int main() {
     std::cerr << lang::MirPrinter().print(frontend.mir);
     return 1;
   }
-  for (const auto &owner : frontend.mir.classInstances())
-    if (owner.compilerCapability ==
-        lang::CompilerCapabilityTypeKind::PrefixStorage) {
-      std::cerr << "source prefix unexpectedly acquired legacy capability "
+  for (const auto &owner : frontend.mir.classInstances()) {
+    const auto source = std::find_if(
+        frontend.hir.classInstances().begin(),
+        frontend.hir.classInstances().end(),
+        [&](const auto &candidate) { return candidate.id == owner.id; });
+    if (source != frontend.hir.classInstances().end() && source->source &&
+        (source->source->name().lexeme == "prefix_owner" ||
+         source->source->name().lexeme == "prefix_slots") &&
+        owner.compilerCapability != lang::CompilerCapabilityTypeKind::None) {
+      std::cerr << "source prefix unexpectedly acquired compiler capability "
                    "authority\n";
       return 1;
     }
+  }
   const auto cpp = gti_test::emitCppText(frontend);
   if (cpp.find("// GTI verified-MIR body:") == std::string::npos)
     return 1;

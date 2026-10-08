@@ -1104,6 +1104,7 @@ void testForwardListEmplacementPublication() {
 void testContainerSwapStorageAndMemberResults() {
   const auto frontend =
       analyzeWithStandardLibrary("container-swap-slots.gti", R"(
+#include <std/memory>
 #include <std/vector>
 #include <std/forward_list>
 class Item {
@@ -1114,7 +1115,12 @@ public:
   Item(Item&& other) = default;
   ~Item() { std::println(this.key); }
 };
+std::detail::prefix_owner<Item> make_storage() {
+  mut std::detail::prefix_owner<Item> result{uint64_t(1)};
+  return std::move(result);
+}
 int main() {
+  auto storage = make_storage();
   mut std::vector<Item> a = std::vector<Item>();
   mut std::vector<Item> b = std::vector<Item>();
   a.push_back(Item(1));
@@ -1141,17 +1147,25 @@ int main() {
     for (const auto &function : frontend.mir.functionInstances()) {
       const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                          .owner = function.id};
-      if (function.returnType.kind == lang::SemanticType::PrefixStorage &&
+      const bool sourcePrefixOwner = std::any_of(
+          frontend.hir.classInstances().begin(),
+          frontend.hir.classInstances().end(), [&](const auto &owner) {
+            return owner.type == function.returnType && owner.source &&
+                   owner.source->name().lexeme == "prefix_owner";
+          });
+      if (sourcePrefixOwner &&
           function.definitionKind == lang::MirDefinitionKind::Source) {
         ++storageReturns;
-        expect(emitter.supportsFailureBodyText(address),
-               "private storage returns must use the explicit status ABI");
+        expect(
+            emitter.supportsFailureBodyText(address),
+            "ordinary move-only storage returns use the explicit status ABI");
         const auto text =
             emitter.emitFailureBodyText(address, "storage-return-test", 1);
         expect(text.emitted() &&
-                   text.text.find("*__gti_mir_out_result = std::move(") !=
+                   text.text.find("construct_representation_at("
+                                  "__gti_mir_out_result, std::move(") !=
                        std::string::npos,
-               "storage publication must transfer rather than copy a handle");
+               "ordinary storage publication move-constructs the output slot");
         auto missing = rows;
         std::erase_if(missing.types, [&](const auto &row) {
           return row.type == function.returnType;
@@ -2640,35 +2654,24 @@ int main() {
     Element* address = nullptr;
     std::construct_at(address);
   }
-  mut auto appended = gti_internal::allocate_prefix_storage<Element>(uint64_t(1));
-  gti_internal::prefix_storage_append(appended);
-  mut auto inserted = gti_internal::allocate_prefix_storage<Element>(uint64_t(1));
-  gti_internal::prefix_storage_insert(inserted, uint64_t(0));
+  mut std::detail::prefix_owner<Element> appended{uint64_t(1)};
+  appended.append();
+  mut std::detail::prefix_owner<Element> inserted{uint64_t(1)};
+  inserted.insert(uint64_t(0), Element());
   return 0;
 }
 )gti";
-  // Prefix storage is compiler-private. Register this mutation fixture as a
-  // trusted prelude overlay, exactly as analyzeTrustedPreludeFixture does;
-  // ordinary application sources must continue to reject these declarations.
-  const auto standardLibrary =
-      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  const auto inPlaceEntry = std::filesystem::temp_directory_path() /
-                            "gti-trusted-generated-in-place-obligation.gti";
-  const auto inPlace = lang::Frontend().analyze(
-      inPlaceEntry, inPlaceSource,
-      {standardLibrary / "prelude.gti", inPlaceEntry},
-      {{std::filesystem::weakly_canonical(inPlaceEntry).string(),
-        inPlaceSource}},
-      {standardLibrary});
+  // Source containers and direct raw construction share the same exact
+  // ObjectConstruct contract; no trusted fixture or container opcode exists.
+  const auto inPlace = analyzeWithStandardLibrary(
+      "generated-in-place-obligation.gti", inPlaceSource);
   if (!inPlace.canGenerateCode())
     for (const auto &diagnostic : inPlace.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(inPlace.canGenerateCode(),
          "raw and prefix default construction retain selected schedules");
   if (inPlace.canGenerateCode()) {
-    for (const auto intrinsic : {lang::IntrinsicKind::ObjectConstruct,
-                                 lang::IntrinsicKind::PrefixStorageAppend,
-                                 lang::IntrinsicKind::PrefixStorageInsert}) {
+    for (const auto intrinsic : {lang::IntrinsicKind::ObjectConstruct}) {
       rejectOrdinarySubstitute(inPlace.mir, intrinsic);
       auto absent = inPlace.mir;
       bool changed = false;

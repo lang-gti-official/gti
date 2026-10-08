@@ -2067,57 +2067,27 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           if (selectedConstructor())
             operation.propagation = FailurePropagationKind::Constructor;
           break;
-        case IntrinsicKind::AllocatePrefixStorage:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
-                            DefinedFailureDetail::PrivateStorage);
-          break;
-        case IntrinsicKind::PrefixStorageAppend:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::RelocationCapacity);
-          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
-                            DefinedFailureDetail::ElementConstruction);
-          // MIR checks capacity while prepared parameters are still owned by
-          // the caller, then transfers them into this exact final-slot ctor.
-          if (selectedConstructor()) {
-            operation.propagation = FailurePropagationKind::Constructor;
-          }
-          break;
-        case IntrinsicKind::PrefixStoragePop:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::UninitializedAccess);
-          break;
-        case IntrinsicKind::PrefixStorageRead:
-        case IntrinsicKind::PrefixStorageReadMut:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
-                            DefinedFailureDetail::PrivateStorage);
-          break;
-        case IntrinsicKind::PrefixStorageRelocate:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::RelocationCapacity);
-          addFailureOutcome(
-              operation, DefinedFailureCode::InvalidStorageState,
-              DefinedFailureDetail::OccupiedRelocationDestination);
-          break;
-        case IntrinsicKind::PrefixStorageInsert:
-          anchor(token);
-          addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
-                            DefinedFailureDetail::PrivateStorage);
-          addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
-                            DefinedFailureDetail::RelocationCapacity);
-          addFailureOutcome(operation, DefinedFailureCode::AllocationFailure,
-                            DefinedFailureDetail::ElementConstruction);
-          break;
-        case IntrinsicKind::PrefixStorageErase:
         case IntrinsicKind::RestoringIndexedSwap:
           anchor(token);
           addFailureOutcome(operation, DefinedFailureCode::IndexOutOfBounds,
                             DefinedFailureDetail::PrivateStorage);
           break;
+        // Transitional IR tags have no trusted source declarations after the
+        // prefix cutover. Keep this exhaustive switch fail-closed until those
+        // tags and their remaining IR consumers are removed together.
+        case IntrinsicKind::AllocatePrefixStorage:
+        case IntrinsicKind::PrefixStorageAppend:
+        case IntrinsicKind::PrefixStoragePop:
+        case IntrinsicKind::PrefixStorageRead:
+        case IntrinsicKind::PrefixStorageReadMut:
+        case IntrinsicKind::PrefixStorageLength:
+        case IntrinsicKind::PrefixStorageRelocate:
+        case IntrinsicKind::PrefixStorageInsert:
+        case IntrinsicKind::PrefixStorageErase:
+        case IntrinsicKind::PrefixStorageTextView:
+        case IntrinsicKind::PrefixStorageCString:
+        case IntrinsicKind::PrefixStorageTryCString:
+          throw std::logic_error("retired prefix intrinsic reached semantics");
         case IntrinsicKind::OptionalStorageConstruct:
           anchor(token);
           addFailureOutcome(operation, DefinedFailureCode::InvalidStorageState,
@@ -2131,10 +2101,6 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
           addFailureOutcome(operation, DefinedFailureCode::EmptyOwnerAccess,
                             DefinedFailureDetail::MemberAccess);
           break;
-        case IntrinsicKind::PrefixStorageLength:
-        case IntrinsicKind::PrefixStorageTextView:
-        case IntrinsicKind::PrefixStorageCString:
-        case IntrinsicKind::PrefixStorageTryCString:
         case IntrinsicKind::TextViewFromAddress:
         case IntrinsicKind::CStringFromAddress:
         case IntrinsicKind::OptionalStorageHasValue:
@@ -2955,12 +2921,7 @@ auto SemanticVisitor::Impl::isFunctionalLibraryUnit(
 
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
     const ClassInfo &owner) const -> bool {
-  return isDefaultLibraryMutexGuardCarrier(owner) ||
-         (isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
-          owner.storedReference->type.kind == SemanticType::Reference &&
-          !owner.storedReference->type.arguments.empty() &&
-          owner.storedReference->type.arguments.front().kind ==
-              SemanticType::PrefixStorage);
+  return isDefaultLibraryMutexGuardCarrier(owner);
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryMutexGuardCarrier(
@@ -8952,8 +8913,6 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   case IntrinsicKind::UniqueOwnerBorrow:
   case IntrinsicKind::UniqueOwnerBorrowMut:
   case IntrinsicKind::SharedOwnerBorrow:
-  case IntrinsicKind::PrefixStorageRead:
-  case IntrinsicKind::PrefixStorageReadMut:
   case IntrinsicKind::OptionalStorageRead:
   case IntrinsicKind::OptionalStorageReadMut:
   case IntrinsicKind::MutexGuardRead:
@@ -11108,11 +11067,6 @@ auto SemanticVisitor::Impl::baseTypeOf(
   }
   if (compilerCapability == CompilerCapabilityTypeKind::UniqueOwner) {
     return type.arguments.size() == 1 ? SemanticType::uniqueOwnerOf(typeOf(
-                                            type.arguments[0], fromScope))
-                                      : SemanticType::Unknown;
-  }
-  if (compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
-    return type.arguments.size() == 1 ? SemanticType::prefixStorageOf(typeOf(
                                             type.arguments[0], fromScope))
                                       : SemanticType::Unknown;
   }
