@@ -51,7 +51,7 @@ is a teaching helper, not a production server.
 | `02-control-flow.gti` | conditions, `for`, `while`, `break`, and `continue` |
 | `03-functions.gti` | typed parameters, return values, and calls |
 | `04-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
-| `05-objects.gti` | structs, classes, constructors, state-bearing bases, declared cleanup, access, and mutable methods |
+| `05-objects.gti` | structs, classes, constructors, checked base arguments, state-bearing bases, declared cleanup, access, and mutable methods |
 | `06-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
