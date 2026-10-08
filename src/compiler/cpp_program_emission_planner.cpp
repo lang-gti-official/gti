@@ -2879,14 +2879,13 @@ public:
            << " __gti_mir_contained_state";
   }
 
-  void
-  emitLoweredContainedConstructorBody(const LoweredDeclaration &owner,
-                                      const MirConstructorInstance &instance,
-                                      std::string_view concreteName = {}) {
+  void emitLoweredContainedConstructorBody(
+      const LoweredDeclaration &owner, const MirConstructorInstance &instance,
+      const CppMirBodyEmissionPlan &plan, std::string_view concreteName = {}) {
     if (loweredContainedConstructorRepresentation(instance.id) == nullptr ||
-        !generalMirBodyPlan(
-             {.kind = MirBodyKind::Constructor, .owner = instance.id})
-             .supportsFailureText()) {
+        plan.body() != MirBodyAddress{.kind = MirBodyKind::Constructor,
+                                      .owner = instance.id} ||
+        !plan.supportsFailureText()) {
       throw std::logic_error(
           "contained constructor definition lost its admitted failure body");
     }
@@ -6444,7 +6443,18 @@ public:
           emitLoweredContainedConstructorParameters(constructor, *instance,
                                                     true);
           output << ')';
-          emitLoweredContainedConstructorBody(owner, *instance);
+          // The selected failure definition above uses the verified dependent
+          // type overlay when a concrete parameter contains an unnamed closure.
+          // Its containment wrapper must use that same admission, not an
+          // unrelated ordinary plan that cannot spell the closure's type.
+          const auto prepared = constructorTemplatePlans.find(instance->id);
+          if (prepared == constructorTemplatePlans.end() ||
+              prepared->second->declaration != constructor.id) {
+            throw std::logic_error(
+                "contained generic-owner constructor lost its template plan");
+          }
+          emitLoweredContainedConstructorBody(owner, *instance,
+                                              prepared->second->plan);
         }
         if (genericNormal) {
           const std::string normalized =
@@ -6526,7 +6536,8 @@ public:
         emitLoweredContainedConstructorParameters(constructor, *instance,
                                                   false);
         output << ')';
-        emitLoweredContainedConstructorBody(owner, *instance, constructorName);
+        emitLoweredContainedConstructorBody(
+            owner, *instance, generalMirBodyPlan(address), constructorName);
       }
       if (normal) {
         emitSignature(false);

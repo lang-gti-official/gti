@@ -10396,6 +10396,28 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       const auto validLifecycleObligation = [&](MirDropObligationId id) {
         return id != 0 && body.findDropObligation(id) != nullptr;
       };
+      // Assignment consumes its held owning RHS, even when the destination is
+      // a borrowed referent and has no drop obligation in this body. Checking
+      // only lifecycle events that are present misses a deleted Replace: the
+      // source would otherwise remain live and be dropped after publication.
+      if (instruction.kind == MirInstructionKind::Assign) {
+        for (const MirDropObligation &source : body.dropObligations) {
+          if (source.kind != MirDropObligationKind::Value ||
+              !source.dropType.requiresActiveCleanup ||
+              !instructionConsumesObligation(instruction, source))
+            continue;
+          if (std::count_if(
+                  instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [&](const MirLifecycleEvent &event) {
+                    return event.kind == MirLifecycleEventKind::Replace &&
+                           event.source == source.id;
+                  }) != 1)
+            return failure(
+                body, owner,
+                "owning assignment lacks its exact replacement transfer",
+                block.id, instruction.id);
+        }
+      }
       for (const MirLifecycleEvent &event : instruction.lifecycle) {
         const bool hasSource = event.source != 0;
         const bool hasTarget = event.target != 0;

@@ -172,7 +172,7 @@ is a teaching helper, not a production server.
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-string-views.gti` | allocation-free search and slicing through the source-defined `std::string_view`, owner-backed views keeping their string borrowed, and a user-defined text carrier relaying its owner |
-| `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
+| `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
 

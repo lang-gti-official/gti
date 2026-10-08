@@ -2608,15 +2608,16 @@ void testRecoveryFindingDiagnostics() {
       const auto declaration = text == nullptr
                                    ? std::string::npos
                                    : text->find("depth<uint64_t N>()");
-      expect(recursive != std::string::npos &&
-                 cause.primary.start == recursive + recursiveCall.size() - 1 &&
-                 cause.primary.end == recursive + recursiveCall.size() &&
-                 cause.related.size() == 1 &&
-                 declaration != std::string::npos &&
-                 cause.related.front().span.source == cause.primary.source &&
-                 cause.related.front().span.start == declaration &&
-                 cause.related.front().span.end == declaration + 5,
-             "discovery cause and primary template retain exact source spans");
+      expect(
+          recursive != std::string::npos && cause.primary.start == recursive &&
+              cause.primary.end ==
+                  recursive + std::string_view("depth").size() &&
+              cause.related.size() == 1 && declaration != std::string::npos &&
+              cause.related.front().span.source == cause.primary.source &&
+              cause.related.front().span.start == declaration &&
+              cause.related.front().span.end == declaration + 5,
+          "discovery cause highlights the callee and retains the exact "
+          "primary-template span");
     }
     const auto &diagnostic = result.diagnostics.back();
     expect(

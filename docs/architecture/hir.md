@@ -29,6 +29,13 @@ loan equality with an unrelated primary analysis is not a provenance proof.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
+The concrete discovery worklist retains the first outer requesting source span
+alongside its existing depth bookkeeping. Missing-definition diagnostics from
+semantic instance reanalysis use that requesting call as primary and preserve
+the internal call, declaration, and distinct immediate request as related spans.
+This is diagnostic provenance only: it changes neither instance keys nor
+discovery limits, semantic selection, or executable HIR/MIR behavior.
+
 For early constant requests, `lowerConstantFunction` and
 `lowerConstantConstructor` reuse ordinary body lowering on a closure rooted in
 one completed constexpr function, method, or constructor. Semantics supplies

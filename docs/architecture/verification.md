@@ -2329,7 +2329,7 @@ SIMD: fixed-array and scalar-field structs, repeated self-read replacement,
 exact constructor counts, immutable-binding rejection, and first-failure
 propagation with enclosing cleanup at O0/O3 under C++20/C++23. These regressions
 ensure native representation staging does not introduce hidden construction.
-On arm64 and x86-64 it disables native
+On arm64 and x86-64 the SIMD runtime gate disables native
 automatic loop/SLP vectorization and checks that packed arithmetic exists only
 in the native-capability path. The scalar reference must contain no packed
 arithmetic instructions in that probe; assembly evidence is architecture-bound
@@ -2338,6 +2338,17 @@ and does not claim every supported host compiler has native SIMD lowering.
 interleaved native-versus-scalar damped-update benchmark. It disables automatic
 vectorization, checks identical output, and reports host/compiler and median
 wall time; its ratio is not an application-wide speedup guarantee.
+
+`reference_class_assignment_runtime` covers whole-class replacement through
+mutable reference parameters, local aliases and aliases of fixed-array elements.
+It exercises fresh, copied, moved and function-returned passive values, owning
+strings, vector reset, unrelated user-destructor classes and unique-owned fields.
+Its eight native modes are C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan.
+Failure observations distinguish RHS construction failure, old-value cleanup
+failure, failure after commit and secondary failure during cleanup, checking
+exact output, failure identity and exactly-once destruction. The lifecycle
+emitter suite independently corrupts carrier type/access, projection, loan and
+replacement metadata; a source negative retains read-only referent rejection.
 
 The library-completion gates cover the following public workflows:
 
@@ -2605,6 +2616,13 @@ overflow before field publication. It observes both cleanup order and the
 unchanged source place after a failed update. The lifecycle emitter suite
 rejects deletion of the explicit field stage and asserts that discarded
 assignment records never introduce an extra publication.
+Its owning-call fixtures cover declaration and explicit collection defaults,
+an unrelated two-owner producer, and failure in a later argument, the callee,
+a later field or the constructor body. Lifecycle mutations reject missing,
+duplicated, conditional or forged input handoffs and missing result/field
+publication. The callback-field fixture also checks containment wrappers for
+both an erased callback and an unrelated generic constructor with an unnamed
+closure parameter, using the same admitted template body plan as the definition.
 `vector_construction_only_runtime` covers empty-slot movement without
 assignment, cloning and growth, fallible zero-argument sized construction and
 resize, partial-prefix rollback, nested optional payload destruction, and

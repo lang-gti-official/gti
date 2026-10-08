@@ -1358,6 +1358,13 @@ failure record when construction fails. The emitter rejects missing,
 duplicated, or mismatched rows; no C++ spelling or containment policy enters
 `LoweredProgram`.
 
+A containment wrapper delegates to the same admitted body plan as its status
+constructor definition. For a generic constructor with an unnamed closure
+parameter, this is the cached, independently verified dependent-type overlay,
+not the ordinary map that cannot spell that closure. The wrapper checks the
+exact constructor body identity and failure-form admission; it does not
+introduce a second execution schedule or treat template spelling as proof.
+
 The passive initializer schedule keeps a closed expression vocabulary.
 Transparent `Identity` values preserve one exact staged spelling, `Convert`
 uses the copied target-type row and retains either the unchecked cast or the
@@ -1823,6 +1830,17 @@ default exactly once. Explicit overrides suppress the corresponding default;
 failure unwinds completed fields before constructor parameters and caller
 values, without beginning the enclosing object's lifetime.
 
+An owning field-result call can itself consume prepared owning arguments.
+Calls and constructors share the same exact input-transfer proof: every
+unconditional `TransferOut` names one operand's prepared-parameter obligation,
+including a fresh result reparented into its argument slot. Input handoff is
+distinct from result publication. The result activates only on its Invoke
+success edge, then its explicit field `Initialize` reparents that exact value
+into construction rollback. Later argument, callee, field and body failures
+retain their original reverse-order cleanup. This covers source-defined
+collection builders and unrelated owning functions without recognizing public
+library names or relaxing the field's private empty-state/movement proof.
+
 A type-only concrete instance with no selected constructor and no generated
 default-construction route has no executable declaration-default consumer.
 Its catalog defaults are suppressed as well, so an unused generic sibling
@@ -1864,7 +1882,7 @@ native representation row. An indexed owning receiver may retire an exact
 chain of mutable call-result loans, child before parent, with the same source;
 the moved-from RHS shell is destroyed only after those recorded endings. The
 emitter does not recognize the owning wrapper or container name. Apart from
-the checked-array replacement extension below, non-field projections,
+the checked-array and checked-reference replacement extensions below, non-field projections,
 conditional lifecycle events, incomplete
 borrow endings, or additional consumers fail closed.
 
@@ -1944,7 +1962,7 @@ argument evaluation; no callee handoff or `TransferOut` is invented. Both
 arms of a conditional terminal argument must satisfy this rule. The impossible
 normal continuation is not permission to omit failure cleanup.
 
-The publication has four destination families, distinguished by which
+The publication has five destination families, distinguished by which
 obligation owns the storage being replaced. A bare mutable binding owns its
 own cleanup obligation, so the `Replace` transfers into that obligation and
 the write carries no failure site. A checked fixed-array element does not:
@@ -1963,7 +1981,27 @@ paired replacement preparation, temporary activation and shell drop remain
 explicit. This also covers restoring a moved-out receiver field after concrete
 `if constexpr` selection. No library spelling or compile-time branch marker is
 consulted by the backend.
-Requiring a destination obligation for an element, owned field or loan referent
+
+A direct dereference of a named checked-reference carrier is the fifth family.
+The exact unprojected sibling must have reference type with the same referent
+type, mutable reference access, and a retained mutable loan naming that carrier.
+The carrier binding's own access does not determine referent mutability. The
+same structural carrier query supplies lvalue spelling and assignment admission;
+no standard-library type is privileged. Cleanup-free fresh/copy/move/call-result
+replacement and owning fresh/move/call-result replacement use their existing
+producer, single-use, staging, and commit proofs. The referent owns no new drop
+obligation. An owning `Replace` therefore has target zero, while its paired
+`CleanupBeforeAssign` and the held RHS failure-cleanup obligation remain intact.
+Unlike an ephemeral call-result loan, the named reference is not ended at commit:
+subsequent uses retain the original MIR-verified loan interval. This representation
+does not authorize movement out of a borrowed referent.
+Body-local MIR verification requires exactly one `Replace` from each consumed
+active-cleanup RHS value obligation; validating only present lifecycle events
+is insufficient, because a missing transfer could leave the published source
+scheduled for cleanup. This requirement is independent of the destination's
+representation or whether it owns a body-local drop obligation.
+
+Requiring a destination obligation for an element, owned field or checked referent
 would retire the same storage twice, so either publication fails closed when
 it names one. Every other destination, a bare-binding, field or loan publication with
 a failure site, an incomplete two-phase loan schedule, extra uses, and any

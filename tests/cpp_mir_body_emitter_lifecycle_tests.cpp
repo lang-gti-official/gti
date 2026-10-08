@@ -2,6 +2,248 @@
 
 namespace {
 
+const lang::MirInstruction *testInstruction(const lang::MirBody &body,
+                                            lang::MirInstructionId id);
+
+void testCheckedReferenceClassAssignment() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/reference_class_assignment.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "checked reference assignment fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "checked reference assignments verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, rows).analyzeProgram().ready(),
+         "fresh, copied, moved and returned class values replace referents");
+  bool passive = false;
+  bool owning = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *destination =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            !destination ||
+            destination->root != lang::MirPlaceRootKind::Binding ||
+            destination->projections.size() != 1 ||
+            destination->projections.front().kind !=
+                lang::MirProjectionKind::Dereference ||
+            destination->type.kind != lang::SemanticType::Class)
+          continue;
+        const bool cleanup = !instruction.lifecycle.empty();
+        if (cleanup ? owning : passive)
+          continue;
+        (cleanup ? owning : passive) = true;
+        const auto carrier = std::find_if(
+            function.body.places.begin(), function.body.places.end(),
+            [&](const auto &place) {
+              return place.root == lang::MirPlaceRootKind::Binding &&
+                     place.binding == destination->binding &&
+                     place.projections.empty();
+            });
+        expect(carrier != function.body.places.end(),
+               "referent retains its pointer carrier");
+        if (carrier == function.body.places.end())
+          continue;
+        if (cleanup)
+          expect(instruction.lifecycle.size() == 1 &&
+                     instruction.lifecycle.front().kind ==
+                         lang::MirLifecycleEventKind::Replace &&
+                     instruction.lifecycle.front().target == 0 &&
+                     instruction.replacementPair != 0,
+                 "referent replacement keeps paired cleanup without acquiring "
+                 "ownership");
+        for (int mutation = 0; mutation < (cleanup ? 9 : 6); ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          auto &changed = *std::find_if(
+              body->places.begin(), body->places.end(),
+              [&](const auto &p) { return p.id == destination->id; });
+          auto &root =
+              *std::find_if(body->places.begin(), body->places.end(),
+                            [&](const auto &p) { return p.id == carrier->id; });
+          auto &assign = *std::find_if(
+              body->findBlock(block.id)->instructions.begin(),
+              body->findBlock(block.id)->instructions.end(),
+              [&](const auto &i) { return i.id == instruction.id; });
+          if (mutation == 0)
+            root.type.referenceAccess = lang::AccessMode::ReadOnly;
+          if (mutation == 1)
+            root.type.arguments.clear();
+          if (mutation == 2)
+            changed.projections.front().kind =
+                lang::MirProjectionKind::RawDereference;
+          if (mutation == 3)
+            changed.symbol = 0;
+          if (mutation == 4 || mutation == 5) {
+            for (auto &loan : body->loans) {
+              if (std::find(loan.carriers.begin(), loan.carriers.end(),
+                            root.binding) == loan.carriers.end())
+                continue;
+              if (mutation == 4)
+                loan.access = lang::AccessMode::ReadOnly;
+              else
+                loan.carriers.clear();
+            }
+          }
+          if (mutation == 6)
+            assign.lifecycle.clear();
+          if (mutation == 7)
+            assign.lifecycle.front().target = assign.lifecycle.front().source;
+          if (mutation == 8)
+            assign.replacementPair = 0;
+          expect(!lang::CppMirBodyEmitter(malformed, rows)
+                      .analyzeProgram()
+                      .ready(),
+                 "reference assignment rejects forged carrier/access/cleanup " +
+                     std::to_string(mutation));
+          if (mutation >= 6)
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "MIR independently rejects forged replacement ownership " +
+                       std::to_string(mutation));
+        }
+      }
+    }
+  }
+  expect(
+      passive && owning,
+      "fixture exercises both cleanup-free and owning reference replacement");
+  const auto readonly = analyze("readonly-reference-assignment.gti", R"(
+struct Point { mut int value; Point(int value) : value(value) {} };
+void replace(Point& target) { target = Point(2); }
+int main() { return 0; }
+)");
+  expect(!readonly.canGenerateCode() &&
+             std::any_of(readonly.diagnostics.begin(),
+                         readonly.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2002";
+                         }),
+         "read-only references cannot replace their referents");
+}
+
+void testContainedClosureConstructorPlan() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/constructor_callback_field.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "contained closure constructor fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "closure field construction must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto rows = buildRows(frontend, frontend.mir, standard);
+    std::size_t closureConstructors = 0;
+    for (const auto &row : rows.containedConstructors) {
+      const auto *constructor =
+          frontend.mir.findConstructorInstance(row.constructor);
+      if (constructor &&
+          std::any_of(constructor->parameterTypes.begin(),
+                      constructor->parameterTypes.end(), [](const auto &type) {
+                        return type.kind == lang::SemanticType::Lambda;
+                      }))
+        ++closureConstructors;
+    }
+    expect(closureConstructors == 2,
+           "both library and unrelated generic constructors need containment");
+    expect(!gti_test::emitCpp(frontend, standard).contents.empty(),
+           "containment must retain the admitted closure-dependent body plan");
+  }
+}
+
+void testOwningCallFieldInputTransfers() {
+  for (const auto *name : {"constructor_collection_field_inputs",
+                           "constructor_owning_call_inputs"}) {
+    const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                         "fixtures" / (std::string(name) + ".gti");
+    std::ifstream input(fixture);
+    expect(input.good(), "owning call field fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "owning call fields must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyzeProgram().ready(),
+           "owning function inputs and field results retain separate handoffs");
+    std::size_t checked = 0;
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      for (const auto &block : constructor.body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.functionTarget || !instruction.successResultDrop ||
+              instruction.lifecycle.empty() || !instruction.result)
+            continue;
+          const auto uses = constructor.body.usesOf(*instruction.result);
+          const auto publication =
+              std::find_if(uses.begin(), uses.end(), [&](const auto &use) {
+                const auto *consumer =
+                    testInstruction(constructor.body, use.instruction);
+                return consumer &&
+                       consumer->kind == lang::MirInstructionKind::Initialize &&
+                       consumer->constructorInitializer != 0;
+              });
+          if (publication == uses.end())
+            continue;
+          ++checked;
+          const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                             constructor.id};
+          expect(emitter.supportsFailureBodyText(address),
+                 "field-producing call must retain its failure body");
+          for (int mutation = 0; mutation != 8; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *body = lang::findMirBody(malformed, address);
+            auto &instructions = body->findBlock(block.id)->instructions;
+            auto changed =
+                std::find_if(instructions.begin(), instructions.end(),
+                             [&](const auto &candidate) {
+                               return candidate.id == instruction.id;
+                             });
+            auto &event = changed->lifecycle.front();
+            if (mutation == 0)
+              changed->lifecycle.clear();
+            if (mutation == 1)
+              event.source = *instruction.successResultDrop;
+            if (mutation == 2)
+              event.target = *instruction.successResultDrop;
+            if (mutation == 3)
+              event.conditional = true;
+            if (mutation == 4)
+              event.failureCleanup = true;
+            if (mutation == 5)
+              changed->lifecycle.push_back(event);
+            if (mutation == 6)
+              changed->successResultDrop.reset();
+            if (mutation == 7) {
+              for (auto &candidateBlock : body->blocks)
+                for (auto &candidate : candidateBlock.instructions)
+                  if (candidate.id == publication->instruction)
+                    candidate.lifecycle.clear();
+            }
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "forged input transfer or field publication must fail MIR "
+                   "verification " +
+                       std::to_string(mutation));
+          }
+        }
+      }
+    }
+    expect(checked != 0,
+           "fixture must consume owning inputs to produce a field");
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "owning field calls must reach production emission");
+  }
+}
+
 void testExplicitVirtualResultChannel() {
   const auto frontend = analyze("explicit-virtual-result-channel.gti", R"(
 interface Channel<T> { T read(T value); };
@@ -11261,6 +11503,11 @@ int32_t main() { return cleanup_t().value - 7; }
 }
 
 constexpr NamedTest kTests[] = {
+    {"testCheckedReferenceClassAssignment",
+     testCheckedReferenceClassAssignment},
+    {"testContainedClosureConstructorPlan",
+     testContainedClosureConstructorPlan},
+    {"testOwningCallFieldInputTransfers", testOwningCallFieldInputTransfers},
     {"testExplicitVirtualResultChannel", testExplicitVirtualResultChannel},
     {"testGeneratedMoveReferenceBindings", testGeneratedMoveReferenceBindings},
     {"testPreparedConstructorReplacement", testPreparedConstructorReplacement},
