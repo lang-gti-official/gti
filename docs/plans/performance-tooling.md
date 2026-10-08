@@ -2,8 +2,8 @@
 
 ## RT-1: source-storage failure-path cost
 
-Status: production implementation and frozen before/after measurements pass;
-focused safety matrices pass and full completion validation is in progress.
+Status: complete bounded implementation; frozen before/after measurements,
+focused safety matrices and full completion validation pass.
 This is a partial cause of #169, not a claim that the historical storage
 regression has been fully recovered.
 
@@ -114,10 +114,11 @@ The independent storage repeat measures 69.988→59.016 ms and
 76.190→66.541 ms. Its native compile time is 585.789→581.043 ms, peak RSS
 127107072→132595712 bytes (+4.3%), and binary size 295752→308952 bytes
 (+4.5%). Runtime RSS across all controls changes by at most 32768 bytes
-(under 2%). These are small real representation costs, not zero-cost claims;
-none crosses the existing 5% material-regression screen on this host. The
-approximately 0.5% thread runtime cost remains visible. No timing threshold
-is added to CI, and macOS/Apple Clang evidence does not establish performance
+(under 2%). These are small real representation costs, not zero-cost claims.
+Runtime controls remain below the existing 5% material-regression screen;
+the separately reported compile, size and memory costs also stay under 5% on
+this host. The approximately 0.5% thread runtime cost remains visible. No timing
+threshold is added to CI, and macOS/Apple Clang evidence does not establish performance
 on Linux, Windows or other native toolchains.
 
 The storage report SHA-256 is
@@ -129,6 +130,23 @@ the Mac mini retains frozen resources, MIR optimization reports, commands,
 unmodified emitted C++, native remarks/disassembly, binaries, RSS and raw
 samples under `/tmp/gti-cold-production.aKyJuB/`. These are temporary evidence
 locations; the hashes and summarized methodology remain in this document.
+
+The optimized all-target build passes, followed by all 570 unfiltered CTest
+gates with no failures or skips (1132.96 seconds). This includes both complete
+130-example MIR/native oracles, all 427 language-coverage programs, independent
+optimization replay, malformed lowered-program rejection, cleanup/panic and
+managed-thread matrices, ASan/UBSan clients and native thread/atomic/mutex TSan.
+All thirteen staged-library consumers pass, as does the installed-only source
+provider's eight-mode matrix and Off/Warn parity. Formatting checks all 502
+first-party C/C++ files. Only evidence/status documentation changes after the
+tested `f2fea6c7` production source checkpoint.
+
+Full-suite JUnit SHA-256 is
+`3069953a715185fee4d27d0b328eaa9bf204b718285a324582ccbdf3a1ca1c51`;
+the raw full-suite log is
+`d474de23a57e5127eddd4f5e36666964bc94e7d12758dcecb3114626206f001b`.
+Native execution evidence is macOS arm64 only; target/ABI tests and guarded
+fallback emission do not substitute for Linux or Windows native execution.
 
 The remaining #169 gap is deliberately separate: ordinary sparse accessors
 still exceed the native inline threshold, and source resource storage still
