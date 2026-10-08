@@ -244,10 +244,13 @@ failure channel remains separate from this result representation.
 A retained class-bound virtual result uses one coherent result-channel
 convention across its resolved virtual-slot family. The representation query
 follows lowered virtual-root identities, including nongeneric overrides of a
-generic base. A defaulted internal output parameter is present throughout the
+generic base. An explicit internal output parameter is present throughout the
 family: native-record results return `void` and publish bytes to that parameter;
 ordinary scalar and owning results retain their original return and cleanup
-convention. The C++ return spelling is conditional only while the owner type is
+convention, passing `nullptr` for the unused channel. Calls take this choice
+from the sealed representation snapshot; they do not rely on C++ default
+arguments, including when a generic parameter pack becomes concrete. The C++
+return spelling is conditional only while the owner type is
 symbolic. Virtual methods therefore need no constrained overloads or native
 by-value fallback. Verified concrete MIR still selects every emitted body;
 the extra parameter is backend calling-convention glue, not a source argument
