@@ -35,6 +35,22 @@ void diagnostics(const lang::FrontendResult &result) {
   for (const auto &diagnostic : result.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
+bool motivatingPointee(const lang::FrontendResult &frontend,
+                       const lang::MirInstruction &instruction,
+                       std::string_view className) {
+  if (instruction.parameterTypes.empty() ||
+      instruction.parameterTypes.front().kind !=
+          lang::SemanticType::RawPointer ||
+      instruction.parameterTypes.front().arguments.size() != 1)
+    return false;
+  const auto &element = instruction.parameterTypes.front().arguments.front();
+  if (element == lang::SemanticType::Int32)
+    return true;
+  const auto *owner = element.kind == lang::SemanticType::Class
+                          ? frontend.semantics.findClassType(element.classId)
+                          : nullptr;
+  return owner != nullptr && owner->qualifiedName == className;
+}
 template <typename Mutation>
 void forged(
     const lang::FrontendResult &frontend, Mutation mutation,
@@ -97,7 +113,8 @@ int main() {
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.intrinsic == lang::IntrinsicKind::ObjectDestroy) {
+        if (instruction.intrinsic == lang::IntrinsicKind::ObjectDestroy &&
+            motivatingPointee(frontend, instruction, "Sensor")) {
           ++count;
           const auto effects = lang::effects(instruction);
           expect(effects.writesUnknownMemory && effects.dropsValue &&
@@ -227,7 +244,8 @@ int main() {
     for (const auto &function : construction.mir.functionInstances())
       for (const auto &block : function.body.blocks)
         for (const auto &instruction : block.instructions)
-          if (instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct) {
+          if (instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct &&
+              motivatingPointee(construction, instruction, "Stationary")) {
             ++constructions;
             const auto effect = lang::effects(instruction);
             expect(effect.writesUnknownMemory && effect.initializesValue &&

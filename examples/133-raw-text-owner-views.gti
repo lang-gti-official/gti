@@ -1,0 +1,35 @@
+#include <std/memory>
+
+// A user-defined owner can expose compact checked text views without any
+// compiler-private string/vector storage. The unsafe boundary asserts that
+// these readable bytes (and, for c_string, their NUL) remain valid for the
+// witnessed owner borrow. The resulting borrow is mandatory even in unsafe.
+class Greeting {
+  mut char bytes[6] = {'h', 'e', 'l', 'l', 'o', '\0'};
+public:
+  Greeting() {}
+  std::string_view view() {
+    unsafe {
+      return std::assume_string_view(&this.bytes[0], uint64_t(5), this);
+    }
+  }
+  c_string native() {
+    unsafe { return std::assume_c_string(&this.bytes[0], this); }
+  }
+  void shout() mut { this.bytes[0] = 'H'; }
+};
+
+int main() {
+  mut Greeting greeting{};
+  {
+    auto text = greeting.view();
+    c_string native = greeting.native();
+    if (text != "hello" || native == nullptr) { return 1; }
+    // greeting.shout() here would be rejected: both views still borrow it.
+    std::println(text);
+  }
+  // Leaving the scope ends the checked loans, so mutation is valid again.
+  greeting.shout();
+  std::println(greeting.view());
+  return 0;
+}

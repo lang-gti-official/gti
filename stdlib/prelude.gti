@@ -66,6 +66,12 @@ namespace gti_internal {
   void require_relocation_capacity(bool valid);
   void require_relocation_source(bool valid);
   void require_relocation_destination(bool valid);
+  // Source allocation policy selects recoverable expected or defined failure;
+  // this guard only enters the existing allocation-failure mechanism.
+  void require_allocation(bool succeeded);
+  // Source cleanup loops need failure-free target integer arithmetic without
+  // importing the high-level numeric algorithms (which depend on memory).
+  T integer_wrapping_sub<T>(T left, T right);
   T restoring_exchange<T>(mut T& destination, T replacement);
   U enum_underlying_value<U, T>(T value);
   void restoring_swap<T>(mut T& left, mut T& right);

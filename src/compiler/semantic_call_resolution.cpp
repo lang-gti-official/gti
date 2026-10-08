@@ -3972,7 +3972,9 @@ auto SemanticVisitor::Impl::recordRawBorrowCall(
   if (resolved.declaration == nullptr ||
       (resolved.intrinsic != IntrinsicKind::None &&
        resolved.intrinsic != IntrinsicKind::RawBorrow &&
-       resolved.intrinsic != IntrinsicKind::RawBorrowMut))
+       resolved.intrinsic != IntrinsicKind::RawBorrowMut &&
+       resolved.intrinsic != IntrinsicKind::TextViewFromAddress &&
+       resolved.intrinsic != IntrinsicKind::CStringFromAddress))
     return;
   RawBorrowCallUse use{.caller = currentFunctionDeclaration,
                        .callee = resolved.declaration,
@@ -4093,6 +4095,15 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
     return witness;
   };
   const auto contractsFor = [&](const RawBorrowCallUse &use) {
+    if (use.intrinsic == IntrinsicKind::TextViewFromAddress ||
+        use.intrinsic == IntrinsicKind::CStringFromAddress)
+      // Text assertions retain the nominated checked borrow independently of
+      // pointer audit policy. Their raw bytes can legitimately be static (or
+      // null for an empty/nullable carrier), so a shorter witness need not be
+      // the address's physical owner. Still transport known expired address
+      // evidence through ordinary helpers, exactly as other raw assertions do.
+      return std::vector<RawBorrowContract>{
+          {.pointerParameter = 0, .access = AccessMode::ReadOnly}};
     if (use.intrinsic == IntrinsicKind::RawBorrow ||
         use.intrinsic == IntrinsicKind::RawBorrowMut)
       return std::vector<RawBorrowContract>{

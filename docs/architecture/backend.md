@@ -19,6 +19,15 @@ compiler-owned, backend-neutral `LoweredProgram`; they do not receive the AST,
 C++. The backend chooses target representation, but it cannot recover missing
 language meaning from an upstream representation or from host C++ behavior.
 
+Hosted argument marshalling consumes the verified startup drop recipe when
+argument construction or append fails. A source-owned vector may have
+failure-capable destruction: its secondary-failure Invoke/terminal envelope is
+checked rather than projected away as failure-free behavior. Emission runs that
+exact cleanup under the original failure context before terminal containment.
+Similarly, an unpublished complete `expected<Class, E>` result retains its
+exact alternative cleanup recipe if another scope destructor fails after the
+result-producing call. No hidden native unwinding replaces either MIR schedule.
+
 The phase direction is:
 
 ```text

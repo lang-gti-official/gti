@@ -195,6 +195,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::PrefixStorageTextView:
   case IntrinsicKind::PrefixStorageCString:
   case IntrinsicKind::PrefixStorageTryCString:
+  case IntrinsicKind::TextViewFromAddress:
+  case IntrinsicKind::CStringFromAddress:
   case IntrinsicKind::OptionalStorageHasValue:
   case IntrinsicKind::OptionalStorageConstruct:
   case IntrinsicKind::OptionalStorageRead:
@@ -251,6 +253,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
     return barrier("synchronization effects; forget mutable memory facts");
   case IntrinsicKind::MutexLockFailure:
   case IntrinsicKind::RequireKey:
+  case IntrinsicKind::RequireAllocation:
   case IntrinsicKind::RequireContainerArgument:
   case IntrinsicKind::RequireVacantStorage:
   case IntrinsicKind::RequireLiveStorage:

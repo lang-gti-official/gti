@@ -7946,6 +7946,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (instruction.tombstone) {
       return instruction == makeMirInstructionTombstone(instruction);
     }
+    if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
+         instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
+        !mir_detail::textAddressResultLoan(body, instruction))
+      return false;
     const bool hasResult = instruction.result.has_value();
     const bool noOperation = instruction.operation == MirOperation::None;
     if (instruction.nativeCalleeType) {
@@ -8928,6 +8932,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                  !instruction.constructorTarget) ||
                 (!instruction.functionTarget &&
                  (instruction.intrinsic == IntrinsicKind::Panic ||
+                  instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
+                  instruction.intrinsic == IntrinsicKind::CStringFromAddress ||
                   instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
                   instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
                   instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||

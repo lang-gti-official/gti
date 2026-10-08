@@ -5728,6 +5728,24 @@ private:
         }
       }
     }
+    if ((value.intrinsic == IntrinsicKind::TextViewFromAddress ||
+         value.intrinsic == IntrinsicKind::CStringFromAddress) &&
+        !value.parameterTypes.empty() &&
+        value.operands.size() >= value.parameterTypes.size()) {
+      // A raw text carrier assertion has ordinary ordered scalar/reference
+      // inputs. Keep the checked witness in the same exact schedule as its
+      // address and count instead of inventing backend-only origin recovery.
+      const std::vector<HirValueId> arguments(
+          value.operands.end() -
+              static_cast<std::ptrdiff_t>(value.parameterTypes.size()),
+          value.operands.end());
+      if (auto planned =
+              orderedArguments(arguments, value.parameterTypes, body))
+        value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                     .arguments = std::move(*planned)};
+      else
+        lifecycleValid = false;
+    }
     if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
          value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
         ((value.constructorTarget &&

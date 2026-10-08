@@ -436,6 +436,38 @@ described above, rather than promising arbitrary source-call provenance
 inference. Typed allocation and object-lifetime operations are provided
 separately by `std::allocator` and `std::storage<T>`.
 
+## Owner-Witness Text Views
+
+`<std/memory>` also provides:
+
+```gti
+unsafe std::string_view assume_string_view<Owner>(const char* address,
+                                                std::size_t count,
+                                                Owner& owner);
+unsafe c_string assume_c_string<Owner>(const char* address, Owner& owner);
+```
+
+These construct the existing primitive text carriers from an asserted raw
+address while retaining a read-only checked loan of an unrelated source owner.
+They do not recognize strings or containers by name. Mutation, movement,
+destruction and escape remain subject to the witness loan, including for empty
+views. Ordinary source helpers can relay the same single argument origin;
+cyclic helper bodies or missing return-origin evidence cannot establish it.
+
+The unsafe caller proves live readable bytes, extent, alignment, owner lifetime
+and race freedom. Counted text need not be terminated. A nonnull C-string
+address must name readable zero-terminated text; a null C-string is permitted.
+A zero-length counted view permits a null address and does not inspect it.
+Arguments still execute in order before carrier construction. These operations
+do not validate arbitrary addresses, allocate bytes or erase known lifetime
+contradictions. Optional raw-lifetime auditing preserves known ended local
+origins through ordinary helpers, while static and null addresses remain valid
+controls. Mandatory checked loans apply in every audit mode.
+
+The compiler still owns primitive text representation and this raw-to-checked
+carrier transition; byte storage, termination and allocation policy can be
+ordinary source. See [the runnable owner example](../../examples/133-raw-text-owner-views.gti).
+
 ## `void*`
 
 `void*` and `const void*` are opaque address carriers. They may be initialized,

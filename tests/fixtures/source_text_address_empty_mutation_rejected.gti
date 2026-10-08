@@ -1,0 +1,16 @@
+#include <std/memory>
+class Owner {
+  mut char data = 'a';
+public:
+  Owner() {}
+  void mutate() mut { this.data = 'b'; }
+};
+int main() {
+  mut Owner owner{};
+  unsafe {
+    std::string_view view = std::assume_string_view(nullptr, uint64_t(0), owner);
+    owner.mutate();
+    std::println(view);
+  }
+  return 0;
+}

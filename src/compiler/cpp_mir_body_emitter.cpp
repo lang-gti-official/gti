@@ -37934,6 +37934,39 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
+         instruction.intrinsic == IntrinsicKind::CStringFromAddress)) {
+      if (!mir_detail::textAddressResultLoan(facts.body, instruction))
+        throw std::logic_error(
+            "verified raw text assertion lost its checked witness");
+      const bool counted =
+          instruction.intrinsic == IntrinsicKind::TextViewFromAddress;
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+      if (counted) {
+        // All source expressions have already been staged exactly once. An
+        // empty assertion accepts a null address without passing it to the
+        // native library's non-empty character-range constructor.
+        output << '(';
+        emitCallArgument(instruction.operands[1], false, false);
+        output << " == 0 ? std::string_view{} : "
+                  "std::string_view(reinterpret_cast<const char *>((";
+      } else
+        output << "reinterpret_cast<const char *>((";
+      emitCallArgument(instruction.operands.front(), false, false);
+      output << ").native_address())";
+      if (counted) {
+        output << ", static_cast<std::size_t>(";
+        emitCallArgument(instruction.operands[1], false, false);
+        output << ")))";
+      }
+      output << ";\n";
+      writeIndent();
+      output << "(void)(";
+      emitCallArgument(instruction.operands[counted ? 2 : 1], false, false);
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {
       const MirPlace *storage =
           storageStagedPlace(facts.body, instruction.operands.front());
@@ -46278,7 +46311,7 @@ bool cppMirHostedStartupFailureFreeSchedule(const MirProgram &program) {
 }
 
 bool cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program) {
-  const auto plan = hostedMarshallingSchedule(program);
+  auto plan = hostedMarshallingSchedule(program);
   if (!plan || plan->kind != ProgramEntryKind::OwnedArguments ||
       plan->entry == 0 || plan->appendFunction == 0 ||
       plan->vectorConstructor == 0 || plan->stringConstructor == 0 ||
@@ -46287,6 +46320,56 @@ bool cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program) {
   }
   using Kind = MirHostedStartupOperationKind;
   using Behavior = MirHostedStartupFailureBehavior;
+  // Source-defined owners can have failure-capable cleanup. Match the same
+  // marshaling schedule only after checking each exact secondary-failure
+  // envelope; emission consumes the original Drop recipe, not this projection.
+  for (std::size_t index = 0; index < plan->operations.size(); ++index) {
+    auto &drop = plan->operations[index];
+    if (drop.kind != Kind::DropFailureCleanup ||
+        drop.failureBehavior != Behavior::Propagate)
+      continue;
+    if (index + 2 >= plan->operations.size())
+      return false;
+    const auto &route = plan->operations[index + 1];
+    const auto &terminate = plan->operations[index + 2];
+    const auto *body = program.hostedStartup();
+    const auto *block = body == nullptr ? nullptr : body->findBlock(drop.block);
+    const auto instruction = block == nullptr ? nullptr : [&]() {
+      for (const auto &candidate : block->instructions)
+        if (candidate.id == drop.instruction)
+          return &candidate;
+      return static_cast<const MirInstruction *>(nullptr);
+    }();
+    const auto *record = body == nullptr
+                             ? nullptr
+                             : body->findFailureRecord(route.failureRecord);
+    const auto *secondary =
+        body == nullptr ? nullptr : body->findBlock(terminate.block);
+    if (drop.terminator || instruction == nullptr ||
+        instruction->kind != MirInstructionKind::Drop ||
+        instruction->definedFailure.propagation !=
+            FailurePropagationKind::Destructor ||
+        block->activeFailure == 0 || route.kind != Kind::RouteCleanupFailure ||
+        route.failureBehavior != Behavior::None || !route.terminator ||
+        route.block != drop.block || record == nullptr ||
+        record->producerInstruction != drop.instruction ||
+        record->producerBlock != drop.block ||
+        terminate.kind != Kind::TerminateCleanupFailure ||
+        terminate.failureBehavior != Behavior::None || !terminate.terminator ||
+        terminate.failureRecord != 0 || secondary == nullptr ||
+        secondary->terminator.kind !=
+            MirTerminatorKind::TerminateCleanupFailure ||
+        secondary->terminator.failureRecord != route.failureRecord ||
+        terminate.block != record->parameterBlock ||
+        block->terminator.kind != MirTerminatorKind::Invoke ||
+        block->terminator.invokeInstruction != drop.instruction ||
+        block->terminator.failureRecord != route.failureRecord ||
+        block->terminator.elseTarget != terminate.block)
+      return false;
+    drop.failureBehavior = Behavior::None;
+    plan->operations.erase(plan->operations.begin() + index + 1,
+                           plan->operations.begin() + index + 3);
+  }
   struct ExpectedOperation {
     Kind kind;
     Behavior behavior;
@@ -49597,6 +49680,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           if (!failureForm || place == nullptr ||
               !(drop->dropType.classInstance || drop->dropType.lambdaInstance ||
+                (drop->dropType.type == body.returnType &&
+                 expectedClassPlacementResultType(program_, representations_,
+                                                  body.returnType) &&
+                 mirUniqueCleanupType(program_, body.returnType) ==
+                     drop->dropType) ||
                 (drop->dropType.fixedArray &&
                  drop->dropType.type == body.returnType &&
                  cppMirOwningArrayPlacementResult(program_,
@@ -50948,6 +51036,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!consumeStorageStage(instruction.operands.front())) {
             return false;
           }
+          continue;
+        }
+        if (instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
+            instruction.intrinsic == IntrinsicKind::CStringFromAddress) {
+          const std::size_t witness =
+              instruction.intrinsic == IntrinsicKind::TextViewFromAddress ? 2
+                                                                          : 1;
+          if (!mir_detail::textAddressResultLoan(body, instruction) ||
+              !hasCompleteCallInputSchedule(body, instruction) ||
+              !typeRow(instruction.info.type) ||
+              !std::all_of(instruction.operands.begin(),
+                           instruction.operands.end(), valueOperand) ||
+              !consumeStorageStage(instruction.operands[witness]))
+            return false;
           continue;
         }
         if (instruction.intrinsic == IntrinsicKind::PrefixStorageLength) {

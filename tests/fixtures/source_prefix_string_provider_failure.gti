@@ -1,0 +1,22 @@
+#include <std/string>
+
+extern "C" {
+  void adoption_fail_at(uint64_t allocation);
+  void adoption_check_cleanup();
+}
+
+class CheckCleanup {
+public:
+  CheckCleanup() {}
+  ~CheckCleanup() {
+    std::println(90);
+    adoption_check_cleanup();
+  }
+};
+
+int main() {
+  CheckCleanup cleanup{};
+  adoption_fail_at(uint64_t(1));
+  auto text = std::string("fail allocation before publishing any characters");
+  return 1;
+}

@@ -1,9 +1,13 @@
 #include <std/span>
 #include <std/utility>
+#include <std/memory>
 
 // The storage-backed value, capacity, indexed operations, move-aware
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
 namespace std {
+// Capacity changes and shifts use generated, failure-free relocation, never
+// custom movement or assignment. Independent storage excludes checked borrows.
+concept vector_element<T> = std::relocatable<T> && std::storage_element<T>;
 namespace detail {
 class vector_sentinel {
   size_t final_position;
@@ -16,16 +20,16 @@ public:
   }
 };
 
-class vector_iterator<T> {
-  gti_internal::prefix_storage<T>& data;
+class vector_iterator<std::storage_element T> {
+  std::detail::prefix_owner<T>& data;
   mut size_t current_position;
 
 public:
-  vector_iterator(gti_internal::prefix_storage<T>& source, size_t position)
+  vector_iterator(std::detail::prefix_owner<T>& source, size_t position)
       : data(source), current_position(position) {}
 
   T& operator*() {
-    return gti_internal::prefix_storage_read(this.data, this.current_position);
+    return this.data.read(this.current_position);
   }
 
   void operator++() mut {
@@ -65,22 +69,22 @@ public:
 // This mutable storage dependency is an ephemeral standard-library carrier.
 // Semantics permits it only when the compiler-generated range iterator keeps
 // it on the range's exclusive loan; ordinary local storage remains rejected.
-class vector_mut_iterator<T> {
-  mut gti_internal::prefix_storage<T>& data;
+class vector_mut_iterator<std::storage_element T> {
+  mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
 
 public:
-  vector_mut_iterator(mut gti_internal::prefix_storage<T>& source,
+  vector_mut_iterator(mut std::detail::prefix_owner<T>& source,
                       size_t position)
       : data(source), current_position(position) {}
 
   T& operator*() {
-    return gti_internal::prefix_storage_read(this.data,
+    return this.data.read(
                                               this.current_position);
   }
 
   mut T& operator*() mut {
-    return gti_internal::prefix_storage_read_mut(this.data,
+    return this.data.read_mut(
                                                   this.current_position);
   }
 
@@ -95,24 +99,24 @@ public:
 }
 
 /// An owning, move-only, contiguous sequence of `T` values.
-class vector<std::move_constructible T> {
-  mut gti_internal::prefix_storage<T> data;
-  mut size_t reserved = 0;
+class vector<std::vector_element T> {
+  mut std::detail::prefix_owner<T> data;
 
-  gti_internal::prefix_storage<T> replace_storage(
-      gti_internal::prefix_storage<T> replacement) mut {
+  std::detail::prefix_owner<T> replace_storage(
+      std::detail::prefix_owner<T> replacement) mut {
     auto previous = std::move(this.data);
     this.data = std::move(replacement);
     return std::move(previous);
   }
 
   void ensure_capacity_for_one() mut {
-    size_t live = gti_internal::prefix_storage_length(this.data);
-    if (live < this.reserved) {
+    size_t live = this.data.length();
+    size_t capacity = this.data.capacity();
+    if (live < capacity) {
       return;
     }
 
-    mut size_t grown = this.reserved * 2;
+    mut size_t grown = capacity * 2;
     if (grown <= live) {
       grown = live + 1;
     }
@@ -124,7 +128,7 @@ public:
   using const_iterator = detail::vector_iterator<T>;
   using sentinel = detail::vector_sentinel;
 
-  vector() : data(gti_internal::allocate_prefix_storage<T>(uint64_t(0))) {}
+  vector() : data(std::detail::prefix_owner<T>(uint64_t(0))) {}
 
   /// Collection-brace protocol: reserve once, then consume each owned element.
   static vector<T> collection_init(uint64_t count) {
@@ -139,18 +143,17 @@ public:
   }
 
   vector(size_t initial_size)
-      : data(gti_internal::allocate_prefix_storage<T>(initial_size)),
-        reserved(initial_size) {
-    while (gti_internal::prefix_storage_length(this.data) < initial_size) {
-      gti_internal::prefix_storage_append(this.data);
+      : data(std::detail::prefix_owner<T>(initial_size)) {
+    while (this.data.length() < initial_size) {
+      this.data.append();
     }
   }
 
   vector<uint64_t N>(T initial[N])
-      : data(gti_internal::allocate_prefix_storage<T>(N)), reserved(N) {
-    while (gti_internal::prefix_storage_length(this.data) < N) {
-      size_t index = gti_internal::prefix_storage_length(this.data);
-      gti_internal::prefix_storage_append(this.data, initial[index]);
+      : data(std::detail::prefix_owner<T>(N)) {
+    while (this.data.length() < N) {
+      size_t index = this.data.length();
+      this.data.append_value(initial[index]);
     }
   }
 
@@ -159,12 +162,12 @@ public:
 
   /// Returns the number of live elements.
   size_t size() {
-    return gti_internal::prefix_storage_length(this.data);
+    return this.data.length();
   }
 
   /// Returns the number of elements that fit without growing storage.
   size_t capacity() {
-    return this.reserved;
+    return this.data.capacity();
   }
 
   /// Check both live indices before mutation; equal valid indices are a no-op.
@@ -172,70 +175,70 @@ public:
     requires std::relocatable<T> {
     gti_internal::index_bounds_check(left, this.size());
     gti_internal::index_bounds_check(right, this.size());
-    gti_internal::restoring_indexed_swap(this.data, left, right);
+    this.data.swap_elements(left, right);
   }
 
   /// Returns whether the vector contains no elements.
   bool empty() {
-    return gti_internal::prefix_storage_length(this.data) == 0;
+    return this.data.length() == 0;
   }
 
   T& front() {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     size_t index = size_t(0);
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   mut T& front() mut {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     size_t index = size_t(0);
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 
   T& back() {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     mut size_t index = size_t(0);
     if (live > 0) {
       index = live - 1;
     }
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   mut T& back() mut {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     mut size_t index = size_t(0);
     if (live > 0) {
       index = live - 1;
     }
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 
   T& at(size_t index) {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   mut T& at(size_t index) mut {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 
   T& operator[](size_t index) {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   mut T& operator[](size_t index) mut {
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 
   const_iterator begin() {
@@ -248,98 +251,97 @@ public:
 
   sentinel end() {
     return detail::vector_sentinel(
-        gti_internal::prefix_storage_length(this.data));
+        this.data.length());
   }
 
   /// Returns a checked read-only view tied to this vector's storage.
   span<T> as_span() {
     return span<T>(this.data, size_t(0),
-                   gti_internal::prefix_storage_length(this.data));
+                   this.data.length());
   }
 
   /// Exclusively borrows initialized elements without permitting reallocation.
   mutable_span<T> as_mutable_span() mut {
-    size_t count = gti_internal::prefix_storage_length(this.data);
+    size_t count = this.data.length();
     return mutable_span<T>(this.data, size_t(0), count);
   }
 
   void reserve(size_t requested) mut {
-    if (requested <= this.reserved) {
+    if (requested <= this.data.capacity()) {
       return;
     }
 
-    mut gti_internal::prefix_storage<T> replacement =
-        gti_internal::allocate_prefix_storage<T>(requested);
-    gti_internal::prefix_storage_relocate(this.data, replacement);
+    mut std::detail::prefix_owner<T> replacement =
+        std::detail::prefix_owner<T>(requested);
+    this.data.relocate_to(replacement);
     this.data = std::move(replacement);
-    this.reserved = requested;
   }
 
   void resize(size_t requested) mut
     requires std::default_initializable<T> {
-    while (gti_internal::prefix_storage_length(this.data) > requested) {
-      gti_internal::prefix_storage_pop(this.data);
+    while (this.data.length() > requested) {
+      this.data.pop();
     }
     this.reserve(requested);
-    while (gti_internal::prefix_storage_length(this.data) < requested) {
-      gti_internal::prefix_storage_append(this.data);
+    while (this.data.length() < requested) {
+      this.data.append();
     }
   }
 
   void resize(size_t requested, T value) mut
     requires std::copyable<T> {
-    while (gti_internal::prefix_storage_length(this.data) > requested) {
-      gti_internal::prefix_storage_pop(this.data);
+    while (this.data.length() > requested) {
+      this.data.pop();
     }
     this.reserve(requested);
-    while (gti_internal::prefix_storage_length(this.data) < requested) {
-      gti_internal::prefix_storage_append(this.data, value);
+    while (this.data.length() < requested) {
+      this.data.append_value(value);
     }
   }
 
   void shrink_to_fit() mut {
-    size_t live = gti_internal::prefix_storage_length(this.data);
-    if (this.reserved == live) {
+    size_t live = this.data.length();
+    if (this.data.capacity() == live) {
       return;
     }
-    mut gti_internal::prefix_storage<T> replacement =
-        gti_internal::allocate_prefix_storage<T>(live);
-    gti_internal::prefix_storage_relocate(this.data, replacement);
+    mut std::detail::prefix_owner<T> replacement =
+        std::detail::prefix_owner<T>(live);
+    this.data.relocate_to(replacement);
     this.data = std::move(replacement);
-    this.reserved = live;
   }
 
   void push_back(T value) mut {
     this.ensure_capacity_for_one();
-    gti_internal::prefix_storage_append(this.data, std::move(value));
+    this.data.append_value(std::move(value));
   }
 
   void insert(size_t index, T value) mut {
     this.ensure_capacity_for_one();
-    gti_internal::prefix_storage_insert(this.data, index, std::move(value));
+    this.data.insert( index, std::move(value));
   }
 
   mut T& emplace_back<Args...>(Args... args) mut {
     this.ensure_capacity_for_one();
-    size_t index = gti_internal::prefix_storage_length(this.data);
-    gti_internal::prefix_storage_append(this.data, args...);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    size_t index = this.data.length();
+    this.data.append(args...);
+    return this.data.read_mut(index);
   }
 
   void pop_back() mut {
-    if (gti_internal::prefix_storage_length(this.data) == 0) {
+    if (this.data.length() == 0) {
       return;
     }
-    gti_internal::prefix_storage_pop(this.data);
+    this.data.pop();
   }
 
   void erase(size_t index) mut {
-    gti_internal::prefix_storage_erase(this.data, index);
+    gti_internal::index_bounds_check(index, this.size());
+    this.data.erase(index);
   }
 
   void clear() mut {
-    while (gti_internal::prefix_storage_length(this.data) > 0) {
-      gti_internal::prefix_storage_pop(this.data);
+    while (this.data.length() > 0) {
+      this.data.pop();
     }
   }
 
@@ -347,19 +349,16 @@ public:
   void swap(mut vector<T>& other) mut {
     auto previous = std::move(this.data);
     this.data = other.replace_storage(std::move(previous));
-    size_t previous_capacity = this.reserved;
-    this.reserved = other.reserved;
-    other.reserved = previous_capacity;
   }
 
   /// Duplicates each element using its clone contract (or ordinary copying).
   vector<T> clone() requires std::cloneable<T> {
     mut vector<T> result = vector<T>();
-    size_t live = gti_internal::prefix_storage_length(this.data);
+    size_t live = this.data.length();
     result.reserve(live);
     for (mut size_t index = 0; index < live; index++) {
       result.push_back(
-          std::clone(gti_internal::prefix_storage_read(this.data, index)));
+          std::clone(this.data.read(index)));
     }
     return std::move(result);
   }
