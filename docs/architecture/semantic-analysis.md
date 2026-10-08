@@ -694,6 +694,11 @@ An open nominal field defers construction until concrete analysis; recursively
 unresolved type arguments, value expressions, and extents are not an invitation
 to check a constructor requirement outside its selected constructor's context.
 Concrete selection still enforces every zero-argument operation and requirement.
+New omitted-nominal defaults do not manufacture an extra argument-free overload
+beside an owner's declared argument-taking construction API. Constructor-free
+owners can use the structural default; declared zero-argument operations keep
+their ordinary selection rules. The earlier generated overload for completely
+written declaration-default state remains available unchanged.
 
 `SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
 active-statement preorder, and exact ordered source-graph/prelude provenance.
