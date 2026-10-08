@@ -591,6 +591,20 @@ void testVerificationEvidenceOwnsItsProgram() {
          "evidence copies and transfers share one live immutable snapshot");
   expect(lang::verifyLoweredProgram(transferred.program()).empty(),
          "the snapshot must outlive the original source object");
+
+  auto owned = buildDetachedProgram();
+  expect(owned.has_value(), "the owning handoff fixture should lower");
+  if (!owned)
+    return;
+  const auto *rows = owned->declarations().data();
+  const auto accepted = lang::verifiedLoweredProgram(std::move(*owned), issues);
+  expect(accepted.has_value() && issues.empty(),
+         "a moved valid value should produce verification evidence");
+  if (accepted) {
+    expect(accepted->program().declarations().data() == rows,
+           "owning handoff must preserve the declaration storage without "
+           "copying the complete lowered program");
+  }
 }
 
 void testMutationRejection() {

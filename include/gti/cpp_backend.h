@@ -14,7 +14,7 @@ public:
 
   [[nodiscard]] std::string_view name() const override;
   [[nodiscard]] BackendArtifact
-  generate(const LoweredProgram &program) override;
+  generate(LoweredProgram program) override;
 
 private:
   CppStandard standard;

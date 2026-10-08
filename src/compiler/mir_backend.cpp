@@ -7,7 +7,7 @@
 
 namespace lang {
 
-BackendArtifact MirBackend::generate(const LoweredProgram &program) {
+BackendArtifact MirBackend::generate(LoweredProgram program) {
   if (!verifyLoweredProgram(program).empty()) {
     throw std::logic_error(
         "MIR backend refuses to serialize an invalid lowered program");

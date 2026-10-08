@@ -18,7 +18,7 @@ public:
   }
 
   [[nodiscard]] BackendArtifact
-  generate(const LoweredProgram &program) override;
+  generate(LoweredProgram program) override;
 };
 
 } // namespace lang

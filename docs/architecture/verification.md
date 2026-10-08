@@ -4778,7 +4778,9 @@ The standard-library module audit also checks verification-evidence ownership.
 public value assignment, rejects newly acquired evidence for that invalid
 replacement, and proves the original evidence still owns the accepted snapshot
 after the caller destroys its value. Copies of the evidence share that same
-const snapshot. A borrowed pointer alone failed this regression. The module
+const snapshot. An owning handoff additionally proves the accepted snapshot
+retains the original declaration storage without copying it. A borrowed
+pointer alone failed the replacement regression. The module
 grammar is regenerated with the pinned Tree-sitter 0.25.10; all 78 grammar
 corpus cases pass. These focused checks are not a full-suite acceptance claim.
 

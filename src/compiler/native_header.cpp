@@ -814,7 +814,7 @@ private:
 
 } // namespace
 
-BackendArtifact NativeHeaderBackend::generate(const LoweredProgram &program) {
+BackendArtifact NativeHeaderBackend::generate(LoweredProgram program) {
   const std::vector<LoweredProgramIssue> issues = verifyLoweredProgram(program);
   if (!issues.empty()) {
     throw std::logic_error("native-header backend requires a verified lowered "
