@@ -11,6 +11,7 @@ CASES = (
     "grouped_class_passive", "grouped_class_cleanup",
     "conditional_class_passive", "conditional_class_cleanup",
     "grouped_class_failure", "conditional_class_failure",
+    "conditional_class_passive_failure",
 )
 
 
@@ -33,7 +34,9 @@ def execute(executable, source):
         arguments = ([], ["right"]) if kind == "conditional" else ([],)
         for args in arguments:
             result = run([str(executable), *args], expected=70)
-            assert result.stdout == "2\n1\n", result
+            cleanup = ("1\n" if source.stem == "conditional_class_passive_failure"
+                       else "2\n1\n")
+            assert result.stdout == cleanup, result
             assert result.stderr == expected, result
     else:
         result = run([str(executable)])
