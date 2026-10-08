@@ -852,6 +852,17 @@ coordinate integration and select an independent adoption row.
 
 ### L-UP-18: Immovable Payload Eligibility After Direct Construction
 
+- **Fresh-result prerequisite delivered (#150):** exact same-type wrappers of
+  class-valued constructions/calls now denote their producer directly; local
+  and return publication can therefore retain an immovable object's final
+  address without an extra lifecycle move. This does not make a completed
+  immovable object movable, remove container constraints, or deliver the
+  optional/storage parity goals below. Remaining fresh-result breadth includes
+  conditional/comma result construction and immovable by-value parameter
+  transport. The latter needs a verified final-place parameter storage protocol
+  with stable identity through later argument failure and callee cleanup;
+  acceptance must prove address identity and once-only cleanup, not merely
+  relax the current movable argument check.
 - **Prerequisite/client:** `L-UP-12`. The public storage owner requires
   `movable<T>`; public/private optional requires `move_constructible<T>` and its
   private traits currently permit generated movement. Direct emplacement alone
@@ -5863,11 +5874,21 @@ The constructor-lifecycle issue campaign extends that shared stage to exact
 scalar parameter/literal arguments, owning derived fields, and declared
 base/derived cleanup, with native-prefix and explicit base-drop proofs. The
 five original A45 forms and an unrelated resource-bearing inheritance fixture
-are the focused acceptance inputs. This is not closure of the full base
-initializer goal: `Base(s + 1)` and other checked/effectful argument evaluation
-need a verified pre-native-base MIR preparation runner carrying the selected
-scalar values and original failure record before native base entry. Owning or
-borrowed base arguments additionally need that runner's transfer/loan contracts.
+are the focused acceptance inputs. The follow-on implements checked/effectful
+scalar arguments such as `Base(s + 1)` using a verified pre-native-base partition,
+carrying the selected scalar values and original failure record before native
+base entry. It preserves argument order, scalar parameter mutations, once-only
+global effects, and prefix/base/body failure cleanup without reconstructing
+source expressions. This is not closure of the full base-initializer goal:
+owned derived parameters need one reference-bound frame with no extra native
+moves/copies/drops; owned base arguments need exact `CallInput` transfer and
+prepared-drop facts; borrowed arguments need original places/access/loan
+endpoints and temporary/escape rejections. Generic owners require exact carrier
+identities and declarations. Owning/nested bases require a recursively inactive
+shell that suppresses observable defaults until preparation succeeds, retaining
+the original typed constructor schedule. Acceptance must cover preparation,
+ancestor, field and body failure, primary/secondary records and exact reverse
+cleanup without standalone base construction or base placement replacement.
 Historical entry-active declaration-field rollback tokens cannot precede a
 fallible base; declaration-default construction must use the typed constructor
 schedule that arms each field after its successful initializer. The concurrent
@@ -6508,7 +6529,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
 ### L-CALL-01: Foundational Owned Callables And Captures
 
 - **State/role:** in progress; `D-CALL-01`, `M-LIFE-01`, explicit confined
-  boundary records, exact context-supplied value results, repeatable read/mut
+  boundary records, exact context-supplied and directly nested callable value
+  results (concretized before HIR), repeatable read/mut
   invocation, consuming once-callable cardinality, and ordered local
   copy/move closure environments are done. Exact same-type generic return and
   the bounded one-field generic owner are also done. A repeatable confined

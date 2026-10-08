@@ -22,5 +22,12 @@ int main() {
   bool found = std::binary_search(sorted.begin(), sorted.end(), present);
   bool absent = !std::binary_search(sorted.begin(), sorted.end(), missing);
 
-  return (*first == 2 && *middle == 6 && found && absent) ? 0 : 1;
+  // End sentinels are small values, so a temporary end() is an ordinary
+  // by-value comparison argument; no temporary reference binding is needed.
+  mut int32_t sum = 0;
+  for (mut auto cursor = sorted.begin(); cursor != sorted.end(); ++cursor) {
+    sum += *cursor;
+  }
+
+  return (*first == 2 && *middle == 6 && found && absent && sum == 42) ? 0 : 1;
 }

@@ -162,6 +162,21 @@ void checkCompatible(std::string_view destructor) {
                      std::string::npos,
              "closure and nominal field publication comments do not split "
              "constructor representation");
+      for (const auto &instance : lowered.mir().constructorInstances()) {
+        if (instance.parameterTypes.size() != 1 ||
+            (instance.parameterTypes.front().kind !=
+                 lang::SemanticType::Lambda &&
+             instance.parameterTypes.front().kind != lang::SemanticType::Class))
+          continue;
+        const std::string marker =
+            "// GTI verified-MIR body: scalar-cfg-v1 constructor-instance " +
+            std::to_string(instance.id) + "\n";
+        const auto firstMarker = text.find(marker);
+        expect(firstMarker != std::string::npos &&
+                   text.find(marker, firstMarker + 1) == std::string::npos,
+               "canonicalized closure and nominal publication retains every "
+               "exact constructor marker once");
+      }
       for (const auto &item : lowered.generatedItems()) {
         const auto *cleanup =
             std::get_if<lang::LoweredLifecycleCleanupItem>(&item.payload);

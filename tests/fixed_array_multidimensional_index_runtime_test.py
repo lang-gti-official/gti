@@ -7,10 +7,10 @@ element spelling admitted a nonterminal index only when it was a compile-time
 in-bounds constant. The read form raised GTI-B0001 outright and the write form
 lost its checked successor.
 
-The bounds contract is the other half. One MIR instruction and one failure site
-describe the whole chained access, so the emitted text owns a bound for every
-dimension and the safety analysis may discharge that site only when it proves
-every dimension. These cases pin both: values land through the chained read and
+The bounds contract is the other half. A nonterminal array selection owns an
+early check before later index effects; the terminal read also guards every
+dimension it projects. Safety analysis may discharge a site's checks only when
+it proves every dimension. These cases pin both: values land through the chained read and
 write, an out-of-range index in any dimension raises the defined
 index_out_of_bounds failure, and the constant-index forms still reach the same
 elements. Everything runs at O0 and O3, because the discharge path only exists
@@ -160,9 +160,8 @@ def main() -> int:
                     )
                     return 1
 
-        # The emitted text owns the per-dimension bound: the chained read pairs
-        # one nonterminal guard with the terminal checked read, and neither
-        # spelling subscripts the array before its own check.
+        # The prefix address and terminal read each guard their projected
+        # dimensions. Neither may subscript before its own successful check.
         generated_path = root / "chained-read.cpp"
         emitted = run(
             [
@@ -181,12 +180,13 @@ def main() -> int:
         entry = generated[entry_start:] if entry_start >= 0 else ""
         guard = " = ::gti_internal::backend::mir_checked_array_bound_v1("
         read = " = ::gti_internal::backend::mir_checked_array_read_v1("
-        if entry.count(guard) != 1 or entry.count(read) != 1:
+        if entry.count(guard) != 2 or entry.count(read) != 1:
             sys.stderr.write(
                 "the chained element read lost its per-dimension bound guard\n"
             )
             return 1
-        guard_at = entry.find(guard)
+        prefix_at = entry.find(guard)
+        guard_at = entry.rfind(guard)
         read_at = entry.find(read)
         status = entry.rfind("__gti_mir_failure_status_", 0, guard_at)
         variable = entry[status:guard_at]
@@ -201,6 +201,16 @@ def main() -> int:
                 "the chained element read lost the success branch that pairs "
                 "its guard with the terminal checked read\n"
             )
+            return 1
+        prefix_status = entry.rfind("__gti_mir_failure_status_", 0, prefix_at)
+        prefix_variable = entry[prefix_status:prefix_at]
+        address_at = entry.find("::gti_internal::backend::raw_address_of(", prefix_at)
+        prefix_branch = f"if ({prefix_variable}.code == GTI_FAILURE_CODE_NONE_V1) {{"
+        if (prefix_status < 0 or not prefix_at < address_at < guard_at
+                or prefix_branch not in entry[prefix_at:address_at]
+                or "goto __gti_mir_bb_" not in entry[address_at:guard_at]
+                or prefix_variable == variable):
+            sys.stderr.write("the early array prefix lost its independent checked successor\n")
             return 1
 
     return 0

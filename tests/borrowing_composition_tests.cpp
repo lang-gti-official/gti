@@ -348,8 +348,40 @@ int main() {
          "nested publication uses the nested field's permission, not the "
          "outer carrier's first dependency");
   if (differingPermissions.canGenerateCode()) {
-    expect(!gti_test::emitCppText(differingPermissions).empty(),
+    const auto cpp = gti_test::emitCppText(differingPermissions);
+    expect(!cpp.empty(),
            "backend resolves nested receiver reference projections");
+    std::size_t constructorBorrows = 0;
+    for (const auto &function : differingPermissions.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &stage : block.instructions) {
+          if (stage.kind != lang::MirInstructionKind::CallInput ||
+              !stage.result ||
+              stage.callInputRole != lang::MirCallInputRole::Argument ||
+              stage.callInputIndex != 0 || stage.operands.size() != 1 ||
+              (stage.operands[0].kind != lang::MirOperandKind::BorrowRead &&
+               stage.operands[0].kind != lang::MirOperandKind::BorrowWrite))
+            continue;
+          for (const auto &use : function.body.usesOf(*stage.result)) {
+            const auto *consumerBlock = function.body.findBlock(use.block);
+            if (!consumerBlock)
+              continue;
+            for (const auto &consumer : consumerBlock->instructions) {
+              if (consumer.id != use.instruction ||
+                  consumer.kind != lang::MirInstructionKind::Construct ||
+                  consumer.operands.size() != 2)
+                continue;
+              ++constructorBorrows;
+              expect(cpp.find(".construct(__gti_mir_v_" +
+                              std::to_string(*stage.result) + ",") ==
+                         std::string::npos,
+                     "constructor publishes exact borrowed referent, not an "
+                     "erased SSA stage");
+            }
+          }
+        }
+    expect(constructorBorrows == 1, "mixed constructor regression checks its "
+                                    "borrowed argument publication");
     bool inspected = false;
     for (const auto &function : differingPermissions.mir.functionInstances()) {
       for (const auto &place : function.body.places) {

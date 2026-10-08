@@ -18,7 +18,28 @@ int main() {
   const lang::CppMirBodyEmissionMap shapeRows(buildRows(shapes, shapes.mir));
   unsigned shapeResults = 0;
   unsigned arrayPublications = 0;
+  unsigned arrayMoveBodies = 0;
   for (const auto &function : shapes.mir.functionInstances()) {
+    const bool movesArray = std::any_of(
+        function.body.blocks.begin(), function.body.blocks.end(),
+        [](const auto &block) {
+          return std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [](const auto &instruction) {
+                return instruction.kind == lang::MirInstructionKind::Move &&
+                       instruction.info.type.kind ==
+                           lang::SemanticType::Array &&
+                       instruction.info.traits.drop == lang::DropKind::Lexical;
+              });
+        });
+    if (movesArray) {
+      ++arrayMoveBodies;
+      expect(lang::CppMirBodyEmitter(shapes.mir, shapeRows)
+                 .supportsFailureBodyText(
+                     {lang::MirBodyKind::Function, function.id}),
+             "owning array moves retain exact argument/return publication, "
+             "including caller bodies and non-default-constructible elements");
+    }
     for (const auto &block : function.body.blocks) {
       for (const auto &call : block.instructions) {
         if (call.intrinsic != lang::IntrinsicKind::RestoringExchange)
@@ -59,6 +80,9 @@ int main() {
   expect(shapeResults == 10 && arrayPublications == 3,
          "shape coverage includes active/cleanup-free arrays and owning "
          "alternatives");
+  expect(
+      arrayMoveBodies >= 4,
+      "array move coverage includes the caller and three exchange instances");
   unsigned quietArrayStages = 0;
   for (const auto &constructor : shapes.mir.constructorInstances()) {
     for (const auto &block : constructor.body.blocks) {

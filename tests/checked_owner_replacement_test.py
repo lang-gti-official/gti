@@ -45,7 +45,9 @@ def main():
         (0, "9\n", ""),
         (70, "9\n", bounds("scalars[index] = std::move")),
         (0, "3\n9\n", ""),
-        (70, "3\n9\n", bounds("grid[row][column] =")),
+        # The row selects a subarray before the later column or RHS runs.
+        # A terminal column failure still occurs at the replacement commit.
+        (70, "9\n", bounds("grid[row][column] =")),
         (70, "3\n9\n", bounds("grid[row][column] =")),
     ]
     modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])

@@ -1035,6 +1035,86 @@ int main() {
          "immutable bindings should reject mutation");
   expect(invalidSemantic.errors().size() == 4,
          "members, parameters, locals, and missing initializers should fail");
+
+  for (const auto &[type, initial] :
+       std::array<std::pair<std::string_view, std::string_view>, 7>{
+           {{"int8_t", "1"},
+            {"int32_t", "1"},
+            {"uint64_t", "1"},
+            {"float", "1.0"},
+            {"double", "1.0"},
+            {"bool", "false"},
+            {"char", "'x'"}}}) {
+    for (const bool assign : {false, true}) {
+      const std::string source =
+          "int main() { mut " + std::string(type) + " value; " +
+          (assign ? "value = " + std::string(initial) + "; " : "") +
+          "return 0; }";
+      const auto result =
+          lang::Frontend().analyze("uninitialized-local.gti", source);
+      const auto *diagnostic =
+          findDiagnosticByCode(result.diagnostics, "GTI-S2000");
+      expect(!result.semanticValid && !result.canGenerateCode() && diagnostic &&
+                 diagnostic->primary.source ==
+                     std::filesystem::absolute("uninitialized-local.gti")
+                         .string() &&
+                 diagnostic->primary.start == source.find("value") &&
+                 diagnostic->primary.end == source.find("value") + 5 &&
+                 diagnostic->message.find("requires an initializer") !=
+                     std::string::npos &&
+                 !diagnostic->hints.empty() && diagnostic->fixes.empty() &&
+                 !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
+             "mutable scalar declarations require a located initializer "
+             "diagnostic even when followed by assignment");
+    }
+  }
+
+  const auto boundaries =
+      lang::Frontend().analyze("initialized-boundaries.gti", R"(
+mut int32_t zeroed;
+struct Record {
+  mut int32_t value;
+  Record(int32_t initial) : value(initial) {}
+};
+int main() {
+  mut int32_t value = 1;
+  value = 2;
+  Record record{value};
+  return record.value + zeroed - 2;
+}
+)");
+  expect(boundaries.canGenerateCode(),
+         "initialized mutable locals, constructor-initialized fields and "
+         "program-wide scalar data initialization remain valid");
+
+  for (const std::string_view source : {
+           "struct Record { int read() { mut int value; return 0; } };",
+           "int main() { auto action = []() -> int { mut int value; return 0; "
+           "}; return action(); }",
+           "constexpr int compute() { mut int value; value = 1; return value; "
+           "}",
+           "int compute<T>() { mut T value; return 0; }",
+       }) {
+    const auto result =
+        lang::Frontend().analyze("local-context.gti", std::string(source));
+    const auto *diagnostic =
+        findDiagnosticByCode(result.diagnostics, "GTI-S2000");
+    expect(!result.semanticValid && diagnostic &&
+               diagnostic->primary.start == source.find("value") &&
+               diagnostic->primary.end == source.find("value") + 5 &&
+               diagnostic->message.find("requires an initializer") !=
+                   std::string::npos,
+           "method, lambda, constexpr and generic bodies obey the same "
+           "local-initialization rule");
+  }
+
+  const auto unknown = lang::Frontend().analyze(
+      "unknown-local.gti", "int main() { mut Missing value; return 0; }");
+  expect(!unknown.semanticValid &&
+             hasDiagnostic(unknown.diagnostics, "Unknown type") &&
+             !hasDiagnostic(unknown.diagnostics, "requires an initializer"),
+         "an unknown local type does not acquire a speculative initialization "
+         "diagnostic");
 }
 
 void testDefaultNodiscard() {
@@ -2729,6 +2809,78 @@ int main() { return int32_t(extent<count>()) - 4; }
          "named compile-time value arguments remain valid");
 }
 
+void testOverloadFailureGuidance() {
+  const auto temporary =
+      analyzeDiagnosticFixture("a53-operator-temporary-ref-diagnostic");
+  const auto *operation =
+      findDiagnosticByCode(temporary.diagnostics, "GTI-S2022");
+  const auto *source =
+      operation ? temporary.sources.find(operation->primary.source) : nullptr;
+  expect(!temporary.canGenerateCode() && operation && source &&
+             operation->phase == lang::DiagnosticPhase::Semantics &&
+             operation->primary.start == source->find("== a + b") &&
+             operation->primary.end == operation->primary.start + 2 &&
+             operation->related.size() == 2 &&
+             operation->related[1].span.start == source->find("+ b") &&
+             operation->related[1].span.end == source->find("+ b") + 1 &&
+             operation->related[1].message.find("temporary value") !=
+                 std::string::npos &&
+             hasDiagnosticHint(temporary.diagnostics, "Bind a temporary") &&
+             !hasDiagnosticHint(temporary.diagnostics, "convert") &&
+             operation->fixes.empty(),
+         "an exact operator reference mismatch explains the value category "
+         "at the operand, not an unrelated conversion");
+
+  const auto missing =
+      analyzeDiagnosticFixture("a60-println-format-missing-include");
+  const auto *include = findDiagnosticByCode(missing.diagnostics, "GTI-S2089");
+  expect(!missing.canGenerateCode() && include && include->fixes.size() == 1 &&
+             include->fixes.front().replacement == "#include <std/format>\n" &&
+             hasDiagnosticHint(missing.diagnostics, "argument count") &&
+             !hasDiagnosticHint(missing.diagnostics, "convert"),
+         "an arity mismatch discovers a missing overload through ordinary "
+         "include reanalysis");
+  if (include) {
+    const auto *text = missing.sources.find(include->primary.source);
+    expect(
+        text && include->primary.start == text->find("std::println(\"") + 5 &&
+            include->primary.end == include->primary.start + 7,
+        "missing overload advice identifies the callee, not its closing paren");
+  }
+
+  const std::string countSource = R"(
+int select(int value) { return value; }
+int select(bool value) { return 0; }
+int main() { return select(1, 2); }
+)";
+  const auto count =
+      lang::Frontend().analyze("overload-count.gti", countSource);
+  const auto *countError = findDiagnosticByCode(count.diagnostics, "GTI-S2012");
+  expect(countError &&
+             countError->primary.start == countSource.rfind("select") &&
+             countError->primary.end == countError->primary.start + 6 &&
+             hasDiagnosticHint(count.diagnostics, "argument count") &&
+             !hasDiagnosticHint(count.diagnostics, "convert") &&
+             countError->fixes.empty(),
+         "an unrelated overload count mismatch does not invent a conversion "
+         "or an unverified include");
+  for (const std::string &declarations :
+       {std::string("int select(int value, int tail = 0) { return value; }\n"
+                    "int select(bool value) { return 0; }\n"),
+        std::string("int select<T...>(int value, T... tail) { return value; }\n"
+                    "int select(bool value) { return 0; }\n")}) {
+    const auto result = lang::Frontend().analyze(
+        "overload-argument-shape.gti",
+        declarations + "int main() { return select(\"wrong\", 2); }\n",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(
+        result.syntaxValid && !result.canGenerateCode() &&
+            hasDiagnosticCode(result.diagnostics, "GTI-S2012") &&
+            !hasDiagnosticHint(result.diagnostics, "argument count"),
+        "defaults and generic packs must not be misreported as arity failures");
+  }
+}
+
 void testConversionDiagnosticGuidance() {
   const auto result =
       analyzeDiagnosticFixture("a05-string-view-help-suggests-invalid-form");
@@ -2851,6 +3003,7 @@ constexpr NamedTest kTests[] = {
     {"testGenericArgumentDiagnosticGuidance",
      testGenericArgumentDiagnosticGuidance},
     {"testConversionDiagnosticGuidance", testConversionDiagnosticGuidance},
+    {"testOverloadFailureGuidance", testOverloadFailureGuidance},
     {"testRawAuditDiagnosticPublication", testRawAuditDiagnosticPublication},
     {"testSemanticDiagnostics", testSemanticDiagnostics},
     {"testOwnershipAndMissingIncludeDiagnostics",

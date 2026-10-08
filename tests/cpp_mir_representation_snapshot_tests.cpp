@@ -2349,6 +2349,26 @@ int main() { sample::Catalog catalog{}; return 0; }
          "unused namespace/member and recursive aliases pass the frontend");
   if (!frontend.canGenerateCode())
     return;
+  expect(std::none_of(frontend.hir.classInstances().begin(),
+                      frontend.hir.classInstances().end(),
+                      [&](const lang::HirClassInstance &instance) {
+                        const auto *info = frontend.semantics.findClassType(
+                            instance.declaration);
+                        return info && info->declaration &&
+                               info->declaration->name().lexeme == "Box";
+                      }),
+         "namespace/member aliases name types without requesting HIR layouts");
+  expect(std::any_of(frontend.hir.classInstances().begin(),
+                     frontend.hir.classInstances().end(),
+                     [&](const lang::HirClassInstance &instance) {
+                       const auto *info = frontend.semantics.findClassType(
+                           instance.declaration);
+                       return info && info->declaration &&
+                              info->declaration->name().lexeme == "Catalog" &&
+                              instance.typeAliases.size() == 1 &&
+                              instance.typeAliases.front().declaration != 0;
+                     }),
+         "the concrete owner still retains its exact member-alias catalog");
   const auto lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   for (const auto standard :
