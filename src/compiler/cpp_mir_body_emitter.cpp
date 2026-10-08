@@ -25701,6 +25701,7 @@ enum class ClassSsaSlotConsumerKind {
   FieldInitialization,
   ExpectedInitialization,
   UnexpectedReturn,
+  PayloadOperand,
 };
 
 struct ClassSsaLifetimeSlot {
@@ -26339,6 +26340,46 @@ classSsaLifetimeSlot(const MirProgram &program,
     }
     if (directMoveProducer)
       return {};
+    // A cleanup-free construction may likewise become one field of a payload
+    // enum alternative when it cannot fuse inline into the variant braces: a
+    // failure-capable constructor ends its block at an Invoke, or sibling
+    // payload operands are prepared between it and the construction. The
+    // constructor runs at its MIR position into representation storage, and
+    // the PayloadConstruct moves the completed value into the alternative.
+    if (consumer && consumer->kind == MirInstructionKind::Compute &&
+        consumer->operation == MirOperation::PayloadConstruct &&
+        consumer->result && !consumer->destination && !consumer->receiver &&
+        consumer->localFailureSites.empty() &&
+        consumer->definedFailure.empty() &&
+        use.operandIndex < consumer->operands.size() &&
+        consumer->operands[use.operandIndex].kind == MirOperandKind::Value &&
+        consumer->operands[use.operandIndex].value == valueId &&
+        consumer->operands[use.operandIndex].type == value->info.type &&
+        mirTypeMoveIsDefinedFailureFree(program, value->info.type) &&
+        inlinePayloadClassConstruction(body, valueId) == nullptr) {
+      const auto *producerBlock = body.findBlock(value->definitionBlock);
+      const auto dominance = computeMirDominance(body);
+      const auto *invoke = invokeProducerBlock(body, *producer);
+      if (!producerBlock || !dominance ||
+          !dominance->dominates(invoke ? invoke->terminator.target
+                                       : producerBlock->id,
+                                use.block))
+        return {};
+      if (!invoke && producerBlock->id == use.block) {
+        const auto position = [&](MirInstructionId id) {
+          return std::find_if(
+              producerBlock->instructions.begin(),
+              producerBlock->instructions.end(),
+              [&](const MirInstruction &item) { return item.id == id; });
+        };
+        if (position(producer->id) >= position(consumer->id))
+          return {};
+      }
+      return {.value = value,
+              .producer = producer,
+              .consumer = consumer,
+              .consumerKind = ClassSsaSlotConsumerKind::PayloadOperand};
+    }
     const auto *target =
         consumer && consumer->functionTarget
             ? program.findFunctionInstance(*consumer->functionTarget)
@@ -30212,6 +30253,24 @@ private:
       output << ".get()";
   }
 
+  // A class constructed into representation storage for one payload field
+  // has transferred its value into the alternative; end the moved-from shell.
+  void retirePayloadOperandSlots(const ScalarBodyFacts &facts,
+                                 const MirInstruction &instruction) {
+    for (const MirOperand &operand : instruction.operands) {
+      if (operand.kind != MirOperandKind::Value)
+        continue;
+      const ClassSsaLifetimeSlot constructed = classSsaLifetimeSlot(
+          program, representations, facts.body, operand.value);
+      if (constructed.consumer != &instruction ||
+          constructed.consumerKind != ClassSsaSlotConsumerKind::PayloadOperand)
+        continue;
+      writeIndent();
+      output << "__gti_mir_v_" << operand.value
+             << ".destroy(); // end payload operand representation\n";
+    }
+  }
+
   // A payload-construct field operand is either a fused inline class
   // construction, a move chain from a named place, or an ordinary
   // scalar/copy operand. Class values entering the variant are consumed.
@@ -30223,6 +30282,14 @@ private:
               payloadTransferredValueSlot(facts.body, operand.value)) {
         output << "std::move(__gti_mir_p_"
                << canonicalSlotPlaceId(facts.body, *slot) << ".get())";
+        return;
+      }
+      const ClassSsaLifetimeSlot constructed = classSsaLifetimeSlot(
+          program, representations, facts.body, operand.value);
+      if (constructed.consumer == &instruction &&
+          constructed.consumerKind ==
+              ClassSsaSlotConsumerKind::PayloadOperand) {
+        output << "std::move(__gti_mir_v_" << operand.value << ".get())";
         return;
       }
       if (const MirInstruction *producer =
@@ -30586,6 +30653,7 @@ private:
                                       instruction.operands[index]);
         }
         output << "}});\n";
+        retirePayloadOperandSlots(facts, instruction);
         for (const MirOperand &operand : instruction.operands) {
           const MirPlace *source =
               operand.kind == MirOperandKind::Value
@@ -30909,6 +30977,7 @@ private:
                                       instruction.operands[index]);
         }
         output << "}};\n";
+        retirePayloadOperandSlots(facts, instruction);
         return;
       }
       emitPayloadExtractExpression(instruction);
@@ -34622,7 +34691,9 @@ private:
            constructionSlot.consumerKind ==
                ClassSsaSlotConsumerKind::UnexpectedReturn ||
            constructionSlot.consumerKind ==
-               ClassSsaSlotConsumerKind::ExpectedInitialization) &&
+               ClassSsaSlotConsumerKind::ExpectedInitialization ||
+           constructionSlot.consumerKind ==
+               ClassSsaSlotConsumerKind::PayloadOperand) &&
           (!failureForm || transformedConstructor(instruction) == nullptr)) {
         writeIndent();
         output << "__gti_mir_v_" << *instruction.result << ".construct(";
@@ -34689,7 +34760,9 @@ private:
              constructionSlot.consumerKind ==
                  ClassSsaSlotConsumerKind::UnexpectedReturn ||
              constructionSlot.consumerKind ==
-                 ClassSsaSlotConsumerKind::ExpectedInitialization);
+                 ClassSsaSlotConsumerKind::ExpectedInitialization ||
+             constructionSlot.consumerKind ==
+                 ClassSsaSlotConsumerKind::PayloadOperand);
         const MirPlace *slot =
             publishesReturn || expectedPayload
                 ? nullptr
@@ -47143,7 +47216,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::UnexpectedReturn ||
                constructionSlot.consumerKind ==
-                   ClassSsaSlotConsumerKind::ExpectedInitialization);
+                   ClassSsaSlotConsumerKind::ExpectedInitialization ||
+               constructionSlot.consumerKind ==
+                   ClassSsaSlotConsumerKind::PayloadOperand);
           const bool ownerTypeMatches =
               targetOwner != nullptr &&
               targetOwner->type == instruction.info.type;
@@ -47201,7 +47276,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                constructionSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::UnexpectedReturn ||
                constructionSlot.consumerKind ==
-                   ClassSsaSlotConsumerKind::ExpectedInitialization) &&
+                   ClassSsaSlotConsumerKind::ExpectedInitialization ||
+               constructionSlot.consumerKind ==
+                   ClassSsaSlotConsumerKind::PayloadOperand) &&
               instruction.definedFailure.empty() &&
               typeRow(instruction.info.type) &&
               std::all_of(instruction.operands.begin(),
