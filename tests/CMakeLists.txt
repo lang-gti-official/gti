@@ -418,6 +418,9 @@ target_link_libraries(gti_cleanup_bound_backend_mutation_tests PRIVATE gti_cpp_b
 add_test(NAME cleanup_bound_backend_mutations
          COMMAND gti_cleanup_bound_backend_mutation_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME process_resource_policy_harness
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_harness_test.py")
   add_test(NAME process_resource_policy
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_test.py"
