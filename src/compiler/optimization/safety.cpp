@@ -2099,6 +2099,18 @@ void applyInstruction(const MirBody &body,
     return;
   }
 
+  if (instruction.intrinsic == IntrinsicKind::StorageBoundsCheck &&
+      instruction.info.type == SemanticType::Void && !instruction.result &&
+      !instruction.receiver && instruction.operands.size() == 2 &&
+      instruction.operands[0].type == SemanticType::UInt64 &&
+      instruction.operands[1].type == SemanticType::UInt64) {
+    // The general scalar bounds detector reads its staged integer inputs;
+    // it neither mutates memory nor invokes source code. Its Invoke already
+    // carries the exact failure/pre-instruction state. Do not turn this
+    // primitive into an opaque memory barrier when a source owner uses it.
+    return;
+  }
+
   if (applyClosedCall(body, aliases, block, instruction, state, closedCalls,
                       address)) {
     return;

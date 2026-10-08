@@ -670,6 +670,9 @@ add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
 add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
 target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)
+add_executable(gti_optimizer_intrinsic_context_tests optimizer_intrinsic_context_tests.cpp)
+target_link_libraries(gti_optimizer_intrinsic_context_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_intrinsic_context COMMAND gti_optimizer_intrinsic_context_tests)
 add_test(NAME optimizer_raw_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_raw_context_runtime_test.py"
     $<TARGET_FILE:gti>)
