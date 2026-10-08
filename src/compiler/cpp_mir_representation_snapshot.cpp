@@ -1276,6 +1276,7 @@ struct RowFunctionFacts {
   bool cLinkage = false;
   bool runtimeBinding = false;
   bool voidFailureResultParameter = false;
+  bool conditionalResultParameter = false;
 };
 
 class RowFactProvider final {
@@ -1396,7 +1397,9 @@ public:
               info->definitionKind == MirDefinitionKind::RuntimeBinding,
           .voidFailureResultParameter =
               instance.returnType == SemanticType::Void &&
-              cppFunctionHasFailureResultChannel(lowered, *info)};
+              cppFunctionHasFailureResultChannel(lowered, *info),
+          .conditionalResultParameter =
+              cppVirtualFamilyHasConditionalResultChannel(lowered, *info)};
       result.parameterTypes.reserve(info->parameters.size());
       for (const LoweredParameter &parameter : info->parameters) {
         result.parameterTypes.push_back(parameter.type);
@@ -2229,7 +2232,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
     builder.rows.bodies.push_back(
         {.address = {.kind = MirBodyKind::Function, .owner = function.id},
          .spelling = std::move(spelling),
-         .voidFailureResultParameter = info->voidFailureResultParameter});
+         .voidFailureResultParameter = info->voidFailureResultParameter,
+         .conditionalResultParameter = info->conditionalResultParameter});
   }
 
   // A failure-capable Module/0 body (or a failure-free shape outside the
