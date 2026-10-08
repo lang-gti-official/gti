@@ -124,7 +124,7 @@
     "96-error-mapping.gti": 34,
     "97-constexpr-tables.gti": 43,
     "98-shared-ownership.gti": 390,
-    "99-borrowed-expected.gti": 382
+    "99-borrowed-expected.gti": 391
   },
-  "total": 19895
+  "total": 19904
 }

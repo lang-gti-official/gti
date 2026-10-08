@@ -1861,8 +1861,8 @@
       }
     },
     "99-borrowed-expected.gti": {
-      "declarations": 1003,
-      "bodies": 382,
+      "declarations": 1014,
+      "bodies": 391,
       "generated_items": 54,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1877,8 +1877,8 @@
     }
   },
   "totals": {
-    "declarations": 60581,
-    "bodies": 19902,
+    "declarations": 60592,
+    "bodies": 19911,
     "generated_items": 3900
   }
 }
