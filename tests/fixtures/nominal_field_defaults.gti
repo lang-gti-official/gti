@@ -1,3 +1,5 @@
+#include <std/io>
+
 mut int trace = 0;
 mut int live = 0;
 
@@ -35,6 +37,24 @@ public:
 };
 struct NominalDerived { Derived value; };
 
+class PlainValue {
+public:
+  int number = 4;
+  PlainValue() {}
+};
+PlainValue unused_value() {
+  std::println("must not evaluate overridden value default");
+  int32_t[1] values = {1};
+  int32_t index = 2;
+  std::println(values[index]);
+  return PlainValue();
+}
+class ExplicitOverride {
+  PlainValue value = unused_value();
+public:
+  ExplicitOverride() : value(PlainValue()) {}
+};
+
 int main() {
   { Generated object{}; }
   if (trace != 1221 || live != 0) return 1;
@@ -43,5 +63,6 @@ int main() {
   if (trace != 12321 || live != 0) return 2;
   NominalDerived owner{};
   if (owner.value.read() != 5) return 3;
+  ExplicitOverride overridden{};
   return 0;
 }
