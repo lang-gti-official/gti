@@ -3108,6 +3108,12 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(cli_progress PROPERTIES TIMEOUT 180)
   add_test(
+    NAME cli_install
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_install_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(cli_install PROPERTIES TIMEOUT 300)
+  add_test(
     NAME project_cli_workflow
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
