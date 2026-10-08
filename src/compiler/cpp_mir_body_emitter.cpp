@@ -48722,6 +48722,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           return false;
         }
         switch (instruction.kind) {
+        case MirInstructionKind::Call:
+          // Alias and concrete type-parameter conversions use the same
+          // checked numeric detector as Compute/Convert. They cannot carry or
+          // replace the frozen receiver, and keep their exact MIR Invoke and
+          // failure cleanup before any later conditional argument executes.
+          if ((instruction.intrinsic != IntrinsicKind::NumericAliasConversion &&
+               instruction.intrinsic !=
+                   IntrinsicKind::NumericTypeParameterConversion) ||
+              instruction.functionTarget || instruction.constructorTarget ||
+              instruction.lambdaTarget || instruction.bodyTarget ||
+              instruction.callableInvocation || !instruction.result ||
+              instruction.destination || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Value ||
+              !isPassiveScalarValueType(instruction.operands.front().type) ||
+              !isPassiveScalarValueType(instruction.info.type) ||
+              (!instruction.definedFailure.empty() &&
+               !invokePairedInstruction(body, instruction.id))) {
+            return false;
+          }
+          break;
         case MirInstructionKind::Compute:
         case MirInstructionKind::Load:
         case MirInstructionKind::CallInput:

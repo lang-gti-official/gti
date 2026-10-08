@@ -449,11 +449,14 @@ target policy, not an inferred property of the address. No object lifetime is
 started by acquiring bytes, and release requires that all live objects have
 already ended.
 
-Small ABI adapters remain justified only for facts/signatures GTI cannot yet
-spell exactly: native `size_t`, POSIX's `void**`, errno constants and reserved
-CRT symbols. They neither validate GTI requests nor own storage/bitmap policy.
-A uniquely named POSIX release forwarder additionally keeps the application's
-ordinary `free` binding usable until compatible C declarations can be shared.
+The original adapter rationale included missing native `size_t` and `void**`
+support. That rationale is superseded: GTI now expresses both through general
+C interop. The uniquely named fixed-width v1 ABI is retained because GTI still
+permits only one declaration of each C symbol across a program. It lets an
+application bind `posix_memalign` and `free` independently of the private
+provider. Native errno/size/alignment facts and reserved Windows CRT symbol
+spellings still justify small adapters. They neither validate GTI requests nor
+own storage/bitmap policy; checked source limits precede native conversions.
 The subsequent general-lifetime revision below migrates sparse owners, their
 metadata and default typed factories onto that source-owned provider policy.
 

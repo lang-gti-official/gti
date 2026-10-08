@@ -15,6 +15,7 @@ CASES = (
     "grouped_class_argument",
     "conditional_class_argument",
     "conditional_class_argument_failure",
+    "conditional_numeric_argument",
 )
 
 
@@ -28,7 +29,23 @@ def run(command, *, expected=0):
 
 
 def execute(executable, source):
-    if source.stem.endswith("_failure"):
+    if source.stem == "conditional_numeric_argument":
+        for arguments, expected_output, failure in (
+                ([], "51\n51\n", None),
+                (["right"], "52\n52\n", None),
+                (["alias", "failure"], "0\n", "alias-failure"),
+                (["generic", "conversion", "failure"], "0\n64\n", "generic-failure")):
+            result = run([str(executable), *arguments], expected=70 if failure else 0)
+            assert result.stdout == expected_output, result
+            if failure:
+                line = next(index for index, text in enumerate(source.read_text().splitlines(), 1)
+                            if f"// {failure}" in text)
+                expected = (f"{source.name}:{line}: runtime error[GTI-R0006]: "
+                            "numeric_conversion_out_of_range in numeric_cast\n")
+                assert result.stderr == expected, result
+            else:
+                assert result.stderr == "", result
+    elif source.stem.endswith("_failure"):
         line = next(index for index, text in enumerate(source.read_text().splitlines(), 1)
                     if "// failure-site" in text)
         kind = "grouped" if source.stem.startswith("grouped") else "conditional"
