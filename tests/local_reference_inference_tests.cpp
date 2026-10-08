@@ -242,6 +242,43 @@ int main() {
        R"(int main() { int* owner = nullptr;
     TYPE& alias = owner; return 0; })",
        false);
+  const auto lambda = analyze(R"(int main() {
+    auto function = [](int value) -> int { return value + 1; };
+    auto& alias = function; auto& child = alias; return child(4) - 5;
+  })");
+  check(lambda.canGenerateCode(),
+        "lambda references retain a checked environment");
+  if (lambda.canGenerateCode()) {
+    for (auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3})
+      for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
+        check(!gti_test::emitCppText(lambda, standard, lang::TargetInfo::host(),
+                                     level)
+                   .empty(),
+              "checked lambda references use the materialized MIR environment");
+    for (const auto &function : lambda.mir.functionInstances())
+      for (const auto &loan : function.body.loans) {
+        if (loan.kind != lang::MirLoanKind::Local)
+          continue;
+        auto invalid = lambda.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            invalid.findFunctionInstance(function.id));
+        changed->body.loans[loan.id - 1].source = 0;
+        check(!lang::verifyMirProgram(invalid).valid(),
+              "lambda references cannot discard their owner proof");
+      }
+  }
+  for (
+      const auto &source : {
+          R"(int main() { auto fn = []() -> int { return 1; };
+              auto& alias = fn; auto moved = std::move(fn); return alias(); })",
+          R"(int main() { auto fn = []() -> int { return 1; };
+              mut auto& alias = fn; return alias(); })",
+          R"(int main() { auto& alias = []() -> int { return 1; }; return alias(); })"}) {
+    const auto result = analyze(source);
+    check(!result.semanticValid, "lambda aliasing cannot invalidate, upgrade "
+                                 "or retain a temporary environment");
+  }
   for (const auto &source :
        {"int main() { int owner = 3; auto&& alias = owner; return 0; }",
         "int owner = 3; auto& alias = owner; int main() { return 0; }",
