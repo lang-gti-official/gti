@@ -286,6 +286,15 @@ retirement now follows the exact reparent chain. The emission inventory is
 still fail for both branch outcomes. These six cases, broad validation and
 integration remain outstanding; no issue is closed on this focused evidence.
 
+Checkpoint `b96629c7` passes the complete eight-fixture publication matrix,
+including constructor failure, cleanup ordering and grouped call arguments,
+in the same six native modes and ASan/UBSan. Both conditional-binding branches
+also pass the separate consumer matrix in all six native modes. The structural
+gate passes (4.44 seconds) with three passive conditional diamonds and six
+grouped producer bodies; cleanup-owning identity mutations additionally remove
+the reparent or forge a self-transfer. This strengthens the binding repair's
+evidence without resolving the six remaining conditional argument cases.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
