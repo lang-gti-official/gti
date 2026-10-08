@@ -807,8 +807,13 @@ slot's shape for that witness after the selected constructor has been corrupted.
 The existing MIR double-failure contract also has an inherited dynamic component:
 an ordinary source destructor or helper called by a failure-cleanup `Drop` cannot
 treat its next failure as a fresh primary and run callee-local cleanup first.
-Each failure-form MIR block with an active record establishes a backend-private,
-thread-local scope over that exact record and artifact descriptor. Every emitted
+Each failure-form body with primary cleanup reserves one backend-private scope
+and activates it at each unique primary-record entry. MIR verification proves
+that the complete
+cleanup chain preserves that record until propagation or emergency termination;
+it cannot rejoin ordinary execution. The invocation-local scope therefore spans
+the chain rather than repeating TLS activation and native RAII cleanup at every
+block. Every emitted
 `Invoke` failure edge checks the inherited context after producing its exact
 secondary record, before entering its local cleanup successor. Terminal source
 constructor/callback/call/join adapters preserve the same check. No public type
@@ -826,6 +831,13 @@ failure ABI is unchanged. The terminal envelope is constructed in a private
 out-of-line helper frame, not in one caller-frame local per terminal block.
 GNU-compatible compilers use cold/noinline hints; MSVC uses noinline. The helper
 is not noexcept because managed-worker emergency handoff can unwind through it.
+
+Each admitted fallible Drop assigns its status at the producer before its paired
+Invoke tests it. These native scalar carriers have no redundant entry-block
+false initializer: that dead definition forced native SSA promotion to compute
+large dominance-frontier/phi sets for every alternative cleanup status. This
+does not change any GTI value's initialization, lifecycle slot, constructor
+status protocol, failure record, or cleanup edge.
 
 Aggregate, array, prefix, optional, shared/unique, closure and polymorphic cleanup
 recipes inherit that scope. A cleanup sequence arms its own scope after its first

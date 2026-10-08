@@ -2,6 +2,7 @@
 """Bound native secondary-record storage without changing cleanup execution."""
 
 from pathlib import Path
+import sys
 
 from lambda_pack_invocation_runtime_test import main
 
@@ -26,4 +27,8 @@ if __name__ == "__main__":
             (("primary",), (70, completed, ordinary)),
             (("primary", "secondary"), (70, "48\n47\n46\n", emergency)),
         ]
+    }, native_inputs_by_name={
+        "many_fallible_scope_guards":
+            ["-Werror=uninitialized", "-Werror=sometimes-uninitialized"]
+            if sys.platform == "darwin" else []
     })
