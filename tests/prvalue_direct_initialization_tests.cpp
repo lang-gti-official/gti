@@ -188,7 +188,8 @@ constexpr Number constant = Number(number());
 static_assert(constant.value == 4);
 int main() {
   Box<int> result = Box<int>(relay<int>(7));
-  return result.value == 7 && Number(number()).value == 4 ? 0 : 1;
+  Number runtime = Number(number());
+  return result.value == 7 && runtime.value == constant.value ? 0 : 1;
 }
 )");
   expect(
