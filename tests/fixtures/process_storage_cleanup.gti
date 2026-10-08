@@ -1,0 +1,59 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+extern "C" {
+  void provider_test_mode(int32_t mode);
+  int32_t provider_test_calls();
+  int32_t provider_test_releases();
+  void provider_test_event(int32_t value);
+  int32_t provider_test_events();
+  int32_t provider_test_event_at(int32_t index);
+}
+
+struct Part {
+  int identity;
+  Part(int identity) : identity(identity) {}
+  ~Part() { provider_test_event(100 + this.identity); }
+};
+
+class Fixed {
+  Part part;
+  int identity;
+  int destroy_divisor;
+public:
+  Fixed(int identity, int construct_divisor, int destroy_divisor)
+      : part(Part(identity)), identity(identity), destroy_divisor(destroy_divisor) {
+    int checked = 1 / construct_divisor;
+  }
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+  ~Fixed() {
+    provider_test_event(this.identity);
+    int checked = 1 / this.destroy_divisor;
+  }
+};
+
+struct Audit {
+  ~Audit() {
+    // Runs after storage cleanup, including on the original failure path.
+    // The native reset independently rejects any leaked region.
+    std::println(provider_test_calls());
+    std::println(provider_test_releases());
+    for (mut int index = 0; index < provider_test_events(); index++) {
+      std::println(provider_test_event_at(index));
+    }
+    provider_test_mode(0);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  provider_test_mode(0);
+  Audit audit{};
+  std::allocator allocator{};
+  mut auto slots = allocator.try_storage<Fixed>(std::size_t(2)).expect("storage");
+  slots.emplace(std::size_t(0), 10, 1, 1);
+  slots.emplace(std::size_t(1), 20, argc == 2 ? 0 : 1, argc == 3 ? 0 : 1);
+  auto moved = std::move(slots);
+  return 0;
+}
