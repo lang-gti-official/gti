@@ -385,6 +385,20 @@ Declare an independent whole-program test with `kind = "test"`, then run it
 with `gti test` (or `gti test <name>`). Runtime failures are reported per target
 without preventing later tests from running.
 
+On macOS and Linux, `gti install` builds an executable target with the
+`release` profile and copies it into `~/.local/bin`, beside the toolchain, so
+you can run it by name. `gti uninstall <name>` removes it, and
+`gti install --list` shows what is installed. Use `--root <dir>` or
+`GTI_INSTALL_ROOT` for another location and `--path <dir>` to install a project
+other than the current one. Install only replaces or removes programs it
+installed; `--force` replaces anything else at the destination:
+
+```sh
+gti install
+hello
+gti uninstall hello
+```
+
 Use `gti init` to initialize an existing directory. It preserves an existing
 `src/main.gti` and refuses to replace an existing `gti.toml`; `--name <name>`
 overrides the package name derived from the directory. Add `--git` to create a
