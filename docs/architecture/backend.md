@@ -1882,7 +1882,7 @@ native representation row. An indexed owning receiver may retire an exact
 chain of mutable call-result loans, child before parent, with the same source;
 the moved-from RHS shell is destroyed only after those recorded endings. The
 emitter does not recognize the owning wrapper or container name. Apart from
-the checked-array replacement extension below, non-field projections,
+the checked-array and checked-reference replacement extensions below, non-field projections,
 conditional lifecycle events, incomplete
 borrow endings, or additional consumers fail closed.
 
@@ -1962,7 +1962,7 @@ argument evaluation; no callee handoff or `TransferOut` is invented. Both
 arms of a conditional terminal argument must satisfy this rule. The impossible
 normal continuation is not permission to omit failure cleanup.
 
-The publication has four destination families, distinguished by which
+The publication has five destination families, distinguished by which
 obligation owns the storage being replaced. A bare mutable binding owns its
 own cleanup obligation, so the `Replace` transfers into that obligation and
 the write carries no failure site. A checked fixed-array element does not:
@@ -1981,7 +1981,22 @@ paired replacement preparation, temporary activation and shell drop remain
 explicit. This also covers restoring a moved-out receiver field after concrete
 `if constexpr` selection. No library spelling or compile-time branch marker is
 consulted by the backend.
-Requiring a destination obligation for an element, owned field or loan referent
+
+A direct dereference of a named checked-reference carrier is the fifth family.
+The exact unprojected sibling must have reference type with the same referent
+type, mutable reference access, and a retained mutable loan naming that carrier.
+The carrier binding's own access does not determine referent mutability. The
+same structural carrier query supplies lvalue spelling and assignment admission;
+no standard-library type is privileged. Cleanup-free fresh/copy/move/call-result
+replacement and owning fresh/move/call-result replacement use their existing
+producer, single-use, staging, and commit proofs. The referent owns no new drop
+obligation. An owning `Replace` therefore has target zero, while its paired
+`CleanupBeforeAssign` and the held RHS failure-cleanup obligation remain intact.
+Unlike an ephemeral call-result loan, the named reference is not ended at commit:
+subsequent uses retain the original MIR-verified loan interval. This representation
+does not authorize movement out of a borrowed referent.
+
+Requiring a destination obligation for an element, owned field or checked referent
 would retire the same storage twice, so either publication fails closed when
 it names one. Every other destination, a bare-binding, field or loan publication with
 a failure site, an incomplete two-phase loan schedule, extra uses, and any

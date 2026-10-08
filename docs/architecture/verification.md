@@ -2329,6 +2329,16 @@ SIMD: fixed-array and scalar-field structs, repeated self-read replacement,
 exact constructor counts, immutable-binding rejection, and first-failure
 propagation with enclosing cleanup at O0/O3 under C++20/C++23. These regressions
 ensure native representation staging does not introduce hidden construction.
+`reference_class_assignment_runtime` covers whole-class replacement through
+mutable reference parameters, local aliases and aliases of fixed-array elements.
+It exercises fresh, copied, moved and function-returned passive values, owning
+strings, unrelated user-destructor classes and unique-owned fields. Its eight
+native modes are C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan. Failure
+observations distinguish RHS construction failure, old-value cleanup failure,
+failure after commit and secondary failure during cleanup, checking exact output,
+failure identity and exactly-once destruction. The lifecycle emitter suite
+independently corrupts carrier type/access, projection, loan and replacement
+metadata; a source negative retains read-only referent rejection.
 On arm64 and x86-64 it disables native
 automatic loop/SLP vectorization and checks that packed arithmetic exists only
 in the native-capability path. The scalar reference must contain no packed

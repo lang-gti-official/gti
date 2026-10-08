@@ -550,6 +550,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testCheckedReferenceClassAssignment",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPassiveNestedConstructorArgument",
       "suite": "lifecycle"
     },
