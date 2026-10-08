@@ -534,6 +534,18 @@ publication classifier and the proof that no MIR `Drop` governs the slot. It
 does not reconstruct loops, alter MIR lifetime semantics, or let an ordinary
 cleanup-owning slot replace or conceal a missing `Drop`.
 
+Grouping a class value does not construct another object. For a nonborrowed
+class value immediately published into a binding, the backend follows exact
+MIR `Identity` links to the original producer and uses one destination slot.
+Each link must have the same complete expression facts, a unique executable
+consumer, and either no value obligations or the exact same-type `Reparent`.
+Links are adjacent instructions or the first instruction on a unique Invoke
+success edge; the last link is adjacent to binding initialization. MIR source
+identities, failure edges, and lifecycle events remain present and execute in
+order. No copy, default constructor, extra move, or cleanup is inferred from
+parentheses. This binding-publication proof does not by itself cover grouped
+borrowed carriers or other consumer shapes.
+
 Local class-valued conditional publication uses one shared uninitialized
 temporary followed by the MIR move into its binding. The exact two-arm CFG,
 unique storage use, publication order and terminal representation teardown are
@@ -551,9 +563,9 @@ separate an arm from publication only when its unique success block contains
 only that publication. The selected status constructor writes the slot at the
 original Invoke and engages it only on success; its original failure edge and
 cleanup remain intact. Ordinary constructor-boundary admission still verifies
-the selected constructor. The shared class-publication query is used by both transformed
-constructor admission and emission; recognizing storage in the prologue alone
-is insufficient.
+the selected constructor. The shared class-publication query is used by both
+transformed constructor admission and emission; recognizing storage in the
+prologue alone is insufficient.
 
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact
