@@ -44,6 +44,11 @@ int main() { shapes::Layer<63> stack{}; return stack.value - 1; }
 )gti",
         true, "finite concrete layout at the positive depth boundary");
   check(std::string(layers) + R"gti(
+int main() { shapes::Layer<64> stack{}; return stack.value - 1; }
+)gti",
+        false, "the next concrete layout still exceeds the unchanged bound",
+        "GTI-S2105");
+  check(std::string(layers) + R"gti(
 struct Box<uint64_t N = 2, uint64_t Extent = N + 1> {
   using Previous = shapes::Layer<N - 1>;
   Previous inner;
@@ -61,6 +66,29 @@ int main() { Outer object{}; return object.inner.value - 17; }
 )gti",
       true,
       "unrelated omitted nominal field receives checked default construction");
+  check(R"gti(
+class Base {
+public:
+  int stamp = 5;
+  Base() {}
+  virtual int read() = 0;
+};
+class Derived : public Base {
+public:
+  int read() override { return this.stamp; }
+};
+struct Holder { Derived value; };
+int main() { Holder owner{}; return owner.value.read() - 5; }
+)gti",
+        true,
+        "abstract base construction remains available to a concrete owner");
+  check(R"gti(
+class Abstract { public: Abstract() {} virtual int read() = 0; };
+struct Holder { Abstract value; };
+int main() { Holder owner{}; return 0; }
+)gti",
+        false,
+        "abstract values cannot acquire nominal-field default construction");
   check(R"gti(
 class Inner { int field; public: Inner(int value) : field(value) {} };
 class Outer { public: Outer(Inner value) : inner(value) {} private: Inner inner; };

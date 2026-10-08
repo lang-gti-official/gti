@@ -44,6 +44,10 @@ access against these records; lowered-program construction copies them into the
 ordinary symbol inventory. The backend never discovers missing locals from AST
 or fabricates their types. Different substitutions and shadowed branch locals
 retain independent source/type identities; discarded arms contribute no facts.
+Generated default construction retains the already-admitted concrete owner's
+discovery depth: its field schedule is not a second source-instantiation edge.
+Each distinct generic constructor still consumes the request's instance budget;
+ordinary constructor bodies and all other discovery limits remain unchanged.
 Every reanalyzed body has its own loan-number domain, including a range whose
 types do not depend on generic parameters. Plan verification retains exact
 non-dependent range types and selected protocol operations, compares loan

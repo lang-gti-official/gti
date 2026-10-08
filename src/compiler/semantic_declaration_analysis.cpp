@@ -3836,7 +3836,9 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
     const SemanticType &type, std::vector<SemanticType> &visiting) const
     -> bool {
   const ClassInfo *owner = classInfo(type);
-  if (owner == nullptr || owner->abstract)
+  // Abstract owners still need constructor availability as base subobjects.
+  // Object-position admission and nominal fields reject abstract values.
+  if (owner == nullptr)
     return false;
   if (owner->kind == ClassKind::Union)
     return owner->unionLayout.has_value();
@@ -3845,9 +3847,10 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
     return false;
   visiting.push_back(type);
   const GenericSubstitution substitution = classSubstitution(type);
-  const auto available = [&](const SemanticType &fieldType) {
+  const auto available = [&](const SemanticType &fieldType,
+                             bool baseSubobject = false) {
     const ClassInfo *fieldOwner = classInfo(fieldType);
-    if (fieldOwner == nullptr || fieldOwner->abstract)
+    if (fieldOwner == nullptr || (fieldOwner->abstract && !baseSubobject))
       return false;
     // An open value expression is a deferred instance obligation, not a
     // usable construction operation. Concrete analysis checks it afresh.
@@ -3884,7 +3887,7 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
   }
   if (valid) {
     if (const ClassBaseTypeInfo *base = concreteBase(*owner))
-      valid = available(substituteType(base->type, substitution));
+      valid = available(substituteType(base->type, substitution), true);
   }
   visiting.pop_back();
   return valid;

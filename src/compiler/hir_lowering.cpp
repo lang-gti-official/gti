@@ -670,10 +670,21 @@ private:
     const bool generic =
         !ownerType->genericParameters.empty() ||
         (declaration != nullptr && !declaration->genericParameters.empty());
-    if (!admitInstance(declarationToken, site, generic)) {
+    // A generated default is the already-admitted owner's field schedule,
+    // not another source instantiation edge. Retain that owner's depth while
+    // still counting a distinct generic constructor toward the request budget.
+    // Ordinary constructor bodies retain their independent discovery edge.
+    const std::size_t constructorDepth =
+        generatedBody ? classDiscoveryDepths[*owner - 1] : discoveryDepth + 1;
+    const bool admitted = [&] {
+      DiscoveryScope scope(discoveryDepth, discoverySite, constructorDepth - 1,
+                           site ? site : discoverySite);
+      return admitInstance(declarationToken, site, generic);
+    }();
+    if (!admitted) {
       return 0;
     }
-    constructorDiscoveryDepths.push_back(discoveryDepth + 1);
+    constructorDiscoveryDepths.push_back(constructorDepth);
     discoveredGenericInstances += generic;
     output.program.constructors.push_back(
         {.id = id,

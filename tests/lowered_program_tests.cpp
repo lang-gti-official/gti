@@ -976,6 +976,41 @@ int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
          "one primary alias identity retains three exact owner-specific types");
   if (owners.size() != 3)
     return;
+  bool testedImplicitSource = false;
+  for (const auto &constructor : frontend.hir.constructorInstances()) {
+    if (!constructor.generatedDefault)
+      continue;
+    const auto &owner = frontend.hir.classInstances()[constructor.owner - 1];
+    for (const auto &field : owner.fields) {
+      if (field.declaration == nullptr || field.declaration->initializer())
+        continue;
+      const auto initialized = std::find_if(
+          constructor.initializers.begin(), constructor.initializers.end(),
+          [&](const auto &initializer) {
+            return initializer.field == field.info.symbol &&
+                   initializer.arguments.size() == 1;
+          });
+      if (initialized == constructor.initializers.end())
+        continue;
+      auto forged = frontend.hir;
+      auto &constructors =
+          const_cast<std::vector<lang::HirConstructorInstance> &>(
+              forged.constructorInstances());
+      auto &body = constructors[constructor.id - 1].body;
+      auto value = std::find_if(
+          body.values.begin(), body.values.end(), [&](const auto &candidate) {
+            return candidate.id == initialized->arguments.front();
+          });
+      if (value == body.values.end())
+        continue;
+      value->source = nullptr;
+      expect(!lang::verifyHirProgramPlans(frontend.semantics, forged).valid(),
+             "implicit nominal default retains exact semantic anchor identity");
+      testedImplicitSource = true;
+    }
+  }
+  expect(testedImplicitSource,
+         "alias fixture exercises generated implicit nominal construction");
   auto forgedHir = frontend.hir;
   auto &hirClasses = const_cast<std::vector<lang::HirClassInstance> &>(
       forgedHir.classInstances());
