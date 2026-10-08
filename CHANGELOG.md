@@ -15,16 +15,16 @@ for what minor and patch releases mean.
   program: its entry point, library exports, global initialization and the C
   boundary, plus everything those reach. Every declaration is still checked,
   so an error in unused code, including in a generic it instantiates, is
-  still reported. Including or importing a large library now costs little
-  more than the parts you call. For example, a program that includes every
-  standard-library unit builds in about a second instead of about ten.
+  still reported. Including or importing a large library avoids MIR,
+  optimization and native compilation work for unused bodies; parsing and
+  semantic analysis still cover the imported source.
 - `extern "C"` declarations and C records stay in the generated native header
   and layout checks whether or not GTI code uses them.
 - Less compiler work per build: whole-program C++ representation facts are
   computed once per build, the lowered program's seal is hashed as it is
-  printed, backends admit a sealed program without re-checking its
-  inventory, and the remaining declaration lookups no longer scan the whole
-  program.
+  printed, consumer stages share owning verification evidence, and the
+  remaining declaration lookups no longer scan the whole program. Backend
+  admission retains full verification rather than relying on the seal alone.
 
 ## 0.392.0 — Standard-library modules
 

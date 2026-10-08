@@ -1539,11 +1539,11 @@ verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues) {
   const auto snapshot =
       std::make_shared<const LoweredProgram>(std::move(program));
-  issues.clear();
-  if (!snapshot->constructionSeal_ ||
-      *snapshot->constructionSeal_ != constructionSeal(*snapshot)) {
-    addIssue(issues, LoweredProgramIssueKind::InvalidConstructionSeal,
-             "lowered program differs from its immutable construction seal");
+  // The inspection print is not a complete serialization of every invariant
+  // (for example, program kind is independent of the embedding plan). A seal
+  // match cannot replace verification of the exact snapshot being admitted.
+  issues = verifyLoweredProgram(*snapshot);
+  if (!issues.empty()) {
     return std::nullopt;
   }
   return VerifiedLoweredProgram(snapshot);

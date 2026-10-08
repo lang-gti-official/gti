@@ -818,28 +818,23 @@ private:
   verifyLoweredProgram(const LoweredProgram &program);
   friend std::vector<LoweredProgramIssue>
   lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program);
-  friend std::optional<VerifiedLoweredProgram>
-  verifiedLoweredProgram(LoweredProgram program,
-                         std::vector<LoweredProgramIssue> &issues);
 };
 
 [[nodiscard]] std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program);
 
 // Takes an independent value for a consumer and returns owning evidence only
-// when it carries a valid construction seal. Lvalues copy; rvalues move. The
-// builder seals a program only after its complete contents verify, and the
-// seal covers the whole printed program, so a matching seal proves this is
-// that verified value; verifyLoweredProgram remains the complete check.
+// when that exact snapshot passes verification. Lvalues copy; rvalues move.
+// The construction seal supplements the inventory checks; the inspection
+// print is not an exhaustive serialization of every verified invariant.
 [[nodiscard]] std::optional<VerifiedLoweredProgram>
 verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues);
 
-// Evidence that this exact, owned const value carries a valid construction
-// seal. A caller may replace or destroy its original LoweredProgram without
+// Evidence that verifyLoweredProgram accepted this exact, owned const value.
+// A caller may replace or destroy its original LoweredProgram without
 // making this proof stale. Consumer stages share the snapshot rather than
-// checking the seal again, which prints the whole program, or copying another
-// complete program.
+// repeating the inventory and seal check or copying another complete program.
 class VerifiedLoweredProgram final {
 public:
   // Deliberately copy shared ownership even for an rvalue: there is no empty
