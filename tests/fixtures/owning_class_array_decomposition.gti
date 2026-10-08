@@ -1,0 +1,25 @@
+#include <std/string>
+#include <std/utility>
+
+extern "C" {
+  void mark_constructor();
+  int32_t constructed_count();
+}
+
+class Text {
+public:
+  std::string text;
+  Text(std::string input) : text(std::move(input)) { mark_constructor(); }
+};
+
+int inspect() {
+  Text values[2] = {Text(std::string("one")), Text(std::string("two"))};
+  auto [first, second] = std::move(values);
+  return first.text.view() == "one" && second.text.view() == "two" ? 0 : 1;
+}
+
+int main() {
+  if (inspect() != 0) { return 1; }
+  // No ordinary/default construction is introduced by the whole-array move.
+  return constructed_count() == 2 ? 0 : 2;
+}
