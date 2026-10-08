@@ -2,6 +2,18 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testContainedClosureConstructorPlan",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testOwningCallFieldInputTransfers",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testExplicitVirtualResultChannel",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testGeneratedMoveReferenceBindings",
       "suite": "lifecycle"
     },

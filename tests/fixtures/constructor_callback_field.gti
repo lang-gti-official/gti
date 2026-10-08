@@ -1,0 +1,25 @@
+#include <std/functional>
+
+struct CallbackField {
+  std::function<int(int, int)> calculate{
+      [](int left, int right) -> int { return left + right; }};
+};
+
+// An unrelated generic constructor also needs the closure-dependent body plan.
+class Computed {
+  int value;
+public:
+  Computed<F>(F factory, int divisor) : value(12 / divisor) {}
+  int read() { return this.value; }
+};
+
+struct UserField {
+  Computed computed{[]() -> int { return 17; }, 2};
+};
+
+int main() {
+  CallbackField field{};
+  UserField user{};
+  if (field.calculate(2, 3) != 5) return 1;
+  return user.computed.read() - 6;
+}

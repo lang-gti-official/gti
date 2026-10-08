@@ -19,6 +19,8 @@ def run(command):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
+    parser.add_argument("--syntax-cxx", type=Path, action="append", default=[],
+                        help="Also syntax-check each standard with this native compiler")
     arguments = parser.parse_args()
     compiler = arguments.compiler.resolve()
     source = Path(__file__).parent / "fixtures/raw_native_record_transport.gti"
@@ -40,6 +42,8 @@ def main():
         emitted = work / "transport.cpp"
         run([compiler, source, "--emit-cpp", "-o", emitted])
         cpp = emitted.read_text()
+        assert not re.search(r"__gti_mir_out_result\s*=\s*nullptr", cpp), (
+            "virtual result channels must be explicit, including after concrete packs")
         signatures = re.findall(r"retained_relay[^\n]*\(const T &\s*__gti_mir_arg_0", cpp)
         assert signatures, "retained native-record parameter must be a const reference"
         assert not re.search(r"retained_relay[^\n]*\(T __gti_mir_arg_0", cpp)
@@ -68,6 +72,17 @@ def main():
         assert "error[GTI-S2101]" in rejected.stderr and "scope has ended" in rejected.stderr, (
             rejected.stdout, rejected.stderr)
         for standard in ("c++20", "c++23"):
+            if arguments.syntax_cxx:
+                syntax_source = work / f"transport-{standard}.cpp"
+                run([compiler, source, "--emit-cpp", "--std", standard,
+                     "-o", syntax_source])
+                root = Path(__file__).resolve().parents[1]
+                for cxx in arguments.syntax_cxx:
+                    run([cxx, f"-std={standard}", "-fsyntax-only",
+                         "-fno-fast-math", "-ffp-contract=off",
+                         "-D__gti_strict_ieee754=1", "-I", root / "runtime/include",
+                         "-I", root / "vendor/expected_lite/include",
+                         syntax_source])
             for level in ("O0", "O2", "O3"):
                 binary = work / f"transport-{standard}-{level}"
                 run([compiler, source, "--std", standard, f"-{level}",
