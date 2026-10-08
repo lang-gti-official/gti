@@ -86,6 +86,10 @@ struct CppMirBodyNameRepresentation {
   // The status ABI retains an unused void* result channel from a symbolic
   // result declaration/virtual family. It never denotes a MIR runtime value.
   bool voidFailureResultParameter = false;
+  // A symbolic virtual result retains an explicit output channel across its
+  // family. Ordinary direct-return calls pass nullptr; byte transport supplies
+  // its verified destination instead. This is representation, not a MIR value.
+  bool conditionalResultParameter = false;
 
   friend bool operator==(const CppMirBodyNameRepresentation &,
                          const CppMirBodyNameRepresentation &) = default;
