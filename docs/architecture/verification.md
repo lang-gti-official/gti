@@ -6,7 +6,8 @@
 typed/braced/grouped wrappers, genuine existing-object copy/move, deleted real
 movement, borrowed-owner escape rejection, exact generic instances, constexpr
 producer parity, HIR source-alias mutations (including forged real transfers,
-missing construction-owner evidence, and an observable ordinary factory),
+missing construction provenance, and actual erasure of ordinary/nominal-call
+factories and a dependent generic branch whose primary has no selection),
 verified MIR and both C++ backend
 standards. It also checks field-wise mixed borrowed factories/relays and rejects
 owner mutation before last use, conflicting exclusive inputs, and local-owner
