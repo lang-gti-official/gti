@@ -2327,6 +2327,68 @@ int main() {
       "ordinary concrete C++ declarations after GTI selects them");
 }
 
+void testRetainedConstructorDeclarations() {
+  const auto frontend = lang::Frontend().analyze("alias-constructors.gti", R"(
+struct Cursor<T> {};
+struct Packet<T> {
+  using cursor = Cursor<T>;
+  T value;
+  Packet<Args...>(Args... args) : value(T(args...)) {}
+};
+struct Wrapped {
+  int value;
+  Wrapped(int input) : value(input) {}
+};
+int main() {
+  Packet<int> scalar{4};
+  Packet<Wrapped> record{5};
+  Packet<int> zero{};
+  Packet<bool> flag{true};
+  if (!flag.value) { return 1; }
+  return scalar.value + record.value.value + zero.value - 9;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "alias-bearing generic owners select independent constructors");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto generated = gti_test::emitCpp(frontend, standard).contents;
+    for (const std::string_view declaration :
+         {"explicit Packet(std::int32_t __gti_mir_arg_0);",
+          "explicit Packet(bool __gti_mir_arg_0);", "explicit Packet();"}) {
+      const auto first = generated.find(declaration);
+      expect(first != std::string::npos &&
+                 generated.find(declaration, first + 1) == std::string::npos,
+             "the retained primary declares each native parameter list once");
+    }
+    std::size_t constructors = 0;
+    for (const auto &instance : frontend.mir.constructorInstances()) {
+      const auto *owner = frontend.mir.findClassInstance(instance.owner);
+      const auto *declaration =
+          owner ? frontend.semantics.findClassType(owner->declaration)
+                : nullptr;
+      if (!declaration || !declaration->declaration ||
+          declaration->declaration->name().lexeme != "Packet" ||
+          instance.definitionKind != lang::MirDefinitionKind::Source)
+        continue;
+      ++constructors;
+      expect(generated.find("constructor-instance " +
+                            std::to_string(instance.id) + "\n") !=
+                 std::string::npos,
+             "declaration sharing retains every exact verified-MIR body");
+      if (instance.mayRaiseDefinedFailure)
+        expect(generated.find("mir_failure_constructor_tag_v1<" +
+                              std::to_string(instance.id) + ">") !=
+                   std::string::npos,
+               "each fallible constructor retains its own failure adapter");
+    }
+    expect(constructors == 4,
+           "equal and different parameter lists retain four concrete bodies");
+  }
+}
+
 void testTypeOnlyConcreteAliases() {
   const auto frontend = lang::Frontend().analyze("type-only-aliases.gti", R"(
 namespace sample {
@@ -2607,6 +2669,7 @@ int main() {
   testReferenceReceiverCompoundAssignPlaceCoherence();
   testConcreteGenericFreeFunctionIdentity();
   testConcreteGenericClassAndMemberIdentity();
+  testRetainedConstructorDeclarations();
   testTypeOnlyConcreteAliases();
   testNativeCarrierExactSpecializations();
   testCleanupFreeConstructorArguments();
