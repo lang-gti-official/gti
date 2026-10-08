@@ -143,7 +143,7 @@ is a teaching helper, not a production server.
 | `96-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
 | `97-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |
 | `98-shared-ownership.gti` | shared handles, explicit cloning versus moving, and final-owner cleanup |
-| `99-borrowed-expected.gti` | read-only fallible lookup, borrowed `?` propagation, and consuming `.expect` with owner lifetime checks |
+| `99-borrowed-expected.gti` | read-only fallible lookup, local-alias return publication, nested read-only accessors, borrowed `?` propagation, and consuming `.expect` with owner lifetime checks |
 | `100-owned-error-pipelines.gti` | exact-error propagation and explicit conversion into an owning application error without losing JSON path context |
 | `101-owned-algorithm-results.gti` | move-only string transformation and bounded comparator sorting for asset-build work |
 | `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |

@@ -1817,14 +1817,12 @@
       "outcome": "pass"
     },
     "a25-expected-ref-relay-wrong-referent": {
-      "finding": "A25",
       "issue": 70,
-      "outcome": "runtime"
+      "outcome": "pass"
     },
     "a25-ref-return-from-expected-value": {
-      "finding": "A25",
       "issue": 70,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a26-overloaded-deref-store-reads-owner": {
       "issue": 71,
@@ -1840,14 +1838,10 @@
       "outcome": "ice"
     },
     "a28-range-element-field-overloaded-operator": {
-      "finding": "A28",
-      "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a28-range-element-field-ref-method": {
-      "finding": "A28",
-      "issue": 73,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a29-method-on-returned-string-view": {
       "finding": "A29",
@@ -2093,24 +2087,23 @@
       "outcome": "pass"
     },
     "a58-map-unique-ptr-value-deref": {
-      "finding": "A58",
-      "issue": 99,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a58-ref-to-owner-field-pointee-via-local-ref": {
-      "finding": "A58",
-      "issue": 99,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a59-map-at-then-element-ref": {
-      "finding": "A59",
-      "issue": 100,
-      "outcome": "ice"
+      "cases": [
+        {
+          "exit": 70,
+          "stderr": "<std/map>:[0-9]+: runtime error\\[GTI-R0015\\]: key_not_found in key_lookup\\n",
+          "stdout": ""
+        }
+      ],
+      "outcome": "pass"
     },
     "a59-readonly-ref-into-mut-nested-container": {
-      "finding": "A59",
-      "issue": 100,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a60-println-format-missing-include": {
       "finding": "A60",
