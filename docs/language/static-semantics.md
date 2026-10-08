@@ -112,7 +112,16 @@ data initialization retain their separate rules.
 
 Local `auto` infers one exact complete value type from its initializer. It does
 not infer globals, fields, parameters, returns, arrays, or untyped braced
-initializers. The range-for forms `auto&` and `mut auto&` infer element borrows;
+initializers. Ordinary initialized locals may use `auto&` for a read-only
+reference or `mut auto&` for a mutable reference. They infer the initializer's
+exact referent type and apply the same addressability, access, stable-storage,
+reborrow and lifetime checks as explicit `T&`/`mut T&`. Inference creates no
+copy, movement, owner or lifetime extension; a checked reference returned through
+a temporary carrier is tied to its established external owner. Whole fixed-array
+and raw-pointer references remain rejected just as in explicit declarations;
+references to supported array elements are valid. This also applies in concretely
+analyzed generic bodies. `auto&&` and API-visible reference inference are not
+supported. The range-for forms infer element borrows;
 plain `auto` does not silently infer a reference. A fixed array is traversed
 with an exact indexed strategy. A read-only loop receives a shared owner loan.
 A `mut T&` or `mut auto&` loop over an addressable range requires a mutable

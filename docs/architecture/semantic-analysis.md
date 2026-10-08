@@ -2,6 +2,17 @@
 
 Status: Current implementation.
 
+## Local reference inference
+
+`analyzeInferredVariable` resolves written `auto&`/`mut auto&` from the analyzed
+initializer's referent type. Reference initializers enter the same loan-establishing
+analysis context as explicit references, including mutable-use tracking. Ordinary
+locals share `validateReferenceReferent`, `validateReferenceBinding` and
+`recordRetainedBorrow`; range/generated locals retain their existing structural
+contracts. Concrete generic reanalysis records the concrete reference, not a
+second inference rule. HIR/MIR consume resolved binding/access and loan facts;
+the backend never asks C++ `auto&` to decide type or lifetime semantics.
+
 ## Generic payload enum signatures
 
 Nominal registration inventories class and enum identities and their ordinary

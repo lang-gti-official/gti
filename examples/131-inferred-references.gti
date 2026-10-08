@@ -1,0 +1,30 @@
+#include <std/json>
+#include <std/string>
+
+struct Record {
+  mut int count = 1;
+};
+
+int main() {
+  mut Record owner{};
+  auto& observed = owner;
+  int snapshot = observed.count;
+  // The shared borrow has reached its last use. This reference requests
+  // exclusive access; it does not copy or become a second owner.
+  mut auto& writable = owner;
+  writable.count = snapshot + 1;
+  if (writable.count != 2) { return 1; }
+
+  auto document = std::json::parse("{\"scopes\":[\"read\",\"write\"]}")
+                      .expect("valid configuration");
+  // The temporary expected shell is consumed, but this checked reference
+  // remains tied to document. Plain auto would attempt to copy its JSON node.
+  auto& scopes = document.get("scopes").expect("scopes are required");
+  for (auto& scope : scopes.elements()) {
+    auto text = scope.as_string().expect("scope must be a string");
+    std::println(text);
+  }
+  // Moving/mutating document before the last use of scopes is rejected.
+  // Fresh owned temporaries and read-only-to-mutable upgrades are not allowed.
+  return 0;
+}

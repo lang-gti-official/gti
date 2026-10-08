@@ -10,6 +10,18 @@ or deterministic cleanup rules. Source-level `new` and `delete` remain absent.
 
 ## Public Ownership Surface
 
+An initialized local `auto& name = expression;` requests a read-only checked
+reference with an inferred exact referent type. `mut auto&` requests mutable
+access without upgrading a read-only initializer. Both use the explicit
+reference contract: the same owner/place dependencies, reborrow restrictions,
+last-use endpoints, escape checks and cleanup obligations apply. Only the
+written type is inferred; ownership is not. Fresh owned temporaries cannot
+initialize a retained reference, while a temporary `expected<T&, E>` may
+publish a borrow of its stable external owner through `?` or `.expect()`.
+Plain `auto` remains a value binding and can therefore reject a move-only
+copy that `auto&` would validly borrow. Whole-array and raw-pointer referents
+remain outside ordinary local reference support in either spelling.
+
 The implemented unique ownership surface is:
 
 ```gti

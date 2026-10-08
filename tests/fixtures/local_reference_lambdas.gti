@@ -1,0 +1,33 @@
+#include <std/string>
+#include <std/vector>
+
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(90); }
+  int read() { return this.value; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  auto empty = [](int value) -> int { return value + 1; };
+  auto& empty_ref = empty;
+  std::println(empty_ref(4));
+
+  mut int snapshot = 7;
+  auto copied = [snapshot]() -> int { return snapshot; };
+  auto& copied_ref = copied;
+  snapshot = 12;
+  std::println(copied_ref());
+
+  Resource resource{9};
+  auto owned = [resource = std::move(resource)](int divisor) -> int {
+    return resource.read() / divisor;
+  };
+  auto& owned_ref = owned;
+  auto& reborrow = owned_ref;
+  std::println(reborrow(argc == 1 ? 1 : 0));
+  return 0;
+}
