@@ -546,6 +546,15 @@ order. No copy, default constructor, extra move, or cleanup is inferred from
 parentheses. This binding-publication proof does not by itself cover grouped
 borrowed carriers or other consumer shapes.
 
+The same identity-link proof also composes with the existing prepared-argument
+slot protocol. It distinguishes the original call/constructor producer from the
+terminal grouped value consumed by `CallInput`, validates every intervening
+drop transfer back to the producer's activation, and requires adjacency to the
+argument stage. Admission and computation emission use the same publication
+query. The prepared argument remains live through later argument evaluation;
+its existing transfer and failure-cleanup schedule is unchanged. This does not
+admit an arbitrary Move from a conditional temporary as a constructor producer.
+
 Local class-valued conditional publication uses one shared uninitialized
 temporary followed by the MIR move into its binding. The exact two-arm CFG,
 unique storage use, publication order and terminal representation teardown are
