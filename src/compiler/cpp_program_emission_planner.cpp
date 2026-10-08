@@ -2980,14 +2980,23 @@ public:
       output << ");\n";
     }
     if (generic) {
+      std::unordered_set<std::string> declaredParameters;
       for (const MirConstructorInstance *instance : instances) {
         if (!loweredConstructorInstanceIsNameable(*instance)) {
           continue;
         }
-        writeIndent();
-        output << "explicit " << classRow.name << '(';
+        // A retained primary can represent several concrete owners with the
+        // same native parameter list. Declare that ordinary overload once;
+        // its owner-specific definitions and failure-tag overloads stay exact.
+        std::ostringstream saved = std::move(output);
+        output = std::ostringstream{};
         emitLoweredMirParameters(instance->parameterTypes);
-        output << ");\n";
+        const std::string parameters = output.str();
+        output = std::move(saved);
+        if (!declaredParameters.insert(parameters).second)
+          continue;
+        writeIndent();
+        output << "explicit " << classRow.name << '(' << parameters << ");\n";
       }
     }
     deferLoweredMember(row);
