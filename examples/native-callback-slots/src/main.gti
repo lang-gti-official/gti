@@ -1,0 +1,32 @@
+#include <hooks/bindings>
+
+int main() {
+  unsafe {
+    mut auto callback = native::obtain_operation();
+    if (callback == nullptr || callback(c_int(41)) != c_int(42)) { return 1; }
+    native::replace_callback(&callback);
+    if (callback(c_int(21)) != c_int(42)) { return 2; }
+    mut c_int result = 0;
+    native::apply_operation(callback, &result);
+    if (result != c_int(42)) { return 3; }
+
+    mut auto table = native::obtain_hooks();
+    if (native::verify_hooks(table) != c_int(1)) { return 4; }
+    auto selected = *table.readonly_slot;
+    if (selected(c_int(41)) != c_int(42)) { return 5; }
+    native::replace_callback(table.slot);
+    auto replaced = *table.readonly_slot;
+    if (replaced(c_int(21)) != c_int(42)) { return 6; }
+    if (*table.label != c_char(114) || *table.labels[1] != c_char(115)) { return 7; }
+    if (table.values[2] != c_ushort(3)) { return 8; }
+    if (table.matrix[1][2] != c_ushort(6)) { return 12; }
+    table.matrix[1][2] = c_ushort(42);
+    if (table.matrix[1][2] != c_ushort(42)) { return 13; }
+    if (uint64_t(native::hooks_size()) != sizeof(native::HookTable) ||
+        uint64_t(native::hooks_alignment()) != alignof(native::HookTable)) { return 9; }
+    mut native::Row values = {c_ushort(10), c_ushort(20), c_ushort(12)};
+    if (native::row_sum(&values[0]) != c_int(42)) { return 10; }
+    if (native::text_length("ready") != c_int(5)) { return 11; }
+  }
+  return 0;
+}

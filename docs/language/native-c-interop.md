@@ -241,7 +241,7 @@ set, including callback fields and fixed arrays with multiple extents or record,
 pointer, callback, and scalar elements; `restrict` qualifiers are read and
 dropped because they do not change the caller's contract. Field positions the
 record surface
-rejects — unsupported nested pointers — degrade the record to an
+rejects — for example pointers to whole arrays — degrade the record to an
 opaque handle with the reason recorded, so generated source always satisfies
 this contract's own validation. Everything
 the bounded surface cannot express is reported with its
@@ -255,6 +255,32 @@ generated source has no special status: this language contract remains the
 sole ABI authority when it is compiled. The tool's architecture and growth
 phases are recorded in
 [the native-bindings-import plan](../plans/native-bindings-import.md).
+
+### Composable typedef imports
+
+The importer preserves every native pointer level. For
+`typedef int (*Callback)(int)`, `Callback` is a callback value and
+`Callback*` is a pointer to a slot containing that value, including in records,
+results and nested pointers. `const Callback*` makes the slot read-only, not
+the function. A bare function typedef such as `typedef int Operation(int)`
+also produces a named callback signature: native `Operation*` and a C
+function-typed parameter use that signature after the native pointer/parameter
+adjustment. The generated declarations use existing GTI types, not new compiler
+privileges. Hidden or system callback names get deterministic synthesized aliases.
+
+Reusable `const char*` typedefs use `const c_char*` storage, so their record and
+nested-pointer uses remain ABI-faithful. Direct call-boundary uses retain the
+existing `c_string` convenience. Fixed-array aliases compose through other
+array aliases and record fields; C array parameters decay to element pointers.
+Zero-length array extensions, pointers to whole arrays, variadic callbacks and
+prototype-less callbacks are reported rather than approximated.
+
+See the runnable [callback-slot project](../../examples/native-callback-slots/README.md).
+Native multidimensional array fields support checked element reads and writes;
+each index keeps its bounds check and evaluation order, including failure before
+evaluating a later index. This repairs the backend row-address representation
+defect tracked in [#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175)
+without adding whole-array pointer or reference support.
 
 ### Imported enum representation
 
