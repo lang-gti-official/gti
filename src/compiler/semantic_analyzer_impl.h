@@ -3535,7 +3535,8 @@ private:
   void captureUnqualifiedCompletion(const Token &completion);
 
   void captureQualifiedCompletion(const NamePath &path,
-                                  const TypeRef *ownerType = nullptr);
+                                  const TypeRef *ownerType = nullptr,
+                                  bool typeOnly = false);
 
   void captureMemberCompletion(const Token &completion,
                                const SemanticType &objectType,

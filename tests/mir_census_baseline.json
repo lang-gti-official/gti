@@ -40,6 +40,7 @@
     "126-conditional-thread-capabilities.gti": 86,
     "128-inline-object-pool.gti": 520,
     "129-generic-payload-enums.gti": 398,
+    "130-qualified-type-members.gti": 100,
     "13-ownership.gti": 75,
     "14-operators.gti": 51,
     "15-variadic-generics.gti": 49,
@@ -126,5 +127,5 @@
     "98-shared-ownership.gti": 390,
     "99-borrowed-expected.gti": 382
   },
-  "total": 19895
+  "total": 19995
 }
