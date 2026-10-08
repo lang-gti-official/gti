@@ -239,6 +239,13 @@ rejects valid class-expression MIR during backend admission. No passing native
 or sanitizer evidence is claimed for the repair yet. Malformed-MIR mutation
 coverage must accompany the eventual representation change.
 
+`conditional_class_publication` adds production C++ admission and malformed-MIR
+checks for the passive conditional repair, retaining an active-cleanup control.
+Its mutations rebuild use records before checking rejection of forged initial
+availability, borrowed traits, operand types, copies, and lifecycle targets.
+The passive representation implementation and these tests are pending build and
+execution; their presence alone is not passing evidence.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
