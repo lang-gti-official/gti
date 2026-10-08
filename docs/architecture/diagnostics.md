@@ -172,6 +172,16 @@ diagnostic storage.
 
 ## Source excerpts and explanations
 
+Failed overload lookup distinguishes argument-count failures from exact-type
+and reference/ownership requirements. A count mismatch does not suggest a cast;
+defaults and parameter packs use the resolver's own argument-shape predicate.
+Named call failures highlight the callee. Missing overload declarations use
+the existing include discovery and frontend reanalysis, offering an include
+only when it resolves to that file without introducing errors. No standard
+library name determines this advice. Operator reference mismatches relate the
+actual value/read-only operand and explain the required place/access; binding
+a temporary remains advisory, not an automatic lifetime-changing edit.
+
 Terminal diagnostics keep the `file:line:column` heading, stable code, source
 caret, and separate `note:`/`help:` lines. The heading's column counts source
 scalars; the excerpt underline uses terminal display cells. Both primary and

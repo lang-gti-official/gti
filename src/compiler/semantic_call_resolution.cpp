@@ -6049,18 +6049,55 @@ auto SemanticVisitor::Impl::resolveOperator(
           "GTI-S2022", DiagnosticPhase::Semantics, token,
           "No exact overload of " + std::string(operatorSourceSpelling(kind)) +
               received + ".");
-      diagnostic.hints.emplace_back(
-          "GTI operator calls do not perform implicit conversions, rank "
-          "candidates, reverse operands, or use ADL; convert the operand "
-          "explicitly when that conversion is intentional.");
+      bool referenceMismatch = false;
       for (const CallableCandidate &candidate : overloadSet.overloads) {
         if (candidate.declaration != nullptr &&
             (isCompilerTrustedRequester(token) || !candidate.compilerPrivate)) {
           diagnostic.related.push_back(
               {tokenSpan(candidate.declaration->operatorName()->keyword),
                "Candidate: " + functionSignatureSpelling(candidate)});
+          if (candidate.parameterTypes.size() != concreteArguments.size())
+            continue;
+          for (std::size_t index = 0; index < concreteArguments.size();
+               ++index) {
+            const auto &parameter = candidate.parameterTypes[index];
+            const auto &argument = concreteArguments[index];
+            if (parameter.kind != SemanticType::Reference ||
+                parameter.arguments.size() != 1 ||
+                parameter.arguments.front() != argument.type ||
+                argument.forwardedPackElement ||
+                argument.expression == nullptr || !*argument.expression)
+              continue;
+            const ExpressionInfo *info =
+                semanticModel.findExpression(**argument.expression);
+            if (info == nullptr)
+              continue;
+            std::string reason;
+            if (info->category == ValueCategory::Value) {
+              reason = "is a temporary value; this candidate requires an "
+                       "existing place for its reference parameter.";
+            } else if (parameter.referenceAccess == AccessMode::Mutable &&
+                       info->access != AccessMode::Mutable) {
+              reason = "is read-only; this candidate requires exclusive "
+                       "mutable access for its reference parameter.";
+            }
+            if (!reason.empty()) {
+              referenceMismatch = true;
+              diagnostic.related.push_back(
+                  {tokenSpan(expressionToken(*argument.expression)),
+                   "Argument " + std::to_string(index + 1) + " " + reason});
+            }
+          }
         }
       }
+      diagnostic.hints.emplace_back(
+          referenceMismatch
+              ? "Reference parameters require an existing place with the "
+                "declared access. Bind a temporary to a local before using "
+                "it, or use an operator accepting an owned value."
+              : "GTI operator calls do not perform implicit conversions, rank "
+                "candidates, reverse operands, or use ADL; match the exact "
+                "parameter types and ownership requirements.");
       diagnostics.emplace_back(std::move(diagnostic));
     } else {
       report(token,
@@ -6717,13 +6754,29 @@ auto SemanticVisitor::Impl::reportOverloadResolutionFailure(
       arguments += typeSpelling(argumentTypes[index]);
     }
     diagnostic = makeDiagnostic(
-        "GTI-S2012", DiagnosticPhase::Semantics, call.paren(),
+        "GTI-S2012", DiagnosticPhase::Semantics, expressionToken(call.callee()),
         "No overload of '" + name + "' exactly matches argument types (" +
             arguments + ").");
     if (constraintFailures.empty()) {
+      const bool acceptsCount = std::any_of(
+          overloadSet.overloads.begin(), overloadSet.overloads.end(),
+          [&](const CallableCandidate &candidate) {
+            return (isCompilerTrustedRequester(call.paren()) ||
+                    !candidate.compilerPrivate) &&
+                   acceptsArgumentShape(candidate, argumentTypes);
+          });
       diagnostic.hints.emplace_back(
-          "Function calls do not perform implicit conversions; convert an "
-          "argument explicitly with syntax such as 'uint64_t(value)'.");
+          acceptsCount
+              ? "Match the exact parameter types and reference/ownership "
+                "requirements of an available overload."
+              : "No available overload accepts this argument count. Check the "
+                "arguments and include the declaration of the intended "
+                "overload.");
+      if (!acceptsCount &&
+          (call.callee()->exprKind() == ExprKind::Variable ||
+           call.callee()->exprKind() == ExprKind::QualifiedName)) {
+        diagnostic.missingIncludeName = expressionToken(call.callee()).lexeme;
+      }
     }
     for (const CallableCandidate &candidate : overloadSet.overloads) {
       if (candidate.declaration != nullptr &&
