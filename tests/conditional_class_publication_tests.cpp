@@ -151,7 +151,7 @@ int main() {
       }
     }
   }
-  expect(joins == 2,
+  expect(joins == 3,
          "nonraising and raising passive class diamonds were exercised");
   std::size_t groupedBodies = 0;
   for (const std::string fixture :

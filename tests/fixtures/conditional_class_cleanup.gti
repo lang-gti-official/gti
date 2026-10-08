@@ -20,15 +20,18 @@ int check(bool left) {
   for (mut int index = 0; index < 4; ++index) {
     {
       Reading selected = left ? Reading(3) : Reading(7);
-      if (selected.read() != wanted || destroyed != before + index) { return 1; }
+      Reading grouped = (((left ? Reading(9) : Reading(11))));
+      int grouped_wanted = left ? 9 : 11;
+      if (selected.read() != wanted || grouped.read() != grouped_wanted ||
+          destroyed != before + index * 2) { return 1; }
     }
-    if (destroyed != before + index + 1 || last_destroyed != wanted) { return 2; }
+    if (destroyed != before + (index + 1) * 2 || last_destroyed != wanted) { return 2; }
   }
   return 0;
 }
 
 int main() {
   if (check(true) != 0 || check(false) != 0) { return 1; }
-  if (constructed != 8 || destroyed != 8) { return 2; }
+  if (constructed != 16 || destroyed != 16) { return 2; }
   return 0;
 }
