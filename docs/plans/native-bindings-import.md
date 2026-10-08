@@ -402,8 +402,9 @@ not claim arbitrary `-fshort-enums` or every target-specific enum extension.
      language's rule (an admitted one-level result, or the exact two-level
      form; a count parameter pointing to a writable fixed-width integer) and
      refuses the function with its reason rather than emitting an attribute
-     the frontend would reject. This is the only control that *widens* what
-     imports: the two-level array result form is otherwise refused.
+     the frontend would reject. Recursive pointer results now import through
+     the ordinary pointer rules without this option; the option adds the
+     separately checked extent contract rather than enabling pointer depth.
    - A configured entry matching nothing is reported as a warning, so a typo
      is visible instead of silently doing nothing.
 
