@@ -1,0 +1,27 @@
+#include <std/string>
+#include <std/vector>
+
+class Defaults {
+  std::vector<int32_t> values = {1, 2};
+public:
+  Defaults() {}
+  int32_t sum() { return this.values[std::size_t(0)] + this.values[std::size_t(1)]; }
+};
+
+class Explicit {
+  std::vector<std::string> values;
+public:
+  Explicit() : values({std::string("one"), std::string("two")}) {}
+  void show() {
+    std::println(this.values[std::size_t(0)]);
+    std::println(this.values[std::size_t(1)]);
+  }
+};
+
+int main() {
+  Defaults defaults{};
+  if (defaults.sum() != 3) return 1;
+  Explicit explicit_values{};
+  explicit_values.show();
+  return 0;
+}
