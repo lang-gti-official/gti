@@ -2142,8 +2142,15 @@ M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
 available/moved/uninitialized fixed point over lifecycle events. Parameters
 begin active; value and lexical initialization activate obligations; move,
 reparent, replacement, and transfer-out preserve exactly one owner; and normal
-return/exit edges must retain no active obligation. Full-expression cleanup is
-LIFO, lexical cleanup is reverse construction order, and a temporary created
+return/exit edges must retain no active obligation. Each assignment must carry
+exactly one `Replace` event for every active-cleanup value obligation it consumes.
+Verification checks this requirement independently of
+the events present in the instruction, so deleting the whole event list cannot
+leave an owning RHS scheduled for destruction after publication. The rule applies
+equally to owned bindings, aggregate elements and checked borrowed referents;
+the latter two do not acquire an independent destination obligation.
+Full-expression cleanup is LIFO, lexical cleanup is reverse construction order,
+and a temporary created
 only by a logical or conditional branch retains a path-conditional obligation
 through the merge and is dropped at the enclosing full-expression boundary.
 Its cleanup place is body-local rather than a branch-local SSA root. MIR
