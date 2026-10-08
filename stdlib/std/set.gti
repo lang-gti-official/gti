@@ -43,6 +43,7 @@ public:
   using size_type = size_t;
   using iterator = detail::set_insert_iterator<K>;
   using const_iterator = detail::set_key_iterator<K>;
+  using sentinel = detail::map_sentinel;
   static set<K, Compare> collection_init(uint64_t count)
       requires std::default_initializable<Compare> && std::read_binary_callable<Compare, K, K, bool> {
     return set<K, Compare>();

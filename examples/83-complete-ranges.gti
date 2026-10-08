@@ -2,21 +2,24 @@
 #include <std/iterator>
 #include <std/vector>
 
+// The vector's public member aliases name its iterator and sentinel types.
+using samples = std::vector<int32_t>;
+
 class readings {
-  mut std::vector<int32_t> values = std::vector<int32_t>({2, 4, 6});
+  mut samples values = samples({2, 4, 6});
 
 public:
   readings() = default;
 
-  std::detail::vector_iterator<int32_t> begin() {
+  samples::const_iterator begin() {
     return this.values.begin();
   }
 
-  std::detail::vector_mut_iterator<int32_t> begin_mut() mut {
+  samples::iterator begin_mut() mut {
     return this.values.begin_mut();
   }
 
-  std::detail::vector_sentinel end() {
+  samples::sentinel end() {
     return this.values.end();
   }
 
