@@ -153,5 +153,73 @@ int main() {
   }
   expect(joins == 2,
          "nonraising and raising passive class diamonds were exercised");
+  std::size_t groupedBodies = 0;
+  for (const std::string fixture :
+       {"grouped_class_passive", "grouped_class_cleanup",
+        "grouped_class_failure"}) {
+    const auto path = std::filesystem::path(__FILE__).parent_path() /
+                      "fixtures" / (fixture + ".gti");
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(), "grouped fixture has valid MIR");
+    if (!frontend.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    try {
+      expect(!gti_test::emitCppText(frontend).empty(),
+             "grouped class values emit without default construction or copy");
+    } catch (const std::exception &error) {
+      expect(false, error.what());
+    }
+    bool exercised = false;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      for (const auto &block : function.body.blocks) {
+        for (const auto &identity : block.instructions) {
+          if (exercised || identity.kind != lang::MirInstructionKind::Compute ||
+              identity.operation != lang::MirOperation::Identity ||
+              identity.info.type.kind != lang::SemanticType::Class ||
+              !identity.result)
+            continue;
+          exercised = true;
+          ++groupedBodies;
+          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                             function.id};
+          expect(lang::CppMirBodyEmitter(frontend.mir, rows)
+                     .supportsFailureBodyText(address),
+                 "grouped body preserves exact publication");
+          for (int mutation = 0; mutation != 4; ++mutation) {
+            auto malformed = frontend.mir;
+            auto *changed = const_cast<lang::MirFunctionInstance *>(
+                malformed.findFunctionInstance(function.id));
+            for (auto &changedBlock : changed->body.blocks) {
+              for (auto &instruction : changedBlock.instructions) {
+                if (instruction.id != identity.id)
+                  continue;
+                if (mutation == 0)
+                  instruction.operands.front().type =
+                      lang::SemanticType::Unknown;
+                else if (mutation == 1)
+                  instruction.operands.front().value = *instruction.result;
+                else if (mutation == 2)
+                  instruction.operands.push_back(instruction.operands.front());
+                else
+                  instruction.lifecycle.push_back(
+                      {.kind = lang::MirLifecycleEventKind::Reparent,
+                       .source = 999998,
+                       .target = 999999});
+              }
+            }
+            (void)lang::rebuildMirValueUses(changed->body);
+            expect(!lang::CppMirBodyEmitter(malformed, rows)
+                        .supportsFailureBodyText(address),
+                   "grouped publication rejects wrong types, cycles, extra "
+                   "operands and forged lifecycle transfers");
+          }
+        }
+      }
+    }
+  }
+  expect(groupedBodies == 3, "all three grouped class bodies were exercised");
   return failures ? 1 : 0;
 }
