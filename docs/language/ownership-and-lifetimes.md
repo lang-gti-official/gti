@@ -1935,14 +1935,14 @@ that is not text-carrying. Multiple-origin and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
 HIR and verified MIR; emitted C++ does not decide the lifetime.
 
-Two shapes are not yet supported. They currently stop at internal MIR or
-backend verification rather than a semantic diagnostic. The first is calling a
-method on a temporary view of an element borrowed from a resource-bound
-container, such as `words.get(i).view().size()`; compare or inspect through
-the element itself (`words.get(i) != "beta"`) instead. The second is
-explicitly constructing a view from a temporary view,
-`std::string_view(owned.view())`, which shares the general gap for explicit
-construction from a class prvalue; bind or pass the view directly.
+A method call on a temporary text carrier, such as
+`words.get(i).view() != "beta"`, passes the carrier by value: it is passive
+and trivially copied, so the call relays its owners without extending the
+temporary's own borrow. One shape is not yet supported and currently stops at
+internal backend verification rather than a semantic diagnostic: explicitly
+constructing a view from a temporary view, `std::string_view(owned.view())`,
+which shares the general gap for explicit construction from a class prvalue.
+Bind or pass the view directly instead.
 
 An owning wrapper may relay a field's text accessor, for example
 `return text.view();` or `return this.text.view();`. Both spellings retain

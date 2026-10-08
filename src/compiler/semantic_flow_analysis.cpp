@@ -5778,6 +5778,15 @@ auto SemanticVisitor::Impl::receiverModeForObject(
       isMutableObject(receiver)) {
     return CallReceiverMode::MutablePlace;
   }
+  // A temporary text carrier holding owner-dependent text is passive and
+  // trivially copied: it is passed by value, relaying its owners, rather than
+  // borrowed as a temporary whose dependency chain the call would extend.
+  if (info != nullptr && info->traits.containsBorrowedState &&
+      info->type.kind == SemanticType::Class &&
+      isTextCarryingType(info->type) &&
+      function.receiverMutability == ReceiverMutability::ReadOnly) {
+    return CallReceiverMode::Value;
+  }
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
        ephemeralBorrowResultSupported(function)) &&

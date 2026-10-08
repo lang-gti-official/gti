@@ -62,9 +62,12 @@ def main():
                 # TransferOut now occurs at invocation: take() retires the
                 # prepared argument representation before entering the native
                 # by-value parameter, rather than a later cleanup comment.
+                # Count the fixture's own Receiver/Text constructions; library
+                # constructions (such as std::string from a std::string_view
+                # argument) have their own prepared transfers.
                 transfers = re.findall(
                     r"::new \(static_cast<void \*>\(__gti_mir_p_\d+\.construction_address\(\)\)\) "
-                    r"[\w:]+\("
+                    r"::__gti_program::(?:Receiver|Text)\("
                     r"::gti_internal::backend::mir_failure_constructor_tag_v1<\d+>\{\}, "
                     r"std::move\((__gti_mir_p_\d+)\.take\(\)\)", generated
                 )

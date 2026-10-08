@@ -7904,7 +7904,8 @@ int main() {
   expect(containsMangledFunction(
              generated, "", "consume",
              "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-             "__gti_mir_arg_1, ::__gti_program::__gti_std::string_view __gti_mir_arg_2"),
+             "__gti_mir_arg_1, ::__gti_program::__gti_std::string_view "
+             "__gti_mir_arg_2"),
          "variadic declarations and forwarding should lower explicitly");
   expect(containsMangledFunction(
              generated, "", "consume",
@@ -7916,7 +7917,8 @@ int main() {
              containsMangledFunction(
                  generated, "", "first",
                  "__gti_mir_failure(std::int32_t __gti_mir_arg_0, bool "
-                 "__gti_mir_arg_1, ::__gti_program::__gti_std::string_view __gti_mir_arg_2"),
+                 "__gti_mir_arg_1, ::__gti_program::__gti_std::string_view "
+                 "__gti_mir_arg_2"),
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
 

@@ -2992,8 +2992,11 @@ int main() {
   std::size_t fieldConstructs = 0;
   for (const lang::MirBlock &block : owner->fieldInitializers.blocks) {
     for (const lang::MirInstruction &instruction : block.instructions) {
+      // Each string literal argument is itself a std::string_view
+      // construction; only the std::string field constructions count here.
       if (instruction.kind != lang::MirInstructionKind::Construct ||
-          !instruction.constructorTarget) {
+          !instruction.constructorTarget || owner->declaredFields.empty() ||
+          instruction.info.type != owner->declaredFields.front().type) {
         continue;
       }
       ++fieldConstructs;
@@ -3015,7 +3018,15 @@ int main() {
       fieldConstructor == nullptr) {
     return;
   }
-  expect(owner->fieldInitializers.dropObligations.size() == 4 &&
+  // Each field's std::string_view literal argument adds its own prepared
+  // parameter obligation; the owning std::string obligations are counted.
+  const auto fieldObligations = std::count_if(
+      owner->fieldInitializers.dropObligations.begin(),
+      owner->fieldInitializers.dropObligations.end(),
+      [&](const lang::MirDropObligation &obligation) {
+        return obligation.dropType.type == owner->declaredFields.front().type;
+      });
+  expect(fieldObligations == 4 &&
              owner->fieldInitializers.failureRecords.size() == 2 &&
              owner->fieldInitializers.cleanupBoundaries.size() == 1 &&
              std::any_of(

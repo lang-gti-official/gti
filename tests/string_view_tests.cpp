@@ -80,6 +80,13 @@ void checkAcceptedLifetimes() {
       "std::string owned = std::string(\"abc\");\n"
       "std::string_view empty = owned.view().substr(std::size_t(3));\n"
       "return empty.empty() ? 0 : 1;",
+      // A method on a temporary view takes the view by value; a result that
+      // holds no text leaves the owner free afterwards.
+      "mut std::string owned = std::string(\"hello world\");\n"
+      "bool starts = owned.view().substr(std::size_t(0), std::size_t(5)) == "
+      "\"hello\";\n"
+      "owned.push_back('!');\n"
+      "return starts ? 0 : 1;",
   };
   for (const auto &program : programs) {
     const auto result = analyze("string-view-accepted.gti", program);
@@ -112,6 +119,13 @@ void checkRejectedLifetimes() {
        "Token token = Token(owned.view(), 1);\n"
        "std::string moved = std::move(owned);\n"
        "return int(token.view().size());",
+       "GTI-S2017", ""},
+      // A temporary carrier passed by value as a receiver still relays its
+      // owner to the text it returns.
+      {"mut std::string owned = std::string(\"key=value\");\n"
+       "std::string_view key = Token(owned.view(), 1).view();\n"
+       "owned.clear();\n"
+       "return int(key.size());",
        "GTI-S2017", ""},
       {"std::string owned = std::string(\"abc\");\n"
        "mut std::vector<std::string_view> views = "

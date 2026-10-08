@@ -1852,12 +1852,12 @@
     "a29-method-on-returned-string-view": {
       "finding": "A29",
       "issue": 74,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a29-string-view-size-on-dynamic-view": {
       "finding": "A29",
       "issue": 74,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a30-assign-consuming-call-result": {
       "finding": "A30",
@@ -2209,7 +2209,7 @@
     "s02-ternary-class-value": {
       "finding": "S02",
       "issue": 103,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "s03-method-on-moved-value": {
       "outcome": "pass"

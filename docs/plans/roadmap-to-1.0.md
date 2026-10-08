@@ -523,10 +523,9 @@ The remaining first-wave work is:
 - `std::string_view` is a source-defined prelude class with its search,
   comparison, and slicing API in GTI. Dynamic views from `std::string::view()`
   retain the owning string through copies, subviews, exact relays, and
-  text-carrying classes. Reseatable and multi-owner forms remain, as do method
-  calls on temporary views of resource-bound container elements and explicit
-  view construction from a class prvalue, which currently stop at internal
-  verification instead of a semantic diagnostic.
+  text-carrying classes. Reseatable and multi-owner forms remain, as does
+  explicit view construction from a class prvalue, which currently stops at
+  internal backend verification instead of a semantic diagnostic.
 
 ### Deliberate improvements over C++
 

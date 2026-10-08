@@ -55,9 +55,9 @@ had no regression protection.
 
 | Status at 0.379.2 | Findings |
 | --- | --- |
-| Resolved, now gated as passing | F8, F9, F11, F12, F13, F15 (its `(a + b).value()` form), S03, S05, S07, S10, S11 |
+| Resolved, now gated as passing | F8, F9, F11, F12, F13, F15 (its `(a + b).value()` form), S02, S03, S05, S07, S10, S11 |
 | Improved | S08: the 40-link chain compiles in about 1.2s (was 6.5s) |
-| Still reproduced, gated as known | F10, F14, F16, F17, S01, S02, S04, S06, S09, S12, S15, tracked together in [#103](https://git.internal.howetotech.dev/gti-lang/gti/issues/103) (F14's wrong diagnostic is now GTI-S2015 rather than GTI-S2046) |
+| Still reproduced, gated as known | F10, F14, F16, F17, S01, S04, S06, S09, S12, S15, tracked together in [#103](https://git.internal.howetotech.dev/gti-lang/gti/issues/103) (F14's wrong diagnostic is now GTI-S2015 rather than GTI-S2046) |
 | Fixed in the issue campaign, gated as located rejection | F7 ([#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51)): selected bodyless ordinary GTI functions, declaration-only `std::weak_ptr` members and primary JSON codecs now produce `GTI-S2106` in closed programs before backend/native entry; the original optional reproducer remains passing |
 | Not gated (resource or tooling inputs) | F18, F19, F20, S13, S14 |
 
@@ -156,7 +156,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A26 | [#71](https://git.internal.howetotech.dev/gti-lang/gti/issues/71) Overloaded dereference self-read store | resolved: pass | `reproducers/a26-overloaded-deref-store-reads-owner` |
 | A27 | [#72](https://git.internal.howetotech.dev/gti-lang/gti/issues/72) Compound assignment through overloaded dereference or indexed call result | resolved: pass | `reproducers/a27-compound-assign-overloaded-deref` |
 | A28 | [#73](https://git.internal.howetotech.dev/gti-lang/gti/issues/73) C++ backend ICE: overloaded operator on a field of a range-for element | ice | `reproducers/a28-map-range-for-key-view`<br>`reproducers/a28-range-element-field-overloaded-operator`<br>`reproducers/a28-range-element-field-ref-method` |
-| A29 | [#74](https://git.internal.howetotech.dev/gti-lang/gti/issues/74) C++ backend ICE: calling a method on a string_view returned by a call | ice | `reproducers/a29-method-on-returned-string-view`<br>`reproducers/a29-string-view-size-on-dynamic-view` |
+| A29 | [#74](https://git.internal.howetotech.dev/gti-lang/gti/issues/74) Resolved: `std::string_view` is a source-defined class, so a method on a view returned by a call is an ordinary member call | pass | `reproducers/a29-method-on-returned-string-view`<br>`reproducers/a29-string-view-size-on-dynamic-view` |
 | A30 | [#75](https://git.internal.howetotech.dev/gti-lang/gti/issues/75) Consuming member results stage before replacing existing owning bindings, retaining receiver and replacement failure cleanup | pass | `reproducers/a30-assign-consuming-call-result` |
 | A31 | [#76](https://git.internal.howetotech.dev/gti-lang/gti/issues/76) Resolved: literal loop exit ownership agrees with post-break reinitialization; native cleanup and safety negatives covered | pass | `reproducers/a31-move-on-break-path-then-reinit` |
 | A32 | [#77](https://git.internal.howetotech.dev/gti-lang/gti/issues/77) Resolved: same-owner value construction preserves selected copy/move lifecycle instead of a generic converting constructor | pass | `reproducers/a32-optional-emplace-move-only-function`<br>`reproducers/a32-vector-push-back-move-only-function`, `constructor_transport`, `generic_callable_transport_runtime` |
@@ -852,6 +852,10 @@ int32_t x = flag ? 1 : 2;             // ok
 
 ICEs in all eight consumer positions tried, so it is the ternary itself and
 not what is done with the result.
+
+Resolved: the conditional's join temporary of a passive, generated-copy class
+is now plain lifetime storage in the C++ backend (no arm owns cleanup), so the
+reproducer compiles and prints `1`.
 
 ## S03 — ICE: a method call directly on `std::move(x)`
 
