@@ -29,6 +29,17 @@ int unknown(BoundsClient& object, uint64_t index, uint64_t length) {
   return object.value + 1;
 }
 
+int checked_condition(BoundsClient& object, bool condition) {
+  gti_internal::require_allocation(condition);
+  return object.value + 1;
+}
+
+int changed_condition(mut BoundsClient& object, bool condition) {
+  object.value = 2147483647;
+  gti_internal::require_allocation(condition);
+  return object.value + 1;
+}
+
 int changed(mut BoundsClient& object, uint64_t index, uint64_t length) {
   object.value = 2147483647;
   gti_internal::index_bounds_check(index, length);
@@ -39,6 +50,8 @@ int main() {
   mut BoundsClient object{7};
   int value = checked(object, uint64_t(0), uint64_t(2));
   if (value != 8) return 1;
+  if (checked_condition(object, true) != 8) return 2;
+  if (changed_condition(object, true) != 8) return 3;
   return changed(object, uint64_t(0), uint64_t(2));
 }
 )gti";
@@ -110,6 +123,12 @@ int main() {
                count("changed",
                      lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
            "unknown bounds/fields and overflowing field writes remain checked");
+    expect(count("checked_condition",
+                 lang::MirSafetyCheckFamily::ArithmeticOverflow) == expected &&
+               count("changed_condition",
+                     lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
+           "a pure boolean detector preserves unrelated facts without hiding "
+           "an overflowing mutation");
   }
   return failures == 0 ? 0 : 1;
 }

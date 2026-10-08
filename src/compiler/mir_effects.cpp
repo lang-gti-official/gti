@@ -1,4 +1,5 @@
 #include "gti/mir_effects.h"
+#include "gti/checked_integer.h"
 #include "gti/mir_verifier.h"
 #include "mir_verification_queries.h"
 
@@ -693,6 +694,31 @@ MirEffectTraits effects(SynchronizationOperationKind kind) {
   return enumEffects(kind, synchronizationEffects);
 }
 
+bool isMirScalarFinalAddressConstruction(const MirInstruction &instruction) {
+  if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      instruction.constructorTarget || instruction.elementCleanup ||
+      instruction.receiver || instruction.nativeCallbackAdapter ||
+      instruction.threadTaskAdapter || instruction.result ||
+      instruction.info.type != SemanticType::Void ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.rawMemoryAccess || !instruction.lifecycle.empty() ||
+      instruction.dispatch != CallDispatch::Static ||
+      instruction.constructorKind != ConstructorKind::Ordinary ||
+      instruction.operation != MirOperation::None ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.operands.empty() || instruction.operands.size() > 2)
+    return false;
+  const auto &address = instruction.operands.front().type;
+  if (address.kind != SemanticType::RawPointer ||
+      address.arguments.size() != 1 ||
+      address.pointerAccess != AccessMode::Mutable ||
+      !constantIntegerDomain(address.arguments.front()))
+    return false;
+  return instruction.operands.size() == 1 ||
+         instruction.operands.back().type == address.arguments.front();
+}
+
 namespace {
 
 [[nodiscard]] MirEffectTraits
@@ -703,7 +729,10 @@ finishInstructionEffects(const MirInstruction &instruction,
   }
   if (instruction.kind == MirInstructionKind::Call &&
       instruction.intrinsic != IntrinsicKind::None) {
-    result = effects(instruction.intrinsic);
+    result = isMirScalarFinalAddressConstruction(instruction)
+                 ? MirEffectTraits{.writesUnknownMemory = true,
+                                   .initializesValue = true}
+                 : effects(instruction.intrinsic);
   } else if (instruction.kind == MirInstructionKind::Call &&
              instruction.synchronization.kind !=
                  SynchronizationOperationKind::None) {

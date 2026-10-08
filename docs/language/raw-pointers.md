@@ -128,7 +128,11 @@ cleans prepared arguments and completed subobjects; it does not publish a live
 complete object.
 
 The unsafe caller guarantees sufficient writable, correctly aligned storage,
-vacancy and nonconflicting access for construction. No allocation or live-slot
+vacancy and nonconflicting access for construction. The complete destination
+extent must not overlap another live non-byte object, even if that object's
+type differs from the selected pointee. Ending such an object's lifetime first
+is a distinct destruction operation; construction is not implicit replacement.
+No allocation or live-slot
 bitmap is hidden in this operation. Raw construction of a type containing
 checked borrowed state is currently rejected: an untracked destination address
 cannot establish that state's checked owner and escape boundary. This is a

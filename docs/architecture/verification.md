@@ -421,6 +421,36 @@ outstanding; the completion evidence above now covers that integration. Native
 platform limitations remain explicit. The independent provider tests alone are
 not the evidence for the combined sparse-metadata and default-factory migration.
 
+## Source prefix ownership (candidate; acceptance still open)
+
+The source-prefix task's Release/AppleClang/LLVM 22.1.8 snapshot on macOS arm64
+passes the 13 focused compiler-pipeline, source-owner contract/runtime,
+resource-prefix runtime, terminated-string runtime, optimizer foundation,
+raw/intrinsic/object context, analyses/conformance and raw/object native gates.
+The aggregate compiler census now includes the implemented
+`testSourceOwnedExpectedRangeOrigins` regression; no case was removed. The
+combined native selection passed in 97.12 seconds apart from that initially
+missing census row; after registering it, the unchanged compiler aggregate
+passed in 41.27 seconds.
+
+The scalar-construction object matrix covers 15 fixtures across eight native
+modes (120 executions): unrelated and nested active fields, nonvacuous byte
+and fixed-array before/after controls, manual destroy/reconstruct overflow,
+raw mutation, retained references and bounded call chains. Shared effects
+tests distinguish exact integer construction from a selected constructor,
+cleanup, mismatched type or forged non-lifetime classification. O0 retains
+checks; O2/O3 proofs independently replay. Source/resource/string matrices use
+the same frozen optimized compiler and source library. Resource-vector retains
+the approved one-region policy, exact original provider/descriptors and the
+existing malformed/duplicate release and panic-cleanup assertions.
+
+This is not migration acceptance. `optimizer_safety` still reports seven
+unmet original source-owner bounds/element-envelope requirements, and
+`optimizer_safety_native_evidence` reports three corresponding proof/emission
+failures; their native behavior checks pass. Those expectations remain intact.
+Full native corpus, final combined inventories, installed consumers and measured
+performance remain required. No Linux/Windows native execution is claimed.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

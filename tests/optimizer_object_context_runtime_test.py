@@ -83,4 +83,30 @@ if __name__ == "__main__":
                      "integer_overflow in addition\n")
             paths[name] = path
             cases[name] = [((), (70, "", error))]
+        construction = fixture.parent / "optimizer_scalar_construction.gti"
+        construction_source = construction.read_text()
+        sites = [index for index, text in enumerate(construction_source.splitlines(), 1)
+                 if "return record.value + 1;" in text]
+        assert len(sites) == 2
+        paths["scalar_reconstruction"] = construction
+        cases["scalar_reconstruction"] = [((), (70, "",
+            f"{construction.name}:{sites[1]}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "scalar_construction.gti"
+        path.write_text(construction_source.replace("return reconstruct(record);", "return 0;"))
+        paths["scalar_construction"] = path
+        cases["scalar_construction"] = [((), (0, "", ""))]
+        construction_paths = fixture.parent / "optimizer_scalar_construction_paths.gti"
+        paths_source = construction_paths.read_text()
+        sites = [index for index, text in enumerate(paths_source.splitlines(), 1)
+                 if text.strip() == "return layer.nested.value + 1;"]
+        assert len(sites) == 2
+        paths["scalar_paths_reconstruction"] = construction_paths
+        cases["scalar_paths_reconstruction"] = [((), (70, "",
+            f"{construction_paths.name}:{sites[1]}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "scalar_paths_construction.gti"
+        path.write_text(paths_source.replace("return nested_reconstruct();", "return 0;"))
+        paths["scalar_paths_construction"] = path
+        cases["scalar_paths_construction"] = [((), (0, "", ""))]
         main(names=tuple(paths), cases=cases, fixture_paths=paths)
