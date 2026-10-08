@@ -76,29 +76,45 @@ int many(int divisor) {
     };
     std::size_t secondaryDrops = 0;
     std::size_t terminalEdges = 0;
+    std::size_t primaryEntries = 0;
+    std::size_t fallibleDrops = 0;
     for (const auto &block : function.body.blocks) {
+      primaryEntries += block.activeFailure != 0 &&
+                        block.failureParameter == block.activeFailure;
       terminalEdges += block.terminator.kind ==
                        lang::MirTerminatorKind::TerminateCleanupFailure;
-      if (block.activeFailure == 0)
-        continue;
       for (const auto &instruction : block.instructions)
-        secondaryDrops += instruction.kind == lang::MirInstructionKind::Drop &&
-                          instruction.definedFailure.propagation ==
-                              lang::FailurePropagationKind::Destructor;
+        if (instruction.kind == lang::MirInstructionKind::Drop &&
+            instruction.definedFailure.propagation ==
+                lang::FailurePropagationKind::Destructor) {
+          ++fallibleDrops;
+          secondaryDrops += block.activeFailure != 0;
+          expect(text.text.find("bool __gti_mir_drop_success_" +
+                                std::to_string(instruction.id) + ";") !=
+                     std::string::npos,
+                 "each paired Drop status is defined at its producer, not "
+                 "initialized at entry for native phi construction");
+        }
     }
-    expect(secondaryDrops > 32 && terminalEdges == secondaryDrops,
+    expect(secondaryDrops > 32 && fallibleDrops > secondaryDrops &&
+               terminalEdges == secondaryDrops,
            "the fixture must contain many alternative secondary failures");
     expect(
         occurrences("::gti_failure_record_v2 "
                     "__gti_mir_cleanup_failure_record{};") == 1 &&
+            occurrences("mir_failure_cleanup_scope_v1 "
+                        "__gti_mir_cleanup_context;") == 1 &&
+            occurrences("__gti_mir_cleanup_context.activate(") ==
+                primaryEntries &&
             occurrences("std::memset(&__gti_mir_cleanup_failure_record,") ==
                 secondaryDrops &&
             occurrences("mir_terminate_cleanup_failure_v2(") == terminalEdges &&
             text.text.find("__gti_mir_cleanup_failure_record_") ==
                 std::string::npos &&
             text.text.find("::gti_failure_emergency_v2") == std::string::npos,
-        "all alternatives share one fresh secondary record; terminal "
-        "envelopes belong to the out-of-line helper frame");
+        "all alternatives share one fresh secondary record and one scope "
+        "activated only at primary entries; terminal envelopes belong to the "
+        "out-of-line helper frame");
     ++checkedBodies;
   }
   expect(checkedBodies == 1,

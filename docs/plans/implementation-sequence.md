@@ -5072,6 +5072,16 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   exact panic messages and immediate secondary termination. The complete JSON
   fixture now runs at O0, but its O3 native build still exceeds the 600-second
   gate. Full JSON, installed and performance acceptance remains outstanding.
+  A native profile identifies dominance-frontier/phi construction over the
+  large cleanup graph. The backend now retains one invocation-local cleanup
+  context across the verified primary chain and omits dead entry initializers
+  for statuses assigned by each Drop before its Invoke. Many-guard structural
+  and native checks preserve that exact assignment/activation schedule;
+  an isolated optimized native JSON snapshot now compiles with uninitialized
+  carrier warnings treated as errors and produces the expected complete output.
+  The fresh compiler-driven JSON matrix is still running. Full acceptance is
+  not inferred merely from removing those representation costs or from that
+  isolated native replay.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

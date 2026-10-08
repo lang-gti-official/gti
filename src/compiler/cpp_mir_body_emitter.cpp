@@ -29861,11 +29861,18 @@ public:
     }
     if (failureForm) {
       bool cleanupFailureRecordDeclared = false;
+      bool cleanupContextDeclared = false;
       for (const MirBlock &block : facts.body.blocks) {
         if (preparingBase &&
             std::find(preparation->blocks.begin(), preparation->blocks.end(),
                       block.id) == preparation->blocks.end())
           continue;
+        if (block.activeFailure != 0 && !cleanupContextDeclared) {
+          writeIndent();
+          output << "::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+                    "__gti_mir_cleanup_context;\n";
+          cleanupContextDeclared = true;
+        }
         for (const MirInstruction &instruction : block.instructions) {
           if (preparingBase &&
               std::find(preparation->instructions.begin(),
@@ -30034,8 +30041,11 @@ public:
               failureDestructorTarget(program, facts.body, instruction) !=
                   nullptr) {
             writeIndent();
-            output << "bool __gti_mir_drop_success_" << instruction.id
-                   << " = false;\n";
+            // Every admitted fallible Drop assigns its returned status before
+            // the paired Invoke reads it. An entry-block false definition is
+            // dead, but forces native SSA promotion to place phis across each
+            // large alternative cleanup graph at optimized native levels.
+            output << "bool __gti_mir_drop_success_" << instruction.id << ";\n";
             if (block.activeFailure != 0 && !cleanupFailureRecordDeclared) {
               writeIndent();
               output << "::gti_failure_record_v2 "
@@ -30083,12 +30093,15 @@ public:
       writeIndent();
       output << plannedBlock.label << ": {\n";
       ++indentation;
-      if (failureForm && block->activeFailure != 0) {
+      if (failureForm && block->activeFailure != 0 &&
+          block->failureParameter == block->activeFailure) {
         writeIndent();
-        output << "::gti_internal::backend::mir_failure_cleanup_scope_v1 "
-                  "__gti_mir_cleanup_context_"
-               << block->id
-               << "(__gti_mir_failure_record, &::gti_internal::backend::"
+        // Verification proves this is the unique primary entry and every
+        // continuation retains it until propagation or emergency termination.
+        // One invocation-local context can therefore span the whole cleanup
+        // chain; per-block scopes add redundant native TLS/EH work and frames.
+        output << "__gti_mir_cleanup_context.activate("
+                  "__gti_mir_failure_record, &::gti_internal::backend::"
                   "__gti_failure_artifact_descriptor_v1);\n";
       }
       if (failureForm && block->failureParameter != 0) {
