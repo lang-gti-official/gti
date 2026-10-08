@@ -40,8 +40,10 @@ def main():
 
         for options, observation in (([], "enabled"), (["--release"], "disabled"),
                                      (["--release", "-D", "PSYCH_ASSERTIONS"], "enabled")):
-            run([gti, "check", "game", *options], cwd=project)
+            checked = run([gti, "check", "game", *options], cwd=project)
+            assert "GTI-S2075" not in checked.stderr, checked.stderr
             result = run([gti, "run", "game", *options], cwd=project)
+            assert "GTI-S2075" not in result.stderr, result.stderr
             assert f"game: assertions {observation}" in result.stdout, result.stdout
         run([gti, "test", "unit"], cwd=project)
         run([gti, "build", "--all", "--jobs", "2"], cwd=project)

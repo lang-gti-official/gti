@@ -601,7 +601,12 @@ defines = ["DEBUG", "COMMON", "DEBUG"]
           target);
       expect(plan.succeeded() && plan.plan && configuration &&
                  plan.plan->configurationFlags() ==
-                     configuration->configurationFlags(),
+                     configuration->configurationFlags() &&
+                 plan.plan->declaredConfigurationFlags() ==
+                     configuration->declaredConfigurationFlags() &&
+                 configuration->declaredConfigurationFlags() ==
+                     lang::ConfigurationFlags(
+                         {"BASE", "COMMON", "DEBUG", "GAME", "UNIT"}),
              "build and editor configurations must agree for each selection");
       if (configuration) {
         const auto &flags = configuration->configurationFlags();
@@ -635,6 +640,23 @@ defines = ["DEBUG", "COMMON", "DEBUG"]
                  lang::ConfigurationFlags(
                      {"BASE", "CLI", "COMMON", "DEBUG", "GAME"}),
          "CLI defines should form a normalized union with all selected scopes");
+
+  std::string ambiguous = text;
+  ambiguous.replace(ambiguous.find("src/test.gti"), 12, "src/main.gti");
+  expect(writeFile(manifest, ambiguous),
+         "ambiguous entry fixture should exist");
+  const auto ambiguousFacts = lang::driver::resolveProjectFacts(root);
+  expect(ambiguousFacts.facts && ambiguousFacts.facts->targetForSource(
+                                     root / "src/main.gti") == nullptr,
+         "shared entry roots must not silently select either target's flags");
+  expect(writeFile(manifest, validManifest()),
+         "single-target fixture should exist");
+  const auto single = lang::driver::resolveProjectFacts(root);
+  expect(
+      single.facts && single.facts->targetForSource(root / "src/shared.gti") &&
+          single.facts->targetForSource(root / "src/shared.gti")->name ==
+              "game",
+      "a single-target package can supply its configuration to shared files");
 
   for (const std::string &scope : {"target", "profile"}) {
     for (const std::string &value :

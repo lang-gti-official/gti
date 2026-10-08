@@ -91,6 +91,11 @@ std::string cacheContext(const FrontendOptions &options) {
     result += '\n';
     result += flag;
   }
+  ConfigurationFlags declaredFlags = options.declaredConfigurationFlags;
+  normalizeConfigurationFlags(declaredFlags);
+  for (const auto &flag : declaredFlags) {
+    result += "\ndeclared-flag:" + flag;
+  }
   result += '\n';
   result += options.requireEntryPoint ? "entry:required\n" : "entry:optional\n";
   result += options.target.dataLayout.supported() ? "layout:supported"
@@ -269,7 +274,8 @@ FrontendResult Frontend::analyze(
     result.sourceGraph = sourceLoader.load(
         entryPath, std::move(entrySource), preludePaths, sourceOverrides,
         standardLibraryRoots, options.completionOffset, packageSourceRoots,
-        options.target, options.configurationFlags);
+        options.target, options.configurationFlags,
+        options.declaredConfigurationFlags);
     loadProgress.update({}, result.sourceGraph.sourceUnits().size(),
                         result.sourceGraph.sourceUnits().size());
   }

@@ -521,6 +521,9 @@ The configuration includes package and default-profile defines. Driver facts
 infer target defines for a unique matching entry root, or any document in a
 single-target package. Shared files and ambiguous entry roots in multi-target
 packages receive no target defines: unrelated target sets are never combined.
+Inactive consumer target/profile flag names remain known for typo diagnostics,
+and both active and declared sets enter the frontend cache context. Watching a
+manifest refreshes these facts for diagnostics and completion together.
 Package angle includes therefore use only declared direct aliases, including
 already-materialized checksum-verified Git dependencies. Resolution runs no
 process, performs no fetch or build, and creates no project state. Registry

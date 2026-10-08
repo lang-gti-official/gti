@@ -164,7 +164,8 @@ std::optional<AnalysisConfiguration> ProjectFacts::analysisConfiguration(
       std::move(target), profile->executionProfile, runtimeProfile,
       composeProjectConfigurationFlags(
           resolvedConfigurationFlags, profile->defines,
-          projectTarget ? projectTarget->defines : ConfigurationFlags{}));
+          projectTarget ? projectTarget->defines : ConfigurationFlags{}),
+      resolvedDeclaredConfigurationFlags);
 }
 
 const std::string &ProjectFacts::modelIdentity() const {
@@ -203,6 +204,8 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
   const ProjectManifest &manifest = selected.manifest;
   facts.selectedIdentity = selected.identity();
   facts.resolvedConfigurationFlags = workspace.configurationFlags();
+  facts.resolvedDeclaredConfigurationFlags =
+      workspace.declaredConfigurationFlags();
   facts.resolvedDefaultProfile = selectDefaultProfileName(manifest.profiles());
 
   facts.resolvedProfiles.reserve(manifest.profiles().size());

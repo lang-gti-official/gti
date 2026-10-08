@@ -3,6 +3,9 @@
 #if !defined(PSYCH_PROJECT) || !defined(PSYCH_GAME)
 #error "game target configuration is missing"
 #endif
+#ifdef PSYCH_TESTS
+#error "another target's defines must not leak into the game"
+#endif
 
 int main() {
 #ifdef PSYCH_ASSERTIONS

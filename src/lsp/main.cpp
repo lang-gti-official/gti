@@ -1667,7 +1667,8 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
     result.configuration = lang::driver::AnalysisConfiguration(
         result.configuration.target(), *executionProfileOverride,
         lang::driver::RuntimeProfile::Hosted,
-        result.configuration.configurationFlags());
+        result.configuration.configurationFlags(),
+        result.configuration.declaredConfigurationFlags());
   }
   result.packageSourceRoots = facts.packageSourceRoots();
   if (const auto *profile = facts.findProfile(facts.defaultProfileName())) {
@@ -2867,6 +2868,8 @@ private:
     frontendOptions.target = project.configuration.target();
     frontendOptions.configurationFlags =
         project.configuration.configurationFlags();
+    frontendOptions.declaredConfigurationFlags =
+        project.configuration.declaredConfigurationFlags();
     frontendOptions.includeSearchRoots = project.includeSearchRoots;
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
       result.diagnostics.push_back(convertDiagnostic(
@@ -3187,6 +3190,8 @@ private:
                .byteOffset = request.byteOffset,
                .target = project.configuration.target(),
                .configurationFlags = project.configuration.configurationFlags(),
+               .declaredConfigurationFlags =
+                   project.configuration.declaredConfigurationFlags(),
                .rawPointerAudit = project.rawPointerAudit,
                .preludePaths = {standardLibrary.prelude},
                .sourceOverrides = request.sourceOverrides,

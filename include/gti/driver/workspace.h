@@ -100,6 +100,8 @@ public:
   // Program-wide [build] flags from the selected package and its transitive
   // dependency closure; target/profile flags are selected separately.
   [[nodiscard]] ConfigurationFlags configurationFlags() const;
+  // Selected consumer target/profile names are declared even when inactive.
+  [[nodiscard]] ConfigurationFlags declaredConfigurationFlags() const;
   [[nodiscard]] std::string modelIdentity() const;
 
 private:
