@@ -2,6 +2,56 @@
 
 namespace {
 
+void testExplicitVirtualResultChannel() {
+  const auto frontend = analyze("explicit-virtual-result-channel.gti", R"(
+interface Channel<T> { T read(T value); };
+class IntegerChannel : public Channel<int> {
+public:
+  int read(int value) override { return value; }
+};
+int plain(int value) { return value; }
+int main() {
+  IntegerChannel channel{};
+  Channel<int>& base = channel;
+  return plain(base.read(9)) - 9;
+}
+)");
+  expect(frontend.canGenerateCode(), "generic virtual channel must analyze");
+  if (!frontend.canGenerateCode())
+    return;
+  for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const auto rows = buildRows(frontend, frontend.mir, standard);
+    const lang::CppMirBodyEmissionMap map(rows);
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    expect(emitter.analyzeProgram().ready(),
+           "explicit virtual result-channel representation must be ready");
+    unsigned channels = 0;
+    for (std::size_t index = 0; index < rows.bodies.size(); ++index) {
+      const auto &row = rows.bodies[index];
+      if (row.address.kind != lang::MirBodyKind::Function)
+        continue;
+      const auto *function =
+          frontend.mir.findFunctionInstance(row.address.owner);
+      if (!function)
+        continue;
+      expect(row.conditionalResultParameter == function->virtualMethod,
+             "only the generic virtual family carries the result channel");
+      if (row.conditionalResultParameter)
+        ++channels;
+      auto changed = rows;
+      changed.bodies[index].conditionalResultParameter =
+          !row.conditionalResultParameter;
+      const lang::CppMirBodyEmissionMap changedMap(changed);
+      const lang::CppMirBodyEmitter invalid(frontend.mir, changedMap);
+      expect(
+          !invalid.analyzeProgram().ready(),
+          "missing family channels and forged ordinary channels fail closed");
+    }
+    expect(channels == 2,
+           "generic declaration and nongeneric override share the channel");
+  }
+}
+
 void testGeneratedMoveReferenceBindings() {
   const auto frontend =
       analyzeWithStandardLibrary("generated-move-reference-bindings.gti", R"(
@@ -11211,6 +11261,7 @@ int32_t main() { return cleanup_t().value - 7; }
 }
 
 constexpr NamedTest kTests[] = {
+    {"testExplicitVirtualResultChannel", testExplicitVirtualResultChannel},
     {"testGeneratedMoveReferenceBindings", testGeneratedMoveReferenceBindings},
     {"testPreparedConstructorReplacement", testPreparedConstructorReplacement},
     {"testConstructedPrvalueCheckedFieldReplacement",
