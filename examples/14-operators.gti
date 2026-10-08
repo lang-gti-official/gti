@@ -28,6 +28,10 @@ public:
     return this.pointed;
   }
 
+  mut int& slot() mut {
+    return this.pointed;
+  }
+
   int& operator[](uint64_t index) {
     return this.elements[index];
   }
@@ -68,6 +72,11 @@ int main() {
   mut Handle handle = Handle();
   handle->increment();
   *handle = 7;
+  // A named mutable-reference accessor is writable, just like operator*.
+  // Its target is evaluated once before the right operand.
+  handle.slot() = 7;
+  (handle.slot()) += 1;
+  handle.slot() -= 1;
   *handle = *handle + 1;
   *handle -= 1;
   handle[uint64_t(1)] += 2;

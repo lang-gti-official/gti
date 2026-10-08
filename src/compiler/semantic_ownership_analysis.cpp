@@ -3216,6 +3216,7 @@ auto SemanticVisitor::Impl::validateLoanPlaceAccess(const Expr &expression,
                 &expression) != suppressedProjectedPlaceReads.end() ||
       kind == ExprKind::Assign || kind == ExprKind::Set ||
       kind == ExprKind::IndexSet || kind == ExprKind::DereferenceSet ||
+      kind == ExprKind::PlaceSet ||
       (analyzingCallCallee && kind == ExprKind::Get)) {
     return;
   }
@@ -3515,6 +3516,8 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
     appendUniquePlace(places, loanPlace(semanticPlace(*set)));
   } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {
     appendUniquePlace(places, loanPlace(semanticPlace(*indexSet)));
+  } else if (const auto *set = exprAs<PlaceSet>(expression.get())) {
+    appendUniquePlace(places, transientLoanPlace(set->target()));
   } else if (const auto *dereferenceSet =
                  exprAs<DereferenceSet>(expression.get())) {
     SemanticPlace target = semanticPlace(dereferenceSet->object());
@@ -3660,6 +3663,9 @@ auto SemanticVisitor::Impl::appendTransientMutationPlaces(
                  exprAs<DereferenceSet>(expression.get())) {
     appendTransientMutationPlaces(dereferenceSet->object(), places);
     appendTransientMutationPlaces(dereferenceSet->value(), places);
+  } else if (const auto *set = exprAs<PlaceSet>(expression.get())) {
+    appendTransientMutationPlaces(set->target(), places);
+    appendTransientMutationPlaces(set->value(), places);
   } else if (const auto *member = exprAs<Get>(expression.get())) {
     appendTransientMutationPlaces(member->object(), places);
   } else if (const auto *grouping = exprAs<Grouping>(expression.get())) {
@@ -3819,6 +3825,9 @@ auto SemanticVisitor::Impl::appendTransientReadPlaces(
                  exprAs<DereferenceSet>(expression.get())) {
     appendTransientReadPlaces(dereferenceSet->object(), places, productions);
     appendTransientReadPlaces(dereferenceSet->value(), places, productions);
+  } else if (const auto *set = exprAs<PlaceSet>(expression.get())) {
+    appendTransientReadPlaces(set->target(), places, productions);
+    appendTransientReadPlaces(set->value(), places, productions);
   } else if (const auto *grouping = exprAs<Grouping>(expression.get())) {
     appendTransientReadPlaces(grouping->expression(), places, productions);
   } else if (const auto *indexSet = exprAs<IndexSet>(expression.get())) {

@@ -3278,6 +3278,14 @@ private:
 
   [[nodiscard]] MirPlaceId destinationFor(const HirValue &value) {
     switch (value.kind) {
+    case HirValueKind::PlaceSet:
+      if (value.operands.size() == 2) {
+        const HirValue *target = findValue(value.operands.front());
+        return target == nullptr
+                   ? 0
+                   : clonePlace(placeForValue(target->id), *target);
+      }
+      return 0;
     case HirValueKind::Assignment: {
       const auto local = localSymbols.find(value.symbol);
       if (local != localSymbols.end()) {
@@ -8066,7 +8074,8 @@ private:
     if (value->kind == HirValueKind::Assignment ||
         value->kind == HirValueKind::MemberSet ||
         value->kind == HirValueKind::IndexSet ||
-        value->kind == HirValueKind::DereferenceSet) {
+        value->kind == HirValueKind::DereferenceSet ||
+        value->kind == HirValueKind::PlaceSet) {
       const bool overloadedBorrowStore =
           (value->kind == HirValueKind::IndexSet ||
            value->kind == HirValueKind::DereferenceSet) &&
@@ -8074,7 +8083,10 @@ private:
           value->borrowOrigin != BorrowOriginKind::None;
       bool reservedBorrowStore =
           overloadedBorrowStore && plainOverloadedBorrowStore(*value);
-      if (value->kind == HirValueKind::MemberSet && !value->operands.empty()) {
+      if (value->kind == HirValueKind::PlaceSet && !value->operands.empty()) {
+        emitPlaceDependencies(value->operands.front());
+      } else if (value->kind == HirValueKind::MemberSet &&
+                 !value->operands.empty()) {
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
         } else {

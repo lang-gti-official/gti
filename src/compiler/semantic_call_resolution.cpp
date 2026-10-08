@@ -4811,6 +4811,29 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return selectStructuralOperator(iterator, OverloadedOperator::Dereference,
                                     {}, false);
   };
+  const auto selectedSentinelOperator = [&](const SemanticType &iterator,
+                                            OverloadedOperator operation,
+                                            const SemanticType &sentinel) {
+    const SemanticType reference =
+        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
+    auto borrowed = selectStructuralOperator(
+        iterator, operation, std::span<const SemanticType>(&reference, 1),
+        false);
+    auto copied = selectStructuralOperator(
+        iterator, operation, std::span<const SemanticType>(&sentinel, 1),
+        false);
+    // Both forms accept a named sentinel. The requirement must not claim
+    // a usable operation when that ordinary call would be ambiguous, or
+    // when its by-value parameter cannot copy the named argument.
+    if (borrowed &&
+        borrowed->receiverMutability != ReceiverMutability::ReadOnly)
+      borrowed.reset();
+    if (copied && copied->receiverMutability != ReceiverMutability::ReadOnly)
+      copied.reset();
+    if (borrowed && copied)
+      return std::optional<CallableCandidate>{};
+    return copied && typeTraits(sentinel).copyable ? copied : borrowed;
+  };
   const auto hasDereference = [&](const SemanticType &iterator,
                                   const SemanticType *referent) {
     const std::optional<CallableCandidate> candidate =
@@ -5096,12 +5119,9 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const SemanticType &sentinel = arguments[0];
     const SemanticType &iterator = arguments[1];
-    const SemanticType parameter =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
     const std::optional<CallableCandidate> comparison =
-        selectStructuralOperator(iterator, OverloadedOperator::NotEqual,
-                                 std::span<const SemanticType>(&parameter, 1),
-                                 false);
+        selectedSentinelOperator(iterator, OverloadedOperator::NotEqual,
+                                 sentinel);
     return comparison && comparison->returnType == SemanticType::Bool &&
            comparison->receiverMutability == ReceiverMutability::ReadOnly;
   }
@@ -5146,12 +5166,8 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const SemanticType &sentinel = arguments[0];
     const SemanticType &iterator = arguments[1];
-    const SemanticType parameter =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
     const std::optional<CallableCandidate> difference =
-        selectStructuralOperator(iterator, OverloadedOperator::Minus,
-                                 std::span<const SemanticType>(&parameter, 1),
-                                 false);
+        selectedSentinelOperator(iterator, OverloadedOperator::Minus, sentinel);
     return difference && difference->returnType == SemanticType::Int64 &&
            difference->receiverMutability == ReceiverMutability::ReadOnly;
   }

@@ -1,0 +1,85 @@
+#include <std/iterator>
+#include <std/numeric>
+#include <std/array>
+#include <std/vector>
+#include <std/deque>
+#include <std/list>
+#include <std/map>
+#include <std/set>
+#include <std/unordered_map>
+#include <std/unordered_set>
+#include <std/string>
+
+class End {
+  int32_t limit;
+public:
+  End(int32_t value) : limit(value) {}
+  int32_t position() { return this.limit; }
+};
+class Cursor {
+  mut int32_t current;
+public:
+  Cursor(int32_t value) : current(value) {}
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End last) { return this.current != last.position(); }
+  std::ptrdiff_t operator-(End last) {
+    return std::ptrdiff_t(last.position()) - std::ptrdiff_t(this.current);
+  }
+};
+class Range {
+public:
+  Cursor begin() { return Cursor(1); }
+  End end() { return End(4); }
+};
+std::ptrdiff_t remaining<Iterator, Sentinel>(Iterator& first, Sentinel& last)
+  requires std::sized_sentinel_for<Sentinel, Iterator> {
+  return first - last;
+}
+int main() {
+  mut Range application{};
+  mut int32_t total = 0;
+  for (mut auto cursor = application.begin(); cursor != application.end(); ++cursor) {
+    total += *cursor;
+  }
+  for (int32_t value : application) { total += value; }
+  if (total != 12 || std::accumulate(Cursor(1), End(4), 0) != 6 ||
+      std::distance(Cursor(1), End(4)) != 3) { return 1; }
+  auto first = application.begin();
+  auto last = application.end();
+  if (remaining(first, last) != 3 || first - application.end() != 3) { return 2; }
+
+  mut std::vector<int32_t> vector = std::vector<int32_t>({1, 2});
+  for (mut auto it = vector.begin(); it != vector.end(); ++it) { total += *it; }
+  auto span = vector.as_span();
+  for (mut auto it = span.begin(); it != span.end(); ++it) { total += *it; }
+  mut std::array<int32_t, 2> array = std::array<int32_t, 2>({1, 2});
+  for (mut auto it = array.begin(); it != array.end(); ++it) { total += *it; }
+  if (vector.begin() - vector.end() != 2 ||
+      array.begin() - array.end() != 2) { return 3; }
+  mut std::deque<int32_t> deque{};
+  deque.push_back(1);
+  deque.push_back(2);
+  for (mut auto it = deque.begin(); it != deque.end(); ++it) { total += *it; }
+  if (deque.begin() - deque.end() != 2) { return 4; }
+  mut std::list<int32_t> list{};
+  list.push_back(1);
+  list.push_back(2);
+  for (mut auto it = list.begin(); it != list.end(); ++it) { total += *it; }
+  mut std::map<int32_t, int32_t> map{};
+  [[discard]] map.emplace(1, 2);
+  for (mut auto it = map.begin(); it != map.end(); ++it) { total += it->second; }
+  mut std::set<int32_t> set{};
+  [[discard]] set.insert(2);
+  for (mut auto it = set.begin(); it != set.end(); ++it) { total += *it; }
+  mut std::unordered_map<int32_t, int32_t> hash_map{};
+  [[discard]] hash_map.emplace(1, 2);
+  for (mut auto it = hash_map.begin(); it != hash_map.end(); ++it) { total += it->second; }
+  mut std::unordered_set<int32_t> hash_set{};
+  [[discard]] hash_set.insert(2);
+  for (mut auto it = hash_set.begin(); it != hash_set.end(); ++it) { total += *it; }
+  mut std::string text{"ab"};
+  mut int32_t letters = 0;
+  for (mut auto it = text.begin(); it != text.end(); ++it) { letters++; }
+  return total == 35 && letters == 2 ? 0 : 5;
+}

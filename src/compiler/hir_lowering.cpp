@@ -2422,6 +2422,7 @@ private:
       return value.functionTarget.has_value();
     case HirValueKind::Assignment:
     case HirValueKind::DereferenceSet:
+    case HirValueKind::PlaceSet:
     case HirValueKind::IndexSet:
     case HirValueKind::LayoutQuery:
     case HirValueKind::PayloadExtraction:
@@ -4703,6 +4704,18 @@ private:
         lowerOperand(set->object());
         lowerOperand(set->value());
       }
+    } else if (const auto *set = exprAs<PlaceSet>(raw)) {
+      const ResolvedOperatorInfo *resolved = model.findOperator(*set);
+      lowerOperand(set->target());
+      if (resolved != nullptr && isAssignmentOperator(resolved->kind)) {
+        kind = HirValueKind::Call;
+        if (!operands.empty())
+          receiver = operands.front();
+      } else {
+        kind = HirValueKind::PlaceSet;
+        operation = set->oper().kind;
+      }
+      lowerOperand(set->value());
     } else if (const auto *get = exprAs<Get>(raw)) {
       kind = HirValueKind::MemberAccess;
       operation = get->access().kind;

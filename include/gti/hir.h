@@ -79,6 +79,7 @@ enum class HirValueKind {
   Conversion,
   DirectInitializer,
   DereferenceSet,
+  PlaceSet,
   ExpectedPropagation,
   MemberAccess,
   Grouping,

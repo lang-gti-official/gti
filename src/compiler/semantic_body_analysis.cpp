@@ -4117,12 +4117,12 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
     if (selected && *sourceOperator == OverloadedOperator::NotEqual &&
         expr.oper().generated &&
         (selected->parameterTypes.size() != 1 ||
-         selected->parameterTypes.front().kind != SemanticType::Reference ||
-         selected->parameterTypes.front().referenceAccess !=
-             AccessMode::ReadOnly)) {
+         (selected->parameterTypes.front() != rightType &&
+          selected->parameterTypes.front() !=
+              SemanticType::referenceTo(rightType, AccessMode::ReadOnly)))) {
       report(expr.oper(),
              "Range iterator operator!= must accept its sentinel by "
-             "read-only reference.",
+             "value or read-only reference.",
              "GTI-S2022");
     }
     currentType = selected ? callExpressionType(selected->returnType)
@@ -5751,6 +5751,88 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
     assignRawPointerFields(targetPlace, expr.value().get());
   }
   currentType = valueTarget;
+}
+
+auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
+  const SemanticType targetType = analyzeProjectionBase(expr.target());
+  const ExpressionInfo *target = semanticModel.findExpression(*expr.target());
+  const bool mutableTarget = target != nullptr &&
+                             target->category == ValueCategory::Place &&
+                             target->access == AccessMode::Mutable;
+  const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
+  const SemanticType valueType =
+      simpleAssignment ? analyzeInitializer(expr.value(), targetType)
+                       : analyze(expr.value());
+  if (targetType == SemanticType::Unknown) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (!mutableTarget) {
+    report(expr.oper(),
+           "Assignment requires a mutable place; an owned call result or "
+           "read-only reference is not writable.",
+           "GTI-S2002");
+    currentType = targetType;
+    return;
+  }
+
+  const SemanticPlace targetPlace = semanticPlace(expr.target());
+  if (targetPlace.root != nullptr) {
+    reportLoanPlaceConflict(expr.oper(), targetPlace, AccessMode::Mutable,
+                            "Cannot write while an overlapping borrow may "
+                            "still be live.");
+  }
+  // Unlike a source operator's reserved projection, an ordinary accessor
+  // executes fully before the right operand. Its mutable result remains
+  // borrowed until the store, so later operands cannot access that owner.
+  if (const auto production = transientBorrowProduction(expr.target());
+      production && production->access == AccessMode::Mutable) {
+    std::vector<SemanticLoanPlace> reads;
+    std::vector<TransientBorrowProduction> productions;
+    appendTransientReadPlaces(expr.value(), reads, productions);
+    std::vector<SemanticLoanPlace> mutations;
+    appendTransientMutationPlaces(expr.value(), mutations);
+    const auto overlaps = [&](const SemanticLoanPlace &place) {
+      return loanPlacesOverlap(production->place, place);
+    };
+    if (std::any_of(reads.begin(), reads.end(), overlaps) ||
+        std::any_of(mutations.begin(), mutations.end(), overlaps)) {
+      report(expr.oper(),
+             "The right operand accesses storage still mutably borrowed "
+             "by the assignment target.",
+             "GTI-S2017");
+      diagnostics.back().related.push_back(
+          {tokenSpan(expressionToken(expr.target())),
+           "This target produces the mutable reference before the right "
+           "operand is evaluated."});
+    }
+  }
+  const auto mutationOperator = compoundOperator(expr.oper().kind);
+  if (!simpleAssignment && mutationOperator &&
+      targetType.kind == SemanticType::Class) {
+    const auto selected = resolveOperator(
+        expr, *mutationOperator, expr.target(), targetType, expr.oper(),
+        std::span<const SemanticType>(&valueType, 1),
+        std::span<const ExprPtr>(&expr.value(), 1));
+    currentType = selected ? callExpressionType(selected->returnType)
+                           : SemanticType::Unknown;
+    return;
+  }
+  if (simpleAssignment &&
+      !isOwnershipAssignment(targetType, valueType, expr.value())) {
+    report(expressionToken(expr.value()),
+           "Cannot assign a value of type '" + typeSpelling(valueType) +
+               "' to a mutable place of type '" + typeSpelling(targetType) +
+               "'.",
+           "GTI-S2003");
+  } else if (simpleAssignment && targetPlace.root != nullptr) {
+    reinitializePlace(targetPlace);
+    assignRawPointerFields(targetPlace, expr.value().get());
+  } else if (!simpleAssignment) {
+    validateCompoundAssignment(expr.oper(), targetType, valueType,
+                               expr.value().get());
+  }
+  currentType = targetType;
 }
 
 auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
@@ -10477,6 +10559,10 @@ auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
   }
   if (const auto *assignment = exprAs<DereferenceSet>(expression)) {
     return expressionNeverReturns(assignment->object().get()) ||
+           expressionNeverReturns(assignment->value().get());
+  }
+  if (const auto *assignment = exprAs<PlaceSet>(expression)) {
+    return expressionNeverReturns(assignment->target().get()) ||
            expressionNeverReturns(assignment->value().get());
   }
   if (const auto *initializer = exprAs<DirectInitializer>(expression)) {
