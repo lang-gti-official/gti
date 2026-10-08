@@ -1,0 +1,43 @@
+class Reading {
+  int number;
+public:
+  Reading(int value) : number(value) {}
+  Reading(Reading&) = delete;
+  int read() { return this.number; }
+};
+
+int consume(Reading value) { return value.read(); }
+
+mut int destroyed = 0;
+class OwnedReading {
+  int number;
+public:
+  OwnedReading(int value) : number(value) {}
+  OwnedReading(OwnedReading&) = delete;
+  ~OwnedReading() { destroyed += 1; }
+  int read() { return this.number; }
+};
+
+int consume_owned(OwnedReading value, int later) { return value.read() + later; }
+int later_argument(int before) { return destroyed == before ? 4 : 99; }
+
+int check(bool left) {
+  int wanted = left ? 3 : 7;
+  for (mut int index = 0; index < 3; ++index) {
+    if (consume(left ? Reading(3) : Reading(7)) != wanted) { return 1; }
+    if (consume(((left ? Reading(3) : Reading(7)))) != wanted) { return 2; }
+    int before = destroyed;
+    if (consume_owned(left ? OwnedReading(3) : OwnedReading(7),
+                      later_argument(before)) != wanted + 4) { return 3; }
+    if (destroyed != before + 1) { return 4; }
+    if (consume_owned(((left ? OwnedReading(3) : OwnedReading(7))),
+                      later_argument(before + 1)) != wanted + 4) { return 5; }
+    if (destroyed != before + 2) { return 6; }
+  }
+  return 0;
+}
+
+int main() {
+  if (check(true) != 0 || check(false) != 0) { return 1; }
+  return destroyed == 12 ? 0 : 2;
+}

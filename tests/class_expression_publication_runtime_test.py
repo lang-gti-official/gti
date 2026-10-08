@@ -13,6 +13,7 @@ CASES = (
     "grouped_class_failure", "conditional_class_failure",
     "conditional_class_passive_failure",
     "grouped_class_argument",
+    "conditional_class_argument",
 )
 
 
