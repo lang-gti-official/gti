@@ -119,7 +119,7 @@ int main() {
            "MIR must retain the selected target's ABI facts");
     const auto serialized = lang::MirPrinter().print(result.mir);
     expect(
-        serialized.starts_with("mir-v95 ") &&
+        serialized.starts_with("mir-v96 ") &&
             serialized.find("target os=" + target.os) != std::string::npos &&
             serialized.find(";native-c=" + std::to_string(static_cast<unsigned>(
                                                C::Char))) != std::string::npos,

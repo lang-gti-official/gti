@@ -1638,7 +1638,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   if (arguments.empty() && defaultConstructor(owner) == nullptr &&
-      classCanGenerateDefaultConstructor(owner)) {
+      classCanGenerateDefaultConstructor(constructedType)) {
     viable.push_back({nullptr, {}, {}, {}, true, ConstructorKind::Ordinary});
   }
 
@@ -2587,9 +2587,9 @@ auto SemanticVisitor::Impl::isDefaultInitializable(const SemanticType &type,
                               (!requirePublic && currentClass == owner->id);
       return accessible &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
-              classCanUseStructuralDefaultConstruction(*owner));
+              classCanUseStructuralDefaultConstruction(type));
     }
-    return classCanGenerateDefaultConstructor(*owner);
+    return classCanGenerateDefaultConstructor(type);
   }
   default:
     return false;
@@ -2617,7 +2617,7 @@ auto SemanticVisitor::Impl::resolveArrayElementDefaultConstruction(
 
   const ConstructorInfo *constructor = defaultConstructor(*owner);
   if (constructor == nullptr) {
-    if (!classCanGenerateDefaultConstructor(*owner)) {
+    if (!classCanGenerateDefaultConstructor(type)) {
       return std::nullopt;
     }
     return ResolvedConstructionInfo{.constructedType = type,
@@ -2741,8 +2741,38 @@ auto SemanticVisitor::Impl::genericValueArgument(const TypeRef &argument) const
     };
     const DependencyCheck check =
         dependency(dependency, *argument.genericValueExpression);
-    return check.valid && check.dependent ? std::optional{CompileTimeValue{}}
-                                          : std::nullopt;
+    if (!check.valid || !check.dependent)
+      return std::nullopt;
+    const auto bind = [&](const auto &self, const ArrayExtentExpr &source)
+        -> std::shared_ptr<const GenericValueExpression> {
+      if (!source.isAtom())
+        return std::make_shared<GenericValueExpression>(
+            GenericValueExpression{.kind = GenericValueExpression::Binary,
+                                   .token = source.token,
+                                   .left = self(self, *source.left),
+                                   .right = self(self, *source.right)});
+      if (const auto *literal =
+              std::get_if<std::uint64_t>(&source.token.literal))
+        return std::make_shared<GenericValueExpression>(
+            GenericValueExpression{.value = *literal});
+      if (const auto parameter = resolveValueParameter(source.token)) {
+        if (parameter->expression)
+          return parameter->expression;
+        return std::make_shared<GenericValueExpression>(GenericValueExpression{
+            .kind = parameter->kind == CompileTimeValue::Parameter
+                        ? GenericValueExpression::Parameter
+                        : GenericValueExpression::UInt64,
+            .value = parameter->value,
+            .parameterId = parameter->parameterId});
+      }
+      const Symbol *symbol = resolve(source.token);
+      const ConstantValue *constant =
+          symbol == nullptr ? nullptr : constantFor(*symbol);
+      return std::make_shared<GenericValueExpression>(GenericValueExpression{
+          .value = *constantUnsignedMagnitude(*constant)});
+    };
+    return CompileTimeValue{.expression =
+                                bind(bind, *argument.genericValueExpression)};
   }
   if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
       !argument.pointers.empty() || !argument.arrayExtents.empty() ||
@@ -3683,6 +3713,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       reportConstraintFailure(type.name.last(), *failure);
     }
   }
+  if (catalog.sealed)
+    validateOrdinaryClassLayout(typeOf(type));
 }
 
 auto SemanticVisitor::Impl::compilerCapabilityType(
@@ -5877,23 +5909,11 @@ auto SemanticVisitor::Impl::substituteType(
     argument = substituteType(argument, substitution);
   }
   for (CompileTimeValue &argument : result.valueArguments) {
-    if (argument.kind != CompileTimeValue::Parameter) {
-      continue;
-    }
-    const auto found = substitution.values.find(argument.parameterId);
-    if (found != substitution.values.end()) {
-      argument = found->second;
-    }
+    argument = substituteCompileTimeValue(argument, substitution.values);
   }
   const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
     for (CompileTimeValue &argument : values) {
-      if (argument.kind != CompileTimeValue::Parameter) {
-        continue;
-      }
-      const auto found = substitution.values.find(argument.parameterId);
-      if (found != substitution.values.end()) {
-        argument = found->second;
-      }
+      argument = substituteCompileTimeValue(argument, substitution.values);
     }
   };
   substituteValues(result.lambdaEnclosingClassValues);

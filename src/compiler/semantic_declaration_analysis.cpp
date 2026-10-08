@@ -1490,7 +1490,8 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
     alias.resolution = TypeAliasResolution::Resolved;
     semanticModel.record(
         *alias.declaration,
-        TypeAliasInfo{.sourceUnit = alias.sourceUnit,
+        TypeAliasInfo{.id = id,
+                      .sourceUnit = alias.sourceUnit,
                       .declaration = alias.declaration,
                       .qualifiedName = alias.qualifiedName,
                       .type = alias.type,
@@ -3305,12 +3306,12 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
 }
 
 auto SemanticVisitor::Impl::byValueTypeReachesClass(
-    const SemanticType &type, ClassId target,
+    const SemanticType &type, const SemanticType &target,
     std::vector<SemanticType> &visiting,
-    std::vector<SemanticType> &visitingEnums) const -> bool {
+    std::vector<SemanticType> &visitingEnums, bool &exhausted) const -> bool {
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
     return byValueTypeReachesClass(type.arguments.front(), target, visiting,
-                                   visitingEnums);
+                                   visitingEnums, exhausted);
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
       type.enumId <= enums.size()) {
@@ -3327,13 +3328,12 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     }
     for (const auto &enumerator : concrete->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
-        // Direct payload sums are outside the admitted field family. Do not
-        // expand an already-invalid symbolic sum recurrence here. Every
-        // admitted enum recursion crosses a class, whose existing nominal
-        // traversal guard bounds structurally growing instances.
+        // Preserve the admitted payload family and exact enum-instance guard;
+        // an invalid symbolic sum must not expand during class layout proof.
         if (payloadTypeAllowed(payload, type.enumId))
-          reaches = reaches || byValueTypeReachesClass(payload, target,
-                                                       visiting, visitingEnums);
+          reaches =
+              reaches || byValueTypeReachesClass(payload, target, visiting,
+                                                 visitingEnums, exhausted);
       }
     }
     visitingEnums.pop_back();
@@ -3343,10 +3343,21 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
       type.classId > classes.size()) {
     return false;
   }
-  if (type.classId == target) {
+  if (type == target) {
     return true;
   }
-  if (nonDecreasingNominalRecurrence(type, visiting)) {
+  if (std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                  [](const auto &value) {
+                    return value.kind != CompileTimeValue::UInt64;
+                  })) {
+    // Open arithmetic is deferred to exact owner substitutions, not mistaken
+    // for a declaration-ID self edge.
+    return false;
+  }
+  if (std::find(visiting.begin(), visiting.end(), type) != visiting.end())
+    return true;
+  if (visiting.size() >= 64) {
+    exhausted = true;
     return false;
   }
   visiting.push_back(type);
@@ -3363,7 +3374,8 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
     }
     const SemanticType fieldType =
         substituteType(member->second.symbol.type, substitution);
-    if (byValueTypeReachesClass(fieldType, target, visiting, visitingEnums)) {
+    if (byValueTypeReachesClass(fieldType, target, visiting, visitingEnums,
+                                exhausted)) {
       visiting.pop_back();
       return true;
     }
@@ -3375,64 +3387,93 @@ auto SemanticVisitor::Impl::byValueTypeReachesClass(
 
 auto SemanticVisitor::Impl::validateOrdinaryClassLayouts() -> void {
   for (const ClassInfo &owner : classes) {
-    if (owner.declaration == nullptr ||
-        owner.declaration->isForwardDeclaration() ||
-        owner.kind == ClassKind::Interface || owner.kind == ClassKind::Union ||
-        owner.cAbiRecord || owner.cOpaqueHandle) {
+    validateOrdinaryClassLayout(openClassType(owner.id));
+  }
+}
+
+auto SemanticVisitor::Impl::validateOrdinaryClassLayout(
+    const SemanticType &ownerType) -> void {
+  if (ownerType.kind != SemanticType::Class || ownerType.classId == 0 ||
+      ownerType.classId > classes.size() ||
+      std::find(requestSession.invalidOrdinaryLayouts.begin(),
+                requestSession.invalidOrdinaryLayouts.end(),
+                ownerType) != requestSession.invalidOrdinaryLayouts.end())
+    return;
+  const ClassInfo &owner = classInfo(ownerType.classId);
+  if (catalog.sealed &&
+      std::any_of(owner.fields.begin(), owner.fields.end(),
+                  [&](const FieldInfo &field) {
+                    return recursiveLayoutFields.contains(field.declaration);
+                  })) {
+    requestSession.invalidOrdinaryLayouts.push_back(ownerType);
+    return;
+  }
+  if (owner.declaration == nullptr ||
+      owner.declaration->isForwardDeclaration() ||
+      owner.kind == ClassKind::Interface || owner.kind == ClassKind::Union ||
+      owner.cAbiRecord || owner.cOpaqueHandle) {
+    return;
+  }
+
+  const GenericSubstitution substitution = classSubstitution(ownerType);
+  std::string ownerSpelling = owner.name.lexeme;
+  if (!owner.genericParameters.empty()) {
+    ownerSpelling += '<';
+    for (std::size_t index = 0; index < owner.genericParameters.size();
+         ++index) {
+      if (index != 0) {
+        ownerSpelling += ", ";
+      }
+      ownerSpelling += owner.genericParameters[index].name.lexeme;
+      if (owner.genericParameters[index].pack) {
+        ownerSpelling += "...";
+      }
+    }
+    ownerSpelling += '>';
+  }
+  for (const FieldInfo &field : owner.fields) {
+    if (field.declaration == nullptr) {
       continue;
     }
-
-    const SemanticType ownerType = openClassType(owner.id);
-    const GenericSubstitution substitution = classSubstitution(ownerType);
-    std::string ownerSpelling = owner.name.lexeme;
-    if (!owner.genericParameters.empty()) {
-      ownerSpelling += '<';
-      for (std::size_t index = 0; index < owner.genericParameters.size();
-           ++index) {
-        if (index != 0) {
-          ownerSpelling += ", ";
-        }
-        ownerSpelling += owner.genericParameters[index].name.lexeme;
-        if (owner.genericParameters[index].pack) {
-          ownerSpelling += "...";
-        }
-      }
-      ownerSpelling += '>';
+    const auto member = owner.members.find(field.declaration->name().lexeme);
+    if (member == owner.members.end()) {
+      continue;
     }
-    for (const FieldInfo &field : owner.fields) {
-      if (field.declaration == nullptr) {
-        continue;
-      }
-      const auto member = owner.members.find(field.declaration->name().lexeme);
-      if (member == owner.members.end()) {
-        continue;
-      }
-      const SemanticType fieldType =
-          substituteType(member->second.symbol.type, substitution);
-      std::vector<SemanticType> visiting;
-      std::vector<SemanticType> visitingEnums;
-      if (!byValueTypeReachesClass(fieldType, owner.id, visiting,
-                                   visitingEnums)) {
-        continue;
-      }
-
+    const SemanticType fieldType =
+        substituteType(member->second.symbol.type, substitution);
+    std::vector<SemanticType> visiting{ownerType};
+    std::vector<SemanticType> visitingEnums;
+    bool exhausted = false;
+    const bool cycle = byValueTypeReachesClass(fieldType, ownerType, visiting,
+                                               visitingEnums, exhausted);
+    if (!cycle && !exhausted) {
+      continue;
+    }
+    requestSession.invalidOrdinaryLayouts.push_back(ownerType);
+    if (exhausted) {
+      diagnostics.push_back(
+          makeDiagnostic(DiagnosticId::GenericInstantiationLimit,
+                         tokenSpan(field.declaration->name()),
+                         {"concrete-layout-depth", "64"}));
+      return;
+    }
+    if (!catalog.sealed)
       recursiveLayoutFields.insert(field.declaration);
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2082", DiagnosticPhase::Semantics,
-          field.declaration->type().name.last(),
-          "Type '" + ownerSpelling +
-              "' cannot contain itself by value through field '" +
-              field.declaration->name().lexeme + "'.");
-      diagnostic.related.push_back(
-          {tokenSpan(owner.name),
-           "The recursively contained type is declared here."});
-      diagnostic.hints.emplace_back(
-          "Break the recursive layout with an owning standard-library "
-          "indirection such as std::unique_ptr<" +
-          ownerSpelling +
-          ">, or use a reference when another object owns the value.");
-      diagnostics.emplace_back(std::move(diagnostic));
-    }
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2082", DiagnosticPhase::Semantics,
+                       field.declaration->type().name.last(),
+                       "Type '" + ownerSpelling +
+                           "' cannot contain itself by value through field '" +
+                           field.declaration->name().lexeme + "'.");
+    diagnostic.related.push_back(
+        {tokenSpan(owner.name),
+         "The recursively contained type is declared here."});
+    diagnostic.hints.emplace_back(
+        "Break the recursive layout with an owning standard-library "
+        "indirection such as std::unique_ptr<" +
+        ownerSpelling +
+        ">, or use a reference when another object owns the value.");
+    diagnostics.emplace_back(std::move(diagnostic));
   }
 }
 
@@ -3741,15 +3782,6 @@ auto SemanticVisitor::Impl::concreteBase(const ClassInfo &owner)
   return found == owner.bases.end() ? nullptr : &*found;
 }
 
-auto SemanticVisitor::Impl::fieldsHaveDeclarationInitializers(
-    const ClassInfo &owner) -> bool {
-  return std::all_of(owner.fields.begin(), owner.fields.end(),
-                     [](const FieldInfo &field) {
-                       return field.declaration != nullptr &&
-                              field.declaration->initializer() != nullptr;
-                     });
-}
-
 auto SemanticVisitor::Impl::defaultConstructor(const ClassInfo &owner)
     -> const ConstructorInfo * {
   const ConstructorInfo *result = nullptr;
@@ -3796,54 +3828,84 @@ auto SemanticVisitor::Impl::hasSourceDestructorBody(const ClassInfo &owner)
 }
 
 auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
-    const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const
-    -> bool {
-  if (owner.kind == ClassKind::Union) {
-    return owner.unionLayout.has_value();
-  }
-  if (!fieldsHaveDeclarationInitializers(owner)) {
-    return false;
-  }
-  if (!visiting.insert(owner.id).second) {
-    return false;
-  }
-  const ClassBaseTypeInfo *base = concreteBase(owner);
-  if (base == nullptr || base->type.classId == 0 ||
-      base->type.classId > classes.size()) {
-    visiting.erase(owner.id);
-    return true;
-  }
-  const ClassInfo &baseOwner = classInfo(base->type.classId);
-  const ConstructorInfo *declared = defaultConstructor(baseOwner);
-  const bool available =
-      declared != nullptr
-          ? declared->access == AccessModifier::Public &&
-                (!requestsStructuralDefaultConstruction(*declared) ||
-                 classCanUseStructuralDefaultConstruction(baseOwner, visiting))
-          : classCanGenerateDefaultConstructor(baseOwner, visiting);
-  visiting.erase(owner.id);
-  return available;
+    const ClassInfo &owner) const -> bool {
+  return classCanUseStructuralDefaultConstruction(openClassType(owner.id));
 }
 
 auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
-    const ClassInfo &owner) const -> bool {
-  std::unordered_set<ClassId> visiting;
-  return classCanUseStructuralDefaultConstruction(owner, visiting);
-}
-
-auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
-    const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const
+    const SemanticType &type, std::vector<SemanticType> &visiting) const
     -> bool {
-  if (defaultConstructorCandidateCount(owner) != 0) {
+  const ClassInfo *owner = classInfo(type);
+  if (owner == nullptr || owner->abstract)
     return false;
+  if (owner->kind == ClassKind::Union)
+    return owner->unionLayout.has_value();
+  if (visiting.size() >= 64 ||
+      std::find(visiting.begin(), visiting.end(), type) != visiting.end())
+    return false;
+  visiting.push_back(type);
+  const GenericSubstitution substitution = classSubstitution(type);
+  const auto available = [&](const SemanticType &fieldType) {
+    const ClassInfo *fieldOwner = classInfo(fieldType);
+    if (fieldOwner == nullptr || fieldOwner->abstract)
+      return false;
+    // An open value expression is a deferred instance obligation, not a
+    // usable construction operation. Concrete analysis checks it afresh.
+    if (std::any_of(fieldType.valueArguments.begin(),
+                    fieldType.valueArguments.end(),
+                    [](const CompileTimeValue &value) {
+                      return value.kind != CompileTimeValue::Kind::UInt64;
+                    }))
+      return true;
+    const ConstructorInfo *constructor = defaultConstructor(*fieldOwner);
+    if (constructor != nullptr) {
+      return constructor->access == AccessModifier::Public &&
+             (!requestsStructuralDefaultConstruction(*constructor) ||
+              classCanUseStructuralDefaultConstruction(fieldType, visiting));
+    }
+    return defaultConstructorCandidateCount(*fieldOwner) == 0 &&
+           classCanUseStructuralDefaultConstruction(fieldType, visiting);
+  };
+  bool valid = true;
+  for (const FieldInfo &field : owner->fields) {
+    if (field.declaration == nullptr) {
+      valid = false;
+      break;
+    }
+    if (field.declaration->initializer())
+      continue;
+    const auto member = owner->members.find(field.declaration->name().lexeme);
+    if (member == owner->members.end() ||
+        member->second.symbol.type.kind != SemanticType::Class ||
+        !available(substituteType(member->second.symbol.type, substitution))) {
+      valid = false;
+      break;
+    }
   }
-  return classCanUseStructuralDefaultConstruction(owner, visiting);
+  if (valid) {
+    if (const ClassBaseTypeInfo *base = concreteBase(*owner))
+      valid = available(substituteType(base->type, substitution));
+  }
+  visiting.pop_back();
+  return valid;
+}
+
+auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
+    const SemanticType &type) const -> bool {
+  std::vector<SemanticType> visiting;
+  return classCanUseStructuralDefaultConstruction(type, visiting);
+}
+
+auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
+    const SemanticType &type) const -> bool {
+  const ClassInfo *owner = classInfo(type);
+  return owner != nullptr && defaultConstructorCandidateCount(*owner) == 0 &&
+         classCanUseStructuralDefaultConstruction(type);
 }
 
 auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
     const ClassInfo &owner) const -> bool {
-  std::unordered_set<ClassId> visiting;
-  return classCanGenerateDefaultConstructor(owner, visiting);
+  return classCanGenerateDefaultConstructor(openClassType(owner.id));
 }
 
 auto SemanticVisitor::Impl::baseHasAccessibleDefaultConstructor(
@@ -6171,6 +6233,15 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
     if (owner.declaration == nullptr) {
       continue;
     }
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr || field.declaration->initializer())
+        continue;
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (owner.kind != ClassKind::Union && !owner.cAbiRecord &&
+          member != owner.members.end() &&
+          member->second.symbol.type.kind == SemanticType::Class)
+        semanticModel.retainImplicitFieldInitializer(*field.declaration);
+    }
     SemanticTypeTraits traits = typeTraits(openClassType(owner.id));
     // The declaration-bound optional slot is a single ownership state. Copy
     // assignment is intentionally unavailable even though its source class
@@ -6312,7 +6383,13 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
             .generatedDefaultFieldInitializers =
                 defaultStatus == SpecialMemberStatus::Generated &&
                 owner.kind != ClassKind::Union && !owner.fields.empty() &&
-                fieldsHaveDeclarationInitializers(owner),
+                std::all_of(owner.fields.begin(), owner.fields.end(),
+                            [&](const FieldInfo &field) {
+                              return field.declaration != nullptr &&
+                                     (field.declaration->initializer() ||
+                                      semanticModel.implicitFieldInitializer(
+                                          *field.declaration));
+                            }),
             .copyConstructor = copyStatus,
             .moveConstructor = moveStatus,
             .copyAssignment = traits.copyAssignable
@@ -7177,6 +7254,12 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
     }
     std::vector<ClassFieldTypeInfo> fields;
     std::vector<ClassFieldTypeInfo> staticFields;
+    std::vector<const TypeAliasDecl *> aliases;
+    for (const RegisteredTypeAlias &alias : typeAliases) {
+      if (alias.ownerClass == owner.id &&
+          alias.resolution == TypeAliasResolution::Resolved)
+        aliases.push_back(alias.declaration);
+    }
     fields.reserve(owner.fields.size());
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr) {
@@ -7222,6 +7305,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .genericArgumentPatterns = owner.genericArgumentPatterns,
             .fields = std::move(fields),
             .staticFields = std::move(staticFields),
+            .typeAliases = std::move(aliases),
             .storedReference = owner.storedReference,
             .lifecycleBoundBorrowCarrier =
                 lifecycleBoundBorrowCarrierFor(openClassType(owner.id)),

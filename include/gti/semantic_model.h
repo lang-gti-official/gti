@@ -765,6 +765,9 @@ struct ClassTypeInfo {
   std::vector<SemanticType> genericArgumentPatterns;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
+  // Active source declaration order; instance analysis resolves each alias in
+  // the exact owner scope before HIR publishes a concrete class catalog.
+  std::vector<const TypeAliasDecl *> typeAliases;
   std::optional<StoredReferenceInfo> storedReference;
   bool lifecycleBoundBorrowCarrier = false;
   // Separate trusted lock authority from general dependency retention.
@@ -865,6 +868,7 @@ struct ResolvedPayloadPatternInfo {
 };
 
 struct TypeAliasInfo {
+  TypeAliasId id = 0;
   SourceUnitId sourceUnit = 0;
   const TypeAliasDecl *declaration = nullptr;
   std::string qualifiedName;
@@ -1351,6 +1355,9 @@ class SemanticDatabase {
 public:
   [[nodiscard]] const std::vector<SymbolRecord> &symbols() const;
 
+  // Identity ceiling, including the reserved prefix of an instance delta.
+  [[nodiscard]] SymbolId symbolIdentityCeiling() const;
+
   [[nodiscard]] const SymbolRecord *findSymbol(SymbolId id) const;
 
   [[nodiscard]] std::vector<const SemanticOccurrence *>
@@ -1398,7 +1405,8 @@ private:
   // Turns this database into an instance-analysis delta over baseDatabase:
   // lookups fall back to the base, and new symbol identities continue after
   // the base's so instance records never collide with base SymbolIds.
-  void beginInstanceDelta(const SemanticDatabase &baseDatabase);
+  void beginInstanceDelta(const SemanticDatabase &baseDatabase,
+                          SymbolId reservedIdentityCeiling);
 
   void rebase(const SemanticDatabase *baseDatabase);
 
@@ -1543,6 +1551,13 @@ public:
   // Own semantic-generated constructor syntax for the lifetime of every
   // downstream reference; cached parsed source trees remain immutable.
   std::vector<std::shared_ptr<const ConstructorDecl>> designatedConstructors;
+  // Source-free empty construction anchors are owned across immutable copies
+  // and instance deltas, just like semantic-generated constructor syntax.
+  [[nodiscard]] const ExprPtr &
+  implicitFieldInitializer(const VariableDecl &field) const;
+  [[nodiscard]] const ExprPtr &
+  resolvedFieldInitializer(const VariableDecl &field) const;
+  void retainImplicitFieldInitializer(const VariableDecl &field);
   [[nodiscard]] const SemanticAnalysisSeal &analysisSeal() const;
 
   [[nodiscard]] ExecutionProfile executionProfile() const;
@@ -1837,7 +1852,8 @@ private:
   // program's model. Loan tables deliberately do not fall back - instance
   // analysis restarts loan identities, mirroring the clearLoans() semantics
   // the previous whole-model copy relied on.
-  void beginInstanceDelta(const SemanticModel &baseModel);
+  void beginInstanceDelta(const SemanticModel &baseModel,
+                          SymbolId reservedIdentityCeiling = 0);
 
   // Re-points an instance delta at a relocated base (the analyzer restores
   // its model after each instance analysis; the delta must follow it).
@@ -2147,6 +2163,8 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
+  std::unordered_map<const VariableDecl *, std::shared_ptr<const ExprPtr>>
+      implicitFieldInitializers;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   std::unordered_map<const ArrayInitializer *, ResolvedCollectionInfo>
       collections;
@@ -2186,5 +2204,13 @@ struct SemanticInstanceAnalysis {
 
   [[nodiscard]] bool valid() const { return !hasErrorDiagnostics(diagnostics); }
 };
+
+// Shared semantic substitution kernel. Consumers preserve declaration-bound
+// parameter identities; an optional semantic catalog resolves exact nominal
+// specializations after substitution, including nested type arguments.
+[[nodiscard]] SemanticType
+substituteSemanticType(const SemanticType &type,
+                       const GenericSubstitution &substitution,
+                       const SemanticModel *model = nullptr);
 
 } // namespace lang

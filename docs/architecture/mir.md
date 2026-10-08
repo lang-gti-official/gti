@@ -63,7 +63,7 @@ The local detector origin remains independently verified. Calls, joins, and
 cleanup propagate that record unchanged. No public `std::panic` spelling,
 ambient thread-local caller state, native unwinding, or backend-inferred control
 flow supplies authority. Deterministic MIR serialization records the declaration,
-instruction, body, and caller-assignment facts (`mir-v95`, `mir-body-v80`).
+instruction, body, and caller-assignment facts (`mir-v96`, `mir-body-v80`).
 
 The first caller-token consumer is panic. This does not change
 `source_location::current()` to inspect an incoming dynamic token, extend
@@ -236,8 +236,8 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v95`/`mir-body-v80`,
-with `lowered-program-v15` declaration metadata. It retains exact concrete
+The combined deterministic serialization is currently `mir-v96`/`mir-body-v80`,
+with `lowered-program-v16` declaration metadata. It retains exact concrete
 integral and payload enum identities, including their type/value arguments,
 alternative fields and lifecycle facts. Version 95 also records
 generated-default constructor identity explicitly on each constructor instance
@@ -256,7 +256,7 @@ its condition and that its result agrees with the payload's concrete MIR
 capabilities; nominal facts remain frontend-owned, while real builtin aggregate
 components compose those facts. Removing the condition or changing the derived
 capability is invalid MIR. The declaration catalog preserves the generic
-condition in `lowered-program-v15`, and optimization replay includes these facts.
+condition in `lowered-program-v16`, and optimization replay includes these facts.
 
 MIR also copies the artifact program kind and a pointer-free
 `MirEmbeddingPlan`. Each canonical row names the exact source
@@ -279,6 +279,16 @@ provide the authoritative ownership, borrowing and concurrency facts folded
 from actual alternative fields; nominal generic metadata does not become a
 stored component. Missing exact rows remain invalid rather than granting a
 storage or capability exemption.
+
+The combined serialization is `mir-v96`/`lowered-program-v16`, preserving
+embedding rows, exact generic enum metadata, and concrete class alias catalogs.
+Each class alias row carries its primary semantic declaration identity and exact
+concrete type. The independent detached verifier rejects omitted, duplicated,
+foreign-owner, and wrongly substituted aliases; program verification rejects
+open concrete types and duplicate identities. Declaration-bound value argument
+expressions are serialized as owned typed metadata, never evaluated by a backend.
+These program/declaration additions do not change body operations: the body
+schema remains `mir-body-v80`.
 The program header retains the selected target's identity, pointer width and
 execution profile. Every serialized type retains its native C primitive
 discriminator separately from its numeric kind; equal-width `long` and
