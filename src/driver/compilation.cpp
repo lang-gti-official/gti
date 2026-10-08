@@ -26,6 +26,8 @@ FrontendResult analyze(const CompilationRequest &request,
                           .configurationFlags = request.configurationFlags(),
                           .toolingOccurrences = false,
                           .requireEntryPoint = request.requiresEntryPoint(),
+                          .requireFunctionDefinitions =
+                              request.requiresFunctionDefinitions(),
                           .progress = progress};
   options.rawPointerAudit = request.rawPointerAudit();
   options.program = request.program();
@@ -315,6 +317,16 @@ CompilationRequest CompilationRequest::forExecutable() const {
   return result;
 }
 
+bool CompilationRequest::requiresFunctionDefinitions() const {
+  return functionDefinitionsRequired;
+}
+
+CompilationRequest CompilationRequest::withDefinitionClosure() const {
+  CompilationRequest result = *this;
+  result.functionDefinitionsRequired = true;
+  return result;
+}
+
 CompilationInputs loadCompilationInputs(const CompilationRequest &request,
                                         ProgressObserver *progress) {
   SourceLoader sourceLoader;
@@ -362,14 +374,15 @@ CheckResult checkCompilation(const CompilationRequest &request,
 CompilationResult compileToCpp(const CompilationRequest &request,
                                ProgressObserver *progress) {
   CppBackend backend(request.cppStandard(), request.debugInfo());
-  return compileWithBackend(request, backend, progress);
+  return compileWithBackend(request.withDefinitionClosure(), backend, progress);
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request,
                                CompilationInputs inputs,
                                ProgressObserver *progress) {
   CppBackend backend(request.cppStandard(), request.debugInfo());
-  return compileWithLoadedInputs(request, std::move(inputs), backend, progress);
+  return compileWithLoadedInputs(request.withDefinitionClosure(),
+                                 std::move(inputs), backend, progress);
 }
 
 CompilationResult compileToNativeHeader(const CompilationRequest &request,

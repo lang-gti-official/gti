@@ -10,8 +10,8 @@ LSP consume the same policy and source spans.
 Status: Current infrastructure and conventions.
 
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition
-in a closed executable/library request, before native code generation. The
-call token is primary and its bodyless declaration is related. Semantic
+in a closed executable/library or C++ representation request, before backend
+generation. The call token is primary and its bodyless declaration is related. Semantic
 resolution preserves the selected signature for recovery; it does not guess
 a replacement body or offer an automatic foreign-linkage edit. Pure virtual
 contracts, registered runtime bindings and compiler intrinsics retain their
@@ -22,6 +22,12 @@ type or value formals remain unresolved. Concrete reanalysis checks the selected
 specialization and active `if constexpr` branch; an instantiated body still
 rejects every selected missing definition, even for a nondependent call. A
 concrete class context does not resolve a generic method's own open formals.
+When concrete generic reanalysis finds a missing definition, the outer requesting
+call is primary, with the selected internal call and bodyless declaration related.
+An immediately enclosing generic request is also related when it differs from the
+outer request. This provenance follows concrete discovery across included files;
+it does not rely on standard-library names or alter instance identity or limits.
+Named call anchors highlight the callee, not the closing argument parenthesis.
 
 ## Terminal colour
 

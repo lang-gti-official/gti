@@ -43,6 +43,9 @@ struct FrontendOptions {
   bool toolingOccurrences = true;
   // Set only for an executable root, never inferred from a source filename.
   bool requireEntryPoint = false;
+  // Executable representation requests require selected GTI call definitions
+  // even when they intentionally do not require a hosted entry point.
+  bool requireFunctionDefinitions = false;
   ProgressObserver *progress = nullptr;
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.

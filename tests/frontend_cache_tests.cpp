@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -474,6 +475,41 @@ void testDependencyConfigurationChangesParsedIdentity() {
          "equivalent");
 }
 
+void testDefinitionClosureReanalyzedWithWarmSyntax() {
+  TemporaryProject project;
+  const auto path = project.path("definition-closure.gti");
+  const std::string source =
+      "int missing(int value); int use() { return missing(4); }";
+  auto cache = std::make_shared<lang::FrontendCache>();
+  for (const bool closed : {false, true, false, true}) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.requireFunctionDefinitions = closed;
+    options.cache = cache;
+    lang::FrontendWorkMetrics metrics;
+    options.workMetrics = &metrics;
+    const auto cached = lang::Frontend(options).analyze(path, source);
+    options.cache.reset();
+    options.workMetrics = nullptr;
+    const auto uncached = lang::Frontend(options).analyze(path, source);
+    expect(resultFingerprint(cached) == resultFingerprint(uncached),
+           "definition policy must be reanalyzed, never retained in syntax "
+           "cache entries");
+    expect(cached.semanticValid != closed &&
+               cached.diagnostics.size() == (closed ? 1U : 0U),
+           "closed requests reject missing definitions and open requests "
+           "remain valid after either policy warms the cache");
+    if (closed) {
+      expect(!metrics.parseCacheHits.empty(),
+             "definition closure must be checked even when syntax is reused");
+      if (cached.diagnostics.size() == 1) {
+        expect(cached.diagnostics.front().code == "GTI-S2106",
+               "warm closed analysis retains the owning definition diagnostic");
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -481,6 +517,7 @@ int main() {
   testFrontendReuseInvalidationAndEquivalence();
   testRecoveredAndConfigurationContextEquivalence();
   testDependencyConfigurationChangesParsedIdentity();
+  testDefinitionClosureReanalyzedWithWarmSyntax();
 
   if (failures != 0) {
     std::cerr << failures << " frontend cache test(s) failed\n";

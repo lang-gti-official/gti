@@ -96,6 +96,15 @@ diagnostic and the retained frontend source/diagnostic snapshot.
 The CLI renders that diagnostic and returns its ordinary compilation-failure
 status; it does not depend on an exception escaping to a CLI-only handler.
 
+Definition closure is an explicit immutable `CompilationRequest` policy,
+independent of requiring `main`. Both `compileToCpp` entry paths derive a
+`withDefinitionClosure()` request before frontend analysis, so a selected
+ordinary GTI call without a definition receives `GTI-S2106` rather than reaching
+backend emission. C++ fragments still need no entry point. Compiler-library
+clients may select this policy for checks or custom backends; open fragment
+analysis and MIR-only inspection remain available. Native declarations,
+intrinsics and runtime bindings retain their own implementation contracts.
+
 `include/gti/target.h` owns the selected target vocabulary and the immutable
 `TargetDataLayout` value carried through these layers. The public value contains
 only GTI domains, byte sizes, ABI/preferred alignments, pointer width, and

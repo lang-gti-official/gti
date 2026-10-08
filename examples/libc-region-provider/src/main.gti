@@ -1,9 +1,10 @@
 #include <std/memory>
 
 namespace packets {
+// libc's allocator is declared with its exact C prototype: c_size_t is C's
+// size_t on the selected target, distinct from GTI's fixed-width uint64_t.
 extern "C" {
-  uint64_t packet_native_size_max();
-  void* packet_malloc(uint64_t bytes);
+  void* malloc(c_size_t bytes);
   void free(void* address);
   uint64_t packet_fill_checksum(void* address, uint64_t bytes);
 }
@@ -20,12 +21,11 @@ public:
   Region(Region& other) = delete;
   Region(Region&& other) = default;
   static expected<Region, std::alloc_errc> create(uint64_t bytes) {
-    if (bytes > packet_native_size_max()) {
-      return unexpected(std::alloc_errc::size_overflow);
-    }
     if (bytes == uint64_t(0)) { return Region(nullptr, bytes); }
     unsafe {
-      void* address = packet_malloc(bytes);
+      // The explicit conversion is checked; size_t holds every uint64_t on
+      // the 64-bit targets GTI admits.
+      void* address = malloc(c_size_t(bytes));
       if (address == nullptr) {
         return unexpected(std::alloc_errc::resource_exhausted);
       }

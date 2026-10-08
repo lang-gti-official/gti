@@ -6468,7 +6468,8 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
                      : declaration->name()),
        "The bodyless declaration is here."});
   diagnostic.hints.emplace_back(
-      "Provide a GTI definition, or declare a foreign function through "
+      "Provide a GTI definition or an exact specialization for this call. "
+      "For a foreign function, use "
       "extern \"C\" with a supported native signature.");
   diagnostics.push_back(std::move(diagnostic));
 }
