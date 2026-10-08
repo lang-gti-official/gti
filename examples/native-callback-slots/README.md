@@ -22,7 +22,7 @@ typedefs work in records and decay in C parameters; pointers to whole arrays,
 variadic callbacks and prototype-less callbacks remain outside the current
 language boundary and are reported, not approximated.
 
-The matrix is transported and checked by C. Direct multidimensional indexing
-of native record fields currently exposes an independent compiler representation
-bug, tracked as [#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175).
-The example checks GTI element access on the one-dimensional row instead.
+The matrix is transported and checked by C, then read and modified through GTI
+multidimensional indexing. This exercises the compiler regression repaired in
+[#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175): an unused
+intermediate row address must not invent an incompatible `std::array` object.
