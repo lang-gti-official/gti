@@ -140,12 +140,12 @@ int main() { return discard(1, uint32_t(2)); }
 )gti");
   expect(unnamed.canGenerateCode(),
          "unnamed bodyless and executable formals need physical identities");
-  for (const std::string shape : {"int32_t", "int32_t&", "mut int32_t&",
-                                  "int32_t*"}) {
-    for (const std::string &declaration : {
-             "int32_t f(" + shape + ");",
-             "class C { public: int32_t f(" + shape + "); };",
-             "interface I { int32_t f(" + shape + "); };"}) {
+  for (const std::string shape :
+       {"int32_t", "int32_t&", "mut int32_t&", "int32_t*"}) {
+    for (const std::string &declaration :
+         {"int32_t f(" + shape + ");",
+          "class C { public: int32_t f(" + shape + "); };",
+          "interface I { int32_t f(" + shape + "); };"}) {
       auto cell = analyze(declaration + " int main() { return 0; }");
       expect(cell.canGenerateCode(),
              "each bodyless unnamed formal shape must retain canonical MIR");
@@ -173,8 +173,9 @@ int main() { return discard(1, uint32_t(2)); }
       expect(symbol.id != 0 && !symbol.nameSpan.source.empty() &&
                  symbol.nameSpan.end > symbol.nameSpan.start,
              "unnamed formal needs a real type source anchor");
-      expect(unnamed.semantics.database().occurrencesForSymbol(symbol.id).empty(),
-             "synthetic formal must not become a source name occurrence");
+      expect(
+          unnamed.semantics.database().occurrencesForSymbol(symbol.id).empty(),
+          "synthetic formal must not become a source name occurrence");
       ids.insert(symbol.id);
       spans.emplace(symbol.nameSpan.start, symbol.nameSpan.end);
     }
@@ -200,9 +201,9 @@ int main() { return discard(1, uint32_t(2)); }
     expect(!gti_test::emitCpp(unnamed).contents.empty(),
            "unnamed formals must reach verified executable emission");
   }
-  auto constexprUnnamed = analyze(
-      "constexpr int32_t reads(int32_t*) { return 0; }\n"
-      "int main() { return 0; }");
+  auto constexprUnnamed =
+      analyze("constexpr int32_t reads(int32_t*) { return 0; }\n"
+              "int main() { return 0; }");
   expect(!constexprUnnamed.canGenerateCode(),
          "raw pointer constexpr restriction remains intact");
   const auto constDiagnostic = std::find_if(

@@ -1399,6 +1399,19 @@ call a terminal aborting array helper to perform an unproven reference return.
 Scalar and class referents use the same rule, preserving `GTI-R0007`, status
 70 and deterministic cleanup in the caller as well as the accessor.
 
+A fixed-array projection used as a later index's base completes its bounds
+check before that next index is evaluated. Place-dependency lowering uses an
+ordinary typed `Compute/AddressOf` stage with the prefix's exact semantic
+failure origin and `Invoke`; it does not load or copy the selected subarray.
+The synthetic pointer has a distinct SSA identity and never replaces the
+source index's value identity. This applies through grouping, comma and field
+projections to reads, writes, reference binding and explicit address formation.
+The eventual access retains its own check; an earlier prefix failure prevents
+all later index side effects and reports the prefix's source location.
+Element receivers and direct reference/copy arguments also finish their terminal
+selection before invocation or later arguments. Their address-only transport
+must not erase the bounds check merely because no scalar load is emitted.
+
 Because the entry loan is self-sourced at the carrier binding — MIR cannot
 name the caller's owner storage — its canonical protected place collides with
 the carrier object itself. Verification therefore exempts whole-carrier

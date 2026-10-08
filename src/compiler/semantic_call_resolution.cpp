@@ -3098,9 +3098,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
                               "transfer-safe exact task whose return type "
                               "matches its transferable result."));
         diagnostic.related.push_back(
-            {tokenSpan(
-                 target->declaration->parameters()[declarationIndex]
-                     .sourceAnchor()),
+            {tokenSpan(target->declaration->parameters()[declarationIndex]
+                           .sourceAnchor()),
              "Managed task parameter declared here."});
         diagnostic.hints.emplace_back(
             "Pass a fresh task value or std::move(task); captures must own "

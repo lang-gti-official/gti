@@ -1,8 +1,27 @@
 # Compiler Verification
 
+## Issue-campaign audit and reconciliation gate
+
+PR #152 reconciles the previously separate issue-fix handoffs and independently
+audits Claude's grouped fixes. Imported focused results and arithmetically
+combined census counts are not final acceptance evidence. The release requires
+an optimized all-target build, an unfiltered current-head CTest run, both full
+MIR corpus oracles, editor/tooling checks and staged installed consumers. Every
+open campaign issue must have a reviewed fix and passing owning regressions
+before closure; remaining work, including the separately developed #150 direct
+initialization fix, must be reconciled before the final run and release.
+
+The audit additionally checks exact reference-return alias publication and
+nested fixed-array evaluation order. Array exchange coverage retains argument
+and return transport without invented element default construction. Nested
+index failure tests require exact source attribution, suppression of later
+index effects and deterministic cleanup, including owning element arrays.
+These are current acceptance requirements, not a claim that the combined full
+suite has already passed.
+
 ## Combined lifetime/storage and payload-enum release gate
 
-PR #94 is the single integration point for the S-ALLOC-06/07 and generic
+Historically, PR #94 was the single integration point for the S-ALLOC-06/07 and generic
 payload-enum candidates. The 2026-10-08 stabilization reset preserves unfinished
 issue-campaign branches separately; they are not prerequisites of this release.
 Earlier checkpoints below are historical evidence, not substitutes for testing
