@@ -31270,6 +31270,20 @@ private:
   void emitOperand(const MirOperand &operand,
                    bool allowSyntheticLogicalConstant = false) {
     if (operand.kind == MirOperandKind::Value) {
+      if (currentFacts != nullptr) {
+        if (const auto *stage =
+                borrowStagedCallInput(currentFacts->body, operand)) {
+          const auto *place =
+              currentFacts->body.findPlace(stage->operands.front().place);
+          if (!place)
+            throw std::logic_error(
+                "verified MIR operand lost its staged borrowed place");
+          // Borrow stages have no SSA carrier. All consumers, including
+          // constructor publication, use the same exact referent spelling.
+          emitStoragePlaceValue(*currentFacts, *place);
+          return;
+        }
+      }
       if (currentBody != nullptr && operand.type.kind == SemanticType::Array) {
         const auto *value = currentBody->findValue(operand.value);
         const auto *stage =

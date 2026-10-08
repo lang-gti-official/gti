@@ -625,6 +625,11 @@ the containing constructor and fixed-array construction retain their original
 MIR Invoke, success activation, transfer, and rollback schedules. A union with
 active cleanup, user lifecycle, or mismatched field/layout metadata does not
 enter this representation proof.
+Read- and mutable-borrow `CallInput` results are representation aliases, not
+native SSA objects. Ordinary calls and constructor publication resolve them
+through the same exact MIR source-place spelling, including when another
+argument transfers an owning or borrowed aggregate through prepared storage.
+
 An immediately consumed by-value `CallInput` may copy a cleanup-free fixed-array
 aggregate from its exact value-rooted slot. Generated element copying is
 observation-free, while the source retains its original full-expression drop;

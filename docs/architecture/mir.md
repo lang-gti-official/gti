@@ -1593,7 +1593,13 @@ A `MirBody` owns:
   place and a class-move checkpoint reparents the exact materialized source
   obligation into such a place, or initializes it when the type has trivial
   cleanup. The prepared owner remains active until the final invocation transfers
-  it exactly once. Scheduled ordinary constructors use this same path:
+  it exactly once. When fixed-array place selection has already completed at
+  an exact checked `AddressOf` preflight, the following copy/borrow checkpoint
+  does not duplicate that selection's local failure metadata. The preflight
+  retains the source HIR identity, exact place, bounds origin and assigned
+  failure site, and its successful `Invoke` edge precedes publication. Other
+  origin and propagation families remain on the operation that owns them.
+  Scheduled ordinary constructors use this same path:
   written, defaulted, and pack-expanded inputs retain prepared-parameter
   places across later argument evaluation and transfer at `Construct`, not at
   the input checkpoint. Failure while preparing a later argument drains earlier
