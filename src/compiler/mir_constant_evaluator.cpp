@@ -526,6 +526,24 @@ private:
       }
       return {};
     }
+    // Checked place formation can be staged before a later index/argument
+    // without reading or copying the selected object at runtime. Canonical
+    // MIR spells that check as an unused, safe AddressOf. Validate the same
+    // aggregate projection here without manufacturing a constant pointer.
+    // Used addresses and all unsafe/raw-memory operations remain excluded.
+    if (instruction.kind == MirInstructionKind::Compute &&
+        instruction.operation == MirOperation::AddressOf &&
+        instruction.result && frame.body.usesOf(*instruction.result).empty() &&
+        instruction.operands.size() == 1 &&
+        instruction.operands.front().kind == MirOperandKind::Address) {
+      const auto *place =
+          frame.body.findPlace(instruction.operands.front().place);
+      if (place != nullptr && !place->projections.empty() &&
+          place->projections.back().kind == MirProjectionKind::Index) {
+        const auto checked = readPlace(frame, place->id);
+        return checked ? MirConstantEvaluation{} : fail(frame, checked.failure);
+      }
+    }
     if (!observedStorageType(instruction.info.type)) {
       return fail(frame, ConstantEvaluationFailure::UnsupportedType);
     }

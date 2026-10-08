@@ -23,7 +23,7 @@ public:
       : slots(slots), position(position) {}
   T& operator*() { return this.slots.get(this.position); }
   void operator++() mut { this.position++; }
-  bool operator!=(resource_vector_sentinel& end) {
+  bool operator!=(resource_vector_sentinel end) {
     return this.position != end.position();
   }
 };

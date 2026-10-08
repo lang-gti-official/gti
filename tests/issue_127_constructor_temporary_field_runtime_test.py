@@ -34,9 +34,13 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-issue-127-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O2"):
+        modes = [(level, []) for level in ("O0", "O1", "O2", "O3")]
+        modes.append(("O1", ["-fsanitize=address,undefined"]))
+        for optimization, native_flags in modes:
             for standard in ("c++20", "c++23"):
                 mode = f"{optimization}-{standard}"
+                if native_flags:
+                    mode += "-sanitized"
                 executable = root / mode
                 built = run(
                     [
@@ -47,6 +51,9 @@ def main() -> int:
                         standard,
                         "-o",
                         str(executable),
+                        "--",
+                        "-fno-elide-constructors",
+                        *native_flags,
                     ]
                 )
                 if built.returncode != 0:
@@ -85,7 +92,7 @@ def main() -> int:
             r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
             generated,
         )
-        if len(direct_field_reads) != 9 or len(direct_slot_constructions) != 8:
+        if len(direct_field_reads) != 11 or len(direct_slot_constructions) != 9:
             sys.stderr.write(
                 "generated C++ lost the exact constructor/call value-rooted "
                 "field-read slots\n"

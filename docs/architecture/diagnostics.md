@@ -9,6 +9,21 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2091` distinguishes an untyped designated initializer from an ineligible
+destination struct. With no contextual destination, it anchors the opening
+brace and recommends an explicitly typed binding, without guessing the type
+or offering an automatic edit. Existing struct layout/constructor diagnostics
+retain priority when the destination type is known. The LSP publishes the same
+record and clears it when a typed destination is supplied.
+
+`GTI-S2000` rejects a mutable local value declaration without an initializer at
+the binding name, before executable lowering. Its hint explains that a later
+assignment does not initialize that declaration. No automatic fix chooses an
+initial value. Existing specific reference, pointer, array, class, enum and
+constexpr diagnostics retain priority; unresolved types do not receive a second
+speculative initializer error. CLI and LSP publish the same record, including
+the exact source range and clearing after an initializer is supplied.
+
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition
 in a closed executable/library or C++ representation request, before backend
 generation. The call token is primary and its bodyless declaration is related. Semantic
@@ -163,6 +178,16 @@ display line. Byte offsets remain authoritative and no normalized copy becomes
 diagnostic storage.
 
 ## Source excerpts and explanations
+
+Failed overload lookup distinguishes argument-count failures from exact-type
+and reference/ownership requirements. A count mismatch does not suggest a cast;
+defaults and parameter packs use the resolver's own argument-shape predicate.
+Named call failures highlight the callee. Missing overload declarations use
+the existing include discovery and frontend reanalysis, offering an include
+only when it resolves to that file without introducing errors. No standard
+library name determines this advice. Operator reference mismatches relate the
+actual value/read-only operand and explain the required place/access; binding
+a temporary remains advisory, not an automatic lifetime-changing edit.
 
 Terminal diagnostics keep the `file:line:column` heading, stable code, source
 caret, and separate `note:`/`help:` lines. The heading's column counts source
@@ -407,6 +432,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   C++ diagnostic is not a substitute for a language diagnostic.
 - Point the primary span at the token/range the user can act on. Use related
   diagnostics for conflicting declarations, includes, or instantiation sites.
+- An unnamed formal uses its written type token as the diagnostic/source
+  anchor. Related lifetime messages identify it by its one-based parameter
+  index, not an empty or generated name. Its physical semantic binding is
+  generated and source-anchored, while AST/Lowered public names remain empty;
+  it contributes no name occurrence to editor lookup, rename, or completion.
 - When a pre-analysis compiler configuration has no source token, anchor it at
   byte zero of the selected entry unit and put the actionable configuration
   change in a hint. `GTI-S2062` uses this form for an unsupported selected
@@ -887,6 +917,15 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   representations are identified by their actual format and path, never claimed
   when artifact generation failed before an artifact existed. See
   [build output](build-and-driver.md#live-build-progress).
+  MIR construction additionally retains transient body-local rejection and
+  verifier context in `MirLoweringResult`, including the concrete body kind,
+  owner, block/instruction identities and nearest retained source statement.
+  Frontend `GTI-B0001` publication uses that original cause and its source span
+  before generic program verification. Missing hosted-startup authority is not
+  reported as the cause when lowering stopped before startup was constructed.
+  If no expression or statement anchor survives, the owning declaration (then
+  the entry-unit fallback) is used. These records do not alter executable MIR,
+  its schema or verifier rules, and never provide source fix-its.
 - Reserve `GTI-B0002` for internal post-HIR failure-metadata construction or
   verification failure. Anchor it at byte zero of the selected entry unit,
   include the first failed invariant, and do not attach a source fix-it: valid

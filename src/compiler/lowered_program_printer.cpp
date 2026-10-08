@@ -193,7 +193,24 @@ private:
 
   void compileTimeValue(const CompileTimeValue &value) {
     output << '{' << number(value.kind) << ':' << value.value << ':'
-           << value.parameterId << '}';
+           << value.parameterId;
+    if (value.expression) {
+      const auto print = [&](const auto &self,
+                             const GenericValueExpression &expression) -> void {
+        output << "expr(" << number(expression.kind) << ':' << expression.value
+               << ':' << expression.parameterId << ':'
+               << (expression.kind == GenericValueExpression::Binary
+                       ? number(expression.token.kind)
+                       : 0);
+        if (expression.left)
+          self(self, *expression.left);
+        if (expression.right)
+          self(self, *expression.right);
+        output << ')';
+      };
+      print(print, *value.expression);
+    }
+    output << '}';
   }
 
   void type(const SemanticType &value) {
@@ -801,7 +818,7 @@ private:
 
 std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
   std::ostringstream output;
-  output << "lowered-program-v15\n";
+  output << "lowered-program-v16\n";
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="

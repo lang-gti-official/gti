@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from native_symbol_spelling import native_spelling
+
 
 def run(command):
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -34,7 +36,8 @@ def main():
                 for name in ("floor", "ceil", "round", "trunc", "sqrt", "cbrt",
                              "pow", "fmod", "exp", "log", "log10", "sin", "cos",
                              "tan", "asin", "acos", "atan", "atan2"):
-                    if f"gti_rt_math_{name}_f32_v1(" not in generated:
+                    symbol = native_spelling(generated, f"gti_rt_math_{name}_f32_v1")
+                    if f"{symbol}(" not in generated:
                         raise AssertionError(f"missing scalar ABI call for {name}")
                 if "// GTI verified-MIR body:" not in generated:
                     raise AssertionError("missing verified-MIR emission witness")

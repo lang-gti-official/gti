@@ -238,7 +238,8 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
           .returnType =
               substituteType(stored->returnType, instanceTypeSubstitution),
           .parameterTypes = stored->parameterTypes,
-          .capability = stored->capability};
+          .capability = stored->capability,
+          .inferResultFromInstantiation = stored->inferResultFromInstantiation};
       for (SemanticType &type : result.parameterTypes) {
         type = substituteType(type, instanceTypeSubstitution);
       }
@@ -287,9 +288,12 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       receiverInfo->type.kind == SemanticType::TypeParameter;
   bool valid = true;
   SemanticType returnType = SemanticType::Void;
+  bool inferResultFromInstantiation = false;
   if (contextualCallableResult && contextualCallableResult->call == &call) {
     returnType = contextualCallableResult->type;
-    if (returnType == SemanticType::Unknown) {
+    inferResultFromInstantiation =
+        contextualCallableResult->inferResultFromInstantiation;
+    if (returnType == SemanticType::Unknown && !inferResultFromInstantiation) {
       Diagnostic diagnostic =
           makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics,
                          expressionToken(call.callee()),
@@ -363,16 +367,18 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
 
   if (storedReceiver) {
     semanticModel.recordDeferredCallableCall(
-        call, DeferredCallableCallInfo{
-                  .genericParameter = calleeType.genericParameterId,
-                  .returnType = returnType,
-                  .parameterTypes = argumentTypes,
-                  .access = receiverInfo->access,
-                  .capability = consuming ? CallableInvocationCapability::Once
-                                          : callableInvocationCapability(
-                                                receiverInfo->access),
-                  .boundary = std::nullopt,
-                  .receiverField = receiverSymbol->id});
+        call,
+        DeferredCallableCallInfo{
+            .genericParameter = calleeType.genericParameterId,
+            .returnType = returnType,
+            .parameterTypes = argumentTypes,
+            .access = receiverInfo->access,
+            .capability =
+                consuming ? CallableInvocationCapability::Once
+                          : callableInvocationCapability(receiverInfo->access),
+            .boundary = std::nullopt,
+            .receiverField = receiverSymbol->id,
+            .inferResultFromInstantiation = inferResultFromInstantiation});
     currentType = returnType;
     return;
   }
@@ -394,23 +400,26 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       consuming ? CallableInvocationCapability::Once
                 : callableInvocationCapability(access);
   semanticModel.recordDeferredCallableCall(
-      call, DeferredCallableCallInfo{.genericParameter =
-                                         calleeType.genericParameterId,
-                                     .returnType = returnType,
-                                     .parameterTypes = argumentTypes,
-                                     .access = access,
-                                     .capability = capability});
+      call, DeferredCallableCallInfo{
+                .genericParameter = calleeType.genericParameterId,
+                .returnType = returnType,
+                .parameterTypes = argumentTypes,
+                .access = access,
+                .capability = capability,
+                .inferResultFromInstantiation = inferResultFromInstantiation});
   semanticModel.recordCallableRequirement(
       *function->declaration,
-      CallableParameterContract{.parameterIndex = parameterIndex,
-                                .genericParameter =
-                                    calleeType.genericParameterId,
-                                .callableType = calleeType,
-                                .access = access,
-                                .signatures = {{.source = &call,
-                                                .returnType = returnType,
-                                                .parameterTypes = argumentTypes,
-                                                .capability = capability}}});
+      CallableParameterContract{
+          .parameterIndex = parameterIndex,
+          .genericParameter = calleeType.genericParameterId,
+          .callableType = calleeType,
+          .access = access,
+          .signatures = {
+              {.source = &call,
+               .returnType = returnType,
+               .parameterTypes = argumentTypes,
+               .capability = capability,
+               .inferResultFromInstantiation = inferResultFromInstantiation}}});
   currentType = returnType;
 }
 
@@ -418,6 +427,25 @@ auto SemanticVisitor::Impl::validateCallableReturn(
     const Call &call, const SemanticType &returnType) -> bool {
   const std::optional<CallableSignatureRequirement> requirement =
       callableSignatureRequirement(call);
+  if (requirement && requirement->inferResultFromInstantiation &&
+      returnType != SemanticType::Unknown) {
+    if (returnType != SemanticType::Void &&
+        returnType.kind != SemanticType::Reference &&
+        !typeTraits(returnType).containsBorrowedState &&
+        !containsLambdaType(returnType))
+      return true;
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2046", DiagnosticPhase::Semantics, expressionToken(call.callee()),
+        "A nested generic callable argument must produce a non-void value "
+        "without references, tracked borrowed state, or lambda identity; "
+        "the selected callable returns '" +
+            typeSpelling(returnType) + "'.");
+    diagnostic.hints.emplace_back(
+        "Use an explicit result binding and a supported ownership contract "
+        "for reference, borrowed, or callable results.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
   if (!requirement || requirement->returnType == returnType ||
       returnType == SemanticType::Unknown) {
     return true;
@@ -3098,8 +3126,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
                               "transfer-safe exact task whose return type "
                               "matches its transferable result."));
         diagnostic.related.push_back(
-            {tokenSpan(
-                 target->declaration->parameters()[declarationIndex].name),
+            {tokenSpan(target->declaration->parameters()[declarationIndex]
+                           .sourceAnchor()),
              "Managed task parameter declared here."});
         diagnostic.hints.emplace_back(
             "Pass a fresh task value or std::move(task); captures must own "
@@ -3130,7 +3158,8 @@ auto SemanticVisitor::Impl::validateOwnedCallableArguments() -> void {
               std::to_string(contract.parameterIndex + 1) + " " + failure +
               ".");
       diagnostic.related.push_back(
-          {tokenSpan(target->declaration->parameters()[declarationIndex].name),
+          {tokenSpan(target->declaration->parameters()[declarationIndex]
+                         .sourceAnchor()),
            "Exact owned callable parameter declared here."});
       diagnostic.hints.emplace_back(
           "Move an exact movable callable whose stored state contains no "
@@ -3255,7 +3284,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableContracts() -> void {
               " cannot escape through the function return value.");
       if (parameter != nullptr) {
         diagnostic.related.push_back(
-            {tokenSpan(parameter->name),
+            {tokenSpan(parameter->sourceAnchor()),
              "Confined callable parameter declared here."});
       }
       diagnostic.hints.emplace_back(
@@ -3309,7 +3338,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableContracts() -> void {
             "is not proven confined.");
     if (sourceParameter != nullptr) {
       diagnostic.related.push_back(
-          {tokenSpan(sourceParameter->name),
+          {tokenSpan(sourceParameter->sourceAnchor()),
            "Confined callable parameter declared here."});
     }
     diagnostic.hints.emplace_back(
@@ -3420,12 +3449,12 @@ auto SemanticVisitor::Impl::validateOnceCallableForwardings() -> void {
             "' requires explicit ownership transfer.");
     if (sourceParameter != nullptr) {
       diagnostic.related.push_back(
-          {tokenSpan(sourceParameter->name),
+          {tokenSpan(sourceParameter->sourceAnchor()),
            "Confined callable parameter declared here."});
     }
     if (targetParameter != nullptr) {
       diagnostic.related.push_back(
-          {tokenSpan(targetParameter->name),
+          {tokenSpan(targetParameter->sourceAnchor()),
            "The selected confined target consumes this callable directly "
            "or through another forwarding edge."});
     }
@@ -3610,7 +3639,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                 (exactReturnTransport ? " and its final exact move."
                                       : " or proven confined forwarding."));
         diagnostic.related.push_back(
-            {tokenSpan(parameter.name),
+            {tokenSpan(parameter.sourceAnchor()),
              exactReturnTransport
                  ? "Exact-return callable parameter declared here."
                  : "Confined callable parameter declared here."});
@@ -3640,7 +3669,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
                   parameter.name.lexeme +
                   "' cannot be captured or otherwise transported.");
           diagnostic.related.push_back(
-              {tokenSpan(parameter.name),
+              {tokenSpan(parameter.sourceAnchor()),
                exactReturnTransport
                    ? "Exact-return callable parameter declared here."
                    : "Confined callable parameter declared here."});
@@ -4811,6 +4840,29 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return selectStructuralOperator(iterator, OverloadedOperator::Dereference,
                                     {}, false);
   };
+  const auto selectedSentinelOperator = [&](const SemanticType &iterator,
+                                            OverloadedOperator operation,
+                                            const SemanticType &sentinel) {
+    const SemanticType reference =
+        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
+    auto borrowed = selectStructuralOperator(
+        iterator, operation, std::span<const SemanticType>(&reference, 1),
+        false);
+    auto copied = selectStructuralOperator(
+        iterator, operation, std::span<const SemanticType>(&sentinel, 1),
+        false);
+    // Both forms accept a named sentinel. The requirement must not claim
+    // a usable operation when that ordinary call would be ambiguous, or
+    // when its by-value parameter cannot copy the named argument.
+    if (borrowed &&
+        borrowed->receiverMutability != ReceiverMutability::ReadOnly)
+      borrowed.reset();
+    if (copied && copied->receiverMutability != ReceiverMutability::ReadOnly)
+      copied.reset();
+    if (borrowed && copied)
+      return std::optional<CallableCandidate>{};
+    return copied && typeTraits(sentinel).copyable ? copied : borrowed;
+  };
   const auto hasDereference = [&](const SemanticType &iterator,
                                   const SemanticType *referent) {
     const std::optional<CallableCandidate> candidate =
@@ -5096,12 +5148,9 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const SemanticType &sentinel = arguments[0];
     const SemanticType &iterator = arguments[1];
-    const SemanticType parameter =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
     const std::optional<CallableCandidate> comparison =
-        selectStructuralOperator(iterator, OverloadedOperator::NotEqual,
-                                 std::span<const SemanticType>(&parameter, 1),
-                                 false);
+        selectedSentinelOperator(iterator, OverloadedOperator::NotEqual,
+                                 sentinel);
     return comparison && comparison->returnType == SemanticType::Bool &&
            comparison->receiverMutability == ReceiverMutability::ReadOnly;
   }
@@ -5146,12 +5195,8 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     }
     const SemanticType &sentinel = arguments[0];
     const SemanticType &iterator = arguments[1];
-    const SemanticType parameter =
-        SemanticType::referenceTo(sentinel, AccessMode::ReadOnly);
     const std::optional<CallableCandidate> difference =
-        selectStructuralOperator(iterator, OverloadedOperator::Minus,
-                                 std::span<const SemanticType>(&parameter, 1),
-                                 false);
+        selectedSentinelOperator(iterator, OverloadedOperator::Minus, sentinel);
     return difference && difference->returnType == SemanticType::Int64 &&
            difference->receiverMutability == ReceiverMutability::ReadOnly;
   }
@@ -6004,18 +6049,55 @@ auto SemanticVisitor::Impl::resolveOperator(
           "GTI-S2022", DiagnosticPhase::Semantics, token,
           "No exact overload of " + std::string(operatorSourceSpelling(kind)) +
               received + ".");
-      diagnostic.hints.emplace_back(
-          "GTI operator calls do not perform implicit conversions, rank "
-          "candidates, reverse operands, or use ADL; convert the operand "
-          "explicitly when that conversion is intentional.");
+      bool referenceMismatch = false;
       for (const CallableCandidate &candidate : overloadSet.overloads) {
         if (candidate.declaration != nullptr &&
             (isCompilerTrustedRequester(token) || !candidate.compilerPrivate)) {
           diagnostic.related.push_back(
               {tokenSpan(candidate.declaration->operatorName()->keyword),
                "Candidate: " + functionSignatureSpelling(candidate)});
+          if (candidate.parameterTypes.size() != concreteArguments.size())
+            continue;
+          for (std::size_t index = 0; index < concreteArguments.size();
+               ++index) {
+            const auto &parameter = candidate.parameterTypes[index];
+            const auto &argument = concreteArguments[index];
+            if (parameter.kind != SemanticType::Reference ||
+                parameter.arguments.size() != 1 ||
+                parameter.arguments.front() != argument.type ||
+                argument.forwardedPackElement ||
+                argument.expression == nullptr || !*argument.expression)
+              continue;
+            const ExpressionInfo *info =
+                semanticModel.findExpression(**argument.expression);
+            if (info == nullptr)
+              continue;
+            std::string reason;
+            if (info->category == ValueCategory::Value) {
+              reason = "is a temporary value; this candidate requires an "
+                       "existing place for its reference parameter.";
+            } else if (parameter.referenceAccess == AccessMode::Mutable &&
+                       info->access != AccessMode::Mutable) {
+              reason = "is read-only; this candidate requires exclusive "
+                       "mutable access for its reference parameter.";
+            }
+            if (!reason.empty()) {
+              referenceMismatch = true;
+              diagnostic.related.push_back(
+                  {tokenSpan(expressionToken(*argument.expression)),
+                   "Argument " + std::to_string(index + 1) + " " + reason});
+            }
+          }
         }
       }
+      diagnostic.hints.emplace_back(
+          referenceMismatch
+              ? "Reference parameters require an existing place with the "
+                "declared access. Bind a temporary to a local before using "
+                "it, or use an operator accepting an owned value."
+              : "GTI operator calls do not perform implicit conversions, rank "
+                "candidates, reverse operands, or use ADL; match the exact "
+                "parameter types and ownership requirements.");
       diagnostics.emplace_back(std::move(diagnostic));
     } else {
       report(token,
@@ -6672,13 +6754,29 @@ auto SemanticVisitor::Impl::reportOverloadResolutionFailure(
       arguments += typeSpelling(argumentTypes[index]);
     }
     diagnostic = makeDiagnostic(
-        "GTI-S2012", DiagnosticPhase::Semantics, call.paren(),
+        "GTI-S2012", DiagnosticPhase::Semantics, expressionToken(call.callee()),
         "No overload of '" + name + "' exactly matches argument types (" +
             arguments + ").");
     if (constraintFailures.empty()) {
+      const bool acceptsCount = std::any_of(
+          overloadSet.overloads.begin(), overloadSet.overloads.end(),
+          [&](const CallableCandidate &candidate) {
+            return (isCompilerTrustedRequester(call.paren()) ||
+                    !candidate.compilerPrivate) &&
+                   acceptsArgumentShape(candidate, argumentTypes);
+          });
       diagnostic.hints.emplace_back(
-          "Function calls do not perform implicit conversions; convert an "
-          "argument explicitly with syntax such as 'uint64_t(value)'.");
+          acceptsCount
+              ? "Match the exact parameter types and reference/ownership "
+                "requirements of an available overload."
+              : "No available overload accepts this argument count. Check the "
+                "arguments and include the declaration of the intended "
+                "overload.");
+      if (!acceptsCount &&
+          (call.callee()->exprKind() == ExprKind::Variable ||
+           call.callee()->exprKind() == ExprKind::QualifiedName)) {
+        diagnostic.missingIncludeName = expressionToken(call.callee()).lexeme;
+      }
     }
     for (const CallableCandidate &candidate : overloadSet.overloads) {
       if (candidate.declaration != nullptr &&

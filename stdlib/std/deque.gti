@@ -47,7 +47,7 @@ public:
     this.position++;
   }
   void operator--() mut { this.position--; }
-  bool operator!=(deque_sentinel& end) { return this.position != end.position(); }
+  bool operator!=(deque_sentinel end) { return this.position != end.position(); }
   bool operator==(deque_sentinel& end) { return this.position == end.position(); }
   bool operator!=(deque_iterator<T>& other) { return this.position != other.position; }
   bool operator==(deque_iterator<T>& other) { return this.position == other.position; }
@@ -57,7 +57,7 @@ public:
   void operator-=(ptrdiff_t offset) mut {
     this.position = size_t(ptrdiff_t(this.position) - offset);
   }
-  ptrdiff_t operator-(deque_sentinel& end) {
+  ptrdiff_t operator-(deque_sentinel end) {
     return ptrdiff_t(end.position()) - ptrdiff_t(this.position);
   }
 };
@@ -81,7 +81,7 @@ public:
     gti_internal::index_bounds_check(this.position, this.length);
     this.position++;
   }
-  bool operator!=(deque_sentinel& end) { return this.position != end.position(); }
+  bool operator!=(deque_sentinel end) { return this.position != end.position(); }
 };
 }
 

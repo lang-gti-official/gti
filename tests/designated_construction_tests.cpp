@@ -117,5 +117,45 @@ int main() {
            "struct S { Owner value; }; int main(){ Owner owner = Owner(1); S s "
            "= {.value = owner}; return 0; }",
            "Cannot initialize");
+  const std::string missingDestination =
+      "struct Point { int x; }; int read(Point value) { return value.x; } "
+      "int main() { /* \xF0\x9F\x98\x80 */ return read({.x = 1}); }";
+  const auto missing =
+      lang::Frontend().analyze("missing-destination.gti", missingDestination);
+  const auto error =
+      std::find_if(missing.diagnostics.begin(), missing.diagnostics.end(),
+                   [](const auto &d) { return d.code == "GTI-S2091"; });
+  expect(!missing.canGenerateCode() && error != missing.diagnostics.end(),
+         "an untyped designated argument must explain the missing context");
+  if (error != missing.diagnostics.end()) {
+    const auto brace = missingDestination.find("{.x");
+    expect(
+        error->phase == lang::DiagnosticPhase::Semantics &&
+            error->severity == lang::DiagnosticSeverity::Error &&
+            error->primary.source.ends_with("/missing-destination.gti") &&
+            error->primary.start == brace && error->primary.end == brace + 1 &&
+            error->message.find("destination struct type") !=
+                std::string::npos &&
+            error->message.find("no declared constructors") ==
+                std::string::npos &&
+            error->hints.size() == 1 &&
+            error->hints.front().find("explicit struct type") !=
+                std::string::npos &&
+            error->fixes.empty(),
+        "the missing-context error has exact source bytes and no guessed fix");
+  }
+  expect(
+      lang::Frontend()
+          .analyze("bound-destination.gti",
+                   "struct Point { int x; }; "
+                   "int read(Point value) { return value.x; } "
+                   "int main() { Point value = {.x = 1}; return read(value); }")
+          .canGenerateCode(),
+      "an explicitly typed binding supplies the required struct context");
+  rejected("int main() { int value = {.x = 1}; return value; }",
+           "requires a struct");
+  rejected("struct Point { int x; }; void read(Point value) {} "
+           "int main() { read({.x = 1}); return 0; }",
+           "destination struct type");
   return failures == 0 ? 0 : 1;
 }

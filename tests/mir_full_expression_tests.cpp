@@ -145,5 +145,48 @@ int main() { auto result = collect(); return result.has_value() ? 0 : 1; }
     std::cerr << "cleanup-free expected calls must retain their failure edge\n";
     return 1;
   }
+
+  // An explicit initializer without source arguments still evaluates the
+  // base constructor's omitted default arguments. They form one full
+  // expression, so a nested owning default argument is a prepared input.
+  const auto baseDefaults =
+      lang::Frontend().analyze("/tmp/gti-explicit-base-default.gti", R"(
+class Token {
+  int value;
+public:
+  Token(int value) : value(value) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() {}
+  int get() { return this.value; }
+};
+int take(Token token = Token(3)) { return token.get(); }
+class Base {
+  int value;
+public:
+  Base(int value = take()) : value(value) {}
+};
+class Explicit : public Base {
+public:
+  Explicit() : Base() {}
+};
+int main() { Explicit first{}; return 0; }
+)");
+  bool preparedDefault = false;
+  for (const auto &constructor : baseDefaults.mir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions)
+        preparedDefault =
+            preparedDefault ||
+            (instruction.kind == lang::MirInstructionKind::CallInput &&
+             instruction.defaultArgument &&
+             instruction.callInputKind == lang::HirCallInputKind::MoveValue &&
+             instruction.preparedParameterDrop.has_value());
+  if (!baseDefaults.mir.valid() ||
+      !lang::verifyMirProgram(baseDefaults.mir).valid() || !preparedDefault) {
+    std::cerr << "an argumentless explicit base initializer must prepare its "
+                 "owning default arguments\n";
+    return 1;
+  }
   return 0;
 }

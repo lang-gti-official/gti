@@ -1,0 +1,44 @@
+mut int constructed = 0;
+mut int destroyed = 0;
+mut int last_destroyed = 0;
+
+class Reading {
+  int number;
+public:
+  Reading(int initial) : number(initial) { constructed += 1; }
+  Reading(Reading& other) = delete;
+  ~Reading() {
+    destroyed += 1;
+    last_destroyed = this.number;
+  }
+  int read() { return this.number; }
+  Reading operator+(int addend) { return Reading(this.number + addend); }
+  Reading next(int value) { return Reading(value); }
+};
+
+Reading make_reading(int value) { return Reading(value); }
+
+int main() {
+  for (mut int index = 0; index < 4; ++index) {
+    {
+      Reading first = (Reading(index));
+      Reading second = (((Reading(9))));
+      if (first.read() != index || second.read() != 9) { return 1; }
+      if (destroyed != index * 2) { return 2; }
+    }
+    // Nested grouping does not introduce more cleanup obligations at runtime.
+    // The two real objects are cleaned in reverse construction order.
+    if (destroyed != (index + 1) * 2 || last_destroyed != index) { return 3; }
+  }
+  if (constructed != 8 || destroyed != 8) { return 4; }
+  {
+    Reading left = Reading(2);
+    Reading sum = ((left + 3));
+    Reading called = (((make_reading(6))));
+    Reading member = (left.next(7));
+    if (sum.read() != 5 || called.read() != 6 || member.read() != 7) { return 5; }
+    if (constructed != 12 || destroyed != 8) { return 6; }
+  }
+  if (constructed != 12 || destroyed != 12 || last_destroyed != 2) { return 7; }
+  return 0;
+}

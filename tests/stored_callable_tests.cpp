@@ -23,6 +23,8 @@ int main() {
   int value = 3;
   auto callback = [value]() -> int { return value; };
   exercise(std::move(callback));
+  auto second = [value]() -> int { return value; };
+  exercise(std::move(second));
   return 0;
 }
 )");
@@ -32,6 +34,26 @@ int main() {
   if (!copiedCallable.canGenerateCode()) {
     for (const auto &diagnostic : copiedCallable.diagnostics)
       std::cerr << diagnostic.message << '\n';
+  }
+  if (copiedCallable.canGenerateCode()) {
+    const auto generated = gti_test::emitCppText(copiedCallable);
+    std::size_t closureConstructors = 0;
+    for (const auto &instance : copiedCallable.mir.constructorInstances()) {
+      if (instance.parameterTypes.size() != 1 ||
+          instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
+        continue;
+      ++closureConstructors;
+      const std::string marker =
+          "// GTI verified-MIR body: scalar-cfg-v1 constructor-instance " +
+          std::to_string(instance.id) + "\n";
+      const auto first = generated.find(marker);
+      expect(first != std::string::npos &&
+                 generated.find(marker, first + 1) == std::string::npos,
+             "coalesced constructor text retains each exact verified instance "
+             "marker once");
+    }
+    expect(closureConstructors == 2,
+           "distinct passive closures share a constructor representation");
   }
   const auto clonePath = std::filesystem::path(__FILE__).parent_path() /
                          "fixtures/stored_callable_clone.gti";

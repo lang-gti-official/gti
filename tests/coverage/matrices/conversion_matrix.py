@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Sweep implicit conversion source type x target type.
 
-GTI's documentation describes a language without implicit conversions, but an
-int32_t variable initializes an int64_t. This maps what is actually permitted.
+GTI permits bounded conversions in assignment contexts, while calls match
+exact argument types. This records the accepted assignment relation; integer
+to float/double may round (S12 is an audited contract, not an open defect).
 """
 import pathlib, subprocess, sys
 

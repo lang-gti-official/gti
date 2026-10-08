@@ -1,0 +1,24 @@
+mut int last_constructed = 0;
+
+class Reading {
+  int number;
+public:
+  Reading(int initial) : number(initial) { last_constructed = initial; }
+  Reading(Reading& other) = delete;
+  int read() { return this.number; }
+};
+
+int check(bool left) {
+  for (mut int index = 0; index < 4; ++index) {
+    Reading selected = left ? Reading(3) : Reading(7);
+    int wanted = left ? 3 : 7;
+    if (selected.read() != wanted || last_constructed != wanted) { return 1; }
+    Reading grouped = (((left ? Reading(9) : Reading(11))));
+    int grouped_wanted = left ? 9 : 11;
+    if (grouped.read() != grouped_wanted || last_constructed != grouped_wanted ||
+        selected.read() != wanted) { return 2; }
+  }
+  return 0;
+}
+
+int main() { return check(true) + check(false); }

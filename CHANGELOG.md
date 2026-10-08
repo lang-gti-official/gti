@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.388.0 — Public names for container iterators
+
+- Name the iterator and sentinel types of standard containers and views
+  without `std::detail`: `const_iterator` (from `begin()`), `iterator` (from
+  `begin_mut()`) and `sentinel` (from `end()`) are now public member aliases
+  on `vector`, `array`, `deque`, `list`, `forward_list`, `span`,
+  `mutable_span`, `string`, `resource_vector`, and the maps and sets. Name them
+  through an alias of a concrete type, for example
+  `using Ints = std::vector<int>;` then `Ints::iterator`.
+
 ## 0.384.0 — Program installation and quieter builds
 
 - Install a project's executable with `gti install` and remove it with
@@ -20,16 +30,6 @@ for what minor and patch releases mean.
 - Build and run output no longer shows the `Lowering`, `Emitting` and
   `Native` stages. `--verbose` still shows them, and a long native link keeps
   the elapsed-time row live.
-
-## 0.386.0 — Public names for container iterators
-
-- Name the iterator and sentinel types of standard containers and views
-  without `std::detail`: `const_iterator` (from `begin()`), `iterator` (from
-  `begin_mut()`) and `sentinel` (from `end()`) are now public member aliases
-  on `vector`, `array`, `deque`, `list`, `forward_list`, `span`,
-  `mutable_span`, `string`, `resource_vector`, and the maps and sets. Name them
-  through an alias of a concrete type, for example
-  `using Ints = std::vector<int>;` then `Ints::iterator`.
 
 ## 0.379.0 — Programmable allocators
 
