@@ -36,7 +36,10 @@ while canonical language documents continue to describe actual support.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)
-  — ordinary GTI policy, compiler-private capabilities, C ABI, and host code.
+  — ordinary GTI policy, compiler-private capabilities, C ABI, and host code;
+  the [operation ownership ledger](architecture/standard-library-and-runtime.md#operation-ownership-ledger)
+  separates implemented source policy, migration candidates, compiler facts,
+  native services and algorithms delegated by choice.
 - [Build and driver](architecture/build-and-driver.md) — direct/project
   orchestration, workspaces/local package graphs, verified whole-program
   caching, and the
