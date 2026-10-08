@@ -4773,6 +4773,15 @@ inferred private result types. Grammar corpus and highlight checks include
 module declarations, all import forms and exported namespaces. These gates
 supplement rather than replace the unchanged include and package regressions.
 
+The standard-library module audit also checks verification-evidence ownership.
+`lowered_program_contract` replaces a caller's already-verified program through
+public value assignment, rejects newly acquired evidence for that invalid
+replacement, and proves the original evidence still owns the accepted snapshot
+after the caller destroys its value. Copies of the evidence share that same
+const snapshot. A borrowed pointer alone failed this regression. The module
+grammar is regenerated with the pinned Tree-sitter 0.25.10; all 78 grammar
+corpus cases pass. These focused checks are not a full-suite acceptance claim.
+
 Use the existing CMake targets and test filters to keep the development loop
 proportional to the edit. A broad verification plan describes the evidence
 needed to deliver the feature; it is not a command list to repeat after each

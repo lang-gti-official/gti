@@ -105,8 +105,8 @@ including a unit that another module imports, loads each unit once. An
 application interface can pass a standard module on to its importers with
 `export import std.vector;`.
 
-Imports and includes produce the same program and compile in the same time;
-an import does not precompile anything. `import std;` is rejected: the cost of
+Imports and includes use the same compilation pipeline; an import does not
+precompile anything or promise a compilation speedup. `import std;` is rejected: the cost of
 compiling a unit does not depend on how much of it a program uses, and the
 whole library takes several seconds to compile, so an aggregate module would
 slow every program that used it. Import each unit you use.

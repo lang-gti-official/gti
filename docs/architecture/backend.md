@@ -345,12 +345,17 @@ provides deterministic full text for comparison and independent tooling.
 Checking the seal prints and hashes the whole program, which for a
 library-heavy program is the largest single cost after lowering. Each
 consumer therefore verifies once. `verifiedLoweredProgram` returns a
-`VerifiedLoweredProgram`, evidence that one exact immutable value passed, and
+`VerifiedLoweredProgram`, owning evidence that one exact immutable value passed.
 `CppBackend` hands that evidence to the emitter, emission planner, and
 representation snapshot instead of letting each stage verify again. The
 `LoweredProgram` overloads of those stages still verify first, so a direct or
-test caller cannot bypass rejection. The builder runs every check except the
-seal and then computes the seal; it never re-checks a seal it has just
+test caller cannot bypass rejection. Evidence owns a const snapshot, shared
+between consumer stages. Acquiring it copies an lvalue program or moves an
+rvalue program; later assignment, movement or destruction of the caller's
+original value cannot detach the proof from the checked contents. Merely
+holding a const pointer to a caller-owned program would not establish this:
+`LoweredProgram` itself remains an assignable value. The builder runs every
+check except the seal and then computes the seal; it never re-checks one just
 computed. Lookups by class, function, constructor, storage, or symbol
 identity use row hints built at construction. A hint is used only after its
 row is confirmed to still carry that identity; otherwise the lookup scans, so

@@ -1536,13 +1536,15 @@ verifyLoweredProgram(const LoweredProgram &program) {
 }
 
 std::optional<VerifiedLoweredProgram>
-verifiedLoweredProgram(const LoweredProgram &program,
+verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues) {
-  issues = verifyLoweredProgram(program);
+  const auto snapshot =
+      std::make_shared<const LoweredProgram>(std::move(program));
+  issues = verifyLoweredProgram(*snapshot);
   if (!issues.empty()) {
     return std::nullopt;
   }
-  return VerifiedLoweredProgram(program);
+  return VerifiedLoweredProgram(snapshot);
 }
 
 } // namespace lang

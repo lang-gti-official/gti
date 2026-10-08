@@ -6,9 +6,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -815,30 +817,36 @@ verifyLoweredProgram(const LoweredProgram &program);
 
 class VerifiedLoweredProgram;
 
-// Verifies one value for a consumer and returns evidence of that only when
-// no issue exists.
+// Takes an independent value for a consumer and returns owning evidence only
+// when that exact snapshot passes verification. Lvalues copy; rvalues move.
 [[nodiscard]] std::optional<VerifiedLoweredProgram>
-verifiedLoweredProgram(const LoweredProgram &program,
+verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues);
 
-// Evidence that verifyLoweredProgram accepted this exact value. A
-// LoweredProgram is immutable through its public interface, so the stages of
-// one consumer pass this evidence along instead of repeating the complete
-// inventory and seal check, which prints the whole program each time.
+// Evidence that verifyLoweredProgram accepted this exact, owned const value.
+// A caller may replace or destroy its original LoweredProgram without making
+// this proof stale. Consumer stages share the snapshot rather than repeating
+// the inventory and seal check or copying another complete program.
 class VerifiedLoweredProgram final {
 public:
+  // Deliberately copy shared ownership even for an rvalue: there is no empty
+  // or moved-from evidence object with a dangling/absent program.
+  VerifiedLoweredProgram(const VerifiedLoweredProgram &) = default;
+  VerifiedLoweredProgram &operator=(const VerifiedLoweredProgram &) = default;
+
   [[nodiscard]] const LoweredProgram &program() const noexcept {
     return *program_;
   }
 
 private:
-  explicit VerifiedLoweredProgram(const LoweredProgram &program) noexcept
-      : program_(&program) {}
+  explicit VerifiedLoweredProgram(
+      std::shared_ptr<const LoweredProgram> program) noexcept
+      : program_(std::move(program)) {}
 
-  const LoweredProgram *program_;
+  std::shared_ptr<const LoweredProgram> program_;
 
   friend std::optional<VerifiedLoweredProgram>
-  verifiedLoweredProgram(const LoweredProgram &program,
+  verifiedLoweredProgram(LoweredProgram program,
                          std::vector<LoweredProgramIssue> &issues);
 };
 
