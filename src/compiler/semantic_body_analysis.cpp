@@ -4363,12 +4363,27 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
   if (deferredCalleeType.kind == SemanticType::TypeParameter) {
     if (argumentAnalysis.hasDeferred()) {
-      report(expr.paren(),
-             "A brace argument requires a callable with a concrete fixed-"
-             "array parameter signature.",
-             "GTI-S2015");
-      currentType = SemanticType::Unknown;
-      return;
+      for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+        if (!argumentAnalysis.deferred[index])
+          continue;
+        const ExprPtr &argument = expr.arguments()[index];
+        if (isContextualArrayArgument(argument)) {
+          report(expressionToken(argument),
+                 "A brace argument requires a callable with a concrete fixed-"
+                 "array parameter signature.",
+                 "GTI-S2015");
+          currentType = SemanticType::Unknown;
+          return;
+        }
+        // The open receiver does not supply an argument type. Record a
+        // result-inference obligation for direct nested callable producers,
+        // then resolve the complete composition in concrete semantics. Do
+        // not guess the inner result from the enclosing return type.
+        argumentTypes[index] = isContextualCallableResultArgument(argument)
+                                   ? analyzeExpectedCallableResult(
+                                         argument, SemanticType::Unknown, true)
+                                   : analyze(argument);
+      }
     }
     analyzeDeferredCallableCall(expr, deferredCalleeType, argumentTypes);
     return;

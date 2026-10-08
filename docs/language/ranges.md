@@ -470,7 +470,10 @@ container-specific invalidation trait. Confined generic `void` operations,
 Exact `bool` predicates, exact context-supplied non-reference value results
 without tracked borrowed state or lambda identity, and proven forwarding
 through other confined callable parameters are available for algorithm
-callbacks. `<std/functional>` exposes those same read/mut/once facts as public
+callbacks. Direct composition of open callables such as `outer(inner(value))`
+also resolves the intermediate value from the selected concrete callable;
+it need not have the outer function's result type. `<std/functional>` exposes
+those same read/mut/once facts as public
 unary, binary, and iterator-aware predicate/operation relations, so invalid
 targets fail before concrete body reanalysis. Result
 inference through `auto` and borrowed callable results remain unavailable. One

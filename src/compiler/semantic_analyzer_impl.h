@@ -571,6 +571,7 @@ private:
   struct ContextualCallableResult {
     const Call *call = nullptr;
     SemanticType type = SemanticType::Unknown;
+    bool inferResultFromInstantiation = false;
   };
 
   struct LoanFlowRecord {
@@ -3411,8 +3412,10 @@ private:
 
   SemanticType analyze(const ExprPtr &expr, OccurrenceRole roles);
 
-  SemanticType analyzeExpectedCallableResult(const ExprPtr &expr,
-                                             const SemanticType &expectedType);
+  SemanticType
+  analyzeExpectedCallableResult(const ExprPtr &expr,
+                                const SemanticType &expectedType,
+                                bool inferFromInstantiation = false);
 
   SemanticType analyzeInitializer(const ExprPtr &expr,
                                   const SemanticType &expectedType,

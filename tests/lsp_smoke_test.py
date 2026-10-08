@@ -1883,6 +1883,44 @@ def test_callable_contract_hover(executable, root):
             "exact transport: field of CallableOwner<T>*"
             in own_hover
         )
+
+        nested = (
+            "int compose<Outer, Inner>(Outer outer, Inner inner, int value) {\n"
+            "  /* 🧭 */ return outer(inner(value));\n"
+            "}\n"
+            "int main() {\n"
+            "  auto inner = [](int value) -> double { return 0.5; };\n"
+            "  auto outer = [](double value) -> int { return 1; };\n"
+            "  return compose(outer, inner, 4);\n"
+            "}\n"
+        )
+
+        def change(text, version):
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                          "params": {"textDocument": {"uri": uri, "version": version},
+                                     "contentChanges": [{"text": text}]}})
+            return session.receive_until(
+                lambda message: message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version)["params"]
+
+        assert not has_error_diagnostics(change(nested, 2))
+        source = nested
+        nested_hover = hover(10, source.index("compose") + 1)
+        assert "result from selected callable" in nested_hover, nested_hover
+        assert "resolved on instantiation" in nested_hover, nested_hover
+        invalid = nested.replace("-> double { return 0.5; }", "-> void {}")
+        failures = change(invalid, 3)["diagnostics"]
+        diagnostic = next(item for item in failures
+                          if item.get("code") == "GTI-S2046"
+                          and "non-void value" in item["message"])
+        start = invalid.index("inner(value)")
+        assert diagnostic["range"] == {
+            "start": lsp_position(invalid, start),
+            "end": lsp_position(invalid, start + len("inner")),
+        }, diagnostic
+        assert "explicit result binding" in str(diagnostic), diagnostic
+        assert not has_error_diagnostics(change(nested, 4))
     finally:
         session.close()
 

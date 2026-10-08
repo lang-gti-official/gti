@@ -666,6 +666,17 @@ concrete result or using that result to distinguish overloads. An unresolved
 outer generic parameter cannot supply an exact result context. A typed local
 can supply the context explicitly when selection otherwise remains ambiguous.
 
+When the outer receiver is itself an open generic callable, a direct nested
+invocation such as `outer(inner(value))` records a deferred result obligation
+instead. Concrete semantic instantiation resolves `inner` first, then checks
+that exact result against `outer`; it does not assume the intermediate has the
+enclosing function's return type. Both selected signatures must be concrete
+before HIR. The intermediate must be a non-void, non-reference value without
+tracked borrowed state or lambda identity. This does not enable general `auto`
+inference through an open callable, overload selection from unknown results,
+or implicit callable escape. Existing receiver capabilities, ownership and
+left-to-right evaluation rules remain unchanged.
+
 Receiver mutability may distinguish method overloads. A read-only receiver can
 select only a read-only method; a mutable receiver prefers the otherwise exact
 mutable overload when both exist. Ordinary methods and `operator()` also admit

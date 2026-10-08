@@ -1040,7 +1040,15 @@ source order after selection. Named functions/methods, constructors, lexical
 lambdas, function items, and concrete call operators share this rule. A
 callback's eventual concrete result does not choose between outer overloads;
 an ambiguous outer signature remains ambiguous. Unknown arguments do not
-deduce an outer generic parameter. Raw pointers
+deduce an outer generic parameter. If the outer receiver is itself an open
+generic callable, a directly nested callable argument instead retains an
+explicit `inferResultFromInstantiation` requirement in the semantic contract.
+Concrete reanalysis selects the inner result and checks the outer invocation;
+it must resolve a non-void, non-reference, non-borrowing, non-lambda value before
+HIR copies the exact signatures. This is not inference from the enclosing
+return type or backend representation. Tooling labels unresolved declaration
+requirements as deferred rather than presenting an unknown type as exact.
+Raw pointers
 remain non-owning values under their ordinary language rules, and the current
 `std::string_view` denotes static literal storage; the callable boundary does
 not reclassify either as ownership. `auto` cannot infer a result through an
