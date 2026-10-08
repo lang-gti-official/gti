@@ -544,6 +544,14 @@ defined-failure-free by MIR type facts; no value or temporary cleanup obligation
 is synthesized. Both modes reject additional temporary aliases, readers or
 writers. The native moved-from shell is retired after the binding construction,
 including when the same CFG executes again through a loop.
+The passive proof uses the class's generated destructor and active-cleanup
+facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
+without requiring an active cleanup operation. A conservative constructor
+`Invoke` may separate an arm from publication only when the selected constructor
+is proved failure-free and its unique success block contains only that
+publication. The shared class-publication query is used by both transformed
+constructor admission and emission; recognizing storage in the prologue alone
+is insufficient.
 
 A copy-loaded class result whose only executable use is `Return` also avoids an
 invented default-constructed SSA object. The plain C++ form returns the exact
