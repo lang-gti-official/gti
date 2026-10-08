@@ -1079,6 +1079,10 @@ pair. Local copies, moves, exact factory/relay returns, empty views, checked
 indexing, and iteration retain that dependency. Moving, destroying, or
 invalidating the owner while any retained view is live is rejected, and
 dropping the final view releases the owner for later mutation.
+The element contract is `std::storage_element<T>`. Generic span relays must
+carry `requires std::storage_element<T>` and include `<std/memory>` when
+spelling it; a span
+neither requires copying/moving its elements nor grants independent ownership.
 
 The same header provides exclusive, move-only `std::mutable_span<T>` through
 vector/string `as_mutable_span()` factories. Checked element access, mutable
@@ -1093,7 +1097,8 @@ progress and error semantics.
 
 `<std/paired_span>` provides an ordinary source-defined
 `std::paired_span<L, R>` over two read-only spans, including different element
-types. Its constructor takes the two spans by value; `size()` is the smaller
+types, each satisfying the span's `storage_element` contract. Its constructor
+takes the two spans by value; `size()` is the smaller
 input length, `empty()` tests that length, and `first(index)`/`second(index)`
 return checked references into the corresponding buffer. `subspan(offset,
 count)` returns a paired subview after validating against the common length.
