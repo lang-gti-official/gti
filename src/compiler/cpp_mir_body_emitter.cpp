@@ -4284,6 +4284,24 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       source == nullptr ? nullptr : findInstruction(body, source->definition);
   const MirInstruction *producer =
       source == nullptr ? nullptr : classPublicationOrigin(body, *source);
+  const MirPlace *movedTemporary =
+      producer != nullptr && producer->kind == MirInstructionKind::Move &&
+              producer->operands.size() == 1 &&
+              producer->operands.front().kind == MirOperandKind::Move
+          ? body.findPlace(producer->operands.front().place)
+          : nullptr;
+  const bool temporaryMoveProducer =
+      movedTemporary != nullptr &&
+      movedTemporary->root == MirPlaceRootKind::Temporary &&
+      movedTemporary->temporary != 0 && movedTemporary->projections.empty() &&
+      !movedTemporary->initiallyAvailable &&
+      movedTemporary->type == producer->info.type &&
+      producer->operands.front().type == movedTemporary->type &&
+      producer->info.traits.movable &&
+      !producer->info.traits.containsBorrowedState && !producer->destination &&
+      !producer->receiver && !producer->loan && producer->lifecycle.empty() &&
+      producer->definedFailure.empty() && producer->localFailureSites.empty() &&
+      !producer->successResultDrop && !producer->successResultDestination;
   const bool functionCallProducer =
       producer != nullptr && producer->kind == MirInstructionKind::Call &&
       (producer->functionTarget || producer->nativeCalleeType) &&
@@ -4353,7 +4371,7 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       producer == nullptr ||
       (!functionCallProducer && !ownedExpectedCallProducer &&
        !cleanupFreeExpectedCallProducer && !ordinaryConstructionProducer &&
-       !defaultConstructionProducer) ||
+       !defaultConstructionProducer && !temporaryMoveProducer) ||
       !producer->result || sourceDefinition == nullptr ||
       sourceDefinition->result != sourceId ||
       producer->info.type != source->info.type) {
@@ -4393,7 +4411,7 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
       stage->lifecycle.size() != 1) {
     return {};
   }
-  if (sourceDefinition != producer) {
+  if (sourceDefinition != producer || temporaryMoveProducer) {
     const MirBlock *block = body.findBlock(source->definitionBlock);
     bool adjacent = false;
     if (block != nullptr)
@@ -4420,8 +4438,11 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
         sourceDrop->kind != MirDropObligationKind::Value ||
         sourceDrop->dropType.type != source->info.type ||
         sourceDrop->initiallyActive || sourcePlace == nullptr ||
-        sourcePlace->root != MirPlaceRootKind::Value ||
-        sourcePlace->value != sourceId || !sourcePlace->projections.empty() ||
+        !((sourcePlace->root == MirPlaceRootKind::Value &&
+           sourcePlace->value == sourceId) ||
+          (temporaryMoveProducer && sourceDefinition == producer &&
+           sourcePlace == movedTemporary)) ||
+        !sourcePlace->projections.empty() ||
         sourcePlace->type != source->info.type) {
       return nullptr;
     }
@@ -4445,6 +4466,16 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
         (producer->successResultDrop &&
          *producer->successResultDrop != activationDrop->id))
       return nullptr;
+
+    // A Move transfers a previously published temporary, rather than
+    // activating a fresh producer obligation. The verified source place and
+    // exact identity reparent chain must reach that same obligation.
+    if (temporaryMoveProducer)
+      return activationDrop->place == movedTemporary->id &&
+                     activationDrop->dropType.type == movedTemporary->type &&
+                     !activationDrop->initiallyActive
+                 ? sourceDrop
+                 : nullptr;
 
     std::vector<MirDropObligationId> inputDrops;
     const auto collectInputDrop = [&](const MirOperand &operand) {
@@ -4561,6 +4592,15 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
        *producer->successResultDestination != slot->id)) {
     return {};
   }
+  if (temporaryMoveProducer &&
+      (slot == movedTemporary || slot->initiallyAvailable ||
+       (directActivation &&
+        (drop->dropType.requiresActiveCleanup ||
+         std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const MirDropObligation &candidate) {
+                       return candidate.place == movedTemporary->id;
+                     })))))
+    return {};
   const MirValue *stagedValue = body.findValue(*stage->result);
   const std::vector<MirValueUse> stagedUses =
       nonRootRecordUses(body, *stage->result);
@@ -7931,6 +7971,12 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
     if (publicationIndex == join->instructions.size())
       continue;
     const MirInstruction &initialize = join->instructions[publicationIndex];
+    const StagedClassResult argument =
+        initialize.kind == MirInstructionKind::CallInput
+            ? stagedClassResultForSource(body, publicationValue)
+            : StagedClassResult{};
+    const bool argumentPublication =
+        argument.producer == &move && argument.stage == &initialize;
     if (move.kind != MirInstructionKind::Move || !move.result ||
         move.destination || move.receiver || move.operands.size() != 1 ||
         move.operands.front().kind != MirOperandKind::Move ||
@@ -7938,8 +7984,10 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
         move.operands.front().type != slot.type ||
         move.info.type != slot.type || !move.localFailureSites.empty() ||
         !move.definedFailure.empty() || !move.lifecycle.empty() ||
-        initialize.kind != MirInstructionKind::Initialize ||
-        !initialize.destination || initialize.receiver || initialize.result ||
+        (!argumentPublication &&
+         initialize.kind != MirInstructionKind::Initialize) ||
+        !initialize.destination || initialize.receiver ||
+        (!argumentPublication && initialize.result) ||
         initialize.operands.size() != 1 ||
         initialize.operands.front().kind != MirOperandKind::Value ||
         initialize.operands.front().value != publicationValue ||
@@ -7954,11 +8002,15 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
     const MirDropObligation *destinationDrop =
         body.findDropObligation(reparent.target);
     if (destination == nullptr ||
-        destination->root != MirPlaceRootKind::Binding ||
-        destination->binding == 0 || !destination->projections.empty() ||
-        destination->type != slot.type || destination->initiallyAvailable ||
-        destinationDrop == nullptr ||
-        destinationDrop->kind != MirDropObligationKind::Binding ||
+        (argumentPublication
+             ? destination != argument.slot
+             : (destination->root != MirPlaceRootKind::Binding ||
+                destination->binding == 0)) ||
+        !destination->projections.empty() || destination->type != slot.type ||
+        destination->initiallyAvailable || destinationDrop == nullptr ||
+        (argumentPublication
+             ? destinationDrop != argument.drop
+             : destinationDrop->kind != MirDropObligationKind::Binding) ||
         destinationDrop->place != destination->id ||
         destinationDrop->initiallyActive ||
         destinationDrop->dropType.type != destination->type ||
@@ -34822,6 +34874,18 @@ private:
                << ".construct(std::move(";
         emitMoveSource(facts, instruction);
         output << "));\n";
+        const StagedClassResult argument =
+            stagedClassResultForSource(facts.body, *instruction.result);
+        if (argument.producer == &instruction && argument.slot == destination) {
+          const MirPlace *source =
+              facts.body.findPlace(instruction.operands.front().place);
+          if (source == nullptr || !slotPlace(facts.body, *source))
+            throw std::logic_error(
+                "verified temporary argument move lost its source slot");
+          writeIndent();
+          output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *source)
+                 << ".destroy(); // end prepared argument source shell\n";
+        }
         return;
       }
     }
