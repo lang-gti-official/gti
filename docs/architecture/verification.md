@@ -234,8 +234,7 @@ cleanup without destruction of the unpublished object.
 The gate runs C++20/C++23 at O0/O1/O3 with native optional elision disabled,
 followed by ASan/UBSan. Its `--case` selector is for focused development;
 `--emit-only` checks C++ admission only and is not runtime validation. This
-regression gate also retains the still-failing grouped-construction cases;
-the complete gate is not passing yet.
+regression gate includes both grouped-construction and conditional cases.
 
 `conditional_class_publication` adds production C++ admission and malformed-MIR
 checks for the passive conditional repair, retaining an active-cleanup control.
@@ -247,6 +246,18 @@ conditional fixtures in six C++20/C++23 O0/O1/O3 no-elide modes plus ASan/UBSan.
 The original S02 binding reproducer also compiles and prints `1`. This is focused
 conditional-binding evidence, not completion of all S02 consumer positions,
 the grouped-expression repair, broader regressions or final release acceptance.
+
+Checkpoint `35c1a390` additionally passes the complete seven-fixture matrix
+with the optimized Mac mini arm64 Release compiler: C++20/C++23 O0/O1/O3,
+elision disabled, and ASan/UBSan. The passive conditional can now propagate a
+real constructor panic while preserving its outer guard cleanup and leaving
+the failed result unpublished. Grouped passive and cleanup-owning bindings,
+nested parentheses, loop re-entry, and constructor rollback also pass. The
+structural gate rejects seven malformed conditional schedules for each of two
+diamonds and four malformed identity schedules for each of three grouped
+bodies. This is focused evidence; the additional class-result producer matrix,
+all eight conditional consumer positions, broad gates and release integration
+remain outstanding.
 
 ## Class field value publication and declaration defaults
 
