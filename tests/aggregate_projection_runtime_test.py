@@ -75,6 +75,78 @@ def main():
                     failed = run([str(executable)], expected=70)
                     assert "runtime error[GTI-R" in failed.stderr and "index_out_of_bounds" in failed.stderr, failed
                     assert failed.stdout == "guard dropped\n", failed
+        # Each nested base selection completes before the next index begins.
+        # Merely checking all dimensions at the final address/load/store runs
+        # column() after an already-failing row and reports the wrong origin.
+        for name, operation in (
+            ("address", "int* element = &values\n    [row()]\n    [column()];\n  unsafe { return *element; }"),
+            ("read", "return values\n    [row()]\n    [column()];"),
+            ("write", "values\n    [row()]\n    [column()] = 9;\n  return 0;"),
+            ("reference", "int& element = values\n    [row()]\n    [column()];\n  return element;"),
+            ("grouped-address", "int* element = &(0, values\n    [row()])\n    [column()];\n  unsafe { return *element; }"),
+        ):
+            source = (
+                'class Guard { public: Guard() {} ~Guard() { std::println("guard dropped"); } };\n'
+                'int row() { std::println("row"); return 2; }\n'
+                'int column() { std::println("column"); return 0; }\n'
+                'int main() {\n  Guard guard{};\n'
+                '  mut int values[2][2] = {{1, 2}, {3, 4}};\n  ' + operation + '\n}\n'
+            )
+            path = scratch / f"ordered-{name}.gti"
+            path.write_text(source)
+            failed_line = next(index + 1 for index, line in enumerate(source.splitlines())
+                               if "[row()]" in line)
+            for standard in ("c++20", "c++23"):
+                for optimization in ("O0", "O2", "O3"):
+                    executable = scratch / f"ordered-{name}-{standard}-{optimization}"
+                    run([str(compiler), str(path), "--std", standard, f"-{optimization}",
+                         "--progress", "never", "-o", str(executable)])
+                    failed = run([str(executable)], expected=70)
+                    assert failed.stdout == "row\nguard dropped\n", failed
+                    assert failed.stderr == (
+                        f"{path.name}:{failed_line}: runtime error[GTI-R0007]: "
+                        "index_out_of_bounds in fixed_array\n"
+                    ), failed
+        for name, declaration, operation, cleanup in (
+            ("outer-index", "mut int values[2][2] = {{1, 2}, {3, 4}};",
+             "int* element = &values\n    [row()]\n    [column()];\n  unsafe { return *element; }", ""),
+            ("middle-index", "mut int values[2][2][2] = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}};",
+             "int* element = &values\n    [row()]\n    [column()]\n    [depth()];\n  unsafe { return *element; }", ""),
+            ("owning-prefix", "Resource values[2][2] = {{Resource(1), Resource(2)}, {Resource(3), Resource(4)}};",
+             "return values\n    [row()]\n    [column()].get();", "4\n3\n2\n1\n"),
+            ("reference-argument", "Resource values[2][2] = {{Resource(1), Resource(2)}, {Resource(3), Resource(4)}};",
+             "return read_arg(values\n    [row()]\n    [column()], depth());", "4\n3\n2\n1\n"),
+            ("copied-argument", "Plain values[2][2] = {{Plain(1), Plain(2)}, {Plain(3), Plain(4)}};",
+             "return copy_arg(values\n    [row()]\n    [column()], depth());", ""),
+        ):
+            source = (
+                'class Guard { public: Guard() {} ~Guard() { std::println("guard dropped"); } };\n'
+                'class Resource { int id; public: Resource(int value) : id(value) {}\n'
+                'Resource(Resource& other) = delete; ~Resource() { std::println(this.id); }\n'
+                'int get() { return this.id; } };\n'
+                'class Plain { int id; public: Plain(int value) : id(value) {} int get() { return this.id; } };\n'
+                'int read_arg(Resource& value, int later) { return value.get() + later; }\n'
+                'int copy_arg(Plain value, int later) { return value.get() + later; }\n'
+                'int row() { std::println("row"); return 1; }\n'
+                'int column() { std::println("column"); return 2; }\n'
+                'int depth() { std::println("depth"); return 0; }\n'
+                'int main() {\n  Guard guard{};\n  ' + declaration + '\n  ' + operation + '\n}\n'
+            )
+            path = scratch / f"ordered-{name}.gti"
+            path.write_text(source)
+            failed_line = next(index + 1 for index, line in enumerate(source.splitlines())
+                               if "[column()]" in line)
+            for standard in ("c++20", "c++23"):
+                for optimization in ("O0", "O2", "O3"):
+                    executable = scratch / f"ordered-{name}-{standard}-{optimization}"
+                    run([str(compiler), str(path), "--std", standard, f"-{optimization}",
+                         "--progress", "never", "-o", str(executable)])
+                    failed = run([str(executable)], expected=70)
+                    assert failed.stdout == "row\ncolumn\n" + cleanup + "guard dropped\n", failed
+                    assert failed.stderr == (
+                        f"{path.name}:{failed_line}: runtime error[GTI-R0007]: "
+                        "index_out_of_bounds in fixed_array\n"
+                    ), failed
         for name, source in (
             ("unsafe-required", "struct F{int values[2]={1,2};};int main(){F f{};const F* p=&f;return p->values[0];}"),
             ("const-write", "struct F{mut int values[2]={1,2};};int main(){F f{};const F* p=&f;unsafe{p->values[0]=7;}return 0;}"),
@@ -92,7 +164,9 @@ def main():
             rejected = run([str(compiler), str(path), "--progress", "never", "--emit-cpp",
                             "-o", str(scratch / "bad.cpp")], expected=65)
             assert "error[GTI-S" in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
-    print("aggregate projections: 84 native successes, 42 checked bounds failures with cleanup, six sanitizers and ten semantic negatives passed")
+    print("aggregate projections: 84 native successes, 42 checked bounds failures, "
+          "60 ordered nested failures with exact origins and cleanup, six sanitizers "
+          "and ten semantic negatives passed")
 
 
 if __name__ == "__main__":

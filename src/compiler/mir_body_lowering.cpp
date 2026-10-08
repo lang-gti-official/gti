@@ -3631,7 +3631,46 @@ private:
     return value.kind == HirValueKind::Call || value.functionTarget;
   }
 
-  void emitPlaceDependencies(HirValueId id) {
+  // A projected array used as another index's base must finish its checked
+  // place formation before that outer index starts. Checking only at the
+  // eventual load/store/address would run later side effects after failure.
+  // Address-only receiver/argument transport also uses this stage because
+  // it has no terminal load to perform that selection's check.
+  void emitCheckedPlacePrefix(const HirValue &value) {
+    if (checkedPlacePrefixes.contains(value.id) || terminated() ||
+        value.kind != HirValueKind::Index || value.functionTarget ||
+        value.unsafeOperation == UnsafeOperationKind::RawIndex ||
+        value.operands.size() != 2)
+      return;
+    const auto *base = findValue(value.operands.front());
+    if (base == nullptr || base->info.type.kind != SemanticType::Array ||
+        value.definedFailure.localOrigins.empty())
+      return;
+    const MirPlaceId place = placeForValue(value.id);
+    const auto *selected = output.findPlace(place);
+    if (selected == nullptr) {
+      valid = false;
+      return;
+    }
+    const auto pointer =
+        SemanticType::rawPointerTo(selected->type, selected->access);
+    ExpressionInfo info{.type = pointer,
+                        .category = ValueCategory::Value,
+                        .access = AccessMode::ReadOnly,
+                        .traits = semanticTraits(pointer)};
+    (void)appendInstruction({.kind = MirInstructionKind::Compute,
+                             .hirValue = value.id,
+                             .result = appendValue(value.id, info),
+                             .operands = {{.kind = MirOperandKind::Address,
+                                           .place = place,
+                                           .type = selected->type}},
+                             .operation = MirOperation::AddressOf,
+                             .definedFailure = localDefinedFailure(&value),
+                             .info = info});
+    checkedPlacePrefixes.insert(value.id);
+  }
+
+  void emitPlaceDependencies(HirValueId id, bool checkedPrefix = false) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
       valid = false;
@@ -3650,12 +3689,12 @@ private:
              operand != std::prev(value->operands.end()); ++operand) {
           (void)valueOperand(*operand);
         }
-        emitPlaceDependencies(value->operands.back());
+        emitPlaceDependencies(value->operands.back(), checkedPrefix);
       }
       break;
     case HirValueKind::Grouping:
       if (!value->operands.empty()) {
-        emitPlaceDependencies(value->operands.front());
+        emitPlaceDependencies(value->operands.front(), checkedPrefix);
       }
       break;
     case HirValueKind::MemberAccess:
@@ -3663,7 +3702,7 @@ private:
         if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
           (void)valueOperand(value->operands.front());
         } else {
-          emitPlaceDependencies(value->operands.front());
+          emitPlaceDependencies(value->operands.front(), checkedPrefix);
         }
       }
       break;
@@ -3672,12 +3711,14 @@ private:
         if (value->unsafeOperation == UnsafeOperationKind::RawIndex) {
           (void)valueOperand(value->operands.front());
         } else {
-          emitPlaceDependencies(value->operands.front());
+          emitPlaceDependencies(value->operands.front(), true);
         }
       }
       if (value->operands.size() >= 2) {
         (void)valueOperand(value->operands[1]);
       }
+      if (checkedPrefix)
+        emitCheckedPlacePrefix(*value);
       break;
     case HirValueKind::Unary:
       if (value->operation == TokenKind::STAR && !value->operands.empty()) {
@@ -3813,7 +3854,7 @@ private:
     if (parameter.kind != SemanticType::Reference) {
       return valueOperand(id);
     }
-    emitPlaceDependencies(id);
+    emitPlaceDependencies(id, true);
     if (const MirLoanId existing = loanForValue(id); existing != 0) {
       // A borrow-carrying value (for example a read-only stored-reference
       // iterator) already has an owner loan, but a reference parameter needs
@@ -3855,7 +3896,7 @@ private:
 
   [[nodiscard]] MirOperand copyArgumentOperand(HirValueId id,
                                                const SemanticType &parameter) {
-    emitPlaceDependencies(id);
+    emitPlaceDependencies(id, true);
     const HirValue *value = findValue(id);
     MirPlaceId place = placeForValue(id);
     const MirPlace *resolved = output.findPlace(place);
@@ -4065,7 +4106,7 @@ private:
               .type = pointee};
     }
     if (receiver->info.category == ValueCategory::Place) {
-      emitPlaceDependencies(id);
+      emitPlaceDependencies(id, true);
       const MirPlaceId place = placeForValue(id);
       if (place != 0) {
         return {.kind = access == AccessMode::Mutable
@@ -8141,7 +8182,7 @@ private:
         } else if (value->unsafeOperation == UnsafeOperationKind::RawIndex) {
           (void)valueOperand(value->operands[0]);
         } else {
-          emitPlaceDependencies(value->operands[0]);
+          emitPlaceDependencies(value->operands[0], true);
         }
         if (!overloadedBorrowStore) {
           (void)valueOperand(value->operands[1]);
@@ -11068,6 +11109,7 @@ private:
       enclosingTransferredLoanEndpoints;
   std::unordered_map<SemanticLoanId, MirPlaceId> semanticLoanPlaces;
   std::unordered_set<HirValueId> emittedValues;
+  std::unordered_set<HirValueId> checkedPlacePrefixes;
   std::vector<Scope> scopes;
   std::vector<TemporaryDrop> temporaryDrops;
   std::optional<PreparedCallArgumentFailure> preparedCallArgumentFailure;

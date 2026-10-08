@@ -4624,16 +4624,14 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   }
   Diagnostic diagnostic = makeDiagnostic(
       std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
-      "Returned " + std::string(description) +
-          " must derive from " +
+      "Returned " + std::string(description) + " must derive from " +
           (source.name.lexeme.empty()
                ? "unnamed read-only parameter " +
                      std::to_string(function->returnBorrowParameter + 1)
                : "read-only parameter '" + source.name.lexeme + "'") +
           ".");
-  diagnostic.related.push_back(
-      {tokenSpan(source.sourceAnchor()),
-       "Required owner dependency source is here."});
+  diagnostic.related.push_back({tokenSpan(source.sourceAnchor()),
+                                "Required owner dependency source is here."});
   diagnostic.hints.emplace_back(
       "Return the parameter, a checked projection of it, or a borrowed "
       "value constructed from it; local, temporary, global, and unrelated "
