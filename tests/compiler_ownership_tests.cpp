@@ -10856,7 +10856,7 @@ int main() {
   const lang::FrontendResult invalidPointee =
       analyzeWithMemory("invalid-unique-pointee.gti", R"(
 int main() {
-  auto unsupported = std::make_unique<std::string_view>("view");
+  auto unsupported = std::make_unique<c_string>("view");
   return 0;
 }
 )");
@@ -17955,7 +17955,8 @@ int main() {
 
   const std::string cpp23 = gti_test::emitCppText(frontend);
   expect(cpp23.find("#include <expected>") != std::string::npos &&
-             cpp23.find("std::expected<std::int32_t, std::string_view>") !=
+             cpp23.find("std::expected<std::int32_t, "
+                        "::__gti_program::__gti_std::string_view>") !=
                  std::string::npos &&
              cpp23.find("std::unexpected(") != std::string::npos &&
              cpp23.find("return {};") != std::string::npos,
@@ -17964,7 +17965,8 @@ int main() {
   const std::string cpp20 =
       gti_test::emitCppText(frontend, lang::CppStandard::Cpp20);
   expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
-             cpp20.find("::nonstd::expected<std::int32_t, std::string_view>") !=
+             cpp20.find("::nonstd::expected<std::int32_t, "
+                        "::__gti_program::__gti_std::string_view>") !=
                  std::string::npos &&
              cpp20.find("::nonstd::make_unexpected(") != std::string::npos,
          "C++20 should lower expected values to the vendored implementation");

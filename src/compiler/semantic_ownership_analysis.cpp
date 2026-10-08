@@ -7944,6 +7944,23 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
             expr, pointeeType.classId, pointeeType.arguments,
             pointeeType.valueArguments, *arguments, expr.paren());
       }
+      // A heap-allocated text carrier cannot retain owner-dependent text,
+      // exactly as other dynamic storage cannot. A forwarded pack element
+      // is a parameter, which is conservatively owner-dependent text.
+      if (isTextCarryingType(pointeeType)) {
+        if (const auto arguments =
+                concreteCallArguments(argumentTypes, expr.arguments())) {
+          for (const AnalyzedCallArgument &argument : *arguments) {
+            if (isTextCarryingType(argument.type) &&
+                (argument.forwardedPackElement ||
+                 isOwnerDependentTextExpression(*argument.expression))) {
+              reportOwnerDependentTextStorage(*argument.expression,
+                                              "nested in dynamic storage");
+              break;
+            }
+          }
+        }
+      }
     }
 
     currentType = SemanticType::uniqueOwnerOf(pointeeType);

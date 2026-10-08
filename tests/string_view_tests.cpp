@@ -5,6 +5,7 @@ namespace {
 // An unrelated user-defined text carrier: the generalized relay rule is
 // structural, never recognition of std::string_view.
 const std::string declarations = R"gti(
+#include <std/memory>
 #include <std/string>
 #include <std/vector>
 class Token {
@@ -133,6 +134,12 @@ void checkRejectedLifetimes() {
        "views.push_back(owned.view());\n"
        "return 0;",
        "GTI-S2045", ""},
+      // A heap allocation is dynamic storage: it cannot retain a view that
+      // depends on an owner (make_unique forwards a parameter).
+      {"std::string owned = std::string(\"abc\");\n"
+       "auto boxed = std::make_unique<std::string_view>(owned.view());\n"
+       "return 0;",
+       "GTI-S2045", "nested in dynamic storage"},
       {"return int(\"abc\".text_capability().size());", "", ""},
   };
   for (const Case &item : cases) {
