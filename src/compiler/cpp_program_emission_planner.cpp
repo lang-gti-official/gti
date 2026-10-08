@@ -1439,6 +1439,11 @@ public:
     };
     for (const MirClassInstance &instance : mir.classInstances()) {
       emitType(emitType, instance.type);
+      // A dependent member alias can become concrete only in this sealed
+      // instance catalog. Its target still need not have an executable layout.
+      for (const MirClassTypeAlias &alias : instance.typeAliases) {
+        emitType(emitType, alias.type);
+      }
     }
     for (const LoweredDeclaration &row : loweredProgram.declarations()) {
       if (const auto *alias =
