@@ -41,7 +41,7 @@
     "127-operator-and-value-transport.gti": 411,
     "128-inline-object-pool.gti": 520,
     "129-generic-payload-enums.gti": 398,
-    "13-ownership.gti": 80,
+    "13-ownership.gti": 81,
     "14-operators.gti": 52,
     "15-variadic-generics.gti": 49,
     "16-move-generics.gti": 71,
@@ -79,7 +79,7 @@
     "48-native-c-records.gti": 34,
     "49-native-bridge-header.gti": 34,
     "50-opaque-native-handles.gti": 39,
-    "51-callable-value-results.gti": 42,
+    "51-callable-value-results.gti": 45,
     "52-stateful-callables.gti": 210,
     "53-consuming-callables.gti": 41,
     "54-owned-move-captures.gti": 65,
@@ -112,7 +112,7 @@
     "83-complete-ranges.gti": 149,
     "84-optional-values.gti": 54,
     "85-payload-enum-fields.gti": 39,
-    "86-owning-callbacks.gti": 270,
+    "86-owning-callbacks.gti": 274,
     "87-associative-containers.gti": 538,
     "88-consuming-builders.gti": 384,
     "89-library-workflow.gti": 865,
@@ -127,5 +127,5 @@
     "98-shared-ownership.gti": 390,
     "99-borrowed-expected.gti": 391
   },
-  "total": 20711
+  "total": 20719
 }

@@ -19,6 +19,22 @@ index effects and deterministic cleanup, including owning element arrays.
 These are current acceptance requirements, not a claim that the combined full
 suite has already passed.
 
+The `6d25a313` audit checkpoint passes the full compiler aggregate and the
+repaired native-identity, optimizer, signature, borrowing, aggregate projection,
+installed-runtime and stdlib-surface gates. Its native corpus oracle builds and
+runs all 126 examples at O0/C++20 and O3/C++23 with identical behavior. The
+reviewed emitted census is 20,719 body identities: constructor-template
+coalescing now preserves four previously omitted identities in example 86;
+example 13 retains its newly explicit default-constructor body; example 51 adds
+three bodies demonstrating heterogeneous nested callable results. Examples 32
+and 127 lose only obsolete reference-specific sentinel operator adapters after
+the source operators became by-value. The LoweredProgram inventory is 62,601
+declarations, 20,722 bodies and 3,828 generated items. These inventories were
+reviewed by identity and checked against a temporary native-oracle baseline
+before refreshing repository expectations. The remaining three-body difference
+is unchanged in scalar atomics and optionals. Final reconciled-head full-suite
+and installed-consumer acceptance is still required.
+
 ## Combined lifetime/storage and payload-enum release gate
 
 Historically, PR #94 was the single integration point for the S-ALLOC-06/07 and generic
