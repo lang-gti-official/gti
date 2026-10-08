@@ -316,7 +316,7 @@ memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
 
 A concrete source body containing raw/unsafe instructions can now receive its
-ordinary closed-call input context. Actual raw pointee/lifetime operations
+ordinary closed-call input context. Unhandled raw pointee/lifetime operations
 and unsupported unsafe calls remain opaque barriers: they clear mutable-memory
 facts and mark the path opaque before ordinary load/store transfer.
 This permits replayable proofs before the operation without granting raw
@@ -348,6 +348,32 @@ still uses the pre-instruction state. This is not a source-container length or
 initialized-element invariant; those require independently represented facts.
 An unrelated record regression distinguishes the pure detector from an
 unknown field, conflicting field writes and an unreached call context.
+The existing one-boolean defined-failure detectors likewise preserve unrelated
+facts: their input condition is source-computed, not a container invariant.
+
+Exact integer-scalar final-address construction has a narrow transfer profile.
+Shared MIR effects retain its unknown-memory write and initialization, but do
+not invent a selected user constructor or synchronization. Construction still
+requires the unsafe caller to provide a vacant, nonconflicting complete extent;
+it cannot implicitly replace another live non-byte object. Consequently,
+existing live non-byte integer facts along exact ordinary owned-field paths
+may survive this operation. Byte fields, arrays/indexes, union overlap, stored
+reference traversal, compiler-capability backing carriers, unresolved roots
+and loaded-origin/element facts are discarded. No pointer validity, region
+extent, fresh allocation or initialized-element fact is inferred.
+
+The interpreter records whether a successful path contains only that supported
+opaque lifetime transfer or an unknown live-memory barrier. Reachable joins
+retain the stronger barrier. Exact source wrappers can forward the supported
+profile without losing unrelated live-field facts, but remain opaque and cannot
+establish recurrence invariance. Normal global, mutable-reference and receiver
+writes still invalidate their protected origins before proved postconditions
+are republished. Actual raw writes/reads, destruction, relocation, unsupported
+calls and synchronization retain full invalidation. Failed paths do not become
+successful-path postconditions. Unrelated public-wrapper, nested-object,
+byte/array and destroy/reconstruct controls exercise independent proof replay.
+This profile does not yet recover the outstanding raw-backed element-envelope
+or logical-bounds migration requirements.
 
 Ordinary class construction and owned class returns transport independently
 proved scalar field envelopes, including parameterized member initializers.

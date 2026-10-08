@@ -87,6 +87,11 @@ struct MirClosedCallSafetyAnalysis {
 // Inert address computations/markers preserve unrelated facts without proving
 // pointee invariants. Selected unsafe source functions use actual body effects;
 // a successful path with a raw barrier cannot export effect closure.
+// The exact vacant integer-scalar construction profile can preserve unrelated
+// active non-byte owned-field facts through source wrappers. It stays opaque;
+// byte/array/union/stored-reference/backing paths and actual unknown
+// live-memory effects remain conservative. This supplies no raw-region/element
+// invariant.
 [[nodiscard]] MirClosedCallSafetyAnalysis
 analyzeMirClosedCallSafetyChecks(const MirProgram &program);
 

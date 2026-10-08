@@ -472,6 +472,7 @@ public:
     require_relocation_capacity(this.slots == uint64_t(0));
     this.objects = objects;
     this.slots = count;
+    this.live = uint64_t(0);
   }
   T& read(uint64_t index) {
     index_bounds_check(index, this.live);
@@ -720,8 +721,7 @@ expected<void, std::alloc_errc> validate_region(
   return;
 }
 
-// Both byte regions come from the owner's selected resource. Publication is
-// last; a failed second request returns the first region through its own lease.
+// A lease retains an original byte descriptor and its selected provider.
 concept byte_lease<L> = requires(L& lease, std::layout request) {
   unsafe { lease.allocate(request) } -> expected<std::detail::raw_allocation, std::alloc_errc>;
 } && requires(mut L& lease, std::detail::raw_allocation allocation) {
@@ -730,12 +730,13 @@ concept byte_lease<L> = requires(L& lease, std::layout request) {
   { lease.release() } -> void;
 };
 
-expected<void, std::alloc_errc> try_allocate_prefix<T, Lease>(
-    mut Lease& objects, mut prefix_slots<T>& destination,
+// Internal owner operation: the supplied lease must be empty. Callers retain
+// it through all object cleanup and publish slots only after this succeeds.
+// A malformed provider descriptor is attached before validation so release
+// receives that exact original descriptor, not a repaired request-sized one.
+expected<std::detail::raw_allocation, std::alloc_errc> try_allocate_objects<T, Lease>(
+    mut Lease& objects,
     uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
-  if (destination.capacity() != uint64_t(0)) {
-    return unexpected(std::alloc_errc::invalid_state);
-  }
   if (minimum == uint64_t(0) || (minimum & (minimum - uint64_t(1))) != uint64_t(0)) {
     return unexpected(std::alloc_errc::invalid_alignment);
   }
@@ -746,7 +747,7 @@ expected<void, std::alloc_errc> try_allocate_prefix<T, Lease>(
   if (selected > maximum || count > maximum / object.bytes) {
     return unexpected(std::alloc_errc::size_overflow);
   }
-  if (count == uint64_t(0)) { return; }
+  if (count == uint64_t(0)) { return std::detail::raw_allocation(); }
   std::layout request{count * object.bytes, selected};
   unsafe {
     auto attempt = objects.allocate(request);
@@ -758,14 +759,29 @@ expected<void, std::alloc_errc> try_allocate_prefix<T, Lease>(
       objects.release();
       return unexpected(valid.error());
     }
-    destination.attach(std::typed_address<T>(region.address), count);
+    return std::move(region);
   }
+}
+
+expected<void, std::alloc_errc> try_allocate_prefix<T, Lease>(
+    mut Lease& objects, mut prefix_slots<T>& destination,
+    uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
+  if (destination.capacity() != uint64_t(0)) {
+    return unexpected(std::alloc_errc::invalid_state);
+  }
+  auto allocated = try_allocate_objects<T, Lease>(objects, count, minimum);
+  if (!allocated) { return unexpected(allocated.error()); }
+  if (count == uint64_t(0)) { return; }
+  std::detail::raw_allocation region = std::move(allocated).value();
+  unsafe { destination.attach(std::typed_address<T>(region.address), count); }
   return;
 }
 
 expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
     mut Lease& objects, mut Lease& metadata, mut sparse_slots<T>& destination,
     uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
+  // Sparse ownership needs two regions. Publication is last; a failed second
+  // request returns the first region through its own lease.
   if (destination.capacity() != uint64_t(0)) {
     return unexpected(std::alloc_errc::invalid_state);
   }
@@ -823,13 +839,13 @@ public:
   prefix_owner() {}
   prefix_owner(uint64_t count) {
     uint64_t minimum = std::layout_of<T>().alignment;
-    mut process_lease objects{};
-    mut gti_internal::prefix_slots<T> data{};
-    auto allocated = gti_internal::try_allocate_prefix(objects, data,
+    auto allocated = gti_internal::try_allocate_objects<T, process_lease>(this.objects,
         count, minimum);
     gti_internal::require_allocation(allocated.has_value());
-    this.objects = std::move(objects);
-    this.data = std::move(data);
+    if (count != uint64_t(0)) {
+      std::detail::raw_allocation region = std::move(allocated).value();
+      unsafe { this.data.attach(std::typed_address<T>(region.address), count); }
+    }
   }
   prefix_owner(prefix_owner<T>& other) = delete;
   prefix_owner(prefix_owner<T>&& other) = default;

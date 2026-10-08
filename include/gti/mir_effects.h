@@ -30,6 +30,11 @@ inline constexpr std::size_t atomicMemoryOrderCount =
 [[nodiscard]] MirEffectTraits effects(MirOperation operation);
 [[nodiscard]] MirEffectTraits effects(IntrinsicKind intrinsic);
 [[nodiscard]] MirEffectTraits effects(SynchronizationOperationKind kind);
+// Exact integer-scalar final-address construction has no selected constructor,
+// cleanup or adapter. It still writes raw storage and requires the ordinary
+// unsafe vacancy/extent/alignment contract; this is not a validity proof.
+[[nodiscard]] bool
+isMirScalarFinalAddressConstruction(const MirInstruction &instruction);
 [[nodiscard]] MirEffectTraits effects(const MirInstruction &instruction);
 [[nodiscard]] MirEffectTraits effects(const MirProgram &program,
                                       const MirInstruction &instruction);

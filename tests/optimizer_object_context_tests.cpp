@@ -156,16 +156,25 @@ int main() {
   }
   expect(testedForgery,
          "the raw-field negative must exercise canonical rejection");
-  for (const auto name : {"optimizer_nested_write", "optimizer_reference_write",
-                          "optimizer_nested_raw"}) {
+  for (const auto name :
+       {"optimizer_nested_write", "optimizer_reference_write",
+        "optimizer_nested_raw", "optimizer_scalar_construction",
+        "optimizer_scalar_construction_paths"}) {
     const auto path = sourcePath.parent_path() / (std::string(name) + ".gti");
     const std::ifstream file(path);
     const std::string text{std::istreambuf_iterator<char>(file.rdbuf()), {}};
-    const auto changed = lang::Frontend().analyze(path, text);
+    const auto library =
+        sourcePath.parent_path().parent_path().parent_path() / "stdlib";
+    const auto changed = lang::Frontend().analyze(
+        path, text, {library / "prelude.gti", path},
+        {{std::filesystem::weakly_canonical(path).string(), text}}, {library});
     expect(changed.canGenerateCode(),
            "nested and reference-field mutation controls must lower");
-    if (!changed.canGenerateCode())
+    if (!changed.canGenerateCode()) {
+      for (const auto &diagnostic : changed.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
       continue;
+    }
     for (const auto level :
          {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
           lang::OptimizationLevel::O3}) {
@@ -173,22 +182,34 @@ int main() {
           {.hir = changed.hir, .mir = changed.mir, .level = level});
       expect(optimized.valid(), "nested mutation controls must replay");
       for (const auto &function : changed.hir.functionInstances()) {
-        if (!function.source || function.source->name().lexeme != "read")
+        if (!function.source)
+          continue;
+        const auto functionName = function.source->name().lexeme;
+        const bool construction = functionName == "construct_other" ||
+                                  functionName == "nested_direct" ||
+                                  functionName == "nested_reconstruct" ||
+                                  functionName == "byte_direct" ||
+                                  functionName == "array_direct";
+        if (functionName != "read" && functionName != "reconstruct" &&
+            !construction)
           continue;
         const auto *body = optimized.mir.findFunctionInstance(function.id);
-        bool proved = false;
+        std::size_t proved = 0;
         if (body)
           for (const auto &block : body->body.blocks)
             for (const auto &instruction : block.instructions)
-              proved |= std::any_of(
+              proved += std::count_if(
                   instruction.safetyDischarges.begin(),
                   instruction.safetyDischarges.end(), [](const auto &proof) {
                     return proof.family ==
                            lang::MirSafetyCheckFamily::ArithmeticOverflow;
                   });
-        expect(!proved,
-               "nested, returned and borrowed-field aliases cannot retain "
-               "stale constructor envelopes after mutation");
+        expect(
+            proved ==
+                (construction && level != lang::OptimizationLevel::O0 ? 1 : 0),
+            "nested, returned and borrowed-field aliases cannot retain "
+            "stale constructor envelopes after mutation; scalar vacant "
+            "construction preserves unrelated active fields");
       }
     }
   }

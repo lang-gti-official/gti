@@ -5057,6 +5057,19 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   raw initialized-element transfer and the same seven owner requirements remain
   open. Independent nested-subobject, returned-container and stored-reference
   mutation probes are now permanent unit/native regressions.
+  The next bounded prerequisite retains active non-byte scalar fields across
+  exact vacant integer construction and ordinary source wrappers. Shared MIR
+  effects no longer invent user code/synchronization for that exact shape;
+  raw writes and unsafe vacancy obligations remain. Successful-path transfer
+  summaries distinguish this supported opaque operation from unknown live-memory
+  barriers. Byte/array/union/stored-reference/backing paths fail closed, and
+  destruction or another unknown operation dominates the joined barrier. This
+  recovers an unrelated public `construct_at` proof, not the seven still-open
+  source-owner acceptance proofs. Pure boolean failure detectors also preserve
+  unrelated facts without introducing container knowledge. Source process
+  prefix construction now allocates through its already-initialized lease and
+  publishes slots last, avoiding two moved owner temporaries; provider validation
+  and exact original-descriptor release retain their existing ordering.
   Full admission/corpus/performance coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.

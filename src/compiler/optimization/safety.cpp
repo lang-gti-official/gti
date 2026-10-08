@@ -55,6 +55,11 @@ struct ObjectFact {
   friend bool operator==(const ObjectFact &, const ObjectFact &) = default;
 };
 
+// These are transfer-rule barriers, not replacement MIR effects. A vacant
+// scalar construction remains opaque, but has a narrower supported transfer
+// than an unhandled operation which might write an already live object.
+enum class LiveMemoryBarrier { None, VacantScalarConstruction, Unknown };
+
 [[nodiscard]] bool mergeObject(ObjectFact &target, const ObjectFact &incoming,
                                bool widen);
 
@@ -64,6 +69,7 @@ struct AbstractState {
   // result summary, but an opaque effect on any successful path must survive
   // joins even when all scalar result facts later become constant.
   bool hasOpaqueEffects = false;
+  LiveMemoryBarrier liveMemoryBarrier = LiveMemoryBarrier::None;
   std::map<MirValueId, IntegerFact> integers;
   std::map<MirPlaceId, IntegerFact> integerPlaces;
   std::map<MirValueId, IntegerFact> arrayValues;
@@ -106,6 +112,7 @@ struct ClosedCallSummary {
   // but callers must invalidate memory and cannot use that call as a closed
   // recurrence edge.
   bool hasOpaqueEffects = false;
+  LiveMemoryBarrier liveMemoryBarrier = LiveMemoryBarrier::None;
   ObservedFact<IntegerFact> result;
   ObservedFact<ObjectFact> receiver;
   std::vector<ObservedFact<ObjectFact>> argumentObjects;
@@ -1648,18 +1655,30 @@ operandMayAliasPlace(const MirBody &body,
                      const MirPlaceAliasEscapeAnalysis &aliases,
                      const MirOperand &operand, MirPlaceId tracked);
 void killUnknownMemory(const MirBody &body, AbstractState &state);
+void preserveLiveScalarFactsForConstruction(const MirProgram *program,
+                                            MirBodyAddress address,
+                                            const MirBody &body,
+                                            AbstractState &state);
 
 void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 const MirPlaceAliasEscapeAnalysis &aliases,
                                 const MirInstruction &instruction,
-                                MirBodyAddress target, bool opaqueEffects,
+                                MirBodyAddress address, MirBodyAddress target,
+                                bool opaqueEffects,
+                                LiveMemoryBarrier liveMemoryBarrier,
                                 AbstractState &state) {
   const auto summary = exactMirInvocationSummary(program, body, instruction);
-  if (!summary || (opaqueEffects && (summary->traits.writesUnknownMemory ||
-                                     summary->traits.maySynchronize))) {
+  const bool scalarConstructionOnly =
+      opaqueEffects &&
+      liveMemoryBarrier == LiveMemoryBarrier::VacantScalarConstruction;
+  if (!summary || (opaqueEffects && (summary->traits.maySynchronize ||
+                                     (summary->traits.writesUnknownMemory &&
+                                      !scalarConstructionOnly)))) {
     killUnknownMemory(body, state);
     return;
   }
+  if (scalarConstructionOnly)
+    preserveLiveScalarFactsForConstruction(&program, address, body, state);
   const auto *function = target.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(target.owner)
                              : nullptr;
@@ -1700,6 +1719,14 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
        function->receiverMutability == ReceiverMutability::Consuming))
     invalidate(*instruction.receiver);
   for (std::size_t index = 0; index < parameters->size(); ++index) {
+    // Returning/forwarding a raw address does not overwrite another already
+    // live object. Only the fully interpreted vacant-scalar profile may use
+    // that contract; actual raw writes, destruction, or an unknown call mark
+    // the successful path Unknown instead. Checked references and ordinary
+    // receiver/global writes still invalidate their exact protected inputs.
+    if (scalarConstructionOnly &&
+        (*parameters)[index].kind == SemanticType::RawPointer)
+      continue;
     const bool escapes = index >= summary->argumentsEscape.size() ||
                          summary->argumentsEscape[index];
     if (parameterAllowsMutation((*parameters)[index]) &&
@@ -1758,7 +1785,10 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     argumentOrigins.push_back(
         objectOriginForOperand(body, aliases, state, operand));
   invalidateClosedCallInputs(closedCalls->program, body, aliases, instruction,
-                             *target, summary.hasOpaqueEffects, state);
+                             address, *target, summary.hasOpaqueEffects,
+                             summary.liveMemoryBarrier, state);
+  state.liveMemoryBarrier =
+      std::max(state.liveMemoryBarrier, summary.liveMemoryBarrier);
   if (summary.hasOpaqueEffects) {
     // Opacity blocks recurrence invariance; it is not independent write
     // authority. The exact effect summary above governs caller invalidation.
@@ -1840,6 +1870,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
 }
 
 void killUnknownMemory(const MirBody &body, AbstractState &state) {
+  state.liveMemoryBarrier = LiveMemoryBarrier::Unknown;
   // Readonly scalar copies are actual immutable values, not readonly
   // references to mutable storage. Valid unknown/raw effects cannot change
   // them; exact reinitialization still invalidates their own place above.
@@ -1895,6 +1926,120 @@ void killUnknownMemory(const MirBody &body, AbstractState &state) {
          instruction.intrinsic == IntrinsicKind::None;
 }
 
+[[nodiscard]] const SemanticType *
+implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
+  if (!program)
+    return nullptr;
+  HirClassInstanceId owner = 0;
+  if (address.kind == MirBodyKind::Function) {
+    const auto *function = program->findFunctionInstance(address.owner);
+    owner = function && function->owner ? *function->owner : 0;
+  } else if (address.kind == MirBodyKind::Constructor) {
+    const auto *constructor = program->findConstructorInstance(address.owner);
+    owner = constructor ? constructor->owner : 0;
+  } else if (address.kind == MirBodyKind::FieldInitializers) {
+    owner = address.owner;
+  }
+  const auto *record = program->findClassInstance(owner);
+  return record ? &record->type : nullptr;
+}
+
+[[nodiscard]] const SemanticType *ordinaryFieldType(const MirProgram *program,
+                                                    const SemanticType *type,
+                                                    SymbolId field) {
+  if (!program || !type || type->kind != SemanticType::Class)
+    return nullptr;
+  const auto record = std::find_if(
+      program->classInstances().begin(), program->classInstances().end(),
+      [&](const auto &candidate) { return candidate.type == *type; });
+  if (record == program->classInstances().end() ||
+      record->kind == ClassKind::Union ||
+      record->compilerCapability != CompilerCapabilityTypeKind::None)
+    return nullptr;
+  const auto member = std::find_if(
+      record->declaredFields.begin(), record->declaredFields.end(),
+      [&](const auto &candidate) { return candidate.symbol == field; });
+  return member == record->declaredFields.end() ? nullptr : &member->type;
+}
+
+[[nodiscard]] bool liveScalarPath(const MirProgram *program,
+                                  MirBodyAddress address, const MirBody &body,
+                                  MirPlaceId root,
+                                  const FieldPath &suffix = {}) {
+  const MirPlace *place = root ? body.findPlace(root) : nullptr;
+  const SemanticType *type = nullptr;
+  if (!root || (place && place->root == MirPlaceRootKind::This)) {
+    type = implicitReceiverType(program, address);
+  } else if (place && (place->root == MirPlaceRootKind::Binding ||
+                       place->root == MirPlaceRootKind::Symbol ||
+                       place->root == MirPlaceRootKind::Temporary)) {
+    const auto base = std::find_if(body.places.begin(), body.places.end(),
+                                   [&](const auto &candidate) {
+                                     return samePlaceRoot(candidate, *place) &&
+                                            candidate.projections.empty();
+                                   });
+    if (base != body.places.end())
+      type = &base->type;
+  }
+  // Only the outer checked reference may be transparent. A reference stored
+  // inside an object is a different live owner, not an owned field path.
+  bool outerReference = type && type->kind == SemanticType::Reference &&
+                        type->arguments.size() == 1;
+  if (outerReference)
+    type = &type->arguments.front();
+  bool fieldSeen = false;
+  if (place)
+    for (const auto &projection : place->projections) {
+      if (projection.kind == MirProjectionKind::Dereference && outerReference &&
+          !fieldSeen) {
+        outerReference = false;
+        continue;
+      }
+      if (projection.kind != MirProjectionKind::Field)
+        return false;
+      fieldSeen = true;
+      type = ordinaryFieldType(program, type, projection.field);
+      if (!type)
+        return false;
+    }
+  for (const auto field : suffix) {
+    type = ordinaryFieldType(program, type, field);
+    if (!type)
+      return false;
+  }
+  const auto domain = type ? constantIntegerDomain(*type) : std::nullopt;
+  return domain && domain->width > 8;
+}
+
+void preserveLiveScalarFactsForConstruction(const MirProgram *program,
+                                            MirBodyAddress address,
+                                            const MirBody &body,
+                                            AbstractState &state) {
+  // The sealed operation requires vacant, nonconflicting final storage. Its
+  // scalar form invokes no constructor/user code, so it cannot overwrite an
+  // already live non-byte scalar place in a valid program. Byte/array storage
+  // may provide an object's backing representation and is not preserved.
+  std::erase_if(state.integerPlaces, [&](const auto &entry) {
+    return !liveScalarPath(program, address, body, entry.first);
+  });
+  for (auto &[root, object] : state.objects) {
+    std::erase_if(object.integers, [&](const auto &entry) {
+      return !liveScalarPath(program, address, body, root, entry.first);
+    });
+    object.elements.reset();
+    object.elementIntegers.clear();
+  }
+  state.arrayElements.clear();
+  state.aggregateElements.clear();
+  state.aggregateElementIntegers.clear();
+  state.loadedOrigins.clear();
+  state.aggregateOrigins.clear();
+  state.objectValues.clear();
+  state.hasOpaqueEffects = true;
+  state.liveMemoryBarrier = std::max(
+      state.liveMemoryBarrier, LiveMemoryBarrier::VacantScalarConstruction);
+}
+
 void applyInstruction(const MirBody &body,
                       const MirPlaceAliasEscapeAnalysis &aliases,
                       const MirBlock &block, const MirInstruction &instruction,
@@ -1916,6 +2061,10 @@ void applyInstruction(const MirBody &body,
   // its actual Load/Call/Compute instruction already carries the effects.
   if (inertLifecycleMarker(instruction))
     return;
+  if (isMirScalarFinalAddressConstruction(instruction)) {
+    preserveLiveScalarFactsForConstruction(program, address, body, state);
+    return;
+  }
   if (inertRawAddressOperation(instruction)) {
     // Address arithmetic/conversion neither observes nor modifies a pointee.
     // Preserve unrelated memory facts, but infer no address, extent, lifetime
@@ -2275,6 +2424,14 @@ void applyInstruction(const MirBody &body,
     // primitive into an opaque memory barrier when a source owner uses it.
     return;
   }
+  if (intrinsicBooleanFailureOutcome(instruction.intrinsic) &&
+      instruction.info.type == SemanticType::Void && !instruction.result &&
+      !instruction.receiver && instruction.operands.size() == 1 &&
+      instruction.operands.front().type == SemanticType::Bool) {
+    // These primitives test a source-computed condition and may fail; they
+    // neither discover a container invariant nor perform a memory transfer.
+    return;
+  }
 
   if (applyClosedCall(body, aliases, block, instruction, state, closedCalls,
                       address)) {
@@ -2419,6 +2576,8 @@ void joinAggregateElementIntegers(
   }
   const AbstractState before = target;
   target.hasOpaqueEffects |= incoming.hasOpaqueEffects;
+  target.liveMemoryBarrier =
+      std::max(target.liveMemoryBarrier, incoming.liveMemoryBarrier);
   joinIntegers(target.integers, incoming.integers, widen);
   joinIntegers(target.integerPlaces, incoming.integerPlaces, widen);
   joinIntegers(target.arrayValues, incoming.arrayValues, widen);
@@ -3733,9 +3892,16 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         round.incompleteBodies.insert(address);
       } else {
         if (initializers->second.hasOpaqueEffects) {
-          killUnknownMemory(*body, entry);
+          if (initializers->second.liveMemoryBarrier ==
+              LiveMemoryBarrier::VacantScalarConstruction)
+            preserveLiveScalarFactsForConstruction(&program, address, *body,
+                                                   entry);
+          else
+            killUnknownMemory(*body, entry);
           entry.hasOpaqueEffects = true;
         }
+        entry.liveMemoryBarrier = std::max(
+            entry.liveMemoryBarrier, initializers->second.liveMemoryBarrier);
         if (initializers->second.constructed.observed) {
           initialFields = initializers->second.constructed.fact;
           const MirPlaceId root = thisRoot(*body);
@@ -3800,6 +3966,9 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       std::any_of(exits.begin(), exits.end(), [](const AbstractState &state) {
         return state.hasOpaqueEffects;
       });
+  for (const auto &state : exits)
+    result.summary.liveMemoryBarrier =
+        std::max(result.summary.liveMemoryBarrier, state.liveMemoryBarrier);
 
   if (!returnFacts.empty()) {
     result.summary.result.observed = true;
