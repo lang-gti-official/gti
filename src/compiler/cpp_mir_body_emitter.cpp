@@ -7020,8 +7020,12 @@ unexpectedPayloadPublicationSlot(const MirBody &body, MirValueId valueId) {
   return ownedUnexpectedValue(body, *wrapper->result).payload;
 }
 
-[[nodiscard]] const MirPlace *classValuePublicationSlot(const MirBody &body,
-                                                        MirValueId valueId) {
+[[nodiscard]] const MirPlace *conditionalClassBindingJoinSlotForValue(
+    const MirProgram &program, const MirBody &body, MirValueId valueId);
+
+[[nodiscard]] const MirPlace *
+classValuePublicationSlot(const MirProgram &program, const MirBody &body,
+                          MirValueId valueId) {
   if (const auto *error = unexpectedPayloadPublicationSlot(body, valueId))
     return error;
   if (const MirPlace *payload = payloadTransferredValueSlot(body, valueId)) {
@@ -7038,8 +7042,11 @@ unexpectedPayloadPublicationSlot(const MirBody &body, MirValueId valueId) {
   }
   const TransferredConstructorArgument transferred =
       transferredConstructorArgumentForSource(body, valueId);
-  return transferred.slot != nullptr ? transferred.slot
-                                     : classValueDestinationSlot(body, valueId);
+  if (transferred.slot != nullptr)
+    return transferred.slot;
+  if (const MirPlace *destination = classValueDestinationSlot(body, valueId))
+    return destination;
+  return conditionalClassBindingJoinSlotForValue(program, body, valueId);
 }
 
 // A destination-less class Construct can publish only into the one exact
@@ -18544,7 +18551,8 @@ transformedFailureCallee(const MirProgram &program,
         !failureConstructorBoundaryEligible(program, *target) ||
         (stagedClassResultForSource(body, *consumer->result).producer !=
              consumer &&
-         classValuePublicationSlot(body, *consumer->result) == nullptr))
+         classValuePublicationSlot(program, body, *consumer->result) ==
+             nullptr))
       return nullptr;
   } else if (consumer->kind == MirInstructionKind::Call) {
     const auto *target =
@@ -28651,15 +28659,14 @@ public:
           // The adjacent store consumes this exact unowned transport directly.
           continue;
         }
-        if (classValuePublicationSlot(facts.body, value.id) != nullptr) {
+        if (classValuePublicationSlot(program, facts.body, value.id) !=
+            nullptr) {
           // The defining call, move, or construct publishes directly into
           // the unique consuming binding's lifetime slot.
           continue;
         }
         if (conditionalClassReturnJoinSlotForValue(facts.body, value.id) !=
-                nullptr ||
-            conditionalClassBindingJoinSlotForValue(program, facts.body,
-                                                    value.id) != nullptr) {
+            nullptr) {
           // Each conditional arm publishes directly into the shared join
           // slot; its class SSA record never owns independent storage.
           continue;
@@ -29467,10 +29474,12 @@ private:
         });
     const bool passiveClassTemporary =
         place.root == MirPlaceRootKind::Temporary &&
-        std::any_of(
-            body.values.begin(), body.values.end(), [&](const MirValue &value) {
-              return classValueDestinationSlot(body, value.id) == &place;
-            });
+        (static_cast<bool>(conditionalClassBindingJoin(program, body, place)) ||
+         std::any_of(body.values.begin(), body.values.end(),
+                     [&](const MirValue &value) {
+                       return classValueDestinationSlot(body, value.id) ==
+                              &place;
+                     }));
     if (place.traits.drop != DropKind::Trivial && !expectedCopyTemporary &&
         !expectedConditionalSlot(body, place) &&
         !expectedConditionalBinding(body, place) && !passiveClassTemporary &&
@@ -32354,7 +32363,7 @@ private:
         }
       }
       if (instruction.result &&
-          classValuePublicationSlot(facts.body, *instruction.result) !=
+          classValuePublicationSlot(program, facts.body, *instruction.result) !=
               nullptr) {
         output << "// class copy load " << *instruction.result
                << " publishes at its consuming initialize\n";
@@ -33099,7 +33108,7 @@ private:
             return;
           }
           const MirPlace *directDestination = classValuePublicationSlot(
-              facts.body, instruction.operands.front().value);
+              program, facts.body, instruction.operands.front().value);
           const MirPlace *conditionalDestination =
               conditionalClassReturnJoinSlotForValue(
                   facts.body, instruction.operands.front().value);
@@ -34533,8 +34542,8 @@ private:
         output << "));\n";
         return;
       }
-      if (const MirPlace *destination =
-              classValuePublicationSlot(facts.body, *instruction.result)) {
+      if (const MirPlace *destination = classValuePublicationSlot(
+              program, facts.body, *instruction.result)) {
         writeIndent();
         emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
                                                *destination);
@@ -34837,7 +34846,8 @@ private:
         const MirPlace *slot =
             publishesReturn || expectedPayload
                 ? nullptr
-                : classValuePublicationSlot(facts.body, *instruction.result);
+                : classValuePublicationSlot(program, facts.body,
+                                            *instruction.result);
         if (slot == nullptr && !publishesReturn && !expectedPayload &&
             fixedArrayAggregateInputSlot(program, facts.body,
                                          *instruction.result) != nullptr) {
@@ -36346,7 +36356,7 @@ private:
                                                    *instruction.result)
           : instruction.result
               ? (instruction.info.type.kind == SemanticType::Class
-                     ? classValuePublicationSlot(facts.body,
+                     ? classValuePublicationSlot(program, facts.body,
                                                  *instruction.result)
                      : directTemporaryBorrowForValue(facts.body,
                                                      *instruction.result)
@@ -37382,7 +37392,8 @@ private:
           instruction.intrinsic == IntrinsicKind::RestoringExchange;
       const MirPlace *destination =
           exchange && instruction.info.type.kind == SemanticType::Class
-              ? classValuePublicationSlot(facts.body, *instruction.result)
+              ? classValuePublicationSlot(program, facts.body,
+                                          *instruction.result)
           : exchange && instruction.info.type.kind == SemanticType::Expected
               ? expectedClassResultDestinationSlot(program, facts.body,
                                                    *instruction.result)
@@ -37618,8 +37629,8 @@ private:
         output << "__gti_mir_v_" << *instruction.result << ".construct();\n";
         return;
       }
-      if (const MirPlace *destination =
-              classValuePublicationSlot(facts.body, *instruction.result)) {
+      if (const MirPlace *destination = classValuePublicationSlot(
+              program, facts.body, *instruction.result)) {
         emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
                                                *destination);
         output << "__gti_mir_p_"
@@ -37719,8 +37730,8 @@ private:
         output << "__gti_mir_v_" << *instruction.result << ".construct();\n";
         return;
       }
-      if (const MirPlace *destination =
-              classValuePublicationSlot(facts.body, *instruction.result)) {
+      if (const MirPlace *destination = classValuePublicationSlot(
+              program, facts.body, *instruction.result)) {
         emitRepresentationOnlyPublicationRearm(facts, *instruction.result,
                                                *destination);
         output << "__gti_mir_p_"
@@ -37864,7 +37875,8 @@ private:
       }
       const MirPlace *classDestination =
           instruction.result && callee.returnType.kind == SemanticType::Class
-              ? classValuePublicationSlot(facts.body, *instruction.result)
+              ? classValuePublicationSlot(program, facts.body,
+                                          *instruction.result)
               : nullptr;
       const ConstructorFieldResultSlot constructorFieldDestination =
           instruction.result && callee.returnType.kind == SemanticType::Class
@@ -38178,9 +38190,9 @@ private:
         !failureForm ? producedCallResultLoan(facts.body, instruction)
                      : nullptr;
     const MirPlace *classDestination =
-        instruction.result
-            ? classValuePublicationSlot(facts.body, *instruction.result)
-            : nullptr;
+        instruction.result ? classValuePublicationSlot(program, facts.body,
+                                                       *instruction.result)
+                           : nullptr;
     if (classDestination == nullptr && instruction.result)
       classDestination = expectedClassResultDestinationSlot(
           program, facts.body, *instruction.result);
@@ -46316,7 +46328,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (constructDefined && slotConsumed(*definition)) ||
           passiveFixedArrayConstructInput(program_, body, value.id) !=
               nullptr ||
-          (classValuePublicationSlot(body, value.id) != nullptr &&
+          (classValuePublicationSlot(program_, body, value.id) != nullptr &&
            (definition == nullptr ||
             definition->kind != MirInstructionKind::Load ||
             copyLoadResult())) ||
@@ -46334,8 +46346,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (definition != nullptr &&
            stagedClassResultForSource(body, value.id).producer == definition) ||
           conditionalClassReturnJoinSlotForValue(body, value.id) != nullptr ||
-          conditionalClassBindingJoinSlotForValue(program_, body, value.id) !=
-              nullptr ||
           movedIntoValueStage() ||
           constructorFieldMoveInitialize(body, value.id) != nullptr ||
           (address.kind == MirBodyKind::Constructor &&
@@ -47245,10 +47255,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.result &&
               expectedPayloadInitialize(program_, body, *instruction.result) !=
                   nullptr;
-          const MirPlace *slot =
-              !publishesReturn && instruction.result
-                  ? classValuePublicationSlot(body, *instruction.result)
-                  : nullptr;
+          const MirPlace *slot = !publishesReturn && instruction.result
+                                     ? classValuePublicationSlot(
+                                           program_, body, *instruction.result)
+                                     : nullptr;
           if (slot == nullptr && !publishesReturn && instruction.result &&
               fixedArrayAggregateInputSlot(program_, body,
                                            *instruction.result) != nullptr) {
@@ -49595,7 +49605,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             returnCallDefinition(body, *instruction.result) == nullptr &&
             returnDefaultConstructionDefinition(body, *instruction.result) ==
                 nullptr &&
-            classValuePublicationSlot(body, *instruction.result) == nullptr &&
+            classValuePublicationSlot(program_, body, *instruction.result) ==
+                nullptr &&
             !constructorFieldResultSlot(program_, body, *instruction.result) &&
             !passiveCAbiCallValueResult(program_, body, *instruction.result) &&
             classSsaLifetimeSlot(program_, representations_, body,
@@ -49781,8 +49792,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                      placementDirectReturnCall(program_, representations_, body,
                                                *instruction.result) ==
                          &instruction ||
-                     classValuePublicationSlot(body, *instruction.result) !=
-                         nullptr ||
+                     classValuePublicationSlot(
+                         program_, body, *instruction.result) != nullptr ||
                      constructorFieldResultSlot(program_, body,
                                                 *instruction.result) ||
                      valueRootedClassCallResultSlot(program_, representations_,
@@ -50366,8 +50377,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (instruction.intrinsic == IntrinsicKind::RestoringExchange &&
                 instruction.info.type.kind == SemanticType::Class &&
                 (!instruction.result ||
-                 classValuePublicationSlot(body, *instruction.result) ==
-                     nullptr))
+                 classValuePublicationSlot(program_, body,
+                                           *instruction.result) == nullptr))
               return false;
             if (instruction.intrinsic == IntrinsicKind::RestoringExchange &&
                 instruction.info.type.kind == SemanticType::Expected &&
