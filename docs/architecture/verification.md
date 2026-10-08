@@ -4412,8 +4412,9 @@ inferred type/access hover, declaration navigation, copy hints, mutation/upgrade
 errors, UTF-16 spans, malformed-source recovery, dirty dependency overlays and
 format/reanalysis. These focused gates do not substitute for combined validation.
 Example 131 demonstrates an unrelated mutable record and a retained JSON node.
-Its reviewed inventory contributes 1,244 declarations, 530 bodies and 76 generated
-items; existing example entries are unchanged.
+Its reconciled inventory contributes 1,254 declarations, 530 bodies and 76
+generated items after the public container aliases are included. The standalone
+inference feature added no bodies or generated items to existing examples.
 
 The borrowed-reference issue checkpoint extends example 99 with two passive
 source-defined owner/referent types, nested read-only accessors and a fallible
