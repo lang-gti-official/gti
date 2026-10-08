@@ -27,13 +27,13 @@ namespace {
 
 using lowered_detail::addIssue;
 using lowered_detail::bodyRole;
+using lowered_detail::constructionSeal;
 using lowered_detail::containsGenerated;
 using lowered_detail::DerivedGeneratedGraph;
 using lowered_detail::deriveGeneratedGraph;
 using lowered_detail::findBody;
 using lowered_detail::findDeclaration;
 using lowered_detail::findGenerated;
-using lowered_detail::fingerprint;
 using lowered_detail::generatedLess;
 using lowered_detail::ordinal;
 
@@ -1526,8 +1526,7 @@ std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program) {
   std::vector<LoweredProgramIssue> issues =
       lowered_detail::verifyLoweredProgramContents(program);
-  const std::uint64_t currentSeal =
-      fingerprint(LoweredProgramPrinter().print(program));
+  const std::uint64_t currentSeal = constructionSeal(program);
   if (!program.constructionSeal_ || *program.constructionSeal_ != currentSeal) {
     addIssue(issues, LoweredProgramIssueKind::InvalidConstructionSeal,
              "lowered program differs from its immutable construction seal");
@@ -1540,8 +1539,11 @@ verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues) {
   const auto snapshot =
       std::make_shared<const LoweredProgram>(std::move(program));
-  issues = verifyLoweredProgram(*snapshot);
-  if (!issues.empty()) {
+  issues.clear();
+  if (!snapshot->constructionSeal_ ||
+      *snapshot->constructionSeal_ != constructionSeal(*snapshot)) {
+    addIssue(issues, LoweredProgramIssueKind::InvalidConstructionSeal,
+             "lowered program differs from its immutable construction seal");
     return std::nullopt;
   }
   return VerifiedLoweredProgram(snapshot);

@@ -9136,6 +9136,7 @@ buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
 CppProgramEmissionPlan
 buildCppProgramEmissionPlan(const VerifiedLoweredProgram &program,
                             CppStandard standard, bool debugInfo) {
+  const CppRepresentationScope representation(program);
   return CppProgramEmissionPlanner(program, standard, debugInfo).build();
 }
 

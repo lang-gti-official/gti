@@ -8,12 +8,15 @@
 namespace lang {
 
 BackendArtifact MirBackend::generate(LoweredProgram program) {
-  if (!verifyLoweredProgram(program).empty()) {
+  std::vector<LoweredProgramIssue> issues;
+  const std::optional<VerifiedLoweredProgram> verified =
+      verifiedLoweredProgram(std::move(program), issues);
+  if (!verified) {
     throw std::logic_error(
         "MIR backend refuses to serialize an invalid lowered program");
   }
   return {.kind = BackendArtifactKind::Source,
-          .contents = MirPrinter().print(program.mir()),
+          .contents = MirPrinter().print(verified->program().mir()),
           .extension = ".mir"};
 }
 

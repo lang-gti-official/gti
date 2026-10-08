@@ -4763,6 +4763,26 @@ interfaces that re-export a standard module and republish their own legacy
 unit, `export #include` misuse, same-name application modules, and a legacy
 standard unit shared with a module domain whose source-local flags differ.
 `stdlib_modules` imports every standard module individually.
+
+Reachable executable lowering is owned by `testReachableExecutableLowering` in
+`compiler_frontend`. It covers:
+- the hosted root's closure;
+- that unreferenced functions, methods, and classes are omitted;
+- that C declarations and records are kept;
+- that complete lowering is unchanged without the option;
+- that an error in a generic instantiated only by unreachable code is still
+  reported.
+
+The census gates measure the reduced artifact inventory:
+- `lowered_program_corpus_census` builds with the same option as artifact
+  builds;
+- `mir_census_regression` drives the CLI.
+
+Before the baselines were refreshed, every example was built and run with both
+the previous and the pruning compiler, and their exit status and output
+matched. `mir_cutover_corpus_oracle`, `cpp_mir_body_emitter_corpus`,
+`stdlib_surface`, `practical_examples`, and the native-header, callback,
+record, embedding, and C-oracle gates exercise the pruned artifacts.
 `source_modules_runtime` covers imported globals, private helper bodies,
 re-exported classes and constrained generics at O0/O1/O3 with C++20/C++23,
 then project imports, build-report edges, cache hits, export revocation and
