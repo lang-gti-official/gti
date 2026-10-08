@@ -50320,17 +50320,23 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                       ? program_.findConstructorInstance(
                             *instruction.constructorTarget)
                       : nullptr;
-              if (!failureForm || constructor == nullptr ||
-                  (!cppMirConstructorStatusCannotFail(program_,
-                                                      constructor->id) &&
-                   !failureConstructorBoundaryEligible(program_,
-                                                       *constructor))) {
+              const bool generated =
+                  mir_detail::generatedUniqueConstruction(instruction);
+              if (!failureForm ||
+                  (!generated && (constructor == nullptr ||
+                                  (!cppMirConstructorStatusCannotFail(
+                                       program_, constructor->id) &&
+                                   !failureConstructorBoundaryEligible(
+                                       program_, *constructor))))) {
                 return false;
               }
             }
             // Allocation consumes the ordinary explicit input schedule. Each
             // pack element has already become a typed CallInput carrying its
             // exact copy/move policy.
+            for (const auto &operand : instruction.operands)
+              if (const auto *stage = borrowStagedCallInput(body, operand))
+                consumedStaged.push_back(*stage->result);
             if ((scalarUniqueAllocation(instruction) &&
                  (!failureForm ||
                   !invokePairedInstruction(body, instruction.id))) ||
