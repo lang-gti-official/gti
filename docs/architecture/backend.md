@@ -546,10 +546,12 @@ writers. The native moved-from shell is retired after the binding construction,
 including when the same CFG executes again through a loop.
 The passive proof uses the class's generated destructor and active-cleanup
 facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
-without requiring an active cleanup operation. A conservative constructor
-`Invoke` may separate an arm from publication only when the selected constructor
-is proved failure-free and its unique success block contains only that
-publication. The shared class-publication query is used by both transformed
+without requiring an active cleanup operation. A constructor `Invoke` may
+separate an arm from publication only when its unique success block contains
+only that publication. The selected status constructor writes the slot at the
+original Invoke and engages it only on success; its original failure edge and
+cleanup remain intact. Ordinary constructor-boundary admission still verifies
+the selected constructor. The shared class-publication query is used by both transformed
 constructor admission and emission; recognizing storage in the prologue alone
 is insufficient.
 

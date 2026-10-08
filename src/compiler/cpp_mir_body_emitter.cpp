@@ -7450,12 +7450,11 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
       passive != nullptr && !passive->traits.containsBorrowedState &&
       passive->moveConstructor == SpecialMemberStatus::Generated &&
       mirTypeMoveIsDefinedFailureFree(program, value->info.type);
-  const bool conservativeInvoke =
+  const bool constructorInvoke =
       representationOnly && construct->constructorTarget &&
       construct->definedFailure.localOrigins.empty() &&
       construct->definedFailure.propagation ==
-          FailurePropagationKind::Constructor &&
-      cppMirConstructorStatusCannotFail(program, *construct->constructorTarget);
+          FailurePropagationKind::Constructor;
   if ((!representationOnly && value->info.traits.drop != DropKind::Lexical) ||
       !construct->result || *construct->result != valueId ||
       construct->destination || construct->receiver ||
@@ -7465,7 +7464,7 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
       construct->intrinsic != IntrinsicKind::None ||
       construct->constructorKind != ConstructorKind::Ordinary ||
       !construct->localFailureSites.empty() ||
-      (!construct->definedFailure.empty() && !conservativeInvoke) ||
+      (!construct->definedFailure.empty() && !constructorInvoke) ||
       construct->successResultDrop || construct->successResultDestination ||
       !hasCompleteCallInputSchedule(body, *construct)) {
     return {};
@@ -7565,7 +7564,7 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
     for (std::size_t index = 0; index + 1 < block->instructions.size(); ++index)
       adjacent |= block->instructions[index].id == construct->id &&
                   block->instructions[index + 1].id == initialize->id;
-  } else if (conservativeInvoke && publicationBlock != nullptr &&
+  } else if (constructorInvoke && publicationBlock != nullptr &&
              !block->instructions.empty() &&
              block->instructions.back().id == construct->id &&
              block->terminator.kind == MirTerminatorKind::Invoke &&
@@ -7579,9 +7578,11 @@ conditionalClassBindingJoinArm(const MirProgram &program, const MirBody &body,
              publicationBlock->activeFailure == 0 &&
              publicationBlock->instructions.size() == 1 &&
              publicationBlock->instructions.front().id == initialize->id) {
-    // Lowering retains a conservative Invoke even when the selected
-    // constructor cannot fail. Only its unique, work-free success path may
-    // separate construction from publication; never fuse across a join.
+    // The status constructor writes the slot at Invoke, and engages it only
+    // on success. Only its unique, work-free success path may separate
+    // construction from publication; failure retains the original cleanup
+    // edge and never reaches the join. Constructor-boundary admission remains
+    // responsible for proving the selected status constructor is supported.
     std::size_t incoming = 0;
     for (const MirBlock &candidate : body.blocks) {
       incoming += candidate.terminator.target == publicationBlock->id;

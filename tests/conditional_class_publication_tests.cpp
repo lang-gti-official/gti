@@ -4,7 +4,8 @@
 int main() {
   std::size_t joins = 0;
   for (const std::string fixture :
-       {"conditional_class_passive", "conditional_class_cleanup"}) {
+       {"conditional_class_passive", "conditional_class_cleanup",
+        "conditional_class_passive_failure"}) {
     const auto path = std::filesystem::path(__FILE__).parent_path() /
                       "fixtures" / (fixture + ".gti");
     std::ifstream input(path);
@@ -21,7 +22,7 @@ int main() {
     } catch (const std::exception &error) {
       expect(false, error.what());
     }
-    if (fixture != "conditional_class_passive")
+    if (fixture == "conditional_class_cleanup")
       continue;
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &slot : function.body.places) {
@@ -140,6 +141,7 @@ int main() {
       }
     }
   }
-  expect(joins == 1, "one source-defined passive class diamond was exercised");
+  expect(joins == 2,
+         "nonraising and raising passive class diamonds were exercised");
   return failures ? 1 : 0;
 }
