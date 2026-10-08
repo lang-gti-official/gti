@@ -5010,9 +5010,18 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   tags, construction-preflight instruction and metadata, effect/name tables,
   representation row and private optimizer facts are now removed as well.
   General scalar, fixed-array and direct-index aggregate analysis remains.
-  Legacy optimizer fixtures and full admission/corpus/performance coverage
-  still need migration and acceptance; no performance-parity claim follows
-  from retiring the private proof model.
+  Optimizer client fixtures now use ordinary `prefix_owner` operations, and
+  native evidence observes the source logical-bounds helper rather than the
+  retired private checked/unchecked read helpers. Their original positive
+  bounds and element-envelope requirements remain acceptance failures, not
+  silently changed to zero-discharge expectations: the optimized safety suite
+  currently reports ten unmet proofs/context requirements. Source access puts
+  its inner check in a selected reference-returning callee, so the positive
+  query follows that exact borrowing call chain. Generic raw-memory/owned
+  construction summaries must recover the warranted facts without restoring a
+  nominal prefix-container rule. Full admission/corpus/performance coverage
+  still needs acceptance; no performance-parity claim follows from retiring
+  the private proof model.
   The `source_prefix_complete_elements` composition probe remains unaccepted:
   its owning-payload/expected-vector native entry profile fails with both the
   baseline and source-owner implementations. Preserve that reduction while
