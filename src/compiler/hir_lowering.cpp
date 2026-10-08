@@ -1384,7 +1384,10 @@ private:
       }
       aliases.push_back(
           {.declaration = alias->id, .source = source, .type = alias->type});
-      (void)enqueueClass(alias->type);
+      // Naming an alias is not a layout or construction use. Preserve its
+      // exact type catalog without discovering executable class bodies;
+      // actual fields/calls/signatures enqueue their concrete types below.
+      seedAliasEnumIdentities(alias->type);
     }
     output.program.classes[index].typeAliases = std::move(aliases);
     std::vector<HirClassField> fields;

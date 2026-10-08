@@ -16,9 +16,9 @@ void testSelectedConstructorDefaultSchedule() {
   bool checked = false;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     const auto *owner = frontend.mir.findClassInstance(constructor.owner);
-    const auto *info = owner == nullptr
-                           ? nullptr
-                           : frontend.semantics.findClassType(owner->declaration);
+    const auto *info =
+        owner == nullptr ? nullptr
+                         : frontend.semantics.findClassType(owner->declaration);
     if (!info || !info->declaration ||
         info->declaration->name().lexeme != "ReferenceOverride" ||
         owner->declaredFields.size() != 3 ||
