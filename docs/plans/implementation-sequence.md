@@ -7395,6 +7395,130 @@ consumer, and release refreshes remain outstanding for the full campaign.
   deterministic layout facts, and O0/O3 runtime parity. The passive first slice
   already has exact construction, exhaustive diagnostics, and runtime parity.
 
+### L-SUM-02: Flat Payload Enum Composition Proposal
+
+- **State/role:** proposal for review; no source support is implemented by this
+  document. Prerequisite: `L-SUM-01` concrete generic payload identities,
+  alternative signatures, exhaustive matching, and verified lifecycle facts.
+  This is a follow-on capability, not a new blocker for unrelated compiler work.
+- **Unlocks:** independently maintained keyboard, mouse, window, or protocol
+  message families can contribute alternatives to one flat queue element type.
+  An engine can enqueue `Event::KeyPressed(...)` and match that alternative
+  directly without repeating payload declarations or nesting category wrappers.
+  The same rule must work for unrelated user-defined protocol families.
+- **Proposed source shape:** an enum-body `using Family;` clause contributes
+  all alternatives from one exact payload-enum type. The spelling below is
+  illustrative and subject to grammar/tooling review; it is not accepted GTI.
+
+  ```gti
+  enum KeyEvents {
+    KeyPressed(int32_t key, bool repeat),
+    KeyReleased(int32_t key)
+  };
+
+  enum MouseEvents {
+    MouseMoved(float x, float y),
+    MouseScrolled(float x_offset, float y_offset)
+  };
+
+  enum Event {
+    using KeyEvents;
+    using MouseEvents;
+    WindowClose,
+    WindowResize(uint32_t width, uint32_t height)
+  };
+
+  // Proposed flat use: ordinary queue storage and matching after composition.
+  auto event = Event::KeyPressed(65, false);
+  // case Event::KeyPressed(key, repeat): ...
+  ```
+
+#### Proposed semantic contract
+
+Composition builds a new closed nominal enum. It is declaration composition,
+not inheritance, an extensible runtime registry, or textual substitution.
+`KeyEvents::KeyPressed` and `Event::KeyPressed` have distinct enum and
+alternative identities even though their payload signatures correspond. The
+destination owns only its active payload, and its copy/move/drop capabilities
+are folded from the complete flattened alternative set by the ordinary enum
+rules. Source family names do not add runtime wrapper alternatives.
+
+The operand must resolve to a payload enum, directly or through a transparent
+alias. A generic operand must be exact after substitution, for example
+`using Messages<T, 3>;` inside a generic destination. Constraints, defaults,
+payload eligibility, ownership and finite layout checks apply at concrete
+instantiation. Importing alternatives must not evade an existing payload
+restriction. Integral enums are outside this proposal; mixing numeric
+discriminants into a payload family needs a separate semantic decision.
+
+Payload type names are resolved in the source family's declaration context,
+with ordinary generic substitution. They must not be rebound to identically
+named declarations in the destination context. Member visibility and module
+export rules remain applicable. Composing an externally visible family must
+not expose an inaccessible payload type accidentally.
+
+Expansion is deterministic: clauses contribute alternatives at their source
+position, and transitive composition preserves that order. Duplicate names are
+located errors, including direct/imported collisions and repeated or diamond
+imports. Do not silently deduplicate or select a winner. Composition cycles
+are rejected independently of by-value payload-layout cycles. Renaming and
+selective import are follow-on design questions; the first proposal requires
+authors to resolve collisions in their family definitions.
+
+Exhaustive switches operate on the flattened destination alternatives. Adding
+an alternative to a source family changes the destination's alternative set
+and can invalidate an exhaustive switch or folded capability. This coupling
+must be documented as an API change. Alternative order does not establish a
+stable numeric tag, serialized representation, or native ABI.
+
+Existing family values do not implicitly convert to the composed enum. Direct
+construction of a destination alternative is the first intended workflow.
+Keep explicit value conversion as an open decision: a later injection operation
+would need a unique alternative mapping and ordinary copy/move/failure rules;
+reverse conversion would be fallible. Composition alone must not add unchecked
+casts or reference reinterpretation between different enum types.
+
+Categories, names, formatting and propagation policy remain ordinary source
+functions or envelope fields. Composition does not automatically create a
+category bitmask, reflection API, dispatcher, or `handled` flag. A closed flat
+family suits engine-controlled events; separately developed plugin families
+still require deliberate recomposition or an independent extensible channel.
+
+#### Implementation direction and acceptance gates
+
+Before implementation, review the proposed `using` grammar, dependency-cycle
+diagnostics, exported payload accessibility and the exact generic composition
+rules. Compare with manually repeated alternatives and explicitly nested
+families; record why flat declaration composition serves the queue workflow.
+Audit existing enum declaration/instance discovery so expansion extends its
+authority rather than introducing a second variant catalog.
+
+The parser/AST preserves composition clauses and their source spans. Semantic
+analysis owns exact operand resolution, expansion, collision/cycle checks and
+destination alternative identities, retaining source provenance for related
+diagnostics. HIR/MIR consumes those resolved identities, payload signatures and
+lifecycle facts through the existing enum construction/matching contracts.
+The backend must neither expand clauses nor infer meaning from family names.
+LSP navigation should reach the original alternative declaration while hover,
+completion and matching present the destination-qualified identity. Formatting,
+Tree-sitter and incomplete-source recovery need the new declaration shape.
+
+A future implementation must ship a runnable event-queue example plus an
+unrelated composed protocol family, registered in the example index/corpus
+with updated census expectations. Tests must cover direct/transitive/generic
+and alias composition, exact construction and exhaustive matching, owned and
+move-only payloads, unchanged queue transport and exactly-once cleanup on
+normal and defined-failure paths. Negative tests must cover collisions,
+diamonds, cycles, wrong operand kinds, inaccessible/unsupported payloads,
+invalid generic arguments and accidental cross-enum conversion. Source spans,
+LSP identities and malformed MIR rejection require focused evidence. Use an
+optimized GTI compiler and the relevant C++20/23/native/sanitizer gates.
+
+Acceptance requires one flat user-visible enum with sound existing ownership
+semantics, preserved source provenance, and no nominal event-library compiler
+exceptions. This proposal changes no language behaviour and requires no
+`VERSION` change; version policy applies when an implementation ships.
+
 ### L-ERR-01: Error Propagation Operator
 
 - **State/role:** complete in 0.311.0; `M-LIFE-01`, `D-LANG-01`, and
