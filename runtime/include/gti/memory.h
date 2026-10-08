@@ -24,7 +24,9 @@ int32_t gti_rt_posix_enomem_v1(void);
 int32_t gti_rt_posix_einval_v1(void);
 // Preconditions: bytes > 0; alignment is a power of two and a multiple of
 // sizeof(void*); both fit size_t; status points to a writable int32_t. Preserve
-// the POSIX status unchanged. GTI cannot yet declare this size_t/void** ABI.
+// the POSIX status unchanged. The fixed-width v1 ABI is retained independently
+// of GTI's native c_size_t/nested-pointer support; its unique symbol lets an
+// application also bind posix_memalign under the one-C-declaration rule.
 void *gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment,
                                int32_t *status);
 // Avoid claiming an application's ordinary free declaration while compatible

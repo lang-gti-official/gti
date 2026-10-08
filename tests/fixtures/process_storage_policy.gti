@@ -1,0 +1,83 @@
+#include <std/memory>
+#include <std/numeric>
+
+extern "C" {
+  void provider_test_mode(int32_t mode);
+  void provider_test_fail_on_call(int32_t attempt);
+  int32_t provider_test_calls();
+  int32_t provider_test_releases();
+  uint64_t provider_test_bytes(int32_t attempt);
+  void provider_test_event(int32_t value);
+  int32_t provider_test_events();
+  int32_t provider_test_event_at(int32_t index);
+}
+
+// An owning, immovable payload proves that moving the storage owner preserves
+// final addresses and that element cleanup precedes both native releases.
+class Fixed {
+  std::unique_ptr<int> owned;
+  int identity;
+public:
+  Fixed(int identity) : owned(std::make_unique<int>(identity)), identity(identity) {}
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+  int value() { return *this.owned; }
+  ~Fixed() { provider_test_event(this.identity); }
+};
+
+int main() {
+  std::allocator allocator{};
+  provider_test_mode(0);
+  {
+    auto empty = allocator.try_storage<Fixed>(std::size_t(0)).expect("empty");
+    auto invalid = allocator.try_storage<Fixed>(std::size_t(1), std::alignment(std::size_t(3)));
+    auto overflow = allocator.try_storage<Fixed>(std::MAX_UINT64);
+    if (empty.capacity() != std::size_t(0) || invalid || overflow) { return 1; }
+    if (invalid.error() != std::alloc_errc::invalid_alignment ||
+        overflow.error() != std::alloc_errc::size_overflow) { return 2; }
+  }
+  if (provider_test_calls() != 0 || provider_test_releases() != 0) { return 3; }
+
+  // A failed object request acquires nothing. A failed metadata request returns
+  // the one acquired object region before the fallible factory returns.
+  for (mut int attempt = 1; attempt <= 2; attempt++) {
+    provider_test_mode(0);
+    provider_test_fail_on_call(attempt);
+    auto failed = allocator.try_storage<Fixed>(std::size_t(3));
+    if (failed || failed.error() != std::alloc_errc::resource_exhausted) { return 4; }
+    if (provider_test_calls() != attempt || provider_test_releases() != attempt - 1) { return 5; }
+    if (attempt == 2 && (provider_test_events() != 1 || provider_test_event_at(0) != -1)) { return 6; }
+  }
+
+  provider_test_mode(0);
+  {
+    mut auto first = allocator.try_storage<Fixed>(std::size_t(3), std::alignment(std::size_t(4096))).expect("first");
+    mut auto second = allocator.try_storage<int>(std::size_t(1)).expect("second");
+    if (provider_test_calls() != 4 || provider_test_releases() != 0) { return 7; }
+    if (provider_test_bytes(1) != std::layout_of<Fixed>().bytes * uint64_t(3) ||
+        provider_test_bytes(2) != uint64_t(3) ||
+        provider_test_bytes(3) != std::layout_of<int>().bytes ||
+        provider_test_bytes(4) != uint64_t(1)) { return 14; }
+    first.emplace(std::size_t(0), 10);
+    first.emplace(std::size_t(2), 20);
+    second.emplace(std::size_t(0), 30);
+    const Fixed* address = &first.get(std::size_t(0));
+    mut auto moved = std::move(first);
+    if (&moved.get(std::size_t(0)) != address || moved.get(std::size_t(2)).value() != 20) { return 8; }
+    moved.destroy(std::size_t(2));
+    moved.emplace(std::size_t(2), 21);
+    if (provider_test_releases() != 0 || provider_test_events() != 1 || provider_test_event_at(0) != 20) { return 9; }
+    moved.release();
+    if (moved.capacity() != std::size_t(0) || provider_test_releases() != 2) { return 10; }
+    // All objects die first, then metadata (region 2), then objects (region 1).
+    if (provider_test_events() != 5 || provider_test_event_at(1) != 21 ||
+        provider_test_event_at(2) != 10 || provider_test_event_at(3) != -2 ||
+        provider_test_event_at(4) != -1) { return 11; }
+    if (second.get(std::size_t(0)) != 30) { return 12; }
+  }
+  if (provider_test_calls() != 4 || provider_test_releases() != 4 ||
+      provider_test_events() != 7 || provider_test_event_at(5) != -4 ||
+      provider_test_event_at(6) != -3) { return 13; }
+  provider_test_mode(0); // Independently rejects any remaining live native region.
+  return 0;
+}

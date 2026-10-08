@@ -234,7 +234,110 @@ declarations run still reports two obsolete generated-default spelling
 assertions already under maintenance in the parallel enum reconciliation;
 that aggregate is not counted as passing at this checkpoint.
 
-## Source-defined process byte provider (S-ALLOC-07 checkpoint)
+## Source-defined process byte provider (S-ALLOC-07)
+
+### Completion acceptance (2026-10-08)
+
+The completion candidate in PR #162 is built from clean revision `fa72b523`
+(0.386.1), using optimized Release/Ninja, AppleClang 21 and LLVM 22.1.8 on
+macOS arm64. The unfiltered production CTest suite passes **558/558**, with no
+failures or skips. This includes the source-provider/default-storage matrix,
+programmable allocators, lifetime and borrow rejection, malformed MIR,
+Off/Warn parity, LSP, tooling, ABI and installed-artifact contracts. The emitter
+corpus admits all 21,106 bodies from 127 sources; the independent cutover oracle
+builds and runs all 127 examples at both endpoints with 21,103 reviewed body
+identities unchanged. The coverage corpus passes 267 programs and rejects the
+expected 160 negatives (427 total).
+
+Separate clean staging passes **13/13 installed-library consumers**, including
+the native memory boundary. The provider matrix passes all eight native modes
+against both build-tree and explicitly pinned installed resources, including
+no-elide and ASan/UBSan, plus Off/Warn emission parity. Its harness rejects
+missing or ambiguous installed resources rather than falling back to a source
+tree. Examples 119–121, 125–126 and 128–129 pass with that staged compiler at
+C++20/O0 and C++23/O3 (14 executions); `libc-region-provider` additionally runs
+inside the provider matrix. Tree-sitter grammar/query/shipped-source contracts
+and the full 500-file first-party formatting check pass.
+
+Injected-provider observations now cover exact object/metadata extents,
+zero/invalid/overflow requests, first and second acquisition failure,
+rollback, simultaneous owners, immovable owning elements, slot reuse and
+movement of owners without moving elements. Constructor and destructor failure
+traces retain their original GTI error/source, completed-field cleanup and
+element-before-region release. The observer checks matching descriptors,
+exactly-once release and absence of leaked regions independently of the GTI
+owner's accounting.
+
+That final cleanup fixture exposed #165: the representation gate rejected an
+already verified numeric alias/type-parameter conversion before a conditional
+argument. The narrow repair admits the existing exact scalar intrinsic Call
+form and its checked Invoke edge; it does not infer new language semantics or
+recognise an allocator name. An unrelated generic `Pair` regression exercises
+both conditional outcomes and both conversion-failure paths, retaining
+GTI-R0006 and destructor observations. Backend mutation tests reject wrong
+intrinsic identity, extraneous operands/receiver and malformed failure control
+flow. This user-visible compiler fix accounts for the patch-version advance.
+
+Raw full-suite and installed-consumer reports are retained locally at
+`/private/tmp/gti-source-process-allocation-final.xml` and
+`/private/tmp/gti-source-process-allocation-installed-final.xml`. Subsequent
+completion-report edits leave the tested implementation and test sources
+unchanged from `fa72b523`.
+
+Native execution evidence is macOS arm64. Linux native CI is queued without an
+available runner; native Windows execution is unavailable. The full local suite
+retains the Linux/Windows provider selection and target ABI contracts, but
+neither is a claim of execution on those hosts. Completion reporting must keep
+this platform limitation explicit.
+
+### Final cost comparison and open performance follow-up
+
+After the other agents' compiler/test workers exited, the same-host frozen
+snapshot comparison measured baseline `229f095f` against clean `fa72b523`.
+Both use C++23/O2; five interleaved compilation samples and nine runtime samples
+follow warmups. The candidate repository checkpoint `964fc6e9` changes only
+completion documentation relative to the tested compiler. Raw commands,
+snapshots, hashes, build/optimization reports, individual samples and complete
+outputs are retained in
+`/private/tmp/gti-source-process-allocation-cost-final-20261008/report.json`.
+
+| Operation | Baseline median | Final candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Emit C++ | 1,828.34 ms | 2,214.24 ms | +21.1% |
+| Full direct compilation | 3,067.85 ms | 3,798.82 ms | +23.8% |
+| Process-storage workload | 27.84 ms | 102.57 ms | +268.4% |
+| Resource-storage workload | 52.80 ms | 112.10 ms | +112.3% |
+
+This is a material regression, not performance parity: process samples range
+27.75–28.15 ms versus 101.82–103.91 ms, and resource samples 52.69–53.31 ms
+versus 111.43–113.25 ms. Generated C++ grows 2,424,838→3,098,270 bytes and the
+executable 461,784→537,928 bytes. Scalar/destructor observations are identical
+to the oracle below. Explicit resource acquisitions/releases grow
+50,000→100,000, as required by the separate same-provider metadata policy;
+process-mode zero resource counters are not a claim of zero allocation.
+
+The comparison includes later general compiler changes as well as source
+storage migration; it does not isolate the cost of libc or the #165 fix.
+Inspection finds a concrete additional lead: the baseline process loop inlines
+emplacement and reads, while the final loop calls source storage methods and
+read wrappers call another checked method. ARM64 `sparse_slots::read_mut`
+reserves a 0x480-byte local frame for cold failure handling; process `exercise`
+reserves 0x4a0 versus baseline 0x80. The baseline report discharges zero
+storage-state checks, so loss of an applied initialized-set optimization does
+not explain the measured change. These code observations and the additional
+allocation explain what changed, not each factor's measured causal share.
+
+[Issue #169](https://git.internal.howetotech.dev/gti-lang/gti/issues/169) records
+reproduction and the follow-up to profile/bisect allocation, access, general
+failure-path code size and host inlining separately. Any optimization must
+preserve cleanup/failure identity and source-owned policy, rather than remove
+safety checks or restore a nominal sparse-storage compiler exception. The
+S-ALLOC-07 migration/measurement gates are complete with this performance
+follow-up explicitly open; the phase never specified a timing-parity threshold.
+Neither these bounded local observations nor the historical samples below are
+a general or cross-platform performance guarantee.
+
+### Historical pre-reconciliation measurement and provider checkpoint
 
 The pre-reconciliation storage-cost probe uses frozen optimized compiler,
 runtime and library snapshots: clean baseline `229f095f` (0.381.0), and the
@@ -291,11 +394,11 @@ Linux and Windows targets, requiring only the corresponding POSIX/CRT adapter
 family. `resource_memory_runtime` checks actual target facts, writable aligned
 extents and matching native release. The C ABI header smoke fixes the exact
 fixed-width adapter signatures. These are local macOS arm64 tests with optimized
-compiler libraries, not evidence of native Windows/Linux execution. Native CI,
-installed consumers and production gates remain required before the full
-S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
-metadata/default-factory migration described above; the provider checkpoint's
-independent tests alone do not validate that integration.
+compiler libraries, not evidence of native Windows/Linux execution. At this
+historical checkpoint, installed consumers and production gates were still
+outstanding; the completion evidence above now covers that integration. Native
+platform limitations remain explicit. The independent provider tests alone are
+not the evidence for the combined sparse-metadata and default-factory migration.
 
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
