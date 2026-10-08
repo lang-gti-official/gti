@@ -1852,6 +1852,23 @@ default exactly once. Explicit overrides suppress the corresponding default;
 failure unwinds completed fields before constructor parameters and caller
 values, without beginning the enclosing object's lifetime.
 
+Native field-prefix proofs consume this selected constructor schedule, not
+the passivity of the unselected catalog defaults. Exact field identities and
+declaration order, child input preparation, original Invoke outcomes, and
+publication/rollback identities still require proof. An observable or panicking
+default that the selected constructor overrides must never execute.
+
+A cleanup-free, zero-input, single-field constructor can retain a child's
+status-tag native construction when that child has no ordinary constructor
+representation. The proof covers the complete parent body: one selected
+Construct/Invoke, immediate success-field Initialize and full-expression end,
+Return, and exact failure propagation, with no loans or drop obligations. It
+independently proves the entire selected child non-failing, including an exact
+InitializeBase target and success activation; neither abstract-base spelling
+nor a conservative effect summary supplies that proof. Fallible children,
+multiple fields, owning cleanup, and additional body work are not admitted by
+this bounded matcher and require their existing independently proved routes.
+
 An owning field-result call can itself consume prepared owning arguments.
 Calls and constructors share the same exact input-transfer proof: every
 unconditional `TransferOut` names one operand's prepared-parameter obligation,
@@ -1870,6 +1887,28 @@ cannot impose conflicting native defaults on the same retained template.
 Every selected constructor still requires the full field-order, exact-type,
 and once-only coverage proof; absence of a constructor is not permission to
 omit a default from an executable construction.
+
+A status constructor may override an effectful declaration default, including
+an implicitly selected nominal default. The declaration catalog is not a second
+executable schedule: this route requires native catalog suppression and exact
+selected field order/types, each MIR producer and `Initialize` publication, and
+its full-expression endpoint. Stored reference fields retain the existing exact
+parameter/loan binding proof. Each endpoint must precede the next field's
+producer; missing, duplicate or forged coverage is rejected. This same proof
+replaces initializer-list-only coverage for status base constructors. Per-field
+empty-shell, active-drop, reference and failure-rollback checks remain separate
+and mandatory; selected-schedule coverage does not authorize an empty native
+representation by itself. An overridden default is neither evaluated nor
+replayed by native field initialization.
+
+Nullable raw-pointer declaration defaults retain MIR's `NullPtr` literal value
+and the field's distinct typed pointer destination. The selected-schedule proof
+admits only the exact null literal conversion, with matching producer/value
+identity, publication operand and destination; arbitrary mismatched values do
+not qualify. A sealed optional-storage construction independently proves its
+selected private constructor's instruction-free, unborrowed void-return body on
+every aggregate/status admission route. Field order or an empty native shell
+alone cannot replace that witness.
 
 Generated/defaulted construction still uses the separate declaration schedule.
 Fallible ordinary class-value calls on that route remain `GTI-B0003`: generated

@@ -827,6 +827,21 @@ add_test(NAME constructor_transport COMMAND gti_constructor_transport_tests)
 add_test(NAME generic_callable_transport_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_callable_transport_runtime_test.py" "$<TARGET_FILE:gti>")
 set_tests_properties(generic_callable_transport_runtime PROPERTIES TIMEOUT 360)
+add_test(NAME generic_branch_locals_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/generic_branch_locals_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+add_executable(gti_generic_initialization_tests generic_initialization_tests.cpp)
+target_link_libraries(gti_generic_initialization_tests PRIVATE gti_compiler)
+add_test(NAME generic_initialization COMMAND gti_generic_initialization_tests)
+add_executable(gti_generic_layout_tests generic_layout_tests.cpp)
+target_link_libraries(gti_generic_layout_tests PRIVATE gti_compiler)
+add_test(NAME generic_layout COMMAND gti_generic_layout_tests)
+add_test(NAME generic_instance_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/generic_instance_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(generic_instance_runtime PROPERTIES TIMEOUT 600)
 
 add_executable("gti_lowered_program_census"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_census.cpp"

@@ -121,8 +121,8 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | Silent miscompile | A25 resolved: reference relays preserve the exact referent |
 | Runtime-semantics or tooling result | A02: `gti test` passes a test whose `main` returns 256 |
 | Compiler hang or silent failure | A06 and A57 resolved; A41 now reports a located internal failure but its forwarding defect remains unresolved |
-| ICE or invalid generated C++ on valid code | A01, A14, A15, A17, A26–A31, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
-| Valid code rejected | A03, A18, A19, A23, A34, A36 |
+| ICE or invalid generated C++ on valid code | A01, A14, A17, A26–A31, A37–A40, A42, A45–A52, A55, A56, A58, A59 |
+| Valid code rejected | A18, A19, A34, A36; A03/A23 fixes await current-main integration validation |
 | Specification gap | A04: a dependency's own `[build] defines` is ignored |
 | Diagnostic quality | A05, A07–A12, A20–A22, A24, A33, A35, A43, A44, A53, A60, A61 |
 
@@ -130,7 +130,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | --- | --- | --- | --- |
 | A01 | [#53](https://git.internal.howetotech.dev/gti-lang/gti/issues/53) C++ backend ICE assigning a class value into a class-typed field | fixed; focused native and representation checks | `reproducers/a01-call-result-into-field`<br>`reproducers/a01-class-value-into-field`<br>`reproducers/a01-field-assign-from-call-result-method` |
 | A02 | [#54](https://git.internal.howetotech.dev/gti-lang/gti/issues/54) hosted entry maps results outside 0..255 to failure status 1 after cleanup | fixed; passing regression | `projects/a02-test-status-truncation` |
-| A03 | [#55](https://git.internal.howetotech.dev/gti-lang/gti/issues/55) Program-wide initializer proof rejects any generic call (GTI-S2068) | rejected | `reproducers/a03-generic-call-in-global-initializer` |
+| A03 | [#55](https://git.internal.howetotech.dev/gti-lang/gti/issues/55) Closed generic initializer effects are analyzed with exact selected instance arguments; real later accesses and unknown effects remain rejected | pass | `reproducers/a03-generic-call-in-global-initializer`, `generic_initialization` |
 | A04 | [#56](https://git.internal.howetotech.dev/gti-lang/gti/issues/56) dependency defines participate in the selected program's shared configuration | fixed; passing regression | `projects/a04-dependency-defines` |
 | A05 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Resolved: conversion guidance uses a proven exact public view accessor, not an invalid constructor | rejected, fixed regression | `reproducers/a05-string-view-help-suggests-invalid-form` |
 | A06 | [#57](https://git.internal.howetotech.dev/gti-lang/gti/issues/57) Resolved: unbounded polymorphic recursion is resource-bounded | rejected (GTI-S2105) | `reproducers/a06-polymorphic-recursion-hang` |
@@ -142,7 +142,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A12 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: the external-symbol catalog publishes one duplicate C declaration error | rejected, fixed regression | `reproducers/a12-extern-c-overload-duplicate` |
 | A13 | [#59](https://git.internal.howetotech.dev/gti-lang/gti/issues/59) Resolved: physical field identities are published in active declaration order before borrow/layout queries | pass | `reproducers/a13-mir-field-symbol-order`, `field_symbol_identity`, `mir_field_determinism`, `mir_associative_determinism` |
 | A14 | [#60](https://git.internal.howetotech.dev/gti-lang/gti/issues/60) C++ backend ICE: constructor-less struct field initializer inside a class with a user constructor | fixed; focused native and representation checks | `reproducers/a14-generated-ctor-field-in-user-ctor` |
-| A15 | [#61](https://git.internal.howetotech.dev/gti-lang/gti/issues/61) ICE: local declared inside a dependent if constexpr branch (absent lowered symbol) | ice | `reproducers/a15-dependent-if-constexpr-local` |
+| A15 | [#61](https://git.internal.howetotech.dev/gti-lang/gti/issues/61) Selected dependent branches retain concrete semantic symbol records through HIR and lowered inventory | candidate focused/native pass; full-suite and main integration pending | `reproducers/a15-dependent-if-constexpr-local`, `generic_branch_locals_runtime` |
 | A16 | [#62](https://git.internal.howetotech.dev/gti-lang/gti/issues/62) Resolved: copyable lambda return retains its verified Load SSA publication | pass | `reproducers/a16-relay-copyable-lambda`, `testCopyableLambdaReturnRetainsSsa`, `generic_callable_transport_runtime` |
 | A17 | [#63](https://git.internal.howetotech.dev/gti-lang/gti/issues/63) Contextual signed fixed-array literals | resolved: pass | `reproducers/a17-narrow-negative-array-literal` |
 | A18 | [#64](https://git.internal.howetotech.dev/gti-lang/gti/issues/64) Function item rejected as a callable argument invoked with a parameter pack | resolved: pass | `reproducers/a18-function-item-pack-invoke` |
@@ -150,7 +150,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A20 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | resolved: pass | `reproducers/a20-unnecessary-mut-per-instance` |
 | A21 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Resolved: a runtime identifier in a value slot fails the compile-time contract, not type lookup | rejected, fixed regression | `reproducers/a21-value-argument-resolved-as-type` |
 | A22 | [#68](https://git.internal.howetotech.dev/gti-lang/gti/issues/68) Resolved: failed required constant evaluation does not cascade into runtime initialization-effect proof | rejected, fixed regression | `reproducers/a22-spurious-s2068-after-constexpr-failure` |
-| A23 | [#67](https://git.internal.howetotech.dev/gti-lang/gti/issues/67) Finite value-generic recursion ended by a specialization is rejected as self-containing | rejected | `reproducers/a23-recursive-value-generic-layout` |
+| A23 | [#67](https://git.internal.howetotech.dev/gti-lang/gti/issues/67) Finite value-generic layouts retain concrete alias identities and checked nominal-field defaults | candidate failure/rollback and full-corpus pass; full-suite and main integration pending | `reproducers/a23-recursive-value-generic-layout`, `generic_layout`, `lowered_program_contract`, `generic_instance_runtime` |
 | A24 | [#66](https://git.internal.howetotech.dev/gti-lang/gti/issues/66) Advisory warnings decided from one generic instance are wrong (GTI-S2096, GTI-S2095) | resolved: pass | `reproducers/a24-unreachable-warning-per-instance` |
 | A25 | [#70](https://git.internal.howetotech.dev/gti-lang/gti/issues/70) Miscompile: returning a local reference through expected<T&, E> yields the parameter, not the referent | resolved: pass | `reproducers/a25-expected-ref-relay-wrong-referent`<br>`reproducers/a25-ref-return-from-expected-value` |
 | A26 | [#71](https://git.internal.howetotech.dev/gti-lang/gti/issues/71) Overloaded dereference self-read store | resolved: pass | `reproducers/a26-overloaded-deref-store-reads-owner` |

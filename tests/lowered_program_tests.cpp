@@ -232,7 +232,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v15") == 0 &&
+  expect(firstText.find("lowered-program-v16") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -852,6 +852,197 @@ void testMutationRejection() {
   }
 }
 
+void testConcreteBranchSymbols() {
+  constexpr std::string_view source = R"gti(
+T select<T, uint64_t Mode>(T value) {
+  if constexpr (Mode == 0) {
+    T local = value;
+    { T local = value; }
+    return local;
+  } else {
+    T alternative = value;
+    return alternative;
+  }
+}
+int main() {
+  return select<int, 0>(7) == 7 && select<bool, 0>(true) &&
+         select<int, 1>(9) == 9 ? 0 : 1;
+}
+)gti";
+  auto frontend = lang::Frontend().analyze("concrete-branch-symbols.gti",
+                                           std::string(source));
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "selected branches retain semantic locals");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto &symbols = frontend.hir.instanceSymbols();
+  expect(symbols.size() == 5 &&
+             std::count_if(symbols.begin(), symbols.end(),
+                           [](const auto &s) {
+                             return s.name == "local" &&
+                                    s.type == lang::SemanticType::Bool;
+                           }) == 2 &&
+             std::count_if(symbols.begin(), symbols.end(),
+                           [](const auto &s) {
+                             return s.name == "local" &&
+                                    s.type == lang::SemanticType::Int32;
+                           }) == 2,
+         "two instances and shadowed locals retain separate typed identities");
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "concrete-only locals cross the lowered inventory");
+  if (!built.valid())
+    return;
+  for (const auto &symbol : symbols) {
+    const auto *lowered = built.program->findSymbol(symbol.id);
+    expect(lowered && lowered->type == symbol.type &&
+               lowered->nameSource == symbol.nameSpan,
+           "concrete symbol type and source identity survive lowering");
+  }
+  auto missing = *built.program;
+  std::erase_if(lang::LoweredProgramTestAccess::symbols(missing),
+                [&](const auto &symbol) { return symbol.id == symbols[0].id; });
+  expect(hasIssue(lang::verifyLoweredProgram(missing),
+                  lang::LoweredProgramIssueKind::InvalidSymbolInventory),
+         "missing selected-arm symbol still fails verification");
+  auto wrong = *built.program;
+  auto &wrongSymbols = lang::LoweredProgramTestAccess::symbols(wrong);
+  const auto record = std::find_if(
+      wrongSymbols.begin(), wrongSymbols.end(),
+      [&](const auto &symbol) { return symbol.id == symbols[0].id; });
+  record->type = lang::SemanticType::Unknown;
+  expect(hasIssue(lang::verifyLoweredProgram(wrong),
+                  lang::LoweredProgramIssueKind::InvalidSymbolInventory),
+         "a forged unresolved concrete local fails verification");
+  auto inactive = lang::Frontend().analyze("inactive-branch.gti", R"gti(
+int choose<uint64_t N>() {
+  if constexpr (N == 0) { int local = 2; return local; }
+  else { Missing type{}; return unknown_name; }
+}
+int main() { return choose<0>() - 2; }
+)gti");
+  expect(inactive.canGenerateCode(), "discarded arms remain unanalyzed");
+  auto invalidBorrow =
+      lang::Frontend().analyze("selected-borrow-escape.gti", R"gti(
+int& borrow<uint64_t N>(int& source) {
+  if constexpr (N == 0) { int local = 2; return local; }
+}
+int main() { int value = 1; return borrow<0>(value); }
+)gti");
+  expect(!invalidBorrow.canGenerateCode() &&
+             std::any_of(invalidBorrow.diagnostics.begin(),
+                         invalidBorrow.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-S2017"; }),
+         "selected-arm locals still cannot escape by reference");
+  auto forged = frontend.hir;
+  auto &forgedSymbols =
+      const_cast<std::vector<lang::SymbolRecord> &>(forged.instanceSymbols());
+  forgedSymbols.front().type = lang::SemanticType::Bool;
+  expect(!lang::verifyHirProgramPlans(frontend.semantics, forged).valid(),
+         "a forged concrete symbol type fails HIR provenance verification");
+}
+
+void testConcreteClassAliases() {
+  auto frontend = lang::Frontend().analyze("concrete-class-aliases.gti", R"gti(
+namespace shapes {
+struct Layer<uint64_t N> { Layer<N - 1> inner; int value = 1; };
+}
+struct shapes::Layer<0> { int value = 100; };
+struct Box<uint64_t N> {
+  using Previous = shapes::Layer<N - 1>;
+  Previous inner;
+};
+int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "concrete class aliases analyze independently");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &d : frontend.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return;
+  }
+  std::vector<const lang::HirClassInstance *> owners;
+  for (const auto &owner : frontend.hir.classInstances())
+    if (!owner.typeAliases.empty())
+      owners.push_back(&owner);
+  expect(owners.size() == 3 && owners[0]->typeAliases[0].declaration != 0 &&
+             owners[0]->typeAliases[0].declaration ==
+                 owners[1]->typeAliases[0].declaration &&
+             owners[0]->typeAliases[0].type != owners[1]->typeAliases[0].type &&
+             owners[1]->typeAliases[0].type != owners[2]->typeAliases[0].type,
+         "one primary alias identity retains three exact owner-specific types");
+  if (owners.size() != 3)
+    return;
+  bool testedImplicitSource = false;
+  for (const auto &constructor : frontend.hir.constructorInstances()) {
+    if (!constructor.generatedDefault)
+      continue;
+    const auto &owner = frontend.hir.classInstances()[constructor.owner - 1];
+    for (const auto &field : owner.fields) {
+      if (field.declaration == nullptr || field.declaration->initializer())
+        continue;
+      const auto initialized = std::find_if(
+          constructor.initializers.begin(), constructor.initializers.end(),
+          [&](const auto &initializer) {
+            return initializer.field == field.info.symbol &&
+                   initializer.arguments.size() == 1;
+          });
+      if (initialized == constructor.initializers.end())
+        continue;
+      auto forged = frontend.hir;
+      auto &constructors =
+          const_cast<std::vector<lang::HirConstructorInstance> &>(
+              forged.constructorInstances());
+      auto &body = constructors[constructor.id - 1].body;
+      auto value = std::find_if(
+          body.values.begin(), body.values.end(), [&](const auto &candidate) {
+            return candidate.id == initialized->arguments.front();
+          });
+      if (value == body.values.end())
+        continue;
+      value->source = nullptr;
+      expect(!lang::verifyHirProgramPlans(frontend.semantics, forged).valid(),
+             "implicit nominal default retains exact semantic anchor identity");
+      testedImplicitSource = true;
+    }
+  }
+  expect(testedImplicitSource,
+         "alias fixture exercises generated implicit nominal construction");
+  auto forgedHir = frontend.hir;
+  auto &hirClasses = const_cast<std::vector<lang::HirClassInstance> &>(
+      forgedHir.classInstances());
+  hirClasses[owners[0]->id - 1].typeAliases[0].type =
+      owners[1]->typeAliases[0].type;
+  expect(!lang::verifyHirProgramPlans(frontend.semantics, forgedHir).valid(),
+         "another owner's closed alias type fails HIR verification");
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "concrete aliases survive detached lowering");
+  if (!built.valid())
+    return;
+  for (int mutation = 0; mutation < 4; ++mutation) {
+    auto forged = *built.program;
+    auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+        lang::LoweredProgramTestAccess::mir(forged).classInstances());
+    auto &aliases = classes[owners[0]->id - 1].typeAliases;
+    if (mutation == 0)
+      aliases.clear();
+    if (mutation == 1)
+      aliases.push_back(aliases.front());
+    if (mutation == 2)
+      aliases[0].declaration += 10000;
+    if (mutation == 3)
+      aliases[0].type = owners[1]->typeAliases[0].type;
+    expect(!lang::verifyLoweredProgram(forged).empty(),
+           "missing, duplicate, foreign or another owner's alias facts fail "
+           "detached verification");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -859,6 +1050,8 @@ int main() {
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
   testMutationRejection();
+  testConcreteBranchSymbols();
+  testConcreteClassAliases();
   if (failures != 0) {
     std::cerr << failures << " lowered-program test(s) failed\n";
     return 1;

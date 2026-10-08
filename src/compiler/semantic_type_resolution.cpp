@@ -1638,7 +1638,7 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
   }
 
   if (arguments.empty() && defaultConstructor(owner) == nullptr &&
-      classCanGenerateDefaultConstructor(owner)) {
+      classCanGenerateDefaultConstructor(constructedType)) {
     viable.push_back({nullptr, {}, {}, {}, true, ConstructorKind::Ordinary});
   }
 
@@ -2585,11 +2585,11 @@ auto SemanticVisitor::Impl::isDefaultInitializable(const SemanticType &type,
     if (const ConstructorInfo *constructor = defaultConstructor(*owner)) {
       const bool accessible = constructor->access == AccessModifier::Public ||
                               (!requirePublic && currentClass == owner->id);
-      return accessible &&
+      return accessible && resolveDefaultConstruction(type) &&
              (!requestsStructuralDefaultConstruction(*constructor) ||
-              classCanUseStructuralDefaultConstruction(*owner));
+              classCanUseStructuralDefaultConstruction(type));
     }
-    return classCanGenerateDefaultConstructor(*owner);
+    return classCanGenerateDefaultConstructor(type);
   }
   default:
     return false;
@@ -2608,16 +2608,17 @@ auto SemanticVisitor::Impl::fixedArrayClassLeafType(const SemanticType &type)
              : SemanticType(SemanticType::Unknown);
 }
 
-auto SemanticVisitor::Impl::resolveArrayElementDefaultConstruction(
-    const SemanticType &type) const -> std::optional<ResolvedConstructionInfo> {
+auto SemanticVisitor::Impl::resolveDefaultConstruction(const SemanticType &type,
+                                                       bool baseSubobject) const
+    -> std::optional<ResolvedConstructionInfo> {
   const ClassInfo *owner = classInfo(type);
-  if (owner == nullptr || owner->abstract) {
+  if (owner == nullptr || (owner->abstract && !baseSubobject)) {
     return std::nullopt;
   }
 
   const ConstructorInfo *constructor = defaultConstructor(*owner);
   if (constructor == nullptr) {
-    if (!classCanGenerateDefaultConstructor(*owner)) {
+    if (!classCanGenerateDefaultConstructor(type)) {
       return std::nullopt;
     }
     return ResolvedConstructionInfo{.constructedType = type,
@@ -2741,8 +2742,38 @@ auto SemanticVisitor::Impl::genericValueArgument(const TypeRef &argument) const
     };
     const DependencyCheck check =
         dependency(dependency, *argument.genericValueExpression);
-    return check.valid && check.dependent ? std::optional{CompileTimeValue{}}
-                                          : std::nullopt;
+    if (!check.valid || !check.dependent)
+      return std::nullopt;
+    const auto bind = [&](const auto &self, const ArrayExtentExpr &source)
+        -> std::shared_ptr<const GenericValueExpression> {
+      if (!source.isAtom())
+        return std::make_shared<GenericValueExpression>(
+            GenericValueExpression{.kind = GenericValueExpression::Binary,
+                                   .token = source.token,
+                                   .left = self(self, *source.left),
+                                   .right = self(self, *source.right)});
+      if (const auto *literal =
+              std::get_if<std::uint64_t>(&source.token.literal))
+        return std::make_shared<GenericValueExpression>(
+            GenericValueExpression{.value = *literal});
+      if (const auto parameter = resolveValueParameter(source.token)) {
+        if (parameter->expression)
+          return parameter->expression;
+        return std::make_shared<GenericValueExpression>(GenericValueExpression{
+            .kind = parameter->kind == CompileTimeValue::Parameter
+                        ? GenericValueExpression::Parameter
+                        : GenericValueExpression::UInt64,
+            .value = parameter->value,
+            .parameterId = parameter->parameterId});
+      }
+      const Symbol *symbol = resolve(source.token);
+      const ConstantValue *constant =
+          symbol == nullptr ? nullptr : constantFor(*symbol);
+      return std::make_shared<GenericValueExpression>(GenericValueExpression{
+          .value = *constantUnsignedMagnitude(*constant)});
+    };
+    return CompileTimeValue{.expression =
+                                bind(bind, *argument.genericValueExpression)};
   }
   if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
       !argument.pointers.empty() || !argument.arrayExtents.empty() ||
@@ -3683,6 +3714,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       reportConstraintFailure(type.name.last(), *failure);
     }
   }
+  if (catalog.sealed)
+    validateOrdinaryClassLayout(typeOf(type));
 }
 
 auto SemanticVisitor::Impl::compilerCapabilityType(
@@ -3747,15 +3780,29 @@ auto SemanticVisitor::Impl::containsRawPointer(const TypeRef &type) -> bool {
 
 auto SemanticVisitor::Impl::isActiveTypePack(const TypeRef &type) const
     -> bool {
+  return activeTypePackIdentity(type).has_value();
+}
+
+auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
+    -> std::optional<GenericParameterId> {
   const std::optional<SemanticType> parameter = resolveTypeParameter(type.name);
   if (!parameter || (parameter->kind != SemanticType::TypeParameter &&
                      parameter->kind != SemanticType::TypePack)) {
-    return false;
+    return std::nullopt;
   }
-  return std::any_of(typePackScopes.rbegin(), typePackScopes.rend(),
-                     [&](const auto &scope) {
-                       return scope.contains(parameter->genericParameterId);
-                     });
+  // The nearest lexical declaration owns whether a name is a pack; its
+  // substituted value may retain another declaration's canonical pack ID.
+  // Keep those identities separate, and do not see through a non-pack shadow.
+  const std::string &name = type.name.last().lexeme;
+  for (std::size_t index = typeParameterScopes.size(); index != 0; --index) {
+    if (typeParameterScopes[index - 1].contains(name)) {
+      const auto found = typePackScopes[index - 1].find(name);
+      return found == typePackScopes[index - 1].end()
+                 ? std::nullopt
+                 : std::optional<GenericParameterId>(found->second);
+    }
+  }
+  return std::nullopt;
 }
 
 auto SemanticVisitor::Impl::validateReferencePlacement(
@@ -5744,7 +5791,7 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
            .arguments = {SemanticType::typeParameter(parameter.id)}});
     }
     if (parameter.pack) {
-      packs.insert(parameter.id);
+      packs.emplace(parameter.name.lexeme, parameter.id);
     }
   }
 }
@@ -5877,23 +5924,11 @@ auto SemanticVisitor::Impl::substituteType(
     argument = substituteType(argument, substitution);
   }
   for (CompileTimeValue &argument : result.valueArguments) {
-    if (argument.kind != CompileTimeValue::Parameter) {
-      continue;
-    }
-    const auto found = substitution.values.find(argument.parameterId);
-    if (found != substitution.values.end()) {
-      argument = found->second;
-    }
+    argument = substituteCompileTimeValue(argument, substitution.values);
   }
   const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
     for (CompileTimeValue &argument : values) {
-      if (argument.kind != CompileTimeValue::Parameter) {
-        continue;
-      }
-      const auto found = substitution.values.find(argument.parameterId);
-      if (found != substitution.values.end()) {
-        argument = found->second;
-      }
+      argument = substituteCompileTimeValue(argument, substitution.values);
     }
   };
   substituteValues(result.lambdaEnclosingClassValues);
@@ -6663,27 +6698,28 @@ auto SemanticVisitor::Impl::validateParameterPacks(
   const bool functionOwnsPack = pack != nullptr;
   if (pack == nullptr && returnType != nullptr && currentClass &&
       !parameters.empty() && parameters.back().pack) {
-    const SemanticType parameterType = typeOf(parameters.back());
+    const auto parameterIdentity =
+        activeTypePackIdentity(parameters.back().type);
     for (const GenericParameterInfo &ownerParameter :
          classInfo(*currentClass).genericParameters) {
-      if (ownerParameter.pack &&
-          parameterType.genericParameterId == ownerParameter.id) {
+      if (ownerParameter.pack && parameterIdentity == ownerParameter.id) {
         pack = &ownerParameter;
         break;
       }
     }
   }
 
-  const auto isBarePack = [&](const SemanticType &type) {
+  const auto isBarePack = [&](const TypeRef &syntax) {
+    const SemanticType type = typeOf(syntax);
     return pack != nullptr &&
            (type.kind == SemanticType::TypeParameter ||
             type.kind == SemanticType::TypePack) &&
-           type.genericParameterId == pack->id;
+           activeTypePackIdentity(syntax) == pack->id;
   };
   const auto expandsPack = [&](const auto &self, const TypeRef &type) -> bool {
     const auto parameter = resolveTypeParameter(type.name);
     if (type.packExpansion && parameter && pack != nullptr &&
-        parameter->genericParameterId == pack->id) {
+        activeTypePackIdentity(type) == pack->id) {
       return true;
     }
     return std::any_of(
@@ -6691,7 +6727,7 @@ auto SemanticVisitor::Impl::validateParameterPacks(
         [&](const TypeRef &argument) { return self(self, argument); });
   };
 
-  if (returnType != nullptr && isBarePack(typeOf(*returnType))) {
+  if (returnType != nullptr && isBarePack(*returnType)) {
     report(returnType->name.last(),
            "A generic type pack cannot be used as a function return type.",
            "GTI-S2023");
@@ -6704,7 +6740,7 @@ auto SemanticVisitor::Impl::validateParameterPacks(
     const SemanticType parameterType = typeOf(parameter);
     if (!parameter.pack) {
       metadataPack = metadataPack || expandsPack(expandsPack, parameter.type);
-      if (isBarePack(parameterType)) {
+      if (isBarePack(parameter.type)) {
         report(parameter.type.name.last(),
                "A generic type pack must be expanded as a function "
                "parameter with '...'.",
@@ -6754,7 +6790,7 @@ auto SemanticVisitor::Impl::validateParameterPacks(
     if (pack == nullptr ||
         (parameterType.kind != SemanticType::TypeParameter &&
          parameterType.kind != SemanticType::TypePack) ||
-        parameterType.genericParameterId != pack->id) {
+        activeTypePackIdentity(parameter.type) != pack->id) {
       report(*parameter.pack,
              "A parameter pack type must name the function's or enclosing "
              "class's generic type pack.",
