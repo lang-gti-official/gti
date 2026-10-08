@@ -2342,22 +2342,36 @@ class Chain<T> {
   using Next = Chain<Chain<T>>;
   using Entry = Box<Value>;
 };
+struct ShelfItem<T, uint64_t N> { T value; };
+class Shelf<T, uint64_t N> {
+  using Entry = ShelfItem<T, N>;
+  using NestedEntry = Box<ShelfItem<T, N>>;
+public:
+  Shelf() {}
+};
 }
-int main() { sample::Catalog catalog{}; return 0; }
+int main() {
+  sample::Catalog catalog{};
+  sample::Shelf<int, 3> first{};
+  sample::Shelf<int, 4> second{};
+  return 0;
+}
 )");
   expect(frontend.canGenerateCode(),
          "unused namespace/member and recursive aliases pass the frontend");
   if (!frontend.canGenerateCode())
     return;
-  expect(std::none_of(frontend.hir.classInstances().begin(),
-                      frontend.hir.classInstances().end(),
-                      [&](const lang::HirClassInstance &instance) {
-                        const auto *info = frontend.semantics.findClassType(
-                            instance.declaration);
-                        return info && info->declaration &&
-                               info->declaration->name().lexeme == "Box";
-                      }),
-         "namespace/member aliases name types without requesting HIR layouts");
+  expect(
+      std::none_of(frontend.hir.classInstances().begin(),
+                   frontend.hir.classInstances().end(),
+                   [&](const lang::HirClassInstance &instance) {
+                     const auto *info =
+                         frontend.semantics.findClassType(instance.declaration);
+                     return info && info->declaration &&
+                            (info->declaration->name().lexeme == "Box" ||
+                             info->declaration->name().lexeme == "ShelfItem");
+                   }),
+      "namespace/member aliases name types without requesting HIR layouts");
   expect(std::any_of(frontend.hir.classInstances().begin(),
                      frontend.hir.classInstances().end(),
                      [&](const lang::HirClassInstance &instance) {
@@ -2387,6 +2401,10 @@ int main() { sample::Catalog catalog{}; return 0; }
       expect(forward != std::string::npos &&
                  forward < generated.find("using Nested ="),
              "every concrete alias component has its exact forward identity");
+      expect(forward == std::string::npos ||
+                 generated.find("struct " + *name + ";", forward + 1) ==
+                     std::string::npos,
+             "repeated alias components share one forward declaration");
       expect(generated.find("struct " + *name + " {") == std::string::npos,
              "a type-only alias does not invent a concrete class layout");
     };
@@ -2394,6 +2412,19 @@ int main() { sample::Catalog catalog{}; return 0; }
       if (const auto *alias =
               std::get_if<lang::LoweredTypeAliasDeclaration>(&row.payload))
         checkType(checkType, alias->type);
+    std::size_t concreteMemberAliases = 0;
+    for (const auto &instance : frontend.mir.classInstances()) {
+      const auto *info = frontend.semantics.findClassType(instance.declaration);
+      if (!info || !info->declaration ||
+          info->declaration->name().lexeme != "Shelf")
+        continue;
+      for (const auto &alias : instance.typeAliases) {
+        ++concreteMemberAliases;
+        checkType(checkType, alias.type);
+      }
+    }
+    expect(concreteMemberAliases == 4,
+           "two value-generic owners retain separate exact member aliases");
     expect(checked >= 2, "the test checks nested concrete alias applications");
   }
 }
