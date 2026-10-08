@@ -65,7 +65,7 @@ enum class BindingItemKind {
   // layout the GTI ABI cannot express, degraded so pointer-based APIs
   // through it stay importable. `reason` is set for the degraded case.
   Opaque,
-  // using Name = int32_t; plus constexpr enumerator constants.
+  // Alias to the target-compatible C integer, plus constexpr enumerators.
   Enum,
   // using Name = <spelling>; for an object typedef.
   Alias,
@@ -88,7 +88,8 @@ struct BindingParameter {
 
 struct BindingConstant {
   std::string name;
-  std::int64_t value = 0;
+  // Exact decimal spelling selected from the native signed/unsigned value.
+  std::string value;
 };
 
 struct BindingField {
@@ -104,7 +105,7 @@ struct BindingItem {
   std::vector<BindingField> fields;
   // Enum.
   std::vector<BindingConstant> constants;
-  // Alias, and the GTI scalar type of a Constant.
+  // Alias, enum-compatible integer, or the GTI scalar type of a Constant.
   std::string aliasSpelling;
   // Callback / Function.
   std::string resultSpelling;
