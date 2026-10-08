@@ -1,0 +1,3 @@
+// Module std.array: the public surface of <std/array>.
+export module array;
+export #include <std/array>

@@ -1,0 +1,3 @@
+// Module std.encoding: the public surface of <std/encoding>.
+export module encoding;
+export #include <std/encoding>

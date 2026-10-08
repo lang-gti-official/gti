@@ -264,7 +264,9 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 
 class Printer {
 public:
-  [[nodiscard]] std::string print(const MirProgram &program) {
+  explicit Printer(std::ostream &output) : output(output) {}
+
+  void print(const MirProgram &program) {
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
@@ -780,13 +782,11 @@ public:
       output << "hosted-startup-body\n";
       body(*program.hostedStartup(), program.hostedStartupPlan()->entry);
     }
-    return output.str();
   }
 
-  [[nodiscard]] std::string print(const MirBody &value) {
+  void print(const MirBody &value) {
     output << "mir-body-v81\n";
     body(value, 0);
-    return output.str();
   }
 
 private:
@@ -1875,17 +1875,25 @@ private:
     output << ')';
   }
 
-  std::ostringstream output;
+  std::ostream &output;
 };
 
 } // namespace
 
 std::string MirPrinter::print(const MirProgram &program) const {
-  return Printer().print(program);
+  std::ostringstream output;
+  print(program, output);
+  return output.str();
 }
 
 std::string MirPrinter::print(const MirBody &body) const {
-  return Printer().print(body);
+  std::ostringstream output;
+  Printer(output).print(body);
+  return output.str();
+}
+
+void MirPrinter::print(const MirProgram &program, std::ostream &output) const {
+  Printer(output).print(program);
 }
 
 } // namespace lang

@@ -1,0 +1,3 @@
+// Module std.http: the public surface of <std/http>.
+export module http;
+export #include <std/http>

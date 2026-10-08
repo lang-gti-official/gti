@@ -32,6 +32,9 @@ def main() -> None:
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--compile-runs', type=int, default=5)
     parser.add_argument('--runtime-runs', type=int, default=9)
+    parser.add_argument('--baseline-resource-allocations', type=int,
+                        choices=(50000, 100000), default=50000,
+                        help='50000 for pre-migration storage; 100000 for a source-storage baseline')
     args = parser.parse_args()
     if args.compile_runs < 1 or args.runtime_runs < 1:
         parser.error('sample counts must be positive')
@@ -46,6 +49,8 @@ def main() -> None:
     report = {'schema': 1, 'scope': 'warm filesystem; sequential direct builds; O2 C++23',
               'warning': 'descriptive local samples, not a statistical performance guarantee',
               'baseline_revision': revision, 'source': benchmark.file_evidence(fixture),
+              'expected_resource_allocations': {
+                  'baseline': args.baseline_resource_allocations, 'candidate': 100000},
               'harness': benchmark.file_evidence(Path(__file__).resolve()),
               'repository': benchmark.repository_facts(), 'variants': {}, 'order': []}
     report['tools'] = {'cxx': benchmark.tool_record(
@@ -155,7 +160,8 @@ def main() -> None:
                 if state != expected:
                     raise RuntimeError('complete semantic state differs from arithmetic oracle')
                 counts = list(map(int, lines[3:]))
-                required = 0 if mode == 'process' else (50000 if name == 'baseline' else 100000)
+                required = (0 if mode == 'process' else
+                            report['expected_resource_allocations'][name])
                 if counts != [required, required]:
                     raise RuntimeError('unexpected resource allocation/release counts: ' + str(counts))
                 key = 'runtime_warmups' if run < 2 else 'runtime_samples'

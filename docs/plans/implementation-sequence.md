@@ -33,6 +33,26 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Runtime audit follow-up: 2026-10-09
+
+`RT-1` is complete as a bounded client: reduce source-storage success-path costs
+by outlining only the incoming cleanup-failure check. PR #166 is reviewed as
+proposal input, with immediate versus future dispositions in
+[optimization.md](optimization.md#pr-166-audit-disposition-2026-10-09).
+Prerequisite: reconciled modules/reachability integration (#174, main
+`b6614cb4`), a semantics-preserving current-head proxy, and unchanged source
+storage policy. Acceptance: exact frozen-snapshot production comparison,
+complete allocation/destructor observations, runtime/code-size/memory controls,
+and cleanup/panic/managed-thread/sanitizer/malformed-MIR tests. Clean optimized
+`f2fea6c7` passes all 570 unfiltered CTests, both 130-example corpus oracles,
+thirteen staged-library consumers and the installed source-provider matrix.
+Production storage medians improve 70.464→59.177 ms and 76.490→66.230 ms,
+with full-build time essentially unchanged and the small size/memory tradeoffs
+recorded in [the performance evidence](performance-tooling.md#production-comparison).
+The earlier historical regression in #169 is not considered fully recovered merely because
+this one cause improves. Follow-on RT-2 through RT-10 need their individual
+prerequisites and measured clients; they are not added to this implementation.
+
 ## Stabilization Reset: 2026-10-08
 
 The owner paused new issue-campaign work to finish the existing lifetime/storage
@@ -8786,7 +8806,7 @@ owned by the rows and domain plans above.
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
 | LSP project index/process isolation | client/risk-gated | project facts or stronger containment requirement |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | Source-interface reconciliation candidate; combined validation pending | ADR 024 defines imports, explicit exports/re-exports and package maps for library APIs; legacy includes remain unchanged. Separate compilation and independent module linkage identities remain follow-up work. |
+| Module vocabulary | Source interfaces implemented; standard-library modules implemented in 0.393.0 | ADR 024 defines imports, explicit exports/re-exports, package maps, and `export #include` republication; every public `<std/name>` unit is importable as `std.name`, and legacy includes remain unchanged. Remaining: an aggregate `import std;`. Its lowering prerequisite landed in 0.393.0, so artifacts lower only reachable code, but every imported unit is still analyzed, and the platform-gated units (`tcp`, `process`) need a selection rule. Also remaining: migrating standard units from republished legacy sources to real exports; separate compilation and independent module linkage identities. |
 
 ## Required Architectural Corrections
 

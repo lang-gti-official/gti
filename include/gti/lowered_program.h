@@ -6,8 +6,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -683,6 +686,16 @@ struct LoweredProgramIssue {
   std::optional<LoweredGeneratedItemIdentity> generatedItem;
 };
 
+class LoweredProgram;
+class VerifiedLoweredProgram;
+
+namespace lowered_detail {
+// Builder-only: every verifier check except the construction seal, which the
+// builder establishes from the same value once these checks pass.
+[[nodiscard]] std::vector<LoweredProgramIssue>
+verifyLoweredProgramContents(const LoweredProgram &program);
+} // namespace lowered_detail
+
 class LoweredProgram final {
 public:
   LoweredProgram(const LoweredProgram &) = default;
@@ -736,6 +749,11 @@ public:
   findDeclaration(LoweredDeclarationId id) const;
   [[nodiscard]] const LoweredClassDeclaration *
   findClassDeclaration(ClassId id) const;
+  // The declaration row carrying a class or enum declaration payload.
+  [[nodiscard]] const LoweredDeclaration *
+  findClassDeclarationRow(ClassId id) const;
+  [[nodiscard]] const LoweredDeclaration *
+  findEnumDeclarationRow(const SemanticType &type) const;
   [[nodiscard]] const LoweredEnumDeclaration *
   findEnumDeclaration(EnumId id) const;
   [[nodiscard]] const LoweredEnumDeclaration *
@@ -765,6 +783,9 @@ public:
 private:
   LoweredProgram() = default;
 
+  // Rebuilds the lookup hints from the completed declaration and symbol rows.
+  void indexDeclarations();
+
   TargetInfo target_;
   MirProgram mir_;
   ProgramKind programKind_ = ProgramKind::Executable;
@@ -779,14 +800,62 @@ private:
   std::vector<LoweredLambdaInstance> lambdaInstances_;
   std::vector<LoweredGeneratedItem> generatedItems_;
   std::optional<std::uint64_t> constructionSeal_;
+  // Derived row hints keyed by semantic identity, never part of the printed
+  // contract. A lookup uses a hint only after confirming that its row still
+  // carries the requested identity, and otherwise scans, so emission does
+  // not repeatedly scan every declaration of an imported library.
+  std::unordered_map<std::size_t, std::size_t> classRows_;
+  std::unordered_map<std::size_t, std::size_t> functionRows_;
+  std::unordered_map<std::size_t, std::size_t> constructorRows_;
+  std::unordered_map<std::size_t, std::size_t> storageRows_;
+  std::unordered_map<std::size_t, std::size_t> symbolRows_;
+  std::unordered_map<std::size_t, std::size_t> enumRows_;
+  std::unordered_map<std::size_t, std::size_t> genericParameterRows_;
 
   friend class LoweredProgramBuilder;
   friend struct LoweredProgramTestAccess;
   friend std::vector<LoweredProgramIssue>
   verifyLoweredProgram(const LoweredProgram &program);
+  friend std::vector<LoweredProgramIssue>
+  lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program);
 };
 
 [[nodiscard]] std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program);
+
+// Takes an independent value for a consumer and returns owning evidence only
+// when that exact snapshot passes verification. Lvalues copy; rvalues move.
+// The construction seal supplements the inventory checks; the inspection
+// print is not an exhaustive serialization of every verified invariant.
+[[nodiscard]] std::optional<VerifiedLoweredProgram>
+verifiedLoweredProgram(LoweredProgram program,
+                       std::vector<LoweredProgramIssue> &issues);
+
+// Evidence that verifyLoweredProgram accepted this exact, owned const value.
+// A caller may replace or destroy its original LoweredProgram without
+// making this proof stale. Consumer stages share the snapshot rather than
+// repeating the inventory and seal check or copying another complete program.
+class VerifiedLoweredProgram final {
+public:
+  // Deliberately copy shared ownership even for an rvalue: there is no empty
+  // or moved-from evidence object with a dangling/absent program.
+  VerifiedLoweredProgram(const VerifiedLoweredProgram &) = default;
+  VerifiedLoweredProgram &operator=(const VerifiedLoweredProgram &) = default;
+
+  [[nodiscard]] const LoweredProgram &program() const noexcept {
+    return *program_;
+  }
+
+private:
+  explicit VerifiedLoweredProgram(
+      std::shared_ptr<const LoweredProgram> program) noexcept
+      : program_(std::move(program)) {}
+
+  std::shared_ptr<const LoweredProgram> program_;
+
+  friend std::optional<VerifiedLoweredProgram>
+  verifiedLoweredProgram(LoweredProgram program,
+                         std::vector<LoweredProgramIssue> &issues);
+};
 
 } // namespace lang

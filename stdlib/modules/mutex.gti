@@ -1,0 +1,3 @@
+// Module std.mutex: the public surface of <std/mutex>.
+export module mutex;
+export #include <std/mutex>

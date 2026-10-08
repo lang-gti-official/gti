@@ -92,10 +92,19 @@ public:
 
       switch (lexeme.kind) {
       case Kind::Directive:
-        if (state.lineHasContent) {
-          state.newline();
+        // An interface republishes one legacy unit with `export #include`;
+        // the prefix belongs to that directive's line.
+        if (lexeme.text == "#include" && previous != nullptr &&
+            previous->kind == Kind::Word && previous->text == "export" &&
+            state.lineHasContent && !state.directiveLine) {
+          state.space();
+          state.append(lexeme.text);
+        } else {
+          if (state.lineHasContent) {
+            state.newline();
+          }
+          state.appendUnindented(lexeme.text);
         }
-        state.appendUnindented(lexeme.text);
         state.directiveLine = true;
         state.includeLine = lexeme.text == "#include";
         break;

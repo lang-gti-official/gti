@@ -70,7 +70,8 @@ bool SourceGraph::isVisible(SourceUnitId requester,
     }
     for (const SourceDependency &dependency : dependencies) {
       if (dependency.source != unit ||
-          dependency.kind != SourceDependencyKind::ExportImport) {
+          (dependency.kind != SourceDependencyKind::ExportImport &&
+           dependency.kind != SourceDependencyKind::ExportInclude)) {
         continue;
       }
       if (dependency.target == declaration) {

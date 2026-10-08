@@ -56,6 +56,45 @@ loan equality with an unrelated primary analysis is not a provenance proof.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
+### Reachable executable prefix
+
+Concrete analysis must cover every declaration, because instance reanalysis
+reports the diagnostics of generic bodies. Executable lowering needs only what
+the program can run. With `FrontendOptions::lowerReachableOnly`, which artifact
+builds set, `HirLowerer` first seeds only the program roots and drains the
+worklist:
+
+- the hosted entry;
+- library exports;
+- every C declaration and `[[c_abi]]` or `[[c_opaque]]` record, because the
+  native header and layout checks publish the C boundary whether or not GTI
+  uses it;
+- non-generic enum identities;
+- the concrete classes that template declarations name in signatures, fields,
+  and bases, because templates are emitted whether or not they are
+  instantiated.
+
+It then seeds every other declaration exactly as complete lowering does, and
+drains the worklist again.
+
+Instances are appended to their tables when first enqueued, and are finished
+once processed. Ordinary on-demand enqueueing discovers everything else the
+roots use: callees, constructors, destructors, virtual members of reachable
+classes, callback and thread-task adapters, and argument-append targets. So
+the tables after the first drain are a closed prefix of the final program, and
+a later instance is never referenced from them. Instance identities are table
+positions, so truncating every table to the prefix keeps each identity. The
+truncated tables are classes, functions, constructors, destructors, lambdas,
+both adapter families, enums, and instance symbols.
+
+`HirLoweringResult::reachable` carries that prefix only when it is smaller and
+passes `verifyHirProgramPlans`; otherwise lowering uses the complete program.
+The frontend lowers the prefix to MIR. The lowered-program declaration
+inventory then omits a non-generic class, function, or constructor that has no
+instance. Generic declarations remain, because retained templates can name
+them. Without the option, seeding and instance order are unchanged, so
+inspection of every declaration's lowering keeps its established form.
+
 The concrete discovery worklist retains the first outer requesting source span
 alongside its existing depth bookkeeping. Missing-definition diagnostics from
 semantic instance reanalysis use that requesting call as primary and preserve

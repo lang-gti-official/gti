@@ -15,6 +15,14 @@ struct CppSupportPreambleFeatures {
   bool storage = true;
   bool managedThreads = false;
   bool cThreads = false;
+  // A lowered capability class declaration lets any emitted declaration,
+  // including an uninstantiated generic definition, name the class template
+  // that represents it. These forward-declare those templates and add no
+  // native support; `atomics` and `mutexes` select the definitions.
+  bool sharedOwnerDeclared = false;
+  bool atomicStorageDeclared = false;
+  bool mutexStorageDeclared = false;
+  bool mutexLockTokenDeclared = false;
   bool atomics = false;
   bool mutexes = false;
   bool simd = false;

@@ -925,6 +925,13 @@ for the current reader profiles and ABI-option boundary. Existing handwritten
 bindings; that type change corrects the native declaration, not GTI's conversion
 rules. The runnable `examples/native-enum-bindings` project exercises this path.
 
+Callback-slot imports likewise preserve pointer depth: a native `Callback*`
+must regenerate as a slot pointer, not a callback value. Function typedefs,
+text-storage aliases and fixed-array aliases use the same importer in direct
+and manifest modes; see [composable typedef imports](../language/native-c-interop.md#composable-typedef-imports)
+and `examples/native-callback-slots`. Release identity invalidates stale
+generated files when these import rules change.
+
 Generation is deterministic and keyed: a `bindings.key` sidecar hashes the
 preprocessed translation unit (which captures every transitive header
 fact), the ordered options, the resolved target triple, and the GTI release
@@ -1008,7 +1015,8 @@ main = "src/api.gti"
 geometry = "src/geometry_api.gti"
 ```
 
-Each key is one non-reserved GTI identifier. Each value is a package-relative
+Each key is one non-reserved GTI identifier other than `std`, which names the
+standard library's modules (`import std.vector;`). Each value is a package-relative
 path to an existing regular `.gti` interface. Canonical paths must remain inside
 the package, including through symlinks. Duplicate physical files, portable
 case-fold name collisions, invalid names/types and missing paths are rejected
