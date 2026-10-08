@@ -2605,6 +2605,13 @@ overflow before field publication. It observes both cleanup order and the
 unchanged source place after a failed update. The lifecycle emitter suite
 rejects deletion of the explicit field stage and asserts that discarded
 assignment records never introduce an extra publication.
+Its owning-call fixtures cover declaration and explicit collection defaults,
+an unrelated two-owner producer, and failure in a later argument, the callee,
+a later field or the constructor body. Lifecycle mutations reject missing,
+duplicated, conditional or forged input handoffs and missing result/field
+publication. The callback-field fixture also checks containment wrappers for
+both an erased callback and an unrelated generic constructor with an unnamed
+closure parameter, using the same admitted template body plan as the definition.
 `vector_construction_only_runtime` covers empty-slot movement without
 assignment, cloning and growth, fallible zero-argument sized construction and
 resize, partial-prefix rollback, nested optional payload destruction, and

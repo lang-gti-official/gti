@@ -1,0 +1,44 @@
+#include <std/string>
+#include <std/vector>
+
+// The field producer is ordinary user code, not a collection intrinsic.
+class Token {
+  std::string text;
+public:
+  Token(std::string_view value) : text(std::string(value)) {}
+  void show() { std::println(this.text); }
+  ~Token() { std::println(this.text); }
+};
+
+Token relay(Token first, Token second, int divisor) {
+  std::println(12 / divisor);
+  second.show();
+  return std::move(first);
+}
+
+class Holder {
+  Token token;
+  int later;
+public:
+  Holder(int argument_divisor, int call_divisor, int field_divisor, int body_divisor)
+      : token(relay(Token("first"), Token("second"),
+                    (12 / argument_divisor) * call_divisor)),
+        later(12 / field_divisor) {
+    std::println(12 / body_divisor);
+    this.token.show();
+  }
+  ~Holder() { std::println("holder"); }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println("guard"); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  Holder holder{argc == 2 ? 0 : 1, argc == 3 ? 0 : 1,
+                argc == 4 ? 0 : 1, argc == 5 ? 0 : 1};
+  return 0;
+}
