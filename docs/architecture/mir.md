@@ -9,6 +9,25 @@ resolved calls, ownership operations, and cleanup. Verified optimized MIR is
 the executable component of the backend-neutral `LoweredProgram`; `MirProgram`
 alone is not the complete backend API.
 
+## Projected references and existing-value allocation
+
+A local reference initialized from a projected address retains that exact
+runtime address independently of its protected owner loan. In particular a
+shared range element can protect its enclosing range while naming one selected
+element; subsequent fields and selected operators project from the reference
+carrier, not from the coarser range origin. The lowering query preserves this
+distinction without changing access permissions, active-loan rules or endpoints.
+
+Unique allocation of an already-built class value uses the selected generated
+copy/move policy. HIR stages a generated move as a consuming same-type value,
+not as a callable shared-reference formal. MIR reuses the separate checked
+`AllocateObject`, construction and raw-storage retirement protocol: exhaustion
+precedes transfer into allocated storage, and failure drains still-owned inputs
+and caller cleanup. The private generated-construction shape query is shared
+by lowering, verification and backend admission; program verification also
+checks the exact class's generated special-member policy. No public factory
+name determines language meaning or bypasses deleted/private constructors.
+
 ## Representation
 
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
