@@ -495,7 +495,7 @@ def test_scoped_configuration_flags(executable, root):
         assert diagnostics_for(session, tool_uri, version=1) == []
         shared_uri = open_document(session, project / "src/shared.gti", shared)
         shared_diagnostics = diagnostics_for(session, shared_uri, version=1)
-        assert not any(item["severity"] == 1 for item in shared_diagnostics), shared_diagnostics
+        assert shared_diagnostics == [], shared_diagnostics
 
         # Profile changes must invalidate diagnostics and completion snapshots.
         write(manifest_path, manifest.replace('defines = ["DEBUG"]', 'defines = []'))
@@ -525,7 +525,14 @@ def test_scoped_configuration_flags(executable, root):
         errors = diagnostics_for(session, game_uri,
             predicate=lambda items: any("game configuration missing" in item["message"] for item in items))
         assert any("game configuration missing" in item["message"] for item in errors)
-        assert diagnostics_for(session, tool_uri, predicate=lambda items: not items) == []
+        # Unchanged tool diagnostics may be deduplicated, or consumed while
+        # awaiting the game publication. Request a fresh document generation.
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": tool_uri, "version": 2},
+                       "contentChanges": [{"text": tool}]},
+        })
+        assert diagnostics_for(session, tool_uri, version=2) == []
     finally:
         session.close()
 

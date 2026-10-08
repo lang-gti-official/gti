@@ -36,6 +36,8 @@ struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
   ProgramRequest program;
   ConfigurationFlags configurationFlags;
+  // Declared but possibly inactive switches; this set never selects a branch.
+  ConfigurationFlags declaredConfigurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   bool analyzeRecoveredProgram = false;
   std::optional<std::size_t> completionOffset;

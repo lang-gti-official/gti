@@ -29,8 +29,10 @@ Configuration defines are implemented in `[build]`, `[profiles.<name>]` and
 package/dependency build flags, consumer profile, consumer target and CLI
 flags. Metadata, cache identity, build/check and read-only editor facts share
 that selection; dependency target/profile flags remain local to their own
-consumer builds. The runnable `examples/scoped-configuration` project and
-`scoped_configuration_defines` gate cover dev/release, distinct executable/test
+consumer builds. Inactive-name diagnostic facts preserve typo checking without
+warning on deliberately disabled consumer switches. The runnable
+`examples/scoped-configuration` project and `scoped_configuration_defines` gate
+cover dev/release, distinct executable/test
 targets, CLI additions, cached rebuilds and source-order undefinition.
 
 Raw-pointer audit policy is now resolved through the existing immutable

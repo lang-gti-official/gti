@@ -1191,6 +1191,7 @@ public:
     FrontendOptions options;
     options.target = input.target;
     options.configurationFlags = input.configurationFlags;
+    options.declaredConfigurationFlags = input.declaredConfigurationFlags;
     options.rawPointerAudit = input.rawPointerAudit;
     options.analyzeRecoveredProgram = true;
     options.completionOffset = input.byteOffset;

@@ -475,6 +475,40 @@ void testDependencyConfigurationChangesParsedIdentity() {
          "equivalent");
 }
 
+void testDeclaredInactiveConfigurationFlags() {
+  TemporaryProject project;
+  const auto path = project.path("inactive-config.gti");
+  const std::string source =
+      "#if defined(DEBUG)\nint value() { return missing(); }\n"
+      "#else\nint value() { return 0; }\n#endif\n";
+  auto cache = std::make_shared<lang::FrontendCache>();
+  for (const bool declared : {false, true, false, true}) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.cache = cache;
+    if (declared) {
+      options.declaredConfigurationFlags = {"DEBUG", "DEBUG"};
+    }
+    const auto cached = lang::Frontend(options).analyze(path, source);
+    options.cache.reset();
+    const auto uncached = lang::Frontend(options).analyze(path, source);
+    expect(
+        resultFingerprint(cached) == resultFingerprint(uncached),
+        "inactive flag declarations must preserve cached/uncached equivalence");
+    expect(cached.semanticValid &&
+               cached.diagnostics.size() == (declared ? 0U : 1U),
+           "declaring a flag suppresses its typo warning without enabling it");
+    if (!declared && cached.diagnostics.size() == 1) {
+      const auto &diagnostic = cached.diagnostics.front();
+      expect(
+          diagnostic.code == "GTI-S2075" &&
+              diagnostic.primary.start == source.find("DEBUG") &&
+              diagnostic.primary.end == source.find("DEBUG") + 5,
+          "unknown switches retain the exact source warning after cache reuse");
+    }
+  }
+}
+
 void testDefinitionClosureReanalyzedWithWarmSyntax() {
   TemporaryProject project;
   const auto path = project.path("definition-closure.gti");
@@ -517,6 +551,7 @@ int main() {
   testFrontendReuseInvalidationAndEquivalence();
   testRecoveredAndConfigurationContextEquivalence();
   testDependencyConfigurationChangesParsedIdentity();
+  testDeclaredInactiveConfigurationFlags();
   testDefinitionClosureReanalyzedWithWarmSyntax();
 
   if (failures != 0) {

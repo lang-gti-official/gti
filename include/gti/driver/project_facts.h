@@ -155,6 +155,7 @@ private:
   std::string resolvedDefaultProfile;
   std::vector<ProjectFactsTarget> resolvedTargets;
   ConfigurationFlags resolvedConfigurationFlags;
+  ConfigurationFlags resolvedDeclaredConfigurationFlags;
   std::string resolvedModelIdentity;
 };
 

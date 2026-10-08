@@ -162,9 +162,11 @@ manifests.
 
 CLI flags are added to manifest flags. Source directives are then applied in
 load order, so a later source `#undef` can deliberately remove either input.
-Flag names use ordinary GTI identifier syntax. Referencing a flag that is
-defined nowhere in the loaded program produces warning `GTI-S2075` and still
-evaluates false.
+Flag names use ordinary GTI identifier syntax. Flags declared in another
+consumer profile or target are known but inactive, so testing a dev-only flag
+in release does not produce a typo warning. Referencing a flag declared neither
+in source nor in the applicable manifest configuration produces warning
+`GTI-S2075` and still evaluates false.
 
 `#error "message"` is a compile-time diagnostic directive. It is syntactically
 valid wherever compile-time conditionals are valid and makes the program

@@ -605,6 +605,12 @@ combines scoped inputs for both immutable build plans and read-only
 Flags remain program-wide, not private to their declaring package; source
 `#undef` still applies in load order. These are additive valueless switches;
 there is no manifest undefinition or automatic `DEBUG` flag for the dev profile.
+The driver also publishes declared flag names from all consumer profiles and
+targets. Source loading uses this separate set only for `GTI-S2075` typo
+diagnostics: a dev-only switch remains known but false in a release build.
+Dependency target/profile names do not enter this declaration set. Both active
+and declared sets participate in frontend/build cache identities, and immutable
+compilation requests preserve them through build, check and editor completion.
 The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
 the shared frontend request. Metadata schema 14 reports that effective `defines`

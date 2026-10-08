@@ -669,7 +669,8 @@ ProjectBuildPlan makeBuildPlan(
   const AnalysisConfiguration configuration(
       target,
       overrides.executionProfile.value_or(selectedProfile.executionProfile),
-      runtimeProfile, std::move(configurationFlags));
+      runtimeProfile, std::move(configurationFlags),
+      workspace.declaredConfigurationFlags());
   const TargetInfo &resolvedTarget = configuration.target();
   std::filesystem::path outputDirectory = workspace.root() / "build" / "gti";
   if (workspace.declared()) {
@@ -727,6 +728,9 @@ ProjectBuildPlan makeBuildPlan(
   }
   for (const std::string &flag : configuration.configurationFlags()) {
     modelIdentity += "\nconfiguration-flag:" + flag;
+  }
+  for (const auto &flag : configuration.declaredConfigurationFlags()) {
+    modelIdentity += "\ndeclared-configuration-flag:" + flag;
   }
   if (selectedTarget.kind == ProjectTargetKind::Library) {
     modelIdentity += "\nprogram-kind:library";
@@ -839,7 +843,7 @@ ProjectBuildPlan makeBuildPlan(
       std::move(modelIdentity), std::move(bindgenImports),
       std::move(buildScripts), std::move(toolchain), debugInfo,
       std::move(packageWarningPolicy), rawPointerAudit, selectedTarget.linkage,
-      selectedTarget.exports);
+      selectedTarget.exports, configuration.declaredConfigurationFlags());
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -1021,7 +1025,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     std::vector<BuildScriptPlan> buildScripts,
     ResolvedProjectToolchain toolchain, bool debugInfo,
     PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit,
-    ProjectTargetLinkage targetLinkage, std::vector<ProjectExport> exports)
+    ProjectTargetLinkage targetLinkage, std::vector<ProjectExport> exports,
+    ConfigurationFlags declaredConfigurationFlags)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -1037,6 +1042,7 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedNativeInputs(std::move(nativeInputs)),
       resolvedPackageSources(std::move(packageSourceRoots)),
       resolvedConfigurationFlags(std::move(configurationFlags)),
+      resolvedDeclaredConfigurationFlags(std::move(declaredConfigurationFlags)),
       resolvedWarningPolicy(std::move(warningPolicy)),
       resolvedPackageWarningPolicy(std::move(packageWarnings)),
       resolvedProjectModelIdentity(std::move(projectModelIdentity)),
@@ -1141,6 +1147,10 @@ const std::vector<PackageSourceRoot> &ProjectBuildPlan::packageSources() const {
 
 const ConfigurationFlags &ProjectBuildPlan::configurationFlags() const {
   return resolvedConfigurationFlags;
+}
+
+const ConfigurationFlags &ProjectBuildPlan::declaredConfigurationFlags() const {
+  return resolvedDeclaredConfigurationFlags;
 }
 
 const WarningPolicy &ProjectBuildPlan::warnings() const {
