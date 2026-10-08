@@ -23,6 +23,16 @@ def assert_neutral_native_detail(output):
         assert re.fullmatch(r"(?: \([0-9]+(?:\.[0-9]+)?s(?: elapsed)?\))?", detail), line
 
 
+BACKEND_ROWS = ("Lowering", "Emitting", "Native")
+
+
+def assert_no_backend_rows(output):
+    # Lowering, emission and native compilation are --verbose detail only.
+    for line in output.splitlines():
+        verb = line.strip().split("  ", 1)[0]
+        assert verb not in BACKEND_ROWS, line
+
+
 def test_native_detail_policy():
     for detail in ("", " (1.46s)", " (10.00s elapsed)"):
         assert_neutral_native_detail("    Native  compiling and linking" + detail)
@@ -67,19 +77,26 @@ def main():
         assert "c++ compiler arguments" not in help_output.stdout
 
         built = run(["build", "--no-cache"])
-        stages = ["Loading", "Parsing", "Checking", "Lowering  HIR", "Lowering  MIR",
-                  "Optimizing", "Emitting  backend representation", "bridge.cpp",
-                  "Native  compiling and linking", "Publishing", "Finished"]
-        # Native-source detail is an exact path, not necessarily relative.
+        stages = ["Loading", "Parsing", "Checking", "Optimizing", "Publishing", "Finished"]
         positions = [built.stderr.index(stage) for stage in stages]
         assert positions == sorted(positions), built.stderr
+        assert_no_backend_rows(built.stderr)
+        assert "bridge.cpp" not in built.stderr, built.stderr
         assert "source units" in built.stderr and "(-O0)" in built.stderr
         assert "\x1b" not in built.stderr and "\r" not in built.stderr
         assert "Finished" not in built.stdout and "Built progress" in built.stdout
         assert "Publishing  executable and build cache" not in built.stderr
         assert "C++" not in built.stdout + built.stderr
-        assert_neutral_native_detail(built.stderr)
         assert "Kept backend representation" in built.stdout
+        # --verbose restores every backend stage, still without a backend name.
+        detailed_build = run(["build", "--no-cache", "--verbose", "--progress=plain"])
+        stages = ["Loading", "Parsing", "Checking", "Lowering  HIR", "Lowering  MIR",
+                  "Optimizing", "Emitting  backend representation", "bridge.cpp",
+                  "Native  compiling and linking", "Publishing", "Finished"]
+        # Native-source detail is an exact path, not necessarily relative.
+        positions = [detailed_build.stderr.index(stage) for stage in stages]
+        assert positions == sorted(positions), detailed_build.stderr
+        assert_neutral_native_detail(detailed_build.stderr)
         executable = next(path for path in (root / "build").rglob("progress*")
                           if path.is_file() and path.name in ["progress", "progress.exe"])
         generated = next((root / "build").rglob("progress.gti.cpp"))
@@ -122,6 +139,10 @@ def main():
         direct = run(["main.gti", "--emit-cpp", "-o", "direct.cpp"])
         assert direct.stderr == ""
         direct = run(["main.gti", "--emit-mir", "-o", "direct.mir", "--progress=plain"])
+        assert "Finished" in direct.stderr
+        assert_no_backend_rows(direct.stderr)
+        direct = run(["main.gti", "--emit-mir", "-o", "direct.mir", "--progress=plain",
+                      "--verbose"])
         assert "Emitting  MIR" in direct.stderr and "Finished" in direct.stderr
         operand = run(["main.gti", "--emit-cpp", "-o", "--progress=never"])
         assert operand.stderr == "" and (root / "--progress=never").is_file()
@@ -202,7 +223,9 @@ def live_native_probe(gti, root, env):
                 if not data: break
                 chunks.append(data)
             text = b"".join(chunks).decode(errors="replace")
-            if not observed and marker.exists() and "compiling and linking" in text and "elapsed)" in text:
+            # The hidden native stage keeps the overall build row alive.
+            if not observed and marker.exists() and re.search(
+                    r"Building  main\.gti \([0-9.]+s elapsed\)", text):
                 assert process.poll() is None, "progress was only published after native exit"
                 observed = True
                 release.touch()
@@ -212,6 +235,7 @@ def live_native_probe(gti, root, env):
         text = b"".join(chunks).decode(errors="replace")
         assert observed and process.returncode == 23, (process.returncode, text)
         assert "\x1b[2K" in text and "\x1b[1;" not in text
+        assert_no_backend_rows(text.replace("\r", "\n").replace("\x1b[2K", ""))
         assert "native probe failure" not in text
         assert "backend failed while compiling and linking" in text
         assert "backend diagnostics saved at " in text
