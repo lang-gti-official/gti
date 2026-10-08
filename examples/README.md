@@ -424,7 +424,9 @@ three-argument function item.
 The owning callback example below also demonstrates retaining one in a wrapper.
 
 `83-complete-ranges.gti` defines an application-owned range with the exact
-read-only, mutable, and sized structural protocol. The same source-defined
+read-only, mutable, and sized structural protocol. It names the wrapped
+vector's `const_iterator`, `iterator`, and `sentinel` member aliases rather
+than `std::detail` types. The same source-defined
 `std::all_of` and `std::fill` implementations accept that nominal range and a
 fixed array; `std::sized_range` also proves a generic `size()` call without
 compiler recognition of either the range or algorithm name.
@@ -497,6 +499,14 @@ slot bytes inline, returns a recoverable error when full, reuses erased slots,
 and relies on ordinary reverse field cleanup. Its immovable nodes own strings;
 the compiler does not recognize the pool or cell names. A slot index is not a
 generation-checked handle: after erasure and reuse it names the replacement.
+
+## Qualified generic type members
+
+[`132-qualified-type-members.gti`](132-qualified-type-members.gti) spells
+`ValueBox<T>::value_type` in a generic signature and wraps a vector of unique
+layer owners behind `std::vector<std::unique_ptr<Layer>>::const_iterator` and
+`::sentinel`. It uses ordinary range traversal and deterministic object cleanup,
+without naming private implementation iterator types.
 
 ## Complete projects
 

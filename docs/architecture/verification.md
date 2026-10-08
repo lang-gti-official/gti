@@ -3732,6 +3732,17 @@ corpus, highlight, and shipped-source gates own editor parsing and captures;
 example 79 is the native compile/run composition. Aliases are static type
 members, so HIR and MIR intentionally gain no operation.
 
+`qualified_type_members` extends that static contract to written specialized
+owners, nested alias qualifiers, owner defaults/value arguments, exact-definition
+alias restrictions, private/cyclic/missing aliases, generic signatures, retained iterator
+loans and move-only targets. `qualified_type_member_lsp` checks completion,
+hover, definition, references, tokens, precise diagnostic ranges, recovery and
+format/reanalysis. `qualified_type_member_runtime` compiles and runs example 132
+at O0/O1/O3 under C++20/C++23, including unique-owner cleanup. The example also
+participates in the standard MIR and LoweredProgram censuses and the Tree-sitter
+shipped-source gate. This slice extends type contexts, not dependent alias
+templates or direct specialized-alias constructor expression spelling.
+
 For owning-string output, `string_owned_output_runtime` is the focused
 source-defined-library gate. It keeps the existing named-owner `string&`
 selection live while proving that a fresh move-only string result directly

@@ -237,11 +237,16 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
     return text;
   }
   std::string text;
-  for (std::size_t index = 0; index < type.name.segments.size(); ++index) {
-    if (index != 0) {
-      text += "::";
+  if (type.qualifiedOwner) {
+    text = typeToString(*type.qualifiedOwner) + "::" +
+           type.name.last().lexeme;
+  } else {
+    for (std::size_t index = 0; index < type.name.segments.size(); ++index) {
+      if (index != 0) {
+        text += "::";
+      }
+      text += type.name.segments[index].lexeme;
     }
-    text += type.name.segments[index].lexeme;
   }
   if (!type.pointers.empty() && type.pointers.front().pointeeConst) {
     text = "const " + text;

@@ -917,7 +917,13 @@ module.exports = grammar({
     user_type: ($) =>
       prec.dynamic(1, seq(
         field("name", $._qualified_identifier),
-        optional(field("arguments", $.type_argument_clause)),
+        optional(seq(
+          field("arguments", $.type_argument_clause),
+          repeat(seq(
+            "::", field("name", $.identifier),
+            optional(field("arguments", $.type_argument_clause)),
+          )),
+        )),
       )),
 
     type_argument_clause: ($) =>
