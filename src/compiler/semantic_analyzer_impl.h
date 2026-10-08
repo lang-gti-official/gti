@@ -3587,6 +3587,13 @@ private:
   resolveTypeAliasPath(const NamePath &path,
                        const std::vector<std::string> &fromScope) const;
 
+  [[nodiscard]] std::optional<ResolvedTypeAlias>
+  resolveMemberTypeAlias(ClassId owner, const std::string &name) const;
+
+  [[nodiscard]] std::optional<ResolvedTypeAlias>
+  resolveTypeAliasPath(const TypeRef &type,
+                       const std::vector<std::string> &fromScope) const;
+
   [[nodiscard]] std::optional<TypeAliasId>
   resolveTypeAliasPathGlobally(const NamePath &path,
                                const std::vector<std::string> &fromScope) const;

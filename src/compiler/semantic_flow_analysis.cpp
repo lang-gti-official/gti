@@ -3033,7 +3033,11 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
   if (compilerPrivatePathDenied(type.name)) {
     return;
   }
-  recordQualifiedPathUses(type.name);
+  if (type.qualifiedOwner) {
+    recordTypeUse(*type.qualifiedOwner);
+  } else {
+    recordQualifiedPathUses(type.name);
+  }
 
   SymbolId symbol = 0;
   SemanticType resolvedType = typeOf(type);
@@ -3049,7 +3053,7 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
       symbol = symbolForDeclaration(info->name);
     }
   } else if (const std::optional<ResolvedTypeAlias> alias =
-                 resolveTypeAliasPath(type.name, currentNamespace)) {
+                 resolveTypeAliasPath(type, currentNamespace)) {
     if (alias->id != 0 && alias->id <= typeAliases.size()) {
       symbol = symbolForDeclaration(alias->declaration->name());
       if (symbol == 0) {
@@ -3972,6 +3976,13 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
   std::optional<ClassId> completionOwner =
       resolveClassPath(ownerPath, currentNamespace);
   std::optional<SemanticType> specializedOwner;
+  if (ownerType) {
+    const SemanticType selected = typeOf(*ownerType);
+    if (selected.kind == SemanticType::Class) {
+      completionOwner = selected.classId;
+      specializedOwner = selected;
+    }
+  }
   if (!completionOwner) {
     if (const auto alias = resolveTypeAliasPath(ownerPath, currentNamespace)) {
       if (!validateTypeAliasAccess(*alias, ownerPath.last())) {
@@ -4014,7 +4025,9 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
                          : GenericSubstitution{};
     const auto candidateDetail = [&](const std::string &name,
                                      const SemanticType &type) {
-      return specializedOwner ? "using " + pathSpelling(ownerPath) +
+      return specializedOwner ? "using " +
+                                    (ownerType ? typeRefSpelling(*ownerType)
+                                               : pathSpelling(ownerPath)) +
                                     "::" + name + " = " + typeSpelling(type)
                               : std::string{};
     };
@@ -4519,6 +4532,62 @@ auto SemanticVisitor::Impl::reportInvisibleSymbol(const Token &use,
                                     declarationSourceUnit(*symbol));
 }
 
+auto SemanticVisitor::Impl::resolveMemberTypeAlias(
+    ClassId owner, const std::string &name) const
+    -> std::optional<ResolvedTypeAlias> {
+  if (owner == 0 || owner > classes.size()) {
+    return std::nullopt;
+  }
+  const auto found = classInfo(owner).typeAliases.find(name);
+  if (found != classInfo(owner).typeAliases.end()) {
+    const MemberTypeAliasInfo &alias = found->second;
+    return ResolvedTypeAlias{.id = alias.id,
+                             .declaration = alias.declaration,
+                             .type = alias.type,
+                             .qualifiedName = alias.qualifiedName,
+                             .ownerClass = alias.ownerClass,
+                             .access = alias.access,
+                             .compilerPrivate = alias.compilerPrivate};
+  }
+  // Alias dependency resolution precedes completion of the member table.
+  for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+    const auto &alias = typeAliases[id - 1];
+    if (alias.ownerDeclaration == classInfo(owner).declaration &&
+        alias.declaration->name().lexeme == name) {
+      return ResolvedTypeAlias{.id = id,
+                               .declaration = alias.declaration,
+                               .type = alias.type,
+                               .qualifiedName = alias.qualifiedName,
+                               .ownerClass = alias.ownerClass,
+                               .access = alias.access,
+                               .compilerPrivate = alias.compilerPrivate};
+    }
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::resolveTypeAliasPath(
+    const TypeRef &type, const std::vector<std::string> &fromScope) const
+    -> std::optional<ResolvedTypeAlias> {
+  if (!type.qualifiedOwner) {
+    return resolveTypeAliasPath(type.name, fromScope);
+  }
+  const SemanticType owner = typeOf(*type.qualifiedOwner, fromScope);
+  if (owner.kind != SemanticType::Class) {
+    return std::nullopt;
+  }
+  auto alias = resolveMemberTypeAlias(owner.classId, type.name.last().lexeme);
+  if (!alias) {
+    return std::nullopt;
+  }
+  alias->type = substituteType(alias->type, classSubstitution(owner));
+  alias->specializedOwner = true;
+  if (auto qualifier = resolveTypeAliasPath(*type.qualifiedOwner, fromScope)) {
+    alias->qualifiers.push_back(std::move(*qualifier));
+  }
+  return alias;
+}
+
 auto SemanticVisitor::Impl::resolveTypeAliasPath(
     const NamePath &path, const std::vector<std::string> &fromScope) const
     -> std::optional<ResolvedTypeAlias> {
@@ -4539,30 +4608,7 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
   const auto member =
       [&](ClassId owner,
           const std::string &name) -> std::optional<ResolvedTypeAlias> {
-    if (owner == 0 || owner > classes.size()) {
-      return std::nullopt;
-    }
-    const auto found = classInfo(owner).typeAliases.find(name);
-    if (found == classInfo(owner).typeAliases.end()) {
-      // During alias dependency resolution the member table is not complete.
-      // Resolve by owning declaration, never by a shared class-family name.
-      for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
-        const auto &alias = typeAliases[id - 1];
-        if (alias.ownerDeclaration == classInfo(owner).declaration &&
-            alias.declaration->name().lexeme == name) {
-          return direct(id);
-        }
-      }
-      return std::nullopt;
-    }
-    const MemberTypeAliasInfo &alias = found->second;
-    return ResolvedTypeAlias{.id = alias.id,
-                             .declaration = alias.declaration,
-                             .type = alias.type,
-                             .qualifiedName = alias.qualifiedName,
-                             .ownerClass = alias.ownerClass,
-                             .access = alias.access,
-                             .compilerPrivate = alias.compilerPrivate};
+    return resolveMemberTypeAlias(owner, name);
   };
   if (path.segments.size() == 1) {
     if (currentClass) {
@@ -10726,6 +10772,17 @@ auto SemanticVisitor::Impl::baseTypeOf(
     }
     return SemanticType::nativeFunctionType(
         typeOf(type.arguments.back(), fromScope), parameters);
+  }
+  if (type.qualifiedOwner) {
+    const auto alias = resolveTypeAliasPath(type, fromScope);
+    if (!alias || !type.arguments.empty() || alias->id == 0 ||
+        alias->id > typeAliases.size() ||
+        typeAliases[alias->id - 1].resolution != TypeAliasResolution::Resolved) {
+      return SemanticType::Unknown;
+    }
+    return substituteType(alias->type,
+                          GenericSubstitution{.types = instanceTypeSubstitution,
+                                              .values = instanceValueSubstitution});
   }
   const CompilerCapabilityTypeKind compilerCapability =
       compilerCapabilityType(type, fromScope);
