@@ -2236,6 +2236,8 @@
     },
     "s09-uninitialized-mut-scalar": {
       "code": "GTI-S2000",
+      "forbid": ["GTI-B0001", "native C++ compiler"],
+      "at_most": {"error[GTI-S2000]": 1},
       "outcome": "rejected"
     },
     "s10-ctor-by-value-copy": {
