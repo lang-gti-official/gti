@@ -25,6 +25,7 @@ def main():
                 )
                 assert executed.returncode == 0, executed.stderr
                 assert executed.stdout == "15\nlayer released\nlayer released\n", executed
+                assert executed.stderr == "", executed
     return 0
 
 

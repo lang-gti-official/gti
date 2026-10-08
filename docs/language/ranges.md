@@ -125,8 +125,8 @@ or a distinct sentinel type.
 
 The iterator must provide:
 
-- `operator!=(Sentinel&)`, with one read-only reference parameter that exactly
-  accepts the sentinel;
+- `operator!=(Sentinel&)` or `operator!=(Sentinel)`, with one exact read-only
+  reference parameter or copyable by-value parameter accepting the sentinel;
 - `operator*()`, returning a checked reference;
 - `void operator++() mut`, the prefix increment operation.
 
@@ -134,6 +134,14 @@ These are ordinary GTI methods. Access control, generic substitution, receiver
 mutability, exact overload matching, virtual dispatch, result ownership, and
 borrow checks all run through the normal frontend. C++ argument-dependent
 lookup and native range-for semantics are never consulted.
+
+The comparison must be unambiguous for a named sentinel. Public library end
+sentinels containing only a position or an empty end marker are passed by
+value, so explicit loops may compare `iterator != owner.end()` directly.
+Reference-taking application sentinels remain supported, but still require a
+stable named argument; this is not an exception to temporary-reference
+binding. The structural requirement promises the named-argument operation,
+not that every conforming sentinel accepts temporary arguments.
 
 A by-value loop declaration such as `for (T value : range)` copies the
 selected element and therefore rejects a move-only lvalue. `for (T& value :
@@ -313,7 +321,7 @@ public library name:
   prefix increment; ordinary parameter ownership separately checks whether a
   particular iterator expression can be transferred into an algorithm;
 - `std::sentinel_for<S, I>` proves exact public read-only
-  `bool I::operator!=(S&)`;
+  `bool I::operator!=(S&)` or `bool I::operator!=(S)` with copyable `S`;
 - `std::output_iterator<I>` proves mut checked dereference returning a mutable
   reference plus mutable prefix increment, and `std::writes_to<I, T>` refines
   the mutable referent to exactly `T`;
@@ -325,8 +333,8 @@ public library name:
   `mut T& I::operator[](std::ptrdiff_t) mut` for exactly `T`, the positioned
   write contract that keeps one exclusive cursor over a whole range;
 - `std::sized_sentinel_for<S, I>` composes `sentinel_for` with read-only
-  `std::ptrdiff_t I::operator-(S&)`, the signed distance from the iterator to
-  the sentinel.
+  `std::ptrdiff_t I::operator-(S&)` or `std::ptrdiff_t I::operator-(S)` with
+  copyable `S`, the signed distance from the iterator to the sentinel.
 
 `<std/numeric>` additionally defines `std::accumulates_into<I, T>`, whose first
 version proves that read-only dereferencing `I` returns a checked reference to
@@ -462,7 +470,10 @@ container-specific invalidation trait. Confined generic `void` operations,
 Exact `bool` predicates, exact context-supplied non-reference value results
 without tracked borrowed state or lambda identity, and proven forwarding
 through other confined callable parameters are available for algorithm
-callbacks. `<std/functional>` exposes those same read/mut/once facts as public
+callbacks. Direct composition of open callables such as `outer(inner(value))`
+also resolves the intermediate value from the selected concrete callable;
+it need not have the outer function's result type. `<std/functional>` exposes
+those same read/mut/once facts as public
 unary, binary, and iterator-aware predicate/operation relations, so invalid
 targets fail before concrete body reanalysis. Result
 inference through `auto` and borrowed callable results remain unavailable. One

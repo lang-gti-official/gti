@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.389.0 — Qualified generic type members
+
+- Name public member aliases directly through generic owners, such as
+  `std::vector<T>::const_iterator` or `Box<int>::value_type`, including nested
+  alias qualifiers. The same spelling works in generic signatures, fields,
+  aliases and local declarations, with existing access and ownership checks.
+- Editor navigation, completion, highlighting and formatting retain the
+  specialized owner and selected alias. Example 132 demonstrates a range
+  wrapper over unique-owned layers.
+
 ## 0.384.0 — Program installation and quieter builds
 
 - Install a project's executable with `gti install` and remove it with

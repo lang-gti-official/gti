@@ -56,6 +56,18 @@ def main():
             assert "Cell" in str(request("textDocument/hover", params))
             change(3, source)
             assert not [item for item in diagnostics(3) if item.get("severity") == 1]
+            target_line = next(i for i, text in enumerate(lines) if "cell.slot() = rhs();" in text)
+            target_params = {"textDocument": {"uri": uri}, "position": {
+                "line": target_line, "character": lines[target_line].index("slot")}}
+            assert request("textDocument/hover", target_params)
+            assert request("textDocument/definition", target_params)
+            change(4, source.replace("cell.slot() = rhs();", "cell.read_slot() = rhs();"))
+            errors = [item for item in diagnostics(4) if item.get("severity") == 1]
+            assert any(item.get("code") == "GTI-S2002" and
+                       item["range"]["start"]["line"] == target_line for item in errors), errors
+            assert all(item.get("code") != "GTI-B0001" for item in errors), errors
+            change(5, source)
+            assert not [item for item in diagnostics(5) if item.get("severity") == 1]
         finally:
             session.close()
 

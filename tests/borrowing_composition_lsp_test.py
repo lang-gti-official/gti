@@ -253,8 +253,8 @@ int main() {
                             start = concrete_errors.index(name + " =")
                             length = len(name)
                         else:
-                            start = concrete_errors.index(construction) + len(construction) - 1
-                            length = 1
+                            start = concrete_errors.index(construction)
+                            length = len("Broken")
                         request_location = {"uri": uri, "range": {
                             "start": lsp_position(concrete_errors, start),
                             "end": lsp_position(concrete_errors, start + length)}}

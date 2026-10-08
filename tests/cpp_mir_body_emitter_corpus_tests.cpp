@@ -43,6 +43,19 @@ void testExampleCorpusEmissionReadiness() {
     lang::CppMirBodyEmissionMapRows rows = completeRows(frontend.mir);
     const lang::CppMirBodyEmissionMapRows productionRows =
         buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target);
+    const lang::CppMirBodyEmissionMap productionMap(productionRows);
+    const auto productionPlan =
+        lang::CppMirBodyEmitter(frontend.mir, productionMap).buildProgramPlan();
+    for (const auto &body : productionPlan.analysis().bodies) {
+      if (body.ready())
+        continue;
+      for (const auto &issue : body.issues) {
+        std::cerr << "production plan issue in " << source.filename().string()
+                  << " kind=" << static_cast<int>(issue.body.kind)
+                  << " owner=" << issue.body.owner << ": " << issue.detail
+                  << '\n';
+      }
+    }
     rows.enums = productionRows.enums;
     for (const lang::CppMirEnumRepresentation &enumeration : rows.enums) {
       addType(rows, enumeration.underlyingType);

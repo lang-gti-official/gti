@@ -2093,8 +2093,9 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
 
   for (const MirFunctionInstance &function : mir.functionInstances()) {
     // Every function instance gets its emitted name row: source definitions
-    // carry their definition spelling, runtime bindings and C-linkage
-    // declarations their exact external names. Only the namespace-scope
+    // carry their definition spelling, runtime bindings their external names,
+    // and C-linkage declarations their private, link-bound names. Only the
+    // namespace-scope
     // source-defined GTI form is also a valid call-target spelling; the
     // scalar call family's gates admit exactly that form.
     const std::optional<RowFunctionFacts> info = facts.functionFacts(function);
@@ -2122,8 +2123,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       }
       spelling += "::";
     } else if (!info->namespaceScope.empty()) {
-      // A C-linkage or runtime-binding declaration keeps its exact
-      // external symbol, but extern "C" affects linkage, not C++ name
+      // A C-linkage private declaration (or runtime binding) keeps its exact
+      // selected link symbol, but extern "C" affects linkage, not C++ name
       // lookup: when the emitted declaration lives inside a namespace,
       // the call-target spelling must name that namespace.
       spelling = "::__gti_program";

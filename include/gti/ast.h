@@ -557,6 +557,7 @@ class ConditionalExpr;
 class Conversion;
 class DirectInitializer;
 class DereferenceSet;
+class PlaceSet;
 class Get;
 class Grouping;
 class Index;
@@ -622,6 +623,7 @@ public:
   virtual void visitConversionExpr(const Conversion &expr) = 0;
   virtual void visitDirectInitializerExpr(const DirectInitializer &expr) = 0;
   virtual void visitDereferenceSetExpr(const DereferenceSet &expr) = 0;
+  virtual void visitPlaceSetExpr(const PlaceSet &expr) = 0;
   virtual void visitGetExpr(const Get &expr) = 0;
   virtual void visitGroupingExpr(const Grouping &expr) = 0;
   virtual void visitIndexExpr(const Index &expr) = 0;
@@ -651,6 +653,7 @@ enum class ExprKind : std::uint8_t {
   Conversion,
   DirectInitializer,
   DereferenceSet,
+  PlaceSet,
   Get,
   Grouping,
   Index,
@@ -734,6 +737,11 @@ struct Parameter {
   Parameter &operator=(const Parameter &) = delete;
 
   [[nodiscard]] bool hasDefault() const { return defaultArgument.has_value(); }
+
+  // An omitted source name does not erase the formal's declaration location.
+  [[nodiscard]] const Token &sourceAnchor() const {
+    return name.lexeme.empty() ? type.name.last() : name;
+  }
 
   TypeRef type;
   Token name;
@@ -1166,6 +1174,28 @@ private:
   ExprPtr value_;
 };
 
+// An expression-valued assignment target. Parsing retains its written shape;
+// semantic analysis, not the parser, establishes mutable place authority.
+class PlaceSet final : public ExprOfKind<ExprKind::PlaceSet> {
+public:
+  PlaceSet(ExprPtr target, Token oper, ExprPtr value)
+      : target_(std::move(target)), oper_(std::move(oper)),
+        value_(std::move(value)) {}
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitPlaceSetExpr(*this);
+  }
+
+  [[nodiscard]] const ExprPtr &target() const { return target_; }
+  [[nodiscard]] const Token &oper() const { return oper_; }
+  [[nodiscard]] const ExprPtr &value() const { return value_; }
+
+private:
+  ExprPtr target_;
+  Token oper_;
+  ExprPtr value_;
+};
+
 class Get final : public ExprOfKind<ExprKind::Get> {
 public:
   Get(ExprPtr object, Token access, Token name)
@@ -1206,6 +1236,7 @@ public:
   }
 
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  ExprPtr takeExpression() { return std::move(expression_); }
 
 private:
   ExprPtr expression_;

@@ -1,0 +1,23 @@
+#include <std/io>
+
+class Earlier {
+public:
+  Earlier() { std::println("earlier constructed"); }
+  ~Earlier() { std::println("earlier dropped"); }
+};
+class Failing {
+public:
+  Failing() {
+    int32_t[1] values = {1};
+    int32_t index = 2;
+    std::println(values[index]);
+  }
+  ~Failing() { std::println("must not drop failing field"); }
+};
+class Outer {
+  Earlier earlier;
+  Failing failing;
+public:
+  ~Outer() { std::println("must not drop incomplete outer"); }
+};
+int main() { Outer object{}; return 0; }

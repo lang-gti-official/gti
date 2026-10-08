@@ -88,6 +88,11 @@ void AstPrinter::visitGetExpr(const Get &expr) {
            expr.name().lexeme + ")";
 }
 
+void AstPrinter::visitPlaceSetExpr(const PlaceSet &expr) {
+  result = parenthesize(expr.oper().lexeme,
+                        {expr.target().get(), expr.value().get()});
+}
+
 void AstPrinter::visitGroupingExpr(const Grouping &expr) {
   result = parenthesize("group", {expr.expression().get()});
 }

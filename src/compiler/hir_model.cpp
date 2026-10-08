@@ -5,6 +5,17 @@
 
 namespace lang {
 
+const HirValue *HirBody::valueForSource(const Expr &source) const {
+  for (auto value = values.rbegin(); value != values.rend(); ++value)
+    if (value->source == &source)
+      return &*value;
+  for (auto alias = directInitializations.rbegin();
+       alias != directInitializations.rend(); ++alias)
+    if (alias->source == &source)
+      return findValue(alias->value);
+  return nullptr;
+}
+
 namespace {
 
 [[nodiscard]] bool sameSpan(const SourceSpan &left, const SourceSpan &right) {
@@ -37,7 +48,7 @@ materializableProgramConstant(const std::optional<ConstantValue> &constant) {
 }
 
 [[nodiscard]] bool containsUnresolvedGeneric(const CompileTimeValue &value) {
-  return value.kind == CompileTimeValue::Parameter;
+  return value.kind != CompileTimeValue::UInt64;
 }
 
 [[nodiscard]] bool containsUnresolvedGeneric(const SemanticType &type) {
@@ -154,6 +165,86 @@ HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
   HirProgramPlanVerificationResult result;
+  std::unordered_map<SymbolId, const SymbolRecord *> instanceSymbols;
+  for (const SymbolRecord &symbol : program.instanceSymbols()) {
+    if (symbol.id == 0 ||
+        semantics.database().findSymbol(symbol.id) != nullptr ||
+        !instanceSymbols.emplace(symbol.id, &symbol).second ||
+        symbol.name.empty() || symbol.sourceUnit == 0 ||
+        symbol.nameSpan.end <= symbol.nameSpan.start) {
+      result.errors.emplace_back(
+          "HIR concrete symbol inventory has invalid or overlapping identity");
+    }
+  }
+  const auto verifyConcreteBindings = [&](const HirBody &body) {
+    for (const HirBinding &binding : body.bindings) {
+      const auto found = instanceSymbols.find(binding.info.symbol);
+      if (found != instanceSymbols.end() &&
+          (found->second->type != binding.info.type ||
+           found->second->traits != binding.info.traits ||
+           found->second->mutableBinding !=
+               (binding.info.access == AccessMode::Mutable))) {
+        result.errors.emplace_back(
+            "HIR concrete binding differs from its semantic symbol record");
+      }
+    }
+  };
+  verifyConcreteBindings(program.module());
+  for (const auto &instance : program.functionInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.constructorInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.destructorInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.lambdaInstances())
+    verifyConcreteBindings(instance.body);
+  for (const auto &instance : program.classInstances()) {
+    const ClassTypeInfo *owner = semantics.findClassType(instance.declaration);
+    if (owner == nullptr ||
+        owner->typeAliases.size() != instance.typeAliases.size()) {
+      result.errors.emplace_back(
+          "HIR class alias inventory differs from semantics");
+      continue;
+    }
+    GenericSubstitution substitution;
+    std::size_t typeIndex = 0, valueIndex = 0;
+    for (const auto &parameter : owner->genericParameters) {
+      if (!parameter.typeArgumentPath.empty()) {
+        if (auto type = projectGenericTypeArgument(
+                instance.typeArguments, parameter.typeArgumentPath,
+                parameter.id, parameter.pack))
+          substitution.types.emplace(parameter.id, std::move(*type));
+      } else if (parameter.value) {
+        if (valueIndex < instance.valueArguments.size())
+          substitution.values.emplace(parameter.id,
+                                      instance.valueArguments[valueIndex++]);
+      } else if (parameter.pack) {
+        std::vector<SemanticType> elements(
+            instance.typeArguments.begin() +
+                static_cast<std::ptrdiff_t>(typeIndex),
+            instance.typeArguments.end());
+        substitution.types.emplace(
+            parameter.id,
+            SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+        typeIndex = instance.typeArguments.size();
+      } else if (typeIndex < instance.typeArguments.size()) {
+        substitution.types.emplace(parameter.id,
+                                   instance.typeArguments[typeIndex++]);
+      }
+    }
+    for (std::size_t index = 0; index < instance.typeAliases.size(); ++index) {
+      const auto &alias = instance.typeAliases[index];
+      const TypeAliasInfo *primary =
+          semantics.findTypeAlias(*owner->typeAliases[index]);
+      if (primary == nullptr || alias.source != owner->typeAliases[index] ||
+          alias.declaration != primary->id || alias.declaration == 0 ||
+          containsUnresolvedGeneric(alias.type) ||
+          alias.type !=
+              substituteSemanticType(primary->type, substitution, &semantics))
+        result.errors.emplace_back(
+            "HIR class alias differs from its exact semantic owner/type");
+    }
+  }
   if (program.analysisSeal() != semantics.analysisSeal()) {
     result.errors.emplace_back(
         "HIR semantic-analysis seal differs from the semantic model");
@@ -360,6 +451,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       exact &= selectedValues == instance.initializerValues &&
                instance.initializers.size() == position + owner->fields.size();
       for (const auto &field : owner->fields) {
+        const Expr *selectedSource =
+            field.declaration == nullptr
+                ? nullptr
+                : (field.declaration->initializer()
+                       ? field.declaration->initializer().get()
+                       : semantics.implicitFieldInitializer(*field.declaration)
+                             .get());
         const auto *initializer = position < instance.initializers.size()
                                       ? &instance.initializers[position]
                                       : nullptr;
@@ -367,8 +465,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             initializer != nullptr && initializer->arguments.size() == 1
                 ? instance.body.findValue(initializer->arguments.front())
                 : nullptr;
-        exact &= field.declaration != nullptr &&
-                 field.declaration->initializer() != nullptr &&
+        exact &= field.declaration != nullptr && selectedSource != nullptr &&
                  initializer != nullptr &&
                  initializer->kind == ConstructorInitializerTargetKind::Field &&
                  initializer->source == nullptr &&
@@ -379,7 +476,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                  !initializer->generatedDefault &&
                  !initializer->storesReference &&
                  !initializer->ownedParameter && value != nullptr &&
-                 value->source == field.declaration->initializer().get() &&
+                 instance.body.valueForSource(*selectedSource) == value &&
                  (value->info.type == field.info.type ||
                   isImplicitScalarInitializationConversion(field.info.type,
                                                            value->info.type) ||
@@ -435,7 +532,86 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       result.errors.emplace_back(
           "generated constructor differs from its selected semantic base");
   }
+  const auto verifyDirectInitializations = [&](const HirBody &body) {
+    std::unordered_set<const Expr *> seen;
+    for (const auto &alias : body.directInitializations) {
+      const auto *value = body.findValue(alias.value);
+      const Expr *input = nullptr;
+      if (const auto *group = exprAs<Grouping>(alias.source))
+        input = group->expression().get();
+      else if (const auto *call = exprAs<Call>(alias.source);
+               call != nullptr && call->arguments().size() == 1)
+        input = call->arguments().front().get();
+      else if (const auto *direct = exprAs<DirectInitializer>(alias.source);
+               direct != nullptr && direct->arguments().size() == 1)
+        input = direct->arguments().front().get();
+      const Expr *producer = alias.producer;
+      for (std::size_t depth = 0; depth < body.directInitializations.size();
+           ++depth) {
+        const auto nested = std::find_if(
+            body.directInitializations.begin(),
+            body.directInitializations.end(),
+            [&](const auto &entry) { return entry.source == producer; });
+        if (nested == body.directInitializations.end())
+          break;
+        producer = nested->producer;
+      }
+      const auto *ids = alias.source == nullptr
+                            ? nullptr
+                            : &program.valueIdsForSource(*alias.source);
+      const auto *selected = alias.source == nullptr
+                                 ? nullptr
+                                 : semantics.findConstruction(*alias.source);
+      const bool grouping = exprAs<Grouping>(alias.source) != nullptr;
+      const auto &proof = alias.constructionProof;
+      const bool exactConstruction =
+          grouping ? !proof
+                   : proof && proof->source() == alias.source &&
+                         proof->producer() == alias.producer &&
+                         proof->type() == alias.type &&
+                         proof->snapshot() ==
+                             semantics.analysisSeal().programSnapshot;
+      const auto *sourceCall = exprAs<Call>(alias.source);
+      const auto *call =
+          sourceCall == nullptr ? nullptr : semantics.findCall(*sourceCall);
+      const bool ordinaryCall =
+          sourceCall != nullptr &&
+          ((call != nullptr &&
+            call->intrinsic != IntrinsicKind::ExactTypeParameterConstruction &&
+            call->intrinsic !=
+                IntrinsicKind::DefaultTypeParameterConstruction) ||
+           semantics.findLambdaCall(*sourceCall) != nullptr ||
+           semantics.findDeferredCallableCall(*sourceCall) != nullptr ||
+           semantics.findOperator(*sourceCall) != nullptr);
+      const bool executableSource = std::any_of(
+          body.values.begin(), body.values.end(), [&](const auto &candidate) {
+            return candidate.source == alias.source;
+          });
+      // A primary generic record may precede concrete reanalysis. When its
+      // exact construction is retained, its direct-initialization decision
+      // must agree; the concrete value/type and source identity are mandatory.
+      const bool semanticMatch =
+          !ordinaryCall && !executableSource && exactConstruction &&
+          (selected == nullptr || selected->directInitialization || grouping);
+      const bool fresh =
+          value != nullptr && (value->kind == HirValueKind::Call ||
+                               value->kind == HirValueKind::DirectInitializer ||
+                               value->functionTarget.has_value());
+      if (alias.source == nullptr || !seen.insert(alias.source).second ||
+          input == nullptr || input != alias.producer || value == nullptr ||
+          value->source != producer || alias.type.kind != SemanticType::Class ||
+          value->info.type != alias.type ||
+          value->info.category != ValueCategory::Value ||
+          (!grouping && (!fresh || value->intrinsic == IntrinsicKind::Move)) ||
+          !semanticMatch || ids == nullptr ||
+          std::find(ids->begin(), ids->end(), alias.value) == ids->end())
+        result.errors.emplace_back(
+            "class result alias lost its exact source/type "
+            "and shared value identity");
+    }
+  };
   const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
+    verifyDirectInitializations(body);
     for (const auto &value : body.values) {
       if (value.kind != HirValueKind::Call &&
           value.kind != HirValueKind::DirectInitializer)
@@ -1088,7 +1264,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto exactValue = [&](HirValueId id, const ExprPtr &expression) {
         const HirValue *value = body.findValue(id);
         return expression && value != nullptr &&
-               value->source == expression.get();
+               body.valueForSource(*expression) == value;
       };
       const HirLoan *rangeLoan =
           range == nullptr ? nullptr : body.findLoan(range->rangeLoan);
@@ -1382,7 +1558,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         step.initializer ? program.module().findValue(*step.initializer)
                          : nullptr;
     if (!step.initializer || initializer == nullptr ||
-        initializer->source != semantic.declaration->initializer().get()) {
+        semantic.declaration->initializer() == nullptr ||
+        program.module().valueForSource(*semantic.declaration->initializer()) !=
+            initializer) {
       result.errors.emplace_back(
           "executable program initializer has no exact source HIR value");
     }

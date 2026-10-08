@@ -46,6 +46,10 @@ ALLOWED_MARKERS = {
     "scalar-cfg-v1",
     "scalar-cfg-failure-v1",
     "scalar-cfg-constructor-failure-v1",
+    # Constructor base preparation/gating are verified projections of the
+    # same constructor body, not separate AST/HIR executable routes.
+    "scalar-cfg-base-gate-v1",
+    "scalar-cfg-base-preparation-v1",
     "scalar-cfg-destructor-failure-v1",
     "native-boundary-v1",
     "hosted-entry-v1",

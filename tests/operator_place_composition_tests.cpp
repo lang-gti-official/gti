@@ -126,12 +126,52 @@ void checkCheckedReferenceFailures(const lang::FrontendResult &frontend) {
          "failure authority");
 }
 
-void checkNegative(std::string declarations, std::string body) {
+void checkNamedPlaceStores(const lang::FrontendResult &frontend) {
+  std::size_t stores = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (hir == nullptr)
+      continue;
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *value = hir->body.findValue(instruction.hirValue);
+        if (instruction.kind != lang::MirInstructionKind::Assign ||
+            value == nullptr || value->kind != lang::HirValueKind::PlaceSet)
+          continue;
+        ++stores;
+        const auto *destination =
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
+        expect(destination != nullptr &&
+                   destination->root == lang::MirPlaceRootKind::Loan &&
+                   destination->access == lang::AccessMode::Mutable,
+               "a named accessor store uses its exact mutable returned loan");
+        if (destination == nullptr || destination->loan == 0)
+          continue;
+        auto malformed = frontend.mir;
+        auto &body = const_cast<lang::MirFunctionInstance *>(
+                         malformed.findFunctionInstance(function.id))
+                         ->body;
+        body.loans[destination->loan - 1].access = lang::AccessMode::ReadOnly;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "MIR independently rejects upgrading a read-only accessor loan "
+               "to a writable destination");
+      }
+    }
+  }
+  expect(stores >= 2, "named plain and primitive compound stores reach MIR");
+}
+
+void checkNegative(std::string declarations, std::string body,
+                   std::string_view expectedCode = {},
+                   std::string_view expectedMessage = {}) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const std::string input =
+      std::move(declarations) + "int main(){" + body + "}";
   const auto result = lang::Frontend().analyze(
-      "operator-place-negative.gti",
-      std::move(declarations) + "int main(){" + body + "}",
-      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      "operator-place-negative.gti", input, {root / "stdlib/prelude.gti"}, {},
+      {root / "stdlib"});
   const auto error = std::find_if(
       result.diagnostics.begin(), result.diagnostics.end(),
       [](const auto &diagnostic) {
@@ -145,6 +185,33 @@ void checkNegative(std::string declarations, std::string body) {
                         return diagnostic.code == "GTI-B0001";
                       }),
          "invalid source must not reach an internal MIR/backend error");
+  if (!expectedCode.empty()) {
+    const auto located = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [&](const auto &diagnostic) {
+          return diagnostic.code == expectedCode &&
+                 diagnostic.message.find(expectedMessage) != std::string::npos;
+        });
+    expect(located != result.diagnostics.end() &&
+               located->primary.source == std::filesystem::weakly_canonical(
+                                              "operator-place-negative.gti")
+                                              .string() &&
+               located->primary.end > located->primary.start,
+           "the invalid place has its owning semantic diagnostic and exact "
+           "source identity");
+    if (located == result.diagnostics.end()) {
+      std::cerr << "Expected " << expectedCode << " containing '"
+                << expectedMessage << "' for " << body << '\n';
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    if (located != result.diagnostics.end() && expectedCode == "GTI-S2002") {
+      expect(located->primary.start == input.rfind("= 2;") &&
+                 located->primary.end == located->primary.start + 1,
+             "an invalid reference-result store highlights its exact '=' "
+             "rather than the accessor or receiver");
+    }
+  }
   if (error == result.diagnostics.end())
     for (const auto &diagnostic : result.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -165,6 +232,7 @@ int main() {
   if (!frontend.canGenerateCode())
     return 1;
   checkMutations(frontend);
+  checkNamedPlaceStores(frontend);
   checkCheckedReferenceFailures(frontend);
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
                      lang::OptimizationLevel::O3}) {
@@ -215,6 +283,23 @@ int main() {
   }
   expect(globalConsumers == 1, "global control checks exactly its entry body");
   checkNegative(declarations, "Cell cell{}; *cell = 2; return 0;");
+  checkNegative(declarations,
+                "mut Cell cell{}; cell.read_slot() = 2; return 0;", "GTI-S2002",
+                "requires a mutable place");
+  checkNegative(declarations, "mut Cell cell{}; cell.read() = 2; return 0;",
+                "GTI-S2002", "requires a mutable place");
+  checkNegative(declarations, "Cell cell{}; cell.slot() = 2; return 0;");
+  checkNegative(declarations, "Cell().slot() = 2; return 0;");
+  checkNegative(declarations, "mut Cell cell{}; cell.slot() = true; return 0;");
+  checkNegative(declarations,
+                "mut Cell cell{}; cell.slot() = cell.read(); return 0;",
+                "GTI-S2017", "still mutably borrowed");
+  checkNegative(declarations,
+                "mut Cell cell{}; cell.slot() += cell.read(); return 0;");
+  checkNegative(declarations,
+                "mut Cell cell{}; int32_t& held = cell.read_slot(); "
+                "cell.slot() = 4; return held;");
+  checkNegative(declarations, "mut Cell cell{}; (cell.read()) = 2; return 0;");
   checkNegative(
       declarations,
       "mut Cell cell{}; mut int32_t& held = *cell; *cell = 2; return held;");
@@ -222,5 +307,46 @@ int main() {
       declarations,
       "mut Grid grid{}; mut Row& held = grid[std::size_t(0)]; "
       "grid[std::size_t(1)][std::size_t(0)] = 2; return held[std::size_t(0)];");
+  const std::string sentinelDeclarations = R"(
+#include <std/iterator>
+class End {};
+class Cursor {
+  mut int32_t current = 0;
+public:
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& end) { return true; }
+};
+)";
+  checkNegative(sentinelDeclarations,
+                "mut Cursor cursor{}; bool compared = cursor != End(); "
+                "return compared ? 1 : 0;",
+                "GTI-S2022", "No exact overload");
+  auto ambiguousSentinel = sentinelDeclarations;
+  ambiguousSentinel.insert(ambiguousSentinel.find("bool operator!="),
+                           "bool operator!=(End end){return true;} ");
+  checkNegative(ambiguousSentinel,
+                "return int32_t(std::distance(Cursor(), End()));", "GTI-S2029",
+                "std::sentinel_for");
+  auto moveOnlySentinel = sentinelDeclarations;
+  moveOnlySentinel.replace(moveOnlySentinel.find("class End {};"),
+                           std::string_view("class End {};").size(),
+                           "class End{ public: End(){} "
+                           "End(End& other)=delete; "
+                           "End(End&& other)=default; };");
+  moveOnlySentinel.replace(moveOnlySentinel.find("End& end"),
+                           std::string_view("End& end").size(), "End end");
+  checkNegative(moveOnlySentinel,
+                "return int32_t(std::distance(Cursor(), End()));", "GTI-S2029",
+                "std::sentinel_for");
+  checkNegative("float identity(float value){return value;}",
+                "float result = identity(16777217); return int32_t(result);",
+                "GTI-S2003", "parameter requires 'float'");
+  checkNegative("class Scalar{ public: Scalar(float value){} };",
+                "Scalar result = Scalar(16777217); return 0;", "GTI-S2012",
+                "exactly matches");
+  checkNegative("",
+                "double value = double(1.0); float narrowed = value; return 0;",
+                "GTI-S2003", "initialize");
   return failures == 0 ? 0 : 1;
 }

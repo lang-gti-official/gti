@@ -26,7 +26,7 @@ the server consumes memory without bound on that input.
 | `generic_shape_matrix.py` | generic shape × type argument | S11 |
 | `ownership_flow_matrix.py` | ownership operation × control-flow context | nothing — 60/60 clean |
 | `elementary_forms_matrix.py` | elementary declaration and statement forms | S09, and confirmation that its 32 siblings are correct |
-| `conversion_matrix.py` | source numeric type × target numeric type | S12 — implicit integer→float conversions that lose value |
+| `conversion_matrix.py` | source numeric type × target numeric type | S12 contract audit — accepted integer→float rounding in assignment contexts |
 | `semantics_oracle.py` | stdlib and control-flow results × expected values | nothing — 11/12, the twelfth an API mistake in the test |
 | `lsp_survival.py` | files × `gti_lsp` staying alive and answering | that S13's memory exhaustion is reachable through the editor |
 | `payload_enum_matrix.py` | payload kind × operation | S15 — a class payload with no destructor |

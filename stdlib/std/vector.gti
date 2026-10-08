@@ -49,11 +49,11 @@ public:
 
   // The signed distance from this iterator to the sentinel; positive while
   // the sentinel is ahead.
-  ptrdiff_t operator-(vector_sentinel& sentinel) {
+  ptrdiff_t operator-(vector_sentinel sentinel) {
     return ptrdiff_t(sentinel.position()) - ptrdiff_t(this.current_position);
   }
 
-  bool operator!=(vector_sentinel& sentinel) {
+  bool operator!=(vector_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 
@@ -88,7 +88,7 @@ public:
     this.current_position++;
   }
 
-  bool operator!=(vector_sentinel& sentinel) {
+  bool operator!=(vector_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 };
@@ -120,9 +120,8 @@ class vector<std::move_constructible T> {
   }
 
 public:
-  using iterator = detail::vector_iterator<T>;
-  using const_iterator = iterator;
-  using mut_iterator = detail::vector_mut_iterator<T>;
+  using iterator = detail::vector_mut_iterator<T>;
+  using const_iterator = detail::vector_iterator<T>;
   using sentinel = detail::vector_sentinel;
 
   vector() : data(gti_internal::allocate_prefix_storage<T>(uint64_t(0))) {}
@@ -239,11 +238,11 @@ public:
     return gti_internal::prefix_storage_read_mut(this.data, index);
   }
 
-  iterator begin() {
+  const_iterator begin() {
     return detail::vector_iterator<T>(this.data, size_t(0));
   }
 
-  mut_iterator begin_mut() mut {
+  iterator begin_mut() mut {
     return detail::vector_mut_iterator<T>(this.data, size_t(0));
   }
 
