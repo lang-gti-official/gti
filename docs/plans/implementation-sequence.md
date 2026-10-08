@@ -5078,7 +5078,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   barrier, including checked aliases/reborrows and declaration-field initializer
   calls, even when the caller has no corresponding global Symbol place.
   Independent scalar storage remains provable; canonical replay rejects stale
-  getter restoration. Focused/native validation is in progress. The original
+  getter restoration. The optimized compiler passes all eight focused compiler,
+  optimizer and source-owner contract gates (47.97 seconds), and the complete
+  ordinary-object/getter/global-alias matrix passes all 320 native cases across
+  eight modes (52.59 seconds), including no-elide and ASan/UBSan. These results
+  do not resolve the original six optimizer and three native optimization-evidence
+  failures. The original
   source-owner requirements remain unchanged; ordinary owning-class movement and
   raw initialized-element coverage are separate prerequisites. Neither is
   inferred from a getter name.
