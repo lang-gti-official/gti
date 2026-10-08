@@ -1,0 +1,83 @@
+// Fresh class constructions as payload enum alternative fields (issue #122).
+// Each constructor runs at its own source position, in argument order, and
+// the alternative receives the completed values.
+mut int32_t order = 0;
+
+enum Event<T> { item(T value) };
+enum Tag { left, right };
+
+class Inner {
+public:
+  Event<int32_t> data;
+  Inner(Event<int32_t> data) : data(data) { order = order * 10 + 1; }
+};
+
+class Plain {
+public:
+  int32_t value;
+  Plain(int32_t value) : value(value) { order = order * 10 + value; }
+};
+
+class Tagged {
+public:
+  Tag tag;
+  int32_t value;
+  Tagged(Tag tag, int32_t value) : tag(tag), value(value) {}
+};
+
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+enum Mixed { both(Plain first, Inner second, int32_t extra), none };
+
+int32_t read(Event<int32_t> event) {
+  switch (event) {
+    case Event<int32_t>::item(value): return value;
+  }
+}
+
+int main() {
+  // The original reproducer: sibling constructors with fresh enum arguments.
+  Pair<Inner> pair = Pair<Inner>::items(
+      Inner(Event<int32_t>::item(1)), Inner(Event<int32_t>::item(2)));
+  switch (pair) {
+    case Pair<Inner>::items(auto& first, second):
+      if (read(first.data) != 1 || read(second.data) != 2) { return 1; }
+      break;
+    case Pair<Inner>::other: return 2;
+  }
+  if (order != 11) { return 3; }
+
+  // Sibling constructors whose arguments are prepared between them.
+  order = 0;
+  Pair<Plain> plain = Pair<Plain>::items(Plain(3), Plain(4));
+  switch (plain) {
+    case Pair<Plain>::items(auto& first, second):
+      if (first.value != 3 || second.value != 4) { return 4; }
+      break;
+    case Pair<Plain>::other: return 5;
+  }
+  if (order != 34) { return 6; }
+
+  // A named enum argument, a scoped enum argument, and mixed field kinds.
+  order = 0;
+  Event<int32_t> named = Event<int32_t>::item(7);
+  Mixed mixed = Mixed::both(Plain(5), Inner(named), 9);
+  Pair<Tagged> tagged =
+      Pair<Tagged>::other(Tagged(Tag::left, 1), Tagged(Tag::right, 2));
+  if (order != 51) { return 7; }
+  switch (mixed) {
+    case Mixed::both(auto& first, auto& second, extra):
+      if (first.value != 5 || read(second.data) != 7 || extra != 9) {
+        return 8;
+      }
+      break;
+    case Mixed::none: return 9;
+  }
+  switch (tagged) {
+    case Pair<Tagged>::items: return 10;
+    case Pair<Tagged>::other(auto& first, second):
+      return first.tag == Tag::left && second.tag == Tag::right &&
+                     first.value + second.value == 3
+                 ? 0
+                 : 11;
+  }
+}

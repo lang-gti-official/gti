@@ -104,7 +104,16 @@ extern "C" {
 ```
 
 GTI code calls `cli11::app_create`, while the object file refers to
-`gti_cli11_app_create`. The link name must be one portable ASCII C identifier;
+`gti_cli11_app_create`.
+The C++ backend uses a separate private declaration identity bound to this
+unchanged external symbol. Generated support headers therefore cannot capture
+or conflict with a GTI C declaration merely because its symbol is also provided
+by libc. The exact resolved signature and callback identity remain GTI facts;
+this does not remap fixed-width integers to different C scalar types. Prefer
+the target-correct `c_size_t` spelling when transcribing a `size_t` prototype.
+Native bridge headers and embedding exports keep their selected external names.
+
+The link name must be one portable ASCII C identifier;
 the current contract does not admit arbitrary object-format spellings. GTI
 does not mangle the selected symbol or prefix it with the containing GTI
 namespace. `link_name` is valid only on a bodyless `extern "C"` function, may
@@ -263,6 +272,13 @@ capturing closures. Native callback values cannot be arithmetically manipulated,
 from lambdas, methods, generic functions, `unsafe` functions, declarations
 without bodies, or inexact overloads. In an exact callback context, one non-generic
 namespace-scope GTI function with a body may convert to the alias:
+
+Direct adaptation of a bodyless `extern "C"` function item is not in that
+conversion family and reports `GTI-S2076`. A C function may instead return a
+value of the exact named native function-pointer type; GTI can transport and
+invoke that address under the native invocation contract below. Private C++
+declaration isolation does not change this eligibility boundary, the address
+transported by C, or public bridge-header/export symbol names.
 
 ```gti
 void report_error(int32_t code, c_string message) {}
