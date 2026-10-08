@@ -50599,6 +50599,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.result &&
             !classSsaLifetimeSlot(program_, representations_, body,
                                   *instruction.result) &&
+            sequencedMovedArgument(body, *instruction.result) != &instruction &&
+            !(cppMirOwningArrayPlacementResult(program_,
+                                               instruction.info.type) &&
+              returnMoveDefinition(body, *instruction.result) ==
+                  &instruction) &&
             constructorFieldMoveInitialize(body, *instruction.result) ==
                 nullptr &&
             !(address.kind == MirBodyKind::Constructor &&
@@ -50606,6 +50611,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                 instruction) != nullptr)) {
           // An owning array cannot fall back to a default-constructed scalar
           // SSA object when its exact publication/lifetime proof is absent.
+          // Sequenced call arguments construct at the Move, while exact
+          // return moves publish directly into the caller's result slot.
           return false;
         }
         const bool terminalElementMove =

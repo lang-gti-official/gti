@@ -1057,6 +1057,14 @@ class-typed values, so lambda closures and unique owners keep their fused and
 prepared spellings; nothing between the producer and the call may touch the
 source place.
 
+The owning fixed-array admission gate also retains these exact sequenced
+`Move` arguments and verified direct return moves. The former constructs at
+the move instruction; the latter publishes into the caller's result slot.
+Neither route requires an independently default-constructed SSA array, even
+when its elements delete default construction. Arrays without an exact
+argument, result, or lifetime-slot publication proof remain rejected rather
+than falling back to native value initialization.
+
 For a verified `MoveBorrowedTemporary` ordinary call or constructor input, the body emitter
 publishes the exact producer call result into its MIR value-rooted lifetime
 slot, moves that value into the selected parameter, and ends the
