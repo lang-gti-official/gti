@@ -267,6 +267,16 @@ publication gate pass together (36.34 seconds). The explicit eight-consumer
 probe is a development inventory until all of its producer/consumer pairs are
 repaired; emission-only runs must not be reported as native execution coverage.
 
+At `1d7c5fd3`, grouped passive and cleanup-owning call arguments pass six native
+modes and ASan/UBSan; the owning argument is alive while the next argument runs
+and is destroyed exactly once by the callee. Structural rejection coverage now
+includes the grouped-argument body. The corrected eight-consumer development
+inventory admits 40 of 48 cases (three producers, eight consumers, both boolean
+values). Remaining failures are parenthesized conditional results consumed by
+binding initialization, a by-value argument, a relayed by-value argument, or
+container insertion. These eight failures remain open; passing emission alone
+does not establish native correctness for the other forty cases.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
