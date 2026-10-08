@@ -2,6 +2,101 @@
 
 namespace {
 
+void testSelectedConstructorDefaultSchedule() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/nominal_field_defaults.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "selected-default fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(), "selected-default fixture must verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  bool checked = false;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto *owner = frontend.mir.findClassInstance(constructor.owner);
+    const auto *info = owner == nullptr
+                           ? nullptr
+                           : frontend.semantics.findClassType(owner->declaration);
+    if (!info || !info->declaration ||
+        info->declaration->name().lexeme != "ReferenceOverride" ||
+        owner->declaredFields.size() != 3 ||
+        owner->declaredFields.front().type.kind !=
+            lang::SemanticType::Reference)
+      continue;
+    checked = true;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                       constructor.id};
+    expect(lang::CppMirBodyEmitter(frontend.mir, map)
+               .supportsFailureBodyText(address),
+           "reference, explicitly overridden class, and scalar default use "
+           "the selected constructor's status schedule");
+    expect(constructor.initializers.size() == 3,
+           "each declared field must have one selected initializer");
+    if (constructor.initializers.size() != 3)
+      continue;
+    for (int mutation = 0; mutation != 12; ++mutation) {
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirConstructorInstance *>(
+          malformed.findConstructorInstance(constructor.id));
+      lang::MirInstruction *publication = nullptr;
+      lang::MirInstruction *end = nullptr;
+      for (auto &block : changed->body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (instruction.kind == lang::MirInstructionKind::Initialize &&
+              instruction.constructorInitializer == 2)
+            publication = &instruction;
+          if (instruction.fullExpressionEnd == 2)
+            end = &instruction;
+        }
+      }
+      expect(publication && end,
+             "class publication and full-expression endpoint must exist");
+      if (!publication || !end)
+        continue;
+      if (mutation == 0)
+        changed->initializers.pop_back();
+      if (mutation == 1)
+        changed->initializers[1].field = changed->initializers[0].field;
+      if (mutation == 2)
+        std::swap(changed->initializers[1], changed->initializers[2]);
+      if (mutation == 3)
+        changed->initializers[1].targetType = lang::SemanticType::Int32;
+      if (mutation == 4)
+        publication->constructorInitializer = 0;
+      if (mutation == 5) {
+        auto *place = const_cast<lang::MirPlace *>(
+            changed->body.findPlace(*publication->destination));
+        place->projections.front().field = changed->initializers[0].field;
+      }
+      if (mutation == 6)
+        publication->operands.front().value = 0;
+      if (mutation == 7)
+        publication->hirValue = changed->initializers[2].arguments.front();
+      if (mutation == 8)
+        end->fullExpressionEnd = 0;
+      if (mutation == 9)
+        changed->body.fullExpressions[1].roots.front() = 0;
+      if (mutation == 10)
+        changed->initializers[0].arguments = changed->initializers[1].arguments;
+      if (mutation == 11) {
+        for (auto &loan : changed->body.loans)
+          if (loan.storedField == changed->initializers[0].field)
+            loan.source = 0;
+      }
+      expect(!lang::CppMirBodyEmitter(malformed, map)
+                  .supportsFailureBodyText(address),
+             "selected schedule rejects missing/duplicate fields, order, "
+             "type, publication, endpoint and reference-origin forgery " +
+                 std::to_string(mutation));
+    }
+  }
+  expect(checked, "fixture must reach the mixed selected-field schedule");
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "selected defaults must reach production emission");
+}
+
 const lang::MirInstruction *testInstruction(const lang::MirBody &body,
                                             lang::MirInstructionId id);
 
@@ -11736,6 +11831,8 @@ constexpr NamedTest kTests[] = {
     {"testGeneratedDefaultOwningFieldInitializer",
      testGeneratedDefaultOwningFieldInitializer},
     {"testPassiveStatusDefaultField", testPassiveStatusDefaultField},
+    {"testSelectedConstructorDefaultSchedule",
+     testSelectedConstructorDefaultSchedule},
 };
 
 } // namespace

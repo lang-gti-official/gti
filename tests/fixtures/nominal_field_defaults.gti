@@ -55,6 +55,18 @@ public:
   ExplicitOverride() : value(PlainValue()) {}
 };
 
+class ReferenceOverride {
+  mut int& source;
+  PlainValue value = unused_value();
+  int tail = 7;
+public:
+  ReferenceOverride(mut int& source, int divisor) :
+    source(source), value(PlainValue()) {
+    this.source += 12 / divisor;
+    if (value.number != 4 || tail != 7) this.source += 100;
+  }
+};
+
 int main() {
   { Generated object{}; }
   if (trace != 1221 || live != 0) return 1;
@@ -64,5 +76,8 @@ int main() {
   NominalDerived owner{};
   if (owner.value.read() != 5) return 3;
   ExplicitOverride overridden{};
+  mut int source = 0;
+  ReferenceOverride selected{source, 2};
+  if (source != 6) return 4;
   return 0;
 }
