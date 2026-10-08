@@ -1384,15 +1384,18 @@ runs also retain these regressions.
 
 ## L-INFER-01: Local Inferred Reference Bindings
 
-**Status: Implementation authorized and in progress.** Local reference inference
-now shares ordinary referent/binding validation and retained loans. Paired semantic,
-HIR/MIR, native cleanup and LSP validation is being completed before publication.
+**Status: Complete in 0.387.0; combined acceptance passed for 0.390.0.** Local
+reference inference shares ordinary referent/binding validation and retained
+loans. Paired semantic, HIR/MIR, native cleanup and LSP checks pass, including
+borrowed closures and external borrowed-expected extraction. Example 131 is the
+runnable client. The reconciled candidate passed all 565 local CTests and the
+staged SDK/consumer checks described in the canonical verification document.
 Whole-array and raw-pointer references retain their existing explicit-reference
 boundary; no backend inference or new owner is introduced.
 
 **Outcome:** Applications can retain a checked borrow without spelling a long
 concrete type. For example, reading an array nested in a parsed JSON document
-should permit:
+permits:
 
 ```gti
 auto& scopes_array = parsed.get("scopes").expect("scopes are required");
@@ -1415,9 +1418,11 @@ Borrowed `expected<T&, E>` extraction through `.expect()` is implemented and
 documented in [expected values](../language/expected.md). It yields a place tied
 to the original owner, even after destruction of the temporary expected shell.
 `std::json::value::get` returns this shape; it does not yield an owned JSON node.
-The current move-only-copy diagnostic on `mut auto value = borrowed_result`
-therefore rejects a real attempted copy, but its unconditional movement hint
-does not explain the available borrowing alternative.
+The move-only-copy diagnostic on `mut auto value = borrowed_result` rejects a
+real attempted copy. The old unconditional movement hint has been replaced:
+current guidance explains `auto&` and conditional explicit cloning, and suggests
+movement only for a legally transferable whole owner. It does not offer an
+ownership-changing fix-it.
 
 ### Language Rule
 
