@@ -740,7 +740,9 @@ void testDependencyConfigurationFlags() {
                   "left",
                   "[build]\ndefines = [\"LEFT\", \"COMMON\"]\n"
                   "[dependencies]\nleaf = { path = \"../leaf\" }\n"
-                  "[profiles.dev]\ndefines = [\"DEPENDENCY_PROFILE\"]\n")) &&
+                  "[profiles.dev]\ndefines = [\"DEPENDENCY_PROFILE\"]\n"
+                  "[targets.left]\nkind = \"library\"\nroot = \"src/api.gti\"\n"
+                  "defines = [\"DEPENDENCY_TARGET\"]\n")) &&
           writeFile(
               root / "right/gti.toml",
               package("right",
@@ -767,6 +769,9 @@ void testDependencyConfigurationFlags() {
                  lang::ConfigurationFlags(
                      {"APP", "CLI", "COMMON", "LEAF", "LEFT", "RIGHT"}),
          "build configuration must share dependency facts and merge CLI flags");
+  expect(build.plan && build.plan->declaredConfigurationFlags() == expected,
+         "dependency target/profile flags must not suppress unknown-flag "
+         "diagnostics in the consumer");
   const auto rootFacts =
       lang::driver::resolveProjectFacts(root, "workspace_root");
   expect(rootFacts.succeeded() && rootFacts.facts &&

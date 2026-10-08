@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.390.0 — Target and profile configuration flags
+
+- Set `defines` in individual `gti.toml` targets and profiles. Build, check,
+  metadata and editor analysis share the selected configuration; flags from
+  unselected targets and profiles remain inactive, without false typo warnings.
+- Selected flags combine with package/dependency build flags and command-line
+  `-D` additions. Cached builds and editor snapshots invalidate when the
+  configuration changes. See `examples/scoped-configuration`.
+
 ## 0.384.0 — Program installation and quieter builds
 
 - Install a project's executable with `gti install` and remove it with
