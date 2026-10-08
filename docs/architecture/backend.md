@@ -1098,6 +1098,13 @@ single-field projection; a trivial scalar copy load; and no active cleanup,
 lifecycle, borrowed-state, or drop obligation. Additional consumers, nested or
 non-field projections, cleanup-owning temporaries, and incoherent type rows
 reject body emission rather than falling back to native temporary behavior.
+Reading a trivial scalar does not transfer its owner: fresh passive immovable
+results use this same proof and storage without requiring a copy or move
+constructor. They cannot carry borrowed state or active drop state through
+this representation-only slot. Constructors construct in place; status-returning
+source calls publish only on their MIR success edge.
+The field load retires the passive shell before slot reuse, including in loops.
+Transfer consumers still require movability independently.
 
 An ordinary cleanup-free construction may instead feed one exact by-value
 parameter of a selected static/free source GTI call. The same uninitialized
