@@ -316,8 +316,8 @@
       }
     },
     "111-final-address-storage.gti": {
-      "declarations": 388,
-      "bodies": 106,
+      "declarations": 393,
+      "bodies": 109,
       "generated_items": 36,
       "generated_kinds": {
         "program_initialization": 0,
@@ -451,8 +451,8 @@
       }
     },
     "12-fixed-arrays.gti": {
-      "declarations": 151,
-      "bodies": 38,
+      "declarations": 157,
+      "bodies": 46,
       "generated_items": 3,
       "generated_kinds": {
         "program_initialization": 0,
@@ -886,17 +886,17 @@
       }
     },
     "32-structured-bindings.gti": {
-      "declarations": 142,
-      "bodies": 31,
-      "generated_items": 2,
+      "declarations": 1022,
+      "bodies": 386,
+      "generated_items": 55,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 0,
-        "callable_adapter": 0,
-        "lifecycle_cleanup": 0,
+        "structural_operator_adapter": 14,
+        "callable_adapter": 21,
+        "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
-        "concrete_instance_adapter": 1,
+        "concrete_instance_adapter": 18,
         "thread_task_adapter": 0
       }
     },
@@ -1877,8 +1877,8 @@
     }
   },
   "totals": {
-    "declarations": 60581,
-    "bodies": 19902,
-    "generated_items": 3900
+    "declarations": 61472,
+    "bodies": 20268,
+    "generated_items": 3953
   }
 }
