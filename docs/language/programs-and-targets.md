@@ -134,8 +134,27 @@ A project may seed it for every target/profile plan in `gti.toml`:
 defines = ["DEBUG", "USE_EPOLL"]
 ```
 
+Flags can also be scoped to the selected profile or named build target:
+
+```toml
+[profiles.dev]
+defines = ["PSYCH_ASSERTIONS"]
+
+[targets.game]
+kind = "executable"
+root = "src/main.gti"
+defines = ["PSYCH_GAME"]
+```
+
+`gti run game` selects the default dev profile and both flags. A release build
+selects the game flag but not the dev-only assertion flag. Profiles do not
+implicitly define `DEBUG`; declare the flag explicitly when needed.
+
 For a project invocation, manifest flags are the sorted, deduplicated union
-from the selected package and its transitive dependencies. They seed the one
+of `[build]` flags from the selected package and its transitive dependencies,
+plus the selected consumer profile's and target's `defines`. Dependency
+target/profile flags and unselected targets/profiles do not contribute.
+They seed the one
 program-wide configuration, not package-private configurations; use distinct
 flag names to avoid unintended interactions. Unrelated workspace members do
 not contribute flags. Direct one-file compilation does not resolve dependency

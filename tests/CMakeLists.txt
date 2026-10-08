@@ -3023,6 +3023,14 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   add_test(
+    NAME scoped_configuration_defines
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/scoped_configuration_defines_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/examples/scoped-configuration"
+  )
+  set_tests_properties(scoped_configuration_defines PROPERTIES TIMEOUT 180)
+  add_test(
     NAME objective_cpp_bridge
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/objective_cpp_bridge_test.py"

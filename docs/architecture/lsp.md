@@ -517,6 +517,10 @@ Before analysis and completion, the LSP asks the driver for immutable
 `ProjectFacts` for the package containing the entry document. The facts select
 the nearest workspace member/package, the default profile's analysis
 configuration, and the exact `PackageSourceRoot` closure used by `gti check`.
+The configuration includes package and default-profile defines. Driver facts
+infer target defines for a unique matching entry root, or any document in a
+single-target package. Shared files and ambiguous entry roots in multi-target
+packages receive no target defines: unrelated target sets are never combined.
 Package angle includes therefore use only declared direct aliases, including
 already-materialized checksum-verified Git dependencies. Resolution runs no
 process, performs no fetch or build, and creates no project state. Registry
@@ -741,7 +745,9 @@ function-local names: identities visible outside the entry document's
   They are the largest remaining repeated-edit cost; no semantic checkpoint or
   durable symbol identity is implemented.
 - Project analysis follows the package containing the opened document and the
-  driver's default profile on the host target. The protocol has no explicit
+  driver's default profile on the host platform. Unique entry roots and
+  single-target packages infer their target defines; shared/ambiguous sources
+  in multi-target packages receive only package/profile flags. The protocol has no explicit
   workspace-package, target, non-default-profile, or cross-target selection
   request yet; adding one requires a client-facing configuration contract,
   not another manifest parser.

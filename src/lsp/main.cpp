@@ -1649,10 +1649,13 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   }
 
   const lang::driver::ProjectFacts &facts = *project.facts;
+  const auto *projectTarget = facts.targetForSource(entryPath);
   const std::optional<lang::driver::AnalysisConfiguration>
-      projectConfiguration =
-          facts.analysisConfiguration(facts.defaultProfileName(), host,
-                                      lang::driver::RuntimeProfile::Hosted);
+      projectConfiguration = facts.analysisConfiguration(
+          facts.defaultProfileName(), host,
+          lang::driver::RuntimeProfile::Hosted,
+          projectTarget ? std::optional<std::string_view>(projectTarget->name)
+                        : std::nullopt);
   if (projectConfiguration) {
     result.configuration = *projectConfiguration;
   } else {

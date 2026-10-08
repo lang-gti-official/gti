@@ -211,6 +211,8 @@ struct ProjectTarget {
   std::filesystem::path root;
   SourceSpan declaration;
   std::vector<ProjectExport> exports;
+  ConfigurationFlags defines;
+  std::vector<SourceSpan> defineDeclarations;
   ProjectNativeSettings native;
 };
 
@@ -225,6 +227,8 @@ struct ProjectProfile {
   bool keepCpp = false;
   bool debugInfo = false;
   SourceSpan declaration;
+  ConfigurationFlags defines;
+  std::vector<SourceSpan> defineDeclarations;
   ProjectNativeSettings native;
 };
 

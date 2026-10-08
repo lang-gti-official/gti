@@ -1,0 +1,9 @@
+// `gti test unit` selects this target; the game target's flags do not apply.
+#if !defined(PSYCH_PROJECT) || !defined(PSYCH_TESTS)
+#error "unit target configuration is missing"
+#endif
+
+int main() {
+  std::println("unit: test target selected");
+  return 0;
+}

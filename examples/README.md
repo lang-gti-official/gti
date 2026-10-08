@@ -107,6 +107,7 @@ is a teaching helper, not a production server.
 | `58-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
 | `59-default-parameters.gti` | caller-side defaults for functions, constructors, methods, and concrete generic calls |
 | `60-configuration-and-comments.gti` | configuration flags, ordinary comments, and `///` hover documentation |
+| `scoped-configuration/` | package, target and profile defines; run `gti run game`, `gti run game --release` and `gti test unit` in the directory |
 | `61-global-borrow-returns.gti` | checked mutable borrows returned from exact global and static storage |
 | `62-native-c-boundaries.gti` | fixed-array C records, link-name aliases, NUL-terminated strings, pointer-count results, and exact callbacks |
 | `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
