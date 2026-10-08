@@ -1,0 +1,13 @@
+class Reading {
+  int number;
+public:
+  Reading(int value) : number(value) {}
+  Reading(Reading&) = delete;
+  int read() { return this.number; }
+};
+
+int consume(Reading value) { return value.read(); }
+
+int main() {
+  return consume((Reading(3))) == 3 ? 0 : 1;
+}
