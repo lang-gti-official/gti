@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "native_symbol_spelling.h"
 
 namespace {
 
@@ -8829,12 +8830,13 @@ int main() {
       " = ::gti_internal::backend::mir_checked_array_read_v1(";
   const std::string write =
       " = ::gti_internal::backend::mir_checked_array_write_v1(";
-  // One guard for the dynamic row of the read and one for the write, each
-  // paired with the terminal helper that carries the column.
-  expect(!body.empty() && occurrences(guard) == 2 && occurrences(read) == 1 &&
+  // Each row is checked before evaluating its column. The terminal access
+  // still guards its complete projected place; its retained row guard is not
+  // a substitute for the earlier, independently routed selection check.
+  expect(!body.empty() && occurrences(guard) == 4 && occurrences(read) == 1 &&
              occurrences(write) == 1,
-         "each chained dynamic access should guard its nonterminal dimension "
-         "alongside the terminal checked helper");
+         "read and write each retain an early row preflight plus the terminal "
+         "access's complete chained guards");
 
   const std::size_t guardAt = body.find(guard);
   const std::size_t statusAt =
@@ -10052,18 +10054,22 @@ int main() {
          "MIR should retain C linkage for future backend consumption");
 
   const std::string generated = gti_test::emitCppText(frontend);
-  expect(generated.find("extern \"C\" {") != std::string::npos &&
-             generated.find(
-                 "std::int32_t socket(std::int32_t domain, std::int32_t "
-                 "type, std::int32_t protocol);") != std::string::npos &&
-             generated.find("std::int32_t close(std::int32_t descriptor);") !=
-                 std::string::npos,
-         "the C++ backend should emit canonical unmangled C prototypes");
-  expect(generated.find("socket(__gti_mir_v_") != std::string::npos &&
-             generated.find("close(__gti_mir_v_") != std::string::npos &&
+  const auto socketName = gti_test::nativeSpelling(generated, "socket");
+  const auto closeName = gti_test::nativeSpelling(generated, "close");
+  expect(
+      generated.find("extern \"C\" {") != std::string::npos &&
+          socketName != "socket" && closeName != "close" &&
+          generated.find("std::int32_t " + socketName +
+                         "(std::int32_t domain, std::int32_t type, "
+                         "std::int32_t protocol)") != std::string::npos &&
+          generated.find("std::int32_t " + closeName +
+                         "(std::int32_t descriptor)") != std::string::npos,
+      "private C prototypes retain exact native symbols and scalar ABI types");
+  expect(generated.find(socketName + "(__gti_mir_v_") != std::string::npos &&
+             generated.find(closeName + "(__gti_mir_v_") != std::string::npos &&
              generated.find("__gti_fn_") == std::string::npos,
-         "resolved C calls should use exact native symbols without GTI name "
-         "mangling");
+         "resolved C calls use the exact prototype identities bound to native "
+         "symbols");
 
   const lang::FrontendResult linkedName =
       lang::Frontend().analyze("extern-c-link-name.gti", R"(
@@ -10097,9 +10103,12 @@ int main() { return cli11::app_create(42) - 42; }
          "semantic, HIR, and MIR identities should retain the source and link "
          "names independently");
   const std::string linkedCpp = gti_test::emitCppText(linkedName);
-  expect(linkedCpp.find("std::int32_t gti_cli11_app_create(") !=
-                 std::string::npos &&
-             linkedCpp.find("::__gti_program::cli11::gti_cli11_app_create(") !=
+  const auto linkedSymbol =
+      gti_test::nativeSpelling(linkedCpp, "gti_cli11_app_create");
+  expect(linkedSymbol != "gti_cli11_app_create" &&
+             linkedCpp.find("std::int32_t " + linkedSymbol +
+                            "(std::int32_t value)") != std::string::npos &&
+             linkedCpp.find("::__gti_program::cli11::" + linkedSymbol + "(") !=
                  std::string::npos &&
              linkedCpp.find(" app_create(") == std::string::npos,
          "the backend should declare and call only the selected native link "
@@ -10118,10 +10127,11 @@ int main() { return platform::invoke_close(-1); }
          "position");
   const std::string lateCpp = gti_test::emitCppText(lateDeclaration);
   const std::size_t latePrototype = lateCpp.find("extern \"C\" {");
+  const auto lateClose = gti_test::nativeSpelling(lateCpp, "close");
   const std::size_t lateCall =
-      lateCpp.find("::__gti_program::platform::close(__gti_mir_v_");
+      lateCpp.find("::__gti_program::platform::" + lateClose + "(__gti_mir_v_");
   expect(latePrototype != std::string::npos && lateCall != std::string::npos &&
-             latePrototype < lateCall,
+             lateClose != "close" && latePrototype < lateCall,
          "the backend should forward namespace-scoped C prototypes before "
          "earlier callers");
 
@@ -10173,16 +10183,18 @@ int main() {
   expect(runtime.canGenerateCode(),
          "counted text buffers should support runtime C ABI migration");
   const std::string runtimeCpp = gti_test::emitCppText(runtime);
-  expect(runtimeCpp.find("#include <gti/c_abi.h>") != std::string::npos &&
-             runtimeCpp.find("#include <gti/runtime.hpp>") ==
-                 std::string::npos &&
-             runtimeCpp.find(
-                 "std::int32_t gti_rt_write_stdout(::gti_c_string_view "
-                 "value);") != std::string::npos &&
-             runtimeCpp.find("::gti_internal::backend::to_c_string_view("
-                             "__gti_mir_v_") != std::string::npos,
-         "text views should cross C linkage through the explicit public "
-         "counted-buffer ABI");
+  const auto writeSymbol =
+      gti_test::nativeSpelling(runtimeCpp, "gti_rt_write_stdout");
+  expect(
+      runtimeCpp.find("#include <gti/c_abi.h>") != std::string::npos &&
+          writeSymbol != "gti_rt_write_stdout" &&
+          runtimeCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
+          runtimeCpp.find("std::int32_t " + writeSymbol +
+                          "(::gti_c_string_view value)") != std::string::npos &&
+          runtimeCpp.find("::gti_internal::backend::to_c_string_view("
+                          "__gti_mir_v_") != std::string::npos,
+      "text views should cross C linkage through the explicit public "
+      "counted-buffer ABI");
 
   const lang::FrontendResult shadowedRecord =
       analyzeTrustedStandalonePreludeFixture("shadowed-c-record.gti", R"(
@@ -10200,14 +10212,17 @@ int main() { return native::measure() - 1; }
          "a GTI namespace should be allowed to reuse the public record's "
          "unqualified spelling");
   const std::string shadowedRecordCpp = gti_test::emitCppText(shadowedRecord);
-  expect(
-      shadowedRecordCpp.find("inline ::gti_c_string_view to_c_string_view") !=
-              std::string::npos &&
-          shadowedRecordCpp.find(
-              "std::int32_t measure_text(::gti_c_string_view value);") !=
-              std::string::npos,
-      "C ABI text lowering should name the global public record even when "
-      "a source namespace shadows it");
+  const auto measureSymbol =
+      gti_test::nativeSpelling(shadowedRecordCpp, "measure_text");
+  expect(measureSymbol != "measure_text" &&
+             shadowedRecordCpp.find(
+                 "inline ::gti_c_string_view to_c_string_view") !=
+                 std::string::npos &&
+             shadowedRecordCpp.find("std::int32_t " + measureSymbol +
+                                    "(::gti_c_string_view value)") !=
+                 std::string::npos,
+         "C ABI text lowering should name the global public record even when "
+         "a source namespace shadows it");
 
   const lang::FrontendResult legacyRuntime =
       analyzeTrustedStandalonePreludeFixture("legacy-runtime.gti", R"(
