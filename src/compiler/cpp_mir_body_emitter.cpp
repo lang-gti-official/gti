@@ -13988,27 +13988,12 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                   [](const MirOperand &operand) {
                     return operand.kind == MirOperandKind::Value;
                   });
-  const bool functionProducer =
-      commonProducer && producer->kind == MirInstructionKind::Call &&
-      producer->lifecycle.empty() && producer->functionTarget &&
-      !producer->constructorTarget &&
-      producer->dispatch == CallDispatch::Static &&
-      producer->definedFailure.propagation ==
-          FailurePropagationKind::DirectCall &&
-      functionTarget != nullptr &&
-      functionTarget->returnType == value->info.type &&
-      functionTarget->parameterTypes == producer->parameterTypes &&
-      ((!producer->receiver &&
-        (!functionTarget->owner || functionTarget->staticMember)) ||
-       exactMemberReceiver()) &&
-      functionTarget->mayRaiseDefinedFailure &&
-      functionTarget->definitionKind == MirDefinitionKind::Source &&
-      functionTarget->linkage == LanguageLinkage::Gti;
-  const bool constructorProducer =
-      commonProducer && producer->kind == MirInstructionKind::Construct &&
-      // Owning arguments transfer their already-prepared obligations into
-      // the selected constructor. These are input handoffs, not publication
-      // of the result: that remains exclusively on the Invoke success edge.
+  // Calls and constructors can consume prepared owning inputs while producing
+  // the field value. These are input handoffs, not publication of the result:
+  // that remains exclusively on the Invoke success edge. Reuse the same exact
+  // staging proof for named arguments and fresh owning results in either case.
+  const bool preparedInputTransfers =
+      commonProducer &&
       std::all_of(
           producer->lifecycle.begin(), producer->lifecycle.end(),
           [&](const MirLifecycleEvent &event) {
@@ -14035,8 +14020,27 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                          return stage != nullptr &&
                                 stage->preparedParameterDrop == event.source;
                        }) == 1;
-          }) &&
-      !producer->functionTarget && producer->constructorTarget &&
+          });
+  const bool functionProducer =
+      commonProducer && producer->kind == MirInstructionKind::Call &&
+      preparedInputTransfers && producer->functionTarget &&
+      !producer->constructorTarget &&
+      producer->dispatch == CallDispatch::Static &&
+      producer->definedFailure.propagation ==
+          FailurePropagationKind::DirectCall &&
+      functionTarget != nullptr &&
+      functionTarget->returnType == value->info.type &&
+      functionTarget->parameterTypes == producer->parameterTypes &&
+      ((!producer->receiver &&
+        (!functionTarget->owner || functionTarget->staticMember)) ||
+       exactMemberReceiver()) &&
+      functionTarget->mayRaiseDefinedFailure &&
+      functionTarget->definitionKind == MirDefinitionKind::Source &&
+      functionTarget->linkage == LanguageLinkage::Gti;
+  const bool constructorProducer =
+      commonProducer && producer->kind == MirInstructionKind::Construct &&
+      preparedInputTransfers && !producer->functionTarget &&
+      producer->constructorTarget &&
       producer->constructorKind == ConstructorKind::Ordinary &&
       producer->definedFailure.propagation ==
           FailurePropagationKind::Constructor &&
