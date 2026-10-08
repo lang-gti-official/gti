@@ -13,6 +13,10 @@ int check(bool left) {
     Reading selected = left ? Reading(3) : Reading(7);
     int wanted = left ? 3 : 7;
     if (selected.read() != wanted || last_constructed != wanted) { return 1; }
+    Reading grouped = (((left ? Reading(9) : Reading(11))));
+    int grouped_wanted = left ? 9 : 11;
+    if (grouped.read() != grouped_wanted || last_constructed != grouped_wanted ||
+        selected.read() != wanted) { return 2; }
   }
   return 0;
 }

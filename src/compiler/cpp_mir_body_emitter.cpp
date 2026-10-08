@@ -4735,10 +4735,23 @@ classPublicationIdentityInput(const MirBody &body,
   bool validDrops = true;
   const auto valueDrop = [&](MirValueId id) -> const MirDropObligation * {
     const MirDropObligation *found = nullptr;
+    const MirPlace *movedTemporary =
+        id == input->id && producer->kind == MirInstructionKind::Move &&
+                producer->operands.size() == 1 &&
+                producer->operands.front().kind == MirOperandKind::Move &&
+                producer->lifecycle.empty() && producer->definedFailure.empty()
+            ? body.findPlace(producer->operands.front().place)
+            : nullptr;
+    if (movedTemporary != nullptr &&
+        (movedTemporary->root != MirPlaceRootKind::Temporary ||
+         !movedTemporary->projections.empty() ||
+         movedTemporary->type != identity.info.type))
+      movedTemporary = nullptr;
     for (const MirDropObligation &drop : body.dropObligations) {
       const MirPlace *place = body.findPlace(drop.place);
-      if (place == nullptr || place->root != MirPlaceRootKind::Value ||
-          place->value != id)
+      if (place == nullptr ||
+          !((place->root == MirPlaceRootKind::Value && place->value == id) ||
+            place == movedTemporary))
         continue;
       if (found != nullptr || !place->projections.empty() ||
           place->type != identity.info.type || place->initiallyAvailable ||
@@ -7617,6 +7630,7 @@ struct ConditionalClassBindingJoin {
   const MirBlock *join = nullptr;
   const MirInstruction *move = nullptr;
   const MirInstruction *initialize = nullptr;
+  const MirInstruction *slotTransfer = nullptr;
   const MirPlace *destination = nullptr;
   const MirDropObligation *destinationDrop = nullptr;
   std::vector<ConditionalClassBindingJoinArm> arms;
@@ -7898,7 +7912,25 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
 
   for (std::size_t index = 0; index + 1 < join->instructions.size(); ++index) {
     const MirInstruction &move = join->instructions[index];
-    const MirInstruction &initialize = join->instructions[index + 1];
+    if (move.kind != MirInstructionKind::Move || !move.result)
+      continue;
+    std::size_t publicationIndex = index + 1;
+    MirValueId publicationValue = *move.result;
+    const MirDropObligation *publicationDrop = result.slotDrop;
+    while (publicationIndex < join->instructions.size()) {
+      const MirInstruction &identity = join->instructions[publicationIndex];
+      const MirValue *input = classPublicationIdentityInput(body, identity);
+      if (input == nullptr || input->id != publicationValue)
+        break;
+      publicationValue = *identity.result;
+      if (!identity.lifecycle.empty())
+        publicationDrop =
+            body.findDropObligation(identity.lifecycle.front().target);
+      ++publicationIndex;
+    }
+    if (publicationIndex == join->instructions.size())
+      continue;
+    const MirInstruction &initialize = join->instructions[publicationIndex];
     if (move.kind != MirInstructionKind::Move || !move.result ||
         move.destination || move.receiver || move.operands.size() != 1 ||
         move.operands.front().kind != MirOperandKind::Move ||
@@ -7910,7 +7942,7 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
         !initialize.destination || initialize.receiver || initialize.result ||
         initialize.operands.size() != 1 ||
         initialize.operands.front().kind != MirOperandKind::Value ||
-        initialize.operands.front().value != *move.result ||
+        initialize.operands.front().value != publicationValue ||
         initialize.operands.front().type != slot.type ||
         !initialize.localFailureSites.empty() ||
         !initialize.definedFailure.empty() ||
@@ -7930,9 +7962,9 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
         destinationDrop->place != destination->id ||
         destinationDrop->initiallyActive ||
         destinationDrop->dropType.type != destination->type ||
-        (result.slotDrop != nullptr
+        (publicationDrop != nullptr
              ? (reparent.kind != MirLifecycleEventKind::Reparent ||
-                reparent.source != result.slotDrop->id)
+                reparent.source != publicationDrop->id)
              : (reparent.kind != MirLifecycleEventKind::Initialize ||
                 reparent.source != 0 ||
                 destinationDrop->dropType.requiresActiveCleanup ||
@@ -7944,7 +7976,7 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
     const std::vector<MirValueUse> uses = body.usesOf(*move.result);
     if (uses.size() != 1 ||
         uses.front().kind != MirValueUseKind::InstructionOperand ||
-        uses.front().instruction != initialize.id ||
+        uses.front().instruction != join->instructions[index + 1].id ||
         uses.front().operandIndex != 0) {
       return {};
     }
@@ -7954,6 +7986,7 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
     result.join = join;
     result.move = &move;
     result.initialize = &initialize;
+    result.slotTransfer = &join->instructions[index + 1];
     result.destination = destination;
     result.destinationDrop = destinationDrop;
   }
@@ -7999,10 +8032,9 @@ conditionalClassBindingJoin(const MirProgram &program, const MirBody &body,
           ++armReparents;
           continue;
         }
-        if (&instruction == result.initialize &&
+        if (&instruction == result.slotTransfer &&
             event.kind == MirLifecycleEventKind::Reparent &&
-            event.source == result.slotDrop->id &&
-            event.target == result.destinationDrop->id && !event.conditional &&
+            event.source == result.slotDrop->id && !event.conditional &&
             !event.failureCleanup) {
           ++terminalReparents;
           continue;
