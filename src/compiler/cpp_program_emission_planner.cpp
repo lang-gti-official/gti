@@ -1110,8 +1110,6 @@ public:
       emitSemanticType(signatureResult);
       output << (conditionalVirtualResult ? "> __gti_mir_out_result"
                                           : " *__gti_mir_out_result");
-      if (conditionalVirtualResult && insideClass)
-        output << " = nullptr";
     }
     output << ')';
     const ReceiverMutability receiver = instance == nullptr

@@ -20411,6 +20411,13 @@ public:
         add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
             "void status-result channel requires an exact void function");
       }
+      if (row.conditionalResultParameter &&
+          (function == nullptr || !function->owner || function->staticMember ||
+           !function->virtualMethod ||
+           function->linkage != LanguageLinkage::Gti)) {
+        add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
+            "conditional result channel requires an exact GTI virtual method");
+      }
       const auto *root =
           function == nullptr
               ? nullptr
@@ -20424,7 +20431,9 @@ public:
             });
         if (rootRow == representations.bodies().end() ||
             rootRow->voidFailureResultParameter !=
-                row.voidFailureResultParameter) {
+                row.voidFailureResultParameter ||
+            rootRow->conditionalResultParameter !=
+                row.conditionalResultParameter) {
           add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
               "virtual status-result channel disagrees with its contract root");
         }
@@ -35541,6 +35550,15 @@ private:
         } else {
           output << "UINT32_C(" << instruction.callerLocationSite << ')';
         }
+        emitted = true;
+      }
+      if (!transformed && target != nullptr &&
+          bodyRepresentation(target->id).conditionalResultParameter &&
+          !cppRequiresIndirectValueTransport(program, target->returnType)) {
+        if (emitted) {
+          output << ", ";
+        }
+        output << "nullptr";
         emitted = true;
       }
       return emitted;
