@@ -13,6 +13,12 @@ perform generic substitution itself.
 
 The LSP is an adapter over compiler-owned semantics:
 
+Local `auto&`/`mut auto&` declarations publish the compiler's concrete reference
+type and access in inferred-type hover. Uses retain the reference binding's
+definition identity. Switching between value/reference spelling, incomplete
+initializers and unsaved owner declarations is handled by the existing snapshot
+generation and dependency invalidation, not protocol-side inference.
+
 ```text
 JSON-RPC/LSP
   -> protocol conversion in src/lsp/main.cpp
