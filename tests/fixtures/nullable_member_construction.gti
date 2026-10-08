@@ -1,0 +1,14 @@
+class Empty {
+  int marker = 7;
+public:
+  Empty(nullptr_t value) {}
+  int read() { return this.marker; }
+};
+class Parent {
+  Empty first;
+  Empty second = nullptr;
+public:
+  Parent() : first(nullptr) {}
+  int read() { return this.first.read() + this.second.read(); }
+};
+int main() { Parent parent{}; return parent.read() - 14; }

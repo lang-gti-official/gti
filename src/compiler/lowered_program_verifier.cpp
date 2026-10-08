@@ -314,8 +314,9 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
   case LoweredDeclarationKind::TypeAlias: {
     const auto *payload =
         std::get_if<LoweredTypeAliasDeclaration>(&declaration.payload);
-    if (payload == nullptr || declaration.name.empty() ||
-        payload->qualifiedName.empty() || !resolvedType(payload->type)) {
+    if (payload == nullptr || declaration.semanticIdentity == 0 ||
+        declaration.name.empty() || payload->qualifiedName.empty() ||
+        !resolvedType(payload->type)) {
       return invalid("type alias lacks a resolved type identity");
     }
     break;
@@ -696,6 +697,7 @@ verifyLoweredProgram(const LoweredProgram &program) {
   std::unordered_map<LoweredDeclarationId, std::size_t> nextOrdinal;
   std::unordered_map<ClassId, LoweredDeclarationId> classDeclarations;
   std::vector<SemanticType> enumDeclarations;
+  std::unordered_map<TypeAliasId, LoweredDeclarationId> aliasDeclarations;
   std::unordered_map<FunctionId, LoweredDeclarationId> functionDeclarations;
   std::unordered_map<ConstructorId, LoweredDeclarationId>
       constructorDeclarations;
@@ -732,6 +734,10 @@ verifyLoweredProgram(const LoweredProgram &program) {
     if (const auto *payload =
             std::get_if<LoweredClassDeclaration>(&declaration.payload)) {
       recordIdentity(classDeclarations, payload->id, "class");
+    } else if (std::holds_alternative<LoweredTypeAliasDeclaration>(
+                   declaration.payload)) {
+      recordIdentity(aliasDeclarations, declaration.semanticIdentity,
+                     "type alias");
     } else if (const auto *payload =
                    std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
       if (std::find(enumDeclarations.begin(), enumDeclarations.end(),
@@ -844,7 +850,82 @@ verifyLoweredProgram(const LoweredProgram &program) {
     if (!classDeclarations.contains(instance.declaration)) {
       addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                "MIR class instance refers to an absent lowered declaration");
+      continue;
     }
+    const LoweredDeclaration *ownerRow =
+        program.findDeclaration(classDeclarations.at(instance.declaration));
+    const auto *owner =
+        std::get_if<LoweredClassDeclaration>(&ownerRow->payload);
+    GenericSubstitution substitution;
+    std::size_t typeIndex = 0, valueIndex = 0;
+    for (const auto &parameter : owner->genericParameters) {
+      if (!parameter.typeArgumentPath.empty()) {
+        if (auto type = projectGenericTypeArgument(
+                instance.type.arguments, parameter.typeArgumentPath,
+                parameter.id, parameter.pack))
+          substitution.types.emplace(parameter.id, std::move(*type));
+      } else if (parameter.value) {
+        if (valueIndex < instance.type.valueArguments.size())
+          substitution.values.emplace(
+              parameter.id, instance.type.valueArguments[valueIndex++]);
+      } else if (parameter.pack) {
+        std::vector<SemanticType> elements(
+            instance.type.arguments.begin() +
+                static_cast<std::ptrdiff_t>(typeIndex),
+            instance.type.arguments.end());
+        substitution.types.emplace(
+            parameter.id,
+            SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+        typeIndex = instance.type.arguments.size();
+      } else if (typeIndex < instance.type.arguments.size())
+        substitution.types.emplace(parameter.id,
+                                   instance.type.arguments[typeIndex++]);
+    }
+    // Reuse semantic substitution only for verification; emission consumes the
+    // exact catalog rows and performs no alias arithmetic or name resolution.
+    const auto resolveExact = [&](const auto &self,
+                                  SemanticType type) -> SemanticType {
+      for (auto &argument : type.arguments)
+        argument = self(self, std::move(argument));
+      for (auto &argument : type.lambdaEnclosingClassTypes)
+        argument = self(self, std::move(argument));
+      for (auto &argument : type.lambdaEnclosingFunctionTypes)
+        argument = self(self, std::move(argument));
+      if (type.kind == SemanticType::Class) {
+        for (const auto &row : program.declarations()) {
+          const auto *candidate =
+              std::get_if<LoweredClassDeclaration>(&row.payload);
+          if (candidate != nullptr &&
+              candidate->exactSpecializationPrimary == type.classId &&
+              candidate->exactTypeArguments == type.arguments &&
+              candidate->exactValueArguments == type.valueArguments)
+            return SemanticType::classType(candidate->id);
+        }
+      }
+      return type;
+    };
+    std::size_t aliasIndex = 0;
+    for (const auto &row : program.declarations()) {
+      const auto *primary =
+          std::get_if<LoweredTypeAliasDeclaration>(&row.payload);
+      if (row.parent != ownerRow->id || primary == nullptr)
+        continue;
+      const SemanticType expected = resolveExact(
+          resolveExact, substituteSemanticType(primary->type, substitution));
+      if (aliasIndex >= instance.typeAliases.size() ||
+          row.semanticIdentity == 0 ||
+          instance.typeAliases[aliasIndex].declaration !=
+              row.semanticIdentity ||
+          instance.typeAliases[aliasIndex].type != expected)
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "MIR class alias differs from its exact lowered "
+                 "declaration/owner/type",
+                 std::nullopt, row.id);
+      ++aliasIndex;
+    }
+    if (aliasIndex != instance.typeAliases.size())
+      addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+               "MIR class alias inventory has missing or foreign declarations");
   }
   for (const MirFunctionInstance &instance : program.mir_.functionInstances()) {
     if (!functionDeclarations.contains(instance.declaration)) {

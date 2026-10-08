@@ -166,7 +166,7 @@ namespace std {
         this.current_position++;
       }
 
-      bool operator!=(storage_sentinel& sentinel) {
+      bool operator!=(storage_sentinel sentinel) {
         return this.current_position != sentinel.position();
       }
 

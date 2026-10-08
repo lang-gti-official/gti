@@ -1,0 +1,47 @@
+class Lens {
+  int& value;
+public:
+  Lens(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+
+Lens view(int& value) { return Lens(value); }
+Lens relay(int& value) { return Lens(Lens(view(value))); }
+
+class Pair {
+  int& left;
+  int& right;
+public:
+  Pair(int& left, int& right) : left(left), right(right) {}
+  int sum() { return this.left + this.right; }
+};
+Pair pair_view(int& left, int& right) { return Pair(left, right); }
+Pair pair_relay(int& left, int& right) {
+  return Pair(Pair(pair_view(left, right)));
+}
+
+class Update {
+  int& step;
+  mut int& value;
+public:
+  Update(int& step, mut int& value) : step(step), value(value) {}
+  void apply() mut { this.value += this.step; }
+};
+Update update_view(int& step, mut int& value) { return Update(step, value); }
+Update update_relay(int& step, mut int& value) {
+  return Update(update_view(step, value));
+}
+
+int main() {
+  int owner = 7;
+  Lens result = Lens((relay(owner)));
+  if (result.read() != 7) { return 1; }
+  int other = 5;
+  Pair pair = Pair((pair_relay(owner, other)));
+  if (pair.sum() != 12) { return 2; }
+  mut int changed = 3;
+  mut Update update = Update((update_relay(owner, changed)));
+  update.apply();
+  changed += 1;
+  return changed == 11 ? 0 : 3;
+}

@@ -7,13 +7,14 @@ endif()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
+    operator_relay_runtime
     abstract_generic_failure_contract_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
-    associative_ownership_runtime borrowing_composition charconv_runtime
+    associative_ownership_runtime borrow_origin_runtime borrowing_composition charconv_runtime
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
     conditional_capability_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
-    constructor_field_publication_runtime constructor_passive_field_rollback_runtime
+    constructor_field_publication_runtime constructor_null_native_runtime constructor_passive_field_rollback_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
     consuming_receiver_runtime consuming_retained_field_replace_runtime
     consuming_retained_field_runtime consuming_retained_lambda_runtime
@@ -23,7 +24,8 @@ if(Python3_Interpreter_FOUND)
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
     generated_base_constructor_runtime generated_constructor_order_runtime generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
-    generic_enum_instances_runtime hosted_constructor_identity_runtime
+    coverage_composition_runtime
+    generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
     lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime
@@ -33,7 +35,8 @@ if(Python3_Interpreter_FOUND)
     owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
     owning_function_resource_result_runtime owning_function_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
-    programmable_allocators_runtime raw_owner_witness_runtime raw_pointer_conversion_runtime
+    programmable_allocators_runtime prvalue_direct_initialization_runtime
+    raw_owner_witness_runtime raw_pointer_conversion_runtime
     reference_class_assignment_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime

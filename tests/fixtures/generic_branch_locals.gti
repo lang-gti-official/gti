@@ -1,0 +1,52 @@
+#include <std/string>
+
+mut int dropped = 0;
+class Owner {
+public:
+  Owner() {}
+  ~Owner() { dropped += 1; }
+};
+
+T select<T, uint64_t N>(T value) {
+  if constexpr (N == 0) {
+    T local = value;
+    return local;
+  } else {
+    T other = value;
+    return other;
+  }
+}
+
+class Worker<uint64_t N> {
+public:
+  Worker() {
+    if constexpr (N == 0) { Owner constructor_local{}; }
+  }
+  ~Worker() {
+    if constexpr (N == 0) { Owner destructor_local{}; }
+  }
+  int run() {
+    if constexpr (N == 0) {
+      Owner owned{};
+      auto callback = []() -> int {
+        int local = 11;
+        return local;
+      };
+      std::string text = std::string("abc");
+      return callback() + int(text.size());
+    } else {
+      Missing discarded{};
+      return unknown;
+    }
+  }
+};
+
+int main() {
+  mut int value = 0;
+  {
+    Worker<0> worker{};
+    value = worker.run();
+  }
+  return value == 14 && dropped == 3 && select<int, 0>(2) == 2 &&
+         select<bool, 0>(true) && select<int, 1>(9) == 9 ? 0 : 1;
+}

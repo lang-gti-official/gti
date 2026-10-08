@@ -1,0 +1,32 @@
+mut int cleanups = 0;
+
+class Owner {
+  int value;
+public:
+  Owner(int value) : value(value) {}
+  ~Owner() { cleanups++; }
+  Owner(Owner&) = delete;
+  Owner(Owner&&) = default;
+  int read() { return this.value; }
+};
+
+int main() {
+  mut int total = 0;
+  for (mut int index = 0; index < 6; index++) {
+    // One lexical slot is reused; its closure has no GTI drop obligation.
+    auto operation = [index](int value) -> int { return value + index; };
+    if (index == 1) continue;
+    if (index == 4) break;
+    total += operation(10);
+  }
+  if (total != 35) return 1;
+  for (mut int index = 0; index < 6; index++) {
+    Owner owner{index};
+    // Owning captures must retain the ordinary verified drop protocol.
+    auto operation = [value = std::move(owner)]() -> int { return value.read(); };
+    if (index == 1) continue;
+    if (index == 4) break;
+    total += operation();
+  }
+  return total == 40 && cleanups == 5 ? 0 : 2;
+}

@@ -16,8 +16,9 @@ application APIs and shall not expose public container or ownership policy.
 Nested `detail` namespaces such as `std::detail` hold library implementation
 types. They are not stable application APIs, but unlike `gti_internal` they are
 ordinary namespaces: nothing prevents application source from naming them.
-Public operations that return a `detail` type publish a member alias for it
-(see [Iteration Type Names](#iteration-type-names)). Application code should
+The container iteration operations listed under
+[Iteration Type Names](#iteration-type-names) publish member aliases for their
+`detail` types. Application code should
 name those aliases rather than `std::detail` spellings. See
 [`R-STD-DETAIL-NAMES`](../plans/language-alignment.md#ranges-and-standard-library-completion).
 

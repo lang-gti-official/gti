@@ -21,9 +21,9 @@ public:
   void operator--() mut { this.position--; }
   void operator+=(ptrdiff_t offset) mut { this.position = size_t(ptrdiff_t(this.position) + offset); }
   void operator-=(ptrdiff_t offset) mut { this.position = size_t(ptrdiff_t(this.position) - offset); }
-  bool operator!=(array_sentinel& end) { return this.position != end.position(); }
+  bool operator!=(array_sentinel end) { return this.position != end.position(); }
   bool operator!=(array_iterator<T, N>& other) { return this.position != other.position; }
-  ptrdiff_t operator-(array_sentinel& end) { return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
+  ptrdiff_t operator-(array_sentinel end) { return ptrdiff_t(end.position()) - ptrdiff_t(this.position); }
 };
 class array_mut_iterator<T, uint64_t N> {
   mut array<T, N>& owner;
@@ -39,7 +39,7 @@ public:
     return this.owner[this.position];
   }
   void operator++() mut { this.position++; }
-  bool operator!=(array_sentinel& end) { return this.position != end.position(); }
+  bool operator!=(array_sentinel end) { return this.position != end.position(); }
 };
 }
 class array<T, uint64_t N> {

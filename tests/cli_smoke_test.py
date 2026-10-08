@@ -11,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 
+from native_symbol_spelling import native_spelling
+
 
 def run(arguments, expected=0, cwd=None, input_text=None):
     result = subprocess.run(
@@ -650,9 +652,10 @@ def main():
             )
             emitted_extern_c = extern_c_cpp.read_text(encoding="utf-8")
             assert 'extern "C" {' in emitted_extern_c
-            assert "std::int32_t socket(" in emitted_extern_c
+            socket_call = native_spelling(emitted_extern_c, "socket")
+            assert f"std::int32_t {socket_call}(" in emitted_extern_c
             assert re.search(
-                r"gti_internal::runtime::socket\("
+                r"gti_internal::runtime::" + re.escape(socket_call) + r"\("
                 r"__gti_mir_v_\d+, __gti_mir_v_\d+, __gti_mir_v_\d+\)",
                 emitted_extern_c,
             )
@@ -662,8 +665,10 @@ def main():
                 "::__gti_program::__gti_std::tcp::errc>"
                 in emitted_extern_c
             )
+            close_call = native_spelling(emitted_extern_c, "close")
             assert re.search(
-                r"gti_internal::runtime::close\(__gti_mir_v_\d+\)",
+                r"gti_internal::runtime::" + re.escape(close_call) +
+                r"\(__gti_mir_v_\d+\)",
                 emitted_extern_c,
             )
             assert "socket(socket &&other)" in emitted_extern_c

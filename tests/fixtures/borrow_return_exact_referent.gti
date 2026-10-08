@@ -1,0 +1,45 @@
+enum class errc { missing };
+
+class Leaf {
+  int32_t value_;
+public:
+  Leaf(int32_t value) : value_(value) {}
+  int32_t read() { return this.value_; }
+};
+
+class Owner {
+  Leaf selected_;
+  int32_t sentinel_;
+public:
+  Owner() : selected_(Leaf(23)), sentinel_(91) {}
+  Leaf& selected() { return this.selected_; }
+  int32_t& sentinel() { return this.sentinel_; }
+};
+
+expected<Leaf&, errc> relay(Owner& owner, bool present) {
+  if (!present) { return unexpected(errc::missing); }
+  Leaf& selected = owner.selected();
+  Leaf& alias = selected;
+  return alias;
+}
+
+expected<int32_t&, errc> relay_scalar(Owner& owner) {
+  int32_t& selected = owner.sentinel();
+  return selected;
+}
+
+Leaf& plain(Owner& owner) {
+  Leaf& selected = owner.selected();
+  Leaf& alias = selected;
+  return alias;
+}
+
+int main() {
+  Owner owner{};
+  auto found = relay(owner, true);
+  if (!found || found.value().read() != 23) { return 1; }
+  auto missing = relay(owner, false);
+  if (missing || missing.error() != errc::missing) { return 2; }
+  if (relay_scalar(owner).value() != 91) { return 3; }
+  return plain(owner).read() == 23 ? 0 : 4;
+}
