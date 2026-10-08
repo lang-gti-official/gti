@@ -35,7 +35,7 @@ input, not a second implementation queue.
 
 ## Runtime audit follow-up: 2026-10-09
 
-`RT-1` is the current bounded client: reduce source-storage success-path costs
+`RT-1` is complete as a bounded client: reduce source-storage success-path costs
 by outlining only the incoming cleanup-failure check. PR #166 is reviewed as
 proposal input, with immediate versus future dispositions in
 [optimization.md](optimization.md#pr-166-audit-disposition-2026-10-09).
@@ -43,8 +43,13 @@ Prerequisite: reconciled modules/reachability integration (#174, main
 `b6614cb4`), a semantics-preserving current-head proxy, and unchanged source
 storage policy. Acceptance: exact frozen-snapshot production comparison,
 complete allocation/destructor observations, runtime/code-size/memory controls,
-and cleanup/panic/managed-thread/sanitizer/malformed-MIR tests. The earlier
-historical regression in #169 is not considered fully recovered merely because
+and cleanup/panic/managed-thread/sanitizer/malformed-MIR tests. Clean optimized
+`f2fea6c7` passes all 570 unfiltered CTests, both 130-example corpus oracles,
+thirteen staged-library consumers and the installed source-provider matrix.
+Production storage medians improve 70.464→59.177 ms and 76.490→66.230 ms,
+with full-build time essentially unchanged and the small size/memory tradeoffs
+recorded in [the performance evidence](performance-tooling.md#production-comparison).
+The earlier historical regression in #169 is not considered fully recovered merely because
 this one cause improves. Follow-on RT-2 through RT-10 need their individual
 prerequisites and measured clients; they are not added to this implementation.
 

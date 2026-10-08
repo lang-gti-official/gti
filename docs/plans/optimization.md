@@ -15,8 +15,9 @@ The immediately justified slice is **RT-1: one cold failure-only helper**.
 An independent current-head storage proxy improves runtime without removing
 checks; broad cold scope/activation/destructor annotations instead regress it.
 Production code adopts only the incoming-cleanup check's guarded cold/noinline
-hint. Production validation and exact before/after measurement remain required;
-the proxy alone is not completion evidence. See
+hint. Frozen production comparisons, runtime/compile/size/memory controls,
+all 570 CTest gates and staged consumers now pass; the proxy alone was not
+treated as completion evidence. See
 [performance-tooling.md](performance-tooling.md#rt-1-source-storage-failure-path-cost).
 
 The rest is useful future work, not implicitly implemented by this change:
