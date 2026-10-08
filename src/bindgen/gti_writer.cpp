@@ -34,14 +34,23 @@ void writeItem(const BindingItem &item, std::string_view indent,
     // name to alias.
     const bool anonymous = item.name.empty();
     if (!anonymous) {
-      out << indent << "using " << item.name << " = int32_t;\n";
+      out << indent << "using " << item.name << " = " << item.aliasSpelling
+          << ";\n";
     }
     const std::string_view constantType =
-        anonymous ? std::string_view("int32_t") : std::string_view(item.name);
+        anonymous ? std::string_view(item.aliasSpelling)
+                  : std::string_view(item.name);
     for (const BindingConstant &constant : item.constants) {
       out << indent << "constexpr " << constantType << ' ' << constant.name
-          << " = " << (constant.value < 0 ? "int32_t(" : "") << constant.value
-          << (constant.value < 0 ? ")" : "") << ";\n";
+          << " = " << constantType << '(';
+      // The minimum signed value has no positive signed literal counterpart.
+      // Form it with checked, representable operands in the selected type.
+      if (constant.value == "-9223372036854775808") {
+        out << "-9223372036854775807) - " << constantType << "(1)";
+      } else {
+        out << constant.value << ')';
+      }
+      out << ";\n";
     }
     out << '\n';
     return;
