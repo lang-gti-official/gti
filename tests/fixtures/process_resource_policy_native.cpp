@@ -19,6 +19,7 @@ struct Region {
 };
 std::array<Region, 16> regions{};
 std::array<int, 64> events{};
+std::array<std::uint64_t, 16> requested_bytes{};
 int event_count = 0;
 
 void remember(void *address) {
@@ -64,6 +65,12 @@ extern "C" void provider_test_mode(std::int32_t selected) {
 }
 extern "C" std::int32_t provider_test_calls() { return calls; }
 extern "C" std::int32_t provider_test_releases() { return releases; }
+extern "C" std::uint64_t provider_test_bytes(std::int32_t attempt) {
+  if (attempt < 1 || attempt > calls ||
+      attempt > static_cast<int>(requested_bytes.size()))
+    std::abort();
+  return requested_bytes[attempt - 1];
+}
 extern "C" void provider_test_fail_on_call(std::int32_t selected) {
   fail_on_call = selected;
 }
@@ -91,6 +98,7 @@ extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *address,
 extern "C" void *gti_rt_aligned_malloc_v1(std::uint64_t bytes,
                                           std::uint64_t alignment) {
   ++calls;
+  requested_bytes.at(calls - 1) = bytes;
   if (mode >= 2 || calls == fail_on_call)
     return nullptr;
   if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
@@ -114,6 +122,7 @@ extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
                                           std::uint64_t alignment,
                                           std::int32_t *status) {
   ++calls;
+  requested_bytes.at(calls - 1) = bytes;
   if (calls == fail_on_call) {
     *status = ENOMEM;
     return nullptr;
