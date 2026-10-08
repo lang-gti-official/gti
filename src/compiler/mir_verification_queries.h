@@ -53,6 +53,21 @@ rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
                                                    const MirLoan &parameter,
                                                    MirPlaceId place);
 
+// Checked expected-reference extraction retains the external owner's identity,
+// not the carrier's storage. Ordinary loan flow separately proves availability.
+[[nodiscard]] bool
+fallibleReferenceOwnerTransport(const MirBody &body,
+                                const MirInstruction &instruction,
+                                const MirLoan &extracted);
+
+// Publish an exact runtime alias of an entry-reference dependency. A unique,
+// dominating initializer chain must establish its typed address, and the return
+// expression must identify the selected alias. Shared by verification and
+// backend admission; carrier membership alone never proves the referent.
+[[nodiscard]] bool
+referenceParameterReturnPublication(const MirBody &body, const MirBlock &block,
+                                    const MirInstruction &instruction);
+
 // Recognize the exact, single-use signed-minimum literal schedule shared by
 // native emission and constant execution. Ordinary runtime negation is not
 // interchangeable with this failure-free literal formation.

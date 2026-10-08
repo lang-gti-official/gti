@@ -1332,6 +1332,17 @@ fallible carrier whose external owner matches the parameter. Matching types or
 carrier membership alone do not establish the address. Parameter publication
 of a referent cannot fall back to the weaker complete-carrier transfer rule;
 forwarding an entire carrier still preserves its existing runtime value.
+Direct field addresses use the same proof, including fields reached through a
+previously initialized reference alias. Each alias initialization must dominate
+its consumer; its declared reference referent is checked separately from any
+subsequent field's type. Stable field-only paths preserve the exact formal and
+field identities without admitting raw or opaque paths. The final runtime place
+also retains the return expression's source-value identity: another same-typed
+alias of the same protected owner cannot replace the selected address merely
+because it would have a valid lifetime.
+The MIR verifier and backend admission share this publication query, including
+the dominating initializer chain and immediate entry-loan retirement; the
+backend cannot accept a weaker carrier-membership approximation of that proof.
 
 Checked reference extraction verifies the external owner through either a
 named carrier or its fresh SSA producer, following explicit copy/move
