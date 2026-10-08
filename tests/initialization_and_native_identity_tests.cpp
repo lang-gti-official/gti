@@ -110,6 +110,7 @@ int main() { return 0; }
 using Native = (int32_t) -> int32_t;
 extern "C" { int32_t native(int32_t); }
 int main() { Native callback = native; return 0; }
-)gti", "GTI-S2076");
+)gti",
+           "GTI-S2076");
   return failures ? 1 : 0;
 }
