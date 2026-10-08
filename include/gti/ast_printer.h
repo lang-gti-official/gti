@@ -20,6 +20,7 @@ public:
   void visitConversionExpr(const Conversion &expr) override;
   void visitDirectInitializerExpr(const DirectInitializer &expr) override;
   void visitDereferenceSetExpr(const DereferenceSet &expr) override;
+  void visitPlaceSetExpr(const PlaceSet &expr) override;
   void visitGetExpr(const Get &expr) override;
   void visitGroupingExpr(const Grouping &expr) override;
   void visitIndexExpr(const Index &expr) override;

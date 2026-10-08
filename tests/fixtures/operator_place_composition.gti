@@ -7,6 +7,11 @@ class Cell {
 public:
   Cell() {}
   int32_t read() { return this.value; }
+  int32_t& read_slot() { return this.value; }
+  mut int32_t& slot() mut {
+    trace = trace * 10 + 6;
+    return this.value;
+  }
   int32_t& operator*() { return this.value; }
   mut int32_t& operator*() mut {
     trace = trace * 10 + 1;
@@ -75,5 +80,16 @@ int main() {
   mut Row& parent = grid[std::size_t(0)];
   parent[std::size_t(0)] = parent[std::size_t(0)] + 1;
   if (parent[std::size_t(0)] != 8) { return 7; }
+  trace = 0;
+  cell.slot() = rhs();
+  if (cell.read() != 7 || trace != 64) { return 8; }
+  trace = 0;
+  (cell.slot()) += rhs();
+  if (cell.read() != 14 || trace != 64) { return 9; }
+  // A grouped ordinary mutable binding is the same checked place.
+  mut int32_t grouped = 1;
+  (grouped) = 3;
+  (grouped) *= 2;
+  if (grouped != 6) { return 10; }
   return 0;
 }

@@ -290,6 +290,7 @@ public:
   void visitDirectInitializerExpr(const DirectInitializer &expr) override;
 
   void visitDereferenceSetExpr(const DereferenceSet &expr) override;
+  void visitPlaceSetExpr(const PlaceSet &expr) override;
 
   void visitGetExpr(const Get &expr) override;
 

@@ -1,5 +1,7 @@
 #include <std/memory>
 #include <std/optional>
+#include <std/vector>
+#include <std/array>
 
 class Row {
   mut int32_t cells[2] = {};
@@ -20,5 +22,15 @@ int main() {
   mut auto row = std::make_unique<Row>();
   (*row)[std::size_t(0)] += 7;
   if ((*row)[std::size_t(0)] != 7) { return 3; }
+  optional.value() = 12;
+  optional.value() += 2;
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});
+  values.at(std::size_t(0)) = 3;
+  values.front() += 1;
+  values.back() = 5;
+  mut std::array<int32_t, 2> fixed = std::array<int32_t, 2>({6, 7});
+  fixed.at(std::size_t(1)) = 8;
+  if (*optional != 14 || values[std::size_t(0)] != 4 ||
+      values[std::size_t(1)] != 5 || fixed[std::size_t(1)] != 8) { return 4; }
   return 0;
 }

@@ -48,7 +48,7 @@ public:
     gti_internal::require_container_argument(this.position != 0);
     this.position = this.slots[this.position - 1].next();
   }
-  bool operator!=(list_sentinel<T>& end) { return this.position != 0; }
+  bool operator!=(list_sentinel<T> end) { return this.position != 0; }
 };
 class list_iterator<T> {
   vector<list_slot<T>>& slots;
@@ -71,7 +71,7 @@ public:
     else { this.position = this.slots[this.position - 1].previous(); }
     gti_internal::require_container_argument(this.position != 0);
   }
-  bool operator!=(list_sentinel<T>& end) { return this.position != 0; }
+  bool operator!=(list_sentinel<T> end) { return this.position != 0; }
   bool operator==(list_sentinel<T>& end) { return this.position == 0; }
   bool operator!=(list_iterator<T>& other) { return this.position != other.position; }
   bool operator==(list_iterator<T>& other) { return this.position == other.position; }

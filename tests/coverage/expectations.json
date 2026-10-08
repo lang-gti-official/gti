@@ -313,10 +313,8 @@
       "outcome": "rejected"
     },
     "c55_iterator_utilities": {
-      "code": "GTI-S2022",
-      "finding": "F16",
-      "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "9 15 15 3\n", "stderr": "^$"}]
     }
   },
   "projects": {
@@ -2130,10 +2128,8 @@
       "outcome": "pass"
     },
     "f10-assign-through-mut-ref-method": {
-      "code": "GTI-P0001",
-      "finding": "F10",
-      "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "4\n", "stderr": "^$"}]
     },
     "f11-pair-nested-in-pair": {
       "outcome": "pass"
@@ -2154,10 +2150,8 @@
       "outcome": "pass"
     },
     "f16-canonical-iterator-loop": {
-      "code": "GTI-S2022",
-      "finding": "F16",
-      "issue": 103,
-      "outcome": "rejected"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "1\n", "stderr": "^$"}]
     },
     "f17-unnamed-parameter-bad-span": {
       "code": "GTI-S2045",
@@ -2246,9 +2240,8 @@
       "outcome": "pass"
     },
     "s12-lossy-implicit-int-to-float": {
-      "finding": "S12",
-      "issue": 103,
-      "outcome": "pass"
+      "outcome": "pass",
+      "cases": [{"args": [], "exit": 0, "stdout": "16777217 16777216\n", "stderr": "^$"}]
     },
     "s15-payload-enum-plain-class": {
       "finding": "S15",

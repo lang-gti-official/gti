@@ -5883,7 +5883,7 @@ class WrongSentinelParameter {
 public:
   int& operator*() { return this.current; }
   void operator++() mut { this.current++; }
-  bool operator!=(End sentinel) {
+  bool operator!=(mut End& sentinel) {
     return this.current != sentinel.position();
   }
 };

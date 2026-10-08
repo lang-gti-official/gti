@@ -21,13 +21,15 @@ def main():
                     ((), "row\ncell\naccess guard\nrhs\nguard\n", "GTI-R0002"),
                     (("x",), "row\ncell\naccess guard\nguard\n", "GTI-R0007"),
                     (("x", "x"), "row\ncell\naccess guard\nrhs\nguard\n", "GTI-R0002"),
+                    (("x", "x", "x"), "named cell\naccess guard\nrhs\nguard\n", "GTI-R0002"),
+                    (("x", "x", "x", "x"), "named cell\naccess guard\nguard\n", "GTI-R0007"),
                 ):
                     result = subprocess.run([str(binary), *arguments], capture_output=True,
                                             text=True, timeout=30)
                     assert result.returncode == 70 and result.stdout == output, (
                         standard, level, arguments, result)
                     assert code in result.stderr and "Internal compiler error" not in result.stderr, result
-    print("PASS 12 operator-place failure/cleanup observations")
+    print("PASS 20 operator-place failure/cleanup observations")
 
 
 if __name__ == "__main__":

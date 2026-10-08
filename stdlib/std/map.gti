@@ -33,7 +33,7 @@ public:
 
   map_entry<K, V>& operator->() { return *this; }
 
-  bool operator!=(map_sentinel& end) { return this.position != 0; }
+  bool operator!=(map_sentinel end) { return this.position != 0; }
   bool operator==(map_sentinel& end) { return this.position == 0; }
   bool operator!=(map_iterator<K, V>& other) {
     return this.position != other.position;
@@ -80,7 +80,7 @@ public:
   }
   map_entry<K, V>& operator->() { return *this; }
   mut map_entry<K, V>& operator->() mut { return *this; }
-  bool operator!=(map_sentinel& end) { return this.position != 0; }
+  bool operator!=(map_sentinel end) { return this.position != 0; }
   bool operator==(map_sentinel& end) { return this.position == 0; }
 
   void operator++() mut {
