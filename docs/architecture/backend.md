@@ -1995,6 +1995,11 @@ obligation. An owning `Replace` therefore has target zero, while its paired
 Unlike an ephemeral call-result loan, the named reference is not ended at commit:
 subsequent uses retain the original MIR-verified loan interval. This representation
 does not authorize movement out of a borrowed referent.
+Body-local MIR verification requires exactly one `Replace` from each consumed
+active-cleanup RHS value obligation; validating only present lifecycle events
+is insufficient, because a missing transfer could leave the published source
+scheduled for cleanup. This requirement is independent of the destination's
+representation or whether it owns a body-local drop obligation.
 
 Requiring a destination obligation for an element, owned field or checked referent
 would retire the same storage twice, so either publication fails closed when
