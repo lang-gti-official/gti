@@ -144,6 +144,86 @@ int main() {
       expect(false, error.what());
     }
   }
+  {
+    // Copied passive class-array arguments and parameter-to-field copies use
+    // exact uninitialized staging; a Value element has no default constructor.
+    const auto path = root / "fixtures" / "class_array_arguments.gti";
+    std::ifstream input(path);
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    expect(frontend.canGenerateCode(), "class array argument fixture has MIR");
+    if (frontend.canGenerateCode()) {
+      const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+      std::string cpp;
+      try {
+        cpp = gti_test::emitCppText(frontend);
+      } catch (const std::exception &error) {
+        expect(false, error.what());
+      }
+      expect(
+          !std::regex_search(
+              cpp,
+              std::regex(
+                  R"(std::array<(?:std::array<)?::__gti_program::Value, 2>(?:, 2>)? __gti_mir_v_[0-9]+\{\};)")),
+          "copied class-array arguments never value-initialize an array");
+      expect(cpp.find("mir_lifetime_slot<std::array<::__gti_program::Value, "
+                      "2>, true> __gti_mir_v_") != std::string::npos &&
+                 cpp.find("mir_lifetime_slot<std::array<std::array<::__gti_"
+                          "program::Value, 2>, 2>, true> __gti_mir_v_") !=
+                     std::string::npos,
+             "copied class-array arguments stage in uninitialized storage");
+      expect(cpp.find(": values(__gti_mir_arg_0)") != std::string::npos,
+             "a passive class-array parameter copies in the member "
+             "initializer");
+      std::size_t staged = 0, rejected = 0;
+      for (const auto &function : frontend.mir.functionInstances()) {
+        for (const auto &block : function.body.blocks)
+          for (std::size_t index = 0; index + 1 < block.instructions.size();
+               ++index) {
+            const auto &load = block.instructions[index];
+            const auto &stage = block.instructions[index + 1];
+            if (load.kind != lang::MirInstructionKind::Load ||
+                load.info.type.kind != lang::SemanticType::Array ||
+                stage.kind != lang::MirInstructionKind::CallInput)
+              continue;
+            ++staged;
+            for (int mutation = 0; mutation != 2; ++mutation) {
+              auto malformed = frontend.mir;
+              auto *changed = const_cast<lang::MirFunctionInstance *>(
+                  malformed.findFunctionInstance(function.id));
+              for (auto &candidateBlock : changed->body.blocks)
+                for (auto &candidate : candidateBlock.instructions) {
+                  if (candidate.id == load.id && mutation == 0 &&
+                      candidate.ownership)
+                    candidate.ownership->reachable = false;
+                  if (candidate.id == load.id && mutation == 1)
+                    candidate.ownership.reset();
+                }
+              // Ownership facts are emitter evidence, not MIR validity.
+              expect(lang::verifyMirProgram(malformed).valid(),
+                     "read-fact mutation remains verified MIR");
+              const auto plan =
+                  lang::CppMirBodyEmitter(malformed, rows)
+                      .buildPlan({lang::MirBodyKind::Function, function.id});
+              const auto &issues = plan.analysis().issues;
+              rejected +=
+                  !plan.admitted() &&
+                  std::any_of(issues.begin(), issues.end(),
+                              [](const auto &issue) {
+                                return issue.detail.find(
+                                           "invent element default "
+                                           "construction") != std::string::npos;
+                              });
+            }
+          }
+      }
+      expect(staged == 8 && rejected == 16,
+             "every copied array argument without its exact read proof fails "
+             "closed instead of value-initializing elements: " +
+                 std::to_string(staged) + " staged, " +
+                 std::to_string(rejected) + " rejected");
+    }
+  }
   expect(copies == 2 && moves == 1 && addresses == 2,
          "fixtures prove independent copying, owning movement and checked "
          "address formation");
