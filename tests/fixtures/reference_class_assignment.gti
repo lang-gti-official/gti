@@ -1,5 +1,6 @@
 #include <std/string>
 #include <std/memory>
+#include <std/vector>
 
 struct Point {
   mut int32_t value;
@@ -18,6 +19,9 @@ void moved_text(mut std::string& target, std::string source) {
 }
 std::string make_text() { return std::string("returned"); }
 void returned_text(mut std::string& target) { target = make_text(); }
+void reset_vector(mut std::vector<int32_t>& target) {
+  target = std::vector<int32_t>();
+}
 
 mut int32_t drops = 0;
 mut int32_t sum = 0;
@@ -68,11 +72,11 @@ int main() {
   }
   mut std::string names[2] = {std::string("first"), std::string("second")};
   {
-    mut std::string& element = names[0];
+    mut std::string& element = names[1];
     element = std::string("changed");
     if (element != "changed") return 11;
   }
-  if (names[0] != "changed" || names[1] != "second") return 12;
+  if (names[0] != "first" || names[1] != "changed") return 12;
   {
     mut Tracked tracked{2};
     replace_tracked(tracked);
@@ -82,5 +86,9 @@ int main() {
   mut Owner owned{10};
   replace_owner(owned);
   if (owned.get() != 11) return 15;
+  mut std::vector<int32_t> values{};
+  values.push_back(42);
+  reset_vector(values);
+  if (!values.empty()) return 16;
   return 0;
 }
