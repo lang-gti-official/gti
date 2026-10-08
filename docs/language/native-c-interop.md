@@ -231,8 +231,8 @@ target is forwarded to Clang and selects the C data model, including LP64
 `long` on macOS/Linux and LLP64 `long` on Windows. Complete
 passive records become `[[c_abi]]` structs, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
-enums become an `int32_t` alias plus `constexpr` constants, a bare anonymous
-enum becomes its `constexpr int32_t` constants alone, function-pointer
+enums become aliases to their native-compatible C integer family plus exact
+`constexpr` constants, a bare anonymous enum contributes those constants alone, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
 block. A configured function rename emits its GTI source spelling plus
 `[[link_name("original_symbol")]]`; a portable assembler label recorded by
@@ -255,6 +255,37 @@ generated source has no special status: this language contract remains the
 sole ABI authority when it is compiled. The tool's architecture and growth
 phases are recorded in
 [the native-bindings-import plan](../plans/native-bindings-import.md).
+
+### Imported enum representation
+
+The reader records Clang's compatible integer type, signedness, width, native
+size/alignment agreement, and evaluated enumerator values. The planner admits
+8-, 16-, 32- and 64-bit C integer representations whose layout matches the enum.
+Signed minima and the full unsigned 64-bit range are preserved. The writer uses
+ordinary aliases, explicit integer conversions and `constexpr` expressions;
+this is not a new GTI enum kind or an unchecked conversion facility.
+
+For example, on the LP64 import profile, `enum Flags { HIGH = 0x80000000U };`
+becomes `using Flags = c_uint;` and
+`constexpr Flags HIGH = Flags(2147483648);`. The same representation applies
+through typedefs, native function/callback signatures, record fields, arrays,
+and qualified nested pointers. An excluded or system-provenance enum's uses
+resolve to the compatible integer without referencing an ungenerated alias.
+An incompatible layout (such as independent over-alignment), unsupported
+integer type, or invalid emitted name receives a skip reason; dependent uses
+are rejected consistently and containing records can degrade to opaque handles.
+
+Enum values and representation are C-target facts, not portable GTI promises.
+The current declaration reader selects canonical LP64 Unix or LLP64
+MSVC-compatible Clang profiles from the requested target's data model. In
+particular, MSVC-compatible ordinary enum rules can evaluate wide constants
+differently from Unix rules. Regenerate per target and match the native
+library's ABI; enum-changing compiler flags such as `-fshort-enums` are not
+currently forwarded as declaration-reader options. Fixed-underlying enum
+extensions accepted by Clang retain their explicit integer family. This slice
+does not expand the separate integer-macro evaluator's range.
+
+See the runnable [native enum bindings project](../../examples/native-enum-bindings/README.md).
 
 ## Native Callback Types
 

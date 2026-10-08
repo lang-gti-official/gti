@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "native-enum-bindings"
+version = "0.1.0"
+
+[package.native]
+c-sources = ["native/flags.c"]
+
+[bindgen.flags]
+header = "native/flags.h"
+namespace = "native_flags"
+
+[targets.native-enum-bindings]
+kind = "executable"
+root = "src/main.gti"

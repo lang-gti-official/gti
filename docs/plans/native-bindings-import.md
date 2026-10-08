@@ -61,6 +61,11 @@ alias references, function shapes, fixed arrays, and an explicit
 tagged by kind (record, enum, typedef, function). Every declaration carries a
 `SourceOrigin` and a `NativeScopeId`.
 
+Enum declarations additionally retain their compatible native integer type,
+the reader's enum/integer size-and-alignment agreement, and signed or unsigned
+64-bit enumerator values without narrowing. These are native facts; the
+planner, not the reader or writer, decides GTI representability.
+
 The scope tree is the deliberate C++ seam: the C reader only creates the
 translation-unit root, but namespaces and class scopes are additional scope
 kinds, not a model redesign. Plain `char` is distinct from the sized integers
@@ -151,7 +156,7 @@ methods, overloads) lands without touching the reader. Two passes:
    *degrades to an `[[c_opaque]]` handle with a recorded reason* rather than
    disappearing, so every pointer-based API through it stays importable.
    Only by-value uses of a degraded record skip.
-2. Entity mapping. Functions, enums (alias to `int32_t` plus `constexpr`
+2. Entity mapping. Functions, enums (alias to the compatible C integer plus `constexpr`
    enumerators; a bare anonymous enum contributes constants only), object
    typedefs, and callback typedefs map through one
    shared type-mapping authority implementing the documented ABI allowlist:
@@ -180,6 +185,12 @@ methods, overloads) lands without touching the reader. Two passes:
    handle, and a record whose name GTI cannot spell (an interior `__`)
    poisons every use rather than emitting a declaration the frontend
    rejects.
+   Enum mapping preserves the exact signed/unsigned domain through 64 bits and
+   rejects an independent enum layout that a scalar alias cannot represent.
+   One shared check covers the declaration and every use; excluded/system enum
+   uses canonicalize to their compatible integer rather than a missing alias.
+   This supersedes the original unconditional `int32_t` enum mapping. It adds
+   no compiler-private capability or frontend/MIR/backend exception.
    Everything else — variadics, plain `char`/`bool`, other multi-level
    pointers, native variables, reserved or GTI-invalid identifiers — becomes a
    `SkippedItem{origin, name, reason}`.
@@ -296,6 +307,15 @@ SQLite: generated bindings must admit the ordinary open/prepare/step/column/
 finalize/close workflow without a SQLite-specific parser or planner rule.
 
 ## Numbered Delivery Milestones
+
+**Native enum follow-up (implemented).** The C-02/C-06 representation goals now
+include target-compatible enum integer identity and full signed/unsigned 64-bit
+enumerator domains. `bindgen_pipeline` covers canonical LP64/LLP64 profiles,
+packed compatible layouts, rejected independent alignment, invalid names and
+filtered/system uses. `native_enum_bindgen` runs the manifest-driven
+`examples/native-enum-bindings` project and a C17-linked runtime matrix. Further
+target/ABI-option fidelity remains a separate reader-profile goal; this does
+not claim arbitrary `-fshort-enums` or every target-specific enum extension.
 
 1. **C-01: bounded C foundation (complete).** GTI-owned model, planner,
    writer, bootstrap C17 reader, CLI, diagnostics, deterministic output, and

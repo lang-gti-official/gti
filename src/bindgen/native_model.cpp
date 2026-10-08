@@ -145,9 +145,16 @@ std::string printNativeModel(const NativeModel &model) {
       break;
     }
     case NativeDeclarationKind::Enum: {
-      out << "enum " << declaration->name << external << '\n';
+      out << "enum " << declaration->name << " : ";
+      printType(model, declaration->enumIntegerType, out);
+      if (!declaration->enumLayoutMatchesInteger) {
+        out << " [distinct layout]";
+      }
+      out << external << '\n';
       for (const NativeEnumerator &enumerator : declaration->enumerators) {
-        out << "  " << enumerator.name << " = " << enumerator.value << '\n';
+        out << "  " << enumerator.name << " = ";
+        std::visit([&out](auto value) { out << value; }, enumerator.value);
+        out << '\n';
       }
       break;
     }
