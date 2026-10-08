@@ -565,6 +565,13 @@ defined-failure-free by MIR type facts; no value or temporary cleanup obligation
 is synthesized. Both modes reject additional temporary aliases, readers or
 writers. The native moved-from shell is retired after the binding construction,
 including when the same CFG executes again through a loop.
+Transparent identity links between the conditional move and binding publication
+retain the same storage and exact drop-reparent chain. Moved-from shell retirement
+traces that chain back to the original move's obligation; comparing only the
+final binding's immediate source obligation would miss retirement through
+parentheses and leave the slot engaged on loop re-entry. This retirement uses
+the already-validated identity links and does not execute an additional GTI
+destructor.
 The passive proof uses the class's generated destructor and active-cleanup
 facts, not `DropKind::Trivial`: a nominal class can retain a lexical lifetime
 without requiring an active cleanup operation. A constructor `Invoke` may

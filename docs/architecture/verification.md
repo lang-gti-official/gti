@@ -277,6 +277,15 @@ binding initialization, a by-value argument, a relayed by-value argument, or
 container insertion. These eight failures remain open; passing emission alone
 does not establish native correctness for the other forty cases.
 
+At `bcb4799f`, parenthesized conditional bindings pass alongside unparenthesized
+bindings in both passive and cleanup-owning fixtures, across all six native
+modes and ASan/UBSan. The runtime loop test caught a moved-from shell left
+engaged through identity reparenting despite passing structural admission;
+retirement now follows the exact reparent chain. The emission inventory is
+42/48: conditional by-value arguments, relayed arguments and container insertion
+still fail for both branch outcomes. These six cases, broad validation and
+integration remain outstanding; no issue is closed on this focused evidence.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
