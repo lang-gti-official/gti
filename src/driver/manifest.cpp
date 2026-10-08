@@ -748,14 +748,57 @@ OptimizationLevel optimizationLevel(std::int64_t value) {
   }
 }
 
+ConfigurationFlags
+parseConfigurationDefines(const toml::table &table, std::string_view owner,
+                          std::string_view sourceName, std::string_view source,
+                          std::vector<Diagnostic> &diagnostics,
+                          std::vector<SourceSpan> &declarations) {
+  const auto flags = stringArray(table, "defines", owner, sourceName, source,
+                                 diagnostics, &declarations);
+  std::vector<std::pair<std::string, SourceSpan>> valid;
+  for (std::size_t index = 0; index < flags.size(); ++index) {
+    if (!isConfigurationFlagName(flags[index])) {
+      diagnostics.push_back(
+          buildDiagnostic("GTI-B1005", declarations[index],
+                          std::string(owner) + " define '" + flags[index] +
+                              "' is not an ordinary GTI identifier."));
+      continue;
+    }
+    valid.emplace_back(flags[index], declarations[index]);
+  }
+  std::sort(valid.begin(), valid.end(),
+            [](const auto &left, const auto &right) {
+              if (left.first != right.first) {
+                return left.first < right.first;
+              }
+              return left.second.start < right.second.start;
+            });
+  valid.erase(std::unique(valid.begin(), valid.end(),
+                          [](const auto &left, const auto &right) {
+                            return left.first == right.first;
+                          }),
+              valid.end());
+  ConfigurationFlags result;
+  declarations.clear();
+  for (auto &[name, declaration] : valid) {
+    result.push_back(std::move(name));
+    declarations.push_back(std::move(declaration));
+  }
+  return result;
+}
+
 void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::string_view sourceName, std::string_view source,
                         std::vector<Diagnostic> &diagnostics) {
   validateFields(table,
                  {"optimization", "cpp-standard", "execution-profile",
                   "raw-pointer-audit", "disabled-warnings",
-                  "dependency-warnings", "keep-cpp", "debug-info", "native"},
+                  "dependency-warnings", "keep-cpp", "debug-info", "native",
+                  "defines"},
                  "profile", sourceName, source, diagnostics);
+  profile.defines =
+      parseConfigurationDefines(table, "Profile", sourceName, source,
+                                diagnostics, profile.defineDeclarations);
 
   if (const toml::node *optimization = table.get("optimization")) {
     const std::optional<std::int64_t> value =
@@ -2250,41 +2293,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     } else {
       validateFields(*buildTable, {"defines", "allow-build-scripts"}, "build",
                      sourceName, source, result.diagnostics);
-      build.defines =
-          stringArray(*buildTable, "defines", "Build", sourceName, source,
-                      result.diagnostics, &build.defineDeclarations);
-      std::vector<std::pair<std::string, SourceSpan>> valid;
-      for (std::size_t index = 0; index < build.defines.size(); ++index) {
-        if (!isConfigurationFlagName(build.defines[index])) {
-          result.diagnostics.push_back(
-              buildDiagnostic("GTI-B1005", build.defineDeclarations[index],
-                              "Build define '" + build.defines[index] +
-                                  "' is not an ordinary GTI identifier."));
-          continue;
-        }
-        valid.emplace_back(build.defines[index],
-                           build.defineDeclarations[index]);
-      }
-      std::sort(valid.begin(), valid.end(),
-                [](const auto &left, const auto &right) {
-                  if (left.first != right.first) {
-                    return left.first < right.first;
-                  }
-                  return left.second.start < right.second.start;
-                });
-      valid.erase(std::unique(valid.begin(), valid.end(),
-                              [](const auto &left, const auto &right) {
-                                return left.first == right.first;
-                              }),
-                  valid.end());
-      build.defines.clear();
-      build.defineDeclarations.clear();
-      build.defines.reserve(valid.size());
-      build.defineDeclarations.reserve(valid.size());
-      for (auto &[name, declaration] : valid) {
-        build.defines.push_back(std::move(name));
-        build.defineDeclarations.push_back(std::move(declaration));
-      }
+      build.defines = parseConfigurationDefines(
+          *buildTable, "Build", sourceName, source, result.diagnostics,
+          build.defineDeclarations);
       build.allowedBuildScripts = stringArray(
           *buildTable, "allow-build-scripts", "Build", sourceName, source,
           result.diagnostics, &build.allowedBuildScriptDeclarations);
@@ -2357,9 +2368,10 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               "Target '" + targetName + "' must be a table."));
           continue;
         }
-        validateFields(*targetTable,
-                       {"kind", "linkage", "root", "exports", "native"},
-                       "target", sourceName, source, result.diagnostics);
+        validateFields(
+            *targetTable,
+            {"kind", "linkage", "root", "exports", "native", "defines"},
+            "target", sourceName, source, result.diagnostics);
         const std::optional<std::string> kind =
             requiredString(*targetTable, "kind", "target", sourceName, source,
                            result.diagnostics);
@@ -2516,9 +2528,15 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
              .root = resolvedRoot,
              .declaration = sourceSpan(sourceName, source, targetKey),
              .exports = std::move(targetExports),
+             .defines = {},
+             .defineDeclarations = {},
              .native =
                  parseOptionalNative(*targetTable, packageRoot, "Target",
                                      sourceName, source, result.diagnostics)});
+        ProjectTarget &parsedTarget = targets.back();
+        parsedTarget.defines = parseConfigurationDefines(
+            *targetTable, "Target", sourceName, source, result.diagnostics,
+            parsedTarget.defineDeclarations);
       }
     }
   }

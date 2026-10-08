@@ -2,18 +2,6 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
-add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
-target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend)
-add_test(NAME local_reference_inference COMMAND gti_local_reference_inference_tests)
-add_test(NAME local_reference_inference_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_runtime_test.py" $<TARGET_FILE:gti>)
-set_tests_properties(local_reference_inference_runtime PROPERTIES TIMEOUT 300)
-if(TARGET gti_lsp)
-  add_test(NAME local_reference_inference_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(local_reference_inference_lsp PROPERTIES TIMEOUT 120)
-endif()
-
 add_executable(gti_qualified_type_member_tests qualified_type_member_tests.cpp)
 target_link_libraries(gti_qualified_type_member_tests PRIVATE gti_compiler)
 add_test(NAME qualified_type_members COMMAND gti_qualified_type_member_tests)
@@ -31,6 +19,18 @@ if(Python3_Interpreter_FOUND)
         $<TARGET_FILE:gti_lsp>)
     set_tests_properties(qualified_type_member_lsp PROPERTIES TIMEOUT 60)
   endif()
+endif()
+
+add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
+target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend)
+add_test(NAME local_reference_inference COMMAND gti_local_reference_inference_tests)
+add_test(NAME local_reference_inference_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(local_reference_inference_runtime PROPERTIES TIMEOUT 300)
+if(TARGET gti_lsp)
+  add_test(NAME local_reference_inference_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(local_reference_inference_lsp PROPERTIES TIMEOUT 120)
 endif()
 
 add_executable(gti_prvalue_direct_initialization_tests
@@ -3169,6 +3169,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
             "$<TARGET_FILE:gti>"
   )
+  add_test(
+    NAME scoped_configuration_defines
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/scoped_configuration_defines_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/examples/scoped-configuration"
+  )
+  set_tests_properties(scoped_configuration_defines PROPERTIES TIMEOUT 180)
   add_test(
     NAME objective_cpp_bridge
     COMMAND "${Python3_EXECUTABLE}"

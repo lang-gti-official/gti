@@ -645,21 +645,6 @@
         "thread_task_adapter": 0
       }
     },
-    "132-qualified-type-members.gti": {
-      "declarations": 562,
-      "bodies": 100,
-      "generated_items": 32,
-      "generated_kinds": {
-        "program_initialization": 0,
-        "hosted_entry": 1,
-        "structural_operator_adapter": 12,
-        "callable_adapter": 0,
-        "lifecycle_cleanup": 2,
-        "native_interop_adapter": 0,
-        "concrete_instance_adapter": 17,
-        "thread_task_adapter": 0
-      }
-    },
     "131-inferred-references.gti": {
       "declarations": 1254,
       "bodies": 530,
@@ -672,6 +657,21 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "concrete_instance_adapter": 37,
+        "thread_task_adapter": 0
+      }
+    },
+    "132-qualified-type-members.gti": {
+      "declarations": 562,
+      "bodies": 100,
+      "generated_items": 32,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 12,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 2,
+        "native_interop_adapter": 0,
+        "concrete_instance_adapter": 17,
         "thread_task_adapter": 0
       }
     },

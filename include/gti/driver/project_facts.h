@@ -68,6 +68,7 @@ struct ProjectFactsProfile {
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   WarningPolicy warningPolicy;
   bool dependencyWarnings = true;
+  ConfigurationFlags defines;
 };
 
 // One declared target of the selected package.
@@ -78,6 +79,7 @@ struct ProjectFactsTarget {
   // The target's entry source, resolved against the package source root.
   std::filesystem::path root;
   std::vector<ProjectExport> exports;
+  ConfigurationFlags defines;
 };
 
 class ProjectFacts final {
@@ -106,17 +108,25 @@ public:
   [[nodiscard]] const std::string &defaultProfileName() const;
 
   [[nodiscard]] const std::vector<ProjectFactsTarget> &targets() const;
+  [[nodiscard]] const ProjectFactsTarget *
+  findTarget(std::string_view name) const;
+  // Infer an editor target only for a unique matching entry root, or a
+  // single-target package. Shared files/ambiguous roots in multi-target
+  // packages have no inferred target; never union unrelated target flags.
+  [[nodiscard]] const ProjectFactsTarget *
+  targetForSource(const std::filesystem::path &source) const;
 
   // Selected-package and transitive-dependency `[build] defines`, the same
   // program-wide flags the build path seeds before CLI overrides apply.
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
 
-  // The analysis configuration for one declared profile, assembled exactly as
-  // the build path assembles it. Returns nothing when the profile is not
-  // declared.
-  [[nodiscard]] std::optional<AnalysisConfiguration>
-  analysisConfiguration(std::string_view profileName, TargetInfo target,
-                        RuntimeProfile runtimeProfile) const;
+  // The analysis configuration for a declared profile and optional target.
+  // With no target, include only package and profile flags. An unknown
+  // profile or explicitly requested target produces no configuration.
+  [[nodiscard]] std::optional<AnalysisConfiguration> analysisConfiguration(
+      std::string_view profileName, TargetInfo target,
+      RuntimeProfile runtimeProfile,
+      std::optional<std::string_view> targetName = std::nullopt) const;
 
   // Consumer-selected profile policy, classified by the resolved graph's
   // actual package identities. Dependency manifests cannot hide diagnostics.
@@ -145,6 +155,7 @@ private:
   std::string resolvedDefaultProfile;
   std::vector<ProjectFactsTarget> resolvedTargets;
   ConfigurationFlags resolvedConfigurationFlags;
+  ConfigurationFlags resolvedDeclaredConfigurationFlags;
   std::string resolvedModelIdentity;
 };
 

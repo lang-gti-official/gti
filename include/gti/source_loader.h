@@ -44,7 +44,8 @@ public:
        std::optional<std::size_t> completionOffset = std::nullopt,
        const std::vector<PackageSourceRoot> &packageSourceRoots = {},
        TargetInfo target = TargetInfo::host(),
-       ConfigurationFlags configurationFlags = {});
+       ConfigurationFlags configurationFlags = {},
+       ConfigurationFlags declaredConfigurationFlags = {});
 
   [[nodiscard]] bool hadError() const;
 

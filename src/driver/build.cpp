@@ -983,6 +983,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   for (const std::string &flag : request.compilation().configurationFlags()) {
     identity.add("configuration.flag", flag);
   }
+  for (const auto &flag : request.compilation().declaredConfigurationFlags()) {
+    identity.add("configuration.declared-flag", flag);
+  }
 
   const TargetInfo &target = request.compilation().target();
   identity.add("target.os", target.os);
