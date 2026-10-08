@@ -923,6 +923,16 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/class_field_value_runtime_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(class_field_value_runtime PROPERTIES TIMEOUT 300)
+endif()
+add_executable(gti_aggregate_projection_tests aggregate_projection_tests.cpp)
+target_link_libraries(gti_aggregate_projection_tests PRIVATE gti_cpp_backend)
+add_test(NAME aggregate_projection COMMAND gti_aggregate_projection_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME aggregate_projection_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/aggregate_projection_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(aggregate_projection_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME passive_fixed_array_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"

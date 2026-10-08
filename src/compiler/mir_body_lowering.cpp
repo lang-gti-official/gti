@@ -3577,6 +3577,30 @@ private:
             .type = value->info.type};
   }
 
+  // Forming an address evaluates its place without loading the referent. The
+  // terminal fixed-array selection therefore must publish its own semantic
+  // bounds origin at AddressOf, rather than disappear with that omitted Load.
+  [[nodiscard]] DefinedFailureOperation addressDefinedFailure(HirValueId id) {
+    const HirValue *value = findValue(id);
+    if (value == nullptr) {
+      valid = false;
+      return {};
+    }
+    if (value->kind == HirValueKind::Index &&
+        !value->definedFailure.localOrigins.empty()) {
+      return localDefinedFailure(value);
+    }
+    if ((value->kind == HirValueKind::Grouping ||
+         value->kind == HirValueKind::MemberAccess) &&
+        !value->operands.empty()) {
+      return addressDefinedFailure(value->operands.front());
+    }
+    if (value->kind == HirValueKind::Binary &&
+        value->operation == TokenKind::COMMA && !value->operands.empty())
+      return addressDefinedFailure(value->operands.back());
+    return {};
+  }
+
   [[nodiscard]] static bool isPlaceExpression(HirValueKind kind) {
     switch (kind) {
     case HirValueKind::Call:
@@ -8333,6 +8357,11 @@ private:
     if (instruction.operation == MirOperation::Literal) {
       instruction.literalProvenance.kind = MirLiteralProvenanceKind::Source;
     }
+    if (instruction.operation == MirOperation::AddressOf &&
+        value->operands.size() == 1) {
+      instruction.definedFailure =
+          addressDefinedFailure(value->operands.front());
+    }
     if (instruction.operation == MirOperation::Closure &&
         instruction.lambdaTarget) {
       const HirLambda *lambda = program.findLambda(*instruction.lambdaTarget);
@@ -9760,8 +9789,22 @@ private:
           continue;
         }
         emitValue(*element.index);
+        const HirValue *indexValue = findValue(*element.index);
+        const auto *constantIndex =
+            indexValue != nullptr &&
+                    indexValue->kind == HirValueKind::Literal &&
+                    indexValue->literal
+                ? std::get_if<std::uint64_t>(&*indexValue->literal)
+                : nullptr;
+        if (constantIndex == nullptr ||
+            sourceSnapshot.type.kind != SemanticType::Array ||
+            *constantIndex >= sourceSnapshot.type.arrayLength) {
+          valid = false;
+          continue;
+        }
         projected.projections.push_back({.kind = MirProjectionKind::Index,
-                                         .index = mirValueFor(*element.index)});
+                                         .index = mirValueFor(*element.index),
+                                         .constantIndex = *constantIndex});
       }
       bindingPlaces.insert_or_assign(element.binding,
                                      appendPlace(std::move(projected)));

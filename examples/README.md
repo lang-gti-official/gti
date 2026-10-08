@@ -64,7 +64,7 @@ is a teaching helper, not a production server.
 | `09-target-selection.gti` | compile-time host selection and active `#error` guards |
 | `10-modules/main.gti` | loading another GTI source file with `#include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
-| `12-fixed-arrays.gti` | bounded arrays, signed contextual literals, named passive records, passive unions, indexing, and size |
+| `12-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `14-operators.gti` | restricted member operators; self-read dereference stores, nested subscripts and once-formed compound targets |
 | `15-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
@@ -84,7 +84,7 @@ is a teaching helper, not a production server.
 | `29-callable-predicates.gti` | exact bool predicate results from confined generic callables |
 | `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
-| `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
+| `32-structured-bindings.gti` | immutable exact-arity decomposition, independent passive class-array copies, explicit owning class-array moves |
 | `33-source-concepts.gti` | unary capabilities, structural class contracts, and trailing-clause admission of dependent compound arguments |
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
@@ -161,7 +161,7 @@ is a teaching helper, not a production server.
 | `108-mutable-slices.gti` | exclusive subviews, shared projections and parent reactivation |
 | `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, generic movement and owner reactivation |
 | `110-integral-enums.gti` | exact enum extraction, numeric formatting and application customization |
-| `111-final-address-storage.gti` | in-slot construction, checked borrowing, allocation-owner movement, slot reuse and explicit release |
+| `111-final-address-storage.gti` | in-slot construction, scalar/struct field addresses in constructors, checked borrowing, allocation-owner movement, slot reuse and explicit release |
 | `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
 | `113-erased-addresses.gti` | explicit const-preserving typed/erased address conversion and separate owner-witness borrowing |
 | `114-owning-storage-view.gti` | application-defined allocation owner and raw-backed view, final-address construction, checked lifetime, movement and explicit release |
