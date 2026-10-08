@@ -73,9 +73,9 @@ planner, not the reader or writer, decides GTI representability.
 
 The scope tree is the deliberate C++ seam: the C reader only creates the
 translation-unit root, but namespaces and class scopes are additional scope
-kinds, not a model redesign. Plain `char` is distinct from the sized integers
-because the GTI ABI treats it differently (`const char*` is `c_string`; bare
-`char` is not an ABI scalar). A deterministic model printer supports golden
+kinds, not a model redesign. Native plain `char` is distinct from the sized
+integers and maps to `c_char`, not GTI's separate `char` type. Direct
+`const char*` call positions may use `c_string`. A deterministic model printer supports golden
 tests exactly like the lowered-program printer does.
 
 ### The reader seam (`header_reader.h`, `clang_reader.cpp`)
@@ -97,7 +97,7 @@ references from pointer uses), fields with pointer declarators and one or
 more concrete array extents (nested `Array` model nodes, outermost first),
 `enum` definitions — anonymous ones retained by name adoption or as bare
 constants (an `Enum` declaration with an empty name) — object and
-function-pointer `typedef`s, and function prototypes (named or unnamed
+function/function-pointer `typedef`s, and function prototypes (named or unnamed
 parameters, `void` lists, `...` recorded as variadic, parameter array decay
 with `const` preserved, and multi-level pointers with `const` qualifiers
 read faithfully; `restrict` never reaches the model because it does not
@@ -415,18 +415,18 @@ not claim arbitrary `-fshort-enums` or every target-specific enum extension.
    Deliberately not implemented: **ownership-transfer annotations**. GTI has
    no ownership-transfer surface for native results at all — the interop
    contract lists it among the unsupported forms — so there is nothing for
-   the tool to emit. Adding it is a language change first, exactly as
+     the tool to emit. Adding it is a language change first, exactly as
    `link_name` was, and belongs to that language work rather than to bindgen.
 
 ## C-08: Native Invocation And Foreign Storage
 
-Status: C-08A native indirect invocation is implemented and locally verified in
-the coordinated release candidate; C-08B foreign-variable declarations remain
-planned. Combined native-scalar/nested-pointer reconciliation retains its own
-composed validation gates before integration.
+Status: C-08A native indirect invocation and the native-scalar/nested-pointer
+family are implemented. Bindgen now preserves callback slots and composable
+typedefs through those facilities. C-08B foreign-variable declarations remain
+planned.
 This is a follow-on language campaign, not permission for the importer to emit
 declarations the frontend rejects. Target-correct native scalar identity and
-general nested raw pointers have their own implementation campaign; reuse its
+general nested raw pointers have their own implemented contract; reuse its
 resolved types and native pointer-slot contract rather than duplicating them.
 
 ### Named outcomes and current evidence
@@ -480,7 +480,7 @@ Extend the existing call-plan machinery, rather than building another callable
 type system. Evaluate the callee once before arguments and retain all prepared
 inputs through the call's established full-expression boundary. Apply existing
 ABI argument conversion/marshalling to the resolved native shape, including the
-general nested-pointer/writeback family when available. The result may itself
+general nested-pointer/writeback family. The result may itself
 be a native function-pointer value. No implicit GTI owner is created by a raw
 native result.
 
