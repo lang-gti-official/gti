@@ -100,6 +100,27 @@ failure stops callee-local cleanup immediately on a second failure, including
 managed task destruction. They retain exact output and both failure identities.
 Native scope probes independently check earliest-primary preservation,
 thread isolation, scope restoration and rejection of forged managed envelopes.
+`cleanup_context_scope_runtime` also checks that the one outlined incoming
+failure helper retains a non-`noexcept` signature, can return for a first
+failure, and receives only its guarded cold/noinline hint. The ordinary
+scope-restoration and managed-handoff checks still run at native O0/O3 under
+C++20/C++23; inherited cleanup and panic matrices exercise real second-failure
+reporting. Performance hints never replace these behavioral checks.
+
+The RT-1 bounded failure-helper change at clean optimized `f2fea6c7` passes
+the all-target Release/Ninja build and all 570 unfiltered CTests, without
+failures or skips (1132.96 seconds). Both corpus oracles pass all 130 examples:
+the complete body-emitter oracle admits 22241 bodies and matches all 13611
+applicable general emissions, while the reachable native corpus preserves
+6778 reviewed body identities at its two endpoints. Language coverage passes
+267 programs and correctly rejects 160 negatives. Independent replay, malformed
+lowered-program rejection, exact cleanup/panic, managed-worker handoff,
+ASan/UBSan and thread/atomic/mutex TSan gates pass. All thirteen staged-library
+consumers and the installed-only process-provider eight-mode matrix and
+Off/Warn parity pass. The [performance record](../plans/performance-tooling.md#production-comparison)
+retains exact identities, timing/size/memory tradeoffs and raw evidence hashes.
+Only evidence documentation changes after this tested implementation. Native
+execution evidence is macOS arm64, not a claim of Linux/Windows native runs.
 
 ## Consolidated lifetime and enum acceptance checkpoint
 
