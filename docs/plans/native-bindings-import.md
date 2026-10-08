@@ -61,6 +61,11 @@ alias references, function shapes, fixed arrays, and an explicit
 tagged by kind (record, enum, typedef, function). Every declaration carries a
 `SourceOrigin` and a `NativeScopeId`.
 
+Function typedefs retain their function node and function-pointer typedefs
+retain the pointer node; typedef handling no longer strips the latter. This
+distinction is necessary for callback slots (`Callback*`) to preserve ABI pointer
+depth. Function-typed parameters receive C's pointer adjustment in the reader.
+
 Enum declarations additionally retain their compatible native integer type,
 the reader's enum/integer size-and-alignment agreement, and signed or unsigned
 64-bit enumerator values without narrowing. These are native facts; the
@@ -68,9 +73,9 @@ planner, not the reader or writer, decides GTI representability.
 
 The scope tree is the deliberate C++ seam: the C reader only creates the
 translation-unit root, but namespaces and class scopes are additional scope
-kinds, not a model redesign. Plain `char` is distinct from the sized integers
-because the GTI ABI treats it differently (`const char*` is `c_string`; bare
-`char` is not an ABI scalar). A deterministic model printer supports golden
+kinds, not a model redesign. Native plain `char` is distinct from the sized
+integers and maps to `c_char`, not GTI's separate `char` type. Direct
+`const char*` call positions may use `c_string`. A deterministic model printer supports golden
 tests exactly like the lowered-program printer does.
 
 ### The reader seam (`header_reader.h`, `clang_reader.cpp`)
@@ -92,7 +97,7 @@ references from pointer uses), fields with pointer declarators and one or
 more concrete array extents (nested `Array` model nodes, outermost first),
 `enum` definitions — anonymous ones retained by name adoption or as bare
 constants (an `Enum` declaration with an empty name) — object and
-function-pointer `typedef`s, and function prototypes (named or unnamed
+function/function-pointer `typedef`s, and function prototypes (named or unnamed
 parameters, `void` lists, `...` recorded as variadic, parameter array decay
 with `const` preserved, and multi-level pointers with `const` qualifiers
 read faithfully; `restrict` never reaches the model because it does not
@@ -160,19 +165,18 @@ methods, overloads) lands without touching the reader. Two passes:
    enumerators; a bare anonymous enum contributes constants only), object
    typedefs, and callback typedefs map through one
    shared type-mapping authority implementing the documented ABI allowlist:
-   fixed-width scalars, `float`/`double`, `void*`, one-level pointers with
-   admitted pointees, `const char*` as `c_string`, by-value bindable
-   records, named callback shapes, `const char**` as `c_string*`, and one exact
-   `OpaqueHandle**` direct function-parameter form. The latter is position
-   aware: callback shapes, fields, aliases, and returns do not inherit it.
-   Record-field positions are equally position aware: `c_string` and nested
-   pointers have no GTI field representation, so a record using one degrades
-   to an opaque handle with the reason recorded instead of emitting source
-   the frontend rejects. Fields otherwise cover the frontend's full admitted
-   set, including callback aliases and fixed arrays with multiple extents or
-   record, pointer, callback, and scalar elements.
-   Read-only string arrays (`const char* const*`) share the `c_string*`
-   spelling with `const char**` out parameters. An inline function-pointer
+   target-native scalar families, `float`/`double`, `void*`, qualified recursive
+   pointers, by-value bindable records and named callback shapes. This revises
+   the historical one-level/opaque-out-parameter restriction: ordinary GTI
+   recursive pointers now own the rule for fields, aliases, parameters and
+   results. Callback slots preserve every extra pointer level. Bare C function
+   typedefs provide callback signatures at pointer and adjusted-parameter uses.
+   `const char*` uses `c_string` only at direct call boundaries; record fields,
+   nested pointers and reusable text typedefs preserve raw `const c_char*`
+   storage. Qualifiers on named pointer aliases apply to the pointer slot.
+   Fixed-array typedefs and record fields compose multiple extents with record,
+   pointer, callback and scalar elements; C parameters decay in the reader.
+   An inline function-pointer
    use binds through a *synthesized named callback alias* — the language's
    own admitted form — deduplicated by shape, named deterministically from
    the first committing declaration (`<owner>_<member>_fn`, ordinals on
@@ -191,8 +195,11 @@ methods, overloads) lands without touching the reader. Two passes:
    uses canonicalize to their compatible integer rather than a missing alias.
    This supersedes the original unconditional `int32_t` enum mapping. It adds
    no compiler-private capability or frontend/MIR/backend exception.
-   Everything else — variadics, plain `char`/`bool`, other multi-level
-   pointers, native variables, reserved or GTI-invalid identifiers — becomes a
+   Filtered/system callback names synthesize an admitted signature at the use
+   instead of leaving a dangling alias. This expands import policy using
+   existing GTI facilities, with no new frontend or backend exception.
+   Remaining inexpressible shapes — variadics, pointers to whole arrays,
+   zero-length array extensions, native variables, reserved or GTI-invalid identifiers — become a
    `SkippedItem{origin, name, reason}`.
 
 The plan is an ordered value type: inspectable, testable, and the future
@@ -395,8 +402,9 @@ not claim arbitrary `-fshort-enums` or every target-specific enum extension.
      language's rule (an admitted one-level result, or the exact two-level
      form; a count parameter pointing to a writable fixed-width integer) and
      refuses the function with its reason rather than emitting an attribute
-     the frontend would reject. This is the only control that *widens* what
-     imports: the two-level array result form is otherwise refused.
+     the frontend would reject. Recursive pointer results now import through
+     the ordinary pointer rules without this option; the option adds the
+     separately checked extent contract rather than enabling pointer depth.
    - A configured entry matching nothing is reported as a warning, so a typo
      is visible instead of silently doing nothing.
 
@@ -408,18 +416,18 @@ not claim arbitrary `-fshort-enums` or every target-specific enum extension.
    Deliberately not implemented: **ownership-transfer annotations**. GTI has
    no ownership-transfer surface for native results at all — the interop
    contract lists it among the unsupported forms — so there is nothing for
-   the tool to emit. Adding it is a language change first, exactly as
+     the tool to emit. Adding it is a language change first, exactly as
    `link_name` was, and belongs to that language work rather than to bindgen.
 
 ## C-08: Native Invocation And Foreign Storage
 
-Status: C-08A native indirect invocation is implemented and locally verified in
-the coordinated release candidate; C-08B foreign-variable declarations remain
-planned. Combined native-scalar/nested-pointer reconciliation retains its own
-composed validation gates before integration.
+Status: C-08A native indirect invocation and the native-scalar/nested-pointer
+family are implemented. Bindgen now preserves callback slots and composable
+typedefs through those facilities. C-08B foreign-variable declarations remain
+planned.
 This is a follow-on language campaign, not permission for the importer to emit
 declarations the frontend rejects. Target-correct native scalar identity and
-general nested raw pointers have their own implementation campaign; reuse its
+general nested raw pointers have their own implemented contract; reuse its
 resolved types and native pointer-slot contract rather than duplicating them.
 
 ### Named outcomes and current evidence
@@ -473,7 +481,7 @@ Extend the existing call-plan machinery, rather than building another callable
 type system. Evaluate the callee once before arguments and retain all prepared
 inputs through the call's established full-expression boundary. Apply existing
 ABI argument conversion/marshalling to the resolved native shape, including the
-general nested-pointer/writeback family when available. The result may itself
+general nested-pointer/writeback family. The result may itself
 be a native function-pointer value. No implicit GTI owner is created by a raw
 native result.
 
