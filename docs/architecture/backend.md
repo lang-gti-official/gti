@@ -1293,6 +1293,13 @@ obligation; repeated evaluation resets only their representation storage.
 Class captures retain their lexical lifetime obligation even when destruction
 is passive. Thus scalar moves and class copies occur before the branch too.
 Other frozen passive closures still use the existing checked fused representation.
+Taking a checked local reference prevents that fusion: the closure factory
+materializes its environment once, and the ordinary MIR loan/pointer carrier
+aliases it. The body-local closure type also names reference carriers and
+their dereference places. Invocations through these places reuse that exact
+environment; they neither repeat captures nor acquire a cleanup obligation.
+Borrow endpoints and owner cleanup remain the verified MIR schedule, including
+reborrows and failure cleanup.
 Exact lambdas with owned class parameters use the shared parameter-slot prelude;
 class results publish into the same verified destination slots as function
 results. Prepared argument shells are retired after invocation, including its

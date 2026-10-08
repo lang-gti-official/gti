@@ -4255,8 +4255,7 @@ auto SemanticVisitor::Impl::captureUnqualifiedCompletion(
 
 auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
                                                        const TypeRef *ownerType,
-                                                       bool typeOnly)
-    -> void {
+                                                       bool typeOnly) -> void {
   const Token &completion = path.last();
   SemanticCompletionContext context{.kind = SemanticCompletionKind::Namespace,
                                     .sourceUnit = currentSourceUnit,
@@ -11077,12 +11076,13 @@ auto SemanticVisitor::Impl::baseTypeOf(
     const auto alias = resolveTypeAliasPath(type, fromScope);
     if (!alias || !type.arguments.empty() || alias->id == 0 ||
         alias->id > typeAliases.size() ||
-        typeAliases[alias->id - 1].resolution != TypeAliasResolution::Resolved) {
+        typeAliases[alias->id - 1].resolution !=
+            TypeAliasResolution::Resolved) {
       return SemanticType::Unknown;
     }
-    return substituteType(alias->type,
-                          GenericSubstitution{.types = instanceTypeSubstitution,
-                                              .values = instanceValueSubstitution});
+    return substituteType(
+        alias->type, GenericSubstitution{.types = instanceTypeSubstitution,
+                                         .values = instanceValueSubstitution});
   }
   const CompilerCapabilityTypeKind compilerCapability =
       compilerCapabilityType(type, fromScope);

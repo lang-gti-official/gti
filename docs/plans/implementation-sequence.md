@@ -1382,6 +1382,124 @@ with moved-binding reuse rejection, a later successful argument before capture
 cleanup, and malformed eager-input HIR plans. The 0.361.0 and 0.362.0 combined
 runs also retain these regressions.
 
+## L-INFER-01: Local Inferred Reference Bindings
+
+**Status: Implementation authorized and in progress.** Local reference inference
+now shares ordinary referent/binding validation and retained loans. Paired semantic,
+HIR/MIR, native cleanup and LSP validation is being completed before publication.
+Whole-array and raw-pointer references retain their existing explicit-reference
+boundary; no backend inference or new owner is introduced.
+
+**Outcome:** Applications can retain a checked borrow without spelling a long
+concrete type. For example, reading an array nested in a parsed JSON document
+should permit:
+
+```gti
+auto& scopes_array = parsed.get("scopes").expect("scopes are required");
+for (auto& scope : scopes_array.elements()) {
+  auto text = scope.as_string().expect("scope must be a string");
+  scopes.push_back(std::move(text));
+}
+```
+
+### Evidence And Prerequisites
+
+At proposal time `SemanticVisitor::Impl::analyzeInferredVariable` explicitly rejected
+ordinary local `auto&`. Its reference path already constructed a
+resolved reference type, calls `validateReferenceBinding`, and records retained
+borrows. Explicit local `T&` declarations use the same reference validation and
+retained-borrow machinery. This overlap supports a bounded generalization;
+removing the diagnostic alone is not sufficient implementation evidence.
+
+Borrowed `expected<T&, E>` extraction through `.expect()` is implemented and
+documented in [expected values](../language/expected.md). It yields a place tied
+to the original owner, even after destruction of the temporary expected shell.
+`std::json::value::get` returns this shape; it does not yield an owned JSON node.
+The current move-only-copy diagnostic on `mut auto value = borrowed_result`
+therefore rejects a real attempted copy, but its unconditional movement hint
+does not explain the available borrowing alternative.
+
+### Language Rule
+
+An initialized ordinary local declaration `auto& name = expression;` infers
+the exact complete referent type and requests a read-only checked reference.
+`mut auto& name = expression;` infers that same type and requests mutable
+access. Each form must accept exactly the initializer shapes accepted by the
+corresponding explicit `T&` or `mut T&` declaration, subject to existing generic
+instance analysis. Expression referent types and value categories must be used
+without accidentally creating a reference-to-reference type.
+
+Plain `auto` continues to infer a value binding. The written `&` is what
+requests borrowing; `mut` cannot upgrade a read-only result to mutable access.
+Inference performs no copy, movement, conversion ranking, lifetime extension,
+or independent ownership creation. The initializer is evaluated once.
+
+The origin place or dependency set, access mode, permitted escape boundary,
+and loan endpoint must be identical to those of an explicit reference binding.
+Borrowed referents remain owned and dropped by their original owner. Existing
+last-use, invalidation, reborrow, and escape rules remain authoritative.
+Fresh owned temporaries remain invalid local reference initializers; a
+temporary carrier that returns a checked borrow of stable external storage is
+judged by that storage's established lifetime, not merely by call syntax.
+
+The initial scope is ordinary initialized local declarations, including locals
+in concretely analyzed generic bodies. It adds no inference for fields,
+namespace/global declarations, function parameters, returns, structured
+bindings, `auto&&`, untyped braces, or explicit `auto` array declarators.
+Reference inference from an existing fixed-array place must follow explicit
+array-reference support and preserve extents rather than decay to a pointer.
+
+Prove the general rule with an unrelated application type as well as JSON:
+
+```gti
+struct Record { mut int count = 1; };
+
+int main() {
+  mut Record owner{};
+  auto& observed = owner;
+  int snapshot = observed.count;
+  mut auto& writable = owner; // shared borrow has reached its last use
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+```
+
+### Implementation And Acceptance
+
+1. Semantics must resolve inferred references through the ordinary reference
+   contract. Audit inferred/range/generated-local special cases and factor
+   only the shared logic needed to prevent explicit and inferred drift.
+2. HIR and MIR must preserve the same concrete binding types, origin/dependency
+   facts, access, loan endpoints, and cleanup behavior as explicit references.
+   The backend consumes these resolved facts; it must not delegate inference
+   or borrow permission to generated C++ `auto&`.
+3. Add paired explicit/inferred positive and negative tests for stable locals,
+   fields, supported array places, checked reference-returning calls, borrowed
+   expected extraction, concrete generic instances, mutation conflicts,
+   read-only-to-mutable upgrades, moved owners, temporary owners, and escaping
+   local storage. Unsupported retained reborrow families remain rejected in
+   both spellings. Exercise later failure and exactly-once owner cleanup.
+4. Improve copy-attempt hints where a stable read-only initializer can be
+   borrowed: explain `auto&` and explicit cloning where applicable. Offer
+   movement only when it represents a legal ownership transfer. Do not
+   automatically change owning code into borrowing code through a fix-it.
+5. LSP diagnostics and hover must use compiler facts, display the inferred
+   referent/access accurately, and retain definition/navigation identity.
+   Test edits from `auto` to `auto&` and `mut auto&`, incomplete source, recovery,
+   and dirty dependency overlays. Confirm formatter and Tree-sitter support
+   the syntax without introducing separate inference rules.
+6. Add a runnable example under `examples/` and update its index, corpus and
+   census registrations. Update current static semantics, ownership and grammar
+   docs, revise `R-INFERENCE`, and apply the user-visible language version policy
+   only when the implementation lands. This proposal itself changes no VERSION.
+
+**Exit gate:** The inferred and explicit forms agree on semantic admission and
+borrow effects for the tested structural families; valid examples execute with
+an optimized host compiler across C++20/C++23 and GTI O0/O3; invalid cases stop
+with frontend diagnostics; relevant MIR verification and LSP gates pass. Any
+missing structural family must name its prerequisite and remain rejected in
+both forms rather than gaining a nominal exception for one library type.
+
 ## Explicit Cloning And Native Bridge Follow-Up
 
 The explicit-duplication slice supplies source-defined `std::clone`,

@@ -13,6 +13,12 @@ perform generic substitution itself.
 
 The LSP is an adapter over compiler-owned semantics:
 
+Local `auto&`/`mut auto&` declarations publish the compiler's concrete reference
+type and access in inferred-type hover. Uses retain the reference binding's
+definition identity. Switching between value/reference spelling, incomplete
+initializers and unsaved owner declarations is handled by the existing snapshot
+generation and dependency invalidation, not protocol-side inference.
+
 ```text
 JSON-RPC/LSP
   -> protocol conversion in src/lsp/main.cpp
@@ -574,8 +580,8 @@ definition, and semantic tokens, while generation checks prevent an analysis
 captured before that edit from publishing. The protocol adapter does not parse
 TOML, reconstruct workspace membership, or resolve dependency aliases itself.
 
-The selected project configuration seeds `[build].defines`, uses the default
-profile's execution model, and derives runtime capabilities from the installed
+The selected project configuration seeds package, default-profile and resolved
+target flags, uses the default profile's execution model, and derives runtime capabilities from the installed
 hosted runtime profile. A startup
 `--execution-profile single-threaded|concurrent` option overrides the manifest
 profile and also configures standalone documents. Omission selects the
