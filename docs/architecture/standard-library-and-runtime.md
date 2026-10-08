@@ -40,8 +40,8 @@ because C symbols may be declared only once per GTI program: private provider
 declarations must coexist with applications' own `posix_memalign` and `free`
 bindings. Windows CRT symbols also have reserved leading-underscore spellings.
 Native facts (size limits, POSIX constants, pointer alignment) remain small
-host observations. The adapters contain no GTI allocation policy. Sparse typed owners now keep
-their slot state in ordinary GTI and lease its bytes from the same provider as
+host observations. The adapters contain no GTI allocation policy. Sparse typed
+owners now keep their slot state in ordinary GTI and lease its bytes from the same provider as
 their object region. Public unsafe manual-lifetime operations supply typed
 construction, destruction and relocation; raw validity remains the programmer's
 obligation. The specialized sparse capability type, intrinsic family, adoption

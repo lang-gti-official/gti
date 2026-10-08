@@ -4621,15 +4621,14 @@ unless requested.
 
 ### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
 
-- **State/role:** in progress. The owner authorized provider-layer preparation
-  in parallel with `S-ALLOC-06`. This independent slice moves process
-  request validation, native-size/zero handling, target selection and failure
-  mapping into GTI, using POSIX/CRT forwarding adapters. The combined candidate
-  now routes default sparse storage and its metadata through that provider and
-  retires generated sparse allocation. Final acceptance remains coupled to
-  `S-ALLOC-06`; this checkpoint does not complete the campaign. The owner delegates the
-  source/compiler/platform split described here. This is not a claim that
-  every allocation client has migrated or every ABI adapter is removable.
+- **State/role:** implementation integrated through PR #94 and the issue
+  reconciliation release; final campaign acceptance is underway in PR #162.
+  Process request validation, native-size/zero handling, target selection and
+  failure mapping are GTI source policy over POSIX/CRT forwarding adapters.
+  Default sparse storage and its metadata both use that provider; generated
+  sparse allocation is retired. The completion audit below owns the remaining
+  evidence. This does not claim every allocation client has migrated or every
+  ABI adapter is removable.
 - **Outcome:** the default typed-storage and process-resource paths acquire
   bytes through source-defined GTI policy and ordinary native bindings, rather
   than specialized C++ allocation policy. Application pools and resource-backed
@@ -4637,6 +4636,28 @@ unless requested.
 - **Continuation:** reuse the preceding campaign and Phase 2 context. Do not
   reopen their accepted lifetime or unsafe boundaries, or duplicate their
   construction/destruction/relocation machinery.
+
+#### Completion Audit (2026-10-08)
+
+The audit starts from canonical main `f0ba8383`, after the issue campaign was
+integrated. The implementation already satisfies the named source-provider
+migration; remaining work is acceptance evidence and correcting stale boundary
+descriptions, not a second allocator implementation.
+
+| Required outcome | Owning implementation and evidence |
+| --- | --- |
+| Source request policy and canonical platform boundary | `gti_internal::process_resource` is an ordinary class in `stdlib/std/memory.gti`; no compiler source recognises its name. `process_provider_target_contract` selects POSIX/CRT calls for macOS, Linux and Windows; the C ABI smoke fixes their exact signatures. |
+| Default typed clients and source metadata | `std::allocator::try_storage`, process leases and `try_allocate_sparse` use two same-provider regions. `process_storage_policy.gti` observes their exact requests, one metadata byte per slot, zero/invalid/overflow requests, first/second acquisition failure, rollback, simultaneous owners, immovable owning elements, slot reuse, owner movement and element-before-region release. |
+| Existing custom resources and checked safety | `resource_protocol_contract`, `programmable_allocators_runtime`, `storage_adoption_contract`, source-storage/lifetime matrices and allocator Off/Warn parity retain resource/element borrow rejection, malformed descriptor checks, failed growth, constructor/destructor failure and original release authority. |
+| Retired and remaining mechanisms | Production `include`, `src`, `stdlib` and `runtime` contain no old `gti_rt_memory_allocate_v1`/`release_v1`, sparse capability or sparse backend allocator. The [allocation inventory](../architecture/standard-library-and-runtime.md#allocation-inventory-and-remaining-boundaries) identifies remaining prefix, unique/shared and host-service families. |
+| Installed and runnable clients | The provider matrix has an explicit installed mode that clears source-tree overrides. CI and release staging run it; the installed library smoke links the native memory boundary. Examples 119–121, 125–126, 128–129 and `libc-region-provider` exercise the existing public APIs. Their source, example index and census identities are unchanged. |
+| Broad, platform and performance acceptance | Full production/tooling validation and a fresh cost comparison are pending in this completion run. Local evidence is macOS arm64; Linux native CI is queued without a runner and Windows native execution is unavailable. Target/ABI checks are retained without claiming native execution on those platforms. |
+
+The ABI-adapter rationale is revised explicitly in ADR 022: native `c_size_t`
+and nested `void**` are now supported. Unique forwarding symbols still avoid
+occupying applications' C declarations, while Windows reserved symbols and
+target facts justify the remaining small adapters. No semantics or allocation
+policy change is required for that correction.
 
 #### Starting Point And Architectural Purpose
 
