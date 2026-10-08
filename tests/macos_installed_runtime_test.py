@@ -61,6 +61,13 @@ def main():
         executable = root / "consumer"
         run([cli, source, "-o", executable], environment)
         assert "portable installed GTI" in run([executable], environment)
+        # Resolve an installed interface and its republished legacy unit after
+        # relocation, without a source-tree stdlib or an environment override.
+        assert (relocated / "share/gti/stdlib/modules/string.gti").is_file()
+        source.write_text(source.read_text().replace(
+            '#include <std/string>', 'import std.string;'))
+        run([cli, source, "-o", executable], environment)
+        assert "portable installed GTI" in run([executable], environment)
         header = root / "consumer.h"
         header.write_text("#include <stdint.h>\nint32_t native_add(int32_t a, int32_t b);\n")
         bindings = root / "bindings.gti"

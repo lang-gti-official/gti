@@ -124,7 +124,7 @@ def main() -> int:
 
     backend_header = (root / "include/gti/backend.h").read_text(encoding="utf-8")
     if not re.search(
-        r"generate\s*\(\s*const\s+LoweredProgram\s*&\s*program\s*\)\s*=\s*0",
+        r"generate\s*\(\s*LoweredProgram\s+program\s*\)\s*=\s*0",
         without_comments(backend_header),
     ):
         failures.append("include/gti/backend.h: Backend does not expose exactly LoweredProgram")
