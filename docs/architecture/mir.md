@@ -2594,7 +2594,10 @@ compiler-generated iterator returned by `begin_mut()`; mutable dereference
 creates only the named child. Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows
-the final parent loan on every path.
+the final parent loan on every path. Every owned temporary with lexical drop
+names its exact obligation, whose cleanup type is the owner's type; that
+includes passive cleanup, where the class has no source destructor and no
+field needing cleanup.
 
 The M-OWN-04 read-only plan additionally names one
 `expectedPayloadExtraction`. Verification requires an exact `ExpectedValue`

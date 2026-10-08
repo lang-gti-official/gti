@@ -14929,6 +14929,115 @@ int main() {
          "reuse of the original owner");
 }
 
+void testPassiveCleanupRangeTemporary() {
+  // The range class has no destructor and only scalar fields, so its lexical
+  // cleanup is passive. The loop must still own and drop the temporary.
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "passive-cleanup-range-temporary.gti", R"(
+class Cursor {
+  mut int32_t at;
+public:
+  Cursor(int32_t at) : at(at) {}
+  int32_t& operator*() { return this.at; }
+  void operator++() mut { this.at += 1; }
+  bool operator!=(Cursor& end) { return this.at < end.at; }
+};
+
+class Span {
+  int32_t last;
+public:
+  Span(int32_t last) : last(last) {}
+  Cursor begin() { return Cursor(0); }
+  Cursor end() { return Cursor(this.last); }
+};
+
+int32_t first_over(int32_t limit) {
+  for (int32_t value : Span(10)) {
+    if (value > limit) { return value; }
+  }
+  return -1;
+}
+
+int main() {
+  mut int32_t total = 0;
+  for (int32_t value : Span(4)) {
+    if (value == 1) { continue; }
+    total += value;
+  }
+  return total - 5 + first_over(6) - 7;
+}
+)",
+      {standardLibraryPrelude()});
+  for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+    std::cerr << "Unexpected passive range diagnostic: " << diagnostic.message
+              << '\n';
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a range-for over a temporary with passive cleanup should lower to "
+         "verified MIR");
+
+  std::size_t passiveRanges = 0;
+  const lang::MirBody *passiveBody = nullptr;
+  for (const lang::HirFunctionInstance &hirFunction :
+       frontend.hir.functionInstances()) {
+    const lang::MirFunctionInstance *mirFunction =
+        frontend.mir.findFunctionInstance(hirFunction.id);
+    if (mirFunction == nullptr) {
+      continue;
+    }
+    for (const lang::MirRangeIteration &range :
+         mirFunction->body.rangeIterations) {
+      if (!range.ownsRangeTemporary) {
+        continue;
+      }
+      const lang::MirPlace *owner = mirFunction->body.findPlace(range.owner);
+      const lang::MirDropObligation *drop =
+          mirFunction->body.findDropObligation(range.ownerDrop);
+      if (owner != nullptr && drop != nullptr && drop->place == range.owner &&
+          drop->dropType.type == owner->type &&
+          !drop->dropType.requiresActiveCleanup) {
+        ++passiveRanges;
+        passiveBody = &mirFunction->body;
+      }
+    }
+  }
+  expect(passiveRanges == 2 && passiveBody != nullptr,
+         "each owned passive-cleanup range temporary should keep one exact "
+         "owner drop obligation without requiring active cleanup");
+
+  if (passiveBody != nullptr) {
+    lang::MirBody missingDrop = *passiveBody;
+    missingDrop.rangeIterations.front().ownerDrop = 0;
+    expect(!lang::verifyMirBody(missingDrop).valid(),
+           "MIR verification should reject an owned lexical range temporary "
+           "with no cleanup obligation");
+
+    lang::MirBody wrongType = *passiveBody;
+    const lang::MirDropObligationId ownerDrop =
+        wrongType.rangeIterations.front().ownerDrop;
+    if (ownerDrop != 0 && ownerDrop <= wrongType.dropObligations.size()) {
+      wrongType.dropObligations[ownerDrop - 1].dropType.type =
+          lang::SemanticType::Int32;
+    }
+    expect(ownerDrop != 0 && !lang::verifyMirBody(wrongType).valid(),
+           "MIR verification should reject a range owner obligation whose "
+           "cleanup type differs from the owner");
+  }
+
+  if (!frontend.mirValid || !lang::verifyMirProgram(frontend.mir).valid()) {
+    return;
+  }
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
+  expect(artifact.contents.find("Span") != std::string::npos,
+         "the C++ backend should emit a passive-cleanup range temporary");
+}
+
 void testExpectedPayloadRangeLoans() {
   const std::string source = R"(
 #include <std/string>
@@ -21133,6 +21242,7 @@ constexpr NamedTest kTests[] = {
     {"testRangeBasedForAndIteratorProtocol",
      testRangeBasedForAndIteratorProtocol},
     {"testReadOnlyRangeLoans", testReadOnlyRangeLoans},
+    {"testPassiveCleanupRangeTemporary", testPassiveCleanupRangeTemporary},
     {"testExpectedPayloadRangeLoans", testExpectedPayloadRangeLoans},
     {"testMutableRangeLoans", testMutableRangeLoans},
     {"testLambdas", testLambdas},
