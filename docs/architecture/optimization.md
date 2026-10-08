@@ -304,15 +304,21 @@ is the maximum work performed for any one body. Proofs are published only
 after the dependency worklist is stable. A body may retain contextual proofs
 established before a conservative call barrier even when that barrier prevents
 the body from exporting a complete return or mutation summary. The barrier
-still clears mutable facts for every later instruction. Recursive SCCs, native
+still clears mutable facts for every later instruction. A permanently
+unsupported call is an opaque transfer with a normal continuation, rather
+than a pending summary that prevents discovery of subsequent clients. It
+supplies no callee result/postcondition facts. Only an admitted source summary
+not yet available postpones and retries its caller. Opaque synchronizing
+effects invalidate mutable memory even when the effect summary reports no
+direct write; they cannot establish a closed recurrence edge. Recursive SCCs, native
 or virtual calls, owning-argument transfers, synchronization, raw/unsafe
 memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
 
 A concrete source body containing raw/unsafe instructions can now receive its
-ordinary closed-call input context. The raw instruction itself is still an
-opaque barrier: every such instruction clears mutable-memory facts and marks
-the path opaque before any ordinary load/store transfer can interpret it.
+ordinary closed-call input context. Actual raw pointee/lifetime operations
+and unsupported unsafe calls remain opaque barriers: they clear mutable-memory
+facts and mark the path opaque before ordinary load/store transfer.
 This permits replayable proofs before the operation without granting raw
 memory a scalar transfer rule or declaring the body effect-closed. Earlier
 immutable SSA results and actual readonly scalar binding copies remain
@@ -323,6 +329,16 @@ destination. Foreign/open calls, owning transfers, synchronization and recursive
 families retain their separate admission boundaries. An unrelated source
 function proves a bounded scalar addition before writing through a raw pointer;
 arithmetic on the changed referent and in its caller remains checked.
+
+Inert typed address arithmetic and pointer conversion neither read nor write a
+pointee, so they preserve unrelated memory facts. They introduce no address,
+extent, lifetime or initialized-element proof. Empty full-expression lifecycle
+markers can inherit an expression's unsafe classification but do not execute
+its operation again; actual lifecycle events and raw accesses remain distinct.
+A selected unsafe source function is analyzed under the ordinary exact-call
+rules, including its actual raw barriers. Its declaration's caller obligations
+remain unchanged. Unrelated record and scalar regressions distinguish pure
+address computation and a pure unsafe declaration from a real raw write.
 
 The trusted scalar bounds detector has no memory transfer: its exact void
 call takes two staged `uint64_t` values, compares them and may raise its defined

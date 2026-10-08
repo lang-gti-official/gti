@@ -4,6 +4,16 @@ public:
   mut int spare = 9;
   Gauge(int input) : value(input) {}
   int read() { return this.value + 1; }
+  int after_address() {
+    unsafe {
+      const int* first = &this.value;
+      const int* end = first + 1;
+      const int* again = end - 1;
+      auto difference = again - first;
+      if (difference != 0) return 2;
+    }
+    return this.value + 1;
+  }
   int bump() mut {
     this.value += 1;
     return this.spare + 1;
@@ -96,6 +106,7 @@ int main() {
   if (nested.read() != 8) return raw_constructor_case();
   mut Gauge object{7};
   if (through_reference(object) != 8) return 6;
+  if (object.after_address() != 8) return 7;
   if (object.bump() != 10) return alias_case();
   return danger.read();
 }

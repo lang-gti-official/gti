@@ -1655,7 +1655,8 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 MirBodyAddress target, bool opaqueEffects,
                                 AbstractState &state) {
   const auto summary = exactMirInvocationSummary(program, body, instruction);
-  if (!summary || (opaqueEffects && summary->traits.writesUnknownMemory)) {
+  if (!summary || (opaqueEffects && (summary->traits.writesUnknownMemory ||
+                                     summary->traits.maySynchronize))) {
     killUnknownMemory(body, state);
     return;
   }
@@ -1726,7 +1727,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                     return owningCallOperand(body, operand);
                   });
   if (!target || closedCalls->rejected.contains(*target) || owningArgument) {
-    closedCalls->incompleteBodies.insert(address);
+    // A permanently unsupported edge is an opaque transfer, not a pending
+    // source summary. The caller still has an ordinary successful continuation
+    // after the barrier below, although that edge supplies no result or
+    // post-call memory facts. Only an admitted, not-yet-available source
+    // summary postpones the continuation and retries the caller.
     return false;
   }
 
@@ -1850,6 +1855,46 @@ void killUnknownMemory(const MirBody &body, AbstractState &state) {
   state.objectValues.clear();
 }
 
+[[nodiscard]] bool inertRawAddressOperation(const MirInstruction &instruction) {
+  if (instruction.rawMemoryAccess || !instruction.result ||
+      instruction.destination || instruction.receiver)
+    return false;
+  const bool pointerComputation =
+      instruction.kind == MirInstructionKind::Compute &&
+      instruction.unsafeOperation == UnsafeOperationKind::PointerArithmetic &&
+      (instruction.operation == MirOperation::PointerAdd ||
+       instruction.operation == MirOperation::PointerSubtract ||
+       instruction.operation == MirOperation::PointerDifference);
+  const bool pointerConversion =
+      instruction.kind == MirInstructionKind::Call &&
+      instruction.intrinsic == IntrinsicKind::RawPointerConversion &&
+      instruction.operands.size() == 1 &&
+      instruction.operands.front().type.kind == SemanticType::RawPointer &&
+      instruction.info.type.kind == SemanticType::RawPointer;
+  const auto effect = effects(instruction);
+  return (pointerComputation || pointerConversion) && !effect.writesPlace &&
+         !effect.readsUnknownMemory && !effect.writesUnknownMemory &&
+         !effect.invokesUserCode && !effect.invokesRuntime &&
+         !effect.maySynchronize;
+}
+
+[[nodiscard]] bool inertLifecycleMarker(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Lifecycle &&
+         instruction.lifecycle.empty() && !instruction.rawMemoryAccess &&
+         (instruction.fullExpressionEnd ||
+          instruction.earlyExitFullExpressionEnd ||
+          instruction.cleanupBoundaryEnd) &&
+         !instruction.result && !instruction.destination &&
+         !instruction.receiver && instruction.operands.empty() &&
+         !instruction.loan && !instruction.functionTarget &&
+         !instruction.constructorTarget && !instruction.bodyTarget &&
+         !instruction.nativeCallbackAdapter && !instruction.threadTaskAdapter &&
+         instruction.synchronization.kind ==
+             SynchronizationOperationKind::None &&
+         instruction.operation == MirOperation::None &&
+         instruction.intrinsic == IntrinsicKind::None;
+}
+
 void applyInstruction(const MirBody &body,
                       const MirPlaceAliasEscapeAnalysis &aliases,
                       const MirBlock &block, const MirInstruction &instruction,
@@ -1866,6 +1911,29 @@ void applyInstruction(const MirBody &body,
     killUnknownMemory(body, state);
     state.hasOpaqueEffects = true;
   };
+  // The empty full-expression marker can inherit the source expression's
+  // unsafe classification. It does not repeat that expression's operation;
+  // its actual Load/Call/Compute instruction already carries the effects.
+  if (inertLifecycleMarker(instruction))
+    return;
+  if (inertRawAddressOperation(instruction)) {
+    // Address arithmetic/conversion neither observes nor modifies a pointee.
+    // Preserve unrelated memory facts, but infer no address, extent, lifetime
+    // or initialized-element fact from this operation.
+    state.integers.erase(*instruction.result);
+    state.arrayValues.erase(*instruction.result);
+    state.objectValues.erase(*instruction.result);
+    return;
+  }
+  if (instruction.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall &&
+      !instruction.rawMemoryAccess &&
+      applyClosedCall(body, aliases, block, instruction, state, closedCalls,
+                      address)) {
+    // An unsafe declaration requires caller obligations; it does not replace
+    // the exact source body's execution/effect authority. Its actual raw
+    // operations still hit the per-instruction barrier in that body.
+    return;
+  }
   if (instruction.rawMemoryAccess ||
       instruction.unsafeOperation != UnsafeOperationKind::None) {
     // Contextual facts before raw access remain useful, but no raw operation
@@ -2650,9 +2718,14 @@ mayMutateTrackedPlace(const MirBody &body,
                       const MirInstruction &instruction, MirPlaceId tracked,
                       ClosedCallRound *closedCalls) {
   const MirEffectTraits effect = effects(instruction);
-  if (instruction.rawMemoryAccess ||
-      instruction.unsafeOperation != UnsafeOperationKind::None ||
-      instruction.kind == MirInstructionKind::Construct) {
+  if (inertLifecycleMarker(instruction))
+    return false;
+  if ((instruction.rawMemoryAccess ||
+       instruction.unsafeOperation != UnsafeOperationKind::None) &&
+      !inertRawAddressOperation(instruction)) {
+    return true;
+  }
+  if (instruction.kind == MirInstructionKind::Construct) {
     return true;
   }
   if (instruction.kind != MirInstructionKind::Call) {

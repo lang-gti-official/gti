@@ -5015,22 +5015,21 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   retired private checked/unchecked read helpers. Their original positive
   bounds and element-envelope requirements remain acceptance failures, not
   silently changed to zero-discharge expectations: the optimized safety suite
-  currently reports ten unmet proofs/context requirements. Source access puts
+  currently reports seven unmet proofs/context requirements. Source access puts
   its inner check in a selected reference-returning callee, so the positive
   query follows that exact borrowing call chain. Generic raw-memory/owned
   construction summaries must recover the warranted facts without restoring a
   nominal prefix-container rule. The first general optimizer prerequisite admits
   contextual proofs before raw operations while retaining opaque per-operation
   memory barriers and independently checked replay. It does not yet transport
-  raw-backed owned-construction or initialized-element facts; the same ten original
-  source-owner proof requirements remain unmet. A second prerequisite preserves
+  raw-backed owned-construction or initialized-element facts. A second prerequisite preserves
   existing field/context facts across the general pure scalar bounds detector;
   its unrelated record proof does not invent a prefix-length invariant or
   supply a prefix invariant. Ordinary parameterized constructor-field,
   implicit-receiver, nested-subobject and class-result summaries are recovered
   by a separate general prerequisite with unrelated record proofs and
   raw-write negatives. The raw initialized-element and allocation transfer
-  prerequisites, and the same ten source-owner requirements, remain open.
+  prerequisites, and the remaining seven source-owner requirements, remain open.
   The combined unrelated record proof exposed 32 whole-program rounds consumed
   solely by fixed-summary propagation. Dependency-based scheduling now bounds
   each body to 32 analyses while retaining four-update widening and eight
@@ -5042,7 +5041,22 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   copies now retain value facts across opaque/raw writes; references and mutable
   memory do not. Eight-mode native controls preserve exact results and the
   changed referent's overflow. This does not make raw/unknown calls effect-closed
-  or satisfy the ten remaining source-owner proof requirements.
+  or satisfy the remaining source-owner proof requirements. A permanently
+  unsupported call now takes a conservative opaque transfer and retains its
+  normal continuation, rather than masquerading as a pending source summary.
+  Exact opaque synchronizing effects still invalidate mutable memory even when
+  they report no direct writes. An unrelated by-value record client proves
+  the independent continuation without admitting its callee's owning argument.
+  Three formerly unreached record clients now pass; the safety suite retains
+  seven proof failures and native evidence retains its three failures.
+  A further general prerequisite distinguishes inert address arithmetic and
+  typed pointer conversion from actual pointee/lifetime operations, and avoids
+  repeating an operation at an empty full-expression marker. Selected unsafe
+  source declarations retain actual body effect authority and caller obligations.
+  Ordinary record/scalar positives and raw-write negatives cover these boundaries;
+  raw initialized-element transfer and the same seven owner requirements remain
+  open. Independent nested-subobject, returned-container and stored-reference
+  mutation probes are now permanent unit/native regressions.
   Full admission/corpus/performance coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.
