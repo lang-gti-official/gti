@@ -26,6 +26,14 @@ the corpus programs alone that does not consult the expectations.
 
 ## Audit result
 
+The issue-reconciliation candidate now records correct outcomes for every gated
+reproducer, rather than retaining `finding` markers on repaired programs. The
+427-program run at `2a9700d8` passed; its remaining A61 diagnostic-quality defect
+is corrected with exact compiler/LSP source-range and recovery tests. Issue
+links remain as regression provenance. Historical results below describe their
+named baselines, not current unresolved allowances. Final combined validation
+and publication are still required before closing the remaining campaign issues.
+
 The complete 65-program PR head initially measured **50 pass, 10 ICE, 1 link
 failure, 2 silent failures, and 2 rejections of valid code**. The first
 30-program tranche initially measured **24 pass, 4 ICE, and 2 silent
@@ -188,7 +196,7 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A58 | [#99](https://git.internal.howetotech.dev/gti-lang/gti/issues/99) Owner-field and range-element pointee references retain their exact accessor addresses; lowering rejections retain their owning cause/source | resolved: pass | `reproducers/a58-map-unique-ptr-value-deref`<br>`reproducers/a58-ref-to-owner-field-pointee-via-local-ref` |
 | A59 | [#100](https://git.internal.howetotech.dev/gti-lang/gti/issues/100) Read-only nested references publish the exact checked child address while retaining the owner's lifetime dependency | resolved: pass | `reproducers/a59-map-at-then-element-ref`<br>`reproducers/a59-readonly-ref-into-mut-nested-container`, `borrow_origin`, `borrow_origin_runtime` |
 | A60 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Fixed: overload arity mismatch discovers a verified include instead of advising a cast | rejected | `reproducers/a60-println-format-missing-include` |
-| A61 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | rejected | `reproducers/a61-designated-argument-diagnostic` |
+| A61 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Fixed: an untyped designated list identifies the missing destination type, without blaming an otherwise eligible struct | rejected | `reproducers/a61-designated-argument-diagnostic`, `designated_construction`, `diagnostic_recovery_lsp` |
 | F7 | [#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51) Calls to declared-but-undefined GTI functions fail at the native link instead of with a diagnostic | ice, link | `reproducers/f7-declaration-only-weak-ptr`<br>`reproducers/f7-json-decode-without-codec`<br>`reproducers/f7-undefined-user-function` |
 
 Optimization-level and C++-standard consistency held throughout. Eight diverse

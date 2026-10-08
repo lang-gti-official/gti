@@ -5440,6 +5440,22 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
           : SemanticType::Unknown;
   const ClassInfo *owner =
       target.kind == SemanticType::Class ? classInfo(target) : nullptr;
+  // An enclosing return/call's scalar expectation is not a struct destination
+  // for this list. Refine the existing rejection without changing acceptance
+  // of eligible contextual construction, including nested designated fields.
+  if (owner == nullptr && (target == SemanticType::Unknown ||
+                           contextualInitializerExpression != &expr)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2091", DiagnosticPhase::Semantics, expr.brace(),
+        "A designated initializer requires a destination struct type; this "
+        "expression has no contextual destination type.");
+    diagnostic.hints.emplace_back(
+        "Initialize a binding with an explicit struct type using this list, "
+        "then use that value in the expression.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (owner == nullptr || owner->kind != ClassKind::Struct ||
       !owner->designatedConstructor) {
     report(

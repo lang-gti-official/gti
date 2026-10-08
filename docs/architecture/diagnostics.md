@@ -9,6 +9,13 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2091` distinguishes an untyped designated initializer from an ineligible
+destination struct. With no contextual destination, it anchors the opening
+brace and recommends an explicitly typed binding, without guessing the type
+or offering an automatic edit. Existing struct layout/constructor diagnostics
+retain priority when the destination type is known. The LSP publishes the same
+record and clears it when a typed destination is supplied.
+
 `GTI-S2000` rejects a mutable local value declaration without an initializer at
 the binding name, before executable lowering. Its hint explains that a later
 assignment does not initialize that declaration. No automatic fix chooses an
