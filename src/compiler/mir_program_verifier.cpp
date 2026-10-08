@@ -13019,6 +13019,40 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
   }
   for (const auto &instance : program.classInstances()) {
     checkProgramType(instance.type);
+    std::unordered_set<TypeAliasId> aliases;
+    const auto closedAlias = [&](const auto &self,
+                                 const SemanticType &type) -> bool {
+      if (type.kind == SemanticType::Unknown ||
+          type.kind == SemanticType::TypeParameter ||
+          (type.kind == SemanticType::TypePack && !type.concretePack) ||
+          type.arrayLengthParameterId != 0)
+        return false;
+      const auto valuesClosed = [](const auto &values) {
+        return std::all_of(values.begin(), values.end(), [](const auto &value) {
+          return value.kind == CompileTimeValue::UInt64;
+        });
+      };
+      const auto typesClosed = [&](const auto &types) {
+        return std::all_of(
+            types.begin(), types.end(),
+            [&](const auto &argument) { return self(self, argument); });
+      };
+      return valuesClosed(type.valueArguments) &&
+             valuesClosed(type.lambdaEnclosingClassValues) &&
+             valuesClosed(type.lambdaEnclosingFunctionValues) &&
+             typesClosed(type.arguments) &&
+             typesClosed(type.lambdaEnclosingClassTypes) &&
+             typesClosed(type.lambdaEnclosingFunctionTypes);
+    };
+    for (const auto &alias : instance.typeAliases) {
+      checkProgramType(alias.type);
+      if (alias.declaration == 0 || !aliases.insert(alias.declaration).second ||
+          !closedAlias(closedAlias, alias.type))
+        result.errors.push_back({.bodyKind = MirBodyKind::FieldInitializers,
+                                 .owner = instance.id,
+                                 .message = "class alias has duplicate/missing "
+                                            "identity or open concrete type"});
+    }
     for (const auto &field : instance.declaredFields) {
       checkProgramType(field.type);
     }

@@ -233,72 +233,7 @@ private:
   [[nodiscard]] SemanticType
   substitute(const SemanticType &type,
              const GenericSubstitution &substitution) const {
-    if (type.kind == SemanticType::TypeParameter ||
-        (type.kind == SemanticType::TypePack && !type.concretePack)) {
-      const auto found = substitution.types.find(type.genericParameterId);
-      if (found == substitution.types.end()) {
-        return type;
-      }
-      return baseModel == nullptr
-                 ? found->second
-                 : baseModel->resolveExactClassSpecialization(found->second);
-    }
-    SemanticType result = type;
-    for (SemanticType &argument : result.arguments) {
-      argument = substitute(argument, substitution);
-    }
-    if (result.kind == SemanticType::Class ||
-        result.kind == SemanticType::Enum ||
-        result.kind == SemanticType::FunctionSignature) {
-      std::vector<SemanticType> expanded;
-      for (SemanticType &argument : result.arguments) {
-        SemanticType::appendExpandedArgument(expanded, std::move(argument));
-      }
-      result.arguments = std::move(expanded);
-    }
-    for (SemanticType &argument : result.lambdaEnclosingClassTypes) {
-      argument = substitute(argument, substitution);
-    }
-    for (SemanticType &argument : result.lambdaEnclosingFunctionTypes) {
-      argument = substitute(argument, substitution);
-    }
-    for (CompileTimeValue &argument : result.valueArguments) {
-      if (argument.kind != CompileTimeValue::Parameter) {
-        continue;
-      }
-      const auto found = substitution.values.find(argument.parameterId);
-      if (found != substitution.values.end()) {
-        argument = found->second;
-      }
-    }
-    const auto substituteValues = [&](std::vector<CompileTimeValue> &values) {
-      for (CompileTimeValue &argument : values) {
-        if (argument.kind != CompileTimeValue::Parameter) {
-          continue;
-        }
-        const auto found = substitution.values.find(argument.parameterId);
-        if (found != substitution.values.end()) {
-          argument = found->second;
-        }
-      }
-    };
-    substituteValues(result.lambdaEnclosingClassValues);
-    substituteValues(result.lambdaEnclosingFunctionValues);
-    if (result.arrayLengthParameterId != 0) {
-      const auto found =
-          substitution.values.find(result.arrayLengthParameterId);
-      if (found != substitution.values.end() &&
-          found->second.kind == CompileTimeValue::UInt64) {
-        result.arrayLength = found->second.value;
-        result.arrayLengthParameterId = 0;
-      } else if (found != substitution.values.end() &&
-                 found->second.kind == CompileTimeValue::Parameter) {
-        result.arrayLengthParameterId = found->second.parameterId;
-      }
-    }
-    return baseModel == nullptr
-               ? result
-               : baseModel->resolveExactClassSpecialization(std::move(result));
+    return substituteSemanticType(type, substitution, baseModel);
   }
 
   [[nodiscard]] static std::vector<const Expr *>
@@ -812,7 +747,7 @@ private:
         (type.kind != SemanticType::TypePack || type.concretePack) &&
         type.arrayLengthParameterId == 0;
     for (const CompileTimeValue &value : type.valueArguments) {
-      concrete = concrete && value.kind != CompileTimeValue::Parameter;
+      concrete = concrete && value.kind == CompileTimeValue::UInt64;
     }
     for (const SemanticType &argument : type.arguments) {
       // Do not short-circuit discovery of a concrete sibling or nested type.
@@ -1415,16 +1350,37 @@ private:
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);
+      retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
                                 snapshot.instantiationSite);
       model = &analysis.model;
     }
+    if (const auto *concreteLifecycle =
+            model->findClassLifecycle(*declaration->declaration)) {
+      auto &instance = output.program.classes[index];
+      instance.defaultConstructor = concreteLifecycle->defaultConstructor;
+      instance.copyConstructor = concreteLifecycle->copyConstructor;
+      instance.moveConstructor = concreteLifecycle->moveConstructor;
+      instance.copyAssignment = concreteLifecycle->copyAssignment;
+      instance.moveAssignment = concreteLifecycle->moveAssignment;
+    }
+    std::vector<HirClassTypeAlias> aliases;
+    for (const TypeAliasDecl *source : declaration->typeAliases) {
+      const TypeAliasInfo *alias = model->findTypeAlias(*source);
+      if (alias == nullptr) {
+        lifecycleValid = false;
+        continue;
+      }
+      aliases.push_back(
+          {.declaration = alias->id, .source = source, .type = alias->type});
+      (void)enqueueClass(alias->type);
+    }
+    output.program.classes[index].typeAliases = std::move(aliases);
     std::vector<HirClassField> fields;
     HirBody fieldInitializers;
     fields.reserve(declaration->fields.size());
     for (const ClassFieldTypeInfo &field : declaration->fields) {
-      const SemanticType type = substitute(field.type, substitution);
-      (void)enqueueClass(type);
+      SemanticType type = substitute(field.type, substitution);
       BindingInfo info{.type = type,
                        .access = field.declaration != nullptr &&
                                          field.declaration->isMutable()
@@ -1436,8 +1392,12 @@ private:
                 model->findBinding(*field.declaration)) {
           info.symbol = recorded->symbol;
           info.constant = recorded->constant;
+          info.type = recorded->type;
+          info.traits = recorded->traits;
+          type = recorded->type;
         }
       }
+      (void)enqueueClass(type);
       const HirBindingId binding =
           field.declaration == nullptr
               ? 0
@@ -1445,9 +1405,10 @@ private:
       const std::optional<HirValueId> initializer =
           field.declaration == nullptr
               ? std::nullopt
-              : lowerExpression(field.declaration->initializer(), *model,
-                                snapshot.typeArguments, snapshot.valueArguments,
-                                fieldInitializers);
+              : lowerExpression(
+                    model->resolvedFieldInitializer(*field.declaration), *model,
+                    snapshot.typeArguments, snapshot.valueArguments,
+                    fieldInitializers);
       if (field.declaration != nullptr) {
         HirStatement statement{.kind = HirStatementKind::Variable,
                                .source = field.declaration,
@@ -1541,6 +1502,12 @@ private:
     }
   }
 
+  void retainInstanceSymbols(const SemanticModel &model) {
+    const auto &symbols = model.database().symbols();
+    output.program.concreteSymbols.insert(output.program.concreteSymbols.end(),
+                                          symbols.begin(), symbols.end());
+  }
+
   [[nodiscard]] SemanticInstanceAnalysis *
   ensureFunctionAnalysis(HirFunctionInstanceId id) {
     if (id == 0 || id > output.program.functions.size()) {
@@ -1580,6 +1547,7 @@ private:
         instanceProvider->analyzeFunctionInstance(
             declaration->id, classArguments, classValueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite);
     SemanticInstanceAnalysis *result = analysis.get();
@@ -1608,6 +1576,7 @@ private:
         instanceProvider->analyzeConstructorInstance(
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite);
     SemanticInstanceAnalysis *result = analysis.get();
@@ -2021,6 +1990,7 @@ private:
     if (!classArguments.empty() || !classValueArguments.empty()) {
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
+      retainInstanceSymbols(fieldAnalysis.model);
       // processPendingInstances completes this owner through processClass
       // before any constructor. That class-owned pass already publishes these
       // substitution diagnostics. Reanalysis supplies constructor-local field
@@ -2030,7 +2000,8 @@ private:
       fieldModel = &fieldAnalysis.model;
     }
     for (const HirClassField &field : owner.fields) {
-      if (field.declaration == nullptr || !field.declaration->initializer() ||
+      if (field.declaration == nullptr ||
+          !fieldModel->resolvedFieldInitializer(*field.declaration) ||
           std::any_of(initializers.begin(), initializers.end(),
                       [&](const HirConstructorInitializer &initializer) {
                         return initializer.kind ==
@@ -2038,9 +2009,9 @@ private:
                                initializer.field == field.info.symbol;
                       }))
         continue;
-      const auto value =
-          lowerExpression(field.declaration->initializer(), *fieldModel,
-                          classArguments, classValueArguments, body);
+      const auto value = lowerExpression(
+          fieldModel->resolvedFieldInitializer(*field.declaration), *fieldModel,
+          classArguments, classValueArguments, body);
       if (!value) {
         lifecycleValid = false;
         continue;
@@ -2106,6 +2077,7 @@ private:
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
+      retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
       model = &analysis.model;
     }
@@ -4603,6 +4575,7 @@ private:
               (!target.arguments.empty() || !target.valueArguments.empty())) {
             defaults.emplace(instanceProvider->analyzeClassFieldInitializers(
                 target.classId, target.arguments, target.valueArguments));
+            retainInstanceSymbols(defaults->model);
             appendInstanceDiagnostics(std::move(defaults->diagnostics),
                                       tokenSpan(initializer->brace()));
           }

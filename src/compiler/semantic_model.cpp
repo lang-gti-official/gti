@@ -6,6 +6,112 @@
 #include <utility>
 
 namespace lang {
+SemanticType substituteSemanticType(const SemanticType &type,
+                                    const GenericSubstitution &substitution,
+                                    const SemanticModel *model) {
+  if (type.kind == SemanticType::TypeParameter ||
+      (type.kind == SemanticType::TypePack && !type.concretePack)) {
+    const auto found = substitution.types.find(type.genericParameterId);
+    if (found == substitution.types.end())
+      return type;
+    return model ? model->resolveExactClassSpecialization(found->second)
+                 : found->second;
+  }
+  SemanticType result = type;
+  const auto substituteTypes = [&](auto &types) {
+    for (auto &argument : types)
+      argument = substituteSemanticType(argument, substitution, model);
+  };
+  substituteTypes(result.arguments);
+  if (result.kind == SemanticType::Class || result.kind == SemanticType::Enum ||
+      result.kind == SemanticType::FunctionSignature) {
+    std::vector<SemanticType> expanded;
+    for (SemanticType &argument : result.arguments)
+      SemanticType::appendExpandedArgument(expanded, std::move(argument));
+    result.arguments = std::move(expanded);
+  }
+  substituteTypes(result.lambdaEnclosingClassTypes);
+  substituteTypes(result.lambdaEnclosingFunctionTypes);
+  const auto substituteValues = [&](auto &values) {
+    for (auto &argument : values)
+      argument = substituteCompileTimeValue(argument, substitution.values);
+  };
+  substituteValues(result.valueArguments);
+  substituteValues(result.lambdaEnclosingClassValues);
+  substituteValues(result.lambdaEnclosingFunctionValues);
+  if (result.arrayLengthParameterId != 0) {
+    const auto found = substitution.values.find(result.arrayLengthParameterId);
+    if (found != substitution.values.end()) {
+      if (found->second.kind == CompileTimeValue::UInt64) {
+        result.arrayLength = found->second.value;
+        result.arrayLengthParameterId = 0;
+      } else if (found->second.kind == CompileTimeValue::Parameter) {
+        result.arrayLengthParameterId = found->second.parameterId;
+      }
+    }
+  }
+  return model ? model->resolveExactClassSpecialization(std::move(result))
+               : result;
+}
+
+CompileTimeValue substituteCompileTimeValue(
+    const CompileTimeValue &value,
+    const std::unordered_map<GenericParameterId, CompileTimeValue>
+        &substitution) {
+  if (value.kind == CompileTimeValue::Parameter) {
+    const auto found = substitution.find(value.parameterId);
+    return found == substitution.end() ? value : found->second;
+  }
+  if (!value.expression)
+    return value;
+  const auto evaluate =
+      [&](const auto &self,
+          const GenericValueExpression &expression) -> CompileTimeValue {
+    if (expression.kind == GenericValueExpression::UInt64)
+      return CompileTimeValue::uint64(expression.value);
+    if (expression.kind == GenericValueExpression::Parameter)
+      return substituteCompileTimeValue(
+          CompileTimeValue::parameter(expression.parameterId), substitution);
+    if (!expression.left || !expression.right)
+      return {};
+    auto left = self(self, *expression.left);
+    auto right = self(self, *expression.right);
+    if (left.kind == CompileTimeValue::UInt64 &&
+        right.kind == CompileTimeValue::UInt64) {
+      const auto evaluated = evaluateConstantBinary(
+          expression.token.kind,
+          ConstantValue{
+              makeConstantInteger({.magnitude = left.value}, {.width = 64})},
+          ConstantValue{
+              makeConstantInteger({.magnitude = right.value}, {.width = 64})},
+          CheckedIntegerDomain{.width = 64});
+      if (evaluated)
+        if (const auto result = constantUnsignedMagnitude(*evaluated.value))
+          return CompileTimeValue::uint64(*result);
+      return {};
+    }
+    const auto retain = [](const CompileTimeValue &operand) {
+      if (operand.expression)
+        return operand.expression;
+      return std::shared_ptr<const GenericValueExpression>(
+          std::make_shared<GenericValueExpression>(GenericValueExpression{
+              .kind = operand.kind == CompileTimeValue::Parameter
+                          ? GenericValueExpression::Parameter
+                          : GenericValueExpression::UInt64,
+              .value = operand.value,
+              .parameterId = operand.parameterId}));
+    };
+    if ((left.kind == CompileTimeValue::Unknown && !left.expression) ||
+        (right.kind == CompileTimeValue::Unknown && !right.expression))
+      return {};
+    return {.expression = std::make_shared<GenericValueExpression>(
+                GenericValueExpression{.kind = GenericValueExpression::Binary,
+                                       .token = expression.token,
+                                       .left = retain(left),
+                                       .right = retain(right)})};
+  };
+  return evaluate(evaluate, *value.expression);
+}
 
 namespace {
 
@@ -145,6 +251,10 @@ SemanticDatabase::symbols() const {
   return symbolRecords;
 }
 
+SymbolId SemanticDatabase::symbolIdentityCeiling() const {
+  return baseSymbolCount + symbolRecords.size();
+}
+
 [[nodiscard]] const SymbolRecord *
 SemanticDatabase::findSymbol(SymbolId id) const {
   if (id == 0) {
@@ -254,12 +364,12 @@ void SemanticDatabase::clear() {
 // Turns this database into an instance-analysis delta over baseDatabase:
 // lookups fall back to the base, and new symbol identities continue after
 // the base's so instance records never collide with base SymbolIds.
-void SemanticDatabase::beginInstanceDelta(
-    const SemanticDatabase &baseDatabase) {
+void SemanticDatabase::beginInstanceDelta(const SemanticDatabase &baseDatabase,
+                                          SymbolId reservedIdentityCeiling) {
   clear();
   base = &baseDatabase;
   baseSymbolCount =
-      baseDatabase.baseSymbolCount + baseDatabase.symbolRecords.size();
+      std::max(baseDatabase.symbolIdentityCeiling(), reservedIdentityCeiling);
 }
 
 void SemanticDatabase::rebase(const SemanticDatabase *baseDatabase) {
@@ -683,6 +793,37 @@ SemanticModel::findBinding(const VariableDecl &declaration) const {
     return &found->second;
   }
   return base == nullptr ? nullptr : base->findBinding(declaration);
+}
+
+const ExprPtr &
+SemanticModel::implicitFieldInitializer(const VariableDecl &field) const {
+  const auto found = implicitFieldInitializers.find(&field);
+  if (found != implicitFieldInitializers.end())
+    return *found->second;
+  if (base != nullptr)
+    return base->implicitFieldInitializer(field);
+  static const ExprPtr absent;
+  return absent;
+}
+
+void SemanticModel::retainImplicitFieldInitializer(const VariableDecl &field) {
+  if (implicitFieldInitializer(field))
+    return;
+  implicitFieldInitializers.emplace(
+      &field,
+      std::make_shared<const ExprPtr>(std::make_unique<DirectInitializer>(
+          field.name(), ExprList{}, field.name())));
+}
+
+const ExprPtr &
+SemanticModel::resolvedFieldInitializer(const VariableDecl &field) const {
+  if (field.initializer())
+    return field.initializer();
+  const ExprPtr &implicit = implicitFieldInitializer(field);
+  if (implicit && findConstruction(*implicit) != nullptr)
+    return implicit;
+  static const ExprPtr absent;
+  return absent;
 }
 
 [[nodiscard]] const BindingInfo *
@@ -1380,6 +1521,7 @@ void SemanticModel::clear() {
   contextualConversions.clear();
   contextualIntegerOperands.clear();
   classLifecycles.clear();
+  implicitFieldInitializers.clear();
   designatedConstructors.clear();
   constructions.clear();
   collections.clear();
@@ -1435,14 +1577,16 @@ void SemanticModel::clearProgramConstantSubstitution(const Expr &expression) {
 // program's model. Loan tables deliberately do not fall back - instance
 // analysis restarts loan identities, mirroring the clearLoans() semantics
 // the previous whole-model copy relied on.
-void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel) {
+void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
+                                       SymbolId reservedIdentityCeiling) {
   clear();
   executionProfile_ = baseModel.executionProfile();
   placeSnapshot_ = baseModel.placeSnapshot();
   programKind_ = baseModel.programKind();
   embeddingPlan_ = baseModel.embeddingPlan();
   base = &baseModel;
-  semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase);
+  semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase,
+                                      reservedIdentityCeiling);
 }
 
 // Re-points an instance delta at a relocated base (the analyzer restores

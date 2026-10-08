@@ -150,9 +150,7 @@ concreteClassPrimaryRow(const LoweredProgram &program,
       }
     }
     if (std::holds_alternative<LoweredClassDeclaration>(candidate.payload) ||
-        std::holds_alternative<LoweredEnumDeclaration>(candidate.payload) ||
-        std::holds_alternative<LoweredTypeAliasDeclaration>(
-            candidate.payload)) {
+        std::holds_alternative<LoweredEnumDeclaration>(candidate.payload)) {
       return false;
     }
   }
@@ -205,7 +203,7 @@ concreteClassHasTemplateDependency(const LoweredProgram &program,
            type.arrayLengthParameterId != 0 ||
            std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
                        [](const CompileTimeValue &value) {
-                         return value.kind == CompileTimeValue::Parameter;
+                         return value.kind != CompileTimeValue::UInt64;
                        }) ||
            std::any_of(type.arguments.begin(), type.arguments.end(),
                        [&](const SemanticType &argument) {
@@ -717,6 +715,63 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   const auto spell = [&](const SemanticType &inner) {
     return cppSemanticTypeSpelling(program, standard, inner);
   };
+  // Spell declaration-bound dependent metadata; never evaluate it here.
+  // Executable concrete instances already carry checked literal arguments.
+  const auto spellValueExpression =
+      [&](const auto &self,
+          const GenericValueExpression &expression) -> std::string {
+    if (expression.kind == GenericValueExpression::UInt64)
+      return "std::uint64_t(" + std::to_string(expression.value) + "ULL)";
+    if (expression.kind == GenericValueExpression::Parameter) {
+      const auto *parameter =
+          program.findGenericParameter(expression.parameterId);
+      if (parameter == nullptr)
+        throw std::logic_error(
+            "dependent value representation lost its declaration identity");
+      return parameter->name;
+    }
+    if (!expression.left || !expression.right)
+      throw std::logic_error(
+          "dependent value representation has an incomplete expression");
+    std::string_view operation;
+    switch (expression.token.kind) {
+    case TokenKind::PLUS:
+      operation = "+";
+      break;
+    case TokenKind::MINUS:
+      operation = "-";
+      break;
+    case TokenKind::STAR:
+      operation = "*";
+      break;
+    case TokenKind::SLASH:
+      operation = "/";
+      break;
+    case TokenKind::PERCENT:
+      operation = "%";
+      break;
+    case TokenKind::SHIFT_LEFT:
+      operation = "<<";
+      break;
+    case TokenKind::SHIFT_RIGHT:
+      operation = ">>";
+      break;
+    case TokenKind::AMPERSAND:
+      operation = "&";
+      break;
+    case TokenKind::PIPE:
+      operation = "|";
+      break;
+    case TokenKind::CARET:
+      operation = "^";
+      break;
+    default:
+      throw std::logic_error(
+          "dependent value representation has an unsupported typed operation");
+    }
+    return '(' + self(self, *expression.left) + ' ' + std::string(operation) +
+           ' ' + self(self, *expression.right) + ')';
+  };
   const auto dependent = [&](const auto &self,
                              const SemanticType &inner) -> bool {
     return inner.kind == SemanticType::TypeParameter ||
@@ -960,6 +1015,9 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
           const LoweredGenericParameter *parameter =
               program.findGenericParameter(argument.parameterId);
           result += parameter == nullptr ? "0" : parameter->name;
+        } else if (argument.expression) {
+          result +=
+              spellValueExpression(spellValueExpression, *argument.expression);
         } else {
           result += '0';
         }

@@ -2,6 +2,7 @@
 
 #include "gti/mir_effects.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -264,7 +265,10 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v95 valid=" << program.valid() << '\n';
+    const bool classAliases = std::any_of(
+        program.classInstances().begin(), program.classInstances().end(),
+        [](const auto &instance) { return !instance.typeAliases.empty(); });
+    output << "mir-v96 valid=" << program.valid() << '\n';
     if (const std::optional<MirEmbeddingPlan> &embedding =
             program.embeddingPlan()) {
       output << "program-kind library embedding-abi=" << embedding->abiVersion
@@ -486,7 +490,20 @@ public:
         type(base.type);
         output << ",interface=" << base.interface << '}';
       }
-      output << "] declared-fields=[";
+      output << "]";
+      if (classAliases) {
+        output << " aliases=[";
+        for (std::size_t index = 0; index < instance.typeAliases.size();
+             ++index) {
+          separator(index);
+          output << "{declaration=" << instance.typeAliases[index].declaration
+                 << ",type=";
+          type(instance.typeAliases[index].type);
+          output << '}';
+        }
+        output << "]";
+      }
+      output << " declared-fields=[";
       for (std::size_t index = 0; index < instance.declaredFields.size();
            ++index) {
         separator(index);

@@ -1187,6 +1187,14 @@ struct MirUnionLayout {
                          const MirUnionLayout &) = default;
 };
 
+struct MirClassTypeAlias {
+  TypeAliasId declaration = 0;
+  SemanticType type = SemanticType::Unknown;
+
+  friend bool operator==(const MirClassTypeAlias &,
+                         const MirClassTypeAlias &) = default;
+};
+
 struct MirClassInstance {
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -1223,6 +1231,7 @@ struct MirClassInstance {
   bool requiresActiveDropState = false;
   bool requiresActiveCleanup = false;
   std::vector<MirClassFieldInfo> declaredFields;
+  std::vector<MirClassTypeAlias> typeAliases;
   std::vector<MirClassFieldLifecycle> fields;
   MirBody fieldInitializers;
   MirBody staticFieldInitializers;

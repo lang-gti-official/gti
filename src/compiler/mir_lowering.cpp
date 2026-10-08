@@ -230,6 +230,9 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .requiresActiveDropState = instance.requiresActiveDropState,
         .requiresActiveCleanup = instance.requiresActiveCleanup};
     lowered.fields.reserve(instance.fields.size());
+    for (const HirClassTypeAlias &alias : instance.typeAliases)
+      lowered.typeAliases.push_back(
+          {.declaration = alias.declaration, .type = alias.type});
     for (const HirClassField &field : instance.fields) {
       lowered.declaredFields.push_back(
           {.field = field.binding,

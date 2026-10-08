@@ -647,7 +647,8 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    default when a constructor omits that field. All initialization runs before
    a body that cannot return.
    When no declared constructor is callable with zero explicit arguments, the
-   compiler generates `Type()` if every field has a declaration initializer,
+   compiler generates `Type()` if every field has a declaration initializer
+   or is a nominal field with an accessible exact default construction,
    even when other constructor overloads exist.
 
    The exact declaration `Type() = default;` explicitly selects that same

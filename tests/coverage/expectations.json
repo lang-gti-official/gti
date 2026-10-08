@@ -1694,10 +1694,9 @@
       "outcome": "pass"
     },
     "a03-generic-call-in-global-initializer": {
-      "code": "GTI-S2068",
       "finding": "A03",
       "issue": 55,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a05-string-view-help-suggests-invalid-form": {
       "code": "GTI-S2003",
@@ -1762,9 +1761,7 @@
       "outcome": "pass"
     },
     "a15-dependent-if-constexpr-local": {
-      "finding": "A15",
-      "issue": 61,
-      "outcome": "ice"
+      "outcome": "pass"
     },
     "a16-relay-copyable-lambda": {
       "issue": 62,
@@ -1804,10 +1801,9 @@
       "outcome": "rejected"
     },
     "a23-recursive-value-generic-layout": {
-      "code": "GTI-S2082",
       "finding": "A23",
       "issue": 67,
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "a24-unreachable-warning-per-instance": {
       "forbid": [
