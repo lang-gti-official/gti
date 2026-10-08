@@ -90,6 +90,36 @@ int main() { Holder owner{}; return 0; }
         false,
         "abstract values cannot acquire nominal-field default construction");
   check(R"gti(
+class Leaf<T> {
+public:
+  Leaf() requires std::default_initializable<T> {}
+};
+class Wrapper<T> {
+  Leaf<T> child;
+public:
+  Wrapper() requires std::default_initializable<T> : child(Leaf<T>()) {}
+};
+int main() { Wrapper<int> object{}; return 0; }
+)gti",
+        true,
+        "open nominal field defers constructor requirements until concrete "
+        "selection");
+  check(R"gti(
+class NoDefault { public: NoDefault(int value) {} };
+class Leaf<T> {
+public:
+  Leaf() requires std::default_initializable<T> {}
+};
+class Wrapper<T> {
+  Leaf<T> child;
+public:
+  Wrapper() requires std::default_initializable<T> : child(Leaf<T>()) {}
+};
+int main() { Wrapper<NoDefault> object{}; return 0; }
+)gti",
+        false, "deferred nominal defaults still enforce concrete requirements",
+        "GTI-S2029");
+  check(R"gti(
 class Inner { int field; public: Inner(int value) : field(value) {} };
 class Outer { public: Outer(Inner value) : inner(value) {} private: Inner inner; };
 int main() { Inner value{3}; Outer object{value}; return 0; }
