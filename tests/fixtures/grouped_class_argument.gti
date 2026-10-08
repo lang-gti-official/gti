@@ -8,6 +8,21 @@ public:
 
 int consume(Reading value) { return value.read(); }
 
+mut int destroyed = 0;
+class OwnedReading {
+  int number;
+public:
+  OwnedReading(int value) : number(value) {}
+  OwnedReading(OwnedReading&) = delete;
+  ~OwnedReading() { destroyed += 1; }
+  int read() { return this.number; }
+};
+
+int consume_owned(OwnedReading value, int later) { return value.read() + later; }
+int later_argument() { return destroyed == 0 ? 4 : 99; }
+
 int main() {
-  return consume((Reading(3))) == 3 ? 0 : 1;
+  if (consume((Reading(3))) != 3) { return 1; }
+  if (consume_owned(((OwnedReading(3))), later_argument()) != 7) { return 2; }
+  return destroyed == 1 ? 0 : 3;
 }

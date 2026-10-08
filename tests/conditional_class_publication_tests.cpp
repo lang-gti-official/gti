@@ -156,7 +156,7 @@ int main() {
   std::size_t groupedBodies = 0;
   for (const std::string fixture :
        {"grouped_class_passive", "grouped_class_cleanup",
-        "grouped_class_failure"}) {
+        "grouped_class_failure", "grouped_class_argument"}) {
     const auto path = std::filesystem::path(__FILE__).parent_path() /
                       "fixtures" / (fixture + ".gti");
     std::ifstream input(path);
@@ -220,6 +220,6 @@ int main() {
       }
     }
   }
-  expect(groupedBodies == 3, "all three grouped class bodies were exercised");
+  expect(groupedBodies == 4, "all four grouped class bodies were exercised");
   return failures ? 1 : 0;
 }
