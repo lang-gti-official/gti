@@ -47,6 +47,18 @@ struct IntegerFact {
 using FieldPath = std::vector<SymbolId>;
 using IntegerFieldFacts = std::map<FieldPath, IntegerFact>;
 
+struct FieldOrigin {
+  MirPlaceId root = 0;
+  FieldPath path;
+  friend bool operator==(const FieldOrigin &, const FieldOrigin &) = default;
+};
+
+[[nodiscard]] std::optional<FieldPath> fieldPath(const MirBody &body,
+                                                 MirPlaceId rootId,
+                                                 MirPlaceId placeId,
+                                                 bool includeRoot);
+[[nodiscard]] MirPlaceId thisRoot(const MirBody &body);
+
 struct ObjectFact {
   std::map<FieldPath, IntegerFact> integers;
   std::optional<IntegerFact> elements;
@@ -69,12 +81,16 @@ struct AbstractState {
   // result summary, but an opaque effect on any successful path must survive
   // joins even when all scalar result facts later become constant.
   bool hasOpaqueEffects = false;
+  bool mayWriteGlobals = false;
   LiveMemoryBarrier liveMemoryBarrier = LiveMemoryBarrier::None;
   std::map<MirValueId, IntegerFact> integers;
   std::map<MirPlaceId, IntegerFact> integerPlaces;
   std::map<MirValueId, IntegerFact> arrayValues;
   std::map<MirPlaceId, IntegerFact> arrayElements;
   std::map<MirValueId, MirPlaceId> loadedOrigins;
+  // Correlation with still-current owned storage, not an immutable value fact.
+  // An implicit receiver root is analysis-only and never a MIR identity.
+  std::map<MirValueId, FieldOrigin> fieldOrigins;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
   std::map<MirPlaceId, IntegerFieldFacts> aggregateElementIntegers;
   // Key zero is an analysis-only implicit This root. It carries ordinary
@@ -112,8 +128,10 @@ struct ClosedCallSummary {
   // but callers must invalidate memory and cannot use that call as a closed
   // recurrence edge.
   bool hasOpaqueEffects = false;
+  bool mayWriteGlobals = false;
   LiveMemoryBarrier liveMemoryBarrier = LiveMemoryBarrier::None;
   ObservedFact<IntegerFact> result;
+  ObservedFact<FieldPath> receiverResultField;
   ObservedFact<ObjectFact> receiver;
   std::vector<ObservedFact<ObjectFact>> argumentObjects;
   ObservedFact<ObjectFact> constructed;
@@ -837,6 +855,26 @@ void refineCondition(const MirBody &body, MirBlockId block,
     placeFact.wideningEnvelope = variableFact->wideningEnvelope;
     state.integerPlaces[place] = std::move(placeFact);
   }
+  if (const auto origin = state.fieldOrigins.find(variable->value);
+      origin != state.fieldOrigins.end()) {
+    auto &fields = state.objects[origin->second.root].integers;
+    auto field = fields.find(origin->second.path);
+    IntegerFact current = field == fields.end() ? *variableFact : field->second;
+    if (!intersect(current, lower, upper, evidence)) {
+      state.reachable = false;
+      return;
+    }
+    current.wideningEnvelope = variableFact->wideningEnvelope;
+    fields.insert_or_assign(origin->second.path, current);
+    // Keep represented leaf places coherent with their abstract owned path.
+    // Root zero itself is never added to proof evidence or the place table.
+    for (const auto &place : body.places) {
+      const auto path = fieldPath(body, origin->second.root, place.id, false);
+      if (path && *path == origin->second.path &&
+          constantIntegerDomain(place.type) == current.domain)
+        state.integerPlaces[place.id] = current;
+    }
+  }
 }
 
 void refineBranch(const MirBody &body, const MirBlock &block,
@@ -1417,6 +1455,7 @@ void invalidatePlaceRoot(const MirBody &body,
     state.aggregateElementIntegers.clear();
     state.objects.clear();
     state.loadedOrigins.clear();
+    state.fieldOrigins.clear();
     state.aggregateOrigins.clear();
     state.objectValues.clear();
     return;
@@ -1424,6 +1463,17 @@ void invalidatePlaceRoot(const MirBody &body,
   const auto overlaps = [&](MirPlaceId place) {
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
+  std::erase_if(state.fieldOrigins, [&](const auto &entry) {
+    const auto &origin = entry.second;
+    if (origin.root != 0 && !overlaps(origin.root))
+      return false;
+    if (const auto path = fieldPath(body, origin.root, destination)) {
+      const auto prefix = std::min(path->size(), origin.path.size());
+      return std::equal(path->begin(), path->begin() + prefix,
+                        origin.path.begin());
+    }
+    return true;
+  });
   // Zero is an analysis-only implicit receiver root, not a MIR identity.
   // A projected This write invalidates overlapping field paths; other writes
   // have no alias proof for an unmaterialized root and conservatively kill it.
@@ -1462,6 +1512,28 @@ void invalidatePlaceRoot(const MirBody &body,
                 [&](const auto &entry) { return overlaps(entry.second); });
   std::erase_if(state.loadedOrigins,
                 [&](const auto &entry) { return overlaps(entry.second); });
+  // Whole-root object invalidation is conservative for indirect aliases.
+  // An independently retained typed field identity still denotes its current
+  // scalar value after a disjoint owned-field write. Recover only that exact
+  // correlation; overlapping writes already retired it above.
+  for (const auto &[value, origin] : state.fieldOrigins)
+    if (const auto fact = state.integers.find(value);
+        fact != state.integers.end()) {
+      auto [field, inserted] = state.objects[origin.root].integers.try_emplace(
+          origin.path, fact->second);
+      if (!inserted && field->second.domain == fact->second.domain &&
+          !intersect(field->second, fact->second.lower, fact->second.upper,
+                     fact->second.evidence)) {
+        state.reachable = false;
+        return;
+      }
+      for (const auto &place : body.places)
+        if (const auto path = fieldPath(body, origin.root, place.id);
+            path && *path == origin.path &&
+            constantIntegerDomain(place.type) == field->second.domain)
+          state.integerPlaces[canonicalPlace(aliases, place.id)] =
+              field->second;
+    }
 }
 
 [[nodiscard]] bool
@@ -1690,10 +1762,34 @@ operandMayAliasPlace(const MirBody &body,
                      const MirPlaceAliasEscapeAnalysis &aliases,
                      const MirOperand &operand, MirPlaceId tracked);
 void killUnknownMemory(const MirBody &body, AbstractState &state);
+void killGlobalAliases(const MirBody &body, AbstractState &state);
 void preserveLiveScalarFactsForConstruction(const MirProgram *program,
                                             MirBodyAddress address,
                                             const MirBody &body,
                                             AbstractState &state);
+[[nodiscard]] std::optional<FieldOrigin> receiverFieldOrigin(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
+    const MirInstruction &instruction, const FieldPath &path);
+
+[[nodiscard]] bool
+mayAliasRepresentedGlobal(const MirBody &body,
+                          const MirPlaceAliasEscapeAnalysis &aliases,
+                          MirPlaceId id) {
+  const auto *place = body.findPlace(id);
+  if (!place)
+    return false;
+  if (place->root == MirPlaceRootKind::Symbol)
+    return true;
+  // A carrier or loan-rooted place may protect a global even though the
+  // write itself has no Symbol root. Only represented possible aliases
+  // participate; an independent ordinary local is not a global write.
+  return std::any_of(
+      body.places.begin(), body.places.end(), [&](const auto &global) {
+        return global.root == MirPlaceRootKind::Symbol &&
+               aliases.relation(id, global.id) != MirAliasRelation::NoAlias;
+      });
+}
 
 void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 const MirPlaceAliasEscapeAnalysis &aliases,
@@ -1741,8 +1837,13 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
     }
     // MayAlias is not transitive: invalidate from actual sources, never from
     // all places which might alias a source and then expand aliasing again.
-    for (const auto source : *sources)
+    for (const auto source : *sources) {
+      if (mayAliasRepresentedGlobal(body, aliases, source)) {
+        state.mayWriteGlobals = true;
+        killGlobalAliases(body, state);
+      }
       invalidatePlaceRoot(body, aliases, state, source);
+    }
   };
   if (summary->traits.writesPlace)
     for (const auto &place : body.places)
@@ -1819,9 +1920,37 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   for (const auto &operand : instruction.operands)
     argumentOrigins.push_back(
         objectOriginForOperand(body, aliases, state, operand));
+  const auto resultField =
+      summary.receiverResultField.fact
+          ? receiverFieldOrigin(closedCalls->program, address, body, aliases,
+                                state, instruction,
+                                *summary.receiverResultField.fact)
+          : std::nullopt;
+  std::optional<IntegerFact> currentResultField;
+  const auto invocation =
+      exactMirInvocationSummary(closedCalls->program, body, instruction);
+  if (resultField && !summary.mayWriteGlobals && invocation &&
+      !invocation->traits.writesPlace &&
+      !invocation->traits.writesUnknownMemory &&
+      !invocation->traits.maySynchronize) {
+    if (const auto object =
+            extractObjectFact(body, aliases, resultField->root, state))
+      if (const auto field = object->integers.find(resultField->path);
+          field != object->integers.end() &&
+          constantIntegerDomain(instruction.info.type) == field->second.domain)
+        currentResultField = field->second;
+  }
   invalidateClosedCallInputs(closedCalls->program, body, aliases, instruction,
                              address, *target, summary.hasOpaqueEffects,
                              summary.liveMemoryBarrier, state);
+  if (summary.mayWriteGlobals) {
+    // A checked reference or receiver can denote a callee-only global whose
+    // Symbol is absent from this body. Current effect summaries do not carry
+    // a written-global set, so invalidate possible aliases conservatively.
+    // Independent SSA values and actual readonly scalar copies remain valid.
+    state.mayWriteGlobals = true;
+    killGlobalAliases(body, state);
+  }
   state.liveMemoryBarrier =
       std::max(state.liveMemoryBarrier, summary.liveMemoryBarrier);
   if (summary.hasOpaqueEffects) {
@@ -1901,6 +2030,25 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                               state);
     }
   }
+  if (instruction.result && resultField) {
+    state.fieldOrigins.insert_or_assign(*instruction.result, *resultField);
+    if (currentResultField) {
+      // A shared getter summary joins all calling contexts. It must not erase
+      // this caller's more precise current field when the exact invocation
+      // cannot write memory. The return identity is independently proved.
+      state.integers[*instruction.result] = rebased(
+          *currentResultField, block.id, instruction.id, *instruction.result);
+      state.objects[resultField->root].integers.insert_or_assign(
+          resultField->path, *currentResultField);
+      for (const auto &place : body.places)
+        if (const auto path = fieldPath(body, resultField->root, place.id);
+            path && *path == resultField->path &&
+            constantIntegerDomain(place.type) == currentResultField->domain)
+          state.integerPlaces[canonicalPlace(aliases, place.id)] =
+              *currentResultField;
+    }
+  } else if (instruction.result)
+    state.fieldOrigins.erase(*instruction.result);
   return true;
 }
 
@@ -1917,8 +2065,25 @@ void killUnknownMemory(const MirBody &body, AbstractState &state) {
   state.aggregateElementIntegers.clear();
   state.objects.clear();
   state.loadedOrigins.clear();
+  state.fieldOrigins.clear();
   state.aggregateOrigins.clear();
   state.objectValues.clear();
+}
+
+void killGlobalAliases(const MirBody &body, AbstractState &state) {
+  std::map<MirPlaceId, IntegerFact> independent;
+  for (const auto &[id, fact] : state.integerPlaces) {
+    const auto *place = body.findPlace(id);
+    if (place && place->root == MirPlaceRootKind::Binding && place->binding &&
+        place->projections.empty() && !place->traits.containsBorrowedState &&
+        constantIntegerDomain(place->type))
+      independent.emplace(id, fact);
+  }
+  // A represented direct global write can alias checked referents, but does
+  // not overwrite independent scalar local/parameter storage. Actual raw or
+  // unknown writes still take killUnknownMemory instead.
+  killUnknownMemory(body, state);
+  state.integerPlaces.insert(independent.begin(), independent.end());
 }
 
 [[nodiscard]] bool inertRawAddressOperation(const MirInstruction &instruction) {
@@ -2046,6 +2211,49 @@ implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
   return domain && domain->width > 8;
 }
 
+[[nodiscard]] std::optional<FieldOrigin> fieldOriginForPlace(
+    const MirProgram *program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId source) {
+  const auto *place = body.findPlace(source);
+  if (!place)
+    return std::nullopt;
+  const bool receiver = place->root == MirPlaceRootKind::This;
+  const MirPlaceId root = receiver ? canonicalPlace(aliases, thisRoot(body))
+                                   : aggregateRoot(body, aliases, source);
+  if (!receiver && !root)
+    return std::nullopt;
+  const auto path = fieldPath(body, root, source);
+  if (!path || !liveScalarPath(program, address, body, root, *path))
+    return std::nullopt;
+  return FieldOrigin{.root = root, .path = *path};
+}
+
+[[nodiscard]] std::optional<FieldOrigin> receiverFieldOrigin(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
+    const MirInstruction &instruction, const FieldPath &path) {
+  if (!instruction.receiver || !instruction.result)
+    return std::nullopt;
+  const MirPlaceId receiver =
+      objectOriginForOperand(body, aliases, state, *instruction.receiver);
+  const auto *place = body.findPlace(receiver);
+  if (!place)
+    return std::nullopt;
+  FieldOrigin origin{.root = receiver, .path = path};
+  if (place->root == MirPlaceRootKind::This) {
+    const auto root = canonicalPlace(aliases, thisRoot(body));
+    const auto prefix = fieldPath(body, root, receiver, true);
+    if (!prefix)
+      return std::nullopt;
+    origin.root = root;
+    origin.path = *prefix;
+    origin.path.insert(origin.path.end(), path.begin(), path.end());
+  }
+  if (!liveScalarPath(&program, address, body, origin.root, origin.path))
+    return std::nullopt;
+  return origin;
+}
+
 void preserveLiveScalarFactsForConstruction(const MirProgram *program,
                                             MirBodyAddress address,
                                             const MirBody &body,
@@ -2068,6 +2276,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
   state.aggregateElements.clear();
   state.aggregateElementIntegers.clear();
   state.loadedOrigins.clear();
+  state.fieldOrigins.clear();
   state.aggregateOrigins.clear();
   state.objectValues.clear();
   state.hasOpaqueEffects = true;
@@ -2143,6 +2352,19 @@ void applyInstruction(const MirBody &body,
     killUnknownMemory(body, state);
     state.hasOpaqueEffects = true;
   };
+  const auto effect = effects(instruction);
+  if (((effect.writesPlace || effect.initializesValue || effect.dropsValue) &&
+       instruction.destination &&
+       mayAliasRepresentedGlobal(body, aliases, *instruction.destination)) ||
+      std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                  [&](const auto &operand) {
+                    return operand.kind == MirOperandKind::Move &&
+                           mayAliasRepresentedGlobal(body, aliases,
+                                                     operand.place);
+                  })) {
+    state.mayWriteGlobals = true;
+    killGlobalAliases(body, state);
+  }
   // The empty full-expression marker can inherit the source expression's
   // unsafe classification. It does not repeat that expression's operation;
   // its actual Load/Call/Compute instruction already carries the effects.
@@ -2159,6 +2381,7 @@ void applyInstruction(const MirBody &body,
     state.integers.erase(*instruction.result);
     state.arrayValues.erase(*instruction.result);
     state.objectValues.erase(*instruction.result);
+    state.fieldOrigins.erase(*instruction.result);
     return;
   }
   if (instruction.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall &&
@@ -2209,6 +2432,7 @@ void applyInstruction(const MirBody &body,
     if (implicitReceiver)
       state.objects.insert_or_assign(0, std::move(*implicitReceiver));
     state.loadedOrigins.erase(*instruction.result);
+    state.fieldOrigins.erase(*instruction.result);
     state.aggregateOrigins.erase(*instruction.result);
     state.arrayValues.erase(*instruction.result);
     state.objectValues.erase(*instruction.result);
@@ -2219,6 +2443,8 @@ void applyInstruction(const MirBody &body,
     return;
   }
   if (instruction.kind == MirInstructionKind::Compute) {
+    if (instruction.result)
+      state.fieldOrigins.erase(*instruction.result);
     // Compute is a representation kind, not a purity promise. An extended
     // operation must not carry old place facts across newly classified memory,
     // lifecycle, or synchronization effects just because no scalar transfer
@@ -2249,6 +2475,10 @@ void applyInstruction(const MirBody &body,
       if (origin != state.loadedOrigins.end()) {
         state.loadedOrigins[*instruction.result] = origin->second;
       }
+      if (const auto field =
+              state.fieldOrigins.find(instruction.operands.front().value);
+          field != state.fieldOrigins.end())
+        state.fieldOrigins[*instruction.result] = field->second;
       const auto aggregateOrigin =
           state.aggregateOrigins.find(instruction.operands.front().value);
       if (aggregateOrigin != state.aggregateOrigins.end()) {
@@ -2264,6 +2494,7 @@ void applyInstruction(const MirBody &body,
   }
   if (instruction.kind == MirInstructionKind::CallInput && instruction.result &&
       instruction.operands.size() == 1) {
+    state.fieldOrigins.erase(*instruction.result);
     const MirOperand &source = instruction.operands.front();
     if (const std::optional<IntegerFact> fact =
             integerForOperand(body, state, source)) {
@@ -2275,6 +2506,9 @@ void applyInstruction(const MirBody &body,
           loaded != state.loadedOrigins.end()) {
         state.loadedOrigins[*instruction.result] = loaded->second;
       }
+      if (const auto field = state.fieldOrigins.find(source.value);
+          field != state.fieldOrigins.end())
+        state.fieldOrigins[*instruction.result] = field->second;
     } else if (source.place != 0) {
       state.loadedOrigins[*instruction.result] =
           canonicalPlace(aliases, source.place);
@@ -2292,6 +2526,7 @@ void applyInstruction(const MirBody &body,
   }
   if (instruction.kind == MirInstructionKind::Load && instruction.result &&
       instruction.operands.size() == 1) {
+    state.fieldOrigins.erase(*instruction.result);
     const MirOperand &source = instruction.operands.front();
     if (source.place != 0) {
       const MirPlaceId sourcePlace = canonicalPlace(aliases, source.place);
@@ -2334,6 +2569,9 @@ void applyInstruction(const MirBody &body,
         addPlace(loaded.evidence, projected.arrayPlace);
         state.integers[*instruction.result] = std::move(loaded);
         state.loadedOrigins[*instruction.result] = sourcePlace;
+        if (const auto field = fieldOriginForPlace(program, address, body,
+                                                   aliases, source.place))
+          state.fieldOrigins[*instruction.result] = *field;
       }
       if (const std::optional<IntegerFact> elements =
               arrayForOperand(state, aliases, source)) {
@@ -2697,6 +2935,7 @@ void joinAggregateElementIntegers(
   }
   const AbstractState before = target;
   target.hasOpaqueEffects |= incoming.hasOpaqueEffects;
+  target.mayWriteGlobals |= incoming.mayWriteGlobals;
   target.liveMemoryBarrier =
       std::max(target.liveMemoryBarrier, incoming.liveMemoryBarrier);
   joinIntegers(target.integers, incoming.integers, widen);
@@ -2717,6 +2956,11 @@ void joinAggregateElementIntegers(
       ++iterator;
     }
   }
+  std::erase_if(target.fieldOrigins, [&](const auto &entry) {
+    const auto found = incoming.fieldOrigins.find(entry.first);
+    return found == incoming.fieldOrigins.end() ||
+           found->second != entry.second;
+  });
   for (auto iterator = target.aggregateOrigins.begin();
        iterator != target.aggregateOrigins.end();) {
     const auto found = incoming.aggregateOrigins.find(iterator->first);
@@ -2766,6 +3010,13 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
     } else {
       state.loadedOrigins.erase(parameter);
     }
+    const auto fieldOrigin = argument.kind == MirOperandKind::Value
+                                 ? state.fieldOrigins.find(argument.value)
+                                 : state.fieldOrigins.end();
+    if (fieldOrigin != state.fieldOrigins.end())
+      state.fieldOrigins[parameter] = fieldOrigin->second;
+    else
+      state.fieldOrigins.erase(parameter);
   }
 }
 
@@ -4029,6 +4280,10 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
           !initializers->second.complete) {
         round.incompleteBodies.insert(address);
       } else {
+        if (initializers->second.mayWriteGlobals) {
+          entry.mayWriteGlobals = true;
+          killGlobalAliases(*body, entry);
+        }
         if (initializers->second.hasOpaqueEffects) {
           if (initializers->second.liveMemoryBarrier ==
               LiveMemoryBarrier::VacantScalarConstruction)
@@ -4064,6 +4319,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
 
   std::vector<AbstractState> exits;
   std::vector<std::optional<IntegerFact>> returnFacts;
+  std::vector<std::optional<FieldPath>> returnFields;
   std::vector<std::optional<ObjectFact>> returnObjects;
   for (const MirBlock &block : body->blocks) {
     const bool successfulExit =
@@ -4086,6 +4342,17 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       std::optional<IntegerFact> fact =
           integerForOperand(*body, transferred.output, *block.terminator.value);
       returnFacts.push_back(std::move(fact));
+      std::optional<FieldPath> returnedField;
+      const auto field =
+          transferred.output.fieldOrigins.find(block.terminator.value->value);
+      if (field != transferred.output.fieldOrigins.end()) {
+        const auto *root = body->findPlace(field->second.root);
+        if (field->second.root == 0 ||
+            (root && root->root == MirPlaceRootKind::This &&
+             root->projections.empty()))
+          returnedField = field->second.path;
+      }
+      returnFields.push_back(std::move(returnedField));
       if (body->returnType.kind == SemanticType::Class) {
         auto object = objectForOperand(*body, aliases, transferred.output,
                                        *block.terminator.value);
@@ -4104,9 +4371,28 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       std::any_of(exits.begin(), exits.end(), [](const AbstractState &state) {
         return state.hasOpaqueEffects;
       });
+  result.summary.mayWriteGlobals =
+      std::any_of(exits.begin(), exits.end(), [](const AbstractState &state) {
+        return state.mayWriteGlobals;
+      });
   for (const auto &state : exits)
     result.summary.liveMemoryBarrier =
         std::max(result.summary.liveMemoryBarrier, state.liveMemoryBarrier);
+
+  const auto *function = address.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(address.owner)
+                             : nullptr;
+  if (function && function->owner &&
+      !receiverAllowsMutation(function->receiverMutability) &&
+      !result.summary.hasOpaqueEffects && !returnFields.empty() &&
+      returnFields.size() == exits.size()) {
+    result.summary.receiverResultField.observed = true;
+    const auto &origin = returnFields.front();
+    if (origin &&
+        std::all_of(returnFields.begin(), returnFields.end(),
+                    [&](const auto &candidate) { return candidate == origin; }))
+      result.summary.receiverResultField.fact = *origin;
+  }
 
   if (!returnFacts.empty()) {
     result.summary.result.observed = true;

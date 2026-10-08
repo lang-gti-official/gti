@@ -154,6 +154,64 @@ if __name__ == "__main__":
             "if (true) return gauge.after_raw_write();", "return 0;"))
         paths["value_stage_success"] = path
         cases["value_stage_success"] = [((), (0, "", ""))]
+        getters = fixture.parent / "optimizer_getter_fields.gti"
+        getter_source = getters.read_text()
+        getter_lines = getter_source.splitlines()
+        getter_dispatch = [text for text in getter_lines
+                           if text.strip().startswith(("if (true) return int(",
+                                                       "if (false) return int("))]
+        assert len(getter_dispatch) == 6
+        getter_marker = "return int(copy_snapshot(meter));"
+        assert getter_source.count(getter_marker) == 1
+        clean_getters = getter_source
+        for dispatch in getter_dispatch:
+            clean_getters = clean_getters.replace(dispatch, "")
+        getter_cases = {"getter_success": ("return 0;", None)}
+        for function in ("order_changed", "cached_local", "ambiguous",
+                         "direct_changed", "mutable_changed", "raw_changed",
+                         "copy_snapshot"):
+            start = next(index for index, text in enumerate(getter_lines, 1)
+                         if text.startswith(f"uint64_t {function}("))
+            line = next(index for index, text in enumerate(getter_lines, 1)
+                        if index > start and "return meter.count + uint64_t(1);" in text)
+            argument = "huge" if function == "ambiguous" else "meter"
+            getter_cases[f"getter_{function}"] = (f"return int({function}({argument}));", line)
+        for name, (replacement, line) in getter_cases.items():
+            path = pathlib.Path(temporary) / f"{name}.gti"
+            path.write_text(clean_getters.replace(getter_marker, replacement))
+            paths[name] = path
+            error = (f"{path.name}:{line}: runtime error[GTI-R0001]: "
+                     "integer_overflow in addition\n") if line else ""
+            cases[name] = [((), (70 if line else 0, "", error))]
+        globals_fixture = fixture.parent / "optimizer_global_getter_alias.gti"
+        global_source = globals_fixture.read_text()
+        global_lines = global_source.splitlines()
+        global_dispatch = [text for text in global_lines
+                           if text.strip().startswith(("if (true) return case_",
+                                                       "if (false) return case_"))]
+        assert len(global_dispatch) == 6
+        global_marker = "return case_global_initializer(shared_meter);"
+        assert global_source.count(global_marker) == 1
+        clean_globals = global_source
+        for dispatch in global_dispatch:
+            clean_globals = clean_globals.replace(dispatch, "")
+        global_cases = {"getter_global_success": ("return 0;", None)}
+        for function in ("case_global_alias", "case_global_forwarded",
+                         "case_global_method", "case_global_initializer",
+                         "case_global_reference", "case_global_scalar_reference",
+                         "case_global_reborrow"):
+            start = next(index for index, text in enumerate(global_lines, 1)
+                         if text.startswith(f"int {function}("))
+            line = next(index for index, text in enumerate(global_lines, 1)
+                        if index > start and "return meter.read() + 1;" in text)
+            global_cases[f"getter_{function}"] = (f"return {function}(shared_meter);", line)
+        for name, (replacement, line) in global_cases.items():
+            path = pathlib.Path(temporary) / f"{name}.gti"
+            path.write_text(clean_globals.replace(global_marker, replacement))
+            paths[name] = path
+            error = (f"{path.name}:{line}: runtime error[GTI-R0001]: "
+                     "integer_overflow in addition\n") if line else ""
+            cases[name] = [((), (70 if line else 0, "", error))]
         guard = fixture.parent / "optimizer_boolean_guards.gti"
         guard_source = guard.read_text()
         # The detectors are compiler-private. Test them behind a temporary

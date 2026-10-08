@@ -413,6 +413,26 @@ path. Constructor destination publication and return summaries retain those
 same facts after sanitizing them against the exact concrete type. These are
 ordinary class facts, not initialized raw-allocation or container invariants.
 
+Exact readonly source members may also return a still-current ordinary owned
+integer field. The interpreter records its typed receiver-relative path only
+when every successful return identifies the same field. Nested readonly
+forwarding preserves that identity. Inert SSA identity/value staging and block
+arguments transport it; joins retain only identical origins. Comparison with
+an exact integer refines both the independent SSA value and its current field,
+so a getter-based loop can establish its exit field bound. A proved nonwriting
+getter also preserves a caller's narrower field interval rather than replacing
+it with the callee's joined calling-context interval.
+
+Field identity is not numerical equality or a persistent borrow. Overlapping
+writes, ancestor replacement, movement, raw/unknown memory and lifetime
+barriers retire the relation without changing the earlier scalar value. Exact
+disjoint owned-field writes retain it and can recover that field's correlated
+interval after conservative whole-root invalidation. Stored references, arrays,
+unions, byte fields and capability backing paths are excluded from this bounded
+profile. A scalar copied into a local binding does not retain receiver identity;
+mutable getters and by-value object inputs do not export this return contract.
+Implicit receiver roots remain analysis-only and never appear in proof records.
+
 Context discovery is also bounded by complete summaries: an earlier
 source-allocation or raw object-lifetime call can prevent completion of a
 required closed-call summary, leaving later call contexts on that path
@@ -433,8 +453,16 @@ once from the actual origins; a `may-alias` relation is not transitive.
 A verified reference's pointer representation is not an additional unknown
 origin: its loan supplies the protected sources. A reference to a borrowed-state
 object still retains both the physical object and its external owner dependency.
-Calls with place writes also invalidate represented global-symbol facts,
-because current effect summaries do not enumerate written globals. Recurrence
+Calls with place writes also invalidate represented global-symbol facts.
+Interpreted direct global writes and transfers carry a successful-path global
+write barrier through ordinary call summaries and constructor declaration-field
+initializers, including writes through checked local aliases/reborrows. The
+barrier clears object/field correlations and possible referent facts even when
+the written global is absent from the caller's place table. Independent scalar
+local/parameter storage and earlier SSA values survive; actual raw/unknown
+effects still use full invalidation. This private transfer flag is not an exact
+written-global set: current MIR effect summaries do not enumerate that set.
+Recurrence
 proofs likewise treat possible global writes and synchronization as barriers.
 The existing closed-body admission remains authoritative: supported private
 storage and numeric-conversion effects are interpreted by that analysis, not

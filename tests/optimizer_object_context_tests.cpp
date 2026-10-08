@@ -386,6 +386,148 @@ int main() {
       }
     }
   }
+  for (const auto fixture :
+       {"optimizer_getter_fields", "optimizer_global_getter_alias"}) {
+    const auto path =
+        sourcePath.parent_path() / (std::string(fixture) + ".gti");
+    const std::ifstream file(path);
+    const std::string text{std::istreambuf_iterator<char>(file.rdbuf()), {}};
+    const auto library =
+        sourcePath.parent_path().parent_path().parent_path() / "stdlib";
+    const auto getters = lang::Frontend().analyze(
+        path, text, {library / "prelude.gti", path},
+        {{std::filesystem::weakly_canonical(path).string(), text}}, {library});
+    expect(getters.canGenerateCode(), "ordinary getter controls must lower");
+    if (!getters.canGenerateCode()) {
+      for (const auto &diagnostic : getters.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      continue;
+    }
+    const auto analysis = lang::analyzeMirClosedCallSafetyChecks(getters.mir);
+    expect(analysis.converged, "ordinary getter identities must converge");
+    std::size_t observedCounter = 0;
+    std::size_t reachedControls = 0;
+    for (const auto &function : getters.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto name = function.source->name().lexeme;
+      const auto *context = analysis.find(
+          {.kind = lang::MirBodyKind::Function, .owner = function.id});
+      if (name == "observe_counter") {
+        ++observedCounter;
+        expect(context && context->reached && context->returnInterval &&
+                   context->returnInterval->lower ==
+                       lang::CheckedIntegerValue{.magnitude = 4} &&
+                   context->returnInterval->upper ==
+                       lang::CheckedIntegerValue{.magnitude = 4},
+               "a bounded constructor loop using forwarded readonly getters "
+               "publishes its exact exit field");
+      }
+      if (name == "guarded" || name == "guarded_nested" || name == "disjoint" ||
+          name == "order_changed" || name == "cached_local" ||
+          name == "ambiguous" || name == "direct_changed" ||
+          name == "mutable_changed" || name == "raw_changed" ||
+          name == "copy_snapshot" || name.starts_with("case_")) {
+        ++reachedControls;
+        expect(context && context->reached,
+               "getter mutation controls must be reached, not vacuous");
+      }
+    }
+    expect(observedCounter ==
+                   (fixture == std::string_view("optimizer_getter_fields")
+                        ? 1
+                        : 0) &&
+               reachedControls ==
+                   (fixture == std::string_view("optimizer_getter_fields") ? 10
+                                                                           : 8),
+           "getter and global-alias inventories must remain complete");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = getters.hir, .mir = getters.mir, .level = level});
+      expect(optimized.valid(), "getter field proofs independently replay");
+      for (const auto &record : optimized.report.transformations)
+        expect(std::find(record.relatedPlaces.begin(),
+                         record.relatedPlaces.end(),
+                         0) == record.relatedPlaces.end(),
+               "getter origins cannot publish an implicit receiver identity");
+      for (const auto &function : getters.hir.functionInstances()) {
+        if (!function.source)
+          continue;
+        const auto name = function.source->name().lexeme;
+        const bool positive = name == "guarded" || name == "guarded_nested" ||
+                              name == "disjoint" ||
+                              name == "case_independent_snapshot";
+        const bool negative =
+            name == "order_changed" || name == "cached_local" ||
+            name == "ambiguous" || name == "direct_changed" ||
+            name == "mutable_changed" || name == "raw_changed" ||
+            name == "copy_snapshot" || name.starts_with("case_global_");
+        if (!positive && !negative)
+          continue;
+        const auto *body = optimized.mir.findFunctionInstance(function.id);
+        std::size_t proved = 0;
+        if (body)
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              proved += std::count_if(
+                  instruction.safetyDischarges.begin(),
+                  instruction.safetyDischarges.end(), [](const auto &proof) {
+                    return proof.family ==
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                  });
+        if (proved !=
+            (positive && level != lang::OptimizationLevel::O0 ? 1 : 0))
+          std::cerr << "getter control: " << name
+                    << " level=" << static_cast<int>(level)
+                    << " proofs=" << proved << '\n';
+        expect(proved ==
+                   (positive && level != lang::OptimizationLevel::O0 ? 1 : 0),
+               "current getter fields and immutable snapshots retain bounds; "
+               "changed, copied or ambiguous referents stay checked");
+      }
+    }
+    std::size_t rejected = 0;
+    for (const auto &function : getters.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto name = function.source->name().lexeme;
+      if (name != "order_changed" && name != "cached_local" &&
+          name != "ambiguous" && name != "direct_changed" &&
+          name != "mutable_changed" && name != "raw_changed" &&
+          name != "copy_snapshot" && !name.starts_with("case_global_"))
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      const auto *body = lang::findMirBody(getters.mir, address);
+      if (!body)
+        continue;
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto &outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto forged = getters.mir;
+              lang::MirEditor editor(forged, "forged-stale-getter-origin");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "canonical replay rejects stale getter/global aliases");
+              ++rejected;
+            }
+    }
+    expect(rejected == 7,
+           "every getter mutation negative exercises canonical rejection");
+  }
   const auto prefixPath =
       sourcePath.parent_path() / "optimizer_source_prefix_fields.gti";
   const std::ifstream prefixFile(prefixPath);
