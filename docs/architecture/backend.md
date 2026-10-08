@@ -1343,6 +1343,10 @@ the body is emitted from the same verified MIR under those local type names.
 Constructor-local lifetimes use ordinary cleanup slots. Replacing a completed
 owning field retains its already-active construction rollback obligation;
 failure still drains locals and the replacement according to MIR.
+When equivalent constructor instances share one source-template body, only the
+representation comparison omits instance markers. The emitted body retains
+every admitted instance's exact marker, including separate cleanup-shape
+variants, so coalescing cannot silently remove an instance from corpus evidence.
 
 Within one immutable emission plan, constructor and callable-template body
 plans are cached by concrete instance identity together with their exact
