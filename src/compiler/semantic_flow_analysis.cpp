@@ -341,11 +341,21 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
         self(self, edge.target, depth);
     }
   };
-  for (const auto &step : plan.steps)
-    if (step.role == ProgramInitializationStepRole::Initializer)
-      visit(visit,
-            {.kind = ProgramEffectOwnerKind::Initializer, .id = step.symbol},
-            0);
+  for (const auto &step : plan.steps) {
+    if (step.role != ProgramInitializationStepRole::Initializer)
+      continue;
+    const auto *binding = step.declaration
+                              ? semanticModel.findBinding(*step.declaration)
+                              : nullptr;
+    // A failed constant has no runtime initializer to close. Keep its owning
+    // constant/discovery diagnostics instead of querying the rejected instance
+    // again and adding an unrelated initializer-effect budget cascade.
+    if (step.declaration && step.declaration->isConstexpr() &&
+        (!binding || !binding->constant))
+      continue;
+    visit(visit,
+          {.kind = ProgramEffectOwnerKind::Initializer, .id = step.symbol}, 0);
+  }
 }
 
 auto SemanticVisitor::Impl::programConstructor(ConstructorId id) const

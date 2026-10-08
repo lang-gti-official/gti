@@ -3866,7 +3866,13 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
              (!requestsStructuralDefaultConstruction(*constructor) ||
               classCanUseStructuralDefaultConstruction(fieldType, visiting));
     }
+    const bool declaredDefaults = std::all_of(
+        fieldOwner->fields.begin(), fieldOwner->fields.end(),
+        [](const FieldInfo &field) {
+          return field.declaration && field.declaration->initializer();
+        });
     return defaultConstructorCandidateCount(*fieldOwner) == 0 &&
+           (fieldOwner->constructors.empty() || declaredDefaults) &&
            classCanUseStructuralDefaultConstruction(fieldType, visiting);
   };
   bool valid = true;
@@ -3902,7 +3908,18 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
 auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
     const SemanticType &type) const -> bool {
   const ClassInfo *owner = classInfo(type);
+  const bool declaredDefaults =
+      owner != nullptr &&
+      std::all_of(owner->fields.begin(), owner->fields.end(),
+                  [](const FieldInfo &field) {
+                    return field.declaration &&
+                           field.declaration->initializer();
+                  });
+  // Preserve the established generated overload for explicitly initialized
+  // state. Newly supplied omitted-nominal defaults cannot manufacture another
+  // construction entry point beside an owner's declared argument-taking API.
   return owner != nullptr && defaultConstructorCandidateCount(*owner) == 0 &&
+         (owner->constructors.empty() || declaredDefaults) &&
          classCanUseStructuralDefaultConstruction(type);
 }
 

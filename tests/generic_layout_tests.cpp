@@ -115,7 +115,11 @@ int main() { Wrapper<int> object{}; return 0; }
         "selection",
         {}, true);
   check(R"gti(
-class NoDefault { public: NoDefault(int value) {} };
+class NoDefault {
+  int saved;
+public:
+  NoDefault(int value) : saved(value) {}
+};
 class Leaf<T> {
 public:
   Leaf() requires std::default_initializable<T> {}
@@ -145,6 +149,42 @@ int main() { Outer object{}; return 0; }
         false,
         "a missing zero-argument operation is not a synthetic empty state",
         "GTI-S2012");
+  check(
+      R"gti(
+class State { public: int identity = 4; State() {} };
+class Token {
+  State state;
+private:
+  Token(State value) : state(value) {}
+};
+struct Wrapper { Token token; };
+int main() { Wrapper value{}; return 0; }
+)gti",
+      false,
+      "implicit defaults cannot bypass a declared private construction policy",
+      "GTI-S2012");
+  check(R"gti(
+class State { public: int identity = 4; State() {} };
+class Token {
+  State state;
+public:
+  Token(State value) : state(value) {}
+};
+int main() { Token value{}; return 0; }
+)gti",
+        false,
+        "omitted nominal fields do not invent a new argument-free overload",
+        "GTI-S2012");
+  check(R"gti(
+class Token {
+  int identity = 4;
+public:
+  Token(int identity) : identity(identity) {}
+};
+int main() { Token value{}; return 0; }
+)gti",
+        true,
+        "explicit declaration defaults preserve existing generated overloads");
   check(R"gti(
 struct Outer { int32_t value; };
 int main() { Outer object{}; return 0; }
