@@ -199,8 +199,9 @@ void checkRejectedLifetimes() {
 }
 
 // MIR independently verifies the slice relay: a forged program that loses
-// the dependency, upgrades its access, or forges a receiver reseat fails
-// verification even though semantics accepted the source.
+// the dependency or its origin, upgrades its access, forges a receiver
+// reseat, or releases the owner early fails verification even though
+// semantics accepted the source.
 void checkMirRejections() {
   const auto result = analyze("string-view-mir.gti",
                               "std::string owned = std::string(\"abcdef\");\n"
@@ -232,6 +233,19 @@ void checkMirRejections() {
                 mutated.loan.reset();
           expect(!lang::verifyMirProgram(lost).valid(),
                  "MIR rejects a slice that loses its owner dependency");
+        }
+        {
+          auto unrooted = result.mir;
+          auto *target = const_cast<lang::MirFunctionInstance *>(
+              unrooted.findFunctionInstance(function.id));
+          target->body.loans[loan - 1].source = 0;
+          const auto rejected = lang::verifyMirProgram(unrooted);
+          expect(std::any_of(rejected.errors.begin(), rejected.errors.end(),
+                             [](const auto &error) {
+                               return error.message.find("source place") !=
+                                      std::string::npos;
+                             }),
+                 "MIR rejects a slice loan without its origin place");
         }
         {
           auto upgraded = result.mir;
@@ -273,6 +287,50 @@ void checkMirRejections() {
       }
     }
   }
+  // A loan derived from the view (a reborrow of its owner dependency) must
+  // end before its parent. Swapping the two releases ends the parent first,
+  // a premature release that only MIR loan liveness can reject.
+  bool checkedRelease = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      const auto &instructions = block.instructions;
+      for (std::size_t child = 0;
+           child < instructions.size() && !checkedRelease; ++child) {
+        if (instructions[child].kind != lang::MirInstructionKind::EndBorrow ||
+            !instructions[child].loan)
+          continue;
+        const lang::MirLoanId parent =
+            function.body.loans[*instructions[child].loan - 1].parent;
+        if (parent == 0)
+          continue;
+        const auto ending = std::find_if(
+            instructions.begin() + static_cast<std::ptrdiff_t>(child),
+            instructions.end(), [&](const auto &item) {
+              return item.kind == lang::MirInstructionKind::EndBorrow &&
+                     item.loan == parent;
+            });
+        if (ending == instructions.end())
+          continue;
+        auto released = result.mir;
+        auto *target = const_cast<lang::MirFunctionInstance *>(
+            released.findFunctionInstance(function.id));
+        auto &mutated = target->body.blocks[block.id - 1].instructions;
+        std::swap(
+            mutated[child].loan,
+            mutated[static_cast<std::size_t>(ending - instructions.begin())]
+                .loan);
+        const auto rejected = lang::verifyMirProgram(released);
+        expect(std::any_of(rejected.errors.begin(), rejected.errors.end(),
+                           [](const auto &error) {
+                             return error.message.find("is ended before its") !=
+                                    std::string::npos;
+                           }),
+               "MIR rejects a view loan released before its derived loan");
+        checkedRelease = true;
+      }
+    }
+  }
+  expect(checkedRelease, "the program exercises a derived view loan release");
   expect(checkedSlice, "the program exercises a verified text slice");
   expect(checkedReseat, "the program exercises a verified receiver reseat");
 }

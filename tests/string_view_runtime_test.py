@@ -54,6 +54,18 @@ def main():
                     "runtime error[GTI-R0007]" in executed.stderr and \
                     FAILURE_DETAIL in executed.stderr, (level, count, executed)
 
+            # View operations allocate nothing; the owning-string control
+            # proves the native counting allocator observes the program.
+            counted = root / f"allocations-{level}"
+            built = run([str(compiler),
+                         str(fixtures / "string_view_allocation_counts.gti"),
+                         f"-{level}", "-o", str(counted), "--",
+                         str(fixtures / "stdlib_adoption_allocation_counts.cpp")])
+            assert built.returncode == 0, built.stderr
+            executed = run([str(counted)])
+            assert (executed.returncode, executed.stdout, executed.stderr) == \
+                (0, "control allocates\n0\n135\n", ""), (level, executed)
+
         # The source-defined search compiles to the same kind of loop as the
         # owning string's source search; it must not be materially slower.
         benchmark = root / "benchmark.gti"

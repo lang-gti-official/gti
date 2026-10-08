@@ -1,0 +1,48 @@
+// Source-defined std::string_view operations allocate nothing. The native
+// counting allocator (stdlib_adoption_allocation_counts.cpp) counts every
+// GTI allocation in a measured region; owning-string construction is the
+// positive control that proves the counter observes this program.
+#include <std/string>
+
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+
+uint64_t stop() {
+  adoption_count_end();
+  return adoption_allocations();
+}
+
+int main() {
+  adoption_count_begin();
+  std::string owned = std::string("key=value; mode=release; level=3");
+  uint64_t control = stop();
+
+  std::string_view literal = "mode";
+  mut std::size_t checksum = 0;
+  adoption_count_begin();
+  mut std::string_view view = owned.view();
+  checksum += view.size() + view.find(literal) + view.rfind(';');
+  checksum += view.find_first_of("=;") + view.find_last_not_of("0123456789");
+  checksum += view.find_first_not_of("key") + view.find_last_of('=');
+  std::string_view tail = view.substr(view.find(literal));
+  if (tail.starts_with(literal) && view.ends_with("3") &&
+      view.contains("release") && tail.compare(literal) > 0 &&
+      tail != literal && view.at(std::size_t(0)) == 'k' && view.front() == 'k' &&
+      view.back() == '3' && view[std::size_t(4)] == 'v') {
+    checksum += 1;
+  }
+  view.remove_prefix(std::size_t(4));
+  view.remove_suffix(std::size_t(1));
+  for (char item : view) {
+    if (item == ';') { checksum += 1; }
+  }
+  uint64_t measured = stop();
+
+  std::println(control > 0 ? "control allocates" : "control missed");
+  std::println(measured);
+  std::println(checksum);
+  return 0;
+}
