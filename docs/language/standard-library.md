@@ -13,6 +13,14 @@ Compiler-private declarations reside under `gti_internal`. They may enforce an
 irreducible invariant unavailable to ordinary GTI, but they are not stable
 application APIs and shall not expose public container or ownership policy.
 
+Nested `detail` namespaces such as `std::detail` hold library implementation
+types. They are not stable application APIs, but unlike `gti_internal` they are
+ordinary namespaces: nothing prevents application source from naming them.
+Several public operations currently return `detail` types without a public
+name for them, so naming those results sometimes requires a `detail` spelling.
+See
+[`R-STD-DETAIL-NAMES`](../plans/language-alignment.md#ranges-and-standard-library-completion).
+
 The source graph distinguishes application, implicit-prelude, and installed
 standard-library units. Only the latter two roles are compiler-trusted, and
 standard-library trust requires a physical source unit beneath a configured
@@ -1162,6 +1170,9 @@ The following component families remain planned or incomplete:
   and general stored borrowing graphs;
 - complete vector copy, allocator, iterator reassignment, and precise iterator
   invalidation support;
+- public names for the iterator and sentinel types that containers and views
+  return, which today are spelled only as `std::detail` types outside the
+  associative containers' `iterator`/`const_iterator` aliases;
 - the remaining callable, output/random-access complete-range, heterogeneous
   accumulation, and hash generic-capability families;
 - named/dynamic-field formatting, formatter customization, buffered streams,
