@@ -29766,6 +29766,20 @@ private:
     return bodyRepresentation(target).spelling;
   }
 
+  bool emitUnusedVirtualResultArgument(HirFunctionInstanceId target,
+                                       bool precedingArgument) {
+    const auto *function = program.findFunctionInstance(target);
+    if (function == nullptr ||
+        !bodyRepresentation(target).conditionalResultParameter ||
+        cppRequiresIndirectValueTransport(program, function->returnType)) {
+      return false;
+    }
+    if (precedingArgument)
+      output << ", ";
+    output << "nullptr";
+    return true;
+  }
+
   void emitPolymorphicAllocationBinding(const SemanticType &type,
                                         const std::string &pointer) {
     for (const auto &pointee : program.classInstances()) {
@@ -32281,6 +32295,7 @@ private:
           emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
           output << "))." << bodySpelling(member->id) << '(';
           emitSubscriptIndex(*access);
+          (void)emitUnusedVirtualResultArgument(member->id, true);
           output << ");\n";
           return;
         }
@@ -33195,6 +33210,7 @@ private:
           emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
           output << ")." << bodySpelling(member->id) << '(';
           emitSubscriptIndex(*access);
+          (void)emitUnusedVirtualResultArgument(member->id, true);
           output << ')';
         };
         const std::string_view checkedCompound =
@@ -33501,7 +33517,9 @@ private:
           "verified MIR inline nested call lost its receiver place");
     }
     emitStoragePlaceValue(facts, *producerPlace);
-    output << '.' << bodySpelling(*producer.functionTarget) << "()";
+    output << '.' << bodySpelling(*producer.functionTarget) << '(';
+    (void)emitUnusedVirtualResultArgument(*producer.functionTarget, false);
+    output << ')';
   }
 
   void emitInstruction(const MirBlock &block, const MirInstruction &instruction,
@@ -35553,12 +35571,7 @@ private:
         emitted = true;
       }
       if (!transformed && target != nullptr &&
-          bodyRepresentation(target->id).conditionalResultParameter &&
-          !cppRequiresIndirectValueTransport(program, target->returnType)) {
-        if (emitted) {
-          output << ", ";
-        }
-        output << "nullptr";
+          emitUnusedVirtualResultArgument(target->id, emitted)) {
         emitted = true;
       }
       return emitted;
