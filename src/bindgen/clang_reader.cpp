@@ -1154,7 +1154,8 @@ private:
     declaration.scope = rootScope_;
     declaration.origin = origin(cursor);
     declaration.inPolicy = inPolicy(declaration.origin);
-    const CXType integerType = clang_getEnumDeclIntegerType(cursor);
+    const CXType integerType =
+        clang_getCanonicalType(clang_getEnumDeclIntegerType(cursor));
     declaration.enumIntegerType = mapType(integerType);
     const CXType enumType = clang_getCursorType(cursor);
     const long long integerSize = clang_Type_getSizeOf(integerType);

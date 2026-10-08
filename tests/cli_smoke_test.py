@@ -3708,7 +3708,8 @@ def main():
             bindings_text = bindgen_bindings.read_text(encoding="utf-8")
             assert "[[c_opaque]] struct Meter;" in bindings_text
             assert "[[c_abi]]" in bindings_text
-            assert "constexpr MeterMode METER_ACTIVE = 2;" in bindings_text
+            assert "using MeterMode = c_uint;" in bindings_text
+            assert "constexpr MeterMode METER_ACTIVE = MeterMode(2);" in bindings_text
             assert "meter_feature" in bindings_text
             assert "meter_disabled" not in bindings_text
             assert (
@@ -3720,6 +3721,8 @@ def main():
             target_header = root / "target-model.h"
             target_header.write_text(
                 "typedef long NativeLong;\n"
+                "enum HighFlag { HIGH_FLAG = 0x80000000U };\n"
+                "enum FixedWide : unsigned long long { WIDE_MAX = 0xffffffffffffffffULL };\n"
                 "NativeLong native_long(NativeLong value);\n",
                 encoding="utf-8",
             )
@@ -3743,6 +3746,13 @@ def main():
             ).stdout
             assert "using NativeLong = c_long;" in windows_bindings
             assert "using NativeLong = c_long;" in linux_bindings
+            assert "using HighFlag = c_int;" in windows_bindings
+            assert "HighFlag(-2147483648)" in windows_bindings
+            assert "using HighFlag = c_uint;" in linux_bindings
+            assert "HighFlag(2147483648)" in linux_bindings
+            for generated in (windows_bindings, linux_bindings):
+                assert "using FixedWide = c_ulonglong;" in generated
+                assert "FixedWide(18446744073709551615)" in generated
             invalid_bindgen_target = run(
                 [gti, "bindgen", str(target_header), "--target", "banana"],
                 64,
@@ -3811,7 +3821,7 @@ def main():
                 + "int main() {\n"
                 + "  mut Meter* meter = nullptr;\n"
                 + "  unsafe {\n"
-                + "    int32_t opened = meter_open_out(METER_ACTIVE, &meter);\n"
+                + "    int32_t opened = meter_open_out(c_int(METER_ACTIVE), &meter);\n"
                 + "    if (opened != 0) { return opened; }\n"
                 + "    MeterSample sample = meter_sample_make(6, 7);\n"
                 + "    int32_t total = meter_accumulate(meter, sample);\n"
