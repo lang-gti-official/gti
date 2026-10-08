@@ -726,7 +726,8 @@ struct BadPacket { enum Aligned value; };
   for (auto model :
        {lang::bindgen::CDataModel::Lp64, lang::bindgen::CDataModel::Llp64}) {
     const auto fixed = lang::bindgen::runCBindgen(
-        "enum Fixed : unsigned long long { ALL = 0xffffffffffffffffULL };",
+        "typedef unsigned long long Integer;\n"
+        "enum Fixed : Integer { ALL = 0xffffffffffffffffULL };",
         "fixed.h", {}, lang::bindgen::CTargetProfile(model));
     const auto *item = findItem(fixed.plan, "Fixed");
     expect(fixed.usable() && item && item->aliasSpelling == "c_ulonglong" &&
@@ -754,6 +755,25 @@ struct BadPacket { enum Aligned value; };
              findItem(badNames.plan, "use_name")->kind ==
                  lang::bindgen::BindingItemKind::Skipped,
          "an unspellable enumerator must not leave dependent uses of a missing "
+         "alias");
+  const auto tooWide =
+      lang::bindgen::runCBindgen("enum TooWide : unsigned __int128 { HUGE = "
+                                 "((unsigned __int128)1 << 100) };\n"
+                                 "enum TooWide wide_result(void);\n",
+                                 "too-wide.h");
+  for (const auto name : {"TooWide", "wide_result"}) {
+    const auto *item = findItem(tooWide.plan, name);
+    expect(item && item->kind == lang::bindgen::BindingItemKind::Skipped &&
+               contains(item->reason, "native integer representation"),
+           "unsupported enum integers must reject without asking libclang for "
+           "truncated values");
+  }
+  const auto anonymous = lang::bindgen::runCBindgen(
+      "enum { UNSIGNED_MAX = 0xffffffffffffffffULL };", "anonymous.h");
+  expect(contains(
+             anonymous.gtiSource,
+             "constexpr c_ulong UNSIGNED_MAX = c_ulong(18446744073709551615);"),
+         "anonymous wide enums must preserve their domain without a nominal "
          "alias");
 }
 
