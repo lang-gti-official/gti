@@ -3525,10 +3525,11 @@ def main():
         assert report.read_bytes() == preserved_record
 
         # A changed source unit is named with its recorded and rebuilt
-        # content identities, and the rebuilt executable differs too.
+        # content identities, and the rebuilt executable differs too. The
+        # change is to reachable code: unreachable code is not emitted.
         (verify_project / "src/support.gti").write_text(
-            "int support_value() { return 0; }\n"
-            "int support_extra() { return 1; }\n",
+            "int support_extra() { return 1; }\n"
+            "int support_value() { return support_extra() - 1; }\n",
             encoding="utf-8",
         )
         diverged = run(

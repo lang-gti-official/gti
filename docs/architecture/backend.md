@@ -342,20 +342,44 @@ contains:
 or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
 provides deterministic full text for comparison and independent tooling.
 
-Checking the seal prints and hashes the whole program, which for a
-library-heavy program is the largest single cost after lowering. Each
-consumer therefore verifies once. `verifiedLoweredProgram` returns a
-`VerifiedLoweredProgram`, evidence that one exact immutable value passed, and
-`CppBackend` hands that evidence to the emitter, emission planner, and
-representation snapshot instead of letting each stage verify again. The
-`LoweredProgram` overloads of those stages still verify first, so a direct or
-test caller cannot bypass rejection. The builder runs every check except the
-seal and then computes the seal; it never re-checks a seal it has just
-computed. Lookups by class, function, constructor, storage, or symbol
-identity use row hints built at construction. A hint is used only after its
-row is confirmed to still carry that identity; otherwise the lookup scans, so
-mutated test values keep their exact behavior. The hints are derived data and
-are not part of the printed contract.
+The builder runs every inventory check and seals the value only if they all
+pass; it never re-checks a seal it has just computed. Consumers are admitted
+by the seal alone. `verifiedLoweredProgram` recomputes the seal, and on a match
+returns a `VerifiedLoweredProgram`, evidence about that exact immutable value.
+A match proves the value is the one whose inventory the builder verified,
+because the seal covers the complete printed program. The C++, MIR, and
+native-header backends admit programs this way. `CppBackend` hands the
+evidence to the emitter, emission planner, and representation snapshot, so no
+stage checks again. The `LoweredProgram` overloads of those stages still check
+first, so a direct or test caller cannot bypass rejection. `verifyLoweredProgram`
+remains the complete inventory and seal check for tooling and tests.
+
+The seal is a 64-bit hash of the deterministic print. Both printers write to a
+stream, and the seal hashes the text as it arrives, eight bytes at a time,
+without materializing it; a large program's print is around 100 MB. Seals
+are compared only with seals of the same compiler, so the hash is not a stable
+external format.
+
+Lookups by class, function, constructor, storage, symbol, enum, or generic
+parameter identity use row hints built at construction. A hint is used only
+after its row is confirmed to still carry that identity; otherwise the lookup
+scans, so mutated test values keep their exact behavior. The hints are derived
+data and are not part of the printed contract.
+
+Several C++ representation facts depend on the whole program rather than on
+the type being spelled:
+- the closure of classes that keep a native template representation;
+- whether any lexical closure forces the shared template carrier;
+- whether a class supports direct representation, which depends on its
+  member rows;
+- the conditional class-return arms of a MIR body.
+
+`CppRepresentationScope` is opened by the emission planner and the
+representation snapshot once they hold verification evidence. While it is
+open on a thread, queries about that exact program compute each such fact
+once. A nested stage of the same consumer reuses the open scope. Queries about
+any other value, and every query outside a scope, compute the same answers
+directly.
 
 ## Generated Items
 
