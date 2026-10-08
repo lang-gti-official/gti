@@ -117,6 +117,15 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
               : result;
       if (link == address.loan && referent != address.type)
         return false;
+      // The call that produced this address may also produce the binding's
+      // durable loan as its sibling: both reborrow one parent with the same
+      // access, as a structural range element does beside its dereference.
+      if (link == address.loan && child->parent != 0 &&
+          child->parent == retained.parent &&
+          child->producedBy == retained.producedBy &&
+          child->access == retained.access &&
+          retained.kind != MirLoanKind::CallResult)
+        return true;
       // A call on a checked field (or on a captured reference carrier) names
       // that precise receiver storage as its dependency. Do not let the loan
       // table replace it with a coarse formal or an unrelated same-typed place.
