@@ -9,7 +9,8 @@ import tempfile
 
 
 DECLARATIONS = r'''
-[[c_abi]] struct Grid { mut c_int cells[2][3][4]; };
+[[c_abi]] struct Point { mut c_int value; };
+[[c_abi]] struct Grid { mut c_int cells[2][3][4]; mut Point points[2][2]; };
 extern "C" {
   Grid get_grid();
   c_int verify_grid(Grid grid);
@@ -25,15 +26,20 @@ int read(Grid& grid, std::size_t i, std::size_t j, std::size_t k) {
 '''
 
 NATIVE = r'''
-struct Grid { int cells[2][3][4]; };
+struct Point { int value; };
+struct Grid { int cells[2][3][4]; struct Point points[2][2]; };
 struct Grid get_grid(void) {
   struct Grid grid;
   for (int i = 0; i < 2; ++i)
     for (int j = 0; j < 3; ++j)
       for (int k = 0; k < 4; ++k) grid.cells[i][j][k] = 100*i + 10*j + k;
+  for (int i = 0; i < 2; ++i)
+    for (int j = 0; j < 2; ++j) grid.points[i][j].value = 10*i + j;
   return grid;
 }
-int verify_grid(struct Grid grid) { return grid.cells[1][2][3] == 99; }
+int verify_grid(struct Grid grid) {
+  return grid.cells[1][2][3] == 99 && grid.points[1][1].value == 77;
+}
 unsigned long long native_index(unsigned long long value) { return value; }
 '''
 
@@ -42,6 +48,7 @@ int main() {
   mut auto grid = get_grid();
   auto frozen = get_grid();
   if (frozen.cells[1][2][3] != c_int(123)) { return 1; }
+  if (frozen.points[1][1].value != c_int(11)) { return 4; }
   for (mut std::size_t i = 0; i < 2; i++) {
     for (mut std::size_t j = 0; j < 3; j++) {
       for (mut std::size_t k = 0; k < 4; k++) {
@@ -52,6 +59,7 @@ int main() {
   grid.cells[index(1)][index(2)][index(3)] = c_int(98);
   mut auto& element = grid.cells[1][2][3];
   element = c_int(99);
+  grid.points[1][1].value = c_int(77);
   if (verify_grid(grid) != c_int(1)) { return 3; }
   return 0;
 }
@@ -106,7 +114,8 @@ def main():
                 else:
                     assert executed.returncode == 70 and not executed.stdout, executed
                     assert "runtime error[GTI-R0007]: index_out_of_bounds in fixed_array" in executed.stderr, executed
-                    assert "AddressSanitizer" not in executed.stderr and "UndefinedBehaviorSanitizer" not in executed.stderr, executed
+                    assert all(marker not in executed.stderr for marker in
+                               ("AddressSanitizer", "UndefinedBehaviorSanitizer", "runtime error:")), executed
             print(f"native array indexing {standard} {level} {sanitizers}: passed", flush=True)
 
 
