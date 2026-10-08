@@ -41,6 +41,7 @@ public:
   using size_type = size_t;
   using iterator = detail::unordered_set_insert_iterator<K>;
   using const_iterator = detail::unordered_set_key_iterator<K>;
+  using sentinel = detail::unordered_map_sentinel;
   static unordered_set<K, Hash, KeyEqual> collection_init(uint64_t count)
       requires std::default_initializable<Hash> && std::default_initializable<KeyEqual> &&
           std::read_callable<Hash, K, std::size_t> && std::read_binary_callable<KeyEqual, K, K, bool> {

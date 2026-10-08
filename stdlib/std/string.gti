@@ -244,6 +244,9 @@ namespace std {
     }
 
   public:
+    using const_iterator = detail::storage_iterator<char>;
+    using sentinel = detail::storage_sentinel;
+
     static constexpr size_t npos = uint64_t(18446744073709551615);
 
     string() : data(gti_internal::allocate_prefix_storage<char>(uint64_t(0))) {}

@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.388.0 — Public names for container iterators
+
+- Name the iterator and sentinel types of standard containers and views
+  without `std::detail`: read-only iteration exposes `const_iterator` (from
+  `begin()`) and `sentinel` (from `end()`); containers supporting mutable
+  iteration also expose `iterator` (from `begin_mut()`). The aliases cover
+  `vector`, `array`, `deque`, `list`, `forward_list`, `span`, `mutable_span`,
+  `string`, `resource_vector`, and the maps and sets. `forward_list` iteration
+  remains declaration-only scaffolding. Name the aliases
+  through an alias of a concrete type, for example
+  `using Ints = std::vector<int>;` then `Ints::iterator`.
+
 ## 0.387.0 — Checked local reference inference
 
 - Use `auto&` and `mut auto&` for local checked references without spelling

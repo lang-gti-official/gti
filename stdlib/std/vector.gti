@@ -120,6 +120,10 @@ class vector<std::move_constructible T> {
   }
 
 public:
+  using iterator = detail::vector_mut_iterator<T>;
+  using const_iterator = detail::vector_iterator<T>;
+  using sentinel = detail::vector_sentinel;
+
   vector() : data(gti_internal::allocate_prefix_storage<T>(uint64_t(0))) {}
 
   /// Collection-brace protocol: reserve once, then consume each owned element.

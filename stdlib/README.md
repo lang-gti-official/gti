@@ -349,6 +349,10 @@ movement, and other overlapping owner operations are rejected while that range
 is active. Owned vector temporaries are supported and destroyed once after
 range cleanup. Precise public invalidation effects, iterator-position mutation,
 allocator customization, and a complete C++ `vector` API remain future work.
+The iterator types are named by the public member aliases `const_iterator`
+(`begin()`), `iterator` (`begin_mut()`), and `sentinel` (`end()`), as on the
+other containers and views; application code should not spell their
+`std::detail` names.
 `swap` exchanges storage and capacity without allocation or element movement.
 Private receiver methods replace their own storage and return the previous
 owner; no move through a borrowed reference is needed. Both owners must be

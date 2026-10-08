@@ -1,0 +1,21 @@
+struct Cursor<T> {};
+
+struct Packet<T> {
+  using cursor = Cursor<T>;
+  T value;
+  Packet<Args...>(Args... args) : value(T(args...)) {}
+};
+
+struct Wrapped {
+  int value;
+  Wrapped(int input) : value(input) {}
+};
+
+int main() {
+  Packet<int> scalar{4};
+  Packet<Wrapped> record{5};
+  Packet<int> zero{};
+  Packet<bool> flag{true};
+  if (!flag.value) { return 1; }
+  return scalar.value + record.value.value + zero.value - 9;
+}

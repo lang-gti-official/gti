@@ -1788,6 +1788,16 @@ recursive concrete aliases, both expected alternatives with passive record
 errors, checked extraction of copyable class payloads, direct/generic lambdas
 returning copyable and move-only records, temporary operator arguments and
 nested receiver arrays. `type_only_alias_runtime` passes C++20/C++23 at O0/O3.
+Its member-alias regression also instantiates two value-generic user-defined
+owners whose unused aliases name otherwise uninstantiated classes, including
+nested type arguments. `cpp_mir_representation_snapshot` requires the exact
+forward identities from each concrete member-alias catalog, deduplicated before
+use, without inventing target layouts or executable bodies.
+The unrelated `Packet<T>` constructor regression retains four concrete bodies
+while requiring one native-primary declaration per exact parameter list, plus
+distinct per-instance failure adapters. Its runtime fixture covers matching and
+different argument lists at both native standards and optimization endpoints;
+the full forward-list emplacement/cleanup matrix also exercises this path.
 `passive_record_runtime` passes 35 executions and `nested_receiver_array_runtime`
 passes 49 executions across C++20/C++23 at O0/O1/O3 and an ASan/UBSan case.
 These include error-constructor failure, later-argument failure, checked array
@@ -4499,8 +4509,9 @@ inferred type/access hover, declaration navigation, copy hints, mutation/upgrade
 errors, UTF-16 spans, malformed-source recovery, dirty dependency overlays and
 format/reanalysis. These focused gates do not substitute for combined validation.
 Example 131 demonstrates an unrelated mutable record and a retained JSON node.
-Its reviewed inventory contributes 1,244 declarations, 530 bodies and 76 generated
-items; existing example entries are unchanged.
+Its reconciled inventory contributes 1,254 declarations, 530 bodies and 76
+generated items after the public container aliases are included. The standalone
+inference feature added no bodies or generated items to existing examples.
 
 The borrowed-reference issue checkpoint extends example 99 with two passive
 source-defined owner/referent types, nested read-only accessors and a fallible
