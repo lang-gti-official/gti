@@ -61,7 +61,7 @@ int main() {
         expect(
             arms == 2 && moves == 1,
             "the fixture reaches two constructor arms and one terminal move");
-        for (int mutation = 0; mutation != 5; ++mutation) {
+        for (int mutation = 0; mutation != 7; ++mutation) {
           auto malformed = frontend.mir;
           auto *changed = const_cast<lang::MirFunctionInstance *>(
               malformed.findFunctionInstance(function.id));
@@ -74,6 +74,30 @@ int main() {
           } else if (mutation == 1) {
             changedSlot->traits.containsBorrowedState = true;
             applied = true;
+          } else if (mutation >= 5) {
+            for (auto &block : changed->body.blocks) {
+              if (applied ||
+                  block.terminator.kind != lang::MirTerminatorKind::Invoke)
+                continue;
+              const auto *success =
+                  changed->body.findBlock(block.terminator.target);
+              if (success == nullptr || success->instructions.size() != 1 ||
+                  success->instructions.front().kind !=
+                      lang::MirInstructionKind::Initialize ||
+                  success->instructions.front().destination != slot.id)
+                continue;
+              if (mutation == 5) {
+                block.terminator.successLifecycle.push_back(
+                    {.kind = lang::MirLifecycleEventKind::Initialize,
+                     .target = 999999});
+              } else {
+                // A second predecessor makes publication reachable without
+                // this constructor. Rebuild uses so rejection cannot rely on
+                // an obsolete value-use cache.
+                block.terminator.elseTarget = success->id;
+              }
+              applied = true;
+            }
           } else {
             for (auto &block : changed->body.blocks)
               for (auto &instruction : block.instructions) {
@@ -110,7 +134,8 @@ int main() {
           expect(!lang::CppMirBodyEmitter(malformed, rows)
                       .supportsFailureBodyText(address),
                  "publication rejects forged availability, borrowing, type, "
-                 "copying and lifecycle identity after rebuilding uses");
+                 "copying, lifecycle identity and success-edge publication "
+                 "after rebuilding uses");
         }
       }
     }
