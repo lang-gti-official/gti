@@ -2135,6 +2135,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::PrefixStorageTextView:
         case IntrinsicKind::PrefixStorageCString:
         case IntrinsicKind::PrefixStorageTryCString:
+        case IntrinsicKind::TextViewFromAddress:
+        case IntrinsicKind::CStringFromAddress:
         case IntrinsicKind::OptionalStorageHasValue:
         case IntrinsicKind::OptionalStorageReset:
         case IntrinsicKind::ObjectDestroy:
@@ -2189,6 +2191,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             storageBoundsCheckDetail());
           break;
         case IntrinsicKind::RequireKey:
+        case IntrinsicKind::RequireAllocation:
         case IntrinsicKind::RequireContainerArgument:
         case IntrinsicKind::RequireVacantStorage:
         case IntrinsicKind::RequireLiveStorage:

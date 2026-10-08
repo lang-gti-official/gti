@@ -65,7 +65,8 @@ def main():
             if built.returncode:
                 raise AssertionError(f"{mode} build:\n{built.stdout}{built.stderr}")
             generated = binary.with_suffix(".gti.cpp").read_text()
-            if "mir_prefix_construct_v1(" not in generated or "&__gti_prefix_constructed" not in generated:
+            if ("::new (static_cast<void *>(::gti_internal::backend::native_pointer_value(" not in generated
+                    or "&__gti_mir_construct_success_" not in generated):
                 raise AssertionError("missing checked final-slot constructor witness")
             for count, expected in enumerate(cases):
                 result = run([str(binary), *(["fail"] * count)])

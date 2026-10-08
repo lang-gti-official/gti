@@ -3208,7 +3208,9 @@ private:
 
   [[nodiscard]] PredeclaredTextBorrowSource
   predeclaredTextBorrowSource(const ExprPtr &expression,
-                              const FunctionInfo &function) const;
+                              const FunctionInfo &function);
+
+  std::unordered_set<const FunctionDecl *> activeTextBorrowSummaries;
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
   dynamicTextReturnBorrowSummary(const FunctionInfo &function);

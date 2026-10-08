@@ -25,8 +25,11 @@ def main():
     destroy_site = next(i + 1 for i in range(destroy_start, len(memory_lines))
                         if "require_live_storage(this.initialized(index))" in memory_lines[i])
     vector = memory.with_name("vector.gti")
-    erase_site = next(i for i, line in enumerate(vector.read_text().splitlines(), 1)
-                     if "gti_internal::prefix_storage_erase(this.data, index);" in line)
+    vector_lines = vector.read_text().splitlines()
+    erase_start = next(i for i, line in enumerate(vector_lines)
+                       if "void erase(size_t index) mut" in line)
+    erase_site = next(i + 1 for i in range(erase_start, len(vector_lines))
+                      if "gti_internal::index_bounds_check(index, this.size())" in vector_lines[i])
 
     def ordinary(line):
         return (f"{source.name}:{line}: runtime error[GTI-R0002]: "
@@ -76,7 +79,7 @@ def main():
         (70, "1\n3\n2\n9\n", ordinary(element)),  # First element failure.
         (70, "3\n2\n1\n9\n", ordinary(element)),  # Last element failure.
         (70, "3\n2\n1\n9\n", f"<std/vector>:{erase_site}: runtime error[GTI-R0007]: "
-         "index_out_of_bounds in private_storage\n"),
+         "index_out_of_bounds in vector\n"),
         (0, "1\n4\n3\n2\n9\n", ""),
         (0, "3\n4\n2\n1\n9\n", ""),
         (70, "2\n3\n1\n9\n", ordinary(element)),  # Nested collection erase.
@@ -107,7 +110,10 @@ def main():
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             generated = binary.with_suffix(".gti.cpp").read_text()
-            assert ".destroy_elements_with_failure(" in generated
+            # Collection policy is an ordinary source body. Cleanup still
+            # consumes the exact MIR class and element recipes.
+            assert "_prefix_drain" in generated
+            assert ".template __gti_mir_unique_cleanup_failure<" in generated
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
                 actual = (result.returncode, result.stdout, result.stderr)

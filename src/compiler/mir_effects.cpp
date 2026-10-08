@@ -405,6 +405,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true},          // RequireRelocationCapacity
     MirEffectTraits{.mayTrap = true},          // RequireRelocationSource
     MirEffectTraits{.mayTrap = true},          // RequireRelocationDestination
+    MirEffectTraits{.startsLoan = true,
+                    .dependsOnLoan = true}, // TextViewFromAddress
+    MirEffectTraits{.startsLoan = true,
+                    .dependsOnLoan = true}, // CStringFromAddress
+    MirEffectTraits{.mayTrap = true},       // RequireAllocation
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -638,6 +643,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "require-relocation-capacity",
     "require-relocation-source",
     "require-relocation-destination",
+    "text-view-from-address",
+    "c-string-from-address",
+    "require-allocation",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

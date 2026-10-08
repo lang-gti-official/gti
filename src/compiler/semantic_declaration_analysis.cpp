@@ -5423,7 +5423,7 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
 }
 
 auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
-    const ExprPtr &expression, const FunctionInfo &function) const
+    const ExprPtr &expression, const FunctionInfo &function)
     -> PredeclaredTextBorrowSource {
   if (!expression) {
     return {};
@@ -5511,6 +5511,36 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   }
   const std::optional<CallableCandidate> intrinsic =
       intrinsicCandidate(call->callee());
+  if (intrinsic) {
+    const auto kind = intrinsic->record().intrinsic;
+    const std::size_t witness =
+        kind == IntrinsicKind::TextViewFromAddress ? 2 : 1;
+    if ((kind == IntrinsicKind::TextViewFromAddress ||
+         kind == IntrinsicKind::CStringFromAddress) &&
+        call->arguments().size() == witness + 1)
+      return predeclaredTextBorrowSource(call->arguments()[witness], function);
+  }
+  if (!intrinsic) {
+    // Follow an exact ordinary helper contract, never its public spelling.
+    // The body-derived query is cycle guarded and works before declaration
+    // iteration happens to publish the callee's summary. This is a prospective
+    // origin only; resolved body analysis still validates the actual return.
+    const auto symbol = resolveExpressionSymbol(call->callee());
+    if (symbol && symbol->overloads.size() == 1) {
+      const auto &candidate = symbol->overloads.front();
+      const auto *target =
+          candidate.declaration
+              ? semanticModel.findFunction(*candidate.declaration)
+              : nullptr;
+      const auto summary =
+          target ? dynamicTextReturnBorrowSummary(*target) : std::nullopt;
+      if (summary && summary->origin == BorrowOriginKind::Argument &&
+          summary->parameters.empty() &&
+          summary->parameter < call->arguments().size())
+        return predeclaredTextBorrowSource(
+            call->arguments()[summary->parameter], function);
+    }
+  }
   if (!intrinsic || call->arguments().size() != 1 ||
       (intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageTextView &&
        intrinsic->record().intrinsic != IntrinsicKind::PrefixStorageCString &&
@@ -5532,6 +5562,13 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
       function.declaration->body() == nullptr) {
     return std::nullopt;
   }
+  if (!activeTextBorrowSummaries.insert(function.declaration).second)
+    return std::nullopt;
+  struct ActiveSummary {
+    std::unordered_set<const FunctionDecl *> &active;
+    const FunctionDecl *declaration;
+    ~ActiveSummary() { active.erase(declaration); }
+  } active{activeTextBorrowSummaries, function.declaration};
 
   std::vector<const ExprPtr *> returns;
   collectBorrowReturnExpressions(function.declaration->body().get(), returns);

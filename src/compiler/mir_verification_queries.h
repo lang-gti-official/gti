@@ -37,6 +37,11 @@ generatedUniqueConstruction(const MirInstruction &instruction);
 // access authority come from the explicit witness in operand one.
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
+// Unsafe raw text assertions retain a checked witness without assigning
+// ownership or validity to the address itself. The exact ordered input
+// stages and resulting loan source are shared by verification and emission.
+[[nodiscard]] const MirLoan *
+textAddressResultLoan(const MirBody &body, const MirInstruction &instruction);
 
 // A distinct loan-rooted address retains either descendant provenance or a
 // parallel read-only loan over the identical source/dependencies. Check typed

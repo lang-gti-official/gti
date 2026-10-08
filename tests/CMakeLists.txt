@@ -157,6 +157,12 @@ add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
 add_executable(gti_object_lifetime_tests object_lifetime_tests.cpp)
 target_link_libraries(gti_object_lifetime_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME object_lifetime_contract COMMAND gti_object_lifetime_tests)
+add_executable(gti_text_address_bridge_tests text_address_bridge_tests.cpp)
+target_link_libraries(gti_text_address_bridge_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME text_address_bridge_contract COMMAND gti_text_address_bridge_tests)
+add_executable(gti_source_prefix_owner_tests source_prefix_owner_tests.cpp)
+target_link_libraries(gti_source_prefix_owner_tests PRIVATE gti_compiler gti_cpp_backend)
+add_test(NAME source_prefix_owner_contract COMMAND gti_source_prefix_owner_tests)
 add_executable(gti_uninitialized_carrier_tests uninitialized_carrier_tests.cpp)
 target_link_libraries(gti_uninitialized_carrier_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME uninitialized_carrier_contract COMMAND gti_uninitialized_carrier_tests)
@@ -447,6 +453,18 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME source_storage_drain_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_storage_drain_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(source_storage_drain_runtime PROPERTIES TIMEOUT 240)
+  add_test(NAME source_prefix_owner_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_prefix_owner_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_prefix_owner_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME source_resource_prefix_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_resource_prefix_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_resource_prefix_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME source_text_address_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_text_address_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_text_address_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME source_prefix_string_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_prefix_string_runtime_test.py" $<TARGET_FILE:gti>)
+  set_tests_properties(source_prefix_string_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME inherited_cleanup_context_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/inherited_cleanup_context_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(inherited_cleanup_context_runtime PROPERTIES TIMEOUT 300)

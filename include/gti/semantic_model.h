@@ -364,6 +364,9 @@ enum class IntrinsicKind {
   RequireRelocationCapacity,
   RequireRelocationSource,
   RequireRelocationDestination,
+  TextViewFromAddress,
+  CStringFromAddress,
+  RequireAllocation,
   Count,
 };
 
@@ -373,6 +376,9 @@ enum class IntrinsicKind {
 [[nodiscard]] inline std::optional<DefinedFailureOutcome>
 intrinsicBooleanFailureOutcome(IntrinsicKind intrinsic) {
   switch (intrinsic) {
+  case IntrinsicKind::RequireAllocation:
+    return DefinedFailureOutcome{DefinedFailureCode::AllocationFailure,
+                                 DefinedFailureDetail::PrivateStorage};
   case IntrinsicKind::RequireKey:
     return DefinedFailureOutcome{DefinedFailureCode::KeyNotFound,
                                  DefinedFailureDetail::KeyLookup};

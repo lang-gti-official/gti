@@ -170,7 +170,7 @@ is a teaching helper, not a production server.
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
 | `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
 | `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |
-| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
+| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable, nested, payload-enum, result and text types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
@@ -508,6 +508,14 @@ generation-checked handle: after erasure and reuse it names the replacement.
 layer owners behind `std::vector<std::unique_ptr<Layer>>::const_iterator` and
 `::sentinel`. It uses ordinary range traversal and deterministic object cleanup,
 without naming private implementation iterator types.
+
+## Raw text views with source-owned lifetime witnesses
+
+[`133-raw-text-owner-views.gti`](133-raw-text-owner-views.gti) derives counted
+text and zero-terminated views from an unrelated inline byte owner. The unsafe
+bridge retains the owner relationship through an ordinary source helper; the
+resulting checked borrow prevents mutation, movement or escape past that owner.
+Address validity, extent and termination remain the caller's unsafe obligations.
 
 ## Complete projects
 

@@ -1928,6 +1928,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "object_relocate") {
       return IntrinsicKind::ObjectRelocate;
     }
+    if (name == "text_view_from_address") {
+      return IntrinsicKind::TextViewFromAddress;
+    }
+    if (name == "c_string_from_address") {
+      return IntrinsicKind::CStringFromAddress;
+    }
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
     }
@@ -2085,6 +2091,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "require_key") {
     return IntrinsicKind::RequireKey;
+  }
+  if (name == "require_allocation") {
+    return IntrinsicKind::RequireAllocation;
+  }
+  if (name == "integer_wrapping_sub") {
+    return IntrinsicKind::IntegerWrappingSubtract;
   }
   if (name == "require_container_argument") {
     return IntrinsicKind::RequireContainerArgument;
@@ -6774,10 +6786,17 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
   case SemanticType::Bool:
   case SemanticType::Char:
   case SemanticType::RawPointer:
+  case SemanticType::StringView:
+  case SemanticType::CString:
     return true;
   case SemanticType::Enum:
     return type.enumId != 0 && type.enumId <= enums.size() &&
-           !enums[type.enumId - 1].payload;
+           enumTypeFor(type).has_value();
+  case SemanticType::Expected:
+    return type.arguments.size() == 2 &&
+           (type.arguments.front() == SemanticType::Void ||
+            runtimeObjectLayoutType(type.arguments.front())) &&
+           runtimeObjectLayoutType(type.arguments.back());
   case SemanticType::Array:
     return type.arguments.size() == 1 && type.arrayLength > 0 &&
            type.arrayLengthParameterId == 0 &&
@@ -6798,6 +6817,59 @@ auto SemanticVisitor::Impl::runtimeObjectLayoutType(
 auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     const Call &expr, const CallableCandidate &declaration) -> void {
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
+  if (intrinsic == IntrinsicKind::TextViewFromAddress ||
+      intrinsic == IntrinsicKind::CStringFromAddress) {
+    const bool counted = intrinsic == IntrinsicKind::TextViewFromAddress;
+    const std::size_t witness = counted ? 2 : 1;
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    requireUnsafe(expr, UnsafeOperationKind::RawDereference, expr.paren(),
+                  "Asserting an owner-dependent raw text view");
+    const bool addressShape =
+        arguments.size() == witness + 1 &&
+        arguments.front().kind == SemanticType::RawPointer &&
+        arguments.front().arguments ==
+            std::vector<SemanticType>{SemanticType::Char} &&
+        (!counted || arguments[1] == SemanticType::UInt64);
+    const ExpressionInfo *owner =
+        arguments.size() == witness + 1
+            ? semanticModel.findExpression(*expr.arguments()[witness])
+            : nullptr;
+    const bool exactOwner =
+        expr.typeArguments().empty() ||
+        (expr.typeArguments().size() == 1 && arguments.size() == witness + 1 &&
+         typeOf(expr.typeArguments().front()) == arguments[witness]);
+    if (!addressShape || !exactOwner || owner == nullptr ||
+        owner->category != ValueCategory::Place) {
+      report(expr.paren(),
+             counted ? "A raw text-view assertion requires a character "
+                       "address, uint64_t count and one checked owner place."
+                     : "A raw C-string assertion requires a character "
+                       "address and one checked owner place.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const SemanticType ownerType = arguments[witness];
+    arguments.front() =
+        SemanticType::rawPointerTo(SemanticType::Char, AccessMode::ReadOnly);
+    arguments[witness] =
+        SemanticType::referenceTo(ownerType, AccessMode::ReadOnly);
+    currentType = counted ? SemanticType::StringView : SemanticType::CString;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(arguments),
+                               .typeArguments = {ownerType},
+                               .intrinsic = intrinsic,
+                               .borrowOrigin = BorrowOriginKind::Argument,
+                               .borrowArgument = witness,
+                               .borrowAccess = AccessMode::ReadOnly});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::ObjectRelocate) {
     std::vector<SemanticType> arguments;
     for (const ExprPtr &argument : expr.arguments())
@@ -6880,6 +6952,15 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
                "GTI-S2019");
         currentType = SemanticType::Unknown;
         return;
+      }
+      if (element.kind == SemanticType::StringView ||
+          element.kind == SemanticType::CString) {
+        for (std::size_t index = 1; index < expr.arguments().size(); ++index) {
+          if (isOwnerDependentTextExpression(expr.arguments()[index])) {
+            reportOwnerDependentTextStorage(expr.arguments()[index],
+                                            "nested in raw storage");
+          }
+        }
       }
       std::vector<AnalyzedCallArgument> constructorArguments;
       bool concrete = true;

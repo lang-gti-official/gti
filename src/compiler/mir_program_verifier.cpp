@@ -10312,6 +10312,17 @@ verifyMirProgramContracts(const MirProgram &program) {
                .message = "raw borrow loses its typed address, explicit owner "
                           "witness, access or loan identity"});
         }
+        if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
+             instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
+            !mir_detail::textAddressResultLoan(body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .instruction = instruction.id,
+               .message =
+                   "raw text assertion loses its exact character address, "
+                   "count, ordered owner witness or checked loan identity"});
+        }
         const auto cThreadSync = cThreadSynchronization(program, instruction);
         const bool nativeThreadClaim =
             instruction.intrinsic == IntrinsicKind::None &&

@@ -789,10 +789,12 @@ constraint. Unsupported types are rejected at the call site, including in
 editor analysis, rather than only after the library body is instantiated.
 
 The current direct-query boundary admits primitive numeric/boolean/character
-types, raw pointers, integral enums, complete non-abstract classes, structs and
-passive unions, and positive concrete fixed arrays of admitted types. References,
-`void`, incomplete/opaque classes, interfaces, abstract classes, payload enums,
-direct `expected` types and compiler-private storage capabilities are excluded.
+types, raw pointers, integral and concrete payload enums, `string_view`,
+`c_string`, complete non-abstract classes, structs and passive unions, and
+positive concrete fixed arrays of admitted types. A direct `expected<T, E>`
+also has a layout when both alternatives are admitted; its success alternative
+may be `void`. References, `void` itself, incomplete/opaque classes, interfaces,
+abstract classes and compiler-private storage capabilities are excluded.
 Containing an owner field does not make an ordinary user class a private
 capability. This runtime descriptor is not a stable foreign ABI, an allocation,
 an initialization proof, or a new constant expression. The existing bounded
@@ -991,8 +993,10 @@ borrows prevent mutation, movement, or cleanup while an element reference is
 retained. The factories and classes are ordinary GTI source; only their
 underlying typed-storage operations are compiler-private.
 
-`std::vector<T>` requires move-constructible elements and rejects element
-types that retain borrowed state. Empty-slot growth and shifting do not require
+`std::vector<T>` requires `vector_element<T>`: a complete independent storage
+element with structural, failure-free relocation. It rejects retained checked
+borrows and address-stable host state; a custom move constructor alone does not
+establish relocation. Empty-slot growth and shifting do not require
 element assignment or grant permission to assign an otherwise nonassignable
 element. The vector is move-only even when `T` is copyable.
 `vector(n)` constructs `n` value-initialized elements, matching the familiar
@@ -1006,10 +1010,20 @@ elements may be copied and noncopyable movable elements are consumed once.
 This is in-place construction, but it is not C++ perfect forwarding and does
 not preserve every source value category.
 
-`insert(index, value)` and `erase(index)` support move-constructible, including
-move-only, elements. They use checked private slot shifts while the source-defined vector
-retains logical size, capacity growth, and API policy. Invalid indices take the
-defined storage failure path rather than performing unchecked memory access.
+`insert(index, value)` and `erase(index)` support these elements, including
+move-only values. The shared source prefix owner tracks one authoritative live
+length, constructs directly at final addresses and shifts through general
+typed relocation. It retires a slot before destruction and drains remaining
+objects in reverse order after a first failure; a second failure during cleanup
+terminates with both records. Capacity growth and API policy are ordinary source.
+Invalid indices take the checked bounds failure path.
+
+String uses the same owner with an extra initialized terminator excluded from
+its logical size/capacity. Empty strings use an allocation-free static sentinel.
+Vector and string therefore share the same checked span/iterator owner boundary,
+not separate compiler-recognized storage handles. Allocation, exact layout,
+object lifetime, generated relocation and checked loans remain distinct lower
+boundaries; moving policy into source does not remove those compiler facts.
 
 The ordinary vector iterator is read-only and retains one checked borrow of its
 owner. It is copy-constructible: copies retain the same shared owner dependency

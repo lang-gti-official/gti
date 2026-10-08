@@ -1,0 +1,6 @@
+#include <std/string>
+int main() {
+  mut std::string text{};
+  text.reserve(uint64_t(18446744073709551615));
+  return 1;
+}

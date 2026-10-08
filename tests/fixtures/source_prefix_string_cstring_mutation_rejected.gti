@@ -1,0 +1,7 @@
+#include <std/string>
+int main() {
+  mut std::string text{};
+  c_string native = text.try_c_string();
+  text.push_back('a');
+  return native == nullptr ? 1 : 0;
+}

@@ -1,0 +1,49 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+mut int mode = 0;
+void checked(int value) {}
+
+class ResultOwner {
+  int number;
+public:
+  ResultOwner(int number) : number(number) {}
+  ResultOwner(ResultOwner& other) = delete;
+  ResultOwner(ResultOwner&& other) = default;
+  int id() { return this.number; }
+  ~ResultOwner() {
+    std::println(8);
+    checked(1 / (mode - 2)); // result cleanup
+  }
+};
+
+class BeforePublication {
+public:
+  BeforePublication() {}
+  ~BeforePublication() {
+    std::println(7);
+    int divisor = mode == 0 ? 1 : 0;
+    checked(1 / divisor); // primary cleanup
+  }
+};
+
+class Caller {
+public:
+  Caller() {}
+  ~Caller() { std::println(9); }
+};
+
+expected<ResultOwner, int> produce() { return ResultOwner(3); }
+expected<ResultOwner, int> forward() {
+  BeforePublication pending{};
+  return produce();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mode = argc - 1;
+  Caller caller{};
+  auto result = forward();
+  std::println(result.value().id());
+  return 0;
+}

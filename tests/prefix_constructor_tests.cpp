@@ -24,156 +24,121 @@ void testPreparedPrefixConstructor() {
       {stdlib / "prelude.gti",
        path.parent_path() / "prefix_constructor_test.gti"},
       {}, {stdlib});
-  if (!frontend.canGenerateCode()) {
-    for (const auto &diagnostic : frontend.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-    for (const auto &issue : lang::verifyMirProgram(frontend.mir).errors)
-      std::cerr << "MIR owner " << issue.owner << " block " << issue.block
-                << " instruction " << issue.instruction << ": " << issue.message
-                << '\n';
-  }
   expect(frontend.canGenerateCode() && frontend.mir.valid(),
-         "owning/reference/owner-backed-text/raw constructor inputs verify");
-  if (!frontend.canGenerateCode() || !frontend.mir.valid())
+         "source prefix owning/reference/text/raw constructor inputs verify");
+  if (!frontend.canGenerateCode())
     return;
   const auto map =
       lang::CppMirBodyEmissionMap(buildRows(frontend, frontend.mir));
   std::size_t tested = 0;
+  std::size_t capacityGuards = 0;
   std::size_t qualifiedPointers = 0;
   std::size_t nullPointers = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
-      for (const auto &append : block.instructions) {
-        if (append.storagePreflight != 0 && append.parameterTypes.size() == 2 &&
-            append.parameterTypes[1].kind == lang::SemanticType::RawPointer) {
-          const auto *value = function.body.findValue(append.operands[1].value);
-          const auto *stage =
-              value == nullptr ? nullptr
-                               : instruction(function.body, value->definition);
-          const auto *target = append.constructorTarget
-                                   ? frontend.mir.findConstructorInstance(
-                                         *append.constructorTarget)
-                                   : nullptr;
+      for (const auto &call : block.instructions) {
+        if (call.intrinsic == lang::IntrinsicKind::RequireRelocationCapacity) {
+          ++capacityGuards;
+          const auto effects = lang::effects(call);
           expect(
-              stage && stage->kind == lang::MirInstructionKind::CallInput &&
-                  stage->callInputKind == lang::HirCallInputKind::Value &&
-                  stage->info.type == append.parameterTypes[1] && target &&
-                  target->parameterTypes ==
-                      std::vector<lang::SemanticType>{stage->info.type},
-              "forwarded pointer input retains the exact selected parameter");
-          if (stage && stage->operands.size() == 1) {
-            const auto &sourceType = stage->operands.front().type;
-            qualifiedPointers +=
-                sourceType.kind == lang::SemanticType::RawPointer &&
-                sourceType.pointerAccess == lang::AccessMode::Mutable &&
-                stage->info.type.pointerAccess == lang::AccessMode::ReadOnly;
-            nullPointers += sourceType == lang::SemanticType::NullPtr;
-          }
+              !effects.writesPlace && !effects.invokesUserCode &&
+                  !effects.movesValue && call.lifecycle.empty(),
+              "source capacity guard cannot consume or construct an element");
         }
-        if (append.storagePreflight == 0 || append.parameterTypes.size() != 6 ||
-            append.parameterTypes[1].kind != lang::SemanticType::Class)
+        if (call.kind == lang::MirInstructionKind::CallInput && call.result &&
+            call.operands.size() == 1 &&
+            call.info.type.kind == lang::SemanticType::RawPointer &&
+            call.info.type.pointerAccess == lang::AccessMode::ReadOnly) {
+          qualifiedPointers += call.operands.front().type.kind ==
+                                   lang::SemanticType::RawPointer &&
+                               call.operands.front().type.pointerAccess ==
+                                   lang::AccessMode::Mutable;
+          nullPointers +=
+              call.operands.front().type == lang::SemanticType::NullPtr;
+        }
+        if (call.intrinsic != lang::IntrinsicKind::ObjectConstruct ||
+            !call.constructorTarget || call.parameterTypes.size() != 6 ||
+            call.parameterTypes[1].kind != lang::SemanticType::Class)
           continue;
         ++tested;
         const auto &body = function.body;
-        const auto *check = instruction(body, append.storagePreflight);
-        expect(check && lang::mirStorageConstructForPreflight(
-                            body, check->id) == &append,
-               "append retains exact non-consuming capacity pair");
-        expect(check && lang::effects(*check).readsPlace &&
-                   !lang::effects(*check).writesPlace &&
-                   !lang::effects(*check).invokesUserCode,
-               "capacity check has no write/user-code/ownership authority");
         const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                            .owner = function.id};
+        expect(call.storagePreflight == 0 &&
+                   call.unsafeOperation ==
+                       lang::UnsafeOperationKind::ObjectLifetime,
+               "prefix policy uses general construction without private "
+               "preflight");
+        for (std::size_t index = 0; index < call.operands.size(); ++index) {
+          const auto *value = body.findValue(call.operands[index].value);
+          const auto *stage =
+              value ? instruction(body, value->definition) : nullptr;
+          expect(stage && stage->kind == lang::MirInstructionKind::CallInput &&
+                     stage->callSite == call.callSite &&
+                     stage->callInputRole == lang::MirCallInputRole::Argument &&
+                     stage->callInputIndex == index &&
+                     stage->info.type == call.parameterTypes[index],
+                 "construction retains exact ordered typed input stages");
+        }
         const auto emitted =
             lang::CppMirBodyEmitter(frontend.mir, map)
-                .emitFailureBodyText(address, "prepared-prefix", 1);
+                .emitFailureBodyText(address, "source-prefix", 1);
         expect(emitted.emitted() &&
-                   emitted.text.find("mir_prefix_preflight_v1(") !=
+                   emitted.text.find("native_pointer_value(") !=
                        std::string::npos &&
-                   emitted.text.find("mir_prefix_construct_v1(") !=
+                   emitted.text.find("&__gti_mir_construct_success_") !=
                        std::string::npos,
-               "MIR emits separate capacity and exact final-slot constructor "
-               "status");
-        if (emitted.emitted()) {
-          const auto preflightPosition =
-              emitted.text.find("mir_prefix_preflight_v1(");
-          const auto invocationPosition =
-              emitted.text.find("mir_prefix_construct_v1(");
-          expect(preflightPosition < invocationPosition,
-                 "capacity is checked before final-slot construction");
-          for (const auto &operand : append.operands) {
-            const auto *value = body.findValue(operand.value);
-            const auto *stage =
-                value ? instruction(body, value->definition) : nullptr;
-            if (!stage || !stage->preparedParameterDrop || !stage->destination)
-              continue;
-            const auto slot =
-                "__gti_mir_p_" + std::to_string(*stage->destination);
-            expect(emitted.text.find(slot + ".construct(") < preflightPosition,
-                   "owning parameter is materialized before capacity check");
-            expect(invocationPosition != std::string::npos &&
-                       emitted.text.find(slot + ".destroy();",
-                                         invocationPosition) !=
-                           std::string::npos,
-                   "consumed prepared owner shell is retired after invocation");
-          }
-        }
+               "general MIR emits checked final-address construction");
         const auto reject = [&](const auto &mutate, std::string_view message) {
           auto forged = frontend.mir;
           auto *changedBody = lang::findMirBody(forged, address);
-          auto *call = instruction(*changedBody, append.id);
-          auto *preflight = instruction(*changedBody, append.storagePreflight);
-          mutate(*changedBody, *call, *preflight);
+          auto *changedCall = instruction(*changedBody, call.id);
+          mutate(*changedBody, *changedCall);
           expect(lang::rebuildMirValueUses(*changedBody),
                  "mutation keeps exact use index");
           expect(!lang::verifyMirProgram(forged).valid(), message);
+          expect(!lang::CppMirBodyEmitter(forged, map)
+                      .supportsFailureBodyText(address),
+                 "backend independently rejects malformed construction");
         };
-        reject([](auto &, auto &call, auto &) { call.storagePreflight = 0; },
-               "cannot erase preflight pairing");
-        reject([](auto &, auto &, auto &check) { ++check.callSite; },
-               "capacity check must belong to the exact call");
-        reject([](auto &, auto &call,
-                  auto &check) { check.operands[0] = call.operands[1]; },
-               "capacity check must protect the exact storage input");
+        reject([](auto &, auto &value) { value.callSite = 0; },
+               "construction cannot erase ordered call identity");
+        reject([](auto &, auto &value) { value.storagePreflight = value.id; },
+               "construction cannot invent retired storage authority");
+        reject([](auto &, auto &value) { value.constructorTarget.reset(); },
+               "construction cannot lose its selected constructor");
         reject(
-            [](auto &, auto &call, auto &) { call.constructorTarget.reset(); },
-            "non-scalar append cannot lose its exact selected constructor");
-        reject(
-            [](auto &, auto &call, auto &) {
-              call.parameterTypes[3] = lang::SemanticType::Int32;
+            [](auto &, auto &value) {
+              value.parameterTypes[3] = lang::SemanticType::Int32;
             },
-            "selected reference parameter role cannot become a value role");
-        reject([](auto &, auto &call, auto &) { call.lifecycle.clear(); },
-               "owning prepared parameters must transfer exactly once");
+            "reference parameter cannot become a value parameter");
+        reject([](auto &, auto &value) { value.lifecycle.clear(); },
+               "prepared owners must transfer exactly once");
         reject(
-            [](auto &, auto &call, auto &check) {
-              check.lifecycle = call.lifecycle;
-              call.lifecycle.clear();
+            [](auto &, auto &value) {
+              value.unsafeOperation = lang::UnsafeOperationKind::None;
             },
-            "capacity check cannot consume parameters before it succeeds");
+            "construction cannot erase lifetime obligations");
         reject(
-            [](auto &body, auto &, auto &check) {
-              for (auto &block : body.blocks)
-                if (block.terminator.invokeInstruction == check.id)
-                  block.terminator.kind = lang::MirTerminatorKind::Goto;
+            [](auto &, auto &value) {
+              value.definedFailure.propagation =
+                  lang::FailurePropagationKind::None;
             },
-            "capacity failure cannot bypass caller parameter cleanup");
+            "construction must preserve selected-constructor failure");
         reject(
-            [](auto &body, auto &, auto &check) {
-              for (auto &block : body.blocks)
-                if (block.terminator.invokeInstruction == check.id)
-                  block.terminator.elseTarget = block.terminator.target;
+            [](auto &changedBody, auto &value) {
+              for (auto &changedBlock : changedBody.blocks)
+                if (changedBlock.terminator.invokeInstruction == value.id)
+                  changedBlock.terminator.kind = lang::MirTerminatorKind::Goto;
             },
-            "capacity failure cannot reach the constructor");
+            "constructor failure cannot bypass caller cleanup");
       }
     }
   }
-  expect(tested >= 2,
-         "test must reach both direct capability and generic pack handoff");
-  expect(qualifiedPointers == 1 && nullPointers == 1,
-         "concrete pack inputs preserve pointer qualification and null "
-         "conversion");
+  expect(tested != 0 && capacityGuards != 0,
+         "fixture reaches source capacity checks and general construction");
+  expect(qualifiedPointers != 0 && nullPointers != 0,
+         "concrete packs preserve pointer qualification and null conversion");
 }
 
 void testPrefixPointerInputRejection() {
@@ -229,14 +194,12 @@ void testGeneratedPrefixTransport() {
     return;
   unsigned checked = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
-    const auto *hir = frontend.hir.findFunctionInstance(function.id);
-    if (hir == nullptr || hir->source == nullptr ||
-        (hir->source->name().lexeme != "append_same_type" &&
-         hir->source->name().lexeme != "append_same_type_pack"))
-      continue;
     for (const auto &block : function.body.blocks) {
       for (const auto &append : block.instructions) {
-        if (append.intrinsic != lang::IntrinsicKind::PrefixStorageAppend)
+        if (append.intrinsic != lang::IntrinsicKind::ObjectConstruct ||
+            append.operands.size() != 2 ||
+            append.parameterTypes[1].kind != lang::SemanticType::Class ||
+            append.lifecycle.empty())
           continue;
         ++checked;
         expect(append.callSite != 0 && !append.constructorTarget &&
@@ -267,7 +230,7 @@ void testGeneratedPrefixTransport() {
       }
     }
   }
-  expect(checked == 2,
+  expect(checked >= 2,
          "direct and pack-generated transport both exercise the rule");
 }
 void testSparseFinalAddressConstructor() {

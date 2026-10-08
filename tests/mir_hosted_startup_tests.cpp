@@ -432,10 +432,12 @@ void testOwnedScheduleAndPrinter() {
           !body->failureRecords.empty() &&
           countTerminators(lang::MirTerminatorKind::Invoke) ==
               body->failureRecords.size() &&
-          countTerminators(lang::MirTerminatorKind::ContainFailure) ==
+          countTerminators(lang::MirTerminatorKind::ContainFailure) +
+                  countTerminators(
+                      lang::MirTerminatorKind::TerminateCleanupFailure) ==
               body->failureRecords.size(),
-      "every failure-capable startup stage should route one contained "
-      "Stage-E failure record");
+      "every failure-capable startup stage should route one contained primary "
+      "or terminal secondary Stage-E failure record");
 
   const auto readView = std::find_if(
       plan->operations.begin(), plan->operations.end(),

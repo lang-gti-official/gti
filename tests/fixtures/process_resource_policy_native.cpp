@@ -13,11 +13,12 @@ int mode = 0;
 int calls = 0;
 int releases = 0;
 int fail_on_call = 0;
+bool observing = false;
 struct Region {
   void *address = nullptr;
   int identity = 0;
 };
-std::array<Region, 16> regions{};
+std::array<Region, 256> regions{};
 std::array<int, 64> events{};
 std::array<std::uint64_t, 16> requested_bytes{};
 int event_count = 0;
@@ -27,7 +28,10 @@ void remember(void *address) {
     return;
   for (auto &region : regions) {
     if (!region.address) {
-      region = {address, calls};
+      // Source-defined argv containers use this same process provider before
+      // main begins. Retain their descriptors for exact release checking, but
+      // do not attribute them to the scenario's allocation/event counters.
+      region = {address, observing ? calls : 0};
       return;
     }
   }
@@ -43,9 +47,11 @@ void event(int value) {
 void retire(void *address) {
   for (auto &region : regions) {
     if (region.address && region.address == address) {
-      event(-region.identity);
+      if (region.identity != 0) {
+        event(-region.identity);
+        ++releases;
+      }
       region = {};
-      ++releases;
       return;
     }
   }
@@ -55,8 +61,9 @@ void retire(void *address) {
 
 extern "C" void provider_test_mode(std::int32_t selected) {
   for (const auto &region : regions)
-    if (region.address)
+    if (region.address && region.identity != 0)
       std::abort(); // A reset must not hide leaked regions.
+  observing = true;
   mode = selected;
   calls = 0;
   releases = 0;
@@ -97,8 +104,10 @@ extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *address,
 #if defined(_WIN32)
 extern "C" void *gti_rt_aligned_malloc_v1(std::uint64_t bytes,
                                           std::uint64_t alignment) {
-  ++calls;
-  requested_bytes.at(calls - 1) = bytes;
+  if (observing) {
+    ++calls;
+    requested_bytes.at(calls - 1) = bytes;
+  }
   if (mode >= 2 || calls == fail_on_call)
     return nullptr;
   if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
@@ -121,8 +130,10 @@ extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
                                           std::uint64_t alignment,
                                           std::int32_t *status) {
-  ++calls;
-  requested_bytes.at(calls - 1) = bytes;
+  if (observing) {
+    ++calls;
+    requested_bytes.at(calls - 1) = bytes;
+  }
   if (calls == fail_on_call) {
     *status = ENOMEM;
     return nullptr;

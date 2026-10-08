@@ -46,6 +46,7 @@ public:
   }
 
   void append<Args...>(Args... args) mut { this.data.append(args...); }
+  void append_value(T value) mut { this.data.append_value(std::move(value)); }
   T& get(size_t index) { return this.data.read(index); }
   mut T& get_mut(size_t index) mut { return this.data.read_mut(index); }
   void pop() mut { this.data.pop(); }
@@ -134,7 +135,7 @@ public:
   expected<void, alloc_errc> try_push_back(T value) mut {
     auto grown = this.try_grow_for_one();
     if (!grown) { return unexpected(grown.error()); }
-    this.slots.append(std::move(value));
+    this.slots.append_value(std::move(value));
     return;
   }
 

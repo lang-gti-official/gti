@@ -4979,18 +4979,26 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 ### S-ALLOC-08: Source Prefix Ownership And Container Cutover
 
 - **State:** implementation in progress; not accepted or integrated. The source
-  prefix slot engine and one-region resource-vector candidate have focused
-  native feedback. Default vector/views, superseded-path removal and final
+  prefix engine, vector/views, terminated string owner and one-region resource
+  vector are implemented on the task branch. Focused native matrices cover
+  final-address construction, generated relocation, borrowed views and exact
+  first/secondary failure cleanup; shared-provider allocation counts are tested.
+  Superseded-path removal, full admission/corpus/performance coverage and final
   acceptance remain required; existing private prefix machinery is not yet
   claimed retired.
+  The `source_prefix_complete_elements` composition probe remains unaccepted:
+  its owning-payload/expected-vector native entry profile fails with both the
+  baseline and source-owner implementations. Preserve that reduction while
+  auditing admitted shapes; frontend/MIR success alone is not native evidence.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound
   provider through cleanup, including while empty.
 - **Prerequisites:** completed `S-ALLOC-06/07` layout, final-address construction,
   destruction, relocation, owner-witness references, process leases and resource
-  leases. Shared vector/string spans require a coherent general owner/view
-  boundary; do not adopt the separate source-text-view proposal implicitly.
+  leases. Shared vector/string spans use the same source owner. The general
+  raw text/C-string bridge retains an exact owner-witness loan and explicit
+  unsafe validity obligations; it does not replace primitive text representation.
 - **Accepted companion policy:** one object region per nonempty resource-vector
   reservation; zero reserves none. Public sparse storage still uses two. The
   owner explicitly approved the observable request-count revision.
