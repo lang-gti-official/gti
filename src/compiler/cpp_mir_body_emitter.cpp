@@ -13969,27 +13969,12 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                   [](const MirOperand &operand) {
                     return operand.kind == MirOperandKind::Value;
                   });
-  const bool functionProducer =
-      commonProducer && producer->kind == MirInstructionKind::Call &&
-      producer->lifecycle.empty() && producer->functionTarget &&
-      !producer->constructorTarget &&
-      producer->dispatch == CallDispatch::Static &&
-      producer->definedFailure.propagation ==
-          FailurePropagationKind::DirectCall &&
-      functionTarget != nullptr &&
-      functionTarget->returnType == value->info.type &&
-      functionTarget->parameterTypes == producer->parameterTypes &&
-      ((!producer->receiver &&
-        (!functionTarget->owner || functionTarget->staticMember)) ||
-       exactMemberReceiver()) &&
-      functionTarget->mayRaiseDefinedFailure &&
-      functionTarget->definitionKind == MirDefinitionKind::Source &&
-      functionTarget->linkage == LanguageLinkage::Gti;
-  const bool constructorProducer =
-      commonProducer && producer->kind == MirInstructionKind::Construct &&
-      // Owning arguments transfer their already-prepared obligations into
-      // the selected constructor. These are input handoffs, not publication
-      // of the result: that remains exclusively on the Invoke success edge.
+  // Calls and constructors can consume prepared owning inputs while producing
+  // the field value. These are input handoffs, not publication of the result:
+  // that remains exclusively on the Invoke success edge. Reuse the same exact
+  // staging proof for named arguments and fresh owning results in either case.
+  const bool preparedInputTransfers =
+      commonProducer &&
       std::all_of(
           producer->lifecycle.begin(), producer->lifecycle.end(),
           [&](const MirLifecycleEvent &event) {
@@ -14016,8 +14001,27 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
                          return stage != nullptr &&
                                 stage->preparedParameterDrop == event.source;
                        }) == 1;
-          }) &&
-      !producer->functionTarget && producer->constructorTarget &&
+          });
+  const bool functionProducer =
+      commonProducer && producer->kind == MirInstructionKind::Call &&
+      preparedInputTransfers && producer->functionTarget &&
+      !producer->constructorTarget &&
+      producer->dispatch == CallDispatch::Static &&
+      producer->definedFailure.propagation ==
+          FailurePropagationKind::DirectCall &&
+      functionTarget != nullptr &&
+      functionTarget->returnType == value->info.type &&
+      functionTarget->parameterTypes == producer->parameterTypes &&
+      ((!producer->receiver &&
+        (!functionTarget->owner || functionTarget->staticMember)) ||
+       exactMemberReceiver()) &&
+      functionTarget->mayRaiseDefinedFailure &&
+      functionTarget->definitionKind == MirDefinitionKind::Source &&
+      functionTarget->linkage == LanguageLinkage::Gti;
+  const bool constructorProducer =
+      commonProducer && producer->kind == MirInstructionKind::Construct &&
+      preparedInputTransfers && !producer->functionTarget &&
+      producer->constructorTarget &&
       producer->constructorKind == ConstructorKind::Ordinary &&
       producer->definedFailure.propagation ==
           FailurePropagationKind::Constructor &&
@@ -20411,6 +20415,13 @@ public:
         add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
             "void status-result channel requires an exact void function");
       }
+      if (row.conditionalResultParameter &&
+          (function == nullptr || !function->owner || function->staticMember ||
+           !function->virtualMethod ||
+           function->linkage != LanguageLinkage::Gti)) {
+        add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
+            "conditional result channel requires an exact GTI virtual method");
+      }
       const auto *root =
           function == nullptr
               ? nullptr
@@ -20424,7 +20435,9 @@ public:
             });
         if (rootRow == representations.bodies().end() ||
             rootRow->voidFailureResultParameter !=
-                row.voidFailureResultParameter) {
+                row.voidFailureResultParameter ||
+            rootRow->conditionalResultParameter !=
+                row.conditionalResultParameter) {
           add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
               "virtual status-result channel disagrees with its contract root");
         }
@@ -29798,6 +29811,20 @@ private:
     return bodyRepresentation(target).spelling;
   }
 
+  bool emitUnusedVirtualResultArgument(HirFunctionInstanceId target,
+                                       bool precedingArgument) {
+    const auto *function = program.findFunctionInstance(target);
+    if (function == nullptr ||
+        !bodyRepresentation(target).conditionalResultParameter ||
+        cppRequiresIndirectValueTransport(program, function->returnType)) {
+      return false;
+    }
+    if (precedingArgument)
+      output << ", ";
+    output << "nullptr";
+    return true;
+  }
+
   void emitPolymorphicAllocationBinding(const SemanticType &type,
                                         const std::string &pointer) {
     for (const auto &pointee : program.classInstances()) {
@@ -32322,6 +32349,7 @@ private:
           emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
           output << "))." << bodySpelling(member->id) << '(';
           emitSubscriptIndex(*access);
+          (void)emitUnusedVirtualResultArgument(member->id, true);
           output << ");\n";
           return;
         }
@@ -33236,6 +33264,7 @@ private:
           emitStoragePlaceValue(facts, *facts.body.findPlace(access->base));
           output << ")." << bodySpelling(member->id) << '(';
           emitSubscriptIndex(*access);
+          (void)emitUnusedVirtualResultArgument(member->id, true);
           output << ')';
         };
         const std::string_view checkedCompound =
@@ -33542,7 +33571,9 @@ private:
           "verified MIR inline nested call lost its receiver place");
     }
     emitStoragePlaceValue(facts, *producerPlace);
-    output << '.' << bodySpelling(*producer.functionTarget) << "()";
+    output << '.' << bodySpelling(*producer.functionTarget) << '(';
+    (void)emitUnusedVirtualResultArgument(*producer.functionTarget, false);
+    output << ')';
   }
 
   void emitInstruction(const MirBlock &block, const MirInstruction &instruction,
@@ -35591,6 +35622,10 @@ private:
         } else {
           output << "UINT32_C(" << instruction.callerLocationSite << ')';
         }
+        emitted = true;
+      }
+      if (!transformed && target != nullptr &&
+          emitUnusedVirtualResultArgument(target->id, emitted)) {
         emitted = true;
       }
       return emitted;
