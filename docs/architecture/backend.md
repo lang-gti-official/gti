@@ -1218,6 +1218,9 @@ Type-only aliases also require forward declarations for any direct concrete
 class names in their resolved type argument graph, even when no executable
 MIR class instance uses them. Declaration planning uses the same concrete-name
 authority as runtime uses and emits each forward identity once before aliases.
+This includes the exact member-alias catalog of each concrete MIR class
+instance: a dependent declaration-level alias alone cannot name its resolved
+type/value argument application. Repeated targets share one forward declaration.
 It does not instantiate layouts, constructors, or methods merely for an alias,
 and does not recursively expand the alias members of a referenced generic
 class. Dependent aliases retain their existing native-template spelling. This

@@ -1685,6 +1685,11 @@ recursive concrete aliases, both expected alternatives with passive record
 errors, checked extraction of copyable class payloads, direct/generic lambdas
 returning copyable and move-only records, temporary operator arguments and
 nested receiver arrays. `type_only_alias_runtime` passes C++20/C++23 at O0/O3.
+Its member-alias regression also instantiates two value-generic user-defined
+owners whose unused aliases name otherwise uninstantiated classes, including
+nested type arguments. `cpp_mir_representation_snapshot` requires the exact
+forward identities from each concrete member-alias catalog, deduplicated before
+use, without inventing target layouts or executable bodies.
 `passive_record_runtime` passes 35 executions and `nested_receiver_array_runtime`
 passes 49 executions across C++20/C++23 at O0/O1/O3 and an ASan/UBSan case.
 These include error-constructor failure, later-argument failure, checked array
