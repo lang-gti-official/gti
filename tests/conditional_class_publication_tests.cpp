@@ -30,6 +30,16 @@ int main() {
             slot.type.kind != lang::SemanticType::Class ||
             !slot.projections.empty())
           continue;
+        std::size_t armInitializations = 0;
+        for (const auto &block : function.body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::Initialize &&
+                instruction.destination == slot.id)
+              ++armInitializations;
+        // Imported library functions contain unrelated class temporaries.
+        // Select the diamond by its two publications, not by a public name.
+        if (armInitializations != 2)
+          continue;
         ++joins;
         const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                            function.id};
