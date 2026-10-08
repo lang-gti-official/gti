@@ -31,14 +31,30 @@ metadata is not a by-value containment edge.
 ## Exact-owner construction
 
 For one completed value of a class's exact owner type, semantic construction
-selects that owner's copy or move lifecycle according to the analyzed value
-category. A generic by-value converting constructor instantiated with that
+first distinguishes a fresh produced result from a transfer of an existing
+place. `SemanticModel::isFreshClassResult` uses the selected construction/call
+identities and return type; grouping preserves that fact, but the Move
+intrinsic does not acquire it merely from `ValueCategory::Value`. An exact
+one-source class construction around a fresh result records
+`ResolvedConstructionInfo::directInitialization` before overload selection.
+It selects no extra constructor or lifetime and does not require a move
+constructor. Compiler-private placement/storage calls are not one-source class
+construction expressions and retain their selected lifecycle protocol.
+
+For a named source or explicit transfer, construction still selects that
+owner's copy or move lifecycle according to the analyzed value category.
+A generic by-value converting constructor instantiated with that
 same owner type cannot outrank or resurrect a deleted lifecycle operation;
 unrelated argument types retain ordinary inference/constraint selection. The
 selected `ConstructorKind`, declaration and argument facts continue through
 HIR/MIR. Completed-value optional publication therefore transports the selected
 lifecycle value rather than invoking another converting constructor at the
 private storage boundary. No public callable/container name defines this rule.
+Stored-borrow and raw-field provenance pass through a direct wrapper to its
+producer. The wrapper adds no invocation effects or new borrow permission;
+ordinary producer validity, unsafe obligations and escape checking remain
+mandatory. Tooling retains a selected construction occurrence whose hover
+explicitly explains that no additional copy/move is selected.
 
 ## Native C scalar target facts
 

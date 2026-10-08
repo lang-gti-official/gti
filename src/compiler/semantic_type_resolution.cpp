@@ -1415,6 +1415,37 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
            "GTI-S2044");
   }
 
+  // A same-type fresh result already denotes the destination object. Unlike
+  // std::move(place), its Value category does not request a lifecycle move.
+  // Resolve this before converting-constructor overload selection, including
+  // deleted/private special members. The producer owns all actual execution.
+  const ExprPtr *writtenSource = nullptr;
+  if (const auto *call = exprAs<Call>(&construction);
+      call != nullptr && call->arguments().size() == 1)
+    writtenSource = &call->arguments().front();
+  else if (const auto *direct = exprAs<DirectInitializer>(&construction);
+           direct != nullptr && direct->arguments().size() == 1)
+    writtenSource = &direct->arguments().front();
+  if (!requireExactNullParameter && arguments.size() == 1 &&
+      arguments.front().type == constructedType &&
+      !arguments.front().forwardedPackElement && writtenSource != nullptr &&
+      arguments.front().expression == writtenSource &&
+      semanticModel.isFreshClassResult(**arguments.front().expression)) {
+    semanticModel.record(
+        construction,
+        ResolvedConstructionInfo{
+            .constructedType = constructedType,
+            .parameterTypes = {constructedType},
+            .borrowOrigin = typeTraits(constructedType).containsBorrowedState
+                                ? BorrowOriginKind::Argument
+                                : BorrowOriginKind::None,
+            .borrowAccess = borrowAccess(constructedType),
+            .directInitialization = true});
+    recordSelectedConstructionOccurrence(construction);
+    currentType = constructedType;
+    return;
+  }
+
   struct ViableConstructor {
     const ConstructorInfo *constructor = nullptr;
     std::vector<SemanticType> parameterTypes;
@@ -2024,11 +2055,19 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
           .borrowFields = std::move(storedFields),
           .generatedDefault = selected.generatedDefault,
           .kind = selected.kind});
+  recordSelectedConstructionOccurrence(construction);
+  currentType = constructedType;
+}
+
+auto SemanticVisitor::Impl::recordSelectedConstructionOccurrence(
+    const Expr &construction) -> void {
   if (const auto *call = exprAs<Call>(&construction)) {
     const ResolvedConstructionInfo *resolved =
         semanticModel.findConstruction(construction);
     const Token token = callableToken(call->callee());
     if (resolved != nullptr) {
+      const SemanticType &constructedType = resolved->constructedType;
+      const ClassInfo &owner = classInfo(constructedType.classId);
       SymbolId symbol = 0;
       if (resolved->declaration != nullptr) {
         symbol = symbolForDeclaration(resolved->declaration->name());
@@ -2066,7 +2105,6 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
            .callGeometry = callArgumentGeometry(*call)});
     }
   }
-  currentType = constructedType;
 }
 
 auto SemanticVisitor::Impl::analyzeExpectedMemberCall(
@@ -4682,6 +4720,8 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
                construction->borrowArgument < initializer->arguments().size()) {
       source = &initializer->arguments()[construction->borrowArgument];
     }
+    if (source != nullptr && construction->directInitialization)
+      return storedCarrierReturnProvenance(*source, parameter, visiting);
     if (source != nullptr &&
         storedCarrierReturnProvenance(*source, parameter, visiting) ==
             StoredCarrierReturnProvenance::ExternalReferent) {

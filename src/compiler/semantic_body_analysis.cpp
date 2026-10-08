@@ -8824,6 +8824,14 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     const Expr &source, const ResolvedConstructionInfo &resolved,
     const ExprList &explicitArguments, const Token &callSite,
     ConstexprInterpreter &context) -> ConstexprEvaluation {
+  if (resolved.directInitialization) {
+    if (explicitArguments.size() != 1)
+      return constexprFailure(callSite,
+                              ConstantEvaluationFailure::InvalidOperands);
+    // No execution rule is added here: the already-supported producer (which
+    // may stage verified MIR) alone determines the value and consumes budget.
+    return evaluateConstexprExpression(explicitArguments.front(), context);
+  }
   const ConstructorDecl *declaration = resolved.declaration;
   if (resolved.generatedDefault || declaration == nullptr ||
       !declaration->isConstexpr() ||

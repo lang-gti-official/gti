@@ -2499,10 +2499,9 @@ private:
     std::vector<HirValueId> roots;
     roots.reserve(expression.roots.size());
     for (const Expr *source : expression.roots) {
-      const auto found = std::find_if(
-          body.values.rbegin(), body.values.rend(),
-          [source](const HirValue &value) { return value.source == source; });
-      if (found == body.values.rend()) {
+      const HirValue *found =
+          source == nullptr ? nullptr : body.valueForSource(*source);
+      if (found == nullptr) {
         lifecycleValid = false;
         continue;
       }
@@ -2877,11 +2876,8 @@ private:
         if (!expression) {
           return HirValueId{0};
         }
-        const auto found = std::find_if(
-            body.values.begin(), body.values.end(), [&](const HirValue &value) {
-              return value.source == expression.get();
-            });
-        return found == body.values.end() ? HirValueId{0} : found->id;
+        const HirValue *found = body.valueForSource(*expression);
+        return found == nullptr ? HirValueId{0} : found->id;
       };
       const auto statementFor = [&](const Stmt *source) {
         const auto found =
@@ -4469,6 +4465,26 @@ private:
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     ensurePlaceDomain(body);
+    if (const Expr *producer = model.directInitializationSource(expression)) {
+      const ExpressionInfo *info = model.findExpression(expression);
+      const ExpressionInfo *input = model.findExpression(*producer);
+      if (info == nullptr || input == nullptr || info->type != input->type ||
+          (exprAs<Grouping>(&expression) == nullptr &&
+           !model.isFreshClassResult(*producer))) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      const auto id = lowerExpression(*producer, model, classArguments,
+                                      classValueArguments, body);
+      if (id) {
+        body.directInitializations.push_back({.source = &expression,
+                                              .producer = producer,
+                                              .value = *id,
+                                              .type = info->type});
+        output.program.sourceValueIds[&expression].push_back(*id);
+      }
+      return id;
+    }
     if (const auto *initializer = exprAs<ArrayInitializer>(&expression)) {
       if (const auto *collection = model.findCollection(*initializer)) {
         return lowerCollection(*initializer, *collection, model, classArguments,

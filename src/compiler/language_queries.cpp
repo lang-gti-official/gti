@@ -731,6 +731,10 @@ public:
           semantics.findClassType(selected.constructedType.classId);
       if (owner != nullptr) {
         result.signature = signatures.constructor(*owner, selected);
+        if (selected.directInitialization)
+          result.notes.emplace_back(
+              "direct initialization from a fresh same-type result; no "
+              "additional copy, move, or temporary lifetime");
       }
       break;
     }
