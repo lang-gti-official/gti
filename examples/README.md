@@ -423,7 +423,9 @@ three-argument function item.
 The owning callback example below also demonstrates retaining one in a wrapper.
 
 `83-complete-ranges.gti` defines an application-owned range with the exact
-read-only, mutable, and sized structural protocol. The same source-defined
+read-only, mutable, and sized structural protocol. It names the wrapped
+vector's `const_iterator`, `iterator`, and `sentinel` member aliases rather
+than `std::detail` types. The same source-defined
 `std::all_of` and `std::fill` implementations accept that nominal range and a
 fixed array; `std::sized_range` also proves a generic `size()` call without
 compiler recognition of either the range or algorithm name.
