@@ -12,13 +12,16 @@ public:
 };
 Point make() { return Point(4); }
 Point relay() { return Point(Point((make()))); }
+Point adjust(Point& source) { return Point(source.value + 1); }
 int main() {
   Point a = Point(make());
   Point b{Point((relay()))};
   Point existing{7};
   Point copied = Point(Point(existing));
   Point moved = Point(Point((std::move(existing))));
-  return a.value + b.value + copied.value + moved.value == 22 ? 0 : 1;
+  Point observed = adjust(Point(make()));
+  return a.value + b.value + copied.value + moved.value == 22 &&
+      observed.value == 5 ? 0 : 1;
 }
 )");
   expect(frontend.canGenerateCode(), "fresh wrappers compose through HIR/MIR");
@@ -41,7 +44,7 @@ int main() {
         moves += instruction.kind == lang::MirInstructionKind::Construct &&
                  instruction.constructorKind == lang::ConstructorKind::Move;
       }
-  expect(aliases == 10, "typed fresh wrappers and parentheses share values");
+  expect(aliases == 11, "typed fresh wrappers and parentheses share values");
   expect(copies == 1 && moves == 1,
          "existing-object copy and move remain real lifecycle operations");
   std::size_t selectedFresh = 0;
@@ -61,7 +64,7 @@ int main() {
            "compiler-owned hover identifies direct initialization, not a move");
     ++selectedFresh;
   }
-  expect(selectedFresh == 6,
+  expect(selectedFresh == 7,
          "typed fresh call sites retain selected occurrences");
   for (const auto standard :
        {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
@@ -84,6 +87,24 @@ int main() {
     break;
   }
   corrupted = frontend.hir;
+  bool removedOwner = false;
+  for (const auto &function : corrupted.functionInstances()) {
+    auto &body = const_cast<lang::HirBody &>(function.body);
+    for (auto &alias : body.directInitializations) {
+      if (!alias.constructionOwner)
+        continue;
+      alias.constructionOwner.reset();
+      removedOwner = true;
+      break;
+    }
+    if (removedOwner)
+      break;
+  }
+  expect(
+      removedOwner &&
+          !lang::verifyHirProgramPlans(frontend.semantics, corrupted).valid(),
+      "a construction wrapper must retain its exact concrete owner witness");
+  corrupted = frontend.hir;
   for (const auto &function : corrupted.functionInstances()) {
     if (function.body.directInitializations.empty())
       continue;
@@ -93,6 +114,107 @@ int main() {
            "a fresh-result witness cannot lose its source producer");
     break;
   }
+
+  for (const auto kind :
+       {lang::ConstructorKind::Copy, lang::ConstructorKind::Move}) {
+    auto forged = frontend.hir;
+    bool mutated = false;
+    for (const auto &function : forged.functionInstances()) {
+      auto &body = const_cast<lang::HirBody &>(function.body);
+      for (const auto &value : body.values) {
+        const auto *selected =
+            value.source == nullptr
+                ? nullptr
+                : frontend.semantics.findConstruction(*value.source);
+        const auto *call = lang::exprAs<lang::Call>(value.source);
+        if (selected == nullptr || selected->directInitialization ||
+            selected->kind != kind || call == nullptr ||
+            call->arguments().size() != 1)
+          continue;
+        auto *input = const_cast<lang::HirValue *>(
+            body.valueForSource(*call->arguments().front()));
+        expect(input != nullptr,
+               "real lifecycle construction retains its source value");
+        if (input == nullptr)
+          continue;
+        // Forge both category and source indexing, rather than relying on
+        // an incidental lvalue/index mismatch to reject the missing lifecycle.
+        input->info.category = lang::ValueCategory::Value;
+        std::optional<lang::HirClassInstanceId> owner;
+        for (const auto &instance : forged.classInstances())
+          if (instance.type == value.info.type)
+            owner = instance.id;
+        body.directInitializations.push_back(
+            {.source = value.source,
+             .producer = call->arguments().front().get(),
+             .value = input->id,
+             .type = value.info.type,
+             .constructionOwner = owner});
+        auto &ids = const_cast<std::vector<lang::HirValueId> &>(
+            forged.valueIdsForSource(*value.source));
+        ids.push_back(input->id);
+        mutated = true;
+        break;
+      }
+      if (mutated)
+        break;
+    }
+    const auto checked =
+        lang::verifyHirProgramPlans(frontend.semantics, forged);
+    expect(mutated && std::any_of(checked.errors.begin(), checked.errors.end(),
+                                  [](const auto &error) {
+                                    return error.find("class result alias") !=
+                                           std::string::npos;
+                                  }),
+           "an existing-object copy/move cannot be forged into a fresh-result "
+           "alias");
+  }
+
+  auto forgedCall = frontend.hir;
+  bool mutated = false;
+  for (const auto &function : forgedCall.functionInstances()) {
+    auto &body = const_cast<lang::HirBody &>(function.body);
+    for (const auto &value : body.values) {
+      const auto *call = lang::exprAs<lang::Call>(value.source);
+      const auto *name =
+          call == nullptr ? nullptr
+                          : lang::exprAs<lang::Variable>(call->callee().get());
+      if (name == nullptr || name->name().lexeme != "adjust" ||
+          call->arguments().size() != 1)
+        continue;
+      const auto *input = body.valueForSource(*call->arguments().front());
+      expect(input != nullptr,
+             "an ordinary factory retains its fresh argument");
+      if (input == nullptr)
+        continue;
+      std::optional<lang::HirClassInstanceId> owner;
+      for (const auto &instance : forgedCall.classInstances())
+        if (instance.type == value.info.type)
+          owner = instance.id;
+      body.directInitializations.push_back(
+          {.source = value.source,
+           .producer = call->arguments().front().get(),
+           .value = input->id,
+           .type = value.info.type,
+           .constructionOwner = owner});
+      auto &ids = const_cast<std::vector<lang::HirValueId> &>(
+          forgedCall.valueIdsForSource(*value.source));
+      ids.push_back(input->id);
+      mutated = true;
+      break;
+    }
+    if (mutated)
+      break;
+  }
+  const auto checked =
+      lang::verifyHirProgramPlans(frontend.semantics, forgedCall);
+  expect(mutated && std::any_of(checked.errors.begin(), checked.errors.end(),
+                                [](const auto &error) {
+                                  return error.find("class result alias") !=
+                                         std::string::npos;
+                                }),
+         "an observable ordinary factory cannot be erased as a construction "
+         "wrapper");
 }
 
 void checkImmovableAndBorrowedResults() {
@@ -248,26 +370,77 @@ int main() {
            "mixed result dependencies survive independent MIR verification");
   }
 
-  for (const auto &body : {
-           R"(int main() { int step = 4; mut int value = 3;
+  struct Negative {
+    std::string_view body;
+    std::string_view code;
+    std::string_view message;
+    std::string_view anchor;
+    bool closingParen = false;
+  };
+  for (const auto &test : std::array{
+           Negative{R"(int main() { int step = 4; mut int value = 3;
                 mut Update result = Update(relay(step, value));
                 value += 1; result.apply(); return value; })",
-           R"(Update bad(int& step) { mut int local = 3;
+                    "GTI-S2017",
+                    "Cannot assign to storage while an overlapping borrow",
+                    "value += 1"},
+           Negative{R"(Update bad(int& step) { mut int local = 3;
                 return Update(relay(step, local)); }
                 int main() { return 0; })",
-           R"(int main() { mut int value = 3;
+                    "GTI-S2045", "Every returned borrowed field must derive",
+                    "Update(relay(step, local))", true},
+           Negative{R"(int main() { mut int value = 3;
                 mut Update result = Update(relay(value, value));
-                result.apply(); return 0; })"}) {
+                result.apply(); return 0; })",
+                    "GTI-S2017", "Call creates overlapping reference accesses",
+                    "relay(value, value)", true}}) {
+    const std::string source = declarations + std::string(test.body);
     const auto negative = lang::Frontend().analyze(
-        "invalid-fresh-borrow-composition.gti", declarations + body);
-    expect(!negative.semanticValid &&
-               std::any_of(negative.diagnostics.begin(),
-                           negative.diagnostics.end(),
-                           [](const auto &diagnostic) {
-                             return diagnostic.code.starts_with("GTI-S");
-                           }),
-           "direct initialization neither hides a local owner nor weakens "
-           "exclusive access");
+        "invalid-fresh-borrow-composition.gti", source);
+    const auto *unit =
+        negative.sourceGraph.findUnit(negative.sourceGraph.entryUnit());
+    const auto start = source.find(test.anchor) +
+                       (test.closingParen ? test.anchor.size() - 1 : 0);
+    const auto length = test.closingParen ? 1u : 5u;
+    const auto found = std::find_if(
+        negative.diagnostics.begin(), negative.diagnostics.end(),
+        [&](const auto &diagnostic) {
+          return diagnostic.code == test.code &&
+                 diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+                 diagnostic.severity == lang::DiagnosticSeverity::Error &&
+                 diagnostic.message.find(test.message) != std::string::npos &&
+                 unit != nullptr &&
+                 diagnostic.primary.source == unit->path.string() &&
+                 diagnostic.primary.start == start &&
+                 diagnostic.primary.end == start + length;
+        });
+    expect(!negative.semanticValid && !negative.canGenerateCode() &&
+               found != negative.diagnostics.end(),
+           "fresh-result borrowing rejects the intended access/escape at its "
+           "exact source span");
+    expect(std::none_of(negative.diagnostics.begin(),
+                        negative.diagnostics.end(),
+                        [&](const auto &diagnostic) {
+                          return diagnostic.severity ==
+                                     lang::DiagnosticSeverity::Error &&
+                                 diagnostic.code != test.code;
+                        }),
+           "an unrelated parser/backend rejection cannot satisfy a borrow "
+           "regression");
+    if (!test.closingParen && found != negative.diagnostics.end()) {
+      expect(found->fixes.empty() && !found->hints.empty() &&
+                 std::any_of(
+                     found->related.begin(), found->related.end(),
+                     [&](const auto &related) {
+                       return related.message ==
+                                  "The borrowed value is used later here." &&
+                              related.span.source == found->primary.source &&
+                              related.span.start ==
+                                  source.find("result.apply()");
+                     }),
+             "conflicting mutation explains the later required use without a "
+             "safety-changing fix");
+    }
   }
 }
 

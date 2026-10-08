@@ -5,7 +5,9 @@
 `prvalue_direct_initialization` covers the original #150 class factory, nested
 typed/braced/grouped wrappers, genuine existing-object copy/move, deleted real
 movement, borrowed-owner escape rejection, exact generic instances, constexpr
-producer parity, HIR source-alias mutations, verified MIR and both C++ backend
+producer parity, HIR source-alias mutations (including forged real transfers,
+missing construction-owner evidence, and an observable ordinary factory),
+verified MIR and both C++ backend
 standards. It also checks field-wise mixed borrowed factories/relays and rejects
 owner mutation before last use, conflicting exclusive inputs, and local-owner
 escape. `prvalue_direct_initialization_runtime` runs example 130, method,

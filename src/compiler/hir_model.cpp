@@ -477,17 +477,40 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto *selected = alias.source == nullptr
                                  ? nullptr
                                  : semantics.findConstruction(*alias.source);
+      const bool grouping = exprAs<Grouping>(alias.source) != nullptr;
+      const auto *owner =
+          alias.constructionOwner && *alias.constructionOwner != 0 &&
+                  *alias.constructionOwner <= program.classInstances().size()
+              ? &program.classInstances()[*alias.constructionOwner - 1]
+              : nullptr;
+      const bool exactOwner =
+          grouping ? !alias.constructionOwner
+                   : owner != nullptr && owner->type == alias.type;
+      const auto *sourceCall = exprAs<Call>(alias.source);
+      const auto *call =
+          sourceCall == nullptr ? nullptr : semantics.findCall(*sourceCall);
+      const bool ordinaryCall =
+          sourceCall != nullptr &&
+          ((call != nullptr &&
+            call->intrinsic != IntrinsicKind::ExactTypeParameterConstruction &&
+            call->intrinsic !=
+                IntrinsicKind::DefaultTypeParameterConstruction) ||
+           semantics.findLambdaCall(*sourceCall) != nullptr ||
+           semantics.findDeferredCallableCall(*sourceCall) != nullptr);
+      const bool executableSource = std::any_of(
+          body.values.begin(), body.values.end(), [&](const auto &candidate) {
+            return candidate.source == alias.source;
+          });
       // A primary generic record may precede concrete reanalysis. When its
       // exact construction is retained, its direct-initialization decision
       // must agree; the concrete value/type and source identity are mandatory.
-      const bool semanticMatch = selected == nullptr ||
-                                 selected->directInitialization ||
-                                 exprAs<Grouping>(alias.source) != nullptr;
+      const bool semanticMatch =
+          !ordinaryCall && !executableSource && exactOwner &&
+          (selected == nullptr || selected->directInitialization || grouping);
       const bool fresh =
           value != nullptr && (value->kind == HirValueKind::Call ||
                                value->kind == HirValueKind::DirectInitializer ||
                                value->functionTarget.has_value());
-      const bool grouping = exprAs<Grouping>(alias.source) != nullptr;
       if (alias.source == nullptr || !seen.insert(alias.source).second ||
           input == nullptr || input != alias.producer || value == nullptr ||
           value->source != producer || alias.type.kind != SemanticType::Class ||
