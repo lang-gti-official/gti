@@ -5019,7 +5019,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   its inner check in a selected reference-returning callee, so the positive
   query follows that exact borrowing call chain. Generic raw-memory/owned
   construction summaries must recover the warranted facts without restoring a
-  nominal prefix-container rule. Full admission/corpus/performance coverage
+  nominal prefix-container rule. The first general optimizer prerequisite admits
+  contextual proofs before raw operations while retaining opaque per-operation
+  memory barriers and independently checked replay. It does not yet transport
+  owned-construction or initialized-element facts; the same ten original
+  source-owner proof requirements remain unmet. Full admission/corpus/performance
+  coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.
   The `source_prefix_complete_elements` composition probe remains unaccepted:
@@ -5064,8 +5069,9 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   and constructs terminal emergency envelopes out of line, without changing
   MIR cleanup or the failure ABI. A many-guard structural check pins the
   storage bound; its eight-mode native matrix preserves complete cleanup,
-  exact panic messages and immediate secondary termination. Full JSON,
-  installed and performance acceptance remains outstanding.
+  exact panic messages and immediate secondary termination. The complete JSON
+  fixture now runs at O0, but its O3 native build still exceeds the 600-second
+  gate. Full JSON, installed and performance acceptance remains outstanding.
 - **Outcome:** vector and its checked views use ordinary source-defined prefix
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound

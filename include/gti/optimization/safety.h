@@ -81,6 +81,9 @@ struct MirClosedCallSafetyAnalysis {
 // the whole analysis converges, contextual proofs established before a
 // conservative call barrier remain usable even when that barrier prevents the
 // enclosing body from exporting a complete summary.
+// Raw/unsafe instructions are per-instruction opaque barriers, not a reason
+// to discard contextual proofs that precede them in a concrete source body.
+// Such a successful path cannot export an effect-closed summary.
 [[nodiscard]] MirClosedCallSafetyAnalysis
 analyzeMirClosedCallSafetyChecks(const MirProgram &program);
 

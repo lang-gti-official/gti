@@ -1769,15 +1769,27 @@ void applyInstruction(const MirBody &body,
     killUnknownMemory(state);
     state.hasOpaqueEffects = true;
   };
+  if (instruction.rawMemoryAccess ||
+      instruction.unsafeOperation != UnsafeOperationKind::None) {
+    // Contextual facts before raw access remain useful, but no raw operation
+    // is interpreted as a scalar load/store or an effect-closed invocation.
+    // Handle this before the ordinary Load/Assign transfer paths as well as
+    // Compute. Immutable SSA facts established earlier remain immutable.
+    unknownEffectBarrier();
+    if (instruction.result) {
+      state.integers.erase(*instruction.result);
+      state.arrayValues.erase(*instruction.result);
+      state.objectValues.erase(*instruction.result);
+    }
+    return;
+  }
   if (instruction.kind == MirInstructionKind::Compute) {
     // Compute is a representation kind, not a purity promise. An extended
     // operation must not carry old place facts across newly classified memory,
     // lifecycle, or synchronization effects just because no scalar transfer
     // function recognizes it yet.
     const MirEffectTraits effect = effects(instruction);
-    if (instruction.rawMemoryAccess ||
-        instruction.unsafeOperation != UnsafeOperationKind::None ||
-        effect.writesPlace || effect.writesUnknownMemory ||
+    if (effect.writesPlace || effect.writesUnknownMemory ||
         effect.invokesUserCode || effect.maySynchronize) {
       unknownEffectBarrier();
       if (instruction.result) {
@@ -3692,9 +3704,7 @@ rejectedClosedCallBodies(const MirProgram &program) {
     }
     for (const MirBlock &block : body->blocks) {
       for (const MirInstruction &instruction : block.instructions) {
-        if (instruction.rawMemoryAccess ||
-            instruction.unsafeOperation != UnsafeOperationKind::None ||
-            instruction.synchronization.kind !=
+        if (instruction.synchronization.kind !=
                 SynchronizationOperationKind::None ||
             instruction.nativeCallbackAdapter ||
             instruction.threadTaskAdapter) {
