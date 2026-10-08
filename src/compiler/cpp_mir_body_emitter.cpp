@@ -30893,7 +30893,8 @@ private:
                    const ScalarBodyFacts &facts) {
     if (instruction.result &&
         classPublicationIdentityInput(facts.body, instruction) != nullptr &&
-        classValueDestinationSlot(facts.body, *instruction.result) != nullptr) {
+        classValuePublicationSlot(program, facts.body, *instruction.result) !=
+            nullptr) {
       output
           << "// transparent class identity; MIR retains lifecycle transfer\n";
       return;

@@ -12,6 +12,7 @@ CASES = (
     "conditional_class_passive", "conditional_class_cleanup",
     "grouped_class_failure", "conditional_class_failure",
     "conditional_class_passive_failure",
+    "grouped_class_argument",
 )
 
 
