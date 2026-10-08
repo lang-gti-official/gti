@@ -1884,6 +1884,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   add_test(
+    NAME passive_range_temporary_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/passive_range_temporary_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  add_test(
     NAME span_owner_dependent_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/span_owner_dependent_runtime_test.py"

@@ -7001,9 +7001,11 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     }
     if (range.ownsRangeTemporary &&
         ownerPlace->traits.drop == DropKind::Lexical) {
+      // A lexical owner with passive cleanup (no source destructor and no
+      // field needing cleanup) still carries its exact obligation.
       const MirDropObligation *drop = body.findDropObligation(range.ownerDrop);
       if (drop == nullptr || drop->place != range.owner ||
-          !drop->dropType.requiresActiveCleanup) {
+          drop->dropType.type != ownerPlace->type) {
         return failure(body, owner,
                        "owned range temporary lacks its exact cleanup "
                        "obligation");
