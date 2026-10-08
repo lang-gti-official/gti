@@ -1,0 +1,20 @@
+mut int last_constructed = 0;
+
+class Reading {
+  int number;
+public:
+  Reading(int initial) : number(initial) { last_constructed = initial; }
+  Reading(Reading& other) = delete;
+  int read() { return this.number; }
+};
+
+int check(bool left) {
+  for (mut int index = 0; index < 4; ++index) {
+    Reading selected = left ? Reading(3) : Reading(7);
+    int wanted = left ? 3 : 7;
+    if (selected.read() != wanted || last_constructed != wanted) { return 1; }
+  }
+  return 0;
+}
+
+int main() { return check(true) + check(false); }

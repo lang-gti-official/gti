@@ -220,6 +220,25 @@ S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
 metadata/default-factory migration described above; the provider checkpoint's
 independent tests alone do not validate that integration.
 
+## Class expression publication regression gate
+
+`class_expression_publication_runtime` covers the grouped-construction and
+conditional-binding failures tracked by coverage findings S01/S02 in issue #103.
+The passive fixtures delete copying and omit default constructors. Both branch
+outcomes and repeated execution of the same binding exercise exact storage
+publication and rearming. Cleanup fixtures count constructions/destructions and
+check reverse cleanup order; constructor-failure fixtures require the original
+panic source, exit status 70, completed-field rollback, and enclosing-scope
+cleanup without destruction of the unpublished object.
+
+The gate runs C++20/C++23 at O0/O1/O3 with native optional elision disabled,
+followed by ASan/UBSan. Its `--case` selector is for focused development;
+`--emit-only` checks C++ admission only and is not runtime validation. This
+regression gate is being added before the repair: the existing compiler still
+rejects valid class-expression MIR during backend admission. No passing native
+or sanitizer evidence is claimed for the repair yet. Malformed-MIR mutation
+coverage must accompany the eventual representation change.
+
 ## Class field value publication and declaration defaults
 
 The optimized Release/Ninja compiler on macOS arm64 with LLVM 22.1.8 passes
