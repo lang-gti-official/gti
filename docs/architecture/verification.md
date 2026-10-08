@@ -669,10 +669,14 @@ checks layout and values. `bindgen_pipeline` also checks typedef chains,
 filtered/system callback aliases, non-writable const slots, zero-array rejection,
 and retained rejection of whole-array pointers, variadic and prototype-less
 callbacks. These imports use existing language capabilities; there is no new
-syntax or numbered-example census change. Matrix transport is checked in C;
-GTI nested indexing of native array fields is separately tracked in
-[#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175), not claimed
-as passing by this importer gate.
+syntax or numbered-example census change. Matrix transport is checked in C and
+GTI reads/writes its elements. `native_array_index_runtime` additionally covers
+three dimensions, constant and dynamic indices, read-only and mutable owners,
+element loans, independent C verification of writes, and out-of-bounds reads
+and writes in each dimension. It checks that a failed prefix prevents later
+index side effects in C++20/23 O0/O1/O3 and ASan/UBSan modes. The native-record
+pipeline pins unused-address storage elision without dropping prefix/terminal
+checks. These gates regress [#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175).
 
 The native-record/header/callback pipelines and runtime oracles, compiler/backend/
 driver library boundaries, LLVM link-policy checks, complete CLI/project

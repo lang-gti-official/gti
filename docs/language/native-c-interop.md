@@ -276,9 +276,11 @@ Zero-length array extensions, pointers to whole arrays, variadic callbacks and
 prototype-less callbacks are reported rather than approximated.
 
 See the runnable [callback-slot project](../../examples/native-callback-slots/README.md).
-Native multidimensional array transport is covered, but GTI nested indexing of
-a native record array currently has a separate backend representation defect
-([#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175)).
+Native multidimensional array fields support checked element reads and writes;
+each index keeps its bounds check and evaluation order, including failure before
+evaluating a later index. This repairs the backend row-address representation
+defect tracked in [#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175)
+without adding whole-array pointer or reference support.
 
 ### Imported enum representation
 

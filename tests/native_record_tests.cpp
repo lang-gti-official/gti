@@ -330,6 +330,43 @@ int main() {
          "elements are admitted");
 }
 
+void testNativeArrayRowProjection() {
+  const auto result = analyze("native-array-row.gti", R"(
+[[c_abi]] struct Matrix { c_int values[2][3]; };
+extern "C" { Matrix native_matrix(); }
+int main() {
+  auto matrix = native_matrix();
+  return int(matrix.values[1][2]);
+}
+)");
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "native nested indexing must retain verified array projections");
+  if (!result.canGenerateCode()) {
+    printDiagnostics(result);
+    return;
+  }
+  const auto optimizations =
+      lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O0);
+  const auto artifact =
+      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
+  const auto &text = artifact.contents;
+  expect(
+      text.find("raw_address<const std::array<std::int32_t, 3>>") ==
+              std::string::npos &&
+          text.find(
+              "static_cast<void>(::gti_internal::backend::raw_address_of(&") !=
+              std::string::npos,
+      "unused native row addresses must evaluate without invented std::array "
+      "pointer storage");
+  expect(
+      text.find(" = ::gti_internal::backend::mir_checked_array_bound_v1(") !=
+              std::string::npos &&
+          text.find(" = ::gti_internal::backend::mir_checked_array_read_v1(") !=
+              std::string::npos,
+      "eliding unused address storage must retain prefix and terminal bounds "
+      "checks");
+}
+
 void expectNativeRecordFailure(std::string_view name, std::string source,
                                std::string_view messageFragment) {
   const lang::FrontendResult result = analyze(name, std::move(source));
@@ -903,6 +940,7 @@ int main() {
   testSemanticLayoutAndAbi();
   testTargetMatrix();
   testRecordArrayFieldLayout();
+  testNativeArrayRowProjection();
   testNativeRecordDiagnostics();
   testNativeIdentifierPortability();
   testUnsafeBoundary();
