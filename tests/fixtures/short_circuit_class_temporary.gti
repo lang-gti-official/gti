@@ -1,0 +1,36 @@
+// A class temporary in a short-circuited operand exists only when that
+// operand is evaluated. Its full-expression drop at the join is conditional:
+// it must run exactly once when the temporary was constructed and not at all
+// when the operand was skipped.
+#include <std/string>
+#include <std/vector>
+
+mut int drops = 0;
+
+class Probe {
+  int value;
+public:
+  Probe(int value) : value(value) {}
+  Probe(Probe& other) = delete;
+  Probe(Probe&& other) = default;
+  ~Probe() { drops++; }
+  int get() { return this.value; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  // With no argument every right operand is skipped; with one argument every
+  // right operand is evaluated (and none of these conditions is taken).
+  bool evaluate = argc == 2;
+
+  if (evaluate && Probe(1).get() != 1) { return 1; }
+  if (!evaluate || Probe(2).get() == 2) {} else { return 2; }
+
+  // Library class temporaries follow the same rule.
+  if (evaluate && std::string("short").size() != std::size_t(5)) { return 3; }
+  if (!evaluate || std::string("circuit").size() == std::size_t(7)) {} else {
+    return 4;
+  }
+
+  std::println(drops);
+  return 0;
+}

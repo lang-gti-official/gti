@@ -33550,7 +33550,17 @@ private:
         throw std::logic_error(
             "verified MIR class drop lost its lifetime slot");
       }
-      output << "__gti_mir_p_" << *instruction.destination << ".destroy();\n";
+      // A conditional Drop joins paths on which the value may never have been
+      // constructed, such as a temporary in a short-circuited operand. Only
+      // an unconditional Drop is proven live on every incoming edge.
+      const bool conditional = std::any_of(
+          instruction.lifecycle.begin(), instruction.lifecycle.end(),
+          [](const MirLifecycleEvent &event) {
+            return event.kind == MirLifecycleEventKind::Drop &&
+                   event.conditional;
+          });
+      output << "__gti_mir_p_" << *instruction.destination
+             << (conditional ? ".destroy_if_engaged();\n" : ".destroy();\n");
       return;
     }
     if (instruction.kind == MirInstructionKind::Load) {
