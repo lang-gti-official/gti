@@ -9276,6 +9276,88 @@ void testConstructedCallbackConditionalArgument() {
   expect(constructors == 3, "fixture must cover three prepared constructors");
 }
 
+void testConditionalNumericConversionArgument() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/conditional_numeric_argument.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "conditional numeric argument fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+  expect(frontend.canGenerateCode(),
+         "alias and type-parameter conversions must retain verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "numeric argument conversion must preserve a receiver across later "
+         "conditional arguments");
+  std::size_t aliases = 0;
+  std::size_t parameters = 0;
+  for (const auto &entry : frontend.mir.functionInstances()) {
+    for (const auto &block : entry.body.blocks) {
+      for (const auto &conversion : block.instructions) {
+        if (conversion.kind != lang::MirInstructionKind::Call ||
+            conversion.info.type != lang::SemanticType::UInt8 ||
+            (conversion.intrinsic !=
+                 lang::IntrinsicKind::NumericAliasConversion &&
+             conversion.intrinsic !=
+                 lang::IntrinsicKind::NumericTypeParameterConversion))
+          continue;
+        if (conversion.intrinsic == lang::IntrinsicKind::NumericAliasConversion)
+          ++aliases;
+        else
+          ++parameters;
+        expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                   block.terminator.invokeInstruction == conversion.id,
+               "checked conversion retains its exact Invoke before the "
+               "argument diamonds");
+        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                           entry.id};
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(malformed, address);
+          auto *changedBlock = body->findBlock(block.id);
+          auto found = std::find_if(changedBlock->instructions.begin(),
+                                    changedBlock->instructions.end(),
+                                    [&](const auto &candidate) {
+                                      return candidate.id == conversion.id;
+                                    });
+          if (mutation == 0)
+            found->intrinsic = lang::IntrinsicKind::IntegerCheckedAdd;
+          else if (mutation == 1)
+            found->operands.push_back(found->operands.front());
+          else if (mutation == 2)
+            found->receiver = found->operands.front();
+          else if (mutation == 3) {
+            auto &term = changedBlock->terminator;
+            term.kind = lang::MirTerminatorKind::Goto;
+            term.invokeInstruction = 0;
+            term.failureRecord = 0;
+            term.elseTarget = 0;
+          } else
+            std::swap(changedBlock->terminator.target,
+                      changedBlock->terminator.elseTarget);
+          // The numeric intrinsic vocabulary is also checked by admission;
+          // generic MIR verification independently owns the operand and
+          // failure schedule, not every intrinsic's representation family.
+          if (mutation != 0)
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "forged conversion arity, receiver or failure schedule "
+                   "must fail MIR verification: " +
+                       std::to_string(mutation));
+          expect(!lang::CppMirBodyEmitter(malformed, map)
+                      .supportsFailureBodyText(address),
+                 "numeric staging does not admit malformed conversion "
+                 "schedules: " +
+                     std::to_string(mutation));
+        }
+      }
+    }
+  }
+  expect(aliases == 1 && parameters == 1,
+         "fixture must cover alias and concrete type-parameter conversions");
+}
+
 void testGenericScalarConstructedFieldPublication() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/associative_node_constructor.gti";
@@ -11944,6 +12026,8 @@ constexpr NamedTest kTests[] = {
      testOwningConstructedFieldInputTransfers},
     {"testConstructedCallbackConditionalArgument",
      testConstructedCallbackConditionalArgument},
+    {"testConditionalNumericConversionArgument",
+     testConditionalNumericConversionArgument},
     {"testErasedOwnedResultReturn", testErasedOwnedResultReturn},
     {"testFreshOwnedCallableArgument", testFreshOwnedCallableArgument},
     {"testGeneratedDefaultOwningFieldInitializer",
