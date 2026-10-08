@@ -153,7 +153,7 @@ int main() {
   }
   expect(joins == 3,
          "nonraising and raising passive class diamonds were exercised");
-  std::size_t groupedBodies = 0;
+  std::size_t groupedFixtures = 0;
   for (const std::string fixture :
        {"grouped_class_passive", "grouped_class_cleanup",
         "grouped_class_failure", "grouped_class_argument",
@@ -166,7 +166,6 @@ int main() {
     expect(frontend.canGenerateCode(), "grouped fixture has valid MIR");
     if (!frontend.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
     try {
       expect(!gti_test::emitCppText(frontend).empty(),
              "grouped class values emit without default construction or copy");
@@ -174,61 +173,104 @@ int main() {
       expect(false, error.what());
     }
     bool exercised = false;
-    for (const auto &function : frontend.mir.functionInstances()) {
-      for (const auto &block : function.body.blocks) {
-        for (const auto &identity : block.instructions) {
-          if (exercised || identity.kind != lang::MirInstructionKind::Compute ||
-              identity.operation != lang::MirOperation::Identity ||
-              identity.info.type.kind != lang::SemanticType::Class ||
-              !identity.result)
-            continue;
-          exercised = true;
-          ++groupedBodies;
-          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                             function.id};
-          expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                     .supportsFailureBodyText(address),
-                 "grouped body preserves exact publication");
-          const int mutationCount = identity.lifecycle.empty() ? 4 : 6;
-          for (int mutation = 0; mutation != mutationCount; ++mutation) {
-            auto malformed = frontend.mir;
-            auto *changed = const_cast<lang::MirFunctionInstance *>(
-                malformed.findFunctionInstance(function.id));
-            for (auto &changedBlock : changed->body.blocks) {
-              for (auto &instruction : changedBlock.instructions) {
-                if (instruction.id != identity.id)
-                  continue;
-                if (mutation == 0)
-                  instruction.operands.front().type =
-                      lang::SemanticType::Unknown;
-                else if (mutation == 1)
-                  instruction.operands.front().value = *instruction.result;
-                else if (mutation == 2)
-                  instruction.operands.push_back(instruction.operands.front());
-                else if (mutation == 3)
-                  instruction.lifecycle.push_back(
-                      {.kind = lang::MirLifecycleEventKind::Reparent,
-                       .source = 999998,
-                       .target = 999999});
-                else if (mutation == 4)
-                  instruction.lifecycle.clear();
-                else
-                  instruction.lifecycle.front().source =
-                      instruction.lifecycle.front().target;
-              }
+    // Class grouping is now a non-executing HIR source alias. Requiring an
+    // Identity instruction would test the obsolete grouping representation.
+    for (const auto &function : frontend.hir.functionInstances()) {
+      if (function.source == nullptr ||
+          function.source->name().source != path.string())
+        continue;
+      const auto *mir = frontend.mir.findFunctionInstance(function.id);
+      for (std::size_t index = 0;
+           index < function.body.directInitializations.size(); ++index) {
+        const auto &alias = function.body.directInitializations[index];
+        const auto *group = lang::exprAs<lang::Grouping>(alias.source);
+        if (group == nullptr)
+          continue;
+        exercised = true;
+        const auto *producer = function.body.findValue(alias.value);
+        expect(producer != nullptr &&
+                   function.body.valueForSource(*group->expression()) ==
+                       producer &&
+                   function.body.valueForSource(*alias.source) == producer &&
+                   producer->info.type == alias.type &&
+                   !alias.constructionProof &&
+                   std::none_of(
+                       function.body.values.begin(), function.body.values.end(),
+                       [&](const auto &v) { return v.source == alias.source; }),
+               "grouping shares the exact producer, not another executable "
+               "value or constructor");
+        expect(std::count_if(function.body.dropObligations.begin(),
+                             function.body.dropObligations.end(),
+                             [&](const auto &drop) {
+                               return drop.kind ==
+                                          lang::HirDropObligationKind::Value &&
+                                      drop.value == alias.value;
+                             }) <= 1,
+               "nested grouping cannot duplicate its producer's value drop");
+        std::size_t producers = 0;
+        if (mir != nullptr)
+          for (const auto &block : mir->body.blocks)
+            for (const auto &instruction : block.instructions) {
+              if (instruction.hirValue != alias.value || !instruction.result ||
+                  instruction.info.type != alias.type)
+                continue;
+              producers +=
+                  instruction.kind == lang::MirInstructionKind::Call ||
+                  instruction.kind == lang::MirInstructionKind::Construct ||
+                  instruction.kind == lang::MirInstructionKind::Move;
+              expect(instruction.kind != lang::MirInstructionKind::Compute ||
+                         instruction.operation != lang::MirOperation::Identity,
+                     "grouping does not add a MIR class identity lifetime");
             }
-            (void)lang::rebuildMirValueUses(changed->body);
-            expect(!lang::CppMirBodyEmitter(malformed, rows)
-                        .supportsFailureBodyText(address),
-                   "grouped publication rejects wrong types, cycles, extra "
-                   "operands and forged or missing lifecycle transfers");
+        expect(producers == 1,
+               "the grouped constructor, call or conditional move executes "
+               "once in MIR");
+        for (int mutation = 0; mutation != 7; ++mutation) {
+          auto malformed = frontend.hir;
+          auto &body = const_cast<lang::HirFunctionInstance *>(
+                           malformed.findFunctionInstance(function.id))
+                           ->body;
+          auto &changed = body.directInitializations[index];
+          if (mutation == 0)
+            changed.type = lang::SemanticType::Unknown;
+          else if (mutation == 1)
+            changed.producer = nullptr;
+          else if (mutation == 2)
+            changed.value = 0;
+          else if (mutation == 3)
+            std::erase_if(body.values,
+                          [&](const auto &v) { return v.id == alias.value; });
+          else if (mutation == 4)
+            body.directInitializations.push_back(changed);
+          else if (mutation == 5)
+            changed.source = changed.producer;
+          else if (producer != nullptr) {
+            auto extra = *producer;
+            extra.id = 1;
+            for (const auto &value : body.values)
+              extra.id = std::max(extra.id, value.id + 1);
+            extra.source = alias.source;
+            body.values.push_back(std::move(extra));
           }
+          const auto verified =
+              lang::verifyHirProgramPlans(frontend.semantics, malformed);
+          expect(std::any_of(verified.errors.begin(), verified.errors.end(),
+                             [](const auto &error) {
+                               return error.find("class result alias") !=
+                                      std::string::npos;
+                             }),
+                 "grouping rejects wrong type, missing source/value, erased "
+                 "producer, duplicate/retargeted alias or extra execution");
         }
       }
     }
+    expect(exercised,
+           "each fixture exercises its own grouping aliases: " + fixture);
+    groupedFixtures += exercised;
   }
-  expect(groupedBodies == 6,
-         "all grouped producer and conditional-move bodies were exercised");
+  expect(
+      groupedFixtures == 6,
+      "all six grouped producer and conditional-move fixtures were exercised");
   std::size_t argumentStages = 0;
   for (const std::string fixture :
        {"conditional_class_argument", "conditional_class_argument_failure"}) {
