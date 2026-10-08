@@ -133,6 +133,27 @@ if __name__ == "__main__":
             "if (true) return gauge.replace_parameter(3);", "return 0;"))
         paths["scalar_move_success"] = path
         cases["scalar_move_success"] = [((), (0, "", ""))]
+        staging = fixture.parent / "optimizer_value_staging.gti"
+        stage_source = staging.read_text()
+        sites = [index for index, text in enumerate(stage_source.splitlines(), 1)
+                 if text.strip() == "return this.value + 1;"]
+        assert len(sites) == 4
+        paths["value_stage_raw_write"] = staging
+        cases["value_stage_raw_write"] = [((), (70, "",
+            f"{staging.name}:{sites[2]}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "value_stage_unsafe_call.gti"
+        path.write_text(stage_source.replace(
+            "if (true) return gauge.after_raw_write();", ""))
+        paths["value_stage_unsafe_call"] = path
+        cases["value_stage_unsafe_call"] = [((), (70, "",
+            f"{path.name}:{sites[3]}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "value_stage_success.gti"
+        path.write_text(stage_source.replace(
+            "if (true) return gauge.after_raw_write();", "return 0;"))
+        paths["value_stage_success"] = path
+        cases["value_stage_success"] = [((), (0, "", ""))]
         guard = fixture.parent / "optimizer_boolean_guards.gti"
         guard_source = guard.read_text()
         # The detectors are compiler-private. Test them behind a temporary

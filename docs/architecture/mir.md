@@ -739,6 +739,16 @@ or abandoned through its represented terminal failure cleanup. Owning arguments
 remain active until the construction handoff. The source owner publishes its
 initialized length only after construction succeeds.
 
+An operation-free `CallInput(Value)` forwarding one already computed SSA value
+does not inherit the source expression's unsafe-operation classification.
+The executed `Load`, pointer `Compute` or selected unsafe `Call` keeps that
+classification and its actual memory effects. This suppression requires exact
+typed SSA forwarding, no place access, destination, receiver, loan, target,
+intrinsic, lifecycle, synchronization or prepared-owner/drop metadata. Explicit
+stage metadata and owning, borrowed and retained-receiver stages are unchanged.
+Source spans and ownership events remain attached; preparation does not execute
+the earlier expression a second time or relax its lexical unsafe obligations.
+
 MIR independently checks the selected target, typed inputs, dominance, failure
 sites and cleanup transfers. The object-lifetime operation's effects compose
 with the selected constructor's effects, and the original failure record drives

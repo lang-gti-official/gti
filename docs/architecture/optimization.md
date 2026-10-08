@@ -339,6 +339,12 @@ A selected unsafe source function is analyzed under the ordinary exact-call
 rules, including its actual raw barriers. Its declaration's caller obligations
 remain unchanged. Unrelated record and scalar regressions distinguish pure
 address computation and a pure unsafe declaration from a real raw write.
+Neutral SSA-value call staging no longer repeats its producer's unsafe
+classification. Actual raw loads, stores and unsafe calls still reach their
+own barriers before that stage. Unrelated ordinary records distinguish inert
+address relay from raw reads, raw writes and an unsafe callee's write. The
+source-prefix client's original exact bounds-and-read proof is recovered;
+raw-backed element envelopes are not implied by this preparation rule.
 
 The trusted scalar bounds detector has no memory transfer: its exact void
 call takes two staged `uint64_t` values, compares them and may raise its defined

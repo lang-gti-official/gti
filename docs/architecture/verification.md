@@ -473,6 +473,20 @@ requirements still fail and have not been weakened.
 The same frozen compiler also passes source owner/resource/string runtime gates
 in 89.62 seconds and the aggregate compiler pipeline in 43.51 seconds.
 
+The following neutral-value-staging correction passes all eight focused
+compiler/optimizer/source-contract gates in 43.81 seconds, the expanded
+24-fixture/eight-mode matrix (192 native executions) in 114.77 seconds, and the
+source owner/resource/string plus raw-context runtime selection in 95.07 seconds.
+Actual pointer arithmetic, raw reads/writes and an unsafe callee's write retain
+their execution classifications; only exact operation-free SSA preparation
+stops repeating them. The original exact public-bounds/matching-read unit
+requirement now passes. `optimizer_safety` retains six unmet original
+requirements, and the freshly relinked `optimizer_safety_native_evidence`
+retains its three proof/emission failures (18.26 seconds). These are remaining
+acceptance failures, not changed zero-proof expectations. Formatting and diff
+checks pass; broad corpus, inventories, installed consumers and performance
+acceptance are still outstanding.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

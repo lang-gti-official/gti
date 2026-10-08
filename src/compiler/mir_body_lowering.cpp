@@ -2321,9 +2321,36 @@ private:
     }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
+        const bool neutralValueStage =
+            instruction.kind == MirInstructionKind::CallInput &&
+            instruction.callInputKind == HirCallInputKind::Value &&
+            instruction.result && !instruction.destination &&
+            !instruction.receiver && !instruction.loan &&
+            instruction.intrinsic == IntrinsicKind::None &&
+            instruction.operation == MirOperation::None &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Value &&
+            instruction.operands.front().value != 0 &&
+            instruction.operands.front().place == 0 &&
+            instruction.operands.front().loan == 0 &&
+            instruction.operands.front().type == instruction.info.type &&
+            instruction.lifecycle.empty() && !instruction.functionTarget &&
+            !instruction.constructorTarget && !instruction.bodyTarget &&
+            !instruction.nativeCallbackAdapter &&
+            !instruction.threadTaskAdapter &&
+            !instruction.preparedParameterDrop &&
+            !instruction.retainedOwnerPlace && !instruction.successResultDrop &&
+            !instruction.successResultDestination &&
+            instruction.synchronization.kind ==
+                SynchronizationOperationKind::None;
         // Object lifetime manipulation is one explicit call, not an assertion
         // by its surrounding full-expression/lifecycle bookkeeping markers.
+        // A neutral Value stage likewise forwards an already computed SSA
+        // value. The source Load/Compute/Call retains its unsafe operation;
+        // preparation must not claim to execute that operation a second time.
+        // Explicit stage annotations and all owning/borrowing stages remain.
         if (source->unsafeOperation != UnsafeOperationKind::None &&
+            !neutralValueStage &&
             (source->unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
              instruction.kind == MirInstructionKind::Call)) {
           instruction.unsafeOperation = source->unsafeOperation;
