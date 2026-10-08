@@ -138,6 +138,10 @@ class list<T> {
   }
 
 public:
+  using iterator = detail::list_mut_iterator<T>;
+  using const_iterator = detail::list_iterator<T>;
+  using sentinel = detail::list_sentinel<T>;
+
   list() {}
   static list<T> collection_init(uint64_t count) { return list<T>(); }
   static list<T> collection_insert(mut list<T> collection, T element) requires std::movable<T> {

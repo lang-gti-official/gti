@@ -57,6 +57,9 @@ class resource_vector<std::resource_vector_element T, std::memory_resource R> {
   }
 
 public:
+  using const_iterator = detail::resource_vector_iterator<T, R>;
+  using sentinel = detail::resource_vector_sentinel;
+
   resource_vector(resource_ref<R> resource)
       : slots(resource_storage<T, R>(resource)) {}
   resource_vector(resource_vector<T, R>& other) = delete;

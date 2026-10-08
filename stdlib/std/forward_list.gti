@@ -74,6 +74,9 @@ namespace std {
     }
 
   public:
+    using const_iterator = detail::forward_list_iterator<T>;
+    using sentinel = detail::forward_list_sentinel<T>;
+
     forward_list() {}
 
     forward_list(forward_list<T>& other) = delete;

@@ -83,6 +83,9 @@ class span<T> {
   }
 
 public:
+  using const_iterator = detail::span_iterator<T>;
+  using sentinel = detail::span_sentinel;
+
   // The parameter type is a compiler-private storage capability, so this
   // constructor is available to the standard library but not application
   // lookup. Public owners expose checked as_span() factories instead.
@@ -164,6 +167,10 @@ class mutable_span<T> {
   }
 
 public:
+  using iterator = detail::mutable_span_iterator<T>;
+  using const_iterator = detail::span_iterator<T>;
+  using sentinel = detail::span_sentinel;
+
   mutable_span(mut gti_internal::prefix_storage<T>& source,
                size_t offset, size_t count)
       : data(source), first_position(offset), element_count(count) {}
