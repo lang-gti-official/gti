@@ -140,7 +140,9 @@ void checkNamedPlaceStores(const lang::FrontendResult &frontend) {
           continue;
         ++stores;
         const auto *destination =
-            function.body.findPlace(instruction.destination);
+            instruction.destination
+                ? function.body.findPlace(*instruction.destination)
+                : nullptr;
         expect(destination != nullptr &&
                    destination->root == lang::MirPlaceRootKind::Loan &&
                    destination->access == lang::AccessMode::Mutable,
@@ -165,10 +167,11 @@ void checkNegative(std::string declarations, std::string body,
                    std::string_view expectedCode = {},
                    std::string_view expectedMessage = {}) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const std::string input =
+      std::move(declarations) + "int main(){" + body + "}";
   const auto result = lang::Frontend().analyze(
-      "operator-place-negative.gti",
-      std::move(declarations) + "int main(){" + body + "}",
-      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      "operator-place-negative.gti", input, {root / "stdlib/prelude.gti"}, {},
+      {root / "stdlib"});
   const auto error = std::find_if(
       result.diagnostics.begin(), result.diagnostics.end(),
       [](const auto &diagnostic) {
@@ -190,10 +193,24 @@ void checkNegative(std::string declarations, std::string body,
                  diagnostic.message.find(expectedMessage) != std::string::npos;
         });
     expect(located != result.diagnostics.end() &&
-               located->primary.source == "operator-place-negative.gti" &&
+               located->primary.source == std::filesystem::weakly_canonical(
+                                              "operator-place-negative.gti")
+                                              .string() &&
                located->primary.end > located->primary.start,
            "the invalid place has its owning semantic diagnostic and exact "
            "source identity");
+    if (located == result.diagnostics.end()) {
+      std::cerr << "Expected " << expectedCode << " containing '"
+                << expectedMessage << "' for " << body << '\n';
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    if (located != result.diagnostics.end() && expectedCode == "GTI-S2002") {
+      expect(located->primary.start == input.rfind("= 2;") &&
+                 located->primary.end == located->primary.start + 1,
+             "an invalid reference-result store highlights its exact '=' "
+             "rather than the accessor or receiver");
+    }
   }
   if (error == result.diagnostics.end())
     for (const auto &diagnostic : result.diagnostics)
@@ -306,9 +323,26 @@ public:
                 "mut Cursor cursor{}; bool compared = cursor != End(); "
                 "return compared ? 1 : 0;",
                 "GTI-S2022", "No exact overload");
+  auto ambiguousSentinel = sentinelDeclarations;
+  ambiguousSentinel.insert(ambiguousSentinel.find("bool operator!="),
+                           "bool operator!=(End end){return true;} ");
+  checkNegative(ambiguousSentinel,
+                "return int32_t(std::distance(Cursor(), End()));", "GTI-S2029",
+                "std::sentinel_for");
+  auto moveOnlySentinel = sentinelDeclarations;
+  moveOnlySentinel.replace(moveOnlySentinel.find("class End {};"),
+                           std::string_view("class End {};").size(),
+                           "class End{ public: End(){} "
+                           "End(End& other)=delete; "
+                           "End(End&& other)=default; };");
+  moveOnlySentinel.replace(moveOnlySentinel.find("End& end"),
+                           std::string_view("End& end").size(), "End end");
+  checkNegative(moveOnlySentinel,
+                "return int32_t(std::distance(Cursor(), End()));", "GTI-S2029",
+                "std::sentinel_for");
   checkNegative("float identity(float value){return value;}",
                 "float result = identity(16777217); return int32_t(result);",
-                "GTI-S2012", "exactly matches");
+                "GTI-S2003", "parameter requires 'float'");
   checkNegative("class Scalar{ public: Scalar(float value){} };",
                 "Scalar result = Scalar(16777217); return 0;", "GTI-S2012",
                 "exactly matches");

@@ -41,7 +41,7 @@
     "128-inline-object-pool.gti": 520,
     "129-generic-payload-enums.gti": 398,
     "13-ownership.gti": 75,
-    "14-operators.gti": 51,
+    "14-operators.gti": 52,
     "15-variadic-generics.gti": 49,
     "16-move-generics.gti": 71,
     "17-standard-array.gti": 38,
