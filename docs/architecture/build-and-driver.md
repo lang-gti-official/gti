@@ -12,7 +12,7 @@ GTI has one language compilation pipeline and two user entry modes:
 
 ```text
 gti source.gti ...                 direct mode
-gti build|check|run|test|clean|metadata project mode
+gti build|check|run|test|install|clean|metadata project mode
                  \                /
                   gti_driver requests
                          -> Frontend
@@ -1555,6 +1555,64 @@ The direct compilation driver retains standard-library include advice by
 calling the same compiler suggestion service after its loaded-input frontend;
 it does not need a second header catalog or a project scan on successful builds.
 
+### Installing Programs
+
+`gti install [target]` builds one executable target exactly as `gti build`
+would and copies the result into `<root>/bin`, so it can be run by name.
+`gti uninstall <name>...` removes programs it installed, and
+`gti install --list` prints them. This first phase supports macOS and Linux;
+on Windows both commands exit with a usage error.
+
+```text
+$ gti install
+  Building  tea (release, arm64-apple-macos)
+       ...
+  Finished  tea (4.10s)
+Installed tea [release, arm64-apple-macos] -> /Users/me/.local/bin/tea
+$ gti uninstall tea
+Removed tea -> /Users/me/.local/bin/tea
+```
+
+- **Source.** The project is resolved from the current directory, or from
+  `--path <dir>`. Target selection, `--package`, dependency policy, and every
+  build override match `gti build`. Test and library targets are refused, as
+  is a `--target` triple other than the host, because the program is placed on
+  this machine.
+- **Profile.** `release` unless `--profile`/`--release` selects one.
+- **Root.** `--root <dir>`, then `GTI_INSTALL_ROOT`, then `$HOME/.local`. The
+  default matches the README's toolchain install prefix, so the programs land
+  beside `gti` in a directory that is normally already on `PATH`. A relative
+  `--root` resolves against the current directory; a relative
+  `GTI_INSTALL_ROOT` and the filesystem root are refused. When `<root>/bin` is
+  not on `PATH`, install prints a note on stderr.
+- **Ownership record.** `<root>/share/gti/installs.toml` records each
+  installed program's file name, package, version, target, profile, and
+  source package root. It is the ownership boundary, because the default root
+  is shared with other tools. Install replaces a program only when the record
+  names the same package. A file the record does not name, or one recorded for
+  another package, is refused (exit 64) before building, and left untouched,
+  unless `--force` is given. Uninstall removes only recorded names. A record
+  that cannot be read, or that names a program with a path separator or
+  traversal, fails closed (exit 74); it is never treated as empty or obeyed.
+- **Publication.** The executable is copied to a staged sibling, made
+  `0755`, and renamed over the destination. A running copy of the previous
+  program keeps its file, and no reader sees a partial one. The record is
+  rewritten through the same stage-and-rename step, before the program is
+  published: a record without its file is harmless, while an unrecorded file
+  would block the next install. A failed publication tries to restore the
+  previous record. An exclusive `flock` on `<root>/share/gti/installs.lock` serializes
+  record updates between concurrent `gti` processes.
+- **Removal.** Uninstall attempts every name it is given and returns the first
+  failure's status: 64 for a name that is not recorded, 74 for a filesystem
+  failure. A recorded program whose file is already gone only loses its
+  record, with a warning. One whose file is no longer a regular file was
+  changed by something else and is left alone, record included.
+
+The driver owns root resolution, the record, and publication
+(`gti/driver/install.h`); the CLI owns arguments, the build, and messages.
+Installed programs are copies, so `gti clean` does not affect them. Building
+still uses the project's own `build/gti` directory and cache.
+
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a workspace-local,
@@ -1833,7 +1891,9 @@ the GTI runtime archive and runtime headers are still discovered once for the
 host toolchain, so a cross link needs a target-built runtime supplied through
 `GTI_RUNTIME_LIBRARY`/`GTI_RUNTIME_INCLUDE`. `gti metadata` still reports the
 host target, and `gti run`/`gti test` refuse a non-host target rather than
-modelling a runner or emulator.
+modelling a runner or emulator. `gti install` supports macOS and Linux only,
+installs from a local project (not a registry or Git source), and installs one
+target per invocation.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP consumes the driver-published project facts for its default host-target

@@ -103,7 +103,7 @@ package as a command target is diagnosed; depending on and including its source
 does not require a dummy executable/test declaration.
 
 Project mode supports `gti build`, `gti check`, `gti run`, `gti test`,
-`gti clean`, and `gti metadata`. It discovers `gti.toml` upward from the
+`gti install`, `gti uninstall`, `gti clean`, and `gti metadata`. It discovers `gti.toml` upward from the
 working directory,
 parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 1 with exact source spans, resolves executable/test targets and named profiles,
@@ -594,6 +594,8 @@ gti new <path> ...              new executable package scaffolding
 gti init [path] [--git] ...     existing-directory package scaffolding
 gti test ...                    project test mode
 gti verify ...                  recorded-provenance verification mode
+gti install ...                 build and install an executable target
+gti uninstall <name>...         remove an installed program
 gti clean ...                   project cleanup mode
 gti fetch ...                   dependency acquisition mode
 gti metadata ...                machine-readable project description
@@ -649,6 +651,10 @@ gti init
 gti init existing/project --name project
 gti init existing/project --git
 gti test
+gti install
+gti install chip8 --path ../chip8 --root ~/tools
+gti install --list
+gti uninstall chip8
 gti clean
 gti metadata --format json
 ```
@@ -1509,6 +1515,40 @@ Acceptance criteria:
   native C sources rather than reaching for host `cc`;
 - **Passed:** a host plan and a cross plan of one package never share a
   project model identity.
+
+### Post-Milestone 7 addition: program installation
+
+Status: phase 1 implemented for macOS and Linux. The current contract is in
+[Installing Programs](../architecture/build-and-driver.md#installing-programs).
+
+`gti install` builds one executable target of a local project with the
+`release` profile and copies it into `<root>/bin` (default `~/.local`).
+`gti uninstall` removes it. An ownership record under
+`<root>/share/gti/installs.toml` limits replacement and removal to programs
+install placed. Phase 1 acceptance:
+
+- **Passed:** default root, `GTI_INSTALL_ROOT`, and `--root` precedence;
+  relative and missing roots are refused;
+- **Passed:** the installed program is a copy that survives `gti clean`, with
+  `0755` permissions, published by rename;
+- **Passed:** same-package reinstall replaces without `--force`; an unrecorded
+  file or another package's program is refused before building and left
+  untouched unless `--force` is given;
+- **Passed:** test targets and non-host `--target` triples are refused;
+- **Passed:** uninstall removes only recorded names, tolerates an already
+  deleted file, leaves a replaced file alone, and continues past failures;
+- **Passed:** an unreadable record or one naming a path outside `<root>/bin`
+  fails closed.
+
+Later phases:
+
+- Windows: `.exe` names, `%LOCALAPPDATA%`-style default root, `ReplaceFileW`
+  publication of a possibly running program, and `LockFileEx` for the record;
+- registry and pinned Git sources (`gti install <package>[@requirement]`)
+  through the existing resolver and package cache, without a consumer
+  workspace;
+- installing every executable target of a package, and skipping an up-to-date
+  reinstall.
 
 ## Testing Strategy
 
