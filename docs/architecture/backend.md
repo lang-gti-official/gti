@@ -40,6 +40,14 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+A staged call receiver can cross the existing scalar conditional-argument
+control flow when its exact origin remains unchanged. Checked numeric alias
+and concrete type-parameter conversions use MIR's numeric-intrinsic `Call`
+representation; they receive the same staging admission as `Compute/Convert`.
+The conversion still executes at its own instruction, with its original Invoke
+and failure cleanup before later arguments. This does not admit arbitrary
+intervening calls, receiver mutation, raw memory operations or new loan shapes.
+
 Signature-pattern primaries retain both their resolved public argument shapes
 and binder projections in sealed lowered declarations. Native template carriers
 spell a primary with the public arity and one patterned definition; GTI has

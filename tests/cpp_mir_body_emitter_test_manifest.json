@@ -578,6 +578,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testConditionalNumericConversionArgument",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testErasedOwnedResultReturn",
       "suite": "lifecycle"
     },

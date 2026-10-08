@@ -34,15 +34,41 @@ nor checked ownership.
 The process resource now validates alignment and native-size limits, handles
 zero-size requests, selects its target provider and maps failures in GTI source.
 POSIX uses `posix_memalign`/`free`; Windows uses the matching CRT
-`_aligned_malloc`/`_aligned_free` family. Narrow forwarding adapters still bridge
-the currently unsupported native `size_t`, POSIX `void**` and reserved CRT symbol
-spellings; they contain no GTI allocation policy. Sparse typed owners now keep
-their slot state in ordinary GTI and lease its bytes from the same provider as
+`_aligned_malloc`/`_aligned_free` family. GTI can now express native `c_size_t`
+and POSIX `void**`. The narrow, uniquely named v1 forwarding ABI remains useful
+because C symbols may be declared only once per GTI program: private provider
+declarations must coexist with applications' own `posix_memalign` and `free`
+bindings. Windows CRT symbols also have reserved leading-underscore spellings.
+Native facts (size limits, POSIX constants, pointer alignment) remain small
+host observations. The adapters contain no GTI allocation policy. Sparse typed
+owners now keep their slot state in ordinary GTI and lease its bytes from the same provider as
 their object region. Public unsafe manual-lifetime operations supply typed
 construction, destruction and relocation; raw validity remains the programmer's
 obligation. The specialized sparse capability type, intrinsic family, adoption
 marker, native bitmap and backend storage helpers are retired. This implementation
-change does not by itself claim completion of the campaign's broader validation.
+change is verified separately from the remaining allocation families below.
+
+### Allocation inventory and remaining boundaries
+
+The S-ALLOC-07 migration covers `std::allocator::try_storage`, sparse
+`std::storage`, arenas/pools backed by that storage, and `std::process_resource`
+used by resource-backed storage/containers. Both object and live-state regions
+use the selected source provider. Zero capacity allocates neither; failure to
+obtain metadata releases the object region before returning an error.
+
+| Allocation family | Current owner and rationale |
+| --- | --- |
+| Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
+| Prefix storage used by strings/vectors and related clients | `cpp_support_preamble.cpp` still pairs aligned native new/delete with prefix bookkeeping. Migrating this distinct representation and its character terminator policy is separate work; S-ALLOC-07 does not claim all containers use the source provider. |
+| Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Shared ownership additionally uses its native control block. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
+| Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
+| Compiler and tool memory | C++ containers in compiler, driver, LSP and tooling are host implementation state, outside GTI-program allocation policy. |
+
+No surviving adapter selects a GTI constructor, owns a slot bitmap, grows a
+container or establishes a checked borrow. Retaining the fixed-width v1 ABI
+does not imply `uint64_t` is C's `size_t`: source checks the native limit before
+the adapter converts to the actual C type. The private forwarding symbols also
+provide a deterministic test seam for exhaustion, rollback and matching release.
 
 ## Public Library
 
@@ -340,16 +366,16 @@ repository consumer and is retired rather than retaining a second validation
 policy. The replacement native ABI in `<gti/memory.h>` exposes only target facts
 and forwarding operations with documented caller preconditions. Native `size_t`
 is not GTI's `std::size_t = uint64_t`; adapters perform that conversion only after
-source validation. POSIX's unsupported `void**` stays local to its adapter.
-CRT leading-underscore symbols are inaccessible through the current native-name
-rules, so Windows release also uses a forwarding adapter. Remove these adapters
-when general exact native scalar/output-pointer/symbol binding support can
-express their signatures. `free(void*)` is expressible directly, but the stdlib
-uses a uniquely named forwarding release adapter: the current C ABI rejects
-compatible duplicate symbol declarations, and a hidden private `free` declaration
-would otherwise prevent applications from declaring their own libc binding.
-Canonical reusable native declarations are the removal prerequisite for this
-last forwarding seam. The independent libc-region example uses ordinary `free`.
+source validation. General `c_size_t` and nested-pointer support can now express
+the POSIX signature. Its uniquely named allocation and release forwarders remain
+because the current C ABI rejects even compatible duplicate symbol declarations;
+private declarations of `posix_memalign` or `free` would otherwise prevent
+applications from declaring their own libc bindings. CRT leading-underscore
+symbols are also inaccessible through the current native-name rules. Reusable
+native declarations and exact reserved-symbol binding are the respective removal
+prerequisites, rather than missing scalar/output-pointer support. Native target
+constants may still need a narrow host boundary. The independent libc-region
+example uses ordinary `malloc(c_size_t)` and `free`.
 
 Sparse object regions and live metadata now use this source-owned provider
 policy, including default typed factories. Other generated-program allocations
