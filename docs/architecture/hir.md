@@ -541,6 +541,28 @@ selection, or recognize the source-defined `std::thread` wrapper.
 
 ## Executable Values
 
+Same-type fresh-result construction and class-value grouping are non-executing
+source aliases. `HirDirectInitialization` retains each wrapper's source,
+immediate producer, exact concrete type and shared `HirValueId`. A construction
+also retains its semantically selected concrete class-instance owner; grouping
+has no construction owner. Lowering returns
+the producer's existing value rather than adding an Identity/Construct value
+and competing drop obligation. Full-expression roots, initialization plans and
+range plans resolve these aliases with `HirBody::valueForSource`; the public
+source-value index also retains every wrapper. HIR verification rejects a
+missing/retyped producer, a forged selected-construction decision, a transfer
+disguised as fresh construction, and a mismatched shared value identity. An
+ordinary/lambda/deferred invocation or executable outer value cannot be erased
+by adding an alias, even when its result and argument have the same class type.
+Grouping an explicit move stays transparent without making that move fresh.
+
+MIR consequently receives the same actual producer and initialization/loan/drop
+schedule as the unwrapped expression. It verifies those executable operations
+and failure/publication edges normally. There is no new backend elision choice
+or source-only executable path. The constexpr compatibility adapter likewise
+forwards to the existing producer evaluator; staged MIR erases the wrapper
+before execution, rather than implementing another constructor rule.
+
 HIR bodies retain source operand vectors and attach semantic type/category,
 access, ownership, selected call/operator/constructor, intrinsic,
 synchronization, dispatch, unsafe, move, and borrow facts to explicit values

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Mac-local GTI toolchain and configure a local Lazy plugin checkout."""
+"""Install a Mac-local GTI toolchain for terminal commands and Neovim."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import tempfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+TOOLS = ("gti", "gti_lsp")
 
 
 def default_jobs():
@@ -81,6 +82,76 @@ def write_config(path, content, replace):
     finally:
         temporary.unlink(missing_ok=True)
     return backup
+
+
+def check_commands(directory, toolchain, replace):
+    if directory.exists() and not directory.is_dir():
+        raise ValueError(f"terminal command directory is not a directory: {directory}")
+    for tool in TOOLS:
+        destination = directory / tool
+        target = toolchain / "bin" / tool
+        if destination.is_symlink() and destination.resolve() == target.resolve():
+            continue
+        if destination.exists() or destination.is_symlink():
+            if destination.is_dir() or not replace:
+                raise ValueError(f"{destination} already exists; inspect it, then use "
+                                 "--replace-bin to replace it with a saved backup")
+
+
+def activate_commands(directory, toolchain, replace):
+    check_commands(directory, toolchain, replace)
+    directory.mkdir(parents=True, exist_ok=True)
+    changed = []
+    # Stage both links first and roll back either command if publication fails.
+    with tempfile.TemporaryDirectory(prefix=".gti-links-", dir=directory) as scratch:
+        links = pathlib.Path(scratch)
+        for tool in TOOLS:
+            (links / tool).symlink_to(toolchain / "bin" / tool)
+        try:
+            for tool in TOOLS:
+                destination = directory / tool
+                if destination.is_symlink() and destination.resolve() == (toolchain / "bin" / tool).resolve():
+                    continue
+                backup = None
+                if destination.exists() or destination.is_symlink():
+                    descriptor, name = tempfile.mkstemp(prefix=tool + ".backup-",
+                                                      suffix=".bak", dir=directory)
+                    os.close(descriptor)
+                    backup = pathlib.Path(name)
+                    try:
+                        os.replace(destination, backup)
+                    except OSError:
+                        backup.unlink()
+                        raise
+                changed.append((destination, backup))
+                os.replace(links / tool, destination)
+        except OSError:
+            for destination, backup in reversed(changed):
+                if backup is not None:
+                    os.replace(backup, destination)
+                else:
+                    destination.unlink(missing_ok=True)
+            raise
+    return [backup for _, backup in changed if backup is not None]
+
+
+def validate_installed_toolchain(toolchain):
+    required = ("share/gti/VERSION", "share/gti/parser/gti.so",
+                "share/gti/stdlib/prelude.gti", "lib/libgti_runtime.a")
+    for relative in required:
+        if not (toolchain / relative).is_file():
+            raise ValueError(f"installed toolchain is missing {relative}; rebuild before activation")
+    version = (toolchain / "share/gti/VERSION").read_text().strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("installed toolchain has an invalid VERSION")
+    for tool in TOOLS:
+        executable = toolchain / "bin" / tool
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise ValueError(f"installed toolchain is missing executable {executable}")
+        result = run([executable, "--version"], capture=True)
+        if result.stdout.strip() != f"{tool} {version}":
+            raise ValueError(f"{tool} does not match installed toolchain VERSION {version}")
+    return version
 
 
 def cache_values(build):
@@ -159,6 +230,15 @@ def main():
                         help="Lazy spec file (default: Neovim's lua/plugins/gti.lua)")
     parser.add_argument("--replace-config", action="store_true",
                         help="back up and replace an existing different Lazy spec")
+    parser.add_argument("--bin-dir", type=pathlib.Path,
+                        default=pathlib.Path.home() / ".local/bin",
+                        help="terminal command directory (default: ~/.local/bin)")
+    parser.add_argument("--replace-bin", action="store_true",
+                        help="back up and replace existing different terminal commands")
+    parser.add_argument("--no-terminal", action="store_true",
+                        help="configure Neovim without installing terminal commands")
+    parser.add_argument("--activate-only", action="store_true",
+                        help="validate and activate the existing toolchain without rebuilding")
     parser.add_argument("--jobs", type=int, default=default_jobs(),
                         help="parallel build jobs (default: all detected CPUs)")
     parser.add_argument("--dry-run", action="store_true",
@@ -168,7 +248,8 @@ def main():
         parser.error("this installer is for macOS")
     if args.jobs < 1:
         parser.error("--jobs must be a positive integer")
-    for executable in ("cmake", "nvim", "tar", "c++"):
+    prerequisites = ("nvim",) if args.activate_only else ("cmake", "nvim", "tar", "c++")
+    for executable in prerequisites:
         if not shutil.which(executable):
             parser.error(f"{executable} is required; see README's local Neovim setup")
     nvim = ["nvim", "--headless", "-u", "NONE", "-i", "NONE", "-n"]
@@ -177,15 +258,31 @@ def main():
     configuration = configuration.expanduser().absolute()
     content = lazy_config(ROOT)
     check_config(configuration, content, args.replace_config)
+    toolchain = ROOT / "toolchain"
+    bin_dir = args.bin_dir.expanduser().absolute()
+    if not args.no_terminal:
+        if bin_dir.resolve() == toolchain.resolve() or bin_dir.resolve().is_relative_to(toolchain.resolve()):
+            parser.error("--bin-dir must not be inside the installed toolchain")
+        check_commands(bin_dir, toolchain, args.replace_bin)
+    if toolchain.is_symlink():
+        parser.error("refusing to replace a symlinked toolchain directory")
+    if (ROOT / ".gti-toolchain-backup").exists():
+        parser.error("a previous installer backup exists; recover it before reinstalling")
+    if args.activate_only:
+        version = validate_installed_toolchain(toolchain)
+        print(f"Existing toolchain: {toolchain} (GTI {version})\nLazy config: {configuration}")
+        if not args.no_terminal:
+            print(f"Terminal commands: {bin_dir}")
+        if args.dry_run:
+            return
+        finish_activation(configuration, content, args.replace_config,
+                          bin_dir, toolchain, args.replace_bin, args.no_terminal, version)
+        return
     build = args.build_dir.expanduser().resolve()
     if build == ROOT or ROOT.is_relative_to(build):
         parser.error("--build-dir must not be the source checkout or its parent")
     if build == ROOT / "toolchain" or build.is_relative_to(ROOT / "toolchain"):
         parser.error("--build-dir must not be inside the installed toolchain")
-    if (ROOT / "toolchain").is_symlink():
-        parser.error("refusing to replace a symlinked toolchain directory")
-    if (ROOT / ".gti-toolchain-backup").exists():
-        parser.error("a previous installer backup exists; recover it before reinstalling")
     llvm_dir = args.llvm_dir or os.environ.get("LLVM_DIR")
     if llvm_dir:
         llvm_dir = pathlib.Path(llvm_dir).expanduser().resolve()
@@ -196,11 +293,15 @@ def main():
         llvm_dir = discover_llvm()
         if llvm_dir is None:
             parser.error("no supported LLVM 18 through 22 found; install a supported "
-                         "LLVM (including libclang), then pass --llvm-dir")
+                         "LLVM (including libclang), for example brew install llvm@22, "
+                         "then pass --llvm-dir. To restore commands from an already "
+                         "installed toolchain without rebuilding, use --activate-only")
     configure = configure_command(build, llvm_dir)
     if "-G" in configure and not shutil.which("ninja"):
         parser.error("Ninja is required for a fresh build")
     print(f"Build: {build}\nToolchain: {ROOT / 'toolchain'}\nLazy config: {configuration}")
+    if not args.no_terminal:
+        print(f"Terminal commands: {bin_dir}")
     print(f"Parallel build jobs: {args.jobs}")
     print("macOS runtime libraries will be bundled; build prerequisites remain external.")
     if args.dry_run:
@@ -242,7 +343,23 @@ def main():
         run([*nvim, "-l", ROOT / "tests/nvim_plugin_smoke_test.lua"],
             env=environment)
         run(nvim + ["-l", ROOT / "scripts/install_neovim_local.lua"], env=environment)
-    backup = write_config(configuration, content, args.replace_config)
+    validate_installed_toolchain(toolchain)
+    finish_activation(configuration, content, args.replace_config,
+                      bin_dir, toolchain, args.replace_bin, args.no_terminal, version)
+
+
+def finish_activation(configuration, content, replace_config, bin_dir,
+                      toolchain, replace_bin, no_terminal, version):
+    if not no_terminal:
+        for backup in activate_commands(bin_dir, toolchain, replace_bin):
+            print(f"Previous terminal command saved to: {backup}")
+        print(f"Terminal commands installed in: {bin_dir}")
+        visible = shutil.which("gti")
+        if visible is None or pathlib.Path(visible).resolve() != (toolchain / "bin/gti").resolve():
+            print("Put the terminal command directory first in PATH:")
+            print(f"export PATH={shlex.quote(str(bin_dir))}:\"$PATH\"")
+        print("Run rehash in existing zsh sessions, then gti --version.")
+    backup = write_config(configuration, content, replace_config)
     if backup:
         print(f"Previous Lazy configuration saved to: {backup}")
     print(f"Installed GTI {version}. Restart Neovim, run :Lazy sync, then :GTIInfo.")

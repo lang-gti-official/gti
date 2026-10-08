@@ -2,6 +2,22 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_prvalue_direct_initialization_tests
+               prvalue_direct_initialization_tests.cpp)
+target_link_libraries(gti_prvalue_direct_initialization_tests PRIVATE gti_cpp_backend)
+add_test(NAME prvalue_direct_initialization
+         COMMAND gti_prvalue_direct_initialization_tests)
+add_test(NAME prvalue_direct_initialization_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/prvalue_direct_initialization_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(prvalue_direct_initialization_runtime PROPERTIES TIMEOUT 600)
+add_test(NAME prvalue_direct_initialization_lsp
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/prvalue_direct_initialization_lsp_test.py"
+                 "$<TARGET_FILE:gti_lsp>")
+set_tests_properties(prvalue_direct_initialization_lsp PROPERTIES TIMEOUT 90)
+
 add_executable(gti_generic_enum_declaration_tests generic_enum_declaration_tests.cpp)
 target_link_libraries(gti_generic_enum_declaration_tests PRIVATE gti_compiler)
 add_test(NAME generic_enum_declaration COMMAND gti_generic_enum_declaration_tests)
