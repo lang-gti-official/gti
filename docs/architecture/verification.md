@@ -234,7 +234,65 @@ declarations run still reports two obsolete generated-default spelling
 assertions already under maintenance in the parallel enum reconciliation;
 that aggregate is not counted as passing at this checkpoint.
 
-## Source-defined process byte provider (S-ALLOC-07 checkpoint)
+## Source-defined process byte provider (S-ALLOC-07)
+
+### Completion acceptance (2026-10-08)
+
+The completion candidate in PR #162 is built from clean revision `fa72b523`
+(0.386.1), using optimized Release/Ninja, AppleClang 21 and LLVM 22.1.8 on
+macOS arm64. The unfiltered production CTest suite passes **558/558**, with no
+failures or skips. This includes the source-provider/default-storage matrix,
+programmable allocators, lifetime and borrow rejection, malformed MIR,
+Off/Warn parity, LSP, tooling, ABI and installed-artifact contracts. The emitter
+corpus admits all 21,106 bodies from 127 sources; the independent cutover oracle
+builds and runs all 127 examples at both endpoints with 21,103 reviewed body
+identities unchanged. The coverage corpus passes 267 programs and rejects the
+expected 160 negatives (427 total).
+
+Separate clean staging passes **13/13 installed-library consumers**, including
+the native memory boundary. The provider matrix passes all eight native modes
+against both build-tree and explicitly pinned installed resources, including
+no-elide and ASan/UBSan, plus Off/Warn emission parity. Its harness rejects
+missing or ambiguous installed resources rather than falling back to a source
+tree. Examples 119–121, 125–126 and 128–129 pass with that staged compiler at
+C++20/O0 and C++23/O3 (14 executions); `libc-region-provider` additionally runs
+inside the provider matrix. Tree-sitter grammar/query/shipped-source contracts
+and the full 500-file first-party formatting check pass.
+
+Injected-provider observations now cover exact object/metadata extents,
+zero/invalid/overflow requests, first and second acquisition failure,
+rollback, simultaneous owners, immovable owning elements, slot reuse and
+movement of owners without moving elements. Constructor and destructor failure
+traces retain their original GTI error/source, completed-field cleanup and
+element-before-region release. The observer checks matching descriptors,
+exactly-once release and absence of leaked regions independently of the GTI
+owner's accounting.
+
+That final cleanup fixture exposed #165: the representation gate rejected an
+already verified numeric alias/type-parameter conversion before a conditional
+argument. The narrow repair admits the existing exact scalar intrinsic Call
+form and its checked Invoke edge; it does not infer new language semantics or
+recognise an allocator name. An unrelated generic `Pair` regression exercises
+both conditional outcomes and both conversion-failure paths, retaining
+GTI-R0006 and destructor observations. Backend mutation tests reject wrong
+intrinsic identity, extraneous operands/receiver and malformed failure control
+flow. This user-visible compiler fix accounts for the patch-version advance.
+
+Raw full-suite and installed-consumer reports are retained locally at
+`/private/tmp/gti-source-process-allocation-final.xml` and
+`/private/tmp/gti-source-process-allocation-installed-final.xml`. Subsequent
+completion-report edits must leave the tested implementation and test sources
+unchanged from `fa72b523`. The fresh allocation-cost comparison remains pending
+until concurrent compiler/test workloads finish; the historical figures below
+are not substituted for that final measurement.
+
+Native execution evidence is macOS arm64. Linux native CI is queued without an
+available runner; native Windows execution is unavailable. The full local suite
+retains the Linux/Windows provider selection and target ABI contracts, but
+neither is a claim of execution on those hosts. Completion reporting must keep
+this platform limitation explicit.
+
+### Historical pre-reconciliation measurement and provider checkpoint
 
 The pre-reconciliation storage-cost probe uses frozen optimized compiler,
 runtime and library snapshots: clean baseline `229f095f` (0.381.0), and the
@@ -291,11 +349,11 @@ Linux and Windows targets, requiring only the corresponding POSIX/CRT adapter
 family. `resource_memory_runtime` checks actual target facts, writable aligned
 extents and matching native release. The C ABI header smoke fixes the exact
 fixed-width adapter signatures. These are local macOS arm64 tests with optimized
-compiler libraries, not evidence of native Windows/Linux execution. Native CI,
-installed consumers and production gates remain required before the full
-S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
-metadata/default-factory migration described above; the provider checkpoint's
-independent tests alone do not validate that integration.
+compiler libraries, not evidence of native Windows/Linux execution. At this
+historical checkpoint, installed consumers and production gates were still
+outstanding; the completion evidence above now covers that integration. Native
+platform limitations remain explicit. The independent provider tests alone are
+not the evidence for the combined sparse-metadata and default-factory migration.
 
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
