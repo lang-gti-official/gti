@@ -46,7 +46,11 @@ findDeclaration(const std::vector<LoweredDeclaration> &declarations,
 findDeclaration(std::vector<LoweredDeclaration> &declarations,
                 LoweredDeclarationId id);
 
-[[nodiscard]] std::uint64_t fingerprint(std::string_view text);
+// The construction seal: a 64-bit hash of the complete deterministic printed
+// program. The text is hashed as it is printed and never materialized. Seals
+// are compared only with seals of the same compiler, so the hash is not a
+// stable external format.
+[[nodiscard]] std::uint64_t constructionSeal(const LoweredProgram &program);
 void addIssue(
     std::vector<LoweredProgramIssue> &issues, LoweredProgramIssueKind kind,
     std::string detail, std::optional<MirBodyAddress> body = std::nullopt,

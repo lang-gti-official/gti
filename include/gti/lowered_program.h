@@ -685,6 +685,7 @@ struct LoweredProgramIssue {
 };
 
 class LoweredProgram;
+class VerifiedLoweredProgram;
 
 namespace lowered_detail {
 // Builder-only: every verifier check except the construction seal, which the
@@ -746,6 +747,11 @@ public:
   findDeclaration(LoweredDeclarationId id) const;
   [[nodiscard]] const LoweredClassDeclaration *
   findClassDeclaration(ClassId id) const;
+  // The declaration row carrying a class or enum declaration payload.
+  [[nodiscard]] const LoweredDeclaration *
+  findClassDeclarationRow(ClassId id) const;
+  [[nodiscard]] const LoweredDeclaration *
+  findEnumDeclarationRow(const SemanticType &type) const;
   [[nodiscard]] const LoweredEnumDeclaration *
   findEnumDeclaration(EnumId id) const;
   [[nodiscard]] const LoweredEnumDeclaration *
@@ -801,6 +807,8 @@ private:
   std::unordered_map<std::size_t, std::size_t> constructorRows_;
   std::unordered_map<std::size_t, std::size_t> storageRows_;
   std::unordered_map<std::size_t, std::size_t> symbolRows_;
+  std::unordered_map<std::size_t, std::size_t> enumRows_;
+  std::unordered_map<std::size_t, std::size_t> genericParameterRows_;
 
   friend class LoweredProgramBuilder;
   friend struct LoweredProgramTestAccess;
@@ -808,23 +816,27 @@ private:
   verifyLoweredProgram(const LoweredProgram &program);
   friend std::vector<LoweredProgramIssue>
   lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program);
+  friend std::optional<VerifiedLoweredProgram>
+  verifiedLoweredProgram(const LoweredProgram &program,
+                         std::vector<LoweredProgramIssue> &issues);
 };
 
 [[nodiscard]] std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program);
 
-class VerifiedLoweredProgram;
-
-// Verifies one value for a consumer and returns evidence of that only when
-// no issue exists.
+// Admits one value to a consumer. The builder seals a program only after its
+// complete contents verify, and the seal covers the whole printed program, so
+// a matching seal proves this is that verified value; this checks the seal
+// instead of repeating the inventory for every consumer. verifyLoweredProgram
+// remains the complete check.
 [[nodiscard]] std::optional<VerifiedLoweredProgram>
 verifiedLoweredProgram(const LoweredProgram &program,
                        std::vector<LoweredProgramIssue> &issues);
 
-// Evidence that verifyLoweredProgram accepted this exact value. A
+// Evidence that this exact value carries a valid construction seal. A
 // LoweredProgram is immutable through its public interface, so the stages of
-// one consumer pass this evidence along instead of repeating the complete
-// inventory and seal check, which prints the whole program each time.
+// one consumer pass this evidence along instead of checking the seal again,
+// which prints the whole program each time.
 class VerifiedLoweredProgram final {
 public:
   [[nodiscard]] const LoweredProgram &program() const noexcept {
