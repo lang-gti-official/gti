@@ -316,7 +316,9 @@ int main() {
             (void)lang::rebuildMirValueUses(changed->body);
             expect(!lang::CppMirBodyEmitter(malformed, rows)
                         .supportsFailureBodyText(address),
-                   "conditional argument rejects forged staging and transfer");
+                   "conditional argument rejects mutation " +
+                       std::to_string(mutation) + " at stage " +
+                       std::to_string(stage.id) + " in " + fixture);
           }
         }
       }
