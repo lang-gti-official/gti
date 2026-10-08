@@ -111,6 +111,28 @@ if __name__ == "__main__":
         path.write_text(paths_source.replace("return nested_reconstruct();", "return 0;"))
         paths["scalar_paths_construction"] = path
         cases["scalar_paths_construction"] = [((), (0, "", ""))]
+        movement = fixture.parent / "optimizer_scalar_move.gti"
+        move_source = movement.read_text()
+        sites = [index for index, text in enumerate(move_source.splitlines(), 1)
+                 if text.strip() in ("return input + 1;", "return this.value + 1;")]
+        assert len(sites) == 2
+        paths["scalar_move_reinitialized_parameter"] = movement
+        cases["scalar_move_reinitialized_parameter"] = [((), (70, "",
+            f"{movement.name}:{sites[0]}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "scalar_move_reinitialized_field.gti"
+        path.write_text(move_source.replace(
+            "if (true) return gauge.replace_parameter(3);", ""))
+        paths["scalar_move_reinitialized_field"] = path
+        # The removed guard occupies its own line; source line identity remains.
+        cases["scalar_move_reinitialized_field"] = [((), (70, "",
+            f"{path.name}:{sites[1]}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "scalar_move_success.gti"
+        path.write_text(move_source.replace(
+            "if (true) return gauge.replace_parameter(3);", "return 0;"))
+        paths["scalar_move_success"] = path
+        cases["scalar_move_success"] = [((), (0, "", ""))]
         guard = fixture.parent / "optimizer_boolean_guards.gti"
         guard_source = guard.read_text()
         # The detectors are compiler-private. Test them behind a temporary

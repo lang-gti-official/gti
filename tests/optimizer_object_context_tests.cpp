@@ -213,6 +213,152 @@ int main() {
       }
     }
   }
+  const auto movePath = sourcePath.parent_path() / "optimizer_scalar_move.gti";
+  const std::ifstream moveFile(movePath);
+  const std::string moveSource{std::istreambuf_iterator<char>(moveFile.rdbuf()),
+                               {}};
+  const auto library =
+      sourcePath.parent_path().parent_path().parent_path() / "stdlib";
+  const auto moved = lang::Frontend().analyze(
+      movePath, moveSource, {library / "prelude.gti", movePath},
+      {{std::filesystem::weakly_canonical(movePath).string(), moveSource}},
+      {library});
+  expect(moved.canGenerateCode(), "ordinary scalar movement must lower");
+  if (!moved.canGenerateCode())
+    for (const auto &diagnostic : moved.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (moved.canGenerateCode()) {
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = moved.hir, .mir = moved.mir, .level = level});
+      expect(optimized.valid(),
+             "scalar movement proofs must independently replay");
+      for (const auto &function : moved.hir.functionInstances()) {
+        if (!function.source)
+          continue;
+        const auto name = function.source->name().lexeme;
+        const bool positive = name == "parameter" || name == "result" ||
+                              name == "sibling" || name == "read";
+        if (!positive && name != "replace_parameter" && name != "field")
+          continue;
+        const auto *body = optimized.mir.findFunctionInstance(function.id);
+        std::size_t proved = 0;
+        if (body)
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              proved += std::count_if(
+                  instruction.safetyDischarges.begin(),
+                  instruction.safetyDischarges.end(), [](const auto &proof) {
+                    return proof.family ==
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                  });
+        expect(
+            proved ==
+                (positive && level != lang::OptimizationLevel::O0 ? 1 : 0),
+            "moved integer results and independent owned receiver fields "
+            "retain facts, but reinitialized sources never regain stale facts");
+      }
+      for (const auto &record : optimized.report.transformations)
+        expect(std::find(record.relatedPlaces.begin(),
+                         record.relatedPlaces.end(),
+                         0) == record.relatedPlaces.end(),
+               "scalar movement cannot publish an implicit receiver identity");
+    }
+    std::size_t rejectedStaleMoves = 0;
+    for (const auto &function : moved.hir.functionInstances()) {
+      if (!function.source ||
+          (function.source->name().lexeme != "replace_parameter" &&
+           function.source->name().lexeme != "field"))
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      const auto *body = lang::findMirBody(moved.mir, address);
+      if (!body)
+        continue;
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto &outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto forged = moved.mir;
+              lang::MirEditor editor(forged, "forged-retired-move-envelope");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "canonical replay rejects stale moved-source envelopes "
+                     "after parameter or receiver-field reinitialization");
+              ++rejectedStaleMoves;
+            }
+    }
+    expect(rejectedStaleMoves == 2,
+           "both scalar source reinitialization negatives exercise replay");
+  }
+  const auto prefixPath =
+      sourcePath.parent_path() / "optimizer_source_prefix_fields.gti";
+  const std::ifstream prefixFile(prefixPath);
+  const std::string prefixSource{
+      std::istreambuf_iterator<char>(prefixFile.rdbuf()), {}};
+  const auto prefix = lang::Frontend().analyze(
+      prefixPath, prefixSource, {library / "prelude.gti", prefixPath},
+      {{std::filesystem::weakly_canonical(prefixPath).string(), prefixSource}},
+      {library});
+  expect(prefix.canGenerateCode(), "source prefix publication must lower");
+  if (prefix.canGenerateCode()) {
+    const auto analysis = lang::analyzeMirClosedCallSafetyChecks(prefix.mir);
+    expect(analysis.converged, "source prefix field publication must converge");
+    std::size_t observations = 0;
+    for (const auto &function : prefix.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto name = function.source->name().lexeme;
+      if (name != "initial_length" && name != "reserved_capacity")
+        continue;
+      ++observations;
+      const auto *fact = analysis.find(
+          {.kind = lang::MirBodyKind::Function, .owner = function.id});
+      const std::uint64_t value = name == "initial_length" ? 0 : 4;
+      expect(fact && fact->reached && fact->returnInterval &&
+                 fact->returnInterval->lower ==
+                     lang::CheckedIntegerValue{.magnitude = value} &&
+                 fact->returnInterval->upper ==
+                     lang::CheckedIntegerValue{.magnitude = value},
+             "ordinary source fields publish after temporary allocation-result "
+             "cleanup without inferring fresh or initialized raw memory");
+    }
+    expect(observations == 2,
+           "both source capacity and empty length postconditions are observed");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3})
+      expect(lang::OptimizationPipeline()
+                 .run({.hir = prefix.hir, .mir = prefix.mir, .level = level})
+                 .valid(),
+             "source prefix field publication independently replays");
+  }
+  const std::string invalidMove =
+      "#include <std/memory>\nint main() { int source = 7; "
+      "int result = std::move(source); return source + result; }\n";
+  const auto invalidPath = sourcePath.parent_path() / "moved-source-read.gti";
+  const auto invalid = lang::Frontend().analyze(
+      invalidPath, invalidMove, {library / "prelude.gti", invalidPath},
+      {{std::filesystem::weakly_canonical(invalidPath).string(), invalidMove}},
+      {library});
+  expect(!invalid.canGenerateCode() &&
+             std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2018";
+                         }),
+         "copying a scalar envelope never restores moved-source availability");
   constexpr std::size_t chainLength = 128;
   std::string chain;
   for (std::size_t index = chainLength; index-- > 0;) {

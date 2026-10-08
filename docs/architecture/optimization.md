@@ -359,6 +359,19 @@ comparison and staged identities for independent replay. Exact later writes
 invalidate the place's earlier bound. This does not invent a relation between
 unknown container fields or initialize a raw region.
 
+An exact builtin-integer result-only `Move` copies the source's scalar envelope
+into an independent SSA result while invalidating the source's place and
+derived origins. It changes no ownership events: source reads after movement
+remain invalid, and reinitialization establishes a new envelope. A uniquely
+identified, unprojected by-value integer formal has independent parameter
+storage; moving it may preserve typed non-byte owned-field facts on an implicit
+receiver. A reference's projected integer type is not that proof. Stored
+references, arrays, unions, capability carriers and unresolved paths receive
+no exemption. Moving a receiver field invalidates that field and overlapping
+paths, not safe siblings. Ordinary user records, nested relay methods and
+overflow after parameter/field reinitialization exercise this transfer without
+container names or changes to call-input admission.
+
 Exact integer-scalar final-address construction has a narrow transfer profile.
 Shared MIR effects retain its unknown-memory write and initialization, but do
 not invent a selected user constructor or synchronization. Construction still

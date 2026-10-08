@@ -461,6 +461,18 @@ trusted source module: application access to compiler-private names is not
 relaxed. Independent coherence replay and the 508-file formatting check pass.
 The seven original owner proof requirements remain open.
 
+The subsequent integer-move prerequisite passes the expanded 21-fixture,
+eight-mode object matrix (168 executions) in 101.30 seconds. Ordinary record
+and nested relay methods preserve independent parameter-result and owned-field
+envelopes; parameter/field reinitialization still reports exact overflow and a
+moved-source read remains `GTI-S2018`. Six focused optimizer/source-contract
+gates pass in 3.45 seconds. Source publication controls recover exact reserved
+capacity four and initial length zero after allocation-result cleanup; all
+O0/O2/O3 snapshots independently replay. The seven original bounds/element
+requirements still fail and have not been weakened.
+The same frozen compiler also passes source owner/resource/string runtime gates
+in 89.62 seconds and the aggregate compiler pipeline in 43.51 seconds.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

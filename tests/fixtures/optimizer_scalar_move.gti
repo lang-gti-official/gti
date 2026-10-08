@@ -1,0 +1,52 @@
+#include <std/memory>
+
+int forward_integer(int value) { return value; }
+
+class MoveGauge {
+public:
+  mut int value = 7;
+  mut int spare = 9;
+  MoveGauge() {}
+  int parameter(int input) {
+    return this.value + forward_integer(std::move(input));
+  }
+  int result(int input) { return std::move(input) + 1; }
+  int sibling() mut {
+    [[discard]] forward_integer(std::move(this.value));
+    this.value = 2147483647;
+    return this.spare + 1;
+  }
+  int replace_parameter(mut int input) {
+    [[discard]] forward_integer(std::move(input));
+    input = 2147483647;
+    return input + 1;
+  }
+  int field() mut {
+    [[discard]] forward_integer(std::move(this.value));
+    this.value = 2147483647;
+    return this.value + 1;
+  }
+};
+
+class MoveRelay {
+public:
+  MoveGauge nested;
+  MoveRelay() : nested(MoveGauge()) {}
+  int relay(int input) {
+    return this.nested.parameter(std::move(input));
+  }
+  int read() { return this.nested.value + 1; }
+};
+
+int main() {
+  mut MoveGauge gauge{};
+  MoveRelay relay{};
+  if (gauge.parameter(3) != 10) return 1;
+  if (gauge.result(3) != 4) return 2;
+  if (relay.relay(3) != 10) return 3;
+  if (relay.read() != 8) return 4;
+  mut MoveGauge sibling_case{};
+  if (sibling_case.sibling() != 10) return 5;
+  if (true) return gauge.replace_parameter(3);
+  return gauge.field();
+}
