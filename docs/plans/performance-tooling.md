@@ -2,9 +2,10 @@
 
 ## RT-1: source-storage failure-path cost
 
-Status: measured one-helper proxy; production implementation and validation in
-progress. This is a partial cause of #169, not a claim that the historical
-storage regression has been fully recovered.
+Status: production implementation and frozen before/after measurements pass;
+focused safety matrices pass and full completion validation is in progress.
+This is a partial cause of #169, not a claim that the historical storage
+regression has been fully recovered.
 
 The reconciled optimized compiler is `7577bf93` (identical production sources
 to merged main `b6614cb4`), SHA-256
@@ -65,6 +66,76 @@ Freeze optimized compiler/runtime/library snapshots, record exact revisions,
 and compare full builds as well as emission and execution. PR #166's broader
 recommendations and their prerequisites are audited in
 [optimization.md](optimization.md#pr-166-audit-disposition-2026-10-09).
+
+### Production comparison
+
+The clean optimized candidate is `f2fea6c7`, compiler SHA-256
+`885c23fa5de49d0e6bc72f3a504333c5576d37f138555e1e7a6d3c0c2064a917`.
+Its runtime archive is
+`bc80d3c130a099bf1d7376c7035f453a5c37b6f7402fcddbc91b371ca83178af`;
+all sixteen object members are byte-identical to the baseline archive. Only
+archive metadata differs. Production sources differ from the baseline only
+in the seven helper-hint/comment lines. Re-emitting with identical source
+and library paths independently proves that these lines are also the entire
+generated-C++ delta, without normalizing away executable differences.
+
+The frozen comparison uses seven randomized/interleaved compile batches after
+one warmup and 31 execution pairs after two warmups on the same M4 Pro host:
+
+| Measurement | Baseline median ms | Production candidate ms |
+| --- | ---: | ---: |
+| GTI emission | 438.711 | 436.219 |
+| Complete GTI/native build | 1023.815 | 1023.422 |
+| Storage, process provider | 70.464 | 59.177 |
+| Storage, explicit resource | 76.490 | 66.230 |
+
+Median paired runtime ratios are 0.8388 (95% paired bootstrap interval
+0.8344–0.8405) and 0.8653 (0.8605–0.8692); complete-build ratio is 0.9994
+(0.9984–1.0054). Bootstrap uses 10,000 resamples with seed 169. Every execution
+retains the complete scalar, destruction and allocation oracle above. The
+baseline's explicit source-metadata policy is selected as 100000 allocations;
+unsupported allocation-policy values fail before measurement starts.
+
+Independent production controls use five warmups and 21 execution pairs, plus
+five interleaved native compile/RSS pairs after a warmup. Runtime memory is
+measured in five separate pairs so the timing wrapper is not part of runtime
+samples. Both compilers emit ordinary unmodified C++ for every workload:
+
+| Control | Baseline ms | Candidate ms | Native compile time change | Native compile peak RSS change | Binary size change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Fixed-array loop | 104.712 | 104.747 | +1.5% | +3.0% | +3.7% |
+| Vector loop | 80.847 | 80.442 | +1.3% | +2.4% | +2.6% |
+| Scalar FP | 79.810 | 79.760 | +2.7% | +2.6% | +3.2% |
+| Game update | 57.779 | 57.810 | +2.6% | +2.2% | +2.9% |
+| Scalar chain | 318.682 | 318.357 | +2.2% | +2.8% | +2.9% |
+| Managed threads | 170.711 | 171.565 | -1.4% | +0.7% | +2.0% |
+
+The independent storage repeat measures 69.988→59.016 ms and
+76.190→66.541 ms. Its native compile time is 585.789→581.043 ms, peak RSS
+127107072→132595712 bytes (+4.3%), and binary size 295752→308952 bytes
+(+4.5%). Runtime RSS across all controls changes by at most 32768 bytes
+(under 2%). These are small real representation costs, not zero-cost claims;
+none crosses the existing 5% material-regression screen on this host. The
+approximately 0.5% thread runtime cost remains visible. No timing threshold
+is added to CI, and macOS/Apple Clang evidence does not establish performance
+on Linux, Windows or other native toolchains.
+
+The storage report SHA-256 is
+`b3f33a509c89d8625e99677b2fb0dfee1b2792722867914744738d5cf6380a16`;
+the independent production controls report is
+`164a2d6850b467ff275b3d2fefce75b854afa568d87a7e425e8d1609c0175a35`.
+Local evidence is `/private/tmp/gti-cold-production-evidence.wzddQK/`;
+the Mac mini retains frozen resources, MIR optimization reports, commands,
+unmodified emitted C++, native remarks/disassembly, binaries, RSS and raw
+samples under `/tmp/gti-cold-production.aKyJuB/`. These are temporary evidence
+locations; the hashes and summarized methodology remain in this document.
+
+The remaining #169 gap is deliberately separate: ordinary sparse accessors
+still exceed the native inline threshold, and source resource storage still
+performs its required metadata allocation. Profile those remaining clients
+against a fresh reconciled baseline before selecting another facility. This
+change neither restores private container semantics nor removes lifetime,
+allocation, bounds, overflow or failure checks.
 
 ## C-TIME-03: HTTP/JSON representation-admission latency (2026-10-07)
 
