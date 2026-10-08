@@ -571,6 +571,7 @@ private:
   struct ContextualCallableResult {
     const Call *call = nullptr;
     SemanticType type = SemanticType::Unknown;
+    bool inferResultFromInstantiation = false;
   };
 
   struct LoanFlowRecord {
@@ -2272,6 +2273,8 @@ private:
   void recordSelectedCallOccurrence(const Call &call,
                                     ResolvedCallInfo resolved);
 
+  void recordSelectedConstructionOccurrence(const Expr &construction);
+
   void bindIntrinsicCallDeclaration(const Call &call,
                                     const CallableCandidate &function);
 
@@ -3411,8 +3414,10 @@ private:
 
   SemanticType analyze(const ExprPtr &expr, OccurrenceRole roles);
 
-  SemanticType analyzeExpectedCallableResult(const ExprPtr &expr,
-                                             const SemanticType &expectedType);
+  SemanticType
+  analyzeExpectedCallableResult(const ExprPtr &expr,
+                                const SemanticType &expectedType,
+                                bool inferFromInstantiation = false);
 
   SemanticType analyzeInitializer(const ExprPtr &expr,
                                   const SemanticType &expectedType,
@@ -3728,8 +3733,8 @@ private:
     SemanticType type = SemanticType::Unknown;
   };
 
-  [[nodiscard]] static const Expr *
-  transparentTemporaryProducer(const ExprPtr &expression);
+  [[nodiscard]] const Expr *
+  transparentTemporaryProducer(const ExprPtr &expression) const;
 
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;

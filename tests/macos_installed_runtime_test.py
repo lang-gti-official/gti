@@ -33,6 +33,12 @@ def main():
         lsp = relocated / "bin/gti_lsp"
         assert "gti" in run([cli, "--version"], environment)
         assert "gti" in run([lsp, "--version"], environment)
+        commands = root / "terminal commands"
+        commands.mkdir()
+        for tool in ("gti", "gti_lsp"):
+            alias = commands / tool
+            alias.symlink_to(relocated / "bin" / tool)
+            assert tool in run([alias, "--version"], environment)
         run([cli, "--help"], environment)
         manifest = json.loads((relocated / "share/gti/host-runtime.json").read_text())
         for file in [cli, lsp, *(relocated / name for name in manifest["libraries"])]:

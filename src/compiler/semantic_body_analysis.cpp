@@ -4363,12 +4363,27 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   }
   if (deferredCalleeType.kind == SemanticType::TypeParameter) {
     if (argumentAnalysis.hasDeferred()) {
-      report(expr.paren(),
-             "A brace argument requires a callable with a concrete fixed-"
-             "array parameter signature.",
-             "GTI-S2015");
-      currentType = SemanticType::Unknown;
-      return;
+      for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+        if (!argumentAnalysis.deferred[index])
+          continue;
+        const ExprPtr &argument = expr.arguments()[index];
+        if (isContextualArrayArgument(argument)) {
+          report(expressionToken(argument),
+                 "A brace argument requires a callable with a concrete fixed-"
+                 "array parameter signature.",
+                 "GTI-S2015");
+          currentType = SemanticType::Unknown;
+          return;
+        }
+        // The open receiver does not supply an argument type. Record a
+        // result-inference obligation for direct nested callable producers,
+        // then resolve the complete composition in concrete semantics. Do
+        // not guess the inner result from the enclosing return type.
+        argumentTypes[index] = isContextualCallableResultArgument(argument)
+                                   ? analyzeExpectedCallableResult(
+                                         argument, SemanticType::Unknown, true)
+                                   : analyze(argument);
+      }
     }
     analyzeDeferredCallableCall(expr, deferredCalleeType, argumentTypes);
     return;
@@ -5425,6 +5440,22 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
           : SemanticType::Unknown;
   const ClassInfo *owner =
       target.kind == SemanticType::Class ? classInfo(target) : nullptr;
+  // An enclosing return/call's scalar expectation is not a struct destination
+  // for this list. Refine the existing rejection without changing acceptance
+  // of eligible contextual construction, including nested designated fields.
+  if (owner == nullptr && (target == SemanticType::Unknown ||
+                           contextualInitializerExpression != &expr)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2091", DiagnosticPhase::Semantics, expr.brace(),
+        "A designated initializer requires a destination struct type; this "
+        "expression has no contextual destination type.");
+    diagnostic.hints.emplace_back(
+        "Initialize a binding with an explicit struct type using this list, "
+        "then use that value in the expression.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (owner == nullptr || owner->kind != ClassKind::Struct ||
       !owner->designatedConstructor) {
     report(
@@ -8967,6 +8998,14 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     const Expr &source, const ResolvedConstructionInfo &resolved,
     const ExprList &explicitArguments, const Token &callSite,
     ConstexprInterpreter &context) -> ConstexprEvaluation {
+  if (resolved.directInitialization) {
+    if (explicitArguments.size() != 1)
+      return constexprFailure(callSite,
+                              ConstantEvaluationFailure::InvalidOperands);
+    // No execution rule is added here: the already-supported producer (which
+    // may stage verified MIR) alone determines the value and consumes budget.
+    return evaluateConstexprExpression(explicitArguments.front(), context);
+  }
   const ConstructorDecl *declaration = resolved.declaration;
   if (resolved.generatedDefault || declaration == nullptr ||
       !declaration->isConstexpr() ||

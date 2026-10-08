@@ -646,6 +646,10 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testOverloadFailureGuidance",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testRawAuditDiagnosticPublication",
       "suite": "diagnostics"
     },

@@ -6479,6 +6479,7 @@ public:
       std::vector<bool> cleanup;
       std::string text;
       std::string initializers;
+      std::vector<std::string> banners;
     };
     std::vector<GenericNormalBody> genericNormalBodies;
     for (const MirConstructorInstance *instance : instances) {
@@ -6552,6 +6553,20 @@ public:
                                               prepared->second->plan);
         }
         if (genericNormal) {
+          const std::string marker =
+              "// GTI verified-MIR body: scalar-cfg-v1 constructor-instance " +
+              std::to_string(instance->id) + "\n";
+          const std::size_t markerAt = genericNormal->find(marker);
+          if (markerAt == std::string::npos) {
+            throw std::logic_error(
+                "generic-owner constructor lost its exact instance marker");
+          }
+          std::size_t lineStart = markerAt;
+          while (lineStart > 0 && (*genericNormal)[lineStart - 1] != '\n') {
+            --lineStart;
+          }
+          const std::string banner = genericNormal->substr(
+              lineStart, markerAt - lineStart + marker.size());
           const std::string normalized =
               loweredConstructorRepresentationText(*genericNormal);
           std::vector<bool> cleanup;
@@ -6582,9 +6597,13 @@ public:
                                    "incompatible MIR representations");
           }
           if (previous == genericNormalBodies.end()) {
-            genericNormalBodies.push_back({instance, std::move(cleanup),
+            genericNormalBodies.push_back({instance,
+                                           std::move(cleanup),
                                            normalized,
-                                           std::move(initializers)});
+                                           std::move(initializers),
+                                           {banner}});
+          } else {
+            previous->banners.push_back(banner);
           }
         }
         continue;
@@ -6687,6 +6706,19 @@ public:
       }
     }
     if (!genericNormalBodies.empty()) {
+      const auto assemble = [](const GenericNormalBody &body) {
+        const std::size_t brace = body.text.find("{\n");
+        if (brace == std::string::npos) {
+          throw std::logic_error(
+              "generic-owner constructor body has no opening brace");
+        }
+        std::string text = body.text.substr(0, brace + 2);
+        for (const std::string &banner : body.banners) {
+          text += banner;
+        }
+        text += body.text.substr(brace + 2);
+        return text;
+      };
       const GenericNormalBody &first = genericNormalBodies.front();
       emitLoweredClassTemplateHeaders(owner);
       emitLoweredTemplateDeclaration(constructor.genericParameters);
@@ -6696,7 +6728,7 @@ public:
                                                    false);
       output << ')' << first.initializers << ' ';
       if (genericNormalBodies.size() == 1) {
-        output << first.text;
+        output << assemble(first);
       } else {
         std::vector<std::size_t> varying;
         for (std::size_t index = 0; index < first.cleanup.size(); ++index) {
@@ -6743,7 +6775,7 @@ public:
           output << ") {\n";
           ++indentation;
           writeIndent();
-          output << "[&]() -> void " << body.text << "();\n";
+          output << "[&]() -> void " << assemble(body) << "();\n";
           --indentation;
           writeIndent();
           output << "}\n";

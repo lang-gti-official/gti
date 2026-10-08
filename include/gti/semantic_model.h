@@ -195,6 +195,9 @@ struct CallableSignatureRequirement {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
+  // Only a direct argument of another open callable may defer its result.
+  // Concrete semantic reanalysis must resolve a non-borrowing value before HIR.
+  bool inferResultFromInstantiation = false;
 };
 
 struct CallableForwardingRequirement {
@@ -959,6 +962,9 @@ struct ResolvedConstructionInfo {
   std::vector<BorrowedFieldOrigin> borrowFields;
   bool generatedDefault = false;
   ConstructorKind kind = ConstructorKind::Ordinary;
+  // Exact same-type fresh-result initialization names the existing result
+  // object. It selects no copy/move constructor and creates no second lifetime.
+  bool directInitialization = false;
 };
 
 enum class ConstructorInitializerTargetKind {
@@ -1134,6 +1140,7 @@ struct DeferredCallableCallInfo {
   // A stored receiver is checked again against its concrete field type.
   // It is not a confined parameter or an ownership-transfer boundary.
   SymbolId receiverField = 0;
+  bool inferResultFromInstantiation = false;
 };
 
 struct ResolvedOperatorInfo {
@@ -1528,6 +1535,38 @@ struct SemanticAnalysisSeal {
 makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
                          const SourceGraph *sourceGraph = nullptr);
 
+// Immutable selected-construction provenance. HIR may carry or copy a proof,
+// but cannot manufacture one for a different source expression. Concrete
+// instance models issue the same proof even when the primary skipped an arm.
+class SemanticDirectInitializationProof {
+public:
+  SemanticDirectInitializationProof(const SemanticDirectInitializationProof &) =
+      default;
+  SemanticDirectInitializationProof(SemanticDirectInitializationProof &&) =
+      default;
+  SemanticDirectInitializationProof &
+  operator=(const SemanticDirectInitializationProof &) = default;
+  SemanticDirectInitializationProof &
+  operator=(SemanticDirectInitializationProof &&) = default;
+
+  [[nodiscard]] const Expr *source() const { return source_; }
+  [[nodiscard]] const Expr *producer() const { return producer_; }
+  [[nodiscard]] const SemanticType &type() const { return type_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticDirectInitializationProof(const Expr &source, const Expr &producer,
+                                    SemanticType type, std::uint64_t snapshot)
+      : source_(&source), producer_(&producer), type_(std::move(type)),
+        snapshot_(snapshot) {}
+
+  const Expr *source_;
+  const Expr *producer_;
+  SemanticType type_;
+  std::uint64_t snapshot_;
+};
+
 struct SemanticFullExpression {
   std::size_t order = 0;
   const Stmt *statement = nullptr;
@@ -1774,6 +1813,16 @@ public:
 
   [[nodiscard]] const ResolvedConstructionInfo *
   findConstruction(const Expr &expression) const;
+
+  // A fresh class result is a newly produced object, not a value-category
+  // transfer from an existing place (notably the Move intrinsic).
+  [[nodiscard]] bool isFreshClassResult(const Expr &expression) const;
+  // Class-value grouping or a selected fresh-result construction wrapper.
+  [[nodiscard]] const Expr *
+  directInitializationSource(const Expr &expression) const;
+
+  [[nodiscard]] std::optional<SemanticDirectInitializationProof>
+  directInitializationProof(const Expr &expression) const;
 
   [[nodiscard]] const ResolvedConstructionInfo *
   findArrayElementConstruction(const ArrayInitializer &initializer) const;

@@ -31,14 +31,37 @@ metadata is not a by-value containment edge.
 ## Exact-owner construction
 
 For one completed value of a class's exact owner type, semantic construction
-selects that owner's copy or move lifecycle according to the analyzed value
-category. A generic by-value converting constructor instantiated with that
+first distinguishes a fresh produced result from a transfer of an existing
+place. `SemanticModel::isFreshClassResult` uses the selected construction/call
+identities and return type; grouping preserves that fact, but the Move
+intrinsic does not acquire it merely from `ValueCategory::Value`. An exact
+one-source class construction around a fresh result records
+`ResolvedConstructionInfo::directInitialization` before overload selection.
+It selects no extra constructor or lifetime and does not require a move
+constructor. Compiler-private placement/storage calls are not one-source class
+construction expressions and retain their selected lifecycle protocol.
+
+`SemanticModel::directInitializationProof` issues an immutable, source-bound
+construction proof only for that selected exact fresh-result rule. It binds the
+immediate producer, concrete type and program snapshot; consumers cannot create
+a proof for an ordinary invocation by presenting a matching class ID. HIR keeps
+the concrete proof when symbolic primary analysis skipped a dependent branch,
+without retaining or copying the entire concrete semantic model.
+
+For a named source or explicit transfer, construction still selects that
+owner's copy or move lifecycle according to the analyzed value category.
+A generic by-value converting constructor instantiated with that
 same owner type cannot outrank or resurrect a deleted lifecycle operation;
 unrelated argument types retain ordinary inference/constraint selection. The
 selected `ConstructorKind`, declaration and argument facts continue through
 HIR/MIR. Completed-value optional publication therefore transports the selected
 lifecycle value rather than invoking another converting constructor at the
 private storage boundary. No public callable/container name defines this rule.
+Stored-borrow and raw-field provenance pass through a direct wrapper to its
+producer. The wrapper adds no invocation effects or new borrow permission;
+ordinary producer validity, unsafe obligations and escape checking remain
+mandatory. Tooling retains a selected construction occurrence whose hover
+explicitly explains that no additional copy/move is selected.
 
 ## Native C scalar target facts
 
@@ -627,6 +650,16 @@ for that resolved function. It does not rescan every namespace/member overload
 table once per function. The index is request-local and contains no durable or
 process-global identity.
 
+Pre-body stored-field summaries compose unambiguous exact-result factory calls
+and same-type construction/grouping wrappers field by field. Each result field
+retains its source parameter or receiver projection and its own shared or
+exclusive access; a mixed result is not flattened to its first parameter.
+Recursive, ambiguous, and unresolved generic-call paths remain conservative.
+This declaration inference only proposes a contract: selected call analysis and
+return-body validation independently check every actual owner, field, access
+permission, and permitted escape. The direct-initialization rule does not grant
+new borrowing or escape authority.
+
 Mutable field groups are source-only declaration containers. Member collection
 recurses through the active group items with the surrounding access state,
 registering every child as an ordinary mutable direct field in textual order.
@@ -1040,7 +1073,15 @@ source order after selection. Named functions/methods, constructors, lexical
 lambdas, function items, and concrete call operators share this rule. A
 callback's eventual concrete result does not choose between outer overloads;
 an ambiguous outer signature remains ambiguous. Unknown arguments do not
-deduce an outer generic parameter. Raw pointers
+deduce an outer generic parameter. If the outer receiver is itself an open
+generic callable, a directly nested callable argument instead retains an
+explicit `inferResultFromInstantiation` requirement in the semantic contract.
+Concrete reanalysis selects the inner result and checks the outer invocation;
+it must resolve a non-void, non-reference, non-borrowing, non-lambda value before
+HIR copies the exact signatures. This is not inference from the enclosing
+return type or backend representation. Tooling labels unresolved declaration
+requirements as deferred rather than presenting an unknown type as exact.
+Raw pointers
 remain non-owning values under their ordinary language rules, and the current
 `std::string_view` denotes static literal storage; the callable boundary does
 not reclassify either as ownership. `auto` cannot infer a result through an

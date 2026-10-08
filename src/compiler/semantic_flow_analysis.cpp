@@ -2442,13 +2442,16 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   valueFlow.rawOperatorResults.erase(&expr);
   expr.accept(*this);
   SemanticType result = currentType;
-  if (exprAs<Call>(&expr) || semanticModel.findConstruction(expr))
+  const auto *construction = semanticModel.findConstruction(expr);
+  const bool directInitialization =
+      construction != nullptr && construction->directInitialization;
+  if (!directInitialization && (exprAs<Call>(&expr) || construction))
     validateRawCallAccesses(expr);
-  if (const auto *call = exprAs<Call>(&expr))
+  if (const auto *call = exprAs<Call>(&expr); call && !directInitialization)
     preserveRawCallWrites(*call);
-  if (const auto *call = exprAs<Call>(&expr))
+  if (const auto *call = exprAs<Call>(&expr); call && !directInitialization)
     invalidateRawCallOrigins(call);
-  if (exprAs<Call>(&expr) || semanticModel.findConstruction(expr))
+  if (!directInitialization && (exprAs<Call>(&expr) || construction))
     applyRawCallWrites(expr);
   ExpressionInfo info = classifyExpression(expr, result);
   if (semanticModel.findOperator(expr) == nullptr && isNumeric(result)) {
@@ -2781,15 +2784,18 @@ auto SemanticVisitor::Impl::analyze(const ExprPtr &expr, OccurrenceRole roles)
 }
 
 auto SemanticVisitor::Impl::analyzeExpectedCallableResult(
-    const ExprPtr &expr, const SemanticType &expectedType) -> SemanticType {
+    const ExprPtr &expr, const SemanticType &expectedType,
+    bool inferFromInstantiation) -> SemanticType {
   const Call *call = directCall(expr);
   if (call == nullptr) {
     return analyze(expr);
   }
   const std::optional<ContextualCallableResult> enclosingResult =
       contextualCallableResult;
-  contextualCallableResult =
-      ContextualCallableResult{.call = call, .type = expectedType};
+  contextualCallableResult = ContextualCallableResult{
+      .call = call,
+      .type = expectedType,
+      .inferResultFromInstantiation = inferFromInstantiation};
   const SemanticType result = analyze(expr);
   contextualCallableResult = enclosingResult;
   return result;
@@ -5815,10 +5821,17 @@ auto SemanticVisitor::Impl::memberReceiverIsMutable(const Get &member) const
 }
 
 auto SemanticVisitor::Impl::transparentTemporaryProducer(
-    const ExprPtr &expression) -> const Expr * {
+    const ExprPtr &expression) const -> const Expr * {
   const Expr *producer = expression.get();
-  while (const auto *grouping = exprAs<Grouping>(producer)) {
-    producer = grouping->expression().get();
+  while (producer != nullptr) {
+    const Expr *source = semanticModel.directInitializationSource(*producer);
+    if (source == nullptr) {
+      const auto *grouping = exprAs<Grouping>(producer);
+      source = grouping == nullptr ? nullptr : grouping->expression().get();
+    }
+    if (source == nullptr)
+      break;
+    producer = source;
   }
   return producer;
 }
@@ -7315,7 +7328,8 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
   }
   if (const auto *construction = semanticModel.findConstruction(*expression)) {
     // Generated copy/move construction preserves the source's projection map.
-    if (construction->kind == ConstructorKind::Copy ||
+    if (construction->directInitialization ||
+        construction->kind == ConstructorKind::Copy ||
         construction->kind == ConstructorKind::Move) {
       if (const auto *call = exprAs<Call>(expression);
           call && call->arguments().size() == 1)
@@ -10881,18 +10895,10 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
   if (info == nullptr) {
     return true;
   }
-  // An ordinary constructor creates a new object, not a transfer from an
-  // existing object's storage. Copy/move policy still applies to named values
-  // and explicit lifecycle constructions, but must not forbid initial creation
-  // of an immobile value (for example a shared once flag).
-  if (info->category == ValueCategory::Value) {
-    const ResolvedConstructionInfo *construction =
-        semanticModel.findConstruction(*expression);
-    if (construction != nullptr && construction->constructedType == target &&
-        construction->kind == ConstructorKind::Ordinary) {
-      return true;
-    }
-  }
+  // Initial creation/publication of a fresh result does not move an existing
+  // object. Assignment separately requires its real assignment operation.
+  if (semanticModel.isFreshClassResult(*expression))
+    return true;
   const SemanticTypeTraits traits = typeTraits(target);
   return info->category == ValueCategory::Value ? traits.movable
                                                 : traits.copyable;

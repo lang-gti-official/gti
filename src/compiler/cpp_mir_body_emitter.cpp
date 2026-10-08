@@ -31816,10 +31816,13 @@ private:
 
   void emitMaterializedClosureConstruction(const ScalarBodyFacts &facts,
                                            const MaterializedClosure &closure) {
-    // Trivial value-rooted environments have no semantic drop obligation.
+    // Trivial value roots and passive local bindings have no semantic drop
+    // obligation (materializedClosure proves the latter's empty lifecycle).
     // Re-executing their Closure in a loop replaces representation-only
-    // storage, just as assigning a trivial SSA temporary does.
-    if (closure.destination->root == MirPlaceRootKind::Value &&
+    // storage, just as assigning a trivial SSA temporary does. Prepared
+    // argument temporaries retain their explicit lifetime protocol.
+    if ((closure.destination->root == MirPlaceRootKind::Value ||
+         closure.destination->root == MirPlaceRootKind::Binding) &&
         closure.destination->traits.drop == DropKind::Trivial) {
       output << "__gti_mir_p_"
              << canonicalSlotPlaceId(facts.body, *closure.destination)

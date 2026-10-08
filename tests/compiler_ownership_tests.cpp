@@ -17775,6 +17775,175 @@ int main() {
          "HIR should retain exact value-result signatures and confined call "
          "boundaries for scalar and move-only class results");
 
+  const lang::FrontendResult nestedResults =
+      lang::Frontend().analyze("nested-callable-results.gti", R"(
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));
+}
+double widen(int value) { return double(value) + 0.5; }
+class Narrow {
+public:
+  int operator()(double value) { return int(value); }
+};
+int main() {
+  auto inner = [](int value) -> double { return double(value) + 0.5; };
+  auto outer = [](double value) -> int { return int(value); };
+  Narrow narrow{};
+  return compose(outer, inner, 4) + compose(narrow, widen, 5) - 9;
+}
+)");
+  if (!nestedResults.canGenerateCode()) {
+    for (const auto &diagnostic : nestedResults.diagnostics)
+      std::cerr << "Unexpected nested-callable diagnostic: "
+                << diagnostic.message << '\n';
+  }
+  expect(nestedResults.canGenerateCode() &&
+             lang::verifyMirProgram(nestedResults.mir).valid(),
+         "direct open-callable composition must infer a concrete intermediate "
+         "without guessing it from the enclosing result");
+  const auto *compose = findTopLevelFunction(nestedResults.program, "compose");
+  const auto *composeInfo =
+      compose ? nestedResults.semantics.findFunction(*compose) : nullptr;
+  bool deferredIntermediate = false;
+  if (composeInfo) {
+    for (const auto &parameter : composeInfo->callableParameters)
+      for (const auto &signature : parameter.signatures)
+        deferredIntermediate |=
+            signature.inferResultFromInstantiation &&
+            signature.returnType == lang::SemanticType::Unknown;
+  }
+  bool concreteSignatures = true;
+  std::size_t composedInstances = 0;
+  for (const auto &instance : nestedResults.hir.functionInstances()) {
+    if (instance.source != compose)
+      continue;
+    ++composedInstances;
+    bool innerDouble = false;
+    bool outerInt = false;
+    for (const auto &parameter : instance.callableParameters) {
+      for (const auto &signature : parameter.signatures) {
+        concreteSignatures &=
+            signature.returnType != lang::SemanticType::Unknown &&
+            std::none_of(signature.parameterTypes.begin(),
+                         signature.parameterTypes.end(), [](const auto &type) {
+                           return type == lang::SemanticType::Unknown;
+                         });
+        innerDouble |=
+            signature.returnType == lang::SemanticType::Double &&
+            signature.parameterTypes ==
+                std::vector<lang::SemanticType>{lang::SemanticType::Int32};
+        outerInt |= signature.returnType == lang::SemanticType::Int32 &&
+                    signature.parameterTypes == std::vector<lang::SemanticType>{
+                                                    lang::SemanticType::Double};
+      }
+    }
+    concreteSignatures &= innerDouble && outerInt;
+  }
+  expect(deferredIntermediate && composedInstances == 2 && concreteSignatures,
+         "primary semantic inference obligations must become exact selected "
+         "callable signatures before concrete HIR and verified MIR");
+
+  const lang::FrontendResult nestedVoid =
+      lang::Frontend().analyze("nested-void-callable.gti", R"(
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));
+}
+int main() {
+  auto inner = [](int value) -> void {};
+  auto outer = [](int value) -> int { return value; };
+  return compose(outer, inner, 4);
+}
+)");
+  expect(
+      !nestedVoid.canGenerateCode() &&
+          hasDiagnosticCode(nestedVoid.diagnostics, "GTI-S2046") &&
+          hasDiagnostic(nestedVoid.diagnostics,
+                        "nested generic callable argument must produce a "
+                        "non-void value") &&
+          hasDiagnosticHint(nestedVoid.diagnostics,
+                            "explicit result binding") &&
+          !hasDiagnosticCode(nestedVoid.diagnostics, "GTI-B0001"),
+      "nested inference must reject void producers with a semantic diagnostic");
+
+  const lang::FrontendResult wrongNestedArgument =
+      lang::Frontend().analyze("wrong-nested-argument.gti", R"(
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));
+}
+int main() {
+  auto inner = [](int value) -> double { return 0.5; };
+  auto outer = [](bool value) -> int { return 1; };
+  return compose(outer, inner, 4);
+}
+)");
+  expect(!wrongNestedArgument.canGenerateCode() &&
+             !hasDiagnosticCode(wrongNestedArgument.diagnostics, "GTI-B0001"),
+         "nested result inference must still check the outer exact parameter "
+         "type");
+
+  const lang::FrontendResult nestedReference =
+      lang::Frontend().analyze("nested-reference-callable.gti", R"(
+class ReferenceSource {
+  int value = 7;
+public:
+  int& operator()(int unused) { return this.value; }
+};
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));
+}
+int main() {
+  ReferenceSource inner{};
+  auto outer = [](int value) -> int { return value; };
+  return compose(outer, inner, 4);
+}
+)");
+  expect(
+      !nestedReference.canGenerateCode() &&
+          hasDiagnosticCode(nestedReference.diagnostics, "GTI-S2046") &&
+          hasDiagnostic(nestedReference.diagnostics,
+                        "without references, tracked borrowed state, or lambda "
+                        "identity") &&
+          !hasDiagnosticCode(nestedReference.diagnostics, "GTI-B0001"),
+      "nested result inference must not erase receiver-tied reference origins");
+
+  const lang::FrontendResult nestedBorrow =
+      lang::Frontend().analyze("nested-borrowed-callable.gti", R"(
+struct View {
+  int& value;
+  View(int& source) : value(source) {}
+};
+class ViewSource {
+  int value = 7;
+public:
+  View operator()(int unused) { return View(this.value); }
+};
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));
+}
+class ReadView {
+public:
+  int operator()(View value) { return value.value; }
+};
+int main() {
+  ViewSource inner{};
+  ReadView outer{};
+  return compose(outer, inner, 4);
+}
+)");
+  if (!hasDiagnosticCode(nestedBorrow.diagnostics, "GTI-S2046")) {
+    for (const auto &diagnostic : nestedBorrow.diagnostics)
+      std::cerr << "Unexpected nested-borrow diagnostic: " << diagnostic.message
+                << '\n';
+  }
+  expect(!nestedBorrow.canGenerateCode() &&
+             hasDiagnosticCode(nestedBorrow.diagnostics, "GTI-S2046") &&
+             hasDiagnostic(nestedBorrow.diagnostics,
+                           "without references, tracked borrowed state, or "
+                           "lambda identity") &&
+             !hasDiagnosticCode(nestedBorrow.diagnostics, "GTI-B0001"),
+         "nested result inference must not discard a borrowed aggregate's "
+         "owner dependencies");
+
   const lang::FrontendResult wrongValueResult =
       lang::Frontend().analyze("wrong-callable-value-result.gti", R"(
 int map<Operation>(int value, Operation operation) {

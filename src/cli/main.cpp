@@ -8,6 +8,7 @@
 #include "gti/driver/build_script.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/dependencies.h"
+#include "gti/driver/install.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
@@ -158,6 +159,7 @@ enum class ProjectCommand {
   Run,
   Test,
   Verify,
+  Install,
 };
 
 struct ProjectOptions {
@@ -189,6 +191,16 @@ struct ProjectOptions {
   bool noBuild = false;
   bool offline = false;
   bool locked = false;
+  // gti install only.
+  std::optional<std::filesystem::path> projectPath;
+  std::optional<std::filesystem::path> installRoot;
+  bool force = false;
+  bool list = false;
+};
+
+struct UninstallOptions {
+  std::vector<std::string> names;
+  std::optional<std::filesystem::path> installRoot;
 };
 
 struct FetchOptions {
@@ -255,6 +267,10 @@ void printUsage(std::ostream &stream) {
          "       gti run [target] [options] [-- <program arguments>]\n"
          "       gti test [target] [options]\n"
          "       gti verify --build-report <path> [options]\n"
+         "       gti install [target] [--path <dir>] [--root <dir>] "
+         "[--force] [options]\n"
+         "       gti install --list [--root <dir>]\n"
+         "       gti uninstall <name>... [--root <dir>]\n"
          "       gti new <path> [--name <name>]\n"
          "       gti init [path] [--name <name>] [--git]\n"
          "       gti add <package[@requirement]> [--registry <name>]\n"
@@ -375,6 +391,18 @@ void printUsage(std::ostream &stream) {
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
          "\n"
+         "Install options (macOS and Linux):\n"
+         "      --path <dir>     Install from the project at <dir> (default: "
+         "the current one).\n"
+         "      --root <dir>     Install into <dir>/bin (default: "
+         "GTI_INSTALL_ROOT, then ~/.local).\n"
+         "      --force          Replace a program gti install did not "
+         "place, or one from another package.\n"
+         "      --list           List programs installed in the root.\n"
+         "  gti install builds with --profile release unless a profile is "
+         "selected,\n"
+         "  and accepts the project build options above.\n"
+         "\n"
          "Bindgen options:\n"
          "  -o, --output <path>  Write generated GTI declarations to a file.\n"
          "      --namespace <name>\n"
@@ -414,6 +442,10 @@ void printUsage(std::ostream &stream) {
          "test target.\n"
          "  verify               Rebuild a recorded --build-report and report "
          "every recorded fact that no longer matches.\n"
+         "  install              Build an executable target and install it "
+         "into <root>/bin.\n"
+         "  uninstall            Remove a program that gti install "
+         "installed.\n"
          "  add                  Add a registry dependency and update the "
          "exact lock.\n"
          "  publish              Publish a validated immutable source "
@@ -839,13 +871,16 @@ std::string_view projectCommandName(ProjectCommand command) {
     return "test";
   case ProjectCommand::Verify:
     return "verify";
+  case ProjectCommand::Install:
+    return "install";
   }
   return "build";
 }
 
 bool buildsExecutable(ProjectCommand command) {
   return command == ProjectCommand::Build || command == ProjectCommand::Run ||
-         command == ProjectCommand::Test || command == ProjectCommand::Verify;
+         command == ProjectCommand::Test || command == ProjectCommand::Verify ||
+         command == ProjectCommand::Install;
 }
 
 ArgumentResult parseProjectArguments(int argc, char *argv[],
@@ -867,6 +902,29 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
       return ArgumentResult::ExitSuccess;
+    }
+    if (options.command == ProjectCommand::Install &&
+        (argument == "--path" || argument == "--root")) {
+      std::optional<std::filesystem::path> &destination =
+          argument == "--path" ? options.projectPath : options.installRoot;
+      if (++index >= argc) {
+        std::cerr << "gti: missing directory after " << argument << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      if (destination) {
+        std::cerr << "gti: " << argument << " may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      destination = std::filesystem::path(argv[index]);
+      continue;
+    }
+    if (options.command == ProjectCommand::Install && argument == "--force") {
+      options.force = true;
+      continue;
+    }
+    if (options.command == ProjectCommand::Install && argument == "--list") {
+      options.list = true;
+      continue;
     }
     if (argument == "--profile") {
       if (++index >= argc) {
@@ -1220,6 +1278,18 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
                  "cache, or configuration overrides\n";
     return ArgumentResult::ExitFailure;
   }
+  if (options.command == ProjectCommand::Install) {
+    if (options.list &&
+        (options.target || options.package || options.projectPath ||
+         options.profileSelected || options.targetTriple || options.force)) {
+      std::cerr << "gti: gti install --list accepts only --root\n";
+      return ArgumentResult::ExitFailure;
+    }
+    // Installed programs are for use, not debugging, like `cargo install`.
+    if (!options.profileSelected) {
+      options.profile = "release";
+    }
+  }
   if (options.command == ProjectCommand::Verify) {
     if (!options.buildReport) {
       std::cerr << "gti: gti verify requires --build-report <path>\n";
@@ -1396,6 +1466,46 @@ ArgumentResult parseCleanArguments(int argc, char *argv[]) {
       return ArgumentResult::ExitSuccess;
     }
     std::cerr << "gti: unknown clean option '" << argument << "'\n";
+    return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult parseUninstallArguments(int argc, char *argv[],
+                                       UninstallOptions &options) {
+  for (int index = 2; index < argc; ++index) {
+    const auto color = parseColorArgument(argc, argv, index);
+    if (color == ColorArgument::Invalid) {
+      return ArgumentResult::ExitFailure;
+    }
+    if (color == ColorArgument::Accepted) {
+      continue;
+    }
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (argument == "--root") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing directory after --root\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.installRoot) {
+        std::cerr << "gti: --root may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.installRoot = std::filesystem::path(argv[index]);
+      continue;
+    }
+    if (!argument.empty() && argument.front() == '-') {
+      std::cerr << "gti: unknown uninstall option '" << argument << "'\n";
+      return ArgumentResult::ExitFailure;
+    }
+    options.names.push_back(argument);
+  }
+  if (options.names.empty()) {
+    std::cerr << "gti: gti uninstall requires a program name\n";
     return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
@@ -2394,7 +2504,8 @@ ProjectTargetSelection selectProjectTarget(const ProjectOptions &options) {
   // models no runner or emulator, so a foreign target is refused here
   // rather than left to fail as an exec-format error after a full build.
   if (options.command == ProjectCommand::Run ||
-      options.command == ProjectCommand::Test) {
+      options.command == ProjectCommand::Test ||
+      options.command == ProjectCommand::Install) {
     const lang::TargetTripleParseResult requested =
         lang::parseTargetTripleResult(*options.targetTriple);
     const lang::TargetInfo host = lang::TargetInfo::host();
@@ -2402,9 +2513,11 @@ ProjectTargetSelection selectProjectTarget(const ProjectOptions &options) {
         lang::driver::targetTriple(*requested.target) !=
             lang::driver::targetTriple(host)) {
       std::cerr << "gti: " << projectCommandName(options.command)
-                << " executes the built program on this machine and cannot "
-                   "select target '"
-                << *options.targetTriple << "'\n"
+                << (options.command == ProjectCommand::Install
+                        ? " places the built program on this machine"
+                        : " executes the built program on this machine")
+                << " and cannot select target '" << *options.targetTriple
+                << "'\n"
                 << "gti: build it with gti build --target "
                 << *options.targetTriple << '\n';
       return {.failure = exitCode(ExitStatus::Usage)};
@@ -2819,11 +2932,69 @@ int generateProjectBindgenImports(const lang::driver::ProjectBuildPlan &plan,
                                 : exitCode(ExitStatus::Compilation);
 }
 
+// `gti install --path <dir>` resolves the project from that directory instead
+// of the current one.
+std::optional<std::filesystem::path>
+projectDirectory(const ProjectOptions &options) {
+  if (!options.projectPath) {
+    return workingDirectory();
+  }
+  std::error_code error;
+  const std::filesystem::path directory =
+      std::filesystem::absolute(*options.projectPath, error);
+  if (error || !std::filesystem::is_directory(directory, error)) {
+    std::cerr << "gti: --path '" << options.projectPath->string()
+              << "' is not a directory\n";
+    return std::nullopt;
+  }
+  return directory;
+}
+
+lang::driver::InstalledProgram
+installedProgram(const lang::driver::ProjectBuildPlan &plan) {
+  return {.name = plan.output().filename().string(),
+          .package = plan.packageName(),
+          .version = plan.packageVersion(),
+          .target = plan.targetName(),
+          .profile = plan.profileName(),
+          .source = plan.packageRoot()};
+}
+
+int reportInstallRefusal(const lang::driver::InstallResult &result) {
+  std::cerr << "gti: " << result.message << '\n';
+  if (result.status == lang::driver::InstallStatus::Conflict) {
+    std::cerr << "gti: use --force to replace it\n";
+    return exitCode(ExitStatus::Usage);
+  }
+  return exitCode(ExitStatus::Io);
+}
+
+// Installed programs are only convenient when their directory is searched.
+bool searchedByPath(const std::filesystem::path &directory) {
+  const char *path = std::getenv("PATH");
+  if (path == nullptr) {
+    return false;
+  }
+  std::string_view remaining = path;
+  while (true) {
+    const std::size_t separator = remaining.find(':');
+    const std::string_view entry = remaining.substr(0, separator);
+    if (!entry.empty() && lang::driver::artifactPathsAlias(
+                              std::filesystem::path(entry), directory)) {
+      return true;
+    }
+    if (separator == std::string_view::npos) {
+      return false;
+    }
+    remaining.remove_prefix(separator + 1);
+  }
+}
+
 int runProject(const ProjectOptions &options, const char *driver) {
   const std::optional<std::filesystem::path> currentDirectory =
-      workingDirectory();
+      projectDirectory(options);
   if (!currentDirectory) {
-    return exitCode(ExitStatus::Io);
+    return exitCode(options.projectPath ? ExitStatus::Usage : ExitStatus::Io);
   }
 
   lang::driver::ProjectBuildOverrides overrides;
@@ -2860,6 +3031,25 @@ int runProject(const ProjectOptions &options, const char *driver) {
               << "' is a test target; use gti test " << plan.targetName()
               << "\n";
     return exitCode(ExitStatus::Usage);
+  }
+  std::optional<lang::driver::InstallRequest> install;
+  if (options.command == ProjectCommand::Install) {
+    if (plan.targetKind() != lang::driver::ProjectTargetKind::Executable) {
+      std::cerr << "gti: target '" << plan.targetName() << "' is a "
+                << lang::driver::projectTargetKindName(plan.targetKind())
+                << " target; gti install installs executable targets\n";
+      return exitCode(ExitStatus::Usage);
+    }
+    install = lang::driver::InstallRequest{.root = *options.installRoot,
+                                           .executable = plan.output(),
+                                           .program = installedProgram(plan),
+                                           .force = options.force};
+    // Refuse before a possibly long release build; installProgram repeats
+    // the check under the install record lock.
+    if (const std::optional<lang::driver::InstallResult> refusal =
+            lang::driver::checkInstallDestination(*install)) {
+      return reportInstallRefusal(*refusal);
+    }
   }
   if (options.verbose) {
     reportProjectPlan(plan, options.command);
@@ -2976,6 +3166,30 @@ int runProject(const ProjectOptions &options, const char *driver) {
                        &provenance, &diagnosticSummary);
   if (status != exitCode(ExitStatus::Success)) {
     return status;
+  }
+
+  if (install) {
+    const lang::driver::InstallResult installed =
+        lang::driver::installProgram(*install);
+    if (installed.status != lang::driver::InstallStatus::Installed &&
+        installed.status != lang::driver::InstallStatus::Replaced) {
+      return reportInstallRefusal(installed);
+    }
+    std::cout << terminalStyle.code(std::cout, Style::Success)
+              << (installed.status == lang::driver::InstallStatus::Replaced
+                      ? "Replaced"
+                      : "Installed")
+              << terminalStyle.code(std::cout, Style::Reset) << ' '
+              << plan.targetName() << " [" << plan.profileName() << ", "
+              << lang::driver::targetTriple(plan.target()) << "] -> "
+              << installed.destination.string() << '\n';
+    reportDiagnosticSummary(std::cout, diagnosticSummary);
+    if (!searchedByPath(installed.destination.parent_path())) {
+      std::cerr << "gti: note: " << installed.destination.parent_path().string()
+                << " is not on PATH; add it to run installed programs by "
+                   "name\n";
+    }
+    return exitCode(ExitStatus::Success);
   }
 
   std::ostream &statusStream =
@@ -3324,6 +3538,91 @@ int runFetch(const FetchOptions &options) {
             << dependencyDescription << (packageCount == 1 ? "y" : "ies")
             << ")\n";
   return exitCode(ExitStatus::Success);
+}
+
+std::optional<std::filesystem::path>
+installRoot(const std::optional<std::filesystem::path> &requested) {
+  const lang::driver::InstallRootResult root =
+      lang::driver::resolveInstallRoot(requested);
+  if (!root.root) {
+    std::cerr << "gti: " << root.error << '\n';
+  }
+  return root.root;
+}
+
+int runInstall(ProjectOptions options, const char *driver) {
+#if defined(_WIN32)
+  (void)options;
+  (void)driver;
+  std::cerr << "gti: gti install is not supported on Windows yet\n";
+  return exitCode(ExitStatus::Usage);
+#else
+  options.installRoot = installRoot(options.installRoot);
+  if (!options.installRoot) {
+    return exitCode(ExitStatus::Usage);
+  }
+  if (!options.list) {
+    return runProject(options, driver);
+  }
+  const lang::driver::InstalledProgramsResult installed =
+      lang::driver::listInstalledPrograms(*options.installRoot);
+  if (!installed.succeeded()) {
+    std::cerr << "gti: " << installed.error << '\n';
+    return exitCode(ExitStatus::Io);
+  }
+  if (installed.programs.empty()) {
+    std::cout
+        << "No programs installed in "
+        << lang::driver::installBinDirectory(*options.installRoot).string()
+        << '\n';
+  }
+  for (const lang::driver::InstalledProgram &program : installed.programs) {
+    std::cout << program.name << ' ' << program.package << '@'
+              << program.version << " [" << program.profile << "] -> "
+              << (lang::driver::installBinDirectory(*options.installRoot) /
+                  program.name)
+                     .string()
+              << '\n';
+  }
+  return exitCode(ExitStatus::Success);
+#endif
+}
+
+int runUninstall(const UninstallOptions &options) {
+#if defined(_WIN32)
+  (void)options;
+  std::cerr << "gti: gti uninstall is not supported on Windows yet\n";
+  return exitCode(ExitStatus::Usage);
+#else
+  const std::optional<std::filesystem::path> root =
+      installRoot(options.installRoot);
+  if (!root) {
+    return exitCode(ExitStatus::Usage);
+  }
+  // Every name is attempted; the first failure decides the exit status.
+  int status = exitCode(ExitStatus::Success);
+  for (const std::string &name : options.names) {
+    const lang::driver::UninstallResult result =
+        lang::driver::uninstallProgram(*root, name);
+    if (result.status != lang::driver::UninstallStatus::Removed) {
+      std::cerr << "gti: " << result.message << '\n';
+      if (status == exitCode(ExitStatus::Success)) {
+        status = result.status == lang::driver::UninstallStatus::NotInstalled
+                     ? exitCode(ExitStatus::Usage)
+                     : exitCode(ExitStatus::Io);
+      }
+      continue;
+    }
+    if (result.fileMissing) {
+      std::cerr << "gti: warning: " << result.destination.string()
+                << " was already removed; dropped its install record\n";
+    }
+    std::cout << terminalStyle.code(std::cout, Style::Success) << "Removed"
+              << terminalStyle.code(std::cout, Style::Reset) << ' ' << name
+              << " -> " << result.destination.string() << '\n';
+  }
+  return status;
+#endif
 }
 
 int runClean() {
@@ -3721,13 +4020,14 @@ int main(int argc, char *argv[]) {
   const std::string_view command =
       argc > 1 ? std::string_view(argv[1]) : std::string_view{};
   if (command == "build" || command == "check" || command == "run" ||
-      command == "test" || command == "verify") {
+      command == "test" || command == "verify" || command == "install") {
     ProjectOptions options;
-    options.command = command == "check"    ? ProjectCommand::Check
-                      : command == "run"    ? ProjectCommand::Run
-                      : command == "test"   ? ProjectCommand::Test
-                      : command == "verify" ? ProjectCommand::Verify
-                                            : ProjectCommand::Build;
+    options.command = command == "check"     ? ProjectCommand::Check
+                      : command == "run"     ? ProjectCommand::Run
+                      : command == "test"    ? ProjectCommand::Test
+                      : command == "verify"  ? ProjectCommand::Verify
+                      : command == "install" ? ProjectCommand::Install
+                                             : ProjectCommand::Build;
     const ArgumentResult argumentResult =
         parseProjectArguments(argc, argv, options);
     if (argumentResult == ArgumentResult::ExitSuccess) {
@@ -3739,6 +4039,9 @@ int main(int argc, char *argv[]) {
     if (options.command == ProjectCommand::Verify) {
       return runProjectVerify(options, argv[0]);
     }
+    if (options.command == ProjectCommand::Install) {
+      return runInstall(std::move(options), argv[0]);
+    }
     if (options.command == ProjectCommand::Test) {
       return runProjectTests(options, argv[0]);
     }
@@ -3746,6 +4049,18 @@ int main(int argc, char *argv[]) {
       return runProjectBuildAll(options, argv[0]);
     }
     return runProject(options, argv[0]);
+  }
+
+  if (command == "uninstall") {
+    UninstallOptions options;
+    const auto parsed = parseUninstallArguments(argc, argv, options);
+    if (parsed == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (parsed == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runUninstall(options);
   }
 
   if (command == "registry") {

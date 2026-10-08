@@ -1350,6 +1350,10 @@ the body is emitted from the same verified MIR under those local type names.
 Constructor-local lifetimes use ordinary cleanup slots. Replacing a completed
 owning field retains its already-active construction rollback obligation;
 failure still drains locals and the replacement according to MIR.
+When equivalent constructor instances share one source-template body, only the
+representation comparison omits instance markers. The emitted body retains
+every admitted instance's exact marker, including separate cleanup-shape
+variants, so coalescing cannot silently remove an instance from corpus evidence.
 
 Within one immutable emission plan, constructor and callable-template body
 plans are cached by concrete instance identity together with their exact
@@ -1387,7 +1391,11 @@ captures and caller obligations after one failure, or preserve primary and
 secondary records on failure during cleanup. Native object destruction ends
 the disarmed representation lifetimes; it does not select capture cleanup or
 replace the MIR failure edge. Passive materialized environments retain trivial
-cleanup. Fused non-escaping closures can still use native lambdas.
+cleanup. Re-entered passive local bindings and passive value-root slots retire
+only their representation before reconstructing the next loop iteration's
+environment. Owning closures and prepared argument temporaries keep their
+verified explicit lifetime protocol. Fused non-escaping closures can still
+use native lambdas.
 Each materialized environment carries a private type alias for its exact
 artifact-local MIR lambda identity. Source-template member families use this
 identity alongside signature and cleanup selectors when distinct closure

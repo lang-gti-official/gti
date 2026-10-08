@@ -26,6 +26,14 @@ the corpus programs alone that does not consult the expectations.
 
 ## Audit result
 
+The issue-reconciliation candidate now records correct outcomes for every gated
+reproducer, rather than retaining `finding` markers on repaired programs. The
+427-program run at `2a9700d8` passed; its remaining A61 diagnostic-quality defect
+is corrected with exact compiler/LSP source-range and recovery tests. Issue
+links remain as regression provenance. Historical results below describe their
+named baselines, not current unresolved allowances. Final combined validation
+and publication are still required before closing the remaining campaign issues.
+
 The complete 65-program PR head initially measured **50 pass, 10 ICE, 1 link
 failure, 2 silent failures, and 2 rejections of valid code**. The first
 30-program tranche initially measured **24 pass, 4 ICE, and 2 silent
@@ -180,15 +188,15 @@ Every defect has a reproducer gated as a known finding and a Gitea issue.
 | A50 | [#91](https://git.internal.howetotech.dev/gti-lang/gti/issues/91) C++ backend ICE: designated construction omitting a field whose default is 'Inner inner{};' | fixed; focused native and representation checks | `reproducers/a50-designated-omitted-brace-default` |
 | A51 | [#92](https://git.internal.howetotech.dev/gti-lang/gti/issues/92) Independent passive class-array decomposition, by-value class-array arguments and parameter-to-field copies, and owning whole-array moves without invented default construction | resolved: pass | `reproducers/a51-binding-over-class-array`<br>`reproducers/a51-binding-over-class-array-invalid-cpp`, `aggregate_projection`, `aggregate_projection_runtime` |
 | A52 | [#93](https://git.internal.howetotech.dev/gti-lang/gti/issues/93) Fixed arrays of passive unions and union-containing records | resolved: pass | `reproducers/a52-struct-with-union-array`<br>`reproducers/a52-union-array` |
-| A53 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a53-operator-temporary-ref-diagnostic` |
+| A53 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Fixed: operator reference mismatch explains temporary/place requirements | rejected | `reproducers/a53-operator-temporary-ref-diagnostic` |
 | A54 | [#95](https://git.internal.howetotech.dev/gti-lang/gti/issues/95) Resolved: alias constraints inspect completed class facts | pass | `reproducers/a54-alias-constrained-generic-class-argument`<br>`reproducers/a54-alias-constrained-generic-user-class` |
 | A55 | [#96](https://git.internal.howetotech.dev/gti-lang/gti/issues/96) Resolved: exact constructor-pack entry cleanup supports move-only field construction and container emplacement; ordered rollback covered | pass | `reproducers/a55-ctor-pack-move-only-field-init`<br>`reproducers/a55-list-emplace-move-only-argument` |
 | A56 | [#97](https://git.internal.howetotech.dev/gti-lang/gti/issues/97) Existing same-type values allocate through selected generated copy/move and checked raw-storage publication | pass | `reproducers/a56-make-unique-same-type`<br>`reproducers/a56-make-unique-string-from-string` |
 | A57 | [#98](https://git.internal.howetotech.dev/gti-lang/gti/issues/98) Resolved: non-dependent generic ranges preserve instance-local loans | pass | `reproducers/a57-generic-member-field-range-for-silent`<br>`reproducers/a57-generic-nondependent-range-for-silent` |
 | A58 | [#99](https://git.internal.howetotech.dev/gti-lang/gti/issues/99) Owner-field and range-element pointee references retain their exact accessor addresses; lowering rejections retain their owning cause/source | resolved: pass | `reproducers/a58-map-unique-ptr-value-deref`<br>`reproducers/a58-ref-to-owner-field-pointee-via-local-ref` |
 | A59 | [#100](https://git.internal.howetotech.dev/gti-lang/gti/issues/100) Read-only nested references publish the exact checked child address while retaining the owner's lifetime dependency | resolved: pass | `reproducers/a59-map-at-then-element-ref`<br>`reproducers/a59-readonly-ref-into-mut-nested-container`, `borrow_origin`, `borrow_origin_runtime` |
-| A60 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | bad-diagnostic | `reproducers/a60-println-format-missing-include` |
-| A61 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Diagnostics suggest invalid fixes and misdescribe explicit generic arguments | rejected | `reproducers/a61-designated-argument-diagnostic` |
+| A60 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Fixed: overload arity mismatch discovers a verified include instead of advising a cast | rejected | `reproducers/a60-println-format-missing-include` |
+| A61 | [#69](https://git.internal.howetotech.dev/gti-lang/gti/issues/69) Fixed: an untyped designated list identifies the missing destination type, without blaming an otherwise eligible struct | rejected | `reproducers/a61-designated-argument-diagnostic`, `designated_construction`, `diagnostic_recovery_lsp` |
 | F7 | [#51](https://git.internal.howetotech.dev/gti-lang/gti/issues/51) Calls to declared-but-undefined GTI functions fail at the native link instead of with a diagnostic | ice, link | `reproducers/f7-declaration-only-weak-ptr`<br>`reproducers/f7-json-decode-without-codec`<br>`reproducers/f7-undefined-user-function` |
 
 Optimization-level and C++-standard consistency held throughout. Eight diverse
@@ -610,6 +618,17 @@ Corpus program: `c48_ownership_breadth`.
 ---
 
 ## F14 — Wrong diagnostic: a callable parameter invoked in argument position
+
+**Resolved in the reconciliation audit.** Direct nested open-callable results
+now have an explicit semantic inference obligation, resolved against the
+selected concrete callable before HIR. The intermediate need not match the
+outer result type. Void, reference, and tracked-borrowed results remain rejected
+without weakening lifetime checks. The complete c52 program also exposed a
+passive local closure slot reused across loop iterations; representation-only
+retirement now preserves both trivial and owning closure lifetimes.
+The reduced reproducer and complete corpus program pass all eight native modes
+(C++20/23 O0/O1/O3, no-elide, and ASan/UBSan), and their expectations now require
+the exact successful output. The diagnostic below is historical.
 
 `reproducers/f14-nested-callable-invocation.gti`
 

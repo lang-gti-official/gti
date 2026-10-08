@@ -19,6 +19,64 @@ index effects and deterministic cleanup, including owning element arrays.
 These are current acceptance requirements, not a claim that the combined full
 suite has already passed.
 
+The reconciliation also closes the two remaining bad-diagnostic expectations
+from issue #69. Operator reference failures identify the temporary or read-only
+operand; unavailable overload arity no longer recommends a cast. Ordinary
+include discovery can prove a missing overload declaration, including an
+unrelated user-defined header. The full diagnostics suite, include-suggestion
+suite and focused LSP tests cover source ranges, candidate/operand notes,
+safe include edits and clearing after applying the edit. This is focused
+evidence; the combined final run remains required.
+
+The `6d25a313` audit checkpoint passes the full compiler aggregate and the
+repaired native-identity, optimizer, signature, borrowing, aggregate projection,
+installed-runtime and stdlib-surface gates. Its native corpus oracle builds and
+runs all 126 examples at O0/C++20 and O3/C++23 with identical behavior. The
+reviewed emitted census is 20,719 body identities: constructor-template
+coalescing now preserves four previously omitted identities in example 86;
+example 13 retains its newly explicit default-constructor body; example 51 adds
+three bodies demonstrating heterogeneous nested callable results. Examples 32
+and 127 lose only obsolete reference-specific sentinel operator adapters after
+the source operators became by-value. The LoweredProgram inventory is 62,601
+declarations, 20,722 bodies and 3,828 generated items. These inventories were
+reviewed by identity and checked against a temporary native-oracle baseline
+before refreshing repository expectations. The remaining three-body difference
+is unchanged in scalar atomics and optionals. Final reconciled-head full-suite
+and installed-consumer acceptance is still required.
+
+The merged #150 candidate additionally passes all 127 examples in both native
+oracle endpoints and the complete emitted/LoweredProgram censuses: 21,103
+emitted body identities, 63,607 declarations, 21,106 lowered bodies and 3,879
+generated items. Example 130 has 51 generated items rather than its standalone
+branch's 54 because the reconciled iterator surface removes the same three
+reference-specific sentinel adapters noted above. Tree-sitter passes all 76
+grammar cases, queries/source-text contracts and 193 shipped sources without
+generated-parser drift. These results precede final construction-provenance
+verifier hardening; they are not final release acceptance.
+
+## Guaranteed fresh-result direct initialization
+
+`prvalue_direct_initialization` covers the original #150 class factory, nested
+typed/braced/grouped wrappers, genuine existing-object copy/move, deleted real
+movement, borrowed-owner escape rejection, exact generic instances, constexpr
+producer parity, HIR source-alias mutations (including forged real transfers,
+missing construction provenance, and actual erasure of ordinary/nominal-call
+factories and a dependent generic branch whose primary has no selection),
+verified MIR and both C++ backend
+standards. It also checks field-wise mixed borrowed factories/relays and rejects
+owner mutation before last use, conflicting exclusive inputs, and local-owner
+escape. `prvalue_direct_initialization_runtime` runs example 130, method,
+operator and lambda factories, mixed borrowed results, and owning constructor
+failure rollback in the shared eight-mode matrix: C++20/C++23 at
+O0/O1/O3, no-elide and generated-program ASan/UBSan. Final-address self-pointers
+and exact destructor output distinguish direct initialization from hidden
+relocation or extra temporary cleanup. The LSP gate checks current diagnostics,
+compiler-owned hover/definition, UTF-16 source positions, invalid edits and
+repaired snapshots. Syntax/formatter/Tree-sitter grammar is unchanged.
+
+These focused gates supplement the full production and installed-consumer
+acceptance; they do not claim the combined feature/release is verified alone.
+
 ## Combined lifetime/storage and payload-enum release gate
 
 Historically, PR #94 was the single integration point for the S-ALLOC-06/07 and generic

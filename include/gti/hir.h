@@ -363,6 +363,19 @@ struct HirStatement {
   std::vector<SemanticLoanId> elseEntryEndedLoans;
 };
 
+// Non-executing source wrappers share their producer's value and lifetime.
+// Keep their exact source/type witness rather than inventing an Identity value
+// with a second object/drop obligation.
+struct HirDirectInitialization {
+  const Expr *source = nullptr;
+  const Expr *producer = nullptr;
+  HirValueId value = 0;
+  SemanticType type = SemanticType::Unknown;
+  // Source-bound selected construction from the concrete semantic model.
+  // Grouping needs no construction proof; ordinary invocation cannot get one.
+  std::optional<SemanticDirectInitializationProof> constructionProof;
+};
+
 struct HirBody {
   PlaceDomain placeDomain;
   std::vector<HirBinding> bindings;
@@ -370,10 +383,13 @@ struct HirBody {
   std::vector<HirFullExpression> fullExpressions;
   std::vector<HirDropObligation> dropObligations;
   std::vector<HirValue> values;
+  std::vector<HirDirectInitialization> directInitializations;
   std::vector<HirStatement> statements;
   std::vector<HirStatementId> roots;
 
   [[nodiscard]] const HirValue *findValue(HirValueId id) const;
+
+  [[nodiscard]] const HirValue *valueForSource(const Expr &source) const;
 
   [[nodiscard]] const HirStatement *findStatement(HirStatementId id) const;
 

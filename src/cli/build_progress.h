@@ -33,6 +33,7 @@ private:
            bool transient, std::chrono::nanoseconds elapsed = {});
   [[nodiscard]] std::string phaseDetail(bool perUnit) const;
   [[nodiscard]] std::string_view phaseVerb() const;
+  [[nodiscard]] bool phaseShown() const;
   void clearRow();
 
   const TerminalStyle &style_;

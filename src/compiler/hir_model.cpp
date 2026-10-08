@@ -5,6 +5,17 @@
 
 namespace lang {
 
+const HirValue *HirBody::valueForSource(const Expr &source) const {
+  for (auto value = values.rbegin(); value != values.rend(); ++value)
+    if (value->source == &source)
+      return &*value;
+  for (auto alias = directInitializations.rbegin();
+       alias != directInitializations.rend(); ++alias)
+    if (alias->source == &source)
+      return findValue(alias->value);
+  return nullptr;
+}
+
 namespace {
 
 [[nodiscard]] bool sameSpan(const SourceSpan &left, const SourceSpan &right) {
@@ -454,22 +465,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             initializer != nullptr && initializer->arguments.size() == 1
                 ? instance.body.findValue(initializer->arguments.front())
                 : nullptr;
-        exact &=
-            field.declaration != nullptr && selectedSource != nullptr &&
-            initializer != nullptr &&
-            initializer->kind == ConstructorInitializerTargetKind::Field &&
-            initializer->source == nullptr &&
-            initializer->field == field.info.symbol &&
-            initializer->targetType == field.info.type &&
-            initializer->explicitArgumentCount == 1 && !initializer->base &&
-            !initializer->constructorTarget && !initializer->generatedDefault &&
-            !initializer->storesReference && !initializer->ownedParameter &&
-            value != nullptr && value->source == selectedSource &&
-            (value->info.type == field.info.type ||
-             isImplicitScalarInitializationConversion(field.info.type,
-                                                      value->info.type) ||
-             isImplicitExpectedInitializationConversion(field.info.type,
-                                                        value->info.type));
+        exact &= field.declaration != nullptr && selectedSource != nullptr &&
+                 initializer != nullptr &&
+                 initializer->kind == ConstructorInitializerTargetKind::Field &&
+                 initializer->source == nullptr &&
+                 initializer->field == field.info.symbol &&
+                 initializer->targetType == field.info.type &&
+                 initializer->explicitArgumentCount == 1 &&
+                 !initializer->base && !initializer->constructorTarget &&
+                 !initializer->generatedDefault &&
+                 !initializer->storesReference &&
+                 !initializer->ownedParameter && value != nullptr &&
+                 instance.body.valueForSource(*selectedSource) == value &&
+                 (value->info.type == field.info.type ||
+                  isImplicitScalarInitializationConversion(field.info.type,
+                                                           value->info.type) ||
+                  isImplicitExpectedInitializationConversion(field.info.type,
+                                                             value->info.type));
         ++position;
       }
       if (!exact)
@@ -520,7 +532,86 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       result.errors.emplace_back(
           "generated constructor differs from its selected semantic base");
   }
+  const auto verifyDirectInitializations = [&](const HirBody &body) {
+    std::unordered_set<const Expr *> seen;
+    for (const auto &alias : body.directInitializations) {
+      const auto *value = body.findValue(alias.value);
+      const Expr *input = nullptr;
+      if (const auto *group = exprAs<Grouping>(alias.source))
+        input = group->expression().get();
+      else if (const auto *call = exprAs<Call>(alias.source);
+               call != nullptr && call->arguments().size() == 1)
+        input = call->arguments().front().get();
+      else if (const auto *direct = exprAs<DirectInitializer>(alias.source);
+               direct != nullptr && direct->arguments().size() == 1)
+        input = direct->arguments().front().get();
+      const Expr *producer = alias.producer;
+      for (std::size_t depth = 0; depth < body.directInitializations.size();
+           ++depth) {
+        const auto nested = std::find_if(
+            body.directInitializations.begin(),
+            body.directInitializations.end(),
+            [&](const auto &entry) { return entry.source == producer; });
+        if (nested == body.directInitializations.end())
+          break;
+        producer = nested->producer;
+      }
+      const auto *ids = alias.source == nullptr
+                            ? nullptr
+                            : &program.valueIdsForSource(*alias.source);
+      const auto *selected = alias.source == nullptr
+                                 ? nullptr
+                                 : semantics.findConstruction(*alias.source);
+      const bool grouping = exprAs<Grouping>(alias.source) != nullptr;
+      const auto &proof = alias.constructionProof;
+      const bool exactConstruction =
+          grouping ? !proof
+                   : proof && proof->source() == alias.source &&
+                         proof->producer() == alias.producer &&
+                         proof->type() == alias.type &&
+                         proof->snapshot() ==
+                             semantics.analysisSeal().programSnapshot;
+      const auto *sourceCall = exprAs<Call>(alias.source);
+      const auto *call =
+          sourceCall == nullptr ? nullptr : semantics.findCall(*sourceCall);
+      const bool ordinaryCall =
+          sourceCall != nullptr &&
+          ((call != nullptr &&
+            call->intrinsic != IntrinsicKind::ExactTypeParameterConstruction &&
+            call->intrinsic !=
+                IntrinsicKind::DefaultTypeParameterConstruction) ||
+           semantics.findLambdaCall(*sourceCall) != nullptr ||
+           semantics.findDeferredCallableCall(*sourceCall) != nullptr ||
+           semantics.findOperator(*sourceCall) != nullptr);
+      const bool executableSource = std::any_of(
+          body.values.begin(), body.values.end(), [&](const auto &candidate) {
+            return candidate.source == alias.source;
+          });
+      // A primary generic record may precede concrete reanalysis. When its
+      // exact construction is retained, its direct-initialization decision
+      // must agree; the concrete value/type and source identity are mandatory.
+      const bool semanticMatch =
+          !ordinaryCall && !executableSource && exactConstruction &&
+          (selected == nullptr || selected->directInitialization || grouping);
+      const bool fresh =
+          value != nullptr && (value->kind == HirValueKind::Call ||
+                               value->kind == HirValueKind::DirectInitializer ||
+                               value->functionTarget.has_value());
+      if (alias.source == nullptr || !seen.insert(alias.source).second ||
+          input == nullptr || input != alias.producer || value == nullptr ||
+          value->source != producer || alias.type.kind != SemanticType::Class ||
+          value->info.type != alias.type ||
+          value->info.category != ValueCategory::Value ||
+          (!grouping && (!fresh || value->intrinsic == IntrinsicKind::Move)) ||
+          !semanticMatch || ids == nullptr ||
+          std::find(ids->begin(), ids->end(), alias.value) == ids->end())
+        result.errors.emplace_back(
+            "class result alias lost its exact source/type "
+            "and shared value identity");
+    }
+  };
   const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
+    verifyDirectInitializations(body);
     for (const auto &value : body.values) {
       if (value.kind != HirValueKind::Call &&
           value.kind != HirValueKind::DirectInitializer)
@@ -1173,7 +1264,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto exactValue = [&](HirValueId id, const ExprPtr &expression) {
         const HirValue *value = body.findValue(id);
         return expression && value != nullptr &&
-               value->source == expression.get();
+               body.valueForSource(*expression) == value;
       };
       const HirLoan *rangeLoan =
           range == nullptr ? nullptr : body.findLoan(range->rangeLoan);
@@ -1467,7 +1558,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         step.initializer ? program.module().findValue(*step.initializer)
                          : nullptr;
     if (!step.initializer || initializer == nullptr ||
-        initializer->source != semantic.declaration->initializer().get()) {
+        semantic.declaration->initializer() == nullptr ||
+        program.module().valueForSource(*semantic.declaration->initializer()) !=
+            initializer) {
       result.errors.emplace_back(
           "executable program initializer has no exact source HIR value");
     }

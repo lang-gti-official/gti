@@ -24,6 +24,7 @@ if(Python3_Interpreter_FOUND)
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
     generated_base_constructor_runtime generated_constructor_order_runtime generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
+    coverage_composition_runtime
     generic_enum_instances_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
@@ -34,7 +35,8 @@ if(Python3_Interpreter_FOUND)
     owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
     owning_function_resource_result_runtime owning_function_runtime
     pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
-    programmable_allocators_runtime raw_owner_witness_runtime raw_pointer_conversion_runtime
+    programmable_allocators_runtime prvalue_direct_initialization_runtime
+    raw_owner_witness_runtime raw_pointer_conversion_runtime
     reference_class_assignment_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
     retained_owner_member_pack_runtime shared_accessor_range_runtime
