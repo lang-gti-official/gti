@@ -13,6 +13,15 @@ Compiler-private declarations reside under `gti_internal`. They may enforce an
 irreducible invariant unavailable to ordinary GTI, but they are not stable
 application APIs and shall not expose public container or ownership policy.
 
+Nested `detail` namespaces such as `std::detail` hold library implementation
+types. They are not stable application APIs, but unlike `gti_internal` they are
+ordinary namespaces: nothing prevents application source from naming them.
+The container iteration operations listed under
+[Iteration Type Names](#iteration-type-names) publish member aliases for their
+`detail` types. Application code should
+name those aliases rather than `std::detail` spellings. See
+[`R-STD-DETAIL-NAMES`](../plans/language-alignment.md#ranges-and-standard-library-completion).
+
 The source graph distinguishes application, implicit-prelude, and installed
 standard-library units. Only the latter two roles are compiler-trusted, and
 standard-library trust requires a physical source unit beneath a configured
@@ -237,7 +246,13 @@ The current implemented foundation includes:
   read-only traversal, in-place emplacement, explicit cloneable-element
   cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
-  owned array parameter and therefore requires copyable `T` when used; and
+  owned array parameter and therefore requires copyable `T` when used. Public
+  type aliases are `std::vector<T>::const_iterator` (read-only), `::iterator`
+  (exclusive writable traversal), and `::sentinel`. `begin()` returns
+  `const_iterator`, `begin_mut() mut` returns `iterator`, and `end()` returns
+  `sentinel`, not `iterator`. These names
+  preserve the underlying checked owner loans; no public code needs to name
+  `std::detail` to wrap vector traversal. Reverse iteration is not yet provided; and
 - `<std/forward_list>` `std::forward_list<T>` as a move-only linked owner with
   constant-time front access/push/pop, iterative clear, resize, reverse, stable
   merge/sort, removal, and adjacent uniqueness; and
@@ -645,6 +660,56 @@ ordinary GTI fields. Compiler-private capabilities may supply unique ownership
 or partially initialized storage without exposing raw addresses, manual
 deallocation, logical size, or capacity policy as public language state.
 
+### Iteration Type Names
+
+Containers and views name the types their iteration operations return with
+public member aliases:
+
+| Alias | Names the result of |
+| --- | --- |
+| `const_iterator` | `begin()` |
+| `iterator` | `begin_mut()` |
+| `sentinel` | `end()` |
+
+`vector`, `array`, `deque`, `list`, and `mutable_span` provide all three.
+`span`, `string`, `resource_vector`, and `forward_list` iterate read-only and
+provide `const_iterator` and `sentinel`; `forward_list`'s `begin()` and `end()`
+remain declaration scaffolds. `map` and `unordered_map` add `sentinel` to their
+existing `iterator` and `const_iterator`, which also name the results of
+`find_mut` and `find`. `set` and `unordered_set` add `sentinel`; their
+`iterator` names the insertion-result iterator.
+
+Each alias is transparent and names exactly the `std::detail` type the
+operation returns, so it changes no borrowing rule. A mutable `iterator` is
+still a range-`for` carrier, so it can be returned from a range's own
+`begin_mut()` but not stored in an ordinary local. Outside the owner, the
+aliases can be named through an alias of a concrete specialization:
+
+```gti
+#include <std/vector>
+
+using samples = std::vector<int32_t>;
+
+class readings {
+  mut samples values = samples({2, 4, 6});
+
+public:
+  readings() = default;
+  samples::const_iterator begin() { return this.values.begin(); }
+  samples::iterator begin_mut() mut { return this.values.begin_mut(); }
+  samples::sentinel end() { return this.values.end(); }
+};
+```
+
+The specialized spelling also works directly: `std::vector<int>::const_iterator`
+or, inside an appropriately constrained generic, `std::vector<T>::iterator`.
+This uses the general [member-type path](static-semantics.md) rules, preserving
+the owner's constraints and the alias's visibility and borrowed lifetime.
+[`83-complete-ranges.gti`](../../examples/83-complete-ranges.gti) shows the
+named-alias pattern in a complete range;
+[`132-qualified-type-members.gti`](../../examples/132-qualified-type-members.gti)
+demonstrates direct specialized owners and an unrelated user-defined type.
+
 ### Associative Containers
 
 `map` uses an AVL tree; `unordered_map` uses bucket chains and cached hashes.
@@ -654,8 +719,8 @@ an exclusive iterator or reference. A retained iterator or element reference
 protects the whole container against conflicting access; these APIs do not
 promise C++'s more permissive node-invalidation rules.
 
-Both expose `key_type`, `mapped_type`, `value_type`, `size_type`, `iterator`, and
-`const_iterator`, along with `size`, `empty`, `contains`, `count`, `at`, `find`,
+Both expose `key_type`, `mapped_type`, `value_type`, `size_type`, `iterator`,
+`const_iterator`, and `sentinel`, along with `size`, `empty`, `contains`, `count`, `at`, `find`,
 `find_mut`, `begin`, `begin_mut`, `end`, `erase(key)`, and `clear`. `end()` is a
 distinct sentinel. Read-only traversal permits shared aliases; mutable
 traversal carries one exclusive dependency. `map` additionally provides
@@ -1194,6 +1259,7 @@ The following component families remain planned or incomplete:
   and general stored borrowing graphs;
 - complete vector copy, allocator, iterator reassignment, and precise iterator
   invalidation support;
+- an enforced boundary for library-private `detail` namespaces;
 - the remaining callable, output/random-access complete-range, heterogeneous
   accumulation, and hash generic-capability families;
 - named/dynamic-field formatting, formatter customization, buffered streams,

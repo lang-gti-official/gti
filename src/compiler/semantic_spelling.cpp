@@ -41,7 +41,9 @@ std::string typeRefSpelling(const TypeRef &type) {
   std::string result =
       !type.pointers.empty() && type.pointers.front().pointeeConst ? "const "
                                                                    : "";
-  result += pathSpelling(type.name);
+  result += type.qualifiedOwner ? typeRefSpelling(*type.qualifiedOwner) +
+                                      "::" + type.name.last().lexeme
+                                : pathSpelling(type.name);
   if (!type.arguments.empty()) {
     result += '<';
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {

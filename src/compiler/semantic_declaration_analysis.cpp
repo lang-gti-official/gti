@@ -1390,7 +1390,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 
 auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
     const TypeRef &type, const std::vector<std::string> &scope) -> void {
-  if (type.name.segments.size() > 1) {
+  if (type.qualifiedOwner) {
+    resolveTypeAliasDependencies(*type.qualifiedOwner, scope);
+  } else if (type.name.segments.size() > 1) {
     TypeRef qualifier = type;
     qualifier.name.segments.pop_back();
     qualifier.arguments.clear();
@@ -1399,7 +1401,7 @@ auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
   if (type.name.last().kind == TokenKind::IDENTIFIER &&
       !resolveTypeParameter(type.name)) {
     if (const std::optional<ResolvedTypeAlias> dependency =
-            resolveTypeAliasPath(type.name, scope)) {
+            resolveTypeAliasPath(type, scope)) {
       (void)resolveTypeAlias(dependency->id, &type.name.last());
     }
   }
@@ -2217,6 +2219,9 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
     -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameter> parameters;
   const auto collect = [&](const auto &self, const TypeRef &type) -> void {
+    if (type.qualifiedOwner) {
+      self(self, *type.qualifiedOwner);
+    }
     if (type.isFunctionSignature()) {
       self(self, type.arguments.back());
       for (std::size_t index = 0; index + 1 < type.arguments.size(); ++index) {

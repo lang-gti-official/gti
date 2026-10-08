@@ -193,6 +193,7 @@ struct CompletionInput {
   std::size_t byteOffset = 0;
   TargetInfo target = TargetInfo::host();
   ConfigurationFlags configurationFlags;
+  ConfigurationFlags declaredConfigurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   std::vector<std::filesystem::path> preludePaths;
   std::unordered_map<std::string, std::string> sourceOverrides;

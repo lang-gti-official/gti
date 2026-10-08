@@ -1629,6 +1629,8 @@ Local type inference
 int main() {
   auto count = 1;
   mut auto total = count;
+  auto& observed = total;
+  mut auto& writable = total;
   return total;
 }
 
@@ -1650,6 +1652,20 @@ int main() {
               (integer_literal)))))
       (variable_declaration
         (type)
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (identifier))))
+      (variable_declaration
+        (type
+          (reference_declarator))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (identifier))))
+      (variable_declaration
+        (type
+          (reference_declarator))
         (identifier)
         (initializer_expression
           (primary_expression

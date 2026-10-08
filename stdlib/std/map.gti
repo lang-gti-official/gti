@@ -203,6 +203,7 @@ public:
   using size_type = size_t;
   using iterator = detail::map_mut_iterator<K, V>;
   using const_iterator = detail::map_iterator<K, V>;
+  using sentinel = detail::map_sentinel;
 
   map() requires std::default_initializable<Compare> &&
                  std::read_binary_callable<Compare, K, K, bool>

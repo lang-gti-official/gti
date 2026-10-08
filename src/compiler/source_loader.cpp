@@ -95,7 +95,8 @@ SourceGraph SourceLoader::load(
     const std::vector<std::filesystem::path> &standardLibraryRoots,
     std::optional<std::size_t> completionOffset,
     const std::vector<PackageSourceRoot> &packageSourceRoots, TargetInfo target,
-    ConfigurationFlags configurationFlags) {
+    ConfigurationFlags configurationFlags,
+    ConfigurationFlags declaredConfigurationFlags) {
   diagnostics.clear();
   states.clear();
   graph.clear();
@@ -108,6 +109,8 @@ SourceGraph SourceLoader::load(
   declaredFlags.clear();
   activeFlags.insert(configurationFlags.begin(), configurationFlags.end());
   declaredFlags.insert(configurationFlags.begin(), configurationFlags.end());
+  declaredFlags.insert(declaredConfigurationFlags.begin(),
+                       declaredConfigurationFlags.end());
   initialFlags = activeFlags;
   configurationDomain = 0;
   this->sourceOverrides = &sourceOverrides;
@@ -174,7 +177,7 @@ SourceGraph SourceLoader::load(
           DiagnosticId::UnknownConfigurationFlag, token, {token.lexeme});
       diagnostic.hints.emplace_back(
           "Check the spelling or define the flag in source, with '-D " +
-          token.lexeme + "', or in '[build].defines'.");
+          token.lexeme + "', or in manifest build/profile/target 'defines'.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }

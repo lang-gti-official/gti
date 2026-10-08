@@ -97,9 +97,11 @@ public:
   [[nodiscard]] const ResolvedProjectPackage *
   findPackage(std::string_view identity) const;
   [[nodiscard]] std::vector<PackageSourceRoot> packageSourceRoots() const;
-  // Program-wide manifest flags from the selected package and its transitive
-  // dependency closure; unrelated workspace members do not contribute.
+  // Program-wide [build] flags from the selected package and its transitive
+  // dependency closure; target/profile flags are selected separately.
   [[nodiscard]] ConfigurationFlags configurationFlags() const;
+  // Selected consumer target/profile names are declared even when inactive.
+  [[nodiscard]] ConfigurationFlags declaredConfigurationFlags() const;
   [[nodiscard]] std::string modelIdentity() const;
 
 private:
@@ -138,5 +140,14 @@ struct WorkspaceResolutionResult {
            workspace.has_value();
   }
 };
+
+// One configuration policy shared by build plans and read-only project facts.
+// Only the selected consumer's profile and target contribute scoped flags;
+// dependency [build] flags have already been collected in packageFlags.
+[[nodiscard]] ConfigurationFlags
+composeProjectConfigurationFlags(ConfigurationFlags packageFlags,
+                                 const ConfigurationFlags &profileFlags,
+                                 const ConfigurationFlags &targetFlags = {},
+                                 const ConfigurationFlags &commandFlags = {});
 
 } // namespace lang::driver

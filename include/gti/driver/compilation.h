@@ -34,16 +34,19 @@ public:
       TargetInfo target = TargetInfo::host(),
       ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded,
       RuntimeProfile runtimeProfile = RuntimeProfile::None,
-      ConfigurationFlags configurationFlags = {});
+      ConfigurationFlags configurationFlags = {},
+      ConfigurationFlags declaredConfigurationFlags = {});
 
   [[nodiscard]] const TargetInfo &target() const;
   [[nodiscard]] RuntimeProfile runtimeProfile() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
+  [[nodiscard]] const ConfigurationFlags &declaredConfigurationFlags() const;
 
 private:
   TargetInfo targetInfo;
   RuntimeProfile selectedRuntimeProfile;
   ConfigurationFlags configuredFlags;
+  ConfigurationFlags declaredFlags;
 };
 
 struct OptimizationOutputRequest {
@@ -91,7 +94,8 @@ public:
       WarningPolicy warningPolicy = {}, bool debugInfo = false,
       PackageWarningPolicy packageWarnings = {},
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
-      ProgramRequest program = {});
+      ProgramRequest program = {},
+      ConfigurationFlags declaredConfigurationFlags = {});
 
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const StandardLibraryLayout &standardLibrary() const;
@@ -102,6 +106,7 @@ public:
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
   [[nodiscard]] const ConfigurationFlags &configurationFlags() const;
+  [[nodiscard]] const ConfigurationFlags &declaredConfigurationFlags() const;
   [[nodiscard]] const OptimizationOutputRequest &optimizationOutputs() const;
   [[nodiscard]] const ProgramRequest &program() const;
   [[nodiscard]] const WarningPolicy &warnings() const;
@@ -119,6 +124,7 @@ private:
   CppStandard backendStandard;
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
+  ConfigurationFlags declaredFlags;
   OptimizationOutputRequest requestedOptimizationOutputs;
   ProgramRequest requestedProgram;
   WarningPolicy warningPolicy;

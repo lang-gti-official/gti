@@ -1,0 +1,55 @@
+#include <std/memory>
+#include <std/vector>
+
+struct ValueBox<T> {
+  using value_type = T;
+};
+
+ValueBox<T>::value_type identity<T>(ValueBox<T>::value_type value) {
+  return std::move(value);
+}
+
+class Layer {
+  int number;
+public:
+  Layer(int value) : number(value) {}
+  int id() { return this.number; }
+  ~Layer() { std::println("layer released"); }
+};
+
+class LayerStack {
+  mut std::vector<std::unique_ptr<Layer>> layers{};
+public:
+  LayerStack() = default;
+  ~LayerStack() = default;
+  LayerStack(LayerStack& other) = delete;
+  LayerStack(LayerStack&& other) = delete;
+
+  void push(std::unique_ptr<Layer> layer) mut {
+    this.layers.push_back(std::move(layer));
+  }
+
+  std::vector<std::unique_ptr<Layer>>::const_iterator begin() {
+    return this.layers.begin();
+  }
+
+  // GTI end points are sentinels, not necessarily the iterator type.
+  std::vector<std::unique_ptr<Layer>>::sentinel end() {
+    return this.layers.end();
+  }
+};
+
+int main() {
+  ValueBox<uint64_t>::value_type number = identity<uint64_t>(uint64_t(9));
+  if (number != uint64_t(9)) { return 1; }
+  mut LayerStack stack{};
+  stack.push(std::make_unique<Layer>(7));
+  stack.push(std::make_unique<Layer>(8));
+  mut int total = 0;
+  for (auto& layer : stack) {
+    total += layer->id();
+  }
+  if (total != 15) { return 2; }
+  std::println(total);
+  return 0;
+}
