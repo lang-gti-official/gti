@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Ordinary constructor/result/receiver facts preserve checked execution."""
 
+import os
 import pathlib
+import shutil
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main
@@ -109,4 +111,42 @@ if __name__ == "__main__":
         path.write_text(paths_source.replace("return nested_reconstruct();", "return 0;"))
         paths["scalar_paths_construction"] = path
         cases["scalar_paths_construction"] = [((), (0, "", ""))]
-        main(names=tuple(paths), cases=cases, fixture_paths=paths)
+        guard = fixture.parent / "optimizer_boolean_guards.gti"
+        guard_source = guard.read_text()
+        # The detectors are compiler-private. Test them behind a temporary
+        # ordinary trusted source module, never by relaxing application access.
+        library = pathlib.Path(temporary) / "stdlib"
+        shutil.copytree(pathlib.Path(os.environ.get("GTI_STDLIB_PATH",
+            fixture.parent.parent.parent / "stdlib")), library)
+        module, entry = guard_source.split("int main() {", 1)
+        (library / "std" / guard.name).write_text(module)
+        entry_source = "#include <std/optimizer_boolean_guards>\nint main() {" + entry
+        sites = [index for index, text in enumerate(guard_source.splitlines(), 1)
+                 if text.strip() == "return input + uint64_t(1);"]
+        assert len(sites) == 3
+        path = pathlib.Path(temporary) / "guard_changed.gti"
+        path.write_text(entry_source)
+        paths["guard_changed"] = path
+        cases["guard_changed"] = [((), (70, "",
+            f"<std/optimizer_boolean_guards>:{sites[2]}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "guard_success.gti"
+        path.write_text(entry_source.replace(
+            "return changed(uint64_t(0)) == uint64_t(0) ? 0 : 3;", "return 0;"))
+        paths["guard_success"] = path
+        cases["guard_success"] = [((), (0, "", ""))]
+        path = pathlib.Path(temporary) / "guard_rejected.gti"
+        path.write_text(entry_source.replace("if (true)", "if (false)", 1))
+        paths["guard_rejected"] = path
+        cases["guard_rejected"] = [((), (70, "",
+            "<std/optimizer_boolean_guards>:4: runtime error[GTI-R0010]: "
+            "invalid_storage_state in relocation_capacity\n"))]
+        previous_library = os.environ.get("GTI_STDLIB_PATH")
+        os.environ["GTI_STDLIB_PATH"] = str(library)
+        try:
+            main(names=tuple(paths), cases=cases, fixture_paths=paths)
+        finally:
+            if previous_library is None:
+                os.environ.pop("GTI_STDLIB_PATH", None)
+            else:
+                os.environ["GTI_STDLIB_PATH"] = previous_library

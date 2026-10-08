@@ -5070,6 +5070,11 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   prefix construction now allocates through its already-initialized lease and
   publishes slots last, avoiding two moved owner temporaries; provider validation
   and exact original-descriptor release retain their existing ordering.
+  Source-computed boolean guards now refine their successful Invoke edge using
+  the existing branch comparison rule, with a bounded inert staging/identity/
+  negation walk. Unrelated direct and negated predicates prove arithmetic after
+  the guard, while a later write retains overflow. Failed edges obtain no
+  success refinement. The same seven owner proof requirements remain open.
   Full admission/corpus/performance coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.
