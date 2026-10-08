@@ -2818,6 +2818,13 @@ class Unused {
 public:
   int read() { return this.value; }
 };
+int initialize_only() { return 7; }
+int unreferenced_global = initialize_only();
+class StaticOnly {
+public:
+  static int value = initialize_only();
+};
+using UnusedAlias = Unused;
 int unused_helper() {
   Unused unused{};
   return unused.read();
@@ -2867,6 +2874,11 @@ int main() { return used_helper() - 1; }
   expect(functions.contains("native_declared") &&
              classes.contains("NativeRecord"),
          "the C boundary is lowered whether or not GTI uses it");
+  expect(functions.contains("initialize_only") &&
+             classes.contains("StaticOnly"),
+         "unreferenced global and static initialization remain program roots");
+  expect(!gti_test::emitCppText(lowered).empty(),
+         "reachable lowering retains valid declarations for aliases and roots");
   const auto complete = analyze(fixture, false);
   const bool completeHasUnused = std::any_of(
       complete.mir.functionInstances().begin(),

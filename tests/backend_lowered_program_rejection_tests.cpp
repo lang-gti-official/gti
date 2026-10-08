@@ -15,6 +15,10 @@
 namespace lang {
 
 struct LoweredProgramTestAccess {
+  static void changeProgramKind(LoweredProgram &program) {
+    program.programKind_ = ProgramKind::Library;
+  }
+
   static std::vector<LoweredDeclaration> &
   declarations(LoweredProgram &program) {
     return program.declarations_;
@@ -80,6 +84,18 @@ int main() { return 0; }
              !nativeHeader.generate(original).contents.empty(),
          "all executable backend implementations should accept the same "
          "verified lowered program");
+
+  // The print is a deterministic inspection format, not an exhaustive
+  // serialization of every invariant. Program kind is checked independently
+  // of the optional embedding plan, even when the print stays unchanged.
+  lang::LoweredProgram wrongKind = original;
+  lang::LoweredProgramTestAccess::changeProgramKind(wrongKind);
+  expect(!lang::verifyLoweredProgram(wrongKind).empty(),
+         "a forged program kind must fail the complete verifier");
+  expectRejected(cpp, wrongKind, "program kind without an embedding plan");
+  expectRejected(mir, wrongKind, "program kind without an embedding plan");
+  expectRejected(nativeHeader, wrongKind,
+                 "program kind without an embedding plan");
 
   lang::LoweredProgram staleSeal = original;
   auto &declarations = lang::LoweredProgramTestAccess::declarations(staleSeal);

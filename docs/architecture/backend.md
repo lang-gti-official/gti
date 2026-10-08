@@ -343,16 +343,20 @@ or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
 provides deterministic full text for comparison and independent tooling.
 
 The builder runs every inventory check and seals the value only if they all
-pass; it never re-checks a seal it has just computed. Consumers are admitted
-by the seal alone. `verifiedLoweredProgram` recomputes the seal, and on a match
-returns a `VerifiedLoweredProgram`, owning evidence about that exact immutable
-value. A match proves the value is the one whose inventory the builder
-verified, because the seal covers the complete printed program. The C++, MIR,
-and native-header backends admit programs this way. `CppBackend` hands the
+pass; it never re-checks a seal it has just computed. Each consumer verifies
+the complete inventory and seal once. `verifiedLoweredProgram` returns a
+`VerifiedLoweredProgram`, owning evidence about that exact immutable value.
+A seal match alone is insufficient: the deterministic inspection print is not
+an exhaustive serialization of every verified invariant. For example, changing
+the independent program kind without its embedding plan must be rejected even
+if the print is unchanged. The C++, MIR, and native-header backends all use
+this admission boundary. `CppBackend` hands the
 evidence to the emitter, emission planner, and representation snapshot, so no
 stage checks again. The `LoweredProgram` overloads of those stages still check
 first, so a direct or test caller cannot bypass rejection. `verifyLoweredProgram`
-remains the complete inventory and seal check for tooling and tests.
+is also available for independent tooling and tests. The PR #176 audit
+therefore retains streamed hashing and shared evidence, but rejects its
+seal-only admission shortcut.
 
 Evidence owns a const snapshot, shared between consumer stages. Acquiring it
 copies an lvalue program or moves an rvalue program. `Backend::generate`
