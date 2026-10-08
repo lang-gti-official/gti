@@ -2450,7 +2450,11 @@ child loan linked to one mutable parent. Producing the child suspends the
 parent; `EndBorrow` for a child reactivates it only when no other active child
 remains. Nested chains apply the same transition recursively. Known-disjoint
 sibling-field children may coexist, and a suspended parent may still be used
-through a known-disjoint projection. Verification rejects direct or
+through a known-disjoint projection. A read-only child of a parent that
+grants no mutation over the child's place shares access with every
+overlapping read-only sibling, whatever the parent's loan kind; reborrowing a
+payload of one read-only matched-enum binding therefore coexists with the
+other read-only payload bindings. Verification rejects direct or
 overlapping use of a suspended parent, a read-only-to-mutable transition, or
 inconsistent active/suspended state at a CFG join. The precise place model for
 this slice is limited to stable roots with named-field and checked-dereference
