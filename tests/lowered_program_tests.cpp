@@ -555,6 +555,44 @@ void testDetachedDebugLocations() {
          "debug stages must identify exact optimized MIR operations");
 }
 
+void testVerificationEvidenceOwnsItsProgram() {
+  auto source = buildDetachedProgram();
+  expect(source.has_value(), "verification evidence fixture should lower");
+  if (!source)
+    return;
+  std::vector<lang::LoweredProgramIssue> issues;
+  const auto verified = lang::verifiedLoweredProgram(*source, issues);
+  expect(verified.has_value() && issues.empty(),
+         "a valid program should produce verification evidence");
+  if (!verified)
+    return;
+  // Public value assignment is legal even though individual rows are exposed
+  // read-only. It must not change the value a consumer has already verified.
+  auto invalid = *source;
+  auto &declarations = lang::LoweredProgramTestAccess::declarations(invalid);
+  expect(!declarations.empty(), "evidence fixture needs declarations");
+  if (declarations.empty())
+    return;
+  declarations.front().name += "_unverified_replacement";
+  *source = std::move(invalid);
+  expect(!lang::verifyLoweredProgram(*source).empty(),
+         "the replacement must invalidate the original construction seal");
+  expect(lang::verifyLoweredProgram(verified->program()).empty(),
+         "verification evidence must retain its exact accepted value across "
+         "public assignment of the source object");
+  expect(!lang::verifiedLoweredProgram(*source, issues).has_value() &&
+             !issues.empty(),
+         "a newly acquired proof must reject the invalid replacement");
+  source.reset();
+  auto shared = *verified;
+  auto transferred = std::move(shared);
+  expect(&transferred.program() == &verified->program() &&
+             &shared.program() == &verified->program(),
+         "evidence copies and transfers share one live immutable snapshot");
+  expect(lang::verifyLoweredProgram(transferred.program()).empty(),
+         "the snapshot must outlive the original source object");
+}
+
 void testMutationRejection() {
   std::optional<lang::LoweredProgram> built = buildDetachedProgram();
   expect(built.has_value(),
@@ -1049,6 +1087,7 @@ int main() {
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
+  testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
   testConcreteBranchSymbols();
   testConcreteClassAliases();
