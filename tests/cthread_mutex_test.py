@@ -61,11 +61,14 @@ def main():
                 run(command)
                 run([binary], 86 if fixture.endswith("destroy") else 0)
                 generated = binary.with_suffix(".gti.cpp").read_text()
+                # The terminal fixture intentionally never unlocks its mutex.
+                # Reachable-only lowering must retain its actual native calls,
+                # not an unrelated unlock wrapper from the included library.
+                operations = (("init", "lock", "destroy") if fixture.endswith("destroy")
+                              else ("lock", "unlock", "destroy"))
                 if ("// GTI verified-MIR body:" not in generated or
-                        generated.count(
-                            f"{native_spelling(generated, 'gti_rt_mtx_lock_v1')}(") < 2 or
-                        generated.count(
-                            f"{native_spelling(generated, 'gti_rt_mtx_unlock_v1')}(") < 2):
+                        any(f"::{native_spelling(generated, 'gti_rt_mtx_' + op + '_v1')}("
+                            not in generated for op in operations)):
                     raise AssertionError(f"{fixture} lost its MIR/native-call witness")
             print(f"C-thread mutex: {mode} passed", flush=True)
 

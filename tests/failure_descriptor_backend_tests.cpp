@@ -195,9 +195,11 @@ void testExactDescriptorEmission(const std::filesystem::path &fixture) {
     expect(optimized.valid(),
            "optimized descriptor snapshots should remain verified");
     if (optimized.valid()) {
-      expect(descriptorRegion(emit(frontend, optimized.mir, levelCompatibility,
+      expect(descriptorRegion(
+                 gti_test::emitCpp(frontend, optimized.sourceMir, optimized.mir,
+                                   optimized.report.transformations,
                                    lang::CppStandard::Cpp23)
-                                  .contents) == baseline,
+                     .contents) == baseline,
              "O0/O1/O3 must emit byte-identical failure descriptors");
     }
   }
