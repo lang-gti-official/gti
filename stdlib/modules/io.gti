@@ -1,0 +1,3 @@
+// Module std.io: the public surface of <std/io>.
+export module io;
+export #include <std/io>

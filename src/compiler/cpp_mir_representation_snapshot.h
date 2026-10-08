@@ -56,6 +56,12 @@ buildCppMirRepresentationSnapshot(const LoweredProgram &program,
                                   CppStandard standard = CppStandard::Cpp23,
                                   bool debugInfo = false);
 
+// The same build for a program its caller has already verified.
+[[nodiscard]] CppMirRepresentationSnapshotBuild
+buildCppMirRepresentationSnapshot(const VerifiedLoweredProgram &program,
+                                  CppStandard standard = CppStandard::Cpp23,
+                                  bool debugInfo = false);
+
 // Builds the deterministic copied representation rows the generic MIR body
 // emitter consumes (ADR 016 phase 4). Spellings come only from the extracted
 // cpp_representation authorities, so a row can never drift from an emitted

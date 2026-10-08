@@ -7,7 +7,7 @@
 
 namespace lang {
 
-class LoweredProgram;
+class VerifiedLoweredProgram;
 class CppBackend;
 
 class CppEmitter final {
@@ -25,8 +25,8 @@ private:
   friend class CppBackend;
 
   // CppBackend is the only construction boundary. The emitter derives all
-  // C++-private plans and spelling rows from this sealed lowered program.
-  CppEmitter(const LoweredProgram &program, CppStandard standard,
+  // C++-private plans and spelling rows from this verified lowered program.
+  CppEmitter(const VerifiedLoweredProgram &program, CppStandard standard,
              bool debugInfo);
 
   class Impl;

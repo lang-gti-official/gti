@@ -482,7 +482,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   HirLoweringResult hir = [&] {
     const PhaseTimeScope timeScope("gti-hir-lowering");
     const ProgressScope progress(options.progress, ProgressPhase::HirLowering);
-    return HirLowerer(options.target)
+    return HirLowerer(options.target, options.lowerReachableOnly)
         .lower(result.program, semantic.model(), semantic);
   }();
   if (options.workMetrics != nullptr) {
@@ -519,6 +519,11 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   if (!result.hirValid || options.stopAfter == FrontendPhase::Hir) {
     applyAuditPolicy();
     return result;
+  }
+  // Executable lowering needs only what the program roots reach. Lowering the
+  // complete program above has already reported every diagnostic.
+  if (hir.reachable) {
+    result.hir = std::move(*hir.reachable);
   }
 
   FailureMetadataBuildResult failureMetadata = [&] {

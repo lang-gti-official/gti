@@ -72,6 +72,8 @@ int main(int argc, char **argv) {
     }
     lang::FrontendOptions options;
     options.target = target;
+    // The census guards the inventory that artifact builds produce.
+    options.lowerReachableOnly = true;
     const lang::FrontendResult frontend =
         lang::Frontend(std::move(options))
             .analyze(source, std::nullopt, {standardLibrary / "prelude.gti"},

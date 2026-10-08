@@ -111,6 +111,8 @@ std::string_view sourceDependencyKindName(SourceDependencyKind kind) {
     return "import";
   case SourceDependencyKind::ExportImport:
     return "export-import";
+  case SourceDependencyKind::ExportInclude:
+    return "export-include";
   }
   return "include";
 }
@@ -134,6 +136,9 @@ parseSourceDependencyKindName(std::string_view name) {
   }
   if (name == "export-import") {
     return SourceDependencyKind::ExportImport;
+  }
+  if (name == "export-include") {
+    return SourceDependencyKind::ExportInclude;
   }
   return std::nullopt;
 }

@@ -3589,6 +3589,8 @@ upstream code.
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
+| `stdlib_modules` | every public `<std/name>` unit has exactly one canonical `stdlib/modules/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
+| `dormant_capability_runtime` | include-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |
 | `encoding_runtime` | strict standard-alphabet padded Base64 and lowercase/dual-case hexadecimal across every byte value, RFC 4648 tail vectors, malformed length/character/padding/canonical-bit rejection, and C++20/C++23 O0/O1/O3 plus no-elide and ASan/UBSan execution |
 | `forward_list_runtime` | source-defined resize/merge/remove/unique/reverse/stable sort with scalar and move-only elements; 30,000-node iterative clear/destruction; exact cleanup on failing comparisons and checked owner-field assignment; verified-MIR emission at O0/O1/O3 under C++20/C++23 plus ASan/UBSan |
 | `unique_owner_access_runtime` | all four unique-owner dereference/arrow overloads; successful read/write, empty and reset access, nested caller cleanup, staged-RHS cleanup, and exact `GTI-R0008`/`GTI-R0014` reports at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` independently rejects forged owner detectors, missing edges, and mismatched loans |
@@ -4768,17 +4770,68 @@ tests use an optimized host compiler; the tested program intentionally uses
 `-O0`. Parser/semantics/formatter/Tree-sitter/LSP syntax is unchanged.
 
 The source-module slice is owned by `testSourceModuleInterfaces`,
-`testSourceModuleResolution`, and `testSourceModuleConfigurationDomains` in
-`compiler_frontend`, `testModuleManifest` in
+`testSourceModuleResolution`, `testSourceModuleConfigurationDomains`, and
+`testStandardLibraryModules` in `compiler_frontend`, `testModuleManifest` in
 `project_model`, and build-provenance round trips in `driver_pipeline`.
+`testStandardLibraryModules` covers direct and project `std.name` resolution,
+the standard-library role and `ExportInclude` edge, non-republication of
+nested includes, the rejected aggregate and unknown modules, application
+interfaces that re-export a standard module and republish their own legacy
+unit, `export #include` misuse, same-name application modules, and a legacy
+standard unit shared with a module domain whose source-local flags differ.
+`stdlib_modules` imports every standard module individually.
+
+Reachable executable lowering is owned by `testReachableExecutableLowering` in
+`compiler_frontend`. It covers:
+
+- the hosted root's closure;
+- that unreferenced functions, methods, and classes are omitted;
+- that C declarations and records are kept;
+- that complete lowering is unchanged without the option;
+- that an error in a generic instantiated only by unreachable code is still
+  reported.
+
+The census gates measure the reduced artifact inventory:
+
+- `lowered_program_corpus_census` builds with the same option as artifact
+  builds;
+- `mir_census_regression` drives the CLI.
+
+Before the baselines were refreshed, every example was built and run with both
+the previous and the pruning compiler, and their exit status and output
+matched. `mir_cutover_corpus_oracle`, `cpp_mir_body_emitter_corpus`,
+`stdlib_surface`, `practical_examples`, and the native-header, callback,
+record, embedding, and C-oracle gates exercise the pruned artifacts.
+The scalar-family CLI tests count only reachable user bodies and explicitly
+reject unused prelude/output and uncalled scalar bodies. Full-program unit
+tests separately retain emission coverage for uncalled declarations. The
+failure-descriptor and default-cleanup fixtures actually call the operations
+whose descriptors and lifecycle helpers they inspect; optimized descriptor
+emission carries the original transform records through independent replay.
+C-thread terminal fixtures check their actual destroy calls, not unused
+unlock/wait wrappers. Their exit-status, C++20/C++23, optimization and sanitizer
+matrices remain unchanged.
 `source_modules_runtime` covers imported globals, private helper bodies,
 re-exported classes and constrained generics at O0/O1/O3 with C++20/C++23,
 then project imports, build-report edges, cache hits, export revocation and
-module-map invalidation. `source_modules_lsp` covers private-name filtering,
+module-map invalidation. It also runs a program that imports standard modules
+through an application facade at O0 with C++20 and O3 with C++23, and a project
+build whose report records the `export-include` edge. `source_modules_lsp` covers private-name filtering,
 hover/definition, incomplete code, unsaved interfaces, close/reload, and
 inferred private result types. Grammar corpus and highlight checks include
 module declarations, all import forms and exported namespaces. These gates
 supplement rather than replace the unchanged include and package regressions.
+
+The standard-library module audit also checks verification-evidence ownership.
+`lowered_program_contract` replaces a caller's already-verified program through
+public value assignment, rejects newly acquired evidence for that invalid
+replacement, and proves the original evidence still owns the accepted snapshot
+after the caller destroys its value. Copies of the evidence share that same
+const snapshot. An owning handoff additionally proves the accepted snapshot
+retains the original declaration storage without copying it. A borrowed
+pointer alone failed the replacement regression. The module
+grammar is regenerated with the pinned Tree-sitter 0.25.10; all 78 grammar
+corpus cases pass. These focused checks are not a full-suite acceptance claim.
 
 Use the existing CMake targets and test filters to keep the development loop
 proportional to the edit. A broad verification plan describes the evidence

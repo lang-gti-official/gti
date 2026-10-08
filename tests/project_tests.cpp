@@ -3527,7 +3527,8 @@ void testModuleManifest() {
         "main = \"src/api.cpp\"", "main = \"src\"", "import = \"src/api.gti\"",
         "\"bad.name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
         "main = \"src/api.gti\"\nother = \"src/api.gti\"",
-        "main = \"src/api.gti\"\nMAIN = \"src/other.gti\""}) {
+        "main = \"src/api.gti\"\nMAIN = \"src/other.gti\"",
+        "std = \"src/api.gti\""}) {
     expect(writeFile(manifest, base + "\n[modules]\n" + registration + "\n"),
            "invalid module fixture should be writable");
     const auto invalid = lang::driver::loadProjectManifest(manifest);
@@ -3535,6 +3536,15 @@ void testModuleManifest() {
            "invalid module map must fail before frontend entry: " +
                registration);
   }
+  expect(writeFile(manifest, base + "\n[modules]\nstd = \"src/api.gti\"\n"),
+         "reserved module fixture should be writable");
+  const auto reserved = lang::driver::loadProjectManifest(manifest);
+  const auto *reservedDiagnostic =
+      findDiagnostic(reserved.diagnostics, "GTI-B1005");
+  expect(reservedDiagnostic != nullptr &&
+             reservedDiagnostic->message.find("reserved for the standard "
+                                              "library") != std::string::npos,
+         "the standard library owns the module name 'std'");
   TemporaryDirectory outside;
   expect(writeFile(outside.root() / "api.gti", "export module main;"),
          "external fixture exists");

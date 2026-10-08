@@ -1,0 +1,3 @@
+// Module std.optional: the public surface of <std/optional>.
+export module optional;
+export #include <std/optional>

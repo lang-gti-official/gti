@@ -303,7 +303,9 @@ from the same semantic expected surface, including consuming `&&` qualifiers.
 
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
 missing registration, name mismatch, duplicate interfaces, package escapes,
-inconsistent shared legacy-unit configuration, and include/import bypasses.
+inconsistent shared legacy-unit configuration, include/import bypasses,
+misplaced or interface-naming `export #include`, unknown standard-library
+modules, and the unsupported aggregate `import std;`.
 Point at the source directive; relate the interface declaration for name
 mismatches or duplicates. Imports retain their tokens through parsing, so an
 import embedded in an otherwise unfinished declaration receives `GTI-P0001`

@@ -858,6 +858,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
 
 struct HirLoweringResult {
   HirProgram program;
+  // The prefix of `program` reachable from its program roots when that prefix
+  // is smaller and verifies. Executable lowering uses it; `program` keeps every
+  // concrete instance, whose analysis reported the program's diagnostics.
+  std::optional<HirProgram> reachable;
   std::vector<Diagnostic> diagnostics;
 
   [[nodiscard]] bool valid() const {
@@ -867,7 +871,10 @@ struct HirLoweringResult {
 
 class HirLowerer {
 public:
-  explicit HirLowerer(TargetInfo target = TargetInfo::host());
+  // With `reachablePrefix`, discovery starts from the program roots and the
+  // result also carries the reachable prefix for executable lowering.
+  explicit HirLowerer(TargetInfo target = TargetInfo::host(),
+                      bool reachablePrefix = false);
   ~HirLowerer();
 
   HirLowerer(const HirLowerer &) = delete;

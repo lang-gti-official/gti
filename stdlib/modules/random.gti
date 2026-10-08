@@ -1,0 +1,3 @@
+// Module std.random: the public surface of <std/random>.
+export module random;
+export #include <std/random>
