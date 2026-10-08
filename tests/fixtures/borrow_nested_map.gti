@@ -1,0 +1,18 @@
+#include <std/map>
+#include <std/vector>
+
+int main() {
+  mut std::map<int32_t, std::vector<int32_t>> graph{};
+  [[discard]] graph.insert(1, std::vector<int32_t>({3, 5, 7}));
+  int32_t key = 1;
+  std::vector<int32_t>& row = graph.at(key);
+  mut int32_t total = 0;
+  for (mut std::size_t index = 0; index < row.size(); index++) {
+    int32_t& element = row[index];
+    int32_t& alias = element;
+    int32_t& again = row[index];
+    if (alias != again) { return 1; }
+    total += alias;
+  }
+  return total == 15 ? 0 : 2;
+}

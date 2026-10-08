@@ -908,6 +908,20 @@ no move lifecycle effects, no active cleanup, and exactly one receiver use.
 The scalar path retains the checked wrong-state failure edge and reads that
 binding directly instead of default-constructing a second Expected. Owning
 receivers requiring cleanup continue to require their explicit lifetime slot.
+
+The failure-free `StringViewSize` and `StringViewEmpty` observers admit either
+a borrowed view place or an ordinary SSA view value, such as the result of a
+call returning a view. A counted view is a by-value descriptor, so the observer
+reads only that descriptor. Any owner dependency belongs to the producing
+call's verified MIR result loan, which spans every use of the value; the
+backend does not extend, end or reinterpret it. The admission keys on the
+verified intrinsic, the `Value` operand category with no place or loan, an
+exact receiver value type with the `StringView` representation, and a
+producer other than a staged `CallInput`; observers carrying failure sites or
+a defined failure are not admitted. MIR constant evaluation already observes
+either operand category. When `std::string_view` becomes a source-defined
+class (PR #109), these become ordinary member calls on a class value and this
+intrinsic route is subsumed.
 Their existing value-rooted moved-Expected slot admits either its one state
 test or a sole checked scalar observer, preserving the same source-to-value
 drop transfer and full-expression destruction. Trivial scalar-only Expected
@@ -1396,6 +1410,14 @@ in the caller's value-rooted slot. The paired success edge arms that slot;
 failure leaves it empty and retains MIR's cleanup order. Representation-only
 moved-from shells are destroyed immediately after their verified transfer.
 Constructor arguments use the same proof, including fresh unit variants.
+A fresh cleanup-free class construction that is one alternative field fuses
+into the variant braces only when it is adjacent to its `PayloadConstruct`.
+Otherwise, when its constructor ends the block at an Invoke or sibling field
+arguments are prepared after it, the construction runs at its MIR position in
+representation-only storage. Its success edge must dominate the sole
+`PayloadConstruct` use, the class must move without defined failure, and MIR
+must record no value-rooted place or drop for it. The alternative moves the
+completed value, and the moved-from shell is destroyed immediately afterward.
 
 Concrete owning pack parameters also enter explicit lifetime slots. Each
 verified entry-active `PackElement` binding obligation selects one flattened
@@ -2046,8 +2068,51 @@ share this representation; the former single-field/single-index receiver-only
 route is removed. Borrowed record parameters also admit one leading checked
 reference `Dereference` before the field chain; an exact root reference and
 sibling array place prove the path, without copying the owner or admitting a
-raw-pointer dereference. Read-only and mutable access still come from verified
-MIR and source loan analysis.
+raw-pointer dereference through that checked-reference proof. A separate exact
+raw-pointer SSA prefix (`RawDereference` or `RawIndex`) may select the same
+field-array sibling: the raw operation retains its unsafe access metadata,
+while every subsequent fixed-array dimension retains ordinary bounds checks.
+Read-only and mutable access still come from verified MIR and source loan
+analysis. Constant in-bounds array-element field chains use the same type/field
+rows for binding, receiver and raw-pointer roots; no extra object is materialized.
+
+Structured fixed-array decomposition retains its semantically chosen ordinal
+as a MIR constant index as well as the evaluated index value. A fixed-array
+projection whose index is a literal must agree with that literal; verification
+rejects a contradictory constant ordinal instead of trusting an unchecked
+backend shortcut. A passive class array copy with one adjacent binding
+initialization constructs that destination
+directly from its exact source array. The source's Read/Available ownership
+event, generated copy/move/destruction traits and destination activation/drop
+identity must all match. There is no default-initialized array SSA temporary,
+no extra ordinary constructor invocation, and no change to the hidden owned
+copy or its immutable element projections. Active cleanup/borrowed-state
+arrays retain their separate protocols rather than entering this fusion.
+A by-value argument copied from a named passive class array is a copy Load
+immediately consumed by its argument CallInput. The CallInput owns
+uninitialized representation storage and copy-constructs it from the exact
+source in MIR argument order; the consuming source call or constructor copies
+that completed stage into its parameter. The same Read/Available, adjacency,
+sole-use and source-callee facts are required, and neither SSA value records
+storage or a drop. A constructor's exact copy of such a parameter into a field
+uses the member-initializer copy proof shared with passive record parameters.
+Any remaining fixed-array SSA value whose element class has no default
+constructor fails body planning instead of being value-initialized, so a lost
+publication proof cannot invent element default construction.
+An owning whole-array Move followed by its one adjacent lexical Initialize
+constructs the final binding directly only with an exact source ownership
+event, source/value drop Move, value/binding Reparent, and structurally
+failure-free element movement. All original source and destination cleanup
+instructions remain scheduled by MIR; no representation-only fusion may
+invent a source Drop or erase an owning result obligation.
+
+Raw address formation evaluates a selected array place without loading its
+referent. MIR lowering places the selected Index's semantic fixed-array bounds
+origin on AddressOf; verification rejects missing or mismatched bounds facts.
+The native detector checks every dimension before forming the address, and its
+paired Invoke carries the canonical source failure record through ordinary
+cleanup. Unsafe raw-pointer validity obligations remain distinct from these
+checked fixed-array selections. Forming an address creates no checked loan.
 
 Generated passive record copies may contain positive concrete
 fixed arrays of passive scalar/enum fields, including C-ABI records. Exact
@@ -2152,6 +2217,19 @@ The loan keeps that owner stable between the check and publication. This path
 does not call the legacy terminal `owner_access` helper, and a missing failure
 edge or plain-body representation is rejected rather than bypassing caller
 cleanup. No public smart-pointer name is recognized.
+
+C-linkage declarations use the deterministic private C++ spelling
+`__gti_c_fn_<FunctionId>`, independently of the semantic external symbol.
+The declaration writer retains the exact native signature and binds that
+private identifier through the selected target's object-format link label:
+macOS (Mach-O) labels include the ABI's leading underscore, Linux (ELF) labels
+retain the symbol directly, and Windows (COFF) uses an alternative-name linker
+directive. The choice comes from the verified target, not host preprocessor
+checks, so the lowered program contains no unresolved target branch. Typed MIR calls,
+indirect-function values and hosted C-thread boundaries consume the same sealed
+private declaration identity. Runtime definitions, native bridge headers and
+embedding export symbols are not renamed. This is representation isolation,
+not a libc-name exception or a type conversion.
 
 Each native callback item produces one typed `extern "C" noexcept` thunk. A
 non-failing target is called directly. A failure-capable target uses its

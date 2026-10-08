@@ -9,6 +9,25 @@ resolved calls, ownership operations, and cleanup. Verified optimized MIR is
 the executable component of the backend-neutral `LoweredProgram`; `MirProgram`
 alone is not the complete backend API.
 
+## Projected references and existing-value allocation
+
+A local reference initialized from a projected address retains that exact
+runtime address independently of its protected owner loan. In particular a
+shared range element can protect its enclosing range while naming one selected
+element; subsequent fields and selected operators project from the reference
+carrier, not from the coarser range origin. The lowering query preserves this
+distinction without changing access permissions, active-loan rules or endpoints.
+
+Unique allocation of an already-built class value uses the selected generated
+copy/move policy. HIR stages a generated move as a consuming same-type value,
+not as a callable shared-reference formal. MIR reuses the separate checked
+`AllocateObject`, construction and raw-storage retirement protocol: exhaustion
+precedes transfer into allocated storage, and failure drains still-owned inputs
+and caller cleanup. The private generated-construction shape query is shared
+by lowering, verification and backend admission; program verification also
+checks the exact class's generated special-member policy. No public factory
+name determines language meaning or bypasses deleted/private constructors.
+
 ## Representation
 
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
@@ -1294,6 +1313,25 @@ that success through its one exact designated reference path; the Return
 operand retains both the external owner loan and the separately verified
 runtime field/dereference place, never the carrier shell's address.
 
+Plain and fallible reference returns share the exact runtime-alias selection
+for a reference parameter's entry loan. If a local alias stores an accessor's
+different address, the Return operand names that alias's dereference place,
+not the entry parameter's address. Verification follows its unique dominating
+reference initialization, including a checked reference extraction from a
+fallible carrier whose external owner matches the parameter. Matching types or
+carrier membership alone do not establish the address. Parameter publication
+of a referent cannot fall back to the weaker complete-carrier transfer rule;
+forwarding an entire carrier still preserves its existing runtime value.
+
+Checked reference extraction verifies the external owner through either a
+named carrier or its fresh SSA producer, following explicit copy/move
+transport. A cleanup-free fresh carrier can use its native SSA representation;
+the checked extraction publishes its pointer into the CallResult loan. Scalar
+and nominal observations read that pointer rather than an unassigned parallel
+SSA object. Wrong-state failure still precedes any referent access, with normal
+Invoke and deterministic cleanup. No referent is copied or consumed by these
+reference publications.
+
 Version 50 adds a bounded two-phase mutable loan for source-defined plain
 subscript and dereference stores rooted in a local, parameter, receiver, or
 existing loan. The target call produces a non-escaping `CallResult` loan in the
@@ -2438,7 +2476,11 @@ child loan linked to one mutable parent. Producing the child suspends the
 parent; `EndBorrow` for a child reactivates it only when no other active child
 remains. Nested chains apply the same transition recursively. Known-disjoint
 sibling-field children may coexist, and a suspended parent may still be used
-through a known-disjoint projection. Verification rejects direct or
+through a known-disjoint projection. A read-only child of a parent that
+grants no mutation over the child's place shares access with every
+overlapping read-only sibling, whatever the parent's loan kind; reborrowing a
+payload of one read-only matched-enum binding therefore coexists with the
+other read-only payload bindings. Verification rejects direct or
 overlapping use of a suspended parent, a read-only-to-mutable transition, or
 inconsistent active/suspended state at a CFG join. The precise place model for
 this slice is limited to stable roots with named-field and checked-dereference
@@ -2462,6 +2504,27 @@ it must not compose `Left::next` onto the `unique_ptr<Left>` binding. Program
 verification independently requires this exact projected source rather than
 accepting equality of flattened dependency keys. This repairs nested checked
 arrow chains without backend inference or a public-wrapper name rule.
+
+Reference initialization records both the retained provenance loan and the
+exact runtime address place. Those identities may differ when several shared
+aliases protect the same owner but accessors select different referents.
+`referenceAddressRetainsLoan` checks a loan-rooted address against that retained
+loan: it is either a descendant with exact typed call publication or a parallel
+read-only publication over identical source and dependency identities. The
+body verifier and independent C++ admission use the same identity query;
+neither infers an address from carrier order or a coarse owner key.
+
+A read-only local reference may capture an active, unretained read-only
+call-result descendant while its mutable provenance parent is suspended. This
+is permission only for exact `Initialize` into a reference binding already
+listed as a carrier, not for an executable read or write through the parent.
+Loan flow requires the complete address-producing ancestry and stored
+dependencies to be definitely active, and permits no live mutable sibling.
+The child keeps its existing full-expression endpoint and the retained parent
+keeps its existing carrier lifetime. Calls, loads, mutations and returns do not
+gain a general suspended-parent exception. This supports read-only nested
+container references and unrelated source-defined accessors without changing
+overload selection, escape rules, IR serialization or runtime loan tracking.
 
 A reference binding that retains a borrowed call result keeps that call
 result's own loan and adds itself as a carrier, whether the loan is a root or
@@ -2525,9 +2588,31 @@ itself. Such a return also carries the exact dereferenced alias place in the
 `Loan` operand. Verification follows unique, dominating reference
 initializations back to the same parameter dereference or a verified
 call-result address, preserving type, access and stored dependencies throughout.
+An accessor's dependency may instead name a checked field projection of that
+formal, or of a uniquely initialized reference carrier retaining the same
+parameter loan. `referenceParameterContainsPlace` proves that stable field-only
+path back to the formal; it does not substitute the projected owner for the
+accessor's returned address. Typed call publication still checks the exact
+physical projected receiver, while a captured reference may retain the whole
+formal's conservative lifetime authority. Raw, indexed or opaque origin paths
+are not admitted by this field-containment proof.
 Without an explicit runtime place, only the exact parameter referent type is
 valid. Carrier membership or a same-typed unrelated alias cannot substitute
 for this executable address evidence.
+
+A body-local reference may share an existing semantic owner identity while
+capturing an accessor's different runtime referent. Lowering accepts that
+address only when its live, nonescaping call-result chain reaches exactly the
+retained owner without widening access. The reference `Initialize` records both
+the owner loan and the actual returned-address place. A later field projection
+through this binding (or a direct reference alias of it) stays rooted at its
+captured address; canonicalization must not append the referent's fields to the
+enclosing owner or range. The transient accessor loans still end normally,
+while the reference retains the owner's checked lifetime and overlap authority.
+The same identity applies to a directly captured projected field address and
+to an unprojected dereference of its reference carrier, not only to another
+field access on that carrier.
+This applies equally to source-defined accessors and allocation-backed members.
 
 `MirRangeIteration` owns the bounded range exceptions. It names the exact
 owner/range/iterator/sentinel bindings, strategy, access mode, parent range
@@ -2539,7 +2624,10 @@ compiler-generated iterator returned by `begin_mut()`; mutable dereference
 creates only the named child. Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows
-the final parent loan on every path.
+the final parent loan on every path. Every owned temporary with lexical drop
+names its exact obligation, whose cleanup type is the owner's type; that
+includes passive cleanup, where the class has no source destructor and no
+field needing cleanup.
 
 The M-OWN-04 read-only plan additionally names one
 `expectedPayloadExtraction`. Verification requires an exact `ExpectedValue`

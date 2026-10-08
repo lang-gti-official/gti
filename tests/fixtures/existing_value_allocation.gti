@@ -1,0 +1,43 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+struct Passive {
+  int value;
+  Passive(int number) : value(number) {}
+};
+mut int drops = 0;
+class Payload {
+public:
+  int value;
+  Payload(int number) : value(number) {}
+  ~Payload() { drops += 1; }
+};
+class Owner {
+  std::unique_ptr<Payload> payload;
+public:
+  Owner(int number) : payload(std::make_unique<Payload>(number)) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  int read() { return this.payload->value; }
+};
+
+int main() {
+  {
+    Passive source = Passive(3);
+    auto copied = std::make_unique<Passive>(source);
+    auto fresh = std::make_unique<Passive>(Passive(5));
+    if (copied->value != 3 || fresh->value != 5 || source.value != 3) { return 1; }
+    Owner original = Owner(7);
+    auto moved = std::make_unique<Owner>(std::move(original));
+    auto owned_fresh = std::make_unique<Owner>(Owner(11));
+    if (moved->read() != 7 || owned_fresh->read() != 11) { return 2; }
+    auto text = std::make_unique<std::string>(std::string("hello"));
+    if (text->view() != "hello") { return 3; }
+    mut std::vector<int> values{};
+    values.push_back(13);
+    auto boxed_values = std::make_unique<std::vector<int>>(std::move(values));
+    if ((*boxed_values)[std::size_t(0)] != 13) { return 4; }
+  }
+  return drops == 2 ? 0 : 5;
+}

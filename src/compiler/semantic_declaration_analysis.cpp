@@ -5388,6 +5388,12 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   if (const auto *member = exprAs<Get>(expression.get())) {
     return predeclaredTextBorrowSource(member->object(), function);
   }
+  if (const auto *index = exprAs<Index>(expression.get())) {
+    // Like a field, an indexed receiver can nominate the enclosing source.
+    // This is only the prospective relay contract: resolved body analysis
+    // must still prove the selected access and returned view depend on it.
+    return predeclaredTextBorrowSource(index->object(), function);
+  }
   const auto *call = exprAs<Call>(expression.get());
   if (call == nullptr) {
     return {};

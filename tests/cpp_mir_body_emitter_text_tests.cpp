@@ -2004,10 +2004,12 @@ int main() {
       }
     }
   }
-  expect(lang::verifyMirProgram(malformed).valid() &&
+  // MIR verification owns Load operand/source type agreement; the backend
+  // boundary still fails closed independently.
+  expect(!lang::verifyMirProgram(malformed).valid() &&
              !lang::CppMirBodyEmitter(malformed, map).supportsBodyText(address),
-         "a type-incoherent copy-return operand must fail closed at the "
-         "backend boundary even when generic MIR remains valid");
+         "a type-incoherent copy-return operand must fail MIR verification "
+         "and the backend boundary");
 }
 
 void testReferenceParameterBorrowUsesReferentCarrier() {

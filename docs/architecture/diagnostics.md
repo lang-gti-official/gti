@@ -887,6 +887,15 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   representations are identified by their actual format and path, never claimed
   when artifact generation failed before an artifact existed. See
   [build output](build-and-driver.md#live-build-progress).
+  MIR construction additionally retains transient body-local rejection and
+  verifier context in `MirLoweringResult`, including the concrete body kind,
+  owner, block/instruction identities and nearest retained source statement.
+  Frontend `GTI-B0001` publication uses that original cause and its source span
+  before generic program verification. Missing hosted-startup authority is not
+  reported as the cause when lowering stopped before startup was constructed.
+  If no expression or statement anchor survives, the owning declaration (then
+  the entry-unit fallback) is used. These records do not alter executable MIR,
+  its schema or verifier rules, and never provide source fix-its.
 - Reserve `GTI-B0002` for internal post-HIR failure-metadata construction or
   verification failure. Anchor it at byte zero of the selected entry unit,
   include the first failed invariant, and do not attach a source fix-it: valid
