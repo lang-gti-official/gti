@@ -21,6 +21,16 @@ for what minor and patch releases mean.
   `Native` stages. `--verbose` still shows them, and a long native link keeps
   the elapsed-time row live.
 
+## 0.386.0 — Public names for container iterators
+
+- Name the iterator and sentinel types of standard containers and views
+  without `std::detail`: `const_iterator` (from `begin()`), `iterator` (from
+  `begin_mut()`) and `sentinel` (from `end()`) are now public member aliases
+  on `vector`, `array`, `deque`, `list`, `forward_list`, `span`,
+  `mutable_span`, `string`, `resource_vector`, and the maps and sets. Name them
+  through an alias of a concrete type, for example
+  `using Ints = std::vector<int>;` then `Ints::iterator`.
+
 ## 0.379.0 — Programmable allocators
 
 - Write allocation policies in ordinary GTI. A resource implements the small
