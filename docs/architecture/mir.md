@@ -604,11 +604,18 @@ Lowering and effects conservatively retain a defined-failure boundary for this
 dispatch, including element cleanup and replacement. Program verification
 reconstructs the canonical recipe and rejects erased dispatch flags or forged
 pointee identities. Static subobject cleanup remains statically selected.
-Lambda invocations with an expanded argument pack retain an explicit HIR
-receiver and lower to an ordered MIR `CallInput` receiver followed by concrete
-argument stages. The call keeps its exact lambda identity, capability and
-flattened signature; ordinary program verification rejects a missing receiver
-or forged parameter type. No native pack matching selects the GTI call.
+Fixed-arity lambda invocations lower their HIR call plan to an ordered MIR
+`CallInput` receiver followed by argument stages, so a base-reference
+parameter receives a prepared borrow of the exact base type rather than a
+direct borrow of a derived place. Lambda invocations with an expanded argument
+pack retain an explicit HIR receiver and lower to the same receiver stage
+followed by concrete argument stages. The call keeps its exact lambda
+identity, capability and flattened signature; ordinary program verification
+rejects a missing receiver or forged parameter type. No native pack matching
+selects the GTI call. A cleanup-free moved environment has no full-expression
+obligation, so its receiver is a `Value` stage of the exact Move rather than a
+`MoveValue`; the once-callable receiver proof follows that stage to the Move
+and still requires its exact ownership event.
 Program v72/body v62 add the generated `ReturnResult` drop obligation. A
 completed owning return operand is reparented out of its full-expression into
 this pending lifetime when callee cleanup can fail. It retains the exact

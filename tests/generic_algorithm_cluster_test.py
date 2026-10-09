@@ -325,7 +325,10 @@ def main() -> int:
                     "Owned callable argument 3 requires an explicit std::move "
                     "ownership transfer.",
                     "Move an exact movable callable whose stored state contains no "
-                    "references, tracked borrowed state, or raw pointers.",
+                    "references or tracked borrowed state.",
+                    "Raw implementation state must be encapsulated by an owner "
+                    "with a valid unsafe transfer contract; direct raw-pointer "
+                    "captures are not supported.",
                 ),
             ),
             (

@@ -1912,7 +1912,7 @@ start a later phase:
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, single-origin read-only owner dependencies, and exact single-threaded global/static borrow returns reach verified MIR. |
 | MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. MIR v18 retains bounded `Invoke`/`PropagateFailure` edges, fixed-record parameters, and deterministic failure cleanup while adding caller-owned ordinary-call parameter stages, normal-edge-only initialization for one cleanup-owning result shape, and exact local-detector or ownership-free static direct-call argument edges after an earlier prepared owner. MIR v19 added verifier-owned source/identity-fold provenance for `Compute/Literal` instructions so transformed production emission does not consult the HIR replacement table. MIR v20 introduced function definition provenance and the bounded function `mayRaiseDefinedFailure` vector. MIR v21 makes the canonical effect result cover functions, constructors, and destructors; retains the acyclic closed scalar/static-call proof; adds the exact class-default-cleanup proof; and derives the exact passive-scalar-class constructor/destructor/function closure consumed by `owned-lifecycle-call-v1` after separate source/MIR graph and lifecycle verification. The lowerer verifies an all-conservative provisional program, derives the three-kind result, then lowers and verifies the exact final facts; generic verification accepts conservative true but rejects unproved false claims and exact `None`/`DirectCall` propagation drift. It retains exact borrow origins, synchronization records, conservative `PackFold`, and artifact-local failure identity. |
-| LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
+| LLVM boundary | One mandatory LLVM 18+ build with matching Clang and required APIs/RTTI; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP HIR-stopped analysis preserves concrete generic diagnostics while skipping failure metadata/MIR; indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `test`, `clean`, and `metadata` share compiled compiler/driver libraries; executable/test kinds and direct/project execution-profile selection resolve through driver-owned plans. |
 | Tooling | Formatter, Tree-sitter shipped-source parsing, diagnostics, semantic tokens, hover, completion, and definition have tested foundations. |
@@ -5283,9 +5283,36 @@ same behavior, invalid-input, replay and performance guarantees.
   exact addresses at joins and retires overlapping/unknown writes. Constructor
   entry and raw pointee contents remain unproved. Unrelated nested controls and
   pointer-replacement/native-mutation negatives accompany this transport.
-  The migration safety suite retains the same ten failures reproduced with the
-  exact prerequisite checkpoint, including missing indexed-element envelopes;
-  those acceptance assertions are unchanged.
+  Checked scalar-reference transport now retains the actual pointer operand
+  of verified reference formation through exact source returns and local
+  carriers, independently of the lifetime witness. Loan endings and unproved
+  writes retire the identity; each read requires a current pointee value fact.
+  This covers exact scalar addresses only, not indexed initialized regions or
+  record-field envelopes. Differing/ambiguous pointers, native writes, checked
+  mutation and lifetime replacement remain negative controls.
+  Exact return/construction displacement substitution now also names one slot
+  selected by a read-only integer formal, including reordered helper arguments
+  and checked-reference returns. Different parameters with identical observed
+  ranges and unconstructed holes retain checks and reject forged proofs.
+  Pointer argument staging no longer repeats the already evaluated producer's
+  unsafe effect. This establishes indexed address equality, not coverage of an
+  initialized prefix; constructor/result ownership transport and that coverage
+  remain required for the container acceptance gates.
+  Terminal source calls now stop only their normal analysis path instead of
+  postponing the whole caller indefinitely for a nonexistent return summary.
+  This recovers three later-record-context assertions: the migration safety
+  suite now retains seven of the original ten failures, including missing
+  indexed-element envelopes. The four object-context acceptance failures remain.
+  Those assertions are unchanged. Independent function/constructor terminal
+  alternatives, retained overflow, forged-proof rejection and 28 C++20/23
+  O0/O2/O3/sanitized native cleanup/failure observations cover this prerequisite.
+  Exact singleton integer comparisons now also exclude impossible equality and
+  inequality alternatives. The expanded terminal/comparison matrix passes 42
+  native cases; 48 native object mutation/alias cases retain their failures.
+  The object fixture's negative dispatch now uses an opaque native selector,
+  rather than relying on provably false positive-check comparisons to appear
+  reachable. All negative proof assertions remain, and the seven plus four
+  container acceptance failures are unchanged.
   Wrapping integer updates now retain ordinary value/entry-relative facts only
   under a proved non-wrapping input envelope. An unrelated four-step bounded
   counter recovers its exact final value; real modular-wrap negatives retain

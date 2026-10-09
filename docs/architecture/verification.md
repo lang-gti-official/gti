@@ -35,10 +35,76 @@ native modes, including sanitizer checks, preserving an ancestor's first
 failure and immediate secondary-failure termination without redundant local
 cleanup scopes. The string matrix passes all 24 cases plus four loan negatives;
 size overflow prints its cleanup witness before contained termination, unlike
-provider exhaustion. The unfiltered combined suite is still in progress.
+provider exhaustion. The first unfiltered 585-test run completed with 554
+passes and 31 failures in 2829.57 seconds. Its compiler was frozen at
+`723b7aa1` while later source/test checkpoints were reconciled, so this run is
+a diagnostic inventory, not exact-head acceptance. Failures include the known
+nested-resource prerequisite and optimizer proof gaps, stale representation
+expectations, missing example census rows, and local network/debugger sandbox
+permissions. Final validation must rebuild and run the reconciled revision.
 Resource-prefix fixtures retain the known nested-constructor loan prerequisite;
 neither this evidence nor the representation-only improvement claims that the
 source-container performance or full migration acceptance is complete.
+
+Direct process-backed vector exhaustion has a separate fault-injection fixture:
+reserve, prepared-value push, emplacement and sized construction abort without
+running a caller or element destructor. Emplacement does not begin the element
+constructor before failed growth. Size overflow still reports its source-owned
+panic and runs cleanup; successful growth destroys the element exactly once
+and releases the region. All six observations pass in each of the eight native
+modes, including no-elide and ASan/UBSan, using the isolated optimized backend
+probe described below. Mandatory unchecked-access/loan negatives pass in both
+Off/Warn advisory modes, and MIR still selects bulk relocation structurally.
+
+The SIMD native-assembly probe now includes the same expected-lite headers as
+ordinary C++20 compilation. Its complete C++20/C++23 O0/O1/O3, scalar-reference,
+sanitizer, macro-isolation and bounds matrix passes; native assembly has eleven
+SIMD instructions and the scalar reference has none. The c115/c116 storage
+failure corpus cases also pass with reviewed source-line changes only: exact
+categories, status 70 and cleanup order are unchanged in all seven cases.
+
+The reconciled `eb3529da` compiler builds all targets in Release with LLVM
+23.1.2. Its focused rerun passes shared-owner MIR contracts, public checked
+swap/private unchecked relocation, all final-slot construction and generated
+transport modes, operator diagnostics, lambda/function-item transport, and the
+loopback registry/HTTP/example and LLDB gates. Those environment-dependent
+gates were rerun with the required local permissions, not skipped. The generic
+array-forwarding assertion is updated to inspect the new unchecked internal
+append; its exact passive array, construction and rejection checks still pass.
+The eleven-test allocation/control selection passes in 65.81 seconds, including
+scalar/class/inherited/existing-value exhaustion, allocation elision, source
+strings, reverse storage drains and process resource policy. Combined full-suite,
+resource-constructor and optimizer performance acceptance remains open.
+
+The `eb3529da` operator suites also pass together (190.07 seconds). The next
+combined checkpoint (`0d51b56c`) builds all targets in Release and passes
+optimizer foundation/raw/intrinsic context and source-prefix contracts, plus
+terminal-call and exact returned-address native matrices (99.47 seconds).
+The unmodified optimizer
+acceptance assertions still report seven safety and four object-context
+failures. These are not waived by the passing prerequisite gates.
+
+`string-growth-search` adds the missing string client to the maintained
+threshold-free runtime workload smoke. It uses the existing audit's 400 rounds
+of 50,000 appended characters and complete `find('q')` traversal. The benchmark
+harness and expanded workload smoke both pass (28.63 seconds). Its separate
+full-state build produces identical 24,444,917-byte output for the candidate,
+preserved private-prefix compiler/library and both C++ twins. Separate
+instrumented GTI builds each request 6,800 allocations and 52,435,200 bytes;
+the observer checks original allocation/release identity. Raw evidence is
+preserved under `gti-string-migration-state-ah2afqew` in the host temporary
+directory, including source/tool hashes and build provenance. The instrumented
+candidate executables are larger than the preserved private-path executables;
+that is a signal to investigate with the uninstrumented binaries, not code-size
+acceptance. Quiet interleaved timing, uninstrumented code-size attribution and
+peak-memory comparison remain required before claiming string performance
+parity. Full-state and allocation-observer execution is not timing evidence.
+
+The resource-growth corpus oracle now requires portable exact abort status,
+not merely nonzero termination. A C17 helper makes its cleanup witnesses
+unbuffered before execution. The harness rejects status 70 and unrelated
+signals, and the c118 fixture still fails until its backend resource-constructor
+prerequisite is implemented; its new expectation is not evidence of a pass.
 
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
@@ -817,7 +883,22 @@ views in #74. `operator_relay_runtime` builds and runs four stronger fixtures
 and eight original reproducers at C++20/C++23 O0/O1/O3, with disabled elision
 and ASan/UBSan (96 observations). Eight injected allocation observations
 separately prove exact success output and exhaustion cleanup of the prepared
-existing owner and caller, with GTI-R0011/70 rather than abort.
+existing owner and caller under the original contract. The S-ALLOC-08 revision
+instead requires an allocation-free GTI-R0011 report and immediate abort, with
+neither prepared-owner nor caller cleanup. Its generated-allocation mutation
+erases the exact abort detector's outcome rather than assuming an obsolete
+allocation Invoke edge. Same-block prepared-borrow allocation and subsequent
+owner publication are explicit regression coverage.
+
+The allocation/container candidate's isolated optimized backend repair passes
+the complete operator-relay structural test, including 32 generated-allocation
+mutations. Its three allocation reproducers pass all eight native modes (24
+cases), the existing-value exhaustion harness passes eight observations, and
+the ordinary class-allocation harness passes all seven modes, preserving
+constructor rollback and immediate exhaustion abort. This probe links the
+repaired emitter against the frozen `723b7aa1` compiler libraries; it is focused
+regression evidence, not a substitute for rebuilding and validating the final
+combined head.
 
 `operator_relay_pipeline` checks O0/O1/O3 snapshot and body admission, corrupts
 generated construction policy, inputs and raw-storage publication, and rejects

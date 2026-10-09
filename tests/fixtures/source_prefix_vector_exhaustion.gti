@@ -1,0 +1,45 @@
+#include <std/vector>
+#include <std/string>
+
+extern "C" {
+  void adoption_fail_at(uint64_t allocation);
+  void adoption_trace(int value);
+  void adoption_check_cleanup();
+}
+
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {
+    adoption_trace(99);
+    adoption_check_cleanup();
+  }
+};
+
+class Item {
+  int value;
+public:
+  Item(int value) : value(value) { adoption_trace(value); }
+  ~Item() { adoption_trace(88); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Cleanup cleanup{};
+  mut std::vector<Item> values{};
+  adoption_fail_at(argc >= 5 ? uint64_t(0) : uint64_t(1));
+  if (argc == 1) { values.reserve(std::size_t(1)); }
+  if (argc == 2) { values.push_back(Item(8)); }
+  // Growth must abort before constructing the emplaced value.
+  if (argc == 3) { [[discard]] values.emplace_back(9); }
+  if (argc == 4) {
+    auto sized = std::vector<int>(std::size_t(4));
+    return sized.empty() ? 1 : 2;
+  }
+  // Size overflow is still a cleanup-preserving failure, not exhaustion.
+  if (argc == 5) { values.reserve(std::size_t(18446744073709551615)); }
+  if (argc == 6) {
+    [[discard]] values.emplace_back(12);
+    return 0;
+  }
+  return 3;
+}

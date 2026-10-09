@@ -1,12 +1,14 @@
 // Valid (failure path): plain resource_vector growth on an exhausted resource
-// panics. Before the report, live elements must be destroyed in reverse order,
-// THEN its one object region returned to the resource, then
-// the remaining locals. The consumed push_back argument is dropped first.
+// aborts with GTI-R0011. No element, prepared push argument, region or local
+// is cleaned up. Make output unbuffered so a missing cleanup witness cannot be
+// confused with buffered output lost by abort.
 #include <std/resource_vector>
 #include <std/resource>
 #include <std/memory>
 #include <std/string>
 #include "support/bump.gti"
+
+extern "C" { void coverage_unbuffered_output(); }
 
 class Loud {
   int32_t id;
@@ -33,6 +35,7 @@ void grow(std::resource_ref<probe::Bump> resource) {
 }
 
 int main() {
+  coverage_unbuffered_output();
   probe::Bump resource{1, true};
   Loud outer{200};
   unsafe {

@@ -256,6 +256,9 @@ safe-state and result-validation contract.
 The runtime-optimizer campaign uses several independently attributable
 workloads rather than one aggregate score:
 
+- [`string-growth-search`](workloads/string-growth-search/README.md) covers
+  repeated string growth, character search and complete-state comparison for
+  the raw-buffer migration;
 - [`checked-scalar-chain`](workloads/checked-scalar-chain/README.md) is the
   scalar checked-arithmetic control;
 - [`fixed-array-loop-proof`](workloads/fixed-array-loop-proof/README.md) is the

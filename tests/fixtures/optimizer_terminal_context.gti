@@ -1,0 +1,48 @@
+#include <std/panic>
+#include <std/format>
+
+class Cleanup {
+public:
+  ~Cleanup() { std::println(42); }
+};
+
+[[noreturn]] void stop_inner() { std::panic("terminal context"); }
+[[noreturn]] void stop_outer() { stop_inner(); }
+
+int after_terminal_branch(int value, bool stop) {
+  if (stop) { Cleanup cleanup{}; stop_outer(); }
+  return value + 1;
+}
+
+class TerminalRecord {
+  int value;
+public:
+  TerminalRecord(int value, bool stop) : value(value) {
+    if (stop) { Cleanup cleanup{}; stop_outer(); }
+  }
+  int after_terminal_constructor() { return this.value + 1; }
+};
+
+int bad_surviving_value(int value, bool stop) {
+  if (stop) { stop_outer(); }
+  return value + 1;
+}
+
+int choose_exact(int value) {
+  if (value != 0) return 2147483647;
+  return 7;
+}
+int choose_equal(int value) {
+  if (value == 0) return 7;
+  return 2147483647;
+}
+int after_exact_branch() { return choose_exact(0) + 1; }
+int after_equal_branch() { return choose_equal(0) + 1; }
+
+int main() {
+  if (false) return bad_surviving_value(2147483647, false);
+  if (after_exact_branch() != 8 || after_equal_branch() != 8) return 3;
+  if (after_terminal_branch(7, false) != 8) return 1;
+  TerminalRecord record{7, false};
+  return record.after_terminal_constructor() == 8 ? 0 : 2;
+}

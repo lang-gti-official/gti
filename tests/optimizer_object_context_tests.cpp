@@ -13,6 +13,114 @@
 #include <string>
 #include <string_view>
 
+int checkTerminalContexts() {
+  int failures = 0;
+  const auto expect = [&](bool condition, std::string_view message) {
+    if (!condition) {
+      std::cerr << "FAIL: " << message << '\n';
+      ++failures;
+    }
+  };
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/optimizer_terminal_context.gti";
+  const std::ifstream file(path);
+  const std::string source{std::istreambuf_iterator<char>(file.rdbuf()), {}};
+  const auto library =
+      path.parent_path().parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      path, source, {library / "prelude.gti", path},
+      {{std::filesystem::weakly_canonical(path).string(), source}}, {library});
+  expect(frontend.canGenerateCode(), "terminal context fixture must lower");
+  if (!frontend.canGenerateCode())
+    return failures;
+  const auto analysis = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
+  expect(analysis.converged,
+         "terminal contexts converge without return summaries");
+  const auto o0 =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O0});
+  const auto o2 =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O2});
+  const auto o3 =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O3});
+  std::size_t observed = 0;
+  for (const auto &instance : frontend.hir.functionInstances()) {
+    if (!instance.source)
+      continue;
+    const auto name = instance.source->name().lexeme;
+    const bool positive = name == "after_terminal_branch" ||
+                          name == "after_terminal_constructor" ||
+                          name == "after_exact_branch" ||
+                          name == "after_equal_branch";
+    const bool negative = name == "bad_surviving_value";
+    const bool terminal = name == "stop_inner" || name == "stop_outer";
+    if (!positive && !negative && !terminal)
+      continue;
+    ++observed;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = instance.id};
+    const auto *context = analysis.find(address);
+    expect(context && context->reached,
+           "terminal branches still discover their callees");
+    if (terminal)
+      expect(context && !context->returnInterval,
+             "terminal calls publish no fabricated successful return value");
+    for (const auto [level, candidate] :
+         {std::pair{lang::OptimizationLevel::O0, &o0},
+          std::pair{lang::OptimizationLevel::O2, &o2},
+          std::pair{lang::OptimizationLevel::O3, &o3}}) {
+      const auto &optimized = *candidate;
+      expect(optimized.valid(), "terminal branch facts independently replay");
+      if (level == lang::OptimizationLevel::O0)
+        expect(optimized.report.transformations.empty(),
+               "terminal O0 is unchanged");
+      std::size_t proofs = 0;
+      for (const auto &block :
+           lang::findMirBody(optimized.mir, address)->blocks)
+        for (const auto &instruction : block.instructions)
+          for (const auto &proof : instruction.safetyDischarges)
+            proofs +=
+                proof.family == lang::MirSafetyCheckFamily::ArithmeticOverflow;
+      expect(proofs ==
+                 (positive && level != lang::OptimizationLevel::O0 ? 1 : 0),
+             "only bounded surviving arithmetic can discard its check");
+    }
+    if (negative) {
+      std::size_t rejected = 0;
+      for (const auto &block : lang::findMirBody(frontend.mir, address)->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto forged = frontend.mir;
+              lang::MirEditor editor(forged, "forged-terminal-survivor");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "terminal alternative cannot justify overflowing "
+                     "surviving arithmetic");
+              ++rejected;
+            }
+      expect(rejected == 1, "surviving overflow exercises canonical rejection");
+    }
+  }
+  expect(observed == 7, "terminal context census");
+  return failures;
+}
+
 int main() {
   const auto sourcePath = std::filesystem::path(__FILE__).parent_path() /
                           "fixtures/optimizer_object_context.gti";
@@ -25,7 +133,7 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return 1;
   }
-  int failures = 0;
+  int failures = checkTerminalContexts();
   const auto expect = [&](bool valid, std::string_view message) {
     if (!valid) {
       std::cerr << "FAIL: " << message << '\n';

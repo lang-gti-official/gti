@@ -683,6 +683,10 @@ add_test(NAME returned_field_address_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
     $<TARGET_FILE:gti>)
 set_tests_properties(returned_field_address_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME optimizer_terminal_context_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_terminal_context_runtime_test.py"
+    "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_terminal_context_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME wrapping_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wrapping_context_runtime_test.py"
     $<TARGET_FILE:gti>)
@@ -2614,6 +2618,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(lambda_pack_invocation_runtime PROPERTIES TIMEOUT 1200)
+  add_test(
+    NAME lambda_base_reference_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/lambda_base_reference_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(lambda_base_reference_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME owning_function_runtime
     COMMAND "${Python3_EXECUTABLE}"

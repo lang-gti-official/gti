@@ -30,7 +30,7 @@ def main():
         memory_lines = memory.read_text().splitlines()
         start = next(index for index, text in enumerate(memory_lines) if method in text)
         capacity_line = next(index + 1 for index in range(start, len(memory_lines))
-                             if "require_relocation_capacity(this.live < this.slots)" in memory_lines[index])
+                             if "require_relocation_capacity(this.live < this.capacity())" in memory_lines[index])
         capacity = f"<std/memory>:{capacity_line}"
         if scenario < 2:
             error = f"{capacity}: runtime error[GTI-R0010]: invalid_storage_state in relocation_capacity\n"

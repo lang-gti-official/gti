@@ -398,7 +398,17 @@ still clears mutable facts for every later instruction. A permanently
 unsupported call is an opaque transfer with a normal continuation, rather
 than a pending summary that prevents discovery of subsequent clients. It
 supplies no callee result/postcondition facts. Only an admitted source summary
-not yet available postpones and retries its caller. Opaque synchronizing
+not yet available postpones and retries its caller. A verified terminal source
+call is still discovered for analysis of its own instructions, but ends only
+that normal path. It never waits for a successful-return postcondition or
+prevents summarizing a separate successful branch. Its original failure edges,
+cleanup and terminal behavior remain in MIR; no successful result is invented.
+Integer comparisons whose two same-domain operands are exact singleton values
+also discard their impossible analysis edge. This includes the non-equality
+edge that an interval intersection alone cannot represent; it does not replace
+or reorder the executed comparison. Native-selected regression branches keep
+mutation and alias negatives reachable independently of proved comparisons.
+Opaque synchronizing
 effects invalidate mutable memory even when the effect summary reports no
 direct write; they cannot establish a closed recurrence edge. Recursive SCCs, native
 or virtual calls, unsupported owning-argument transfers, synchronization, raw/unsafe
@@ -535,6 +545,27 @@ the stored address, joins retain equal addresses, and overlapping writes or
 unknown effects invalidate the map. Constructor receivers, stored-reference
 traversal and raw pointee contents are not seeded. This is address transport,
 not initialized-region coverage or proof that an incoming pointer is valid.
+
+The same typed address may flow into a verified raw-to-checked reference
+formation and its exact source-return relays. The analysis records the actual
+pointer operand against the produced loan; it never uses that loan's lifetime
+witness as a pointee. Explicit loan transfers and local reference carriers
+preserve this identity, while loan endings and unproved writes retire it.
+Scalar loads consult the still-current construction/value fact at that address,
+not a value cached when the reference was formed. Read-only pointer qualification
+preserves identical pointee types; erasure/retyping does not. Unknown effects,
+differing return addresses, lifetime replacement and checked writes retain the
+normal failure checks. Exact non-writing source address relays may return a
+borrow without treating that return escape as a write to the witness.
+
+Exact address summaries also carry a constant element offset or one symbolic
+index from a read-only integer formal/owned entry field. Return and construction
+summaries share caller substitution, including reordered arguments. Equal
+calling intervals do not equate different parameters, and one indexed
+construction does not cover holes or its entire observed interval. Preparing
+an already evaluated pointer value is an inert argument transfer, even when
+its source expression was unsafe; the real producer and all its obligations
+remain in MIR. General contiguous initialization coverage remains separate.
 
 This rule and its exact call postcondition do not initialize unknown pointer
 contents at entry. Successful vacant construction may additionally retain up

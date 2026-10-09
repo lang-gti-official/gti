@@ -180,10 +180,22 @@ when the checkout is newer. This permits recovery after Homebrew removes build
 prerequisites while the bundled runtime remains usable. It preserves a supplied
 build directory's generator and
 does not change source compilation, project manifests, LSP semantics, or release
-publication authority. Discovery accepts LLVM 18–22, skips unsupported newer
-Homebrew formulas, and considers retained supported versions without assuming
+publication authority. Discovery accepts LLVM 18 or newer and considers
+retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
+
+There is no maximum-major admission check: system packages must provide the
+required APIs, RTTI, approved support targets, and an exactly matching Clang
+package. LLVM 23.1.2 has been built and tested; admission of a later release is
+not a substitute for compatibility validation. The bundled release pin is
+unchanged. The local installer resolves cached Homebrew aliases on every run
+and supplies the matching concrete LLVM/Clang CMake paths. It permits an
+explicit dependency change in the same build directory while retaining the
+source-checkout and optimized-build checks. A raw developer executable can
+stop loading after Homebrew replaces a dylib ABI; reconfigure and rebuild it,
+rather than substituting a differently versioned dylib. Installed toolchains
+remain insulated from that upgrade by the runtime bundle described below.
 
 On macOS, the `gti_toolchain` CMake install step runs
 `scripts/bundle_macos_runtime.py` for both system and bundled LLVM builds. It

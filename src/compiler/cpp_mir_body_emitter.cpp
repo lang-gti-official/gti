@@ -1285,6 +1285,43 @@ valueCallableReceiverInput(const MirBody &body,
          call->callSite == instruction.callSite;
 }
 
+// A cleanup-free moved environment has no lifetime to transfer, so its
+// prepared receiver is an ordinary value stage of the exact Move rather than
+// a MoveValue stage. The stage itself has no representation; it returns that
+// Move when the stage feeds exactly one callable invocation.
+[[nodiscard]] const MirInstruction *
+movedValueCallableReceiverStage(const MirBody &body,
+                                const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::CallInput ||
+      !instruction.result || instruction.callSite == 0 ||
+      instruction.callInputRole != MirCallInputRole::Receiver ||
+      instruction.callInputKind != HirCallInputKind::Value ||
+      instruction.operands.size() != 1 ||
+      instruction.operands.front().kind != MirOperandKind::Value ||
+      instruction.info.type.kind != SemanticType::Lambda ||
+      instruction.operands.front().type != instruction.info.type ||
+      instruction.destination || instruction.preparedParameterDrop ||
+      !instruction.lifecycle.empty())
+    return nullptr;
+  const MirValue *source = body.findValue(instruction.operands.front().value);
+  const MirInstruction *move =
+      source == nullptr ? nullptr : findInstruction(body, source->definition);
+  if (move == nullptr || move->kind != MirInstructionKind::Move ||
+      body.usesOf(source->id).size() != 1)
+    return nullptr;
+  const auto &uses = body.usesOf(*instruction.result);
+  const auto *call =
+      uses.size() == 1 &&
+              uses.front().kind == MirValueUseKind::InstructionReceiver
+          ? findInstruction(body, uses.front().instruction)
+          : nullptr;
+  return call != nullptr && callableValueInvocation(*call) &&
+                 call->receiver->value == *instruction.result &&
+                 call->callSite == instruction.callSite
+             ? move
+             : nullptr;
+}
+
 // A callable-parameter invocation stages its receiver place through one
 // Load (or Move) whose result feeds exactly the invocation: the call
 // spells the place expression (or its std::move) directly, matching the
@@ -1297,6 +1334,11 @@ valueCallableReceiverInput(const MirBody &body,
   const MirValue *value = body.findValue(id);
   const MirInstruction *definition =
       value == nullptr ? nullptr : findInstruction(body, value->definition);
+  if (definition != nullptr) {
+    if (const MirInstruction *move =
+            movedValueCallableReceiverStage(body, *definition))
+      definition = move;
+  }
   if (definition == nullptr ||
       (definition->kind != MirInstructionKind::Load &&
        definition->kind != MirInstructionKind::Move &&
@@ -6037,6 +6079,20 @@ struct PayloadEnumFreshArgumentStage {
 [[nodiscard]] bool
 payloadEnumOrdinaryTransportConsumer(const MirProgram &program,
                                      const MirInstruction &consumer) {
+  if (consumer.kind == MirInstructionKind::Call && consumer.lambdaTarget) {
+    // An exact typed lambda invocation stages its arguments through the same
+    // ordered call plan. Its captureless environment has no capture
+    // lifecycle that could observe the transported argument.
+    const MirLambdaInstance *lambda =
+        program.findLambda(*consumer.lambdaTarget);
+    return lambda != nullptr && callableValueInvocation(consumer) &&
+           consumer.receiver->type == lambda->type &&
+           lambda->captureTypes.empty() && lambda->captureModes.empty() &&
+           lambda->captureSymbols.empty() && !consumer.functionTarget &&
+           !consumer.constructorTarget && !consumer.bodyTarget &&
+           lambda->parameterTypes == consumer.parameterTypes &&
+           consumer.operands.size() == lambda->parameterTypes.size();
+  }
   if (consumer.kind == MirInstructionKind::Call) {
     const MirFunctionInstance *target =
         consumer.functionTarget
@@ -6550,7 +6606,8 @@ struct PayloadEnumDirectFreshArgument {
   }
 };
 
-// Exact typed lambda invocation has no CallInput schedule. It consumes the
+// An unplanned exact typed lambda invocation, one with an argument outside
+// the ordered call-plan vocabulary, has no CallInput schedule. It consumes the
 // Move value directly, and the call's TransferOut edge proves that the
 // value-rooted slot is only a moved-from representation shell afterwards.
 [[nodiscard]] PayloadEnumDirectMoveArgument
@@ -6617,8 +6674,8 @@ payloadEnumDirectMoveArgument(const MirProgram &program, const MirBody &body,
              : PayloadEnumDirectMoveArgument{};
 }
 
-// A freshly constructed payload variant reaches an exact typed lambda
-// directly as well: lambda invocation intentionally has no CallInput record.
+// A freshly constructed payload variant reaches an unplanned exact typed
+// lambda directly as well, without a CallInput record.
 // The producer's unique value-rooted initialization and the call's unique
 // TransferOut edge are the copied MIR proof that lets C++ consume the slot and
 // retire only its moved-from representation shell.
@@ -9588,6 +9645,13 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
   std::size_t invocations = 0;
   std::size_t discards = 0;
   bool directOnly = true;
+  // A prepared value receiver in the literal's own block aliases the closure;
+  // the invocation it feeds is still a direct use of the literal.
+  std::vector<MirValueId> directValues{*closure.result};
+  const auto direct = [&](MirValueId value) {
+    return std::find(directValues.begin(), directValues.end(), value) !=
+           directValues.end();
+  };
   std::optional<MirDropObligationId> fusedValueDrop;
   const MirInstruction *directConsumer = nullptr;
   std::vector<MirPlaceId> visitedCarriers;
@@ -9625,7 +9689,11 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
       const MirInstruction *user = findInstruction(body, use.instruction);
       if (use.kind == MirValueUseKind::InstructionOperand && user != nullptr &&
           valueCallableReceiverInput(body, *user)) {
-        directOnly = false;
+        if (direct(current) && use.block == result->definitionBlock) {
+          directValues.push_back(*user->result);
+        } else {
+          directOnly = false;
+        }
         pending.push_back(*user->result);
         continue;
       }
@@ -9634,7 +9702,7 @@ cppMirTerminalCheckedHelperSpelling(MirOperation operation) {
           return false;
         }
         ++invocations;
-        directOnly = directOnly && current == *closure.result &&
+        directOnly = directOnly && direct(current) &&
                      use.block == result->definitionBlock;
         if (directOnly) {
           directConsumer = user;
@@ -23103,9 +23171,9 @@ private:
     if ((instruction.kind == MirInstructionKind::Call ||
          instruction.kind == MirInstructionKind::Construct) &&
         instruction.intrinsic == IntrinsicKind::None &&
-        // A callable-value invocation has no CallInput schedule: its
-        // receiver is the fused closure literal and its arguments pass as
-        // plain staged values, exactly like the compatibility call.
+        // An unplanned callable-value invocation has no CallInput schedule:
+        // its receiver is the fused closure literal and its arguments pass
+        // as plain staged values, exactly like the compatibility call.
         !callableValueInvocation(instruction) &&
         !hasCompleteCallInputSchedule(body, instruction)) {
       add(CppMirBodyEmissionIssueKind::MissingCallInputScheduleMir, block.id,
@@ -36657,6 +36725,12 @@ private:
                << " aliases the caller-owned receiver lifetime\n";
         return;
       }
+      if (movedValueCallableReceiverStage(facts.body, instruction) &&
+          callableReceiverStage(facts.body, *instruction.result)) {
+        output << "// call input " << *instruction.result
+               << " aliases its moved callable place\n";
+        return;
+      }
       if (const auto *source =
               passiveCopiedCallInput(program, facts.body, instruction)) {
         output << "__gti_mir_v_" << *instruction.result
@@ -49023,6 +49097,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       return stagedAcrossInvokeSuccessChain(*stage->result, block.id);
     };
+    const auto consumeStagedBorrows =
+        [&](const std::vector<MirValueId> &consumed) {
+          if (!std::all_of(
+                  consumed.begin(), consumed.end(), [&](MirValueId id) {
+                    return std::find(pendingStaged.begin(), pendingStaged.end(),
+                                     id) != pendingStaged.end() ||
+                           stagedAcrossInvokeSuccessChain(id, block.id);
+                  }))
+            return false;
+          for (const MirValueId id : consumed)
+            pendingStaged.erase(
+                std::remove(pendingStaged.begin(), pendingStaged.end(), id),
+                pendingStaged.end());
+          return true;
+        };
     for (const MirInstruction &instruction : block.instructions) {
       // Destructive MIR rewrites preserve stable instruction identities as
       // canonical tombstones. They have no runtime vocabulary and must be
@@ -51345,22 +51434,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (staged != nullptr) {
             consumedStaged.push_back(*staged->result);
           }
-          if (!std::all_of(
-                  consumedStaged.begin(), consumedStaged.end(),
-                  [&](MirValueId id) {
-                    return std::find(pendingStaged.begin(), pendingStaged.end(),
-                                     id) != pendingStaged.end() ||
-                           stagedAcrossInvokeSuccessChain(id, block.id);
-                  })) {
-            {
-              return false;
-            }
-          }
-          for (const MirValueId id : consumedStaged) {
-            pendingStaged.erase(
-                std::remove(pendingStaged.begin(), pendingStaged.end(), id),
-                pendingStaged.end());
-          }
+          if (!consumeStagedBorrows(consumedStaged))
+            return false;
           continue;
         }
         if (instruction.receiver &&
@@ -52469,6 +52544,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 return false;
               }
             }
+            // The intrinsic arm returns before ordinary call admission's
+            // staging drain. Its exact prepared inputs are consumed here,
+            // including when abort-only allocation and result publication
+            // occupy the same block.
+            if (!consumeStagedBorrows(consumedStaged))
+              return false;
             continue;
           }
           // The substituted type parameter's default construction names
@@ -52574,22 +52655,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // check still demands the set drains to empty. A consumed borrow
         // staged in the unique invoke-predecessor block is equally
         // exact: the predecessor's block-end rule proved the hand-off.
-        if (!std::all_of(consumedStaged.begin(), consumedStaged.end(),
-                         [&](MirValueId id) {
-                           return std::find(pendingStaged.begin(),
-                                            pendingStaged.end(),
-                                            id) != pendingStaged.end() ||
-                                  stagedAcrossInvokeSuccessChain(id, block.id);
-                         })) {
-          {
-            return false;
-          }
-        }
-        for (const MirValueId id : consumedStaged) {
-          pendingStaged.erase(
-              std::remove(pendingStaged.begin(), pendingStaged.end(), id),
-              pendingStaged.end());
-        }
+        if (!consumeStagedBorrows(consumedStaged))
+          return false;
         continue;
       }
       default: {

@@ -8,20 +8,11 @@ import sys
 import tempfile
 
 
-def main():
-    compiler = Path(sys.argv[1]).resolve()
+def run_fixture(compiler, filename, negatives, marker):
     fixtures = Path(__file__).parent / "fixtures"
-    fixture = fixtures / "optimizer_returned_field_address.gti"
+    fixture = fixtures / filename
     original = fixture.read_text()
     native = fixtures / "optimizer_returned_field_address_native.cpp"
-    negatives = {
-        "bad_different_field": "owner.bad_different_field()",
-        "bad_ambiguous_field": "owner.bad_ambiguous_field(false)",
-        "bad_mutating_field": "owner.bad_mutating_field()",
-        "bad_opaque_field": "owner.bad_opaque_field()",
-        "bad_reassigned_nested": "relay.bad_reassigned_nested()",
-        "bad_opaque_nested": "relay.bad_opaque_nested()",
-    }
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],
@@ -40,7 +31,7 @@ def main():
             start = next(i for i, line in enumerate(lines, 1)
                          if line.strip().startswith(f"unsafe int {name}("))
             site = next(i for i, line in enumerate(lines, 1)
-                        if i > start and "return *pointer + 1;" in line)
+                        if i > start and marker in line)
             cases.append((source, (70, "", f"{source.name}:{site}: "
                                   "runtime error[GTI-R0001]: integer_overflow in addition\n")))
         for label, flags, extra in modes:
@@ -54,7 +45,30 @@ def main():
                                         timeout=30, env=environment)
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     label, source, result)
-            print(f"Returned field addresses: {label} passed ({len(cases)} cases)", flush=True)
+            print(f"{filename}: {label} passed ({len(cases)} cases)", flush=True)
+
+
+def main():
+    compiler = Path(sys.argv[1]).resolve()
+    run_fixture(compiler, "optimizer_returned_field_address.gti", {
+        "bad_different_field": "owner.bad_different_field()",
+        "bad_ambiguous_field": "owner.bad_ambiguous_field(false)",
+        "bad_mutating_field": "owner.bad_mutating_field()",
+        "bad_opaque_field": "owner.bad_opaque_field()",
+        "bad_reassigned_nested": "relay.bad_reassigned_nested()",
+        "bad_opaque_nested": "relay.bad_opaque_nested()",
+    }, "return *pointer + 1;")
+    run_fixture(compiler, "optimizer_constructed_borrows.gti", {
+        "bad_borrow_ambiguous": "bad_borrow_ambiguous(storage.data(), &other, false, owner)",
+        "bad_borrow_lifetime": "bad_borrow_lifetime(storage.data(), owner)",
+        "bad_borrow_different": "bad_borrow_different(storage.data(), &other, owner)",
+        "bad_borrow_opaque": "bad_borrow_opaque(storage.data(), owner)",
+        "bad_borrow_write": "bad_borrow_write(storage.data(), owner)",
+    }, "return value + 1;")
+    run_fixture(compiler, "optimizer_indexed_borrows.gti", {
+        "bad_index_mismatch": "bad_index_mismatch(&pair[0], uint64_t(0), uint64_t(1), owner)",
+        "bad_index_hole": "bad_index_hole(&pair[0], owner)",
+    }, "return value + 1;")
 
 
 if __name__ == "__main__":

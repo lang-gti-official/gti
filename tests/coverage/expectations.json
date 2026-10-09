@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:651: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/memory>:792: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:650: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/memory>:791: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:648: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/memory>:789: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:616: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:757: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:617: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/memory>:758: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:1077: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:1220: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:636: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/memory>:777: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -81,11 +81,12 @@
       ]
     },
     "c118_memory_resource_growth_panic": {
+      "native_sources": ["native/unbuffered_output.c"],
       "cases": [
         {
-          "exit": 70,
-          "stderr": "<std/resource_vector>:143: runtime error\\[GTI-R0017\\]: panic: \"resource_vector\\ could\\ not\\ grow\"\\n",
-          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 1\ndrop 100\ndrop 200\n"
+          "exit": "abort",
+          "stderr": "<std/memory>:343: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
+          "stdout": "full\n"
         }
       ]
     },
