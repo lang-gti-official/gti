@@ -639,7 +639,8 @@ The next integration audit repairs dependent relocation guarantees and enum
 identities used only as generic arguments. The optimized structural-relocation,
 qualified-member and contextual-collection unit gates pass, including weak and
 disjunctive constraints, borrowed fields, and forbidden bitwise upgrades. Native
-recursive-generic validation against the newly linked compiler is still pending.
+recursive-generic validation passes 16 cases across all eight modes, including
+disabled elision and ASan/UBSan, plus 19 source rejection controls (5.60 seconds).
 Existing source generic fixtures now name the vector's actual element contract.
 
 The migrated provider observer retains allocation-free swap assertions and adds
@@ -654,8 +655,13 @@ representation inspection by the optional class, not the removed prefix helper.
 
 The reviewed library surface inventory is 76 entries and 150 cases. Its first
 complete run passes 147 cases; two stale observer/rollback expectations are
-repaired, and the JSON O3 build exceeds the unchanged 300-second per-case limit
-under concurrent full-suite load. An isolated retry is pending. The full 582-gate
+repaired. JSON O3 also exceeded the unchanged 300-second per-case limit in an
+isolated retry. Profiling identified repeated whole-body instruction/root-use
+queries during backend admission. Immutable representation-scoped indexes and
+exact defining-instruction lookup remove that repeated work. The unchanged
+JSON O0/O3 surface case now passes in 317.08 seconds combined; neither per-build
+timeout was increased. Scoped/unscoped byte-output parity covers nested and
+foreign snapshots, and copies remain outside the cache. The full 582-gate
 audit completes in 1548.68 seconds with 550 passes and 32 failures (including
 the stale tests corrected during that audit). It is not final acceptance:
 optimizer proofs, aggregate-projection emission,
@@ -665,6 +671,18 @@ matrix's missing bounded-worker registration is repaired; all 96 shared-harness
 clients now pass scheduler inventory and mutation checks. None of this is final
 migration/release acceptance; the combined optimized full run, native corpus,
 installed consumers and measured performance remain required for 0.394.2.
+
+The owning-array correction reuses the failure-free vacant-destination
+relocation proof for generated transfers with guarded destructors. Positive
+admission precedes mutations of activation, ownership and reparenting; losing
+the destructor guard rejects admission. An unrelated application `Lease`
+checks two constructions and exactly-once reverse cleanup after decomposition.
+The optimized aggregate, nested-guarded-Expected, representation-snapshot,
+backend-preflight and backend-lifecycle suites pass together (45.80 seconds).
+The complete aggregate native matrix passes 96 successes, 42 bounds failures,
+60 ordered nested failures, eight sanitizer cases and ten semantic negatives
+(124.59 seconds). This includes the previously failing structured-bindings
+example, both C++ standards and O0/O1/O3, without copy elision.
 
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 

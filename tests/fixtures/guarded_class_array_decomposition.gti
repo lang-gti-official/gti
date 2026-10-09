@@ -1,0 +1,26 @@
+#include <std/utility>
+
+mut int32_t constructions = 0;
+mut int32_t released = 0;
+
+class Lease {
+  int32_t identity;
+public:
+  Lease(int32_t identity) : identity(identity) { constructions++; }
+  Lease(Lease& other) = delete;
+  Lease(Lease&& other) = default;
+  ~Lease() { released = released * 10 + this.identity; }
+  int32_t id() { return this.identity; }
+};
+
+int inspect() {
+  Lease values[2] = {Lease(1), Lease(2)};
+  auto [first, second] = std::move(values);
+  return first.id() == 1 && second.id() == 2 ? 0 : 1;
+}
+
+int main() {
+  if (inspect() != 0) { return 1; }
+  // No extra construction, and only the relocated array owns live cleanup.
+  return constructions == 2 && released == 21 ? 0 : 2;
+}

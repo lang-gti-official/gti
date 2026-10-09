@@ -1144,10 +1144,51 @@ moduleDataOnlyInitialization(const MirProgram &program,
              : nullptr;
 }
 
+// These are indexes of existing MIR records, not additional admission facts.
+// A representation scope owns one immutable verified program, so the indexes
+// cannot outlive their body or survive a MIR edit. Unscoped/mutation probes
+// retain the direct queries below.
+struct BodyTextQueryIndex {
+  explicit BodyTextQueryIndex(const MirBody &body) {
+    for (const MirLoan &loan : body.loans)
+      referencedPlaces.insert(loan.source);
+    for (const MirBlock &block : body.blocks) {
+      if (block.terminator.value)
+        referencedPlaces.insert(block.terminator.value->place);
+      for (const MirInstruction &instruction : block.instructions) {
+        instructions.emplace(instruction.id, &instruction);
+        if (instruction.destination)
+          referencedPlaces.insert(*instruction.destination);
+        if (instruction.receiver)
+          referencedPlaces.insert(instruction.receiver->place);
+        for (const MirOperand &operand : instruction.operands)
+          referencedPlaces.insert(operand.place);
+      }
+    }
+  }
+
+  std::unordered_map<MirInstructionId, const MirInstruction *> instructions;
+  std::unordered_set<MirPlaceId> referencedPlaces;
+};
+
+[[nodiscard]] const BodyTextQueryIndex *
+bodyTextQueryIndex(const MirBody &body) {
+  auto *stored = cppScopedBodyAnalysis(body, "body-text-query-index");
+  if (stored == nullptr)
+    return nullptr;
+  if (!*stored)
+    *stored = std::make_shared<BodyTextQueryIndex>(body);
+  return static_cast<const BodyTextQueryIndex *>(stored->get());
+}
+
 [[nodiscard]] const MirInstruction *findInstruction(const MirBody &body,
                                                     MirInstructionId id) {
   if (id == 0) {
     return nullptr;
+  }
+  if (const auto *index = bodyTextQueryIndex(body)) {
+    const auto found = index->instructions.find(id);
+    return found == index->instructions.end() ? nullptr : found->second;
   }
   for (const MirBlock &block : body.blocks) {
     const auto found =
@@ -1826,6 +1867,8 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
   if (place.root != MirPlaceRootKind::Value || !place.projections.empty()) {
     return false;
   }
+  if (const auto *index = bodyTextQueryIndex(body))
+    return !index->referencedPlaces.contains(place.id);
   for (const MirLoan &loan : body.loans) {
     if (loan.source == place.id) {
       return false;
@@ -16055,7 +16098,7 @@ fixedArrayValueDestinationSlot(const MirProgram &program, const MirBody &body,
       instruction.localFailureSites.empty() &&
       instruction.definedFailure.empty() &&
       !invokePairedInstruction(body, instruction.id) &&
-      mirTypeMoveIsDefinedFailureFree(program, instruction.info.type);
+      mirTypeRelocationIsDefinedFailureFree(program, instruction.info.type);
   if ((!aggregate && !call && !move) || !instruction.result) {
     return nullptr;
   }
@@ -24402,16 +24445,15 @@ movedReturnTemporaryForTransfer(const MirBody &body,
 // result) spells the construction inline instead.
 [[nodiscard]] const MirInstruction *unexpectedDefinition(const MirBody &body,
                                                          MirValueId value) {
-  for (const MirBlock &block : body.blocks) {
-    for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.kind == MirInstructionKind::Compute &&
-          instruction.operation == MirOperation::Unexpected &&
-          instruction.result && *instruction.result == value) {
-        return &instruction;
-      }
-    }
-  }
-  return nullptr;
+  const MirValue *record = body.findValue(value);
+  const MirInstruction *definition =
+      record == nullptr ? nullptr : findInstruction(body, record->definition);
+  return definition != nullptr &&
+                 definition->kind == MirInstructionKind::Compute &&
+                 definition->operation == MirOperation::Unexpected &&
+                 definition->result == value
+             ? definition
+             : nullptr;
 }
 
 // A storage-free Unexpected may publish directly into an Expected binding or
