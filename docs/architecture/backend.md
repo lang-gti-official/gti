@@ -117,6 +117,11 @@ existing constructor rollback proof remains mandatory. Targetless generated
 default/copy/move construction uses the same explicit storage protocol; a
 generated default requiring a field/base schedule must retain its exact
 constructor target. There is no fallback native `make_unique` execution path.
+The allocation intrinsic consumes its exact prepared borrows through the same
+pending-input/success-chain proof as ordinary calls. An abort-only allocation
+can share a block with subsequent owner publication; its already consumed
+inputs must not remain pending across that publication. No arbitrary intervening
+effects or new argument lifetimes are admitted by this bookkeeping.
 
 ## Opt-in Source Debug Locations
 

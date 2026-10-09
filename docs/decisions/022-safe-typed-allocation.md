@@ -12,12 +12,13 @@ Historical descriptions in the initial decision record their original scope;
 they are not the current implementation contract or a claim of final campaign
 validation.
 
-Direction note (2026-10-09): the owner has accepted two further revisions,
-neither implemented yet. The
+Direction note (2026-10-09): the owner has accepted two further revisions;
+implementation is in progress on the allocation/container task branch, with
+combined acceptance and integration still outstanding. The
 [Rust allocation-failure model](#revision-rust-allocation-failure-model-2026-10-09)
 replaces observable failure for infallible allocation. The
 [raw-buffer sequence representation](#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
-is the target for `std::vector`. Until they are implemented, the sections they
+is the target for `std::vector`. Until they are integrated, the sections they
 revise remain the shipped contract.
 
 ## Context
