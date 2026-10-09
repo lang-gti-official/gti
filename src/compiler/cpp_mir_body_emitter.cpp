@@ -30470,8 +30470,7 @@ public:
     // Adapters are discovered only by the existing exact Drop emission routes.
     // Insert their complete prelude once, before any label can bypass native
     // initialization, rather than respelling or shifting the body per Drop.
-    cleanupAdapterPreludePosition =
-        static_cast<std::size_t>(output.tellp());
+    cleanupAdapterPreludePosition = static_cast<std::size_t>(output.tellp());
     cleanupAdapterPreludeIndentation = indentation;
     writeIndent();
     output << "goto " << entry->label << ";\n";
@@ -30588,9 +30587,9 @@ private:
     std::string expression;
   };
 
-  [[nodiscard]] std::string cleanupAdapterSpelling(
-      const ScalarBodyFacts &facts, const MirDropType &recipe,
-      const MirPlace &slot) {
+  [[nodiscard]] std::string cleanupAdapterSpelling(const ScalarBodyFacts &facts,
+                                                   const MirDropType &recipe,
+                                                   const MirPlace &slot) {
     const auto *canonical =
         facts.body.findPlace(canonicalSlotPlaceId(facts.body, slot));
     if (canonical == nullptr)
@@ -30605,15 +30604,14 @@ private:
         [&](const CleanupAdapter &adapter) {
           return adapter.recipe == recipe && adapter.nativeType == nativeType;
         });
-    const auto index = static_cast<std::size_t>(
-        std::distance(cleanupAdapters.begin(), found));
+    const auto index =
+        static_cast<std::size_t>(std::distance(cleanupAdapters.begin(), found));
     if (found == cleanupAdapters.end()) {
-      cleanupAdapters.push_back(
-          {.recipe = recipe,
-           .nativeType = nativeType,
-           .expression = cppMirCleanupValueExpression(
-               program, recipe, "__gti_cleanup_value", "__gti_record",
-               "__gti_unwinding")});
+      cleanupAdapters.push_back({.recipe = recipe,
+                                 .nativeType = nativeType,
+                                 .expression = cppMirCleanupValueExpression(
+                                     program, recipe, "__gti_cleanup_value",
+                                     "__gti_record", "__gti_unwinding")});
     }
     return "__gti_mir_cleanup_adapter_" + std::to_string(index);
   }
@@ -33629,8 +33627,7 @@ private:
                << " = __gti_mir_p_" << canonicalSlotPlaceId(facts.body, *slot)
                << ".destroy_cleanup_with_failure(" << record << ", "
                << (drop.conditional ? "true" : "false") << ", "
-               << (block.activeFailure != 0 ? "true" : "false")
-               << ", "
+               << (block.activeFailure != 0 ? "true" : "false") << ", "
                << cleanupAdapterSpelling(facts, obligation->dropType, *slot)
                << ");\n";
         return;
@@ -33686,8 +33683,7 @@ private:
           output << "__gti_mir_p_" << canonicalSlotPlaceId(facts.body, *place)
                  << ".destroy_cleanup_with_failure(nullptr, "
                  << (event.conditional ? "true" : "false") << ", "
-                 << (event.failureCleanup ? "true" : "false")
-                 << ", "
+                 << (event.failureCleanup ? "true" : "false") << ", "
                  << cleanupAdapterSpelling(facts, drop->dropType, *place)
                  << ");\n";
         } else {

@@ -656,6 +656,19 @@ scope shape prevents a jump from entering past a C++ initialization while
 preserving the old per-block scope exit. GTI destruction and failure cleanup
 remain explicit MIR instructions and terminators rather than native RAII.
 
+Slot cleanup reuses one private captureless native adapter per body emission
+for each equal complete `MirDropType` recipe and sealed native slot-type
+spelling. The recipe, including alternative/subobject identities and order,
+remains MIR-owned; equal rendered expressions alone do not justify sharing.
+Adapters are collected only by the existing admitted Drop routes and inserted
+once into the body prelude before all labels. Each original Drop retains its
+slot, failure record, conditional and unwinding arguments, status and Invoke;
+all failure and second-failure termination edges remain distinct. This shares
+native template identities, not GTI callable values, lifetimes or control flow.
+The inventory resets for every body and plain/failure/deduced representation
+variant and never escapes its immutable program/map snapshot. Pointer-free
+body plans retain the finished declarations and calls as ordinary text.
+
 Direct labels and gotos are the complete production CFG representation,
 including reducible and irreducible graphs. The backend does not structure
 loops from source syntax or names, and it does not require a mutable block
