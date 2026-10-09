@@ -1,6 +1,49 @@
 # Compiler Verification
 
-## Allocation-exhaustion abort foundation (candidate)
+## Source prefix ownership and allocation abort acceptance (0.397.0)
+
+S-ALLOC-08 and S-ALLOC-09 are accepted on the reconciled task head. The
+sections below record the earlier candidate checkpoints.
+
+- **Optimizer proofs.** The source-container safety suite passes with its
+  original positive and negative expectations. One crossing-record
+  expectation changed: after the opaque cleanup erases the constructor
+  envelope, the first client keeps both checks, and the later loops prove
+  their arithmetic from that client's own post-barrier exact write (5 and 2
+  discharges at O2/O3). Native optimization evidence, including the
+  allocator-first and closed-vector cases, passes.
+- **New controls.** `testSourceRecordSequenceEnvelopes` builds an unrelated
+  record sequence with the public vector size constructor. It proves both
+  counters and all three field operations in a nested update loop, keeps the
+  field checks after an opaque call before the write or under an opaque
+  element constructor, rejects an index reaching the initialized length, and
+  replays every proof at O2 and O3. `testUnborrowedLocalReferenceDisjointness`
+  checks the place alias rule on real MIR in both directions.
+- **Performance.** Against the preserved private-path compiler on one Apple M2
+  Max, with 3 warmups and 15 shuffled interleaved rounds:
+
+  | Workload | Private path | Source path | Executable bytes |
+  | --- | ---: | ---: | --- |
+  | vector checked loop | 75.36 ms | 74.48 ms | 142,072 → 127,320 |
+  | game update | 78.97 ms | 78.83 ms | 164,536 → 143,816 |
+  | string growth/search | 72.95 ms | 32.73 ms | 146,112 → 127,928 |
+
+  The benchmark runner measures the checked vector loop at 72.07 ms against
+  71.44 ms for idiomatic C++, and game update at 0.73× semantic C++. With the
+  allocation counter, both paths request one 20,000-byte region for the vector
+  loop and 6,800 allocations of 52,435,200 bytes for string growth.
+- **Census review.** Refreshing both baselines after reconciling #203–#206
+  changes only reviewed sources. Every MIR body count equals the branch's
+  reviewed count plus main's own change, except:
+  - 106, 110 and 134 gain one body each, already emitted by the unmerged branch
+    head;
+  - #203's new examples 135 and 136 gain the source-vector bodies;
+  - 055 gains #203's 26 polymorphic declarations, now reachable through the
+    source string.
+
+  Optimization levels do not change these counts.
+
+## Allocation-exhaustion abort foundation
 
 `allocation_abort_runtime` tests the S-ALLOC-08 terminal primitive
 in subprocesses: direct exhaustion, a managed worker, reentry from an active
@@ -859,7 +902,7 @@ with the proxy evidence. This single observation proves the production path
 and inventory; without a matched full-compilation baseline it is not an
 overall GTI compile-time speedup measurement.
 
-## Source prefix ownership (candidate; acceptance still open)
+## Source prefix ownership checkpoints
 
 The source-prefix task's Release/AppleClang/LLVM 22.1.8 snapshot on macOS arm64
 passes the 13 focused compiler-pipeline, source-owner contract/runtime,
