@@ -285,8 +285,7 @@ Combined checkpoint `805e3e73` builds all Release targets on the Mac mini in
 gates pass, including the new formatting matrix, LSP protocol, raw/intrinsic/
 object context and optimizer analyses. The six optimizer safety requirements
 remain unmet. Both census failures are limited to one additional formatting
-body in each of examples 106, 110 and 134; they remain pending independent
-inventory review rather than being updated from arithmetic alone. Logs are
+body in each of examples 106, 110 and 134. Logs are
 retained in `/private/tmp/gti-combined-integration-805e3e73.log` and its JUnit
 record; this is not an unfiltered combined-head acceptance run.
 
@@ -302,6 +301,20 @@ still-missing multiplication proof. The strengthened conflicting/recursive/
 cleanup/native/virtual negatives, exact runtime cleanup and O0/O2/O3 parity
 checks pass. This deliberately preserves the unmet performance requirement;
 it does not waive it or claim that the full suite passes.
+
+Independent inventory review isolates the formatting source change with an
+otherwise identical compiler/library. Examples 106 and 110 stop calling
+`append_text` and `append_numeric_text`; example 134 stops calling one string
+`append` instance and `append_numeric_text`. Each gains `append_character`,
+`split_padding` and `reserve_additional`, explaining the net additional body.
+All other example inventories and generated-item categories are unchanged.
+Fresh candidate inventories contain 11,471 emitted body identities and 60,031
+lowered declarations/11,474 bodies/6,023 generated items. The complete native
+oracle passes all 131 examples at O0/C++20 and O3/C++23 against those candidates,
+including identical ownership and output. Candidate JSON and before/after
+function inventories remain under `/private/tmp/gti-s08-s09-body-origins`, with
+the native log at `/private/tmp/gti-combined-corpus-oracle-805e3e73.log`.
+Committed baselines are not yet promoted while combined acceptance is open.
 
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
