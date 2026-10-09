@@ -21,7 +21,7 @@ def main():
                ("array_field_projections", "class_array_decomposition",
                 "owning_class_array_decomposition", "constructor_struct_field_address",
                 "class_array_arguments", "array_element_references",
-                "checked_class_copy_arguments")] + [
+                "checked_class_copy_arguments", "guarded_class_array_decomposition")] + [
         repository / f"tests/coverage/reproducers/{name}.gti"
         for name in ("a39-ctor-address-of-struct-field", "a40-raw-pointer-fixed-array-field-index",
                      "a40-c-abi-record-pointer-array-field",
@@ -43,7 +43,7 @@ def main():
                     expected_output = ("structured bindings worked\n" if source.name.startswith("32-") else
                                        "fixed arrays keep their bounds\n" if source.name.startswith("12-") else "")
                     assert executed.stdout == expected_output and executed.stderr == "", executed
-        for source in sources[:7]:
+        for source in sources[:8]:
             executable = scratch / f"{source.stem}-sanitized"
             run([str(compiler), str(source), "-O1", "--progress", "never", "-o", str(executable),
                  "--", str(native), "-fsanitize=address,undefined", "-fno-elide-constructors"])
@@ -164,8 +164,9 @@ def main():
             rejected = run([str(compiler), str(path), "--progress", "never", "--emit-cpp",
                             "-o", str(scratch / "bad.cpp")], expected=65)
             assert "error[GTI-S" in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
-    print("aggregate projections: 84 native successes, 42 checked bounds failures, "
-          "60 ordered nested failures with exact origins and cleanup, six sanitizers "
+    print(f"aggregate projections: {len(sources) * 6} native successes, "
+          f"{len(bounds_cases) * 6} checked bounds failures, "
+          "60 ordered nested failures with exact origins and cleanup, eight sanitizers "
           "and ten semantic negatives passed")
 
 

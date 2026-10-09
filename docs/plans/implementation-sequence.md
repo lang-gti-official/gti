@@ -5260,8 +5260,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   the type parameter's declared/active relocation guarantees without granting
   unconstrained or disjunctive permission. HIR retains exact enum identities
   occurring only in generic arguments in both complete and reachable lowering.
-  Focused structural tests pass; recursive native composition and the broader
-  failing audit gates still require acceptance. Test observers now follow the
+  Focused structural tests and the 16-case/eight-mode recursive native matrix
+  pass. The JSON surface timeout is repaired with immutable backend query
+  indexes; cached and direct plans retain byte-identical output. Owning-array
+  decomposition now uses the exact vacant-destination relocation proof and
+  passes its complete native matrix, including unrelated guarded destructors.
+  The broader failing audit gates still require acceptance. Test observers now follow the
   real process provider and approved one-region vector policy, without weakening
   zero-allocation swaps, reverse cleanup or sparse-storage's two-region contract.
 - **Prerequisites:** completed `S-ALLOC-06/07` layout, final-address construction,

@@ -24,6 +24,22 @@ two append-only passes, in that order. It does not admit operations or consult
 MIR/semantic state. This avoids repeatedly shifting a large cleanup body for
 every indentation marker while preserving the established output bytes.
 
+Body-text queries reuse instruction-ID and referenced-place indexes within the
+existing representation scope for one immutable verified lowered program.
+These indexes contain existing MIR records, not cached permission to emit an
+operation. Copies, foreign bodies and unscoped mutation probes use direct
+queries; nested consumers of a different snapshot cannot reuse the outer
+indexes. Expected wrapper lookup follows the value's exact defining instruction
+instead of searching every instruction for each candidate. Scoped/unscoped
+plan comparisons pin byte-identical output and nested-snapshot isolation.
+
+Whole owning-array movement into an adjacent fresh binding uses the shared
+failure-free relocation proof, not the narrower passive move/assignment proof.
+Generated transfer may include guarded source destructors: it transfers their
+active cleanup state without running them. The exact typed source, vacant
+destination, single result consumer and lifecycle reparenting remain mandatory;
+this does not authorize replacement of live objects.
+
 Hosted argument marshalling consumes the verified startup drop recipe when
 argument construction or append fails. A source-owned vector may have
 failure-capable destruction: its secondary-failure Invoke/terminal envelope is
