@@ -1,0 +1,80 @@
+#include <std/string>
+
+#ifdef ALLOCATION_COUNTS
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t adoption_bytes();
+}
+#endif
+
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0): std::print("0"); break;
+  case uint64_t(1): std::print("1"); break;
+  case uint64_t(2): std::print("2"); break;
+  case uint64_t(3): std::print("3"); break;
+  case uint64_t(4): std::print("4"); break;
+  case uint64_t(5): std::print("5"); break;
+  case uint64_t(6): std::print("6"); break;
+  case uint64_t(7): std::print("7"); break;
+  case uint64_t(8): std::print("8"); break;
+  case uint64_t(9): std::print("9"); break;
+  case uint64_t(10): std::print("a"); break;
+  case uint64_t(11): std::print("b"); break;
+  case uint64_t(12): std::print("c"); break;
+  case uint64_t(13): std::print("d"); break;
+  case uint64_t(14): std::print("e"); break;
+  case uint64_t(15): std::print("f"); break;
+  default: std::print("?"); break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+int main() {
+  std::string_view alphabet = "abcdefghijklmnopqrstuvwxyz";
+  mut uint64_t checksum = 0;
+#ifdef ALLOCATION_COUNTS
+  adoption_count_begin();
+#endif
+  for (mut int32_t round = 0; round < 400; round++) {
+    mut std::string text{};
+    for (mut int32_t i = 0; i < 50000; i++) {
+      text.push_back(alphabet[std::size_t((i * 7 + round) % 26)]);
+    }
+#ifdef FULL_STATE
+    std::println(text);
+#endif
+    mut std::size_t position = text.find('q');
+    while (position != std::string::npos) {
+#ifdef FULL_STATE
+      std::println(std::to_string(position));
+#endif
+      checksum += uint64_t(position);
+      position = text.find('q', position + std::size_t(1));
+    }
+    checksum += uint64_t(text.size());
+  }
+#ifdef ALLOCATION_COUNTS
+  adoption_count_end();
+#endif
+  if (checksum != uint64_t(19250373078)) { return 1; }
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(checksum);
+  std::println(" work-units:20000000");
+#ifdef ALLOCATION_COUNTS
+  std::print("allocations ");
+  std::println(std::to_string(adoption_allocations()));
+  std::print("bytes ");
+  std::println(std::to_string(adoption_bytes()));
+#endif
+  return 0;
+}
