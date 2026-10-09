@@ -522,10 +522,9 @@ cross-platform, installed-consumer or publication gates.
 
 ## Revision: Rust allocation-failure model (2026-10-09)
 
-Status: implemented on the allocation/container task branch; combined
-acceptance and integration remain in progress under
-[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model)
-and S-ALLOC-09. This revision supersedes the earlier contained-exhaustion rule.
+Status: implemented in 0.397.0 by
+[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model).
+This revision supersedes the earlier contained-exhaustion rule.
 
 GTI no longer makes allocation failure observable everywhere. It adopts
 Rust's split between fallible and infallible allocation, and Rust's rule that
@@ -593,11 +592,11 @@ Consequences:
 
 ## Revision: initialized-prefix sequences over a raw buffer (2026-10-09)
 
-Status: accepted target representation; implementation and acceptance in progress. The work item is
-[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-`std::vector` and `std::string` are migrating from the private
-`gti_internal::prefix_storage<T>` capability to the layering Rust uses for
-`RawVec` and `Vec`, in ordinary GTI:
+Status: implemented in 0.397.0 by
+[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string),
+which retired the private `gti_internal::prefix_storage<T>` capability.
+`std::vector` and `std::string` use the layering Rust uses for `RawVec` and
+`Vec`, in ordinary GTI:
 
 - **A source-defined raw buffer.** It owns one region from a memory resource,
   the process resource by default: an element pointer and a capacity, with
@@ -638,10 +637,12 @@ guarantee:
 The compiler must not recognize vector, string or the raw-buffer type by name.
 MIR keeps verified lifecycle authority.
 
-Under ADR 012's performance requirement, `prefix_storage` is retired only
-when vector and string workloads match or beat the current private path. The
-checked vector loop currently runs at idiomatic-C++ parity (72 ms against
-71 ms). Allocation counts and code size must not regress either. Issue #169
+Under ADR 012's performance requirement, `prefix_storage` was retired only
+once vector and string workloads matched or beat the private path. The
+checked vector loop runs at idiomatic-C++ parity (72.07 ms against 71.44 ms),
+game update and the checked vector loop match the private path, and string
+growth runs in under half its time. Allocation counts are identical and
+executables are smaller. S-ALLOC-09 records the measurements. Issue #169
 showed that moving storage policy into source without this layering cost 3.68×
 on the storage workload. Migrating the same representation is not enough; the
 layering above is what removes that cost.
