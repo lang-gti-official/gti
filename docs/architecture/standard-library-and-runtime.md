@@ -496,8 +496,12 @@ ordinary field cleanup releases the buffer's lease. Process and checked resource
 owners share this policy; resource growth exchanges allocation descriptors only
 between leases retaining the same provider binding. No bitmap or second region
 is acquired. Allocation-result cleanup finishes before publishing pointer and
-capacity, and an empty reservation makes no provider call. Descriptor copies
-remain passive and never gain release authority.
+capacity. Successful initial prefix allocation then publishes zero live elements
+after its own allocation-result temporary is retired; the one-argument entry
+delegates to this same alignment-aware path. Rejected allocation on a nonempty
+buffer and provider failure leave its prior count, capacity and elements intact.
+An empty reservation makes no provider call. Descriptor copies remain passive
+and never gain release authority.
 
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI
