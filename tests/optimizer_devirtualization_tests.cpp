@@ -2,6 +2,7 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "gti/optimization/closed_world.h"
 #include "gti/optimization/devirtualization.h"
 #include "gti/optimizer.h"
 
@@ -174,6 +175,139 @@ int main() { return apply(40) - 41; }
   }
 }
 
+std::size_t countProofs(const lang::OptimizedProgram &optimized,
+                        lang::MirTransformProofKind proof) {
+  return static_cast<std::size_t>(std::count_if(
+      optimized.report.transformations.begin(),
+      optimized.report.transformations.end(), [&](const auto &record) {
+        return record.kind == lang::MirTransformKind::DevirtualizeCall &&
+               record.proof == proof;
+      }));
+}
+
+// A reference parameter whose referent class is exact on every visible call
+// of a closed function admits static dispatch inside that function.
+void testParameterReceiver(const std::string &name, const std::string &body,
+                           std::size_t expected) {
+  using namespace lang;
+  const auto frontend = Frontend().analyze(name + ".gti", prefix + body);
+  expect(frontend.canGenerateCode(), name + " lowers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  for (auto level :
+       {OptimizationLevel::O1, OptimizationLevel::O2, OptimizationLevel::O3}) {
+    auto optimized = OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(), name + " verifies");
+    for (const auto &error : optimized.report.outputVerification.errors)
+      std::cerr << error.message << '\n';
+    const std::size_t count =
+        countProofs(optimized, MirTransformProofKind::ExactParameterReceiver);
+    expect(count == (level == OptimizationLevel::O1 ? 0 : expected),
+           name + " proves every exact parameter receiver at O2/O3 only");
+    if (count == 0)
+      continue;
+    auto forged = optimized.report.transformations;
+    for (auto &record : forged)
+      if (record.proof == MirTransformProofKind::ExactParameterReceiver)
+        record.requiredAnalyses.closedWorld = false;
+    expect(!verifyMirOptimizationCoherence(frontend.mir, optimized.mir, forged)
+                .valid(),
+           name + " rejects a record that omits its closed-world proof input");
+    forged = optimized.report.transformations;
+    std::erase_if(forged, [](const auto &record) {
+      return record.kind == MirTransformKind::DevirtualizeCall;
+    });
+    expect(!verifyMirOptimizationCoherence(frontend.mir, optimized.mir, forged)
+                .valid(),
+           name + " rejects missing parameter receiver evidence");
+  }
+}
+
+// The analysis itself fails closed when a visible call stops being a plain
+// direct call, passes an inexact object, or the callee may rebind its
+// reference.
+void testClosedWorldFacts() {
+  using namespace lang;
+  const auto frontend = Frontend().analyze("closed-world.gti", prefix + R"(
+int apply(Operation& selected, int value) { return selected.run(value); }
+int main() { Increment concrete{}; return apply(concrete, 40) - 41; }
+)");
+  expect(frontend.canGenerateCode(), "closed-world fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto *apply = [&]() -> const MirFunctionInstance * {
+    for (const auto &function : frontend.mir.functionInstances())
+      if (function.parameterTypes.size() == 2 &&
+          function.parameterTypes[0].kind == SemanticType::Reference &&
+          !function.owner)
+        return &function;
+    return nullptr;
+  }();
+  expect(apply != nullptr, "closed-world fixture has the forwarding function");
+  if (apply == nullptr)
+    return;
+  const auto facts = analyzeMirClosedWorldFacts(frontend.mir);
+  const SemanticType *exact = facts.exactParameterClass(apply->id, 0);
+  expect(facts.closed(apply->id) && exact != nullptr &&
+             exact->kind == SemanticType::Class,
+         "every visible call passes one complete local class object");
+  expect(facts.exactParameterClass(apply->id, 1) == nullptr,
+         "scalar parameters carry no class fact");
+  for (const auto &function : frontend.mir.functionInstances())
+    if (function.entryKind != ProgramEntryKind::None ||
+        function.virtualMethod || function.overrideMethod)
+      expect(!facts.closed(function.id),
+             "entry and virtual functions are invoked outside visible calls");
+
+  const auto mutateCall = [&](const auto &mutation) {
+    auto changed = frontend.mir;
+    for (const auto address : enumerateMirBodyAddresses(changed)) {
+      auto *body = findMirBody(changed, address);
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.functionTarget == apply->id)
+            mutation(*body, instruction);
+    }
+    return analyzeMirClosedWorldFacts(changed);
+  };
+  const auto virtualReference =
+      mutateCall([](MirBody &, MirInstruction &call) {
+        call.dispatch = CallDispatch::Virtual;
+      });
+  expect(!virtualReference.closed(apply->id) &&
+             !virtualReference.exactParameterClass(apply->id, 0),
+         "a reference other than a plain direct call opens the function");
+  const auto copied = mutateCall([](MirBody &body, MirInstruction &call) {
+    for (auto &block : body.blocks)
+      for (auto &input : block.instructions)
+        if (input.kind == MirInstructionKind::CallInput &&
+            input.callSite == call.callSite && input.callInputIndex == 0 &&
+            input.callInputRole == MirCallInputRole::Argument)
+          input.operands.front().kind = MirOperandKind::Copy;
+  });
+  expect(copied.closed(apply->id) && !copied.exactParameterClass(apply->id, 0),
+         "an argument that is not a borrowed exact object is unknown");
+
+  auto rebound = frontend.mir;
+  auto *body =
+      findMirBody(rebound, {.kind = MirBodyKind::Function, .owner = apply->id});
+  for (auto &place : body->places)
+    if (place.binding == apply->parameterBindings[0] &&
+        place.projections.empty())
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::CallInput &&
+              instruction.callInputRole == MirCallInputRole::Receiver)
+            instruction.destination = place.id;
+  expect(!analyzeMirClosedWorldFacts(rebound).exactParameterClass(apply->id, 0),
+         "a body that may replace its reference parameter loses the fact");
+}
+
 void testConservative(const std::string &name, const std::string &body) {
   using namespace lang;
   const auto frontend = Frontend().analyze(name + ".gti", prefix + body);
@@ -198,9 +332,60 @@ void testConservative(const std::string &name, const std::string &body) {
 
 int main() {
   testLocalReceiver();
-  testConservative("parameter", R"(
+  testClosedWorldFacts();
+  testParameterReceiver("parameter", R"(
 int apply(Operation& selected, int value) { return selected.run(value); }
 int main() { Increment concrete{}; return apply(concrete, 40) - 41; }
+)", 1);
+  testParameterReceiver("forwarded-parameter", R"(
+int inner(Operation& selected, int value) { return selected.run(value); }
+int outer(Operation& selected, int value) { return inner(selected, value) + selected.run(0); }
+int main() { Increment first{}; Increment second{}; return outer(first, 40) + inner(second, 1) - 44; }
+)", 2);
+  testParameterReceiver("recursive-parameter", R"(
+int repeat(Operation& selected, int value, int count) {
+  if (count > 0) { return repeat(selected, selected.run(value), count - 1); }
+  return value;
+}
+int main() { Increment concrete{}; return repeat(concrete, 37, 3) - 40; }
+)", 1);
+  testParameterReceiver("observable-cleanup-parameter", R"(
+extern "C" { void record_drop(); }
+class Resource : public Operation {
+public:
+  Resource() {}
+  ~Resource() { record_drop(); }
+  int run(int value) override { return value + 1; }
+};
+int apply(Operation& selected, int value) { return selected.run(value); }
+int main() { Resource concrete{}; return apply(concrete, 40) - 41; }
+)", 1);
+  testParameterReceiver("member-and-position", R"(
+class Runner {
+public:
+  Runner() {}
+  int both(int value, Operation& first, Operation& second) { return second.run(first.run(value)); }
+};
+int pair(Operation& first, int value, Operation& second) { return second.run(first.run(value)); }
+int main() { Increment up{}; Decrement down{}; Runner runner{};
+  return pair(up, 3, down) + runner.both(3, down, up) - 6; }
+)", 4);
+  testConservative("mixed-parameter", R"(
+int apply(Operation& selected, int value) { return selected.run(value); }
+int main() { Increment up{}; Decrement down{}; return apply(up, 40) + apply(down, 2) - 42; }
+)");
+  testConservative("reference-origin-parameter", R"(
+int apply(Operation& selected, int value) { return selected.run(value); }
+int main() { Increment concrete{}; Operation& view = concrete; return apply(view, 40) - 41; }
+)");
+  testConservative("function-item-parameter", R"(
+int apply(Operation& selected, int value) { return selected.run(value); }
+int call<Function>(Function function) { Increment concrete{}; return function(concrete, 40); }
+int main() { Increment concrete{}; return apply(concrete, 40) + call(apply) - 82; }
+)");
+  testConservative("uncalled-parameter", R"(
+int apply(Operation& selected, int value) { return selected.run(value); }
+int main() { return 0; }
 )");
   testConservative("mutable", R"(
 int apply(int value) { mut Increment concrete{}; Operation& selected = concrete; return selected.run(value); }

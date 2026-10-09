@@ -14,7 +14,9 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -751,6 +753,219 @@ int main() { return same(1, true); }
          "diagnostic");
 }
 
+// A Call operand prepared by an argument CallInput that borrows a derived
+// class place for an exact base-reference parameter.
+struct DerivedReferenceArgument {
+  lang::MirInstruction *call = nullptr;
+  std::size_t index = 0;
+  const lang::MirInstruction *input = nullptr;
+};
+
+std::vector<DerivedReferenceArgument>
+derivedReferenceArguments(lang::MirProgram &program) {
+  std::vector<DerivedReferenceArgument> result;
+  for (lang::MirFunctionInstance &instance :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           program.functionInstances())) {
+    const lang::MirBody &body = instance.body;
+    std::unordered_map<lang::MirValueId, const lang::MirInstruction *> inputs;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputRole == lang::MirCallInputRole::Argument &&
+            instruction.result && instruction.operands.size() == 1) {
+          inputs.emplace(*instruction.result, &instruction);
+        }
+      }
+    }
+    for (lang::MirBlock &block :
+         const_cast<std::vector<lang::MirBlock> &>(body.blocks)) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call) {
+          continue;
+        }
+        for (std::size_t index = 0; index < instruction.operands.size() &&
+                                    index < instruction.parameterTypes.size();
+             ++index) {
+          const lang::MirOperand &operand = instruction.operands[index];
+          const lang::SemanticType &parameter =
+              instruction.parameterTypes[index];
+          const auto input = inputs.find(operand.value);
+          if (operand.kind != lang::MirOperandKind::Value ||
+              input == inputs.end() ||
+              parameter.kind != lang::SemanticType::Reference ||
+              parameter.arguments.size() != 1) {
+            continue;
+          }
+          const lang::MirOperand &borrow = input->second->operands.front();
+          const lang::MirPlace *place = body.findPlace(borrow.place);
+          if (place != nullptr && operand.type == parameter &&
+              borrow.type == parameter &&
+              place->type.kind == lang::SemanticType::Class &&
+              place->type != parameter.arguments.front()) {
+            result.push_back(
+                {.call = &instruction, .index = index, .input = input->second});
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+void testDerivedReferenceArguments() {
+  const std::string source = R"(
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + 1; }
+};
+int inspect(Operation& selected, int value) { return selected.run(value); }
+int update(mut Operation& selected, int value) { return selected.run(value); }
+int invoke<Function>(Function function) {
+  Increment concrete{};
+  return function(concrete, 40);
+}
+int invoke_mut<Function>(Function function) {
+  mut Increment concrete{};
+  return function(concrete, 41);
+}
+int main() { return invoke(inspect) + invoke_mut(update) - 83; }
+)";
+  const lang::FrontendResult frontend =
+      analyze("function-item-base-reference.gti", source);
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+  }
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "a function item accepts a derived class object for an exact "
+         "base-reference parameter through a generic callable");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  expect(lang::verifyHirProgramPlans(frontend.semantics, frontend.hir).valid(),
+         "HIR plans verify for derived function-item reference arguments");
+
+  std::size_t readPlans = 0;
+  std::size_t mutablePlans = 0;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : instance.body.values) {
+      const lang::HirValue *callee =
+          value.kind == lang::HirValueKind::Call && !value.operands.empty()
+              ? instance.body.findValue(value.operands.front())
+              : nullptr;
+      if (callee == nullptr || !callee->info.type.hasFunctionItemShape()) {
+        continue;
+      }
+      if (!value.callPlan || value.callPlan->receiver ||
+          value.callPlan->arguments.size() != 2) {
+        continue;
+      }
+      const lang::HirCallArgument &argument = value.callPlan->arguments.front();
+      const lang::HirValue *input = instance.body.findValue(argument.value);
+      if (input == nullptr ||
+          argument.parameterType.kind != lang::SemanticType::Reference ||
+          argument.parameterType.arguments.size() != 1 ||
+          argument.parameterType.arguments.front() == input->info.type) {
+        continue;
+      }
+      readPlans +=
+          argument.kind == lang::HirCallInputKind::ReadBorrow &&
+          argument.parameterType.referenceAccess == lang::AccessMode::ReadOnly;
+      mutablePlans +=
+          argument.kind == lang::HirCallInputKind::MutableBorrow &&
+          argument.parameterType.referenceAccess == lang::AccessMode::Mutable;
+    }
+  }
+  expect(readPlans == 1 && mutablePlans == 1,
+         "a concrete function-item call plans each derived argument as an "
+         "ordered borrow of its exact base-reference parameter");
+
+  const lang::MirVerificationResult verified =
+      lang::verifyMirProgram(frontend.mir);
+  for (const lang::MirVerificationError &error : verified.errors) {
+    std::cerr << "MIR: " << error.message << '\n';
+  }
+  expect(verified.valid(),
+         "verified MIR accepts staged derived-to-base function-item "
+         "arguments");
+  lang::MirProgram mir = frontend.mir;
+  const std::vector<DerivedReferenceArgument> staged =
+      derivedReferenceArguments(mir);
+  const auto staged_with = [&](lang::MirOperandKind kind) {
+    return std::count_if(staged.begin(), staged.end(), [&](const auto &entry) {
+      return entry.input->operands.front().kind == kind;
+    });
+  };
+  expect(staged.size() == 2 &&
+             staged_with(lang::MirOperandKind::BorrowRead) == 1 &&
+             staged_with(lang::MirOperandKind::BorrowWrite) == 1,
+         "each function-item call receives a prepared exact base reference "
+         "borrowed from the derived class place");
+
+  if (!staged.empty()) {
+    staged.front().call->operands[staged.front().index] =
+        staged.front().input->operands.front();
+    const lang::MirVerificationResult direct = lang::verifyMirProgram(mir);
+    expect(std::any_of(direct.errors.begin(), direct.errors.end(),
+                       [](const lang::MirVerificationError &error) {
+                         return error.message.find(
+                                    "direct reference argument does not "
+                                    "match") != std::string::npos;
+                       }),
+           "MIR still rejects a derived place passed directly as a base "
+           "reference call operand");
+  }
+
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+    const auto optimized =
+        lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                          .mir = frontend.mir,
+                                          .level = level,
+                                          .target = lang::TargetInfo::host()});
+    expect(optimized.valid(),
+           "derived function-item reference arguments survive verified "
+           "optimization");
+    if (optimized.valid()) {
+      const auto lowered = gti_test::lowerProgram(
+          frontend, optimized.sourceMir, optimized.mir,
+          lang::TargetInfo::host(), optimized.report.transformations);
+      expect(lang::verifyLoweredProgram(lowered).empty(),
+             "derived function-item reference arguments lower to one closed "
+             "program");
+    }
+  }
+
+  const std::string declarations = R"(
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + 1; }
+};
+class Unrelated { public: Unrelated() {} };
+int inspect(Operation& selected, int value) { return selected.run(value); }
+int update(mut Operation& selected, int value) { return selected.run(value); }
+)";
+  for (const std::string invocation :
+       {"int invoke<Function>(Function function) { Unrelated other{}; "
+        "return function(other, 40); }\n"
+        "int main() { return invoke(inspect); }",
+        "int invoke<Function>(Function function) { Increment concrete{}; "
+        "return function(concrete, 40); }\n"
+        "int main() { return invoke(update); }"}) {
+    const auto invalid =
+        analyze("invalid-base-reference-item.gti", declarations + invocation);
+    expect(!invalid.canGenerateCode() && hasCode(invalid, "GTI-S2090") &&
+               !hasCode(invalid, "GTI-B0001"),
+           "an unrelated class or read-only derived object for a function "
+           "item's base reference fails in semantics, not in MIR");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -758,5 +973,6 @@ int main() {
   testContextualDiagnosticsAndBoundaries();
   testConstructorValueArguments();
   testPackInvocationContracts();
+  testDerivedReferenceArguments();
   return failures == 0 ? 0 : 1;
 }
