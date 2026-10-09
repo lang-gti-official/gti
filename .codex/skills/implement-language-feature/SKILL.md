@@ -26,6 +26,12 @@ the feature actually affects.
 7. Name the user-facing program, standard-library operation, or workflow this
    slice enables. Prefer a bounded end-to-end capability over generalized
    restriction machinery that has no immediate client.
+8. Define the expected successful-path cost, required runtime state/allocation
+   and how general optimization can see through the new abstraction. Runtime
+   performance is part of feature acceptance, not a later optional campaign.
+   Apply [ADR 012's performance requirement](../../../docs/decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09):
+   implement necessary architecture without requiring a prior benchmarked
+   regression, then validate costs and claims with representative evidence.
 
 ## Apply The Generality Gate
 
