@@ -126,6 +126,45 @@ struct ScalarAddressKey {
           address.subobject};
 }
 
+// One element at an unknown displacement within `offsets` of an exact base,
+// such as a caller-local loop index. It answers initialized-prefix queries
+// over that whole interval and never names one exact cell: it is never a
+// constructed-scalar, field-address or loan-retained address identity.
+struct AddressRegion {
+  ScalarAddress base;
+  IntegerFact offsets;
+  friend bool operator==(const AddressRegion &,
+                         const AddressRegion &) = default;
+};
+
+// Regions keep a zero base displacement and unsigned 64-bit offsets, so one
+// loan's regions from different paths compare by their exact base alone. An
+// index-free exact address is the region of its single displacement.
+[[nodiscard]] std::optional<AddressRegion>
+normalizedRegion(ScalarAddress base, IntegerFact offsets) {
+  const auto shift = base.elementOffset;
+  if (base.index || offsets.lower.negative || offsets.upper.negative ||
+      offsets.upper.magnitude >
+          std::numeric_limits<std::uint64_t>::max() - shift)
+    return std::nullopt;
+  if (shift != 0)
+    offsets.wideningEnvelope.reset();
+  offsets.lower.magnitude += shift;
+  offsets.upper.magnitude += shift;
+  offsets.domain = {.width = 64, .signedValue = false};
+  base.elementOffset = 0;
+  return AddressRegion{std::move(base), std::move(offsets)};
+}
+
+[[nodiscard]] std::optional<AddressRegion>
+exactRegion(const ScalarAddress &address) {
+  return normalizedRegion(
+      address, IntegerFact{.domain = {.width = 64, .signedValue = false},
+                           .lower = {},
+                           .upper = {},
+                           .evidence = address.evidence});
+}
+
 struct ConstructedScalar {
   IntegerFact value;
   // Exact equality to a read-only by-value formal or its owned scalar field,
@@ -263,6 +302,9 @@ struct AbstractState {
   // Exact addresses supplied to checked reference formation. The loan's
   // witness is lifetime authority, never an alternative address source.
   std::map<MirLoanId, ScalarAddress> borrowedAddresses;
+  // Checked references to some element of an exact region. They share the
+  // invalidation of borrowedAddresses but never substitute for one.
+  std::map<MirLoanId, AddressRegion> borrowedRegions;
   ConstructedScalars constructedScalars;
   EntryRelativeFields entryRelativeFields;
   std::map<MirValueId, EntryRelativeField> entryRelativeValues;
@@ -888,6 +930,67 @@ borrowedAddressForPlace(const MirProgram *program, const MirBody &body,
   return result;
 }
 
+[[nodiscard]] bool sameRegion(const AddressRegion &left,
+                              const AddressRegion &right) {
+  return addressKey(left.base) == addressKey(right.base) &&
+         left.base.subobjectType == right.base.subobjectType &&
+         left.offsets.domain == right.offsets.domain &&
+         left.offsets.lower == right.offsets.lower &&
+         left.offsets.upper == right.offsets.upper;
+}
+
+// The region counterpart of borrowedAddressForPlace. Callers consult exact
+// addresses first; a region never stands in for one exact cell.
+[[nodiscard]] std::optional<AddressRegion>
+borrowedRegionForPlace(const MirProgram *program, const MirBody &body,
+                       const AbstractState &state, MirPlaceId id) {
+  const auto *place = body.findPlace(id);
+  if (!place)
+    return std::nullopt;
+  std::optional<AddressRegion> result;
+  std::size_t firstField = 0;
+  if (place->root == MirPlaceRootKind::Loan) {
+    const auto found = state.borrowedRegions.find(place->loan);
+    if (found != state.borrowedRegions.end())
+      result = found->second;
+  } else {
+    if (place->root != MirPlaceRootKind::Binding ||
+        place->projections.empty() ||
+        place->projections.front().kind != MirProjectionKind::Dereference)
+      return std::nullopt;
+    firstField = 1;
+    for (const auto &[id, region] : state.borrowedRegions) {
+      const auto *loan = body.findLoan(id);
+      if (!loan || std::find(loan->carriers.begin(), loan->carriers.end(),
+                             place->binding) == loan->carriers.end())
+        continue;
+      if (result && !sameRegion(*result, region))
+        return std::nullopt;
+      result = region;
+    }
+  }
+  if (!result)
+    return std::nullopt;
+  FieldPath path;
+  for (std::size_t index = firstField; index < place->projections.size();
+       ++index) {
+    const auto &projection = place->projections[index];
+    if (projection.kind != MirProjectionKind::Field || !projection.field)
+      return std::nullopt;
+    path.push_back(projection.field);
+  }
+  auto base = projectPointee(program, body, result->base, path);
+  if (!base || !addressPointeeType(body, *base) ||
+      *addressPointeeType(body, *base) != place->type)
+    return std::nullopt;
+  result->base = std::move(*base);
+  return result;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+integerInRegion(const MirBody &body, const AbstractState &state,
+                const AddressRegion &region, const SemanticType &type);
+
 [[nodiscard]] std::optional<IntegerFact>
 integerInPrefix(const MirProgram *program, MirBodyAddress address,
                 const MirBody &body, const AbstractState &state,
@@ -959,6 +1062,7 @@ void preserveEntryPointerIdentities(const MirBody &body, AbstractState &state,
   if (!vacantConstruction) {
     state.fieldAddresses.clear();
     state.borrowedAddresses.clear();
+    state.borrowedRegions.clear();
   }
   std::erase_if(state.scalarAddressValues, [&](const auto &entry) {
     return entry.second.kind != AddressOriginKind::EntryPointer &&
@@ -1225,10 +1329,11 @@ parameterOrdinal(const MirProgram &program, MirBodyAddress address,
 }
 
 [[nodiscard]] std::optional<IntegerFact>
-integerInPrefix(const MirProgram *program, MirBodyAddress address,
-                const MirBody &body, const AbstractState &state,
-                const ScalarAddress &pointer, const SemanticType &type) {
-  if (!program)
+prefixEnvelopeAt(const AbstractState &state, const ScalarAddress &pointer,
+                 const IntegerFact &offset, const SemanticType &type) {
+  // Every displacement in `offset` must lie inside one current initialized
+  // prefix at this exact base; the index of `pointer` itself is ignored.
+  if (offset.lower.negative)
     return std::nullopt;
   for (const auto &[field, base] : state.fieldAddresses) {
     if (base.index || !base.subobject.empty() ||
@@ -1243,37 +1348,11 @@ integerInPrefix(const MirProgram *program, MirBodyAddress address,
     const auto object = state.objects.find(field.root);
     if (object == state.objects.end())
       continue;
-    std::optional<IntegerFact> offset;
-    if (pointer.index) {
-      const auto &index = *pointer.index;
-      if (index.parameter) {
-        const auto roots = parameterPlaces(*program, address, body);
-        if (*index.parameter < roots.size())
-          offset = integerForPlace(body, state, roots[*index.parameter]);
-      } else if (const auto receiver = state.objects.find(thisRoot(body));
-                 receiver != state.objects.end()) {
-        const auto current = receiver->second.integers.find(index.field);
-        if (current != receiver->second.integers.end())
-          offset = current->second;
-      }
-      if (offset && offset->domain == index.domain)
-        offset = applyEntryRelative(
-            *offset,
-            EntryRelativeField{index.field, index.domain, index.offset});
-      else
-        offset.reset();
-    } else {
-      offset = IntegerFact{.domain = {.width = 64, .signedValue = false},
-                           .lower = {},
-                           .upper = {}};
-    }
-    if (!offset || offset->lower.negative)
-      continue;
     const auto displacement = pointer.elementOffset - base.elementOffset;
-    if (offset->upper.magnitude >
+    if (offset.upper.magnitude >
         std::numeric_limits<std::uint64_t>::max() - displacement)
       continue;
-    const auto last = offset->upper.magnitude + displacement;
+    const auto last = offset.upper.magnitude + displacement;
     for (const auto &[path, envelope] : object->second.prefixes) {
       if (path.pointer != field.path || path.subobject != pointer.subobject ||
           constantIntegerDomain(type) != envelope.domain)
@@ -1283,13 +1362,55 @@ integerInPrefix(const MirProgram *program, MirBodyAddress address,
           last >= end->second.lower.magnitude)
         continue;
       auto result = envelope;
-      result.evidence = merged(result.evidence, offset->evidence);
+      result.evidence = merged(result.evidence, offset.evidence);
       result.evidence = merged(result.evidence, end->second.evidence);
       result.evidence = merged(result.evidence, pointer.evidence);
       return result;
     }
   }
   return std::nullopt;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+integerInPrefix(const MirProgram *program, MirBodyAddress address,
+                const MirBody &body, const AbstractState &state,
+                const ScalarAddress &pointer, const SemanticType &type) {
+  if (!program)
+    return std::nullopt;
+  std::optional<IntegerFact> offset;
+  if (pointer.index) {
+    const auto &index = *pointer.index;
+    if (index.parameter) {
+      const auto roots = parameterPlaces(*program, address, body);
+      if (*index.parameter < roots.size())
+        offset = integerForPlace(body, state, roots[*index.parameter]);
+    } else if (const auto receiver = state.objects.find(thisRoot(body));
+               receiver != state.objects.end()) {
+      const auto current = receiver->second.integers.find(index.field);
+      if (current != receiver->second.integers.end())
+        offset = current->second;
+    }
+    if (offset && offset->domain == index.domain)
+      offset = applyEntryRelative(
+          *offset, EntryRelativeField{index.field, index.domain, index.offset});
+    else
+      offset.reset();
+  } else {
+    offset = IntegerFact{.domain = {.width = 64, .signedValue = false},
+                         .lower = {},
+                         .upper = {}};
+  }
+  return offset ? prefixEnvelopeAt(state, pointer, *offset, type)
+                : std::nullopt;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+integerInRegion(const MirBody &body, const AbstractState &state,
+                const AddressRegion &region, const SemanticType &type) {
+  const auto *pointee = addressPointeeType(body, region.base);
+  return pointee && *pointee == type
+             ? prefixEnvelopeAt(state, region.base, region.offsets, type)
+             : std::nullopt;
 }
 
 [[nodiscard]] std::optional<std::size_t>
@@ -2157,10 +2278,15 @@ compoundCheckedOperation(MirOperation operation) {
   }
   std::optional<IntegerFact> left;
   if (const auto pointer = borrowedAddressForPlace(program, body, state,
-                                                   *instruction.destination))
+                                                   *instruction.destination)) {
     if (const auto *place = body.findPlace(*instruction.destination))
       left = integerAtAddress(body, state, *pointer, place->type, program,
                               address);
+  } else if (const auto region = borrowedRegionForPlace(
+                 program, body, state, *instruction.destination)) {
+    if (const auto *place = body.findPlace(*instruction.destination))
+      left = integerInRegion(body, state, *region, place->type);
+  }
   if (const std::optional<IndexedAggregateAccess> indexed =
           indexedAggregateAccess(program, body, aliases,
                                  *instruction.destination)) {
@@ -2295,6 +2421,7 @@ void invalidatePlaceRoot(const MirBody &body,
   if (!fresh) {
     retireScalarPointeeSnapshots(state);
     state.borrowedAddresses.clear();
+    state.borrowedRegions.clear();
   }
   if (written == nullptr) {
     state.constructedScalars.clear();
@@ -3125,6 +3252,9 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
       std::erase_if(state.scalarAddressPlaces, oldAddress);
       std::erase_if(state.fieldAddresses, oldAddress);
       std::erase_if(state.borrowedAddresses, oldAddress);
+      std::erase_if(state.borrowedRegions, [&](const auto &entry) {
+        return sameObservation(entry.second.base);
+      });
       state.fieldAddresses.emplace(*field, pointer);
       if (contents)
         for (const auto &[path, fact] : contents->scalarPointees) {
@@ -3144,6 +3274,47 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
     }
   }
   return std::nullopt;
+}
+
+// A returned element address whose index has no exact caller representation,
+// such as a caller-local loop counter, still denotes one element at the
+// substituted base displaced by the index's current interval.
+[[nodiscard]] std::optional<AddressRegion> inputRegionForCall(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, AbstractState &state,
+    const MirInstruction &instruction, const InputAddress &input) {
+  if (!input.index)
+    return std::nullopt;
+  const auto &index = *input.index;
+  std::optional<IntegerFact> current;
+  if (index.parameter) {
+    if (*index.parameter >= instruction.operands.size())
+      return std::nullopt;
+    const auto &operand = instruction.operands[*index.parameter];
+    if (constantIntegerDomain(operand.type) != index.domain)
+      return std::nullopt;
+    current = integerForOperand(body, state, operand);
+  } else if (const auto origin =
+                 receiverFieldOrigin(program, address, body, aliases, state,
+                                     instruction, index.field)) {
+    if (const auto object =
+            extractObjectFact(body, aliases, origin->root, state))
+      if (const auto field = object->integers.find(origin->path);
+          field != object->integers.end())
+        current = field->second;
+  }
+  if (!current || current->domain != index.domain)
+    return std::nullopt;
+  auto offsets = applyEntryRelative(
+      *current, EntryRelativeField{index.field, index.domain, index.offset});
+  if (!offsets || offsets->lower.negative)
+    return std::nullopt;
+  InputAddress base = input;
+  base.index.reset();
+  auto pointer = inputAddressForCall(program, address, body, aliases, state,
+                                     instruction, base);
+  return pointer ? normalizedRegion(std::move(*pointer), std::move(*offsets))
+                 : std::nullopt;
 }
 
 [[nodiscard]] bool
@@ -3225,10 +3396,15 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
           ? preserveDifferentWidthFields(&closedCalls->program, address, body,
                                          state, summary.scalarStoreWidth)
           : DisjointScalarFields{};
+  // A store profile without a store width admits only callee-frame writes:
+  // independent locals, local transfers/drops and equally closed callees.
+  const bool frameLocalWrites =
+      summary.scalarStoresOnly && !summary.scalarStoreWidth;
   const bool pointerRelayOnly =
       (summary.returnedPointer || summary.returnedBorrow) &&
       !summary.hasOpaqueEffects && !summary.mayWriteGlobals && invocation &&
-      (!invocation->traits.writesPlace || summary.localPointerWritesOnly) &&
+      (!invocation->traits.writesPlace || summary.localPointerWritesOnly ||
+       frameLocalWrites) &&
       !invocation->traits.writesUnknownMemory &&
       !invocation->traits.maySynchronize;
   std::optional<ScalarAddress> returnedAddress;
@@ -3241,6 +3417,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     borrowedAddress =
         inputAddressForCall(closedCalls->program, address, body, aliases, state,
                             instruction, *summary.returnedBorrow);
+  std::optional<AddressRegion> borrowedRegion;
+  if (pointerRelayOnly && summary.returnedBorrow && !borrowedAddress)
+    borrowedRegion =
+        inputRegionForCall(closedCalls->program, address, body, aliases, state,
+                           instruction, *summary.returnedBorrow);
   AlternativeFields alternatives;
   if (instruction.result &&
       instruction.info.type.kind == SemanticType::Expected)
@@ -3402,7 +3583,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   // result preparation no longer contains the borrowed input's object fact.
   const bool preservesMemory =
       !summary.hasOpaqueEffects && !summary.mayWriteGlobals && invocation &&
-      !invocation->traits.writesPlace &&
+      (!invocation->traits.writesPlace || frameLocalWrites) &&
       !invocation->traits.writesUnknownMemory &&
       !invocation->traits.maySynchronize &&
       (pointerRelayOnly ||
@@ -3492,16 +3673,30 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     // authority. The exact effect summary above governs caller invalidation.
     state.hasOpaqueEffects = true;
   }
+  // A call-result loan designates the returned referent whatever value
+  // category the call expression itself received; a compound-assignment
+  // target, for example, produces that loan from a value-category call.
+  const MirLoan *resultLoan =
+      instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+  const bool referentResult =
+      resultLoan && (instruction.info.category == ValueCategory::Place ||
+                     resultLoan->kind == MirLoanKind::CallResult);
   if (instruction.result) {
-    if (borrowedAddress && instruction.loan &&
-        instruction.info.category == ValueCategory::Place &&
-        body.findLoan(*instruction.loan) &&
+    if (borrowedAddress && referentResult &&
         addressPointeeType(body, *borrowedAddress) &&
         *addressPointeeType(body, *borrowedAddress) == instruction.info.type) {
       add(borrowedAddress->evidence, block.id);
       addInstruction(borrowedAddress->evidence, instruction.id);
       addValue(borrowedAddress->evidence, *instruction.result);
       state.borrowedAddresses[*instruction.loan] = *borrowedAddress;
+    } else if (borrowedRegion && referentResult &&
+               addressPointeeType(body, borrowedRegion->base) &&
+               *addressPointeeType(body, borrowedRegion->base) ==
+                   instruction.info.type) {
+      add(borrowedRegion->base.evidence, block.id);
+      addInstruction(borrowedRegion->base.evidence, instruction.id);
+      addValue(borrowedRegion->base.evidence, *instruction.result);
+      state.borrowedRegions[*instruction.loan] = std::move(*borrowedRegion);
     }
     if (returnedAddress &&
         instruction.info.type.kind == SemanticType::RawPointer &&
@@ -4164,8 +4359,10 @@ void applyInstruction(const MirBody &body,
     state.resultAlternatives.erase(*instruction.result);
     state.entryRelativeValues.erase(*instruction.result);
     state.scalarAddressValues.erase(*instruction.result);
-    if (instruction.loan)
+    if (instruction.loan) {
       state.borrowedAddresses.erase(*instruction.loan);
+      state.borrowedRegions.erase(*instruction.loan);
+    }
   }
   const auto unknownEffectBarrier = [&] {
     killUnknownMemory(body, state);
@@ -4190,9 +4387,10 @@ void applyInstruction(const MirBody &body,
   // The same holds for checked loan bookkeeping without raw access: keep its
   // observable schedule, but do not repeat the producer's memory operation.
   if (nonMutatingLoanBoundary(body, instruction)) {
-    if (instruction.kind == MirInstructionKind::EndBorrow)
+    if (instruction.kind == MirInstructionKind::EndBorrow) {
       state.borrowedAddresses.erase(*instruction.loan);
-    else if (instruction.kind == MirInstructionKind::Borrow) {
+      state.borrowedRegions.erase(*instruction.loan);
+    } else if (instruction.kind == MirInstructionKind::Borrow) {
       std::optional<ScalarAddress> pointer;
       // A field reborrow can carry its parent loan as the operand. The
       // child's typed source place owns the projection; the lifetime witness
@@ -4212,8 +4410,30 @@ void applyInstruction(const MirBody &body,
         pointer = borrowedAddressForPlace(program, body, state,
                                           instruction.operands.front().place);
       state.borrowedAddresses.erase(*instruction.loan);
-      if (pointer)
+      state.borrowedRegions.erase(*instruction.loan);
+      if (pointer) {
         state.borrowedAddresses[*instruction.loan] = *pointer;
+      } else {
+        // The same typed-source rule relays a region reborrow.
+        std::optional<AddressRegion> region;
+        if (const auto *loan = body.findLoan(*instruction.loan))
+          region = borrowedRegionForPlace(program, body, state, loan->source);
+        if (!region && instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Loan)
+          if (const auto found =
+                  state.borrowedRegions.find(instruction.operands.front().loan);
+              found != state.borrowedRegions.end() &&
+              addressPointeeType(body, found->second.base) &&
+              *addressPointeeType(body, found->second.base) ==
+                  instruction.info.type)
+            region = found->second;
+        if (!region && instruction.operands.size() == 1 &&
+            instruction.operands.front().place)
+          region = borrowedRegionForPlace(program, body, state,
+                                          instruction.operands.front().place);
+        if (region)
+          state.borrowedRegions[*instruction.loan] = std::move(*region);
+      }
     }
     return;
   }
@@ -4688,13 +4908,17 @@ void applyInstruction(const MirBody &body,
       const auto arrayElements = state.arrayElements.find(arrayPlace);
       std::optional<IntegerFact> fact;
       if (const auto pointer =
-              borrowedAddressForPlace(program, body, state, source.place))
+              borrowedAddressForPlace(program, body, state, source.place)) {
         if (auto value =
                 integerAtAddress(body, state, *pointer, instruction.info.type,
                                  program, address)) {
           value->evidence = merged(value->evidence, pointer->evidence);
           fact = std::move(*value);
         }
+      } else if (const auto region = borrowedRegionForPlace(
+                     program, body, state, source.place)) {
+        fact = integerInRegion(body, state, *region, instruction.info.type);
+      }
       if (indexed) {
         if (indexed->field.empty()) {
           if (const auto elements = state.aggregateElements.find(indexed->root);
@@ -4808,6 +5032,14 @@ void applyInstruction(const MirBody &body,
       for (const auto &[root, object] : state.objects)
         if (!object.prefixes.empty())
           retainedPrefixes.emplace(root, object.prefixes);
+    // Writing an independent local scalar cannot retarget a reference;
+    // checked references never reseat. Their exact addresses and regions stay.
+    const auto retainedBorrows = independentScalarWrite
+                                     ? state.borrowedAddresses
+                                     : decltype(state.borrowedAddresses){};
+    const auto retainedRegions = independentScalarWrite
+                                     ? state.borrowedRegions
+                                     : decltype(state.borrowedRegions){};
     const auto writtenDomain =
         physicalDestination ? constantIntegerDomain(physicalDestination->type)
                             : std::nullopt;
@@ -4821,27 +5053,39 @@ void applyInstruction(const MirBody &body,
             ? preserveDifferentWidthFields(program, address, body, state,
                                            writtenDomain->width)
             : DisjointScalarFields{};
+    // The written scalar is the physical destination; its canonical alias
+    // representative may be the borrowed owner rather than the referent.
+    const bool typedCheckedWrite =
+        instruction.kind == MirInstructionKind::Assign && physicalDestination &&
+        !instruction.rawMemoryAccess &&
+        instruction.unsafeOperation == UnsafeOperationKind::None &&
+        instruction.lifecycle.empty() && !effect.invokesUserCode &&
+        !effect.invokesRuntime && !effect.writesUnknownMemory &&
+        !effect.maySynchronize && writtenDomain && writtenDomain->width > 8;
     const auto checkedAddress =
-        instruction.kind == MirInstructionKind::Assign && destinationPlace &&
-                !instruction.rawMemoryAccess &&
-                instruction.unsafeOperation == UnsafeOperationKind::None &&
-                instruction.lifecycle.empty() && !effect.invokesUserCode &&
-                !effect.invokesRuntime && !effect.writesUnknownMemory &&
-                !effect.maySynchronize &&
-                constantIntegerDomain(destinationPlace->type) &&
-                constantIntegerDomain(destinationPlace->type)->width > 8
-            ? borrowedAddressForPlace(program, body, state,
-                                      *instruction.destination)
+        typedCheckedWrite ? borrowedAddressForPlace(program, body, state,
+                                                    *instruction.destination)
+                          : std::nullopt;
+    // A region reference writes one unknown element of an exact base. It can
+    // still join an initialized-prefix envelope, never publish an exact cell.
+    const auto checkedRegion =
+        typedCheckedWrite && !checkedAddress
+            ? borrowedRegionForPlace(program, body, state,
+                                     *instruction.destination)
             : std::nullopt;
+    const ScalarAddress *checkedBase =
+        checkedAddress ? &*checkedAddress
+                       : (checkedRegion ? &checkedRegion->base : nullptr);
     // A typed non-byte scalar write cannot replace a live pointer/reference
     // carrier. Retain address identities, not other mutable pointee values.
     // The exact selected cell is republished only on the successful edge.
-    const auto savedFieldAddresses = checkedAddress
-                                         ? state.fieldAddresses
-                                         : decltype(state.fieldAddresses){};
+    const auto savedFieldAddresses =
+        checkedBase ? state.fieldAddresses : decltype(state.fieldAddresses){};
     const auto savedBorrowedAddresses =
-        checkedAddress ? state.borrowedAddresses
-                       : decltype(state.borrowedAddresses){};
+        checkedBase ? state.borrowedAddresses
+                    : decltype(state.borrowedAddresses){};
+    const auto savedBorrowedRegions =
+        checkedBase ? state.borrowedRegions : decltype(state.borrowedRegions){};
     ConstructedScalars siblingPointees;
     if (checkedAddress && !checkedAddress->subobject.empty()) {
       auto written = addressKey(*checkedAddress);
@@ -4907,7 +5151,7 @@ void applyInstruction(const MirBody &body,
       fact = compoundIntegerFact(body, program, address, aliases, state,
                                  instruction);
     }
-    if (checkedAddress && fact && writtenDomain &&
+    if (checkedBase && fact && writtenDomain &&
         (instruction.operation == MirOperation::None ||
          instruction.operation == MirOperation::Assign ||
          compoundCheckedOperation(instruction.operation)) &&
@@ -4918,7 +5162,7 @@ void applyInstruction(const MirBody &body,
       // elements. Different pointer fields are never assumed disjoint.
       for (const auto &[root, object] : state.objects) {
         for (const auto &[path, envelope] : object.prefixes) {
-          if (path.subobject != checkedAddress->subobject ||
+          if (path.subobject != checkedBase->subobject ||
               envelope.domain != fact->domain)
             continue;
           const auto base = state.fieldAddresses.find({root, path.pointer});
@@ -4927,14 +5171,14 @@ void applyInstruction(const MirBody &body,
               !base->second.subobject.empty() || end == object.integers.end() ||
               end->second.domain.width == writtenDomain->width)
             continue;
-          auto compared = addressKey(*checkedAddress);
+          auto compared = addressKey(*checkedBase);
           compared.index.reset();
           compared.elementOffset = base->second.elementOffset;
           compared.subobject.clear();
           if (compared != addressKey(base->second))
             continue;
           auto updated = joinedElementFact(envelope, *fact);
-          updated.evidence = merged(updated.evidence, checkedAddress->evidence);
+          updated.evidence = merged(updated.evidence, checkedBase->evidence);
           addInstruction(updated.evidence, instruction.id);
           retainedPrefixes[root].insert_or_assign(path, std::move(updated));
         }
@@ -4947,13 +5191,25 @@ void applyInstruction(const MirBody &body,
     const auto *producer = source.kind == MirOperandKind::Value
                                ? definingInstruction(body, source.value)
                                : nullptr;
+    // A binding which reparents the constructor result's own drop obligation
+    // adopts that SSA object; no copy or move constructor runs in between.
+    const bool adoptsConstructedResult =
+        producer && producer->successResultDrop && !producer->destination &&
+        std::count_if(instruction.lifecycle.begin(),
+                      instruction.lifecycle.end(),
+                      [&](const MirLifecycleEvent &event) {
+                        return event.kind == MirLifecycleEventKind::Reparent &&
+                               event.source == *producer->successResultDrop;
+                      }) == 1;
     const bool publishesConstructedResult =
         instruction.kind == MirInstructionKind::Initialize && producer &&
         producer->kind == MirInstructionKind::Construct &&
-        producer->successResultDestination == instruction.destination &&
+        (producer->successResultDestination == instruction.destination ||
+         adoptsConstructedResult) &&
         producer->info.type == source.type;
-    // Verified final-address publication does not copy the shell again.
-    // Ordinary copies, moves and replacement receive no pointee snapshots.
+    // Verified final-address publication and result adoption do not copy the
+    // shell again. Ordinary copies, moves and replacement receive no pointee
+    // snapshots.
     if (sourceObject && !publishesConstructedResult) {
       sourceObject->scalarPointees.clear();
       sourceObject->prefixes.clear();
@@ -4969,7 +5225,7 @@ void applyInstruction(const MirBody &body,
       invalidatePlaceRoot(body, aliases, state, destination);
     }
     restoreDifferentWidthFields(state, untouchedFields);
-    if (checkedAddress) {
+    if (checkedBase) {
       // A raw-derived checked reference may write a caller-owned object. This
       // is not vacant construction: callers must invalidate possible aliases
       // before consuming the exact successful postcondition.
@@ -4977,10 +5233,13 @@ void applyInstruction(const MirBody &body,
       state.liveMemoryBarrier = LiveMemoryBarrier::Unknown;
       state.fieldAddresses = savedFieldAddresses;
       state.borrowedAddresses = savedBorrowedAddresses;
+      state.borrowedRegions = savedBorrowedRegions;
+    }
+    if (checkedAddress) {
       for (auto &[pointer, fact] : siblingPointees)
         publishConstructedScalar(state, pointer, std::move(fact));
       const auto *pointee = addressPointeeType(body, *checkedAddress);
-      if (fact && pointee && *pointee == destinationPlace->type &&
+      if (fact && pointee && *pointee == physicalDestination->type &&
           constantIntegerDomain(*pointee) == fact->domain) {
         auto stored = *fact;
         stored.evidence = merged(stored.evidence, checkedAddress->evidence);
@@ -5101,6 +5360,10 @@ void applyInstruction(const MirBody &body,
       if (const auto object = state.objects.find(root);
           object != state.objects.end())
         object->second.prefixes = std::move(prefixes);
+    if (independentScalarWrite) {
+      state.borrowedAddresses = retainedBorrows;
+      state.borrowedRegions = retainedRegions;
+    }
     // Initializing a new independent local shell does not write the objects
     // described by the call that produced it. Reassignment/projection and
     // borrowed-state carriers deliberately receive no such restoration.
@@ -5439,7 +5702,49 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
   joinScalarAddresses(target.scalarAddressValues, incoming.scalarAddressValues);
   joinScalarAddresses(target.scalarAddressPlaces, incoming.scalarAddressPlaces);
   joinScalarAddresses(target.fieldAddresses, incoming.fieldAddresses);
+  // One loan reaching this join with different exact element addresses, or
+  // with an exact address on one path and a region on another, still denotes
+  // one element of their common exact base.
+  const auto sameAddress = [](const ScalarAddress &left,
+                              const ScalarAddress &right) {
+    return addressKey(left) == addressKey(right) &&
+           left.fieldPointee == right.fieldPointee &&
+           left.subobjectType == right.subobjectType;
+  };
+  auto incomingRegions = incoming.borrowedRegions;
+  const auto convert = [&](const AbstractState &from, const AbstractState &to,
+                           std::map<MirLoanId, AddressRegion> &regions) {
+    for (const auto &[loan, pointer] : from.borrowedAddresses) {
+      const auto other = to.borrowedAddresses.find(loan);
+      if (other != to.borrowedAddresses.end()
+              ? sameAddress(other->second, pointer)
+              : !to.borrowedRegions.contains(loan))
+        continue;
+      if (auto region = exactRegion(pointer))
+        regions.emplace(loan, std::move(*region));
+    }
+  };
+  convert(before, incoming, target.borrowedRegions);
+  convert(incoming, before, incomingRegions);
   joinScalarAddresses(target.borrowedAddresses, incoming.borrowedAddresses);
+  // A region survives only with the same exact base. Its displacement
+  // interval joins and widens like any other integer fact.
+  for (auto entry = target.borrowedRegions.begin();
+       entry != target.borrowedRegions.end();) {
+    const auto found = incomingRegions.find(entry->first);
+    if (found == incomingRegions.end() ||
+        addressKey(entry->second.base) != addressKey(found->second.base) ||
+        entry->second.base.subobjectType != found->second.base.subobjectType ||
+        entry->second.offsets.domain != found->second.offsets.domain) {
+      entry = target.borrowedRegions.erase(entry);
+      continue;
+    }
+    entry->second.base.evidence =
+        merged(entry->second.base.evidence, found->second.base.evidence);
+    entry->second.offsets =
+        joinedInteger(entry->second.offsets, found->second.offsets, widen);
+    ++entry;
+  }
   joinConstructed(target.constructedScalars, incoming.constructedScalars,
                   widen);
   for (auto iterator = target.loadedOrigins.begin();
@@ -5824,10 +6129,31 @@ mayMutateTrackedPlace(const MirBody &body,
   if (!target || closedCalls->rejected.contains(*target) ||
       summary == closedCalls->summaries.end() || !summary->second.complete ||
       summary->second.hasOpaqueEffects || !effects ||
-      effects->traits.writesUnknownMemory || effects->traits.allocates ||
-      effects->traits.invokesUserCode || effects->traits.targetDependent) {
+      effects->traits.writesUnknownMemory || effects->traits.allocates) {
     return true;
   }
+  // Invoking exact source code is not itself a write: the complete closed
+  // summary bounds every nested exact callee, and target-dependent address
+  // arithmetic writes nothing. A by-value input carrying borrowed state, such
+  // as a closure capturing a reference, could still let those callees reach
+  // caller storage without a mutable reference parameter.
+  const auto hidesBorrow = [&](const MirOperand &operand) {
+    if (operand.type.kind == SemanticType::Reference ||
+        operand.type.kind == SemanticType::RawPointer || operand.literal)
+      return false;
+    if (const auto *place = body.findPlace(operand.place))
+      return place->traits.containsBorrowedState;
+    const auto *definition = operand.kind == MirOperandKind::Value
+                                 ? definingInstruction(body, operand.value)
+                                 : nullptr;
+    return definition == nullptr ||
+           definition->info.traits.containsBorrowedState;
+  };
+  if (effects->traits.invokesUserCode &&
+      ((instruction.receiver && hidesBorrow(*instruction.receiver)) ||
+       std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                   hidesBorrow)))
+    return true;
   // Runtime effects conservatively carry maySynchronize even for the exact
   // prefix-length/read transfers interpreted by this analysis. Effect
   // closure above is a separate, successful-path proof: explicit atomic
@@ -6237,7 +6563,8 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                 const PlaceThresholds *thresholds = nullptr,
                 const AbstractState *entryState = nullptr,
                 ClosedCallRound *closedCalls = nullptr,
-                MirBodyAddress address = {}) {
+                MirBodyAddress address = {},
+                const std::vector<bool> *wideningBlocks = nullptr) {
   AbstractState entry = entryState == nullptr ? AbstractState{} : *entryState;
   entry.reachable = true;
   const MirForwardDataflowResult<AbstractState> solved = runMirForwardDataflow(
@@ -6253,9 +6580,17 @@ solveStatesOnce(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         }
         return result;
       },
-      [](AbstractState &target, const AbstractState &incoming,
-         MirDataflowMergeContext context) {
-        return mergeInto(target, incoming, context.widen);
+      [&](AbstractState &target, const AbstractState &incoming,
+          MirDataflowMergeContext context) {
+        // Every cycle of a reducible body passes through its header, so
+        // widening there bounds every ascending chain. Facts inside the loop
+        // are recomputed from that header state rather than widened again.
+        const bool widen =
+            context.widen &&
+            (wideningBlocks == nullptr || context.edge.target == 0 ||
+             context.edge.target > wideningBlocks->size() ||
+             (*wideningBlocks)[context.edge.target - 1]);
+        return mergeInto(target, incoming, widen);
       });
   if (!solved.converged()) {
     return {};
@@ -6274,23 +6609,34 @@ solveStates(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
             const AbstractState *entryState = nullptr,
             ClosedCallRound *closedCalls = nullptr,
             MirBodyAddress address = {}) {
-  const std::vector<AbstractState> initial =
-      solveStatesOnce(body, aliases, nullptr, entryState, closedCalls, address);
+  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
+  const std::optional<MirLoopAnalysis> loops =
+      dominance ? std::optional{analyzeMirLoops(body, *dominance)}
+                : std::nullopt;
+  std::vector<bool> headers;
+  if (loops && !loops->hasIrreducibleControlFlow) {
+    headers.assign(body.blocks.size(), false);
+    for (const MirNaturalLoop &loop : loops->loops)
+      if (loop.header != 0 && loop.header <= headers.size())
+        headers[loop.header - 1] = true;
+  }
+  const std::vector<bool> *wideningBlocks =
+      headers.empty() ? nullptr : &headers;
+  const std::vector<AbstractState> initial = solveStatesOnce(
+      body, aliases, nullptr, entryState, closedCalls, address, wideningBlocks);
   if (initial.empty()) {
     return {};
   }
-  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
   if (!dominance) {
     return initial;
   }
-  const MirLoopAnalysis loops = analyzeMirLoops(body, *dominance);
   const PlaceThresholds thresholds = recurrenceThresholds(
-      body, aliases, *dominance, loops, initial, closedCalls, address);
+      body, aliases, *dominance, *loops, initial, closedCalls, address);
   if (thresholds.empty()) {
     return initial;
   }
   return solveStatesOnce(body, aliases, &thresholds, entryState, closedCalls,
-                         address);
+                         address, wideningBlocks);
 }
 
 [[nodiscard]] std::optional<std::size_t>

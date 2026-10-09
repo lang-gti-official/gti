@@ -1459,18 +1459,21 @@ int32_t main() {
         lang::OptimizationPipeline().run({.hir = crossingFrontend.hir,
                                           .mir = crossingFrontend.mir,
                                           .level = level});
+    // The constructor's envelope does not survive the opaque cleanup, so
+    // the first client keeps both checks. Its own exact write then proves a
+    // fresh element-zero postcondition, which later clients may consume.
     expect(crossing.valid() &&
                functionDischarges(
                    crossingFrontend, crossing, "increment_narrow",
                    lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0 &&
                functionDischarges(
                    crossingFrontend, crossing, "repeat_narrow",
-                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 1 &&
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 5 &&
                functionDischarges(
                    crossingFrontend, crossing, "increment_then_barrier",
-                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
-           "opaque cleanup must erase the earlier caller record envelope, "
-           "while the independent loop counter remains provable");
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 2,
+           "opaque cleanup must erase the earlier caller record envelope; "
+           "only facts written after the barrier may prove later clients");
     expect(lang::verifyMirOptimizationCoherence(crossingFrontend.mir,
                                                 crossing.mir,
                                                 crossing.report.transformations)
