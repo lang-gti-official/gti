@@ -1,0 +1,150 @@
+#include <std/memory>
+extern "C" {
+  void* malloc(uint64_t bytes);
+  void free(void* address);
+  void opaque_pointer_effect(int* pointer);
+}
+
+class Sequence {
+  mut int* pointer = nullptr;
+  mut uint64_t live = 0;
+public:
+  Sequence(int* pointer) : pointer(pointer) {}
+  uint64_t size() { return this.live; }
+  unsafe void append(int value) mut {
+    unsafe { std::construct_at(this.pointer + this.live, value); }
+    this.live += uint64_t(1);
+  }
+  unsafe int& at(uint64_t index) {
+    unsafe { return std::assume_ref(this.pointer + index, this); }
+  }
+  unsafe void clobber() mut {
+    unsafe { opaque_pointer_effect(this.pointer); }
+  }
+  unsafe void retarget(int* other) mut {
+    this.pointer = other;
+    this.live = uint64_t(1);
+  }
+  unsafe void append_gap(int value) mut {
+    unsafe { std::construct_at(this.pointer + this.live + uint64_t(1), value); }
+    this.live += uint64_t(1);
+  }
+  unsafe void append_maybe(int value, bool initialize) mut {
+    if (initialize) {
+      unsafe { std::construct_at(this.pointer + this.live, value); }
+    }
+    this.live += uint64_t(1);
+  }
+  unsafe void replace_first() mut {
+    unsafe {
+      std::destroy_at(this.pointer);
+      std::construct_at(this.pointer, 2147483647);
+    }
+  }
+};
+
+unsafe int prefix_frontier(Sequence& sequence) {
+  unsafe {
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+unsafe int prefix_last(Sequence& sequence) {
+  unsafe {
+    int& value = sequence.at(uint64_t(4999));
+    return value + 1;
+  }
+}
+unsafe int prefix_parameter(Sequence& sequence, uint64_t index) {
+  unsafe {
+    int& value = sequence.at(index);
+    return value + 1;
+  }
+}
+unsafe int bad_prefix_native(mut Sequence& sequence) {
+  unsafe {
+    sequence.clobber();
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+unsafe int bad_prefix_retarget(mut Sequence& sequence, int* other) {
+  unsafe {
+    sequence.retarget(other);
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+unsafe int bad_prefix_gap() {
+  unsafe {
+    void* bytes = malloc(uint64_t(8));
+    if (bytes == nullptr) return 1;
+    int* pointer = std::typed_address<int>(bytes);
+    std::construct_at(pointer, 2147483647);
+    opaque_pointer_effect(pointer);
+    mut Sequence sequence{pointer};
+    sequence.append_gap(7);
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+unsafe int bad_prefix_partial() {
+  unsafe {
+    void* bytes = malloc(uint64_t(8));
+    if (bytes == nullptr) return 1;
+    int* pointer = std::typed_address<int>(bytes);
+    std::construct_at(pointer, 2147483647);
+    opaque_pointer_effect(pointer);
+    mut Sequence sequence{pointer};
+    sequence.append_maybe(7, false);
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+unsafe int bad_prefix_value() {
+  unsafe {
+    void* bytes = malloc(uint64_t(8));
+    if (bytes == nullptr) return 1;
+    int* pointer = std::typed_address<int>(bytes);
+    mut Sequence sequence{pointer};
+    sequence.append(2147483647);
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+unsafe int bad_prefix_lifetime(mut Sequence& sequence) {
+  unsafe {
+    sequence.replace_first();
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+
+int main() {
+  unsafe {
+    void* bytes = malloc(uint64_t(20000));
+    if (bytes == nullptr) return 1;
+    int* pointer = std::typed_address<int>(bytes);
+    mut Sequence sequence{pointer};
+    while (sequence.size() < uint64_t(5000)) {
+      sequence.append(7);
+    }
+    mut int other = 2147483647;
+    if (false) return bad_prefix_native(sequence);
+    if (false) return bad_prefix_retarget(sequence, &other);
+    if (false) return bad_prefix_gap();
+    if (false) return bad_prefix_partial();
+    if (false) return bad_prefix_value();
+    if (false) return bad_prefix_lifetime(sequence);
+    int answer = prefix_frontier(sequence);
+    int last = prefix_last(sequence);
+    for (mut uint64_t index = 0; index < uint64_t(5000); index++) {
+      if (prefix_parameter(sequence, index) != 8) return 1;
+    }
+    for (mut uint64_t index = 0; index < uint64_t(5000); index++) {
+      std::destroy_at(pointer + index);
+    }
+    free(bytes);
+    return answer == 8 && last == 8 ? 0 : 1;
+  }
+}
