@@ -3,7 +3,8 @@
 #include <vector>
 int main() {
   std::vector<int64_t> wide;
-  for (int64_t i = 0; i < 4096; i++) wide.push_back((i * 2654435761ll) % 2000000000ll);
+  for (int64_t i = 0; i < 4096; i++)
+    wide.push_back((i * 2654435761ll) % 2000000000ll);
   int64_t acc = 0;
   for (int32_t round = 0; round < 50000; round++)
     for (int64_t value : wide) {
