@@ -431,7 +431,8 @@ int main() {
                       false, false);
   checkAddressFixture("optimizer_default_scalar_construction.gti",
                       {"default_scalar", "default_forwarded",
-                       "default_unsigned", "default_sequence"},
+                       "default_unsigned", "default_sequence",
+                       "default_packed"},
                       4, false, false);
   return failures == 0 ? 0 : 1;
 }

@@ -660,7 +660,9 @@ integer field of a readonly by-value record formal. Caller substitution reads
 the actual prepared argument's field, not the joined interval of all calls to
 the helper. Concrete parameter-pack elements use their verified occurrence in
 the flattened signature, shared with ordinary scalar-formal identification;
-equal element types do not make different occurrences interchangeable. Passive
+the source pack binding is expanded through its verified concrete element
+types, including zero elements, before matching an invocation ordinal.
+Equal element types do not make different occurrences interchangeable. Passive
 cleanup of independent by-value parameter/local storage can retain already
 constructed cells at original entry addresses, not arbitrary observed local
 addresses or the retired object's own storage. General source-constructor
@@ -693,8 +695,8 @@ updates converge without enumerating the trip count or enlarging analysis
 budgets, while preserving bounded constructor/getter-loop proofs.
 
 The remaining source-owner goals include region-preserving element writes,
-record-region transport across local construction/cleanup, default scalar
-construction postconditions, and general loop-index/endpoint relations. The
+record-region transport across local construction/cleanup, and general
+loop-index/endpoint relations. The
 six existing source-container safety acceptance failures and end-to-end runtime
 performance comparison remain open; this prefix slice is not their completion.
 A lifetime witness is still never a pointee or an allocation identity.
