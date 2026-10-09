@@ -6332,10 +6332,12 @@ auto SemanticVisitor::Impl::resolveRequirements(
       recordMemberRequirementReceiver(
           *application.memberRequirement,
           typeOf(application.memberRequirement->receiver(), scope));
-      AppliedConceptRequirement requirement{.syntax = &application,
-                                            .expression = &clause->expression,
-                                            .expressionApplication =
-                                                applicationIndex};
+      AppliedConceptRequirement requirement{
+          .syntax = &application,
+          .expression = &clause->expression,
+          .expressionApplication = applicationIndex,
+          .trustedMemberAccess = isCompilerTrustedRequester(
+              application.memberRequirement->member())};
       for (const auto &argument : application.arguments) {
         argumentsToValidate.push_back(&argument);
         requirement.arguments.push_back(typeOf(argument, scope));

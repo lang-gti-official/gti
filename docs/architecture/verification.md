@@ -2461,6 +2461,11 @@ self-referential requirements fail closed and reference results are not owned
 results. Formatter round trips preserve the query. `member_requirement_lsp`
 checks compiler-owned hover, receiver definition, malformed-source recovery,
 shared diagnostic codes, and formatting/reanalysis.
+`testCompilerPrivateMemberRequirements` proves that trusted source selects a
+`gti_internal` probe's member through direct queries, a `requires requires`
+clause, and an if-constexpr instance branch, including a member constrained by
+a raw `@compiler_constraint` concept. A named concept still rejects that member
+with a compiler-private reason.
 
 `generic_clone_runtime` verifies independent string/vector/nested-vector
 duplication, scalar fallback, custom read-member precedence, shared-owner
