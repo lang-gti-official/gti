@@ -335,6 +335,19 @@ private:
     const SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
+    // An existing instance discovered its arguments when it was created, and
+    // admission is monotone, so revisiting them can only propagate a first
+    // instantiation site. Re-walking them on every hit made each lookup of a
+    // nested generic proportional to its whole argument tree.
+    if (resolvedType.kind == SemanticType::Class && resolvedType.classId != 0) {
+      if (const std::optional<std::size_t> existing = instanceIndex.findClass(
+              resolvedType.classId, resolvedType.arguments,
+              resolvedType.valueArguments);
+          existing &&
+          (!site || output.program.classes[*existing - 1].instantiationSite)) {
+        return *existing;
+      }
+    }
     for (const SemanticType &argument : resolvedType.arguments) {
       (void)enqueueClass(argument, site);
     }
@@ -5801,6 +5814,10 @@ private:
                             {}, resolved->returnType, resolved->parameterTypes);
       }
     }
+    // A function target is this instance's exact selection. A generic
+    // callable call inherits its deferred record from the primary analysis,
+    // but once the instance selects operator() or a function item, that
+    // signature's argument conversions are planned like any ordinary call.
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && kind == HirValueKind::Call &&
         value.intrinsic == IntrinsicKind::None && !value.constructorTarget &&
@@ -5808,8 +5825,6 @@ private:
         (model.findOperator(*call) == nullptr ||
          model.findOperator(*call)->kind == OverloadedOperator::Call) &&
         model.findLambdaCall(*call) == nullptr &&
-        (model.findDeferredCallableCall(*call) == nullptr ||
-         model.findOperator(*call) != nullptr) &&
         value.parameterTypes.size() >= call->arguments().size() &&
         value.parameterTypes.size() <= value.operands.size()) {
       const std::size_t argumentCount = value.parameterTypes.size();

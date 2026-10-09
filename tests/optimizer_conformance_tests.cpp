@@ -59,7 +59,7 @@ void testCensus() {
   census(UnsafeOperationKind::ObjectLifetime);
   census(MirAnalysisKind::SparseConstants);
   census(MirTransformKind::DevirtualizeCall);
-  census(MirTransformProofKind::ExactReceiver);
+  census(MirTransformProofKind::ExactParameterReceiver);
   census(MirSafetyCheckFamily::ArithmeticDomain);
   expect(
       !optimizationCoverage(static_cast<DefinedFailureCode>(14)).classified(),
