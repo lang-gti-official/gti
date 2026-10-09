@@ -162,6 +162,9 @@ using EntryRelativeFields = std::map<FieldPath, EntryRelativeField>;
 [[nodiscard]] MirPlaceId thisRoot(const MirBody &body);
 [[nodiscard]] MirPlaceId rootForBinding(const MirBody &body,
                                         HirBindingId binding);
+[[nodiscard]] bool liveScalarPath(const MirProgram *program,
+                                  MirBodyAddress address, const MirBody &body,
+                                  MirPlaceId root, const FieldPath &suffix);
 struct AbstractState;
 void publishFieldFact(const MirBody &body, AbstractState &state,
                       const FieldOrigin &origin, const IntegerFact &fact);
@@ -172,6 +175,18 @@ struct ObjectFact {
   IntegerFieldFacts elementIntegers;
 
   friend bool operator==(const ObjectFact &, const ObjectFact &) = default;
+};
+
+// One verified result alternative guards facts about still-current owned
+// fields. This is not an allocation/region invariant. The first observer
+// profile is MIR's built-in two-alternative result state (success=0,error=1).
+using AlternativeFields =
+    std::map<std::size_t, std::map<FieldOrigin, IntegerFact>>;
+
+struct InputField {
+  std::optional<std::size_t> parameter;
+  FieldPath field;
+  friend auto operator<=>(const InputField &, const InputField &) = default;
 };
 
 // These are transfer-rule barriers, not replacement MIR effects. A vacant
@@ -198,6 +213,8 @@ struct AbstractState {
   // Correlation with still-current owned storage, not an immutable value fact.
   // An implicit receiver root is analysis-only and never a MIR identity.
   std::map<MirValueId, FieldOrigin> fieldOrigins;
+  std::map<MirValueId, AlternativeFields> resultAlternatives;
+  std::map<MirPlaceId, AlternativeFields> placeAlternatives;
   std::map<MirValueId, ScalarAddress> scalarAddressValues;
   std::map<MirPlaceId, ScalarAddress> scalarAddressPlaces;
   // Current values of ordinary owned pointer fields, including fields not
@@ -263,6 +280,7 @@ struct ClosedCallSummary {
   ObservedFact<FieldPath> receiverResultField;
   std::optional<InputAddress> returnedPointer;
   std::optional<InputAddress> returnedBorrow;
+  std::map<std::size_t, std::map<InputField, IntegerFact>> resultAlternatives;
   bool localPointerWritesOnly = false;
   std::map<InputAddress, ConstructedScalar> constructedParameters;
   ObservedFact<ObjectFact> receiver;
@@ -1147,6 +1165,37 @@ void refineCondition(const MirBody &body, MirBlockId block,
       branchTaken = !branchTaken;
     comparison = definingInstruction(body, comparison->operands.front().value);
   }
+  if (comparison && comparison->kind == MirInstructionKind::Compute &&
+      comparison->operation == MirOperation::ExpectedHasValue &&
+      comparison->operands.size() == 1 &&
+      comparison->operands.front().type.kind == SemanticType::Expected) {
+    const auto source = comparison->operands.front();
+    const auto known = state.resultAlternatives.find(source.value);
+    if (source.kind != MirOperandKind::Value ||
+        known == state.resultAlternatives.end())
+      return;
+    const std::size_t selected = branchTaken ? 0 : 1;
+    const auto alternative = known->second.find(selected);
+    if (alternative == known->second.end()) {
+      state.reachable = false;
+      return;
+    }
+    const AlternativeFields retained{{selected, alternative->second}};
+    for (const auto &[origin, saved] : alternative->second) {
+      auto fact = saved;
+      fact.evidence = merged(fact.evidence, conditionEvidence);
+      add(fact.evidence, block);
+      addInstruction(fact.evidence, comparison->id);
+      addValue(fact.evidence, source.value);
+      publishFieldFact(body, state, origin, fact);
+    }
+    state.resultAlternatives[source.value] = retained;
+    if (const auto loaded = state.loadedOrigins.find(source.value);
+        loaded != state.loadedOrigins.end() &&
+        state.placeAlternatives.contains(loaded->second))
+      state.placeAlternatives[loaded->second] = retained;
+    return;
+  }
   if (comparison == nullptr ||
       comparison->kind != MirInstructionKind::Compute ||
       comparison->operands.size() != 2) {
@@ -1891,6 +1940,8 @@ void invalidatePlaceRoot(const MirBody &body,
                          const MirPlaceAliasEscapeAnalysis &aliases,
                          AbstractState &state, MirPlaceId destination) {
   // This bounded address relay does not infer reference/write disjointness.
+  state.resultAlternatives.clear();
+  state.placeAlternatives.clear();
   state.borrowedAddresses.clear();
   const MirPlace *written = body.findPlace(destination);
   if (written == nullptr) {
@@ -2354,6 +2405,11 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
     const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
     const MirInstruction &instruction, const FieldPath &path);
 [[nodiscard]] std::optional<FieldOrigin>
+normalizedFieldOrigin(const MirProgram &program, MirBodyAddress address,
+                      const MirBody &body,
+                      const MirPlaceAliasEscapeAnalysis &aliases,
+                      MirPlaceId receiver, const FieldPath &path);
+[[nodiscard]] std::optional<FieldOrigin>
 ownedPointerFieldOrigin(const MirProgram *program, MirBodyAddress address,
                         const MirBody &body,
                         const MirPlaceAliasEscapeAnalysis &aliases,
@@ -2709,6 +2765,27 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     borrowedAddress =
         inputAddressForCall(closedCalls->program, address, body, aliases, state,
                             instruction, *summary.returnedBorrow);
+  AlternativeFields alternatives;
+  if (instruction.result &&
+      instruction.info.type.kind == SemanticType::Expected)
+    for (const auto &[alternative, fields] : summary.resultAlternatives) {
+      auto &selected = alternatives[alternative];
+      for (const auto &[input, saved] : fields) {
+        std::optional<FieldOrigin> origin;
+        if (!input.parameter) {
+          origin =
+              receiverFieldOrigin(closedCalls->program, address, body, aliases,
+                                  state, instruction, input.field);
+        } else if (*input.parameter < argumentOrigins.size()) {
+          const auto root = argumentOrigins[*input.parameter];
+          if (root)
+            origin = normalizedFieldOrigin(closedCalls->program, address, body,
+                                           aliases, root, input.field);
+        }
+        if (origin && selected.size() < 64)
+          selected.emplace(*origin, rebased(saved, block.id, instruction.id));
+      }
+    }
   std::vector<std::pair<ScalarAddress, ConstructedScalar>> constructed;
   for (const auto &[destination, postcondition] :
        summary.constructedParameters) {
@@ -2977,10 +3054,15 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       }
   } else if (instruction.result)
     state.fieldOrigins.erase(*instruction.result);
+  if (instruction.result && !alternatives.empty() &&
+      state.resultAlternatives.size() < 64)
+    state.resultAlternatives[*instruction.result] = std::move(alternatives);
   return true;
 }
 
 void killUnknownMemory(const MirBody &body, AbstractState &state) {
+  state.resultAlternatives.clear();
+  state.placeAlternatives.clear();
   state.liveMemoryBarrier = LiveMemoryBarrier::Unknown;
   state.constructedScalars.clear();
   // Readonly scalar copies are actual immutable values, not readonly
@@ -3235,12 +3317,24 @@ ownedPointerFieldOrigin(const MirProgram *program, MirBodyAddress address,
     return std::nullopt;
   const MirPlaceId receiver =
       objectOriginForOperand(body, aliases, state, *instruction.receiver);
+  return normalizedFieldOrigin(program, address, body, aliases, receiver, path);
+}
+
+[[nodiscard]] std::optional<FieldOrigin>
+normalizedFieldOrigin(const MirProgram &program, MirBodyAddress address,
+                      const MirBody &body,
+                      const MirPlaceAliasEscapeAnalysis &aliases,
+                      MirPlaceId receiver, const FieldPath &path) {
   const auto *place = body.findPlace(receiver);
-  if (!place)
+  if (!place || !liveScalarPath(&program, address, body, receiver, path))
     return std::nullopt;
   FieldOrigin origin{.root = receiver, .path = path};
-  if (place->root == MirPlaceRootKind::This) {
-    const auto root = canonicalPlace(aliases, thisRoot(body));
+  if (place->root == MirPlaceRootKind::This ||
+      place->root == MirPlaceRootKind::Binding) {
+    const auto root =
+        canonicalPlace(aliases, place->root == MirPlaceRootKind::This
+                                    ? thisRoot(body)
+                                    : rootForBinding(body, place->binding));
     const auto prefix = fieldPath(body, root, receiver, true);
     if (!prefix)
       return std::nullopt;
@@ -3257,6 +3351,8 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
                                             MirBodyAddress address,
                                             const MirBody &body,
                                             AbstractState &state) {
+  state.resultAlternatives.clear();
+  state.placeAlternatives.clear();
   // The sealed operation requires vacant, nonconflicting final storage. Its
   // structural form invokes no constructor/user code, so it cannot overwrite an
   // already live non-byte scalar place in a valid program. Byte/array storage
@@ -3419,6 +3515,7 @@ void applyInstruction(const MirBody &body,
   const MirProgram *program =
       closedCalls == nullptr ? nullptr : &closedCalls->program;
   if (instruction.result) {
+    state.resultAlternatives.erase(*instruction.result);
     state.entryRelativeValues.erase(*instruction.result);
     state.scalarAddressValues.erase(*instruction.result);
     if (instruction.loan)
@@ -3840,6 +3937,13 @@ void applyInstruction(const MirBody &body,
     const MirOperand &source = instruction.operands.front();
     if (source.place != 0) {
       const MirPlaceId sourcePlace = canonicalPlace(aliases, source.place);
+      if (instruction.info.type.kind == SemanticType::Expected &&
+          state.resultAlternatives.size() < 64)
+        if (const auto found = state.placeAlternatives.find(sourcePlace);
+            found != state.placeAlternatives.end()) {
+          state.resultAlternatives[*instruction.result] = found->second;
+          state.loadedOrigins[*instruction.result] = sourcePlace;
+        }
       if (instruction.info.type.kind == SemanticType::RawPointer &&
           instruction.info.type.arguments.size() == 1) {
         const auto found = state.scalarAddressPlaces.find(sourcePlace);
@@ -3984,6 +4088,20 @@ void applyInstruction(const MirBody &body,
       }
     }
     const MirOperand &source = instruction.operands.front();
+    std::optional<AlternativeFields> initializedAlternatives;
+    const auto *destinationPlace = body.findPlace(destination);
+    if (instruction.kind == MirInstructionKind::Initialize &&
+        destinationPlace &&
+        destinationPlace->root == MirPlaceRootKind::Binding &&
+        destinationPlace->projections.empty() &&
+        destinationPlace->type.kind == SemanticType::Expected &&
+        !destinationPlace->traits.containsBorrowedState &&
+        (address.kind == MirBodyKind::Function ||
+         address.kind == MirBodyKind::Constructor))
+      if (const auto found = state.resultAlternatives.find(source.value);
+          source.kind == MirOperandKind::Value &&
+          found != state.resultAlternatives.end())
+        initializedAlternatives = found->second;
     std::optional<IntegerFact> fact =
         source.place != 0
             ? integerForPlace(body, state,
@@ -4026,6 +4144,11 @@ void applyInstruction(const MirBody &body,
         arrayForOperand(state, aliases, source);
     const std::optional<ObjectFact> sourceObject =
         objectForOperand(body, aliases, state, source);
+    // Even exact indexed writes which retain aggregate envelopes retire
+    // conditional memory correlations. Independent local initialization may
+    // restore only its producer's freshly captured alternatives below.
+    state.resultAlternatives.clear();
+    state.placeAlternatives.clear();
     if (!referenceCarrierInitialization &&
         (!indexed || (!previousAggregateElements && !previousAggregateField))) {
       invalidatePlaceRoot(body, aliases, state, destination);
@@ -4136,6 +4259,12 @@ void applyInstruction(const MirBody &body,
     if (sourceObject) {
       seedObjectFact(body, aliases, destination, *sourceObject, state);
     }
+    // Initializing a new independent local shell does not write the objects
+    // described by the call that produced it. Reassignment/projection and
+    // borrowed-state carriers deliberately receive no such restoration.
+    if (initializedAlternatives && state.placeAlternatives.size() < 64)
+      state.placeAlternatives[destination] =
+          std::move(*initializedAlternatives);
     return;
   }
   if (instruction.kind == MirInstructionKind::Construct &&
@@ -4345,6 +4474,27 @@ void joinIntegers(std::map<Key, IntegerFact> &target,
   }
 }
 
+template <typename Key>
+void joinAlternatives(std::map<Key, AlternativeFields> &target,
+                      const std::map<Key, AlternativeFields> &incoming,
+                      bool widen) {
+  for (auto entry = target.begin(); entry != target.end();) {
+    const auto found = incoming.find(entry->first);
+    if (found == incoming.end()) {
+      entry = target.erase(entry);
+      continue;
+    }
+    // Missing alternative means impossible, not unknown. Both sides possess
+    // the tagged result fact; a wholly unknown result would erase the key.
+    for (const auto &[alternative, fields] : found->second) {
+      auto [slot, inserted] = entry->second.try_emplace(alternative, fields);
+      if (!inserted)
+        joinIntegers(slot->second, fields, widen);
+    }
+    ++entry;
+  }
+}
+
 void joinOptionalInteger(std::optional<IntegerFact> &target,
                          const std::optional<IntegerFact> &incoming,
                          bool widen) {
@@ -4429,6 +4579,9 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
   joinAggregateElementIntegers(target.aggregateElementIntegers,
                                incoming.aggregateElementIntegers, widen);
   joinObjectFacts(target.objects, incoming.objects, widen);
+  joinAlternatives(target.resultAlternatives, incoming.resultAlternatives,
+                   widen);
+  joinAlternatives(target.placeAlternatives, incoming.placeAlternatives, widen);
   joinEntryRelative(target.entryRelativeFields, incoming.entryRelativeFields);
   joinEntryRelative(target.entryRelativeValues, incoming.entryRelativeValues);
   joinScalarAddresses(target.scalarAddressValues, incoming.scalarAddressValues);
@@ -5940,6 +6093,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       result.safety.proofs.end());
 
   std::vector<AbstractState> exits;
+  std::map<std::size_t, std::vector<AbstractState>> alternativeExits;
   std::vector<std::optional<IntegerFact>> returnFacts;
   std::vector<std::optional<FieldPath>> returnFields;
   std::vector<std::optional<InputAddress>> returnPointers;
@@ -6017,6 +6171,31 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         if (object)
           sanitizeObject(program, body->returnType, *object);
         returnObjects.push_back(std::move(object));
+      }
+    }
+    if (body->returnType.kind == SemanticType::Expected) {
+      AlternativeFields alternatives;
+      if (!block.terminator.value) {
+        alternatives[0];
+      } else if (block.terminator.value->type.kind ==
+                 SemanticType::Unexpected) {
+        alternatives[1];
+      } else if (block.terminator.value->type.kind != SemanticType::Expected) {
+        alternatives[0];
+      } else if (const auto found = transferred.output.resultAlternatives.find(
+                     block.terminator.value->value);
+                 block.terminator.value->kind == MirOperandKind::Value &&
+                 found != transferred.output.resultAlternatives.end()) {
+        alternatives = found->second;
+      } else {
+        alternatives[0];
+        alternatives[1];
+      }
+      for (const auto &[alternative, fields] : alternatives) {
+        auto state = transferred.output;
+        for (const auto &[origin, fact] : fields)
+          publishFieldFact(*body, state, origin, fact);
+        alternativeExits[alternative].push_back(std::move(state));
       }
     }
     exits.push_back(std::move(transferred.output));
@@ -6180,6 +6359,27 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       result.summary.constructed = objectAtExits(program, *body, aliases, exits,
                                                  root, constructorOwner->type);
     }
+  }
+  for (const auto &[alternative, states] : alternativeExits) {
+    auto &fields = result.summary.resultAlternatives[alternative];
+    const auto collect = [&](std::optional<std::size_t> parameter,
+                             const ObservedFact<ObjectFact> &object) {
+      if (!object.fact)
+        return;
+      for (const auto &[path, fact] : object.fact->integers)
+        if (fields.size() < 64)
+          fields.emplace(InputField{parameter, path}, fact);
+    };
+    if (function && function->owner)
+      if (const auto *owner = program.findClassInstance(*function->owner))
+        collect(std::nullopt, objectAtExits(program, *body, aliases, states,
+                                            thisRoot(*body), owner->type));
+    for (std::size_t index = 0; index < bindings.size() && index < types.size();
+         ++index)
+      if (types[index].kind == SemanticType::Reference)
+        if (const auto root = rootForBinding(*body, bindings[index]))
+          collect(index, objectAtExits(program, *body, aliases, states, root,
+                                       types[index]));
   }
   return result;
 }

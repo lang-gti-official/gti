@@ -22,7 +22,8 @@ void expect(bool condition, std::string_view message) {
 }
 void checkAddressFixture(std::string_view filename,
                          std::initializer_list<std::string_view> positiveNames,
-                         std::size_t negativeCount, bool rawReads = true) {
+                         std::size_t negativeCount, bool rawReads = true,
+                         bool requireOpaque = true) {
   const lang::OptimizationPipeline pipeline;
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     ("fixtures/" + std::string(filename));
@@ -66,8 +67,9 @@ void checkAddressFixture(std::string_view filename,
           {.kind = lang::MirBodyKind::Function, .owner = instance.id});
       expect(context && context->reached,
              "all address controls must be reached");
-      expect(context && !context->closed,
-             "actual raw reads remain opaque despite value postconditions");
+      if (requireOpaque)
+        expect(context && !context->closed,
+               "actual raw reads remain opaque despite value postconditions");
       std::size_t discharges = 0, rawLoads = 0, loads = 0;
       const auto *body = optimized.mir.findFunctionInstance(instance.id);
       for (const auto &block : body->body.blocks)
@@ -361,5 +363,7 @@ int main() {
   checkAddressFixture("optimizer_indexed_borrows.gti",
                       {"indexed_borrow", "initialized_indexed_borrow"}, 2,
                       false);
+  checkAddressFixture("optimizer_result_postconditions.gti",
+                      {"accepted_ticket", "denied_ticket"}, 5, false, false);
   return failures == 0 ? 0 : 1;
 }
