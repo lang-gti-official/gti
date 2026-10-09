@@ -536,6 +536,19 @@ unresolved addresses retain the conservative path. The checked-address-store
 fixture tests replacement, compound assignment, overflow, native mutation and
 a distinct target, including forged-discharge rejection and O0 parity.
 
+Checked non-byte integer stores additionally preserve facts about live ordinary
+scalar fields of a different integer width. This relies on GTI's exact live
+pointee and non-overlapping-object obligations, not the C++ backend's aliasing
+rules. Equal-width types (including signedness variants and transparent/native
+aliases) receive no disjointness inference. A source-call profile replays all
+operations and nested selected source calls, admitting one nonlocal integer
+write width while excluding independent scalar locals. Raw/native, byte,
+aggregate, unknown and lifetime-changing writes, unsupported calls and
+synchronization reject that profile. Only owned non-byte scalar field facts
+survive; no region, allocation or initialized-element fact follows. The
+unrelated metadata fixture covers direct and called writes, with same-width,
+raw, native and destruction/reconstruction negatives and forged-proof replay.
+
 Exact source summaries export constructed addresses rooted in raw-pointer
 formals or an ordinary pointer field of a receiver/checked-reference formal,
 relative to the receiver or formal ordinal, owned field path and element

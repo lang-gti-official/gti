@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,7 +31,8 @@ def run_fixture(compiler, filename, negatives, marker,
             source.write_text(original.replace(dispatch, f"if (true) return {call};"))
             lines = original.splitlines()
             start = next(i for i, line in enumerate(lines, 1)
-                         if line.strip().startswith((f"unsafe int {name}(", f"int {name}(")))
+                         if re.match(r"(?:unsafe\s+)?(?:int|uint64_t)\s+" +
+                                     re.escape(name) + r"\(", line.strip()))
             site = next(i for i, line in enumerate(lines, 1)
                         if i > start and marker in line)
             cases.append((source, (70, "", f"{source.name}:{site}: "
@@ -100,6 +102,12 @@ def main():
         "bad_checked_other": "bad_checked_other(first.data(), &other, owner)",
         "bad_checked_call": "bad_checked_call(first.data(), owner)",
     }, " + 1;")
+    run_fixture(compiler, "optimizer_typed_scalar_stores.gti", {
+        "bad_same_width": "int(data.bad_same_width())",
+        "bad_native_width": "int(data.bad_native_width())",
+        "bad_raw_width": "int(data.bad_raw_width())",
+        "bad_lifetime_width": "int(data.bad_lifetime_width())",
+    }, "return this.wide + uint64_t(1);", "optimizer_typed_scalar_stores_native.cpp")
 
 
 if __name__ == "__main__":

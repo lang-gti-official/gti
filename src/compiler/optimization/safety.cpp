@@ -288,6 +288,11 @@ struct ClosedCallSummary {
   std::optional<InputAddress> returnedBorrow;
   std::map<std::size_t, std::map<InputField, IntegerFact>> resultAlternatives;
   bool localPointerWritesOnly = false;
+  // A bounded typed-MIR mutation profile, not a replacement effect summary.
+  // All nonlocal successful writes are checked non-byte integers of one width;
+  // pointer, aggregate, byte, raw/native and lifecycle writes reject it.
+  bool scalarStoresOnly = false;
+  std::optional<unsigned> scalarStoreWidth;
   std::map<InputAddress, ConstructedScalar> constructedParameters;
   ObservedFact<ObjectFact> receiver;
   EntryRelativeFields receiverUpdates;
@@ -2449,6 +2454,36 @@ void invalidateObjectOperand(const MirBody &body,
 }
 
 [[nodiscard]] bool parameterAllowsMutation(const SemanticType &type);
+struct DisjointScalarFields {
+  std::map<MirPlaceId, IntegerFieldFacts> objects;
+  std::map<MirPlaceId, IntegerFact> places;
+};
+
+[[nodiscard]] DisjointScalarFields
+preserveDifferentWidthFields(const MirProgram *program, MirBodyAddress address,
+                             const MirBody &body, const AbstractState &state,
+                             unsigned writtenWidth) {
+  DisjointScalarFields saved;
+  for (const auto &[root, object] : state.objects)
+    for (const auto &[path, fact] : object.integers)
+      if (fact.domain.width != writtenWidth && fact.domain.width > 8 &&
+          liveScalarPath(program, address, body, root, path))
+        saved.objects[root].emplace(path, fact);
+  for (const auto &[place, fact] : state.integerPlaces)
+    if (fact.domain.width != writtenWidth && fact.domain.width > 8 &&
+        liveScalarPath(program, address, body, place, {}))
+      saved.places.emplace(place, fact);
+  return saved;
+}
+
+void restoreDifferentWidthFields(AbstractState &state,
+                                 const DisjointScalarFields &saved) {
+  for (const auto &[root, fields] : saved.objects)
+    for (const auto &[path, fact] : fields)
+      state.objects[root].integers.insert_or_assign(path, fact);
+  for (const auto &[place, fact] : saved.places)
+    state.integerPlaces.insert_or_assign(place, fact);
+}
 [[nodiscard]] std::optional<std::vector<MirPlaceId>>
 operandProtectedPlaces(const MirBody &body, const MirOperand &operand);
 [[nodiscard]] bool
@@ -2813,6 +2848,12 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   std::optional<IntegerFact> currentResultField;
   const auto invocation =
       exactMirInvocationSummary(closedCalls->program, body, instruction);
+  const auto untouchedFields =
+      summary.scalarStoresOnly && summary.scalarStoreWidth && invocation &&
+              !invocation->traits.maySynchronize
+          ? preserveDifferentWidthFields(&closedCalls->program, address, body,
+                                         state, *summary.scalarStoreWidth)
+          : DisjointScalarFields{};
   const bool pointerRelayOnly =
       (summary.returnedPointer || summary.returnedBorrow) &&
       !summary.hasOpaqueEffects && !summary.mayWriteGlobals && invocation &&
@@ -3121,6 +3162,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   if (instruction.result && !alternatives.empty() &&
       state.resultAlternatives.size() < 64)
     state.resultAlternatives[*instruction.result] = std::move(alternatives);
+  restoreDifferentWidthFields(state, untouchedFields);
   return true;
 }
 
@@ -4186,6 +4228,20 @@ void applyInstruction(const MirBody &body,
     const MirOperand &source = instruction.operands.front();
     std::optional<AlternativeFields> initializedAlternatives;
     const auto *destinationPlace = body.findPlace(destination);
+    const auto *physicalDestination = body.findPlace(*instruction.destination);
+    const auto writtenDomain =
+        physicalDestination ? constantIntegerDomain(physicalDestination->type)
+                            : std::nullopt;
+    const auto untouchedFields =
+        instruction.kind == MirInstructionKind::Assign && writtenDomain &&
+                writtenDomain->width > 8 && !instruction.rawMemoryAccess &&
+                instruction.unsafeOperation == UnsafeOperationKind::None &&
+                instruction.lifecycle.empty() && !effect.invokesUserCode &&
+                !effect.invokesRuntime && !effect.writesUnknownMemory &&
+                !effect.maySynchronize
+            ? preserveDifferentWidthFields(program, address, body, state,
+                                           writtenDomain->width)
+            : DisjointScalarFields{};
     const auto checkedAddress =
         instruction.kind == MirInstructionKind::Assign && destinationPlace &&
                 !instruction.rawMemoryAccess &&
@@ -4282,6 +4338,7 @@ void applyInstruction(const MirBody &body,
         (!indexed || (!previousAggregateElements && !previousAggregateField))) {
       invalidatePlaceRoot(body, aliases, state, destination);
     }
+    restoreDifferentWidthFields(state, untouchedFields);
     if (checkedAddress) {
       // A raw-derived checked reference may write a caller-owned object. This
       // is not vacant construction: callers must invalidate possible aliases
@@ -6189,6 +6246,76 @@ struct ContextualBodyResult {
   MirSafetyAnalysis safety;
 };
 
+struct ScalarStoreProfile {
+  bool supported = false;
+  std::optional<unsigned> width;
+};
+
+[[nodiscard]] ScalarStoreProfile
+scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
+                   const MirBody &body, const ClosedCallRound &round) {
+  if (address.kind != MirBodyKind::Function)
+    return {};
+  ScalarStoreProfile result{.supported = true};
+  const auto addWidth = [&](unsigned width) {
+    if (width <= 8 || (result.width && *result.width != width))
+      return false;
+    result.width = width;
+    return true;
+  };
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone || inertLifecycleMarker(instruction) ||
+          nonMutatingLoanBoundary(body, instruction) ||
+          ownerWitnessFormation(body, instruction) ||
+          inertRawAddressOperation(instruction) ||
+          initializesReferenceCarrier(body, instruction))
+        continue;
+      const auto effect = effects(program, instruction);
+      if (instruction.kind == MirInstructionKind::Call &&
+          instruction.intrinsic == IntrinsicKind::None) {
+        const auto target = closedCallTarget(program, instruction);
+        const auto callee =
+            target ? round.summaries.find(*target) : round.summaries.end();
+        if (instruction.rawMemoryAccess || !target ||
+            round.rejected.contains(*target) ||
+            callee == round.summaries.end() || !callee->second.complete ||
+            !callee->second.scalarStoresOnly || effect.maySynchronize ||
+            (callee->second.scalarStoreWidth &&
+             !addWidth(*callee->second.scalarStoreWidth)))
+          return {};
+        continue;
+      }
+      if (instruction.rawMemoryAccess ||
+          instruction.unsafeOperation != UnsafeOperationKind::None ||
+          effect.writesUnknownMemory || effect.maySynchronize ||
+          effect.invokesUserCode || effect.allocates ||
+          instruction.kind == MirInstructionKind::Construct)
+        return {};
+      const auto *destination = instruction.destination
+                                    ? body.findPlace(*instruction.destination)
+                                    : nullptr;
+      const auto domain =
+          destination ? constantIntegerDomain(destination->type) : std::nullopt;
+      const bool independentScalar =
+          destination && domain &&
+          destination->root == MirPlaceRootKind::Binding &&
+          destination->projections.empty() &&
+          !destination->traits.containsBorrowedState;
+      if (independentScalar &&
+          (instruction.kind == MirInstructionKind::Initialize ||
+           instruction.kind == MirInstructionKind::Assign))
+        continue;
+      if (instruction.kind == MirInstructionKind::Assign && domain &&
+          instruction.lifecycle.empty() && !effect.invokesRuntime &&
+          !effect.movesValue && !effect.dropsValue && addWidth(domain->width))
+        continue;
+      if (effect.writesPlace || effect.movesValue || effect.dropsValue)
+        return {};
+    }
+  return result;
+}
+
 [[nodiscard]] ContextualBodyResult
 analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
                       const ClosedCallContext &context,
@@ -6368,6 +6495,9 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     return result;
   }
   result.summary.complete = true;
+  const auto scalarStores = scalarStoreProfile(program, address, *body, round);
+  result.summary.scalarStoresOnly = scalarStores.supported;
+  result.summary.scalarStoreWidth = scalarStores.width;
   result.summary.hasOpaqueEffects =
       std::any_of(exits.begin(), exits.end(), [](const AbstractState &state) {
         return state.hasOpaqueEffects;
