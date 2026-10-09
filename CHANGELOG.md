@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.394.1 — Lambda base-reference arguments
+## 0.394.2 — Lambda base-reference arguments
 
 - Fix an internal compiler error when a lambda is called with a derived class
   object for a base-class reference parameter, such as
