@@ -245,7 +245,16 @@ if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
-    run_runtime_matrix(names=("borrowing_composition", "paired_span",
-                             "stored_borrow_aggregates"))
+    nested = repository / "tests/fixtures/nested_owning_constructor_arguments.gti"
+    failure_line = next(index for index, text in enumerate(nested.read_text().splitlines(), 1)
+                        if text.endswith("// constructor failure"))
+    run_runtime_matrix(
+        names=("borrowing_composition", "paired_span", "stored_borrow_aggregates",
+               "nested_carrier_arguments", "nested_owning_constructor_arguments"),
+        cases={"nested_owning_constructor_arguments": [
+            ((), (0, "7\n900\n", "")),
+            (("fail",), (70, "7\n", f"{nested.name}:{failure_line}: "
+                        "runtime error[GTI-R0002]: division_by_zero in integer_division\n")),
+        ]})
     check_failure_cleanup(pathlib.Path(sys.argv[1]).resolve())
     check_mixed_failure_cleanup(pathlib.Path(sys.argv[1]).resolve())

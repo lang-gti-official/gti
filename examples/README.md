@@ -163,7 +163,7 @@ is a teaching helper, not a production server.
 | `106-custom-formatters.gti` | application-owned formatter specializations, presentation delegation and recoverable dynamic errors |
 | `107-composable-io.gti` | generic line reading, memory input, buffered output and explicit flushing |
 | `108-mutable-slices.gti` | exclusive subviews, shared projections and parent reactivation |
-| `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, generic movement and owner reactivation |
+| `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, fresh nested constructor arguments, generic movement and owner reactivation |
 | `110-integral-enums.gti` | exact enum extraction, numeric formatting and application customization |
 | `111-final-address-storage.gti` | in-slot construction, scalar/struct field addresses in constructors, checked borrowing, allocation-owner movement, slot reuse and explicit release |
 | `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
