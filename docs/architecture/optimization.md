@@ -731,6 +731,17 @@ It preserves the same unrelated non-byte live-field facts, not a value envelope
 for the newly constructed region. Source wrappers can relay this profile;
 destroy/reconstruct still invalidates the old object's facts.
 
+The closed typed-store profile can combine vacant structural construction with
+checked non-byte scalar bookkeeping writes of one width. Independent scalar
+parameter moves affect only their own invocation storage. Existing non-byte
+pointee facts of a different width survive that exact profile, just as live
+ordinary fields do; a construction-only profile preserves all such live scalar
+pointees. This follows the existing nonoverlapping-live-object contract, not an
+assumption that different pointers name different allocations. Same-width live
+writes, unknown/native access, destructive lifetime changes and unsupported
+operations prevent preservation. The successive-publication regression includes
+replacement, native mutation and destroy/reconstruct failure controls.
+
 The interpreter records whether a successful path contains only that supported
 opaque lifetime transfer or an unknown live-memory barrier. Reachable joins
 retain the stronger barrier. Exact source wrappers can forward the supported

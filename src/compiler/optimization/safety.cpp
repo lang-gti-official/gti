@@ -299,8 +299,9 @@ struct ClosedCallSummary {
   bool localPointerWritesOnly = false;
   std::map<InputField, InputAddress> pointerFieldValues;
   // A bounded typed-MIR mutation profile, not a replacement effect summary.
-  // All nonlocal successful writes are checked non-byte integers of one width;
-  // pointer, aggregate, byte, raw/native and lifecycle writes reject it.
+  // All writes to existing nonlocal objects are checked non-byte integers of
+  // one width. Vacant structural construction is independent; pointer,
+  // aggregate, byte, raw/native and destructive lifecycle writes reject it.
   bool scalarStoresOnly = false;
   std::optional<unsigned> scalarStoreWidth;
   std::map<InputAddress, ConstructedScalar> constructedParameters;
@@ -2468,12 +2469,13 @@ void invalidateObjectOperand(const MirBody &body,
 struct DisjointScalarFields {
   std::map<MirPlaceId, IntegerFieldFacts> objects;
   std::map<MirPlaceId, IntegerFact> places;
+  ConstructedScalars pointees;
 };
 
 [[nodiscard]] DisjointScalarFields
 preserveDifferentWidthFields(const MirProgram *program, MirBodyAddress address,
                              const MirBody &body, const AbstractState &state,
-                             unsigned writtenWidth) {
+                             std::optional<unsigned> writtenWidth) {
   DisjointScalarFields saved;
   for (const auto &[root, object] : state.objects)
     for (const auto &[path, fact] : object.integers)
@@ -2484,6 +2486,10 @@ preserveDifferentWidthFields(const MirProgram *program, MirBodyAddress address,
     if (fact.domain.width != writtenWidth && fact.domain.width > 8 &&
         liveScalarPath(program, address, body, place, {}))
       saved.places.emplace(place, fact);
+  for (const auto &[pointer, fact] : state.constructedScalars)
+    if (fact.value.domain.width > 8 &&
+        fact.value.domain.width != writtenWidth)
+      saved.pointees.emplace(pointer, fact);
   return saved;
 }
 
@@ -2494,6 +2500,8 @@ void restoreDifferentWidthFields(AbstractState &state,
       state.objects[root].integers.insert_or_assign(path, fact);
   for (const auto &[place, fact] : saved.places)
     state.integerPlaces.insert_or_assign(place, fact);
+  for (const auto &[pointer, fact] : saved.pointees)
+    publishConstructedScalar(state, pointer, fact);
 }
 [[nodiscard]] std::optional<std::vector<MirPlaceId>>
 operandProtectedPlaces(const MirBody &body, const MirOperand &operand);
@@ -2893,10 +2901,10 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   const auto invocation =
       exactMirInvocationSummary(closedCalls->program, body, instruction);
   const auto untouchedFields =
-      summary.scalarStoresOnly && summary.scalarStoreWidth && invocation &&
+      summary.scalarStoresOnly && invocation &&
               !invocation->traits.maySynchronize
           ? preserveDifferentWidthFields(&closedCalls->program, address, body,
-                                         state, *summary.scalarStoreWidth)
+                                         state, summary.scalarStoreWidth)
           : DisjointScalarFields{};
   const bool pointerRelayOnly =
       (summary.returnedPointer || summary.returnedBorrow) &&
@@ -6371,8 +6379,16 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
           nonMutatingLoanBoundary(body, instruction) ||
           ownerWitnessFormation(body, instruction) ||
           inertRawAddressOperation(instruction) ||
-          initializesReferenceCarrier(body, instruction))
+          initializesReferenceCarrier(body, instruction) ||
+          isMirStructuralFinalAddressConstruction(program, instruction))
         continue;
+      if (scalarResultMove(instruction, body)) {
+        const auto *source =
+            body.findPlace(instruction.operands.front().place);
+        if (source && source->root == MirPlaceRootKind::Binding &&
+            source->projections.empty())
+          continue;
+      }
       const auto effect = effects(program, instruction);
       if (instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None) {

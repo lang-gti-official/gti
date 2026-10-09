@@ -421,5 +421,7 @@ int main() {
                       false);
   checkAddressFixture("optimizer_pointer_field_snapshots.gti",
                       {"local_snapshot", "after_member_initialization"}, 5);
+  checkAddressFixture("optimizer_vacant_sequence.gti", {"consecutive_vacant"},
+                      3);
   return failures == 0 ? 0 : 1;
 }
