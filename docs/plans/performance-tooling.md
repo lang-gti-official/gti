@@ -155,6 +155,110 @@ against a fresh reconciled baseline before selecting another facility. This
 change neither restores private container semantics nor removes lifetime,
 allocation, bounds, overflow or failure checks.
 
+## C-TIME-04: Optimizer proof/state bookkeeping (2026-10-09)
+
+Status: bounded compiler improvement, not a compile-time plateau. The outcome
+is a faster optimized edit/build loop for ordinary library consumers, with no
+new language rule or runtime representation. Integration uses PR #181.
+
+CPU sampling of `examples/93-http-json-client.gti` identifies safety-dataflow
+proof construction and SCCP state copying in both optimization and its
+independent coherence replay. SCCP now detects changes per fact instead of
+copying the whole destination state; internal canonical evidence sets use
+ordered insertion and set union instead of append/sort/unique on every join.
+Complete facts and provenance, solver budgets, failure edges and independent
+verification are unchanged. External evidence acquires no sorted-input
+assumption. See the implemented
+[bookkeeping contract](../architecture/optimization.md#canonical-proof-evidence-bookkeeping).
+
+### Paired measurements
+
+Both compiler executables were freshly built Release/Ninja with Apple Clang
+21.0.0 and LLVM 22.1.8 on an Apple M2 Max (12 cores), macOS 27 arm64. The
+baseline is clean `e659c93f`; the measured candidate is clean `c5b24d85`.
+Their SHA-256 identities are respectively
+`e13da26f2b9aec6bb6f60fca3eab4efd143165e68bb7a35b70d374041b6eaa9d` and
+`791937c4e117d80d15bb18db5b06944819e53b19015385fc71c34618339e26fd`.
+Subsequent edits only record evidence and status; production sources are the
+measured checkpoint's sources.
+
+One warmup and five seeded (`20261009`) randomized/interleaved sequential
+pairs per workload use identical source/stdlib/runtime paths, a warm
+filesystem, no project cache, C++23 and `/usr/bin/clang++`. Emission uses
+`--emit-cpp`; full builds use `--keep-cpp`; both disable progress and color.
+Each pair overwrites the same output path to avoid path-dependent differences.
+The controls are the existing `benchmarks/workloads/{game-update-stage,
+vector-checked-loop,fixed-array-loop-proof}/main.gti` programs.
+
+| Workload | Mode | Baseline median s | Candidate median s | Less wall time |
+| --- | --- | ---: | ---: | ---: |
+| HTTP/JSON | O2 emission | 6.333 | 5.426 | 14.3% |
+| HTTP/JSON | O2 complete native build | 8.776 | 7.848 | 10.6% |
+| HTTP/JSON | O0 emission | 1.553 | 1.550 | effectively unchanged |
+| Game update | O2 emission | 1.994 | 1.590 | 20.3% |
+| Vector loop | O2 emission | 0.323 | 0.286 | 11.4% |
+| Fixed-array loop | O2 emission | 0.295 | 0.274 | 7.0% |
+
+These are shared-desktop measurements, not isolated-machine certification.
+A competing multi-job build invalidated an earlier exploratory batch, which
+is excluded above. The final batch had one other agent's long-running
+single-threaded compiler test active, as well as ordinary desktop processes;
+no process was stopped. Child CPU medians agree closely: HTTP O2 emission
+6.322→5.420 s and full builds 8.802→7.869 s. All five measured pairs improve
+for each optimized row. Timing thresholds are not CI gates, and these results
+do not establish Linux/Windows performance, no-op cache latency, host compiler
+build speed or an equivalent gain for every user program.
+
+All 72 measured/warmup emissions are byte-identical within their before/after
+workload. Diagnostics are identical. Every full-build executable runs the
+offline HTTP recipe successfully with identical complete output and file size;
+no network request or credentials are used. The independently checked 130
+runnable examples also retain byte-identical generated C++, optimized MIR,
+optimizer proof reports and diagnostics at O2. Thus this slice does not trade
+runtime checks, generated-code size or runtime behavior for compiler speed.
+
+Three additional alternating HTTP O2 emission pairs under `/usr/bin/time -l`
+measure median peak compiler RSS at 649.9→630.5 MiB. Ranges are 634.2–656.1
+and 554.6–637.9 MiB respectively; this is a noisy memory screen, not a precise
+allocation-count or guaranteed memory-reduction claim. Full-build executable
+size is unchanged at 674792 bytes.
+
+### Validation and reproduction
+
+The evidence helper has exhaustive 64×64 set-union tests, including sparse
+64-bit identities, duplicates, zero insertion, self-aliasing and allocation
+preservation on subset joins. Existing SCCP equal-constant/different-evidence,
+forged-proof rejection, safety failure-edge, loop, mutable-call and independent
+replay regressions remain in force. Thirteen selected CTest gates cover the
+compiler aggregate, optimizer foundation/safety/analyses/conformance/coverage,
+devirtualization and native execution, safety native evidence, mutable-call
+runtime, scalar optimizer runtime, backend preflight and compile-time harness.
+The pinned formatter checks all 503 first-party C/C++ files. This is focused
+compiler-wide evidence, not a full unfiltered repository-suite rerun.
+
+Local raw samples, exact commands, input/tool hashes and full-build execution
+results are retained in `/private/tmp/gti-compile-final/report.json`; the
+adjacent `rss.json` records separate peak-memory observations. The local
+runner is `/private/tmp/gti-compile-final.py`. Corpus output hashes and retained
+CPP/MIR/proof artifacts are in `/private/tmp/gti-optimizer-output-comparison/`.
+The measured candidate is frozen as
+`/private/tmp/gti-compile-final/gti-candidate-c5b24d85`; later documentation-only
+build identity refreshes do not replace that evidence. Raw timing, RSS and
+corpus report SHA-256 values are respectively
+`6995ddfbd7590fbfd861b490558753b7a7cb22eb0214b084c116b2aa1a3a5767`,
+`48c3e667329907e7392920f01a5774062ec4f5f3170f19e48021b4a153391f3b` and
+`9899bcc205cf0ae2ea42e3fc24f3ccfa37db114faa22ad87b717bf1114f69355`.
+These are temporary evidence locations, not durable repository fixtures.
+The workloads, source diff and owning tests are checked in; the existing
+`scripts/compile_time_compare.py --baseline-gti ... --gti ...` also reproduces
+the registered benchmark controls. Keep both toolchains optimized, select
+identical stdlib/runtime paths and report emission separately from full builds.
+
+Remaining analysis-state copies, proof construction and repeated dataflow work
+are candidates for future profiling and general improvements. This result is
+positive evidence that the compiler has **not** reached an optimization limit;
+it is not permission to omit independent proof replay or weaken GTI guarantees.
+
 ## C-TIME-03: HTTP/JSON representation-admission latency (2026-10-07)
 
 Status: bounded compiler improvement; paired emission measurements and complete
