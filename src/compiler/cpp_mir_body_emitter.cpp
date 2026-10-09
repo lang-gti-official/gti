@@ -48603,6 +48603,21 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       return stagedAcrossInvokeSuccessChain(*stage->result, block.id);
     };
+    const auto consumeStagedBorrows =
+        [&](const std::vector<MirValueId> &consumed) {
+          if (!std::all_of(
+                  consumed.begin(), consumed.end(), [&](MirValueId id) {
+                    return std::find(pendingStaged.begin(), pendingStaged.end(),
+                                     id) != pendingStaged.end() ||
+                           stagedAcrossInvokeSuccessChain(id, block.id);
+                  }))
+            return false;
+          for (const MirValueId id : consumed)
+            pendingStaged.erase(
+                std::remove(pendingStaged.begin(), pendingStaged.end(), id),
+                pendingStaged.end());
+          return true;
+        };
     for (const MirInstruction &instruction : block.instructions) {
       // Destructive MIR rewrites preserve stable instruction identities as
       // canonical tombstones. They have no runtime vocabulary and must be
@@ -50925,22 +50940,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (staged != nullptr) {
             consumedStaged.push_back(*staged->result);
           }
-          if (!std::all_of(
-                  consumedStaged.begin(), consumedStaged.end(),
-                  [&](MirValueId id) {
-                    return std::find(pendingStaged.begin(), pendingStaged.end(),
-                                     id) != pendingStaged.end() ||
-                           stagedAcrossInvokeSuccessChain(id, block.id);
-                  })) {
-            {
-              return false;
-            }
-          }
-          for (const MirValueId id : consumedStaged) {
-            pendingStaged.erase(
-                std::remove(pendingStaged.begin(), pendingStaged.end(), id),
-                pendingStaged.end());
-          }
+          if (!consumeStagedBorrows(consumedStaged))
+            return false;
           continue;
         }
         if (instruction.receiver &&
@@ -52042,6 +52043,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 return false;
               }
             }
+            // The intrinsic arm returns before ordinary call admission's
+            // staging drain. Its exact prepared inputs are consumed here,
+            // including when abort-only allocation and result publication
+            // occupy the same block.
+            if (!consumeStagedBorrows(consumedStaged))
+              return false;
             continue;
           }
           // The substituted type parameter's default construction names
@@ -52147,22 +52154,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // check still demands the set drains to empty. A consumed borrow
         // staged in the unique invoke-predecessor block is equally
         // exact: the predecessor's block-end rule proved the hand-off.
-        if (!std::all_of(consumedStaged.begin(), consumedStaged.end(),
-                         [&](MirValueId id) {
-                           return std::find(pendingStaged.begin(),
-                                            pendingStaged.end(),
-                                            id) != pendingStaged.end() ||
-                                  stagedAcrossInvokeSuccessChain(id, block.id);
-                         })) {
-          {
-            return false;
-          }
-        }
-        for (const MirValueId id : consumedStaged) {
-          pendingStaged.erase(
-              std::remove(pendingStaged.begin(), pendingStaged.end(), id),
-              pendingStaged.end());
-        }
+        if (!consumeStagedBorrows(consumedStaged))
+          return false;
         continue;
       }
       default: {

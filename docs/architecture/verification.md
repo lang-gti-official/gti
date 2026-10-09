@@ -817,7 +817,22 @@ views in #74. `operator_relay_runtime` builds and runs four stronger fixtures
 and eight original reproducers at C++20/C++23 O0/O1/O3, with disabled elision
 and ASan/UBSan (96 observations). Eight injected allocation observations
 separately prove exact success output and exhaustion cleanup of the prepared
-existing owner and caller, with GTI-R0011/70 rather than abort.
+existing owner and caller under the original contract. The S-ALLOC-08 revision
+instead requires an allocation-free GTI-R0011 report and immediate abort, with
+neither prepared-owner nor caller cleanup. Its generated-allocation mutation
+erases the exact abort detector's outcome rather than assuming an obsolete
+allocation Invoke edge. Same-block prepared-borrow allocation and subsequent
+owner publication are explicit regression coverage.
+
+The allocation/container candidate's isolated optimized backend repair passes
+the complete operator-relay structural test, including 32 generated-allocation
+mutations. Its three allocation reproducers pass all eight native modes (24
+cases), the existing-value exhaustion harness passes eight observations, and
+the ordinary class-allocation harness passes all seven modes, preserving
+constructor rollback and immediate exhaustion abort. This probe links the
+repaired emitter against the frozen `723b7aa1` compiler libraries; it is focused
+regression evidence, not a substitute for rebuilding and validating the final
+combined head.
 
 `operator_relay_pipeline` checks O0/O1/O3 snapshot and body admission, corrupts
 generated construction policy, inputs and raw-storage publication, and rejects
