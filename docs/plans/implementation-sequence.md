@@ -5000,6 +5000,64 @@ allocation into GTI, migrating every distinct owning representation, inventing
 a second backend or implementing freestanding allocation. Follow the existing
 PR lifecycle and local-main synchronization; installation remains opt-in.
 
+### S-ALLOC-08: Rust Allocation-Failure Model
+
+- **State/role:** accepted direction from the owner (2026-10-09); not started.
+  The contract is
+  [ADR 022's Rust allocation-failure revision](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09)
+  and [ADR 007's exhaustion revision](../decisions/007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09).
+- **Outcome:** each allocation behaves as it would in Rust.
+  - Infallible allocation (`make_unique`, `make_shared`, vector and string
+    growth, plain container counterparts) aborts on exhaustion after a
+    best-effort, allocation-free `GTI-R0011` report.
+  - Fallible `try_` allocation keeps its `expected` result.
+  - Size-computation overflow stays a contained defined failure.
+  - Process allocations are not observable effects.
+- **Work:**
+  - Change the runtime's exhaustion path to report and abort.
+  - Remove allocation failure edges from infallible allocation operations in
+    MIR effects and the backend's failure paths.
+  - Let MIR or backend optimization remove unused process allocations and their
+    releases, or move them to automatic storage, without removing calls to
+    application `memory_resource` providers.
+  - Update the affected failure, cleanup and exit-status tests and the language
+    documentation.
+- **Acceptance:**
+  - Exhaustion tests show the report and abort for each infallible family, and
+    unchanged `expected` results for each fallible family.
+  - The owning-temporary workload shows the removed allocation.
+  - Resource-provider calls are never removed.
+  - The census and runtime controls show no unexplained regression.
+
+### S-ALLOC-09: Raw-Buffer Vector And String
+
+- **State/role:** accepted target representation (2026-10-09); not scheduled.
+  The contract is
+  [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
+  It covers migration candidates M01, M02 and M04 in the
+  [standard-library ledger](../architecture/standard-library-and-runtime.md#b-source-policy-candidates-still-using-private-machinery).
+  M03, string's terminator, follows it.
+- **Outcome:** `std::vector` and `std::string` use Rust's `RawVec`/`Vec`
+  layering in ordinary GTI, and the private `prefix_storage` capability is
+  retired:
+  - a source-defined raw buffer over a memory resource;
+  - an initialized-prefix length invariant with no per-slot metadata;
+  - one check per safe public operation, with raw access internally;
+  - `unsafe` unchecked accessors on vector, string, span and fixed array;
+  - byte-copy growth for bitwise-relocatable elements.
+- **Prerequisites:**
+  - Outlined failure paths, so the boundary checks do not inflate inlined
+    accessors (see #169).
+  - Ideally `S-ALLOC-08`, so plain growth has no exhaustion failure edge.
+- **Acceptance:**
+  - Vector and string workloads match or beat the current private path,
+    including the checked vector loop at idiomatic-C++ parity (72 ms against
+    71 ms when measured).
+  - Allocation counts and code size do not regress.
+  - Final-address emplacement, construction rollback, exactly-once cleanup,
+    checked loans and string's C-string bridges are preserved.
+  - The compiler recognizes no container or buffer name.
+
 ### S-FREE-01: Freestanding Target Profile
 
 - **State/role:** later breadth; `S-LAYOUT-01`, `D-LANG-01`, and `D-FAIL-01`
