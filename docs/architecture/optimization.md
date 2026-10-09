@@ -407,9 +407,28 @@ Symbolic entry-pointer SSA values survive pointee invalidation as addresses
 only; read-only independent pointer bindings can retain those same values.
 Neither preserves initialized contents, liveness or dereference permission.
 Loads consult the exact surviving construction fact, keep their raw access,
-and remain opaque. The remaining source-owner work needs owned pointer-field
-origins, index coverage and checked returned-element provenance; a lifetime
-witness is still never a pointee or an allocation identity.
+and remain opaque.
+
+Within a function, the same address lattice can name the entry value of a raw
+pointer field in an ordinary receiver or checked-reference parameter. Only an
+owned field path is transparent: nested owned records are supported, but stored
+references, unions, arrays, capability backing storage and raw dereferences are
+not. Constructor receivers are not seeded before initialization. Repeated exact
+paths load the same entry value even when the conservative alias matrix cannot
+classify two indirect places as MustAlias; different fields establish no
+pointee disjointness. A verified vacant construction cannot overwrite a live
+pointer field, so the relation survives that operation. Field replacement,
+unknown memory and potentially aliasing writes retire it; a later arbitrary
+load cannot recreate the entry relation. Exact scalar construction through the
+field can therefore justify subsequent scalar arithmetic, including an exact
+raw-parameter initialization helper, without removing the raw load or granting
+an unsafe operation new permission.
+
+This body-local rule does not export a constructed-field postcondition or
+initialize unknown pointer contents at entry. The remaining source-owner work
+needs interprocedural owned pointer-field/initialized-index coverage and checked
+returned-element provenance; a lifetime witness is still never a pointee or an
+allocation identity.
 
 Inert typed address arithmetic and pointer conversion neither read nor write a
 pointee, so they preserve unrelated memory facts. Apart from the exact typed

@@ -54,12 +54,14 @@ struct FieldOrigin {
   friend bool operator==(const FieldOrigin &, const FieldOrigin &) = default;
 };
 
-enum class AddressOriginKind { ExistingPlace, EntryPointer };
+enum class AddressOriginKind { ExistingPlace, EntryPointer, EntryPointerField };
 
 // Actual address identity, distinct from a loan's lifetime witness. An
 // ExistingPlace denotes live scalar storage; EntryPointer denotes only the
 // address passed into a raw pointer formal, not that formal's own storage.
-// The latter establishes no pointee, allocation, extent or initialization fact.
+// EntryPointerField similarly names the initial value of one ordinary owned
+// pointer field, not the field's storage. Neither establishes a pointee,
+// allocation, extent, disjointness or initialization fact.
 struct ScalarAddress {
   AddressOriginKind kind = AddressOriginKind::ExistingPlace;
   MirPlaceId place = 0;
@@ -743,11 +745,19 @@ offsetAddress(ScalarAddress address, std::uint64_t offset, bool subtract) {
 // A pointer's SSA address value is independent of the pointee's mutable
 // memory. Read-only by-value bindings likewise retain that value. This does
 // not preserve liveness, initialized contents or any dereference permission.
-void preserveEntryPointerIdentities(const MirBody &body, AbstractState &state) {
-  std::erase_if(state.scalarAddressValues, [](const auto &entry) {
-    return entry.second.kind != AddressOriginKind::EntryPointer;
+void preserveEntryPointerIdentities(const MirBody &body, AbstractState &state,
+                                    bool vacantConstruction = false) {
+  std::erase_if(state.scalarAddressValues, [&](const auto &entry) {
+    return entry.second.kind != AddressOriginKind::EntryPointer &&
+           !(vacantConstruction &&
+             entry.second.kind == AddressOriginKind::EntryPointerField);
   });
   std::erase_if(state.scalarAddressPlaces, [&](const auto &entry) {
+    // Constructing an object in vacant storage cannot overwrite a live owned
+    // pointer field. Unknown memory writes still retire this relation.
+    if (vacantConstruction &&
+        entry.second.kind == AddressOriginKind::EntryPointerField)
+      return false;
     const auto *place = body.findPlace(entry.first);
     return entry.second.kind != AddressOriginKind::EntryPointer || !place ||
            place->root != MirPlaceRootKind::Binding || !place->binding ||
@@ -2790,10 +2800,10 @@ implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
   return member == record->declaredFields.end() ? nullptr : &member->type;
 }
 
-[[nodiscard]] bool liveScalarPath(const MirProgram *program,
-                                  MirBodyAddress address, const MirBody &body,
-                                  MirPlaceId root,
-                                  const FieldPath &suffix = {}) {
+[[nodiscard]] const SemanticType *
+liveOwnedPathType(const MirProgram *program, MirBodyAddress address,
+                  const MirBody &body, MirPlaceId root,
+                  const FieldPath &suffix = {}) {
   const MirPlace *place = root ? body.findPlace(root) : nullptr;
   const SemanticType *type = nullptr;
   if (!root || (place && place->root == MirPlaceRootKind::This)) {
@@ -2824,17 +2834,25 @@ implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
         continue;
       }
       if (projection.kind != MirProjectionKind::Field)
-        return false;
+        return nullptr;
       fieldSeen = true;
       type = ordinaryFieldType(program, type, projection.field);
       if (!type)
-        return false;
+        return nullptr;
     }
   for (const auto field : suffix) {
     type = ordinaryFieldType(program, type, field);
     if (!type)
-      return false;
+      return nullptr;
   }
+  return type;
+}
+
+[[nodiscard]] bool liveScalarPath(const MirProgram *program,
+                                  MirBodyAddress address, const MirBody &body,
+                                  MirPlaceId root,
+                                  const FieldPath &suffix = {}) {
+  const auto *type = liveOwnedPathType(program, address, body, root, suffix);
   const auto domain = type ? constantIntegerDomain(*type) : std::nullopt;
   return domain && domain->width > 8;
 }
@@ -2909,7 +2927,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
     return !liveScalarPath(program, address, body, 0, entry.first);
   });
   state.entryRelativeValues.clear();
-  preserveEntryPointerIdentities(body, state);
+  preserveEntryPointerIdentities(body, state, true);
   state.aggregateOrigins.clear();
   state.objectValues.clear();
   state.hasOpaqueEffects = true;
@@ -5117,6 +5135,43 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
   const std::vector<HirBindingId> bindings =
       parameterBindings(program, address);
   const auto types = parameterTypes(program, address);
+  // A function may name the initial pointer value in an ordinary owned field
+  // of its receiver or checked-reference parameter. Do not seed constructor
+  // receivers (not initialized yet), local objects, stored references, unions,
+  // raw dereferences or capability backing paths. Exact writes retire the
+  // field relation; it is never recreated from a later arbitrary load.
+  if (address.kind == MirBodyKind::Function)
+    for (const auto &place : body.places) {
+      if (place.type.kind != SemanticType::RawPointer ||
+          place.type.arguments.size() != 1 || place.projections.empty() ||
+          place.projections.back().kind != MirProjectionKind::Field)
+        continue;
+      bool incoming = place.root == MirPlaceRootKind::This;
+      if (place.root == MirPlaceRootKind::Binding)
+        for (std::size_t index = 0;
+             index < bindings.size() && index < types.size(); ++index)
+          incoming |= place.binding == bindings[index] &&
+                      types[index].kind == SemanticType::Reference;
+      const auto *type =
+          incoming ? liveOwnedPathType(&program, address, body, place.id)
+                   : nullptr;
+      if (!type || *type != place.type)
+        continue;
+      const auto root = canonicalPlace(aliases, place.id);
+      // The alias matrix deliberately treats indirect projections as MayAlias.
+      // Two occurrences of this same checked parameter/receiver and exact
+      // owned field path nevertheless load the same entry pointer value. This
+      // equality does not make different fields or pointees disjoint.
+      const auto same = std::find_if(
+          body.places.begin(), body.places.end(), [&](const auto &candidate) {
+            return samePlaceRoot(candidate, place) &&
+                   candidate.projections == place.projections &&
+                   candidate.type == place.type;
+          });
+      entry.scalarAddressPlaces[root] =
+          ScalarAddress{.kind = AddressOriginKind::EntryPointerField,
+                        .place = same == body.places.end() ? root : same->id};
+    }
   for (std::size_t index = 0; index < bindings.size() && index < types.size();
        ++index) {
     if (types[index].kind != SemanticType::RawPointer ||

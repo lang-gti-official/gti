@@ -1,0 +1,154 @@
+#include <std/memory>
+
+unsafe void initialize_field_target(int* address, int value) {
+  unsafe { std::construct_at(address, value); }
+}
+
+class AddressPair {
+public:
+  mut int* slot = nullptr;
+  mut int* other = nullptr;
+  AddressPair(int* slot, int* other) : slot(slot), other(other) {}
+
+  unsafe int constructed_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int constructed_field_relay() {
+    unsafe {
+      initialize_field_target(this.slot, 7);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int constructed_field_offset() {
+    unsafe {
+      std::construct_at(this.slot + 1, 7);
+      int* pointer = this.slot + 1;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int constructed_copied_field() mut {
+    unsafe {
+      this.other = this.slot;
+      std::construct_at(this.other, 7);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_field_value() {
+    unsafe {
+      std::construct_at(this.slot, 2147483647);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_field_hole() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.slot + 1;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_field_alias() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      *this.other = 2147483647;
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_field_redirect() mut {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      this.slot = this.other;
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_field_old_address() mut {
+    unsafe {
+      int* old = this.slot;
+      this.slot = this.other;
+      std::construct_at(old, 7);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+
+  unsafe int bad_field_replacement() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      std::destroy_at(this.slot);
+      std::construct_at(this.slot, 2147483647);
+      int* pointer = this.slot;
+      return *pointer + 1;
+    }
+  }
+};
+
+struct NestedAddresses {
+  AddressPair addresses;
+  NestedAddresses(int* slot, int* other) : addresses(AddressPair(slot, other)) {}
+};
+
+unsafe int constructed_reference_field(AddressPair& addresses) {
+  unsafe {
+    std::construct_at(addresses.slot, 7);
+    int* pointer = addresses.slot;
+    return *pointer + 1;
+  }
+}
+
+unsafe int constructed_nested_field(NestedAddresses& nested) {
+  unsafe {
+    std::construct_at(nested.addresses.slot, 7);
+    int* pointer = nested.addresses.slot;
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  mut std::uninitialized<int> storage{};
+  mut int pair[2] = {0, 2147483647};
+  unsafe {
+    mut AddressPair addresses{storage.data(), &pair[1]};
+    AddressPair aliasing{storage.data(), storage.data()};
+    NestedAddresses nested{storage.data(), &pair[1]};
+    if (false) return addresses.bad_field_value();
+    if (false) {
+      std::destroy_at(&pair[0]);
+      AddressPair holes{&pair[0], &pair[1]};
+      return holes.bad_field_hole();
+    }
+    if (false) return aliasing.bad_field_alias();
+    if (false) return addresses.bad_field_redirect();
+    if (false) return addresses.bad_field_old_address();
+    if (false) return addresses.bad_field_replacement();
+    if (addresses.constructed_field() != 8) return 1;
+    std::destroy_at(storage.data());
+    if (addresses.constructed_field_relay() != 8) return 2;
+    std::destroy_at(storage.data());
+    if (constructed_reference_field(addresses) != 8) return 3;
+    std::destroy_at(storage.data());
+    if (constructed_nested_field(nested) != 8) return 4;
+    std::destroy_at(storage.data());
+    if (addresses.constructed_copied_field() != 8) return 6;
+    std::destroy_at(storage.data());
+    std::destroy_at(&pair[1]);
+    AddressPair offset{&pair[0], &pair[0]};
+    if (offset.constructed_field_offset() != 8) return 5;
+  }
+  return 0;
+}
