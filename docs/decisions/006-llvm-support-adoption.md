@@ -12,13 +12,23 @@ not change the backend position recorded in
 [`docs/architecture/backend.md`](../architecture/backend.md).
 
 There is one compiler implementation. `find_package(LLVM CONFIG)` uses a
-system LLVM in the supported range from 18 through 22; `GTI_BUNDLE_LLVM` is
+system LLVM version 18 or newer; `GTI_BUNDLE_LLVM` is
 an acquisition option that builds a pinned release for self-contained
 toolchains, and `GTI_RELEASE_BUILD` forces that acquisition mode. It does not
 select a second implementation. When an LLVM implementation replaces existing
 GTI code, the displaced code may remain temporarily under `archive/` as
 non-built historical reference, but it is not a supported fallback or part of
 the test matrix.
+
+### System-version policy revision (2026-10-09)
+
+The previous LLVM 22 ceiling represented a validation window, not a semantic
+or architectural requirement. It is removed after a successful LLVM 23.1.2
+build and compatibility validation. The minimum remains 18; the required API
+surface, RTTI, restricted link targets, and matching Clang package remain
+mandatory. A new major is eligible for a system build, not automatically
+certified compatible. Bundled releases retain their reproducible LLVM pin;
+this revision neither broadens adoption nor adds another implementation.
 
 ## Adoption Rubric
 
