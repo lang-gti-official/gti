@@ -123,6 +123,21 @@ candidate diff are retained in `/private/tmp/gti-string-linkage-final-fka0qeq4`.
 Native text and metadata remain separately measurable costs; these size and
 state checks do not replace quiet interleaved timings or peak-memory evidence.
 
+The same four binaries were then measured on the authorized Mac mini runner
+(Apple M4 Pro, 12 cores, 24 GiB, macOS 27.0.1) after verifying transferred SHA-256
+identities. Five warmup rounds and 25 deterministically shuffled interleaved
+rounds give medians of 26.77 ms for source-prefix GTI, 65.04 ms for private-prefix
+GTI, 40.79 ms for semantic C++ and 40.46 ms for idiomatic C++. The paired
+candidate/private median ratio is 0.4095 (10,000 paired bootstrap resamples,
+95% interval 0.4054–0.4120). Process/load snapshots show no competing compiler
+work during the measurement; ordinary system services remain active. Three
+separate peak-resident observations are 2,162,688 bytes each for the candidate
+and 2,146,304–2,277,376 for the private path: no material memory increase is
+observed, rather than a claim of byte-identical OS accounting. Raw samples,
+hardware/OS identities and memory reports are in that directory's
+`runner-measurement.json`. This is string-client evidence for the linkage
+checkpoint, not a substitute for final-head vector/control or full-suite gates.
+
 `cpp_program_linkage` links two independently generated units with deliberately
 identical ordinary function/storage identities and one shared native C symbol.
 Only their hosted adapters are renamed for this test. It fails before internal
@@ -134,11 +149,24 @@ bounded workers. The combined `af12b553` precursor separately passes all ten
 resource/borrow/optimizer checks (170.89 seconds), including the previously
 blocked source-resource-prefix matrix and exact nested-constructor mutations.
 
-The resource-growth corpus oracle now requires portable exact abort status,
+The resource-growth corpus oracle requires portable exact abort status,
 not merely nonzero termination. A C17 helper makes its cleanup witnesses
 unbuffered before execution. The harness rejects status 70 and unrelated
-signals, and the c118 fixture still fails until its backend resource-constructor
-prerequisite is implemented; its new expectation is not evidence of a pass.
+signals. After the nested resource-constructor prerequisite was integrated,
+the `65b82d25` optimized compiler passes c115/c116/c117/c118/c128 in all eight
+native modes (40 fixture/mode combinations), including no-elide and
+ASan/UBSan. Infallible growth reports GTI-R0011 and aborts with no cleanup;
+the contained state failures retain their exact cleanup traces and status 70.
+Only c128's two source-line expectations change to the current mutable owner
+dereference/member-access declarations (235 and 243); its error categories,
+details and reverse cleanup/release observations remain unchanged. Raw matrix
+results are retained in `/private/tmp/gti-resource-corpus-s5bo91zd/report.json`.
+
+The same checkpoint passes the complete returned-field-address native gate
+(143.09 seconds) and optimizer foundation/raw/intrinsic/conformance controls.
+The unmodified source-owner acceptance assertions retain six safety and three
+object-context failures. Those outstanding proof requirements still prevent
+optimizer and whole-migration acceptance.
 
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
