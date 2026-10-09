@@ -192,12 +192,24 @@ struct PointeeField {
   friend auto operator<=>(const PointeeField &, const PointeeField &) = default;
 };
 
+// Every element in [0, the current end field) at the current pointer field
+// has this scalar/subobject envelope. This is a coverage relation, not an
+// allocation extent or a promise about uninitialized capacity.
+struct PrefixField {
+  FieldPath pointer;
+  FieldPath end;
+  FieldPath subobject;
+  friend auto operator<=>(const PrefixField &, const PrefixField &) = default;
+};
+using PrefixFacts = std::map<PrefixField, IntegerFact>;
+
 struct ObjectFact {
   std::map<FieldPath, IntegerFact> integers;
   // Mutable contents at exact ordinary owned pointer-field values. Only
   // successful scalar construction/checked stores supply these facts; they
   // imply neither allocation extent nor disjointness from other pointer fields.
   std::map<PointeeField, IntegerFact> scalarPointees;
+  PrefixFacts prefixes;
   std::optional<IntegerFact> elements;
   IntegerFieldFacts elementIntegers;
 
@@ -877,8 +889,15 @@ borrowedAddressForPlace(const MirProgram *program, const MirBody &body,
 }
 
 [[nodiscard]] std::optional<IntegerFact>
+integerInPrefix(const MirProgram *program, MirBodyAddress address,
+                const MirBody &body, const AbstractState &state,
+                const ScalarAddress &pointer, const SemanticType &type);
+
+[[nodiscard]] std::optional<IntegerFact>
 integerAtAddress(const MirBody &body, const AbstractState &state,
-                 const ScalarAddress &pointer, const SemanticType &type) {
+                 const ScalarAddress &pointer, const SemanticType &type,
+                 const MirProgram *program = nullptr,
+                 MirBodyAddress address = {}) {
   const auto *pointee = addressPointeeType(body, pointer);
   if (!pointee || *pointee != type)
     return std::nullopt;
@@ -889,7 +908,7 @@ integerAtAddress(const MirBody &body, const AbstractState &state,
   if (pointer.kind == AddressOriginKind::ExistingPlace &&
       pointer.elementOffset == 0 && !pointer.index)
     return integerForPlace(body, state, pointer.place);
-  return std::nullopt;
+  return integerInPrefix(program, address, body, state, pointer, type);
 }
 
 template <typename Key>
@@ -1072,6 +1091,10 @@ void stabilize(ObjectFact &object) {
     (void)path;
     stabilize(fact);
   }
+  for (auto &[path, fact] : object.prefixes) {
+    (void)path;
+    stabilize(fact);
+  }
 }
 
 [[nodiscard]] IntegerFact joinedInteger(const IntegerFact &left,
@@ -1199,6 +1222,74 @@ parameterOrdinal(const MirProgram &program, MirBodyAddress address,
       if (!roots[*index])
         roots[*index] = place.id;
   return roots;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+integerInPrefix(const MirProgram *program, MirBodyAddress address,
+                const MirBody &body, const AbstractState &state,
+                const ScalarAddress &pointer, const SemanticType &type) {
+  if (!program)
+    return std::nullopt;
+  for (const auto &[field, base] : state.fieldAddresses) {
+    if (base.index || !base.subobject.empty() ||
+        pointer.elementOffset < base.elementOffset)
+      continue;
+    auto identity = addressKey(pointer);
+    identity.index.reset();
+    identity.elementOffset = base.elementOffset;
+    identity.subobject.clear();
+    if (identity != addressKey(base))
+      continue;
+    const auto object = state.objects.find(field.root);
+    if (object == state.objects.end())
+      continue;
+    std::optional<IntegerFact> offset;
+    if (pointer.index) {
+      const auto &index = *pointer.index;
+      if (index.parameter) {
+        const auto roots = parameterPlaces(*program, address, body);
+        if (*index.parameter < roots.size())
+          offset = integerForPlace(body, state, roots[*index.parameter]);
+      } else if (const auto receiver = state.objects.find(thisRoot(body));
+                 receiver != state.objects.end()) {
+        const auto current = receiver->second.integers.find(index.field);
+        if (current != receiver->second.integers.end())
+          offset = current->second;
+      }
+      if (offset && offset->domain == index.domain)
+        offset = applyEntryRelative(
+            *offset,
+            EntryRelativeField{index.field, index.domain, index.offset});
+      else
+        offset.reset();
+    } else {
+      offset = IntegerFact{.domain = {.width = 64, .signedValue = false},
+                           .lower = {},
+                           .upper = {}};
+    }
+    if (!offset || offset->lower.negative)
+      continue;
+    const auto displacement = pointer.elementOffset - base.elementOffset;
+    if (offset->upper.magnitude >
+        std::numeric_limits<std::uint64_t>::max() - displacement)
+      continue;
+    const auto last = offset->upper.magnitude + displacement;
+    for (const auto &[path, envelope] : object->second.prefixes) {
+      if (path.pointer != field.path || path.subobject != pointer.subobject ||
+          constantIntegerDomain(type) != envelope.domain)
+        continue;
+      const auto end = object->second.integers.find(path.end);
+      if (end == object->second.integers.end() || end->second.lower.negative ||
+          last >= end->second.lower.magnitude)
+        continue;
+      auto result = envelope;
+      result.evidence = merged(result.evidence, offset->evidence);
+      result.evidence = merged(result.evidence, end->second.evidence);
+      result.evidence = merged(result.evidence, pointer.evidence);
+      return result;
+    }
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] std::optional<std::size_t>
@@ -1459,8 +1550,11 @@ void refineCondition(const MirBody &body, MirBlockId block,
     state.reachable = false;
     return;
   }
-  auto branchEnvelope = variableFact->wideningEnvelope.value_or(std::pair{
-      minimumValue(variableFact->domain), maximumValue(variableFact->domain)});
+  // This edge's predicate is an independent threshold. An earlier contextual
+  // singleton is not an invariant of repeated executions of the guard: keeping
+  // it here would make an affine loop expand its threshold one step at a time.
+  auto branchEnvelope = std::pair{minimumValue(variableFact->domain),
+                                  maximumValue(variableFact->domain)};
   if (lower && compare(*lower, branchEnvelope.first) > 0) {
     branchEnvelope.first = *lower;
   }
@@ -1862,6 +1956,20 @@ extractObjectFact(const MirBody &body,
       result.scalarPointees.insert_or_assign(
           PointeeField{std::move(suffix), path.subobject}, fact);
     }
+    for (const auto &[path, fact] : object.prefixes) {
+      if (path.pointer.size() <= prefix->size() ||
+          path.end.size() <= prefix->size() ||
+          !std::equal(prefix->begin(), prefix->end(), path.pointer.begin()) ||
+          !std::equal(prefix->begin(), prefix->end(), path.end.begin()))
+        continue;
+      result.prefixes.insert_or_assign(
+          PrefixField{
+              FieldPath(path.pointer.begin() + prefix->size(),
+                        path.pointer.end()),
+              FieldPath(path.end.begin() + prefix->size(), path.end.end()),
+              path.subobject},
+          fact);
+    }
   }
   bool observedElements = false;
   std::optional<IntegerFact> derivedElements;
@@ -1907,6 +2015,16 @@ extractObjectFact(const MirBody &body,
                         suffix.pointer.end());
         result.scalarPointees.insert_or_assign(
             PointeeField{std::move(combined), suffix.subobject}, fact);
+      }
+      for (const auto &[suffix, fact] : nested->second.prefixes) {
+        auto pointer = *path;
+        pointer.insert(pointer.end(), suffix.pointer.begin(),
+                       suffix.pointer.end());
+        auto end = *path;
+        end.insert(end.end(), suffix.end.begin(), suffix.end.end());
+        result.prefixes.insert_or_assign(
+            PrefixField{std::move(pointer), std::move(end), suffix.subobject},
+            fact);
       }
     }
   }
@@ -1957,8 +2075,11 @@ extractObjectFact(const MirBody &body,
   }
   while (result.scalarPointees.size() > 64)
     result.scalarPointees.erase(std::prev(result.scalarPointees.end()));
+  while (result.prefixes.size() > 64)
+    result.prefixes.erase(std::prev(result.prefixes.end()));
   if (result.integers.empty() && result.scalarPointees.empty() &&
-      !result.elements && result.elementIntegers.empty()) {
+      result.prefixes.empty() && !result.elements &&
+      result.elementIntegers.empty()) {
     return std::nullopt;
   }
   return result;
@@ -2146,10 +2267,12 @@ void retireScalarPointeeSnapshots(AbstractState &state) {
   for (auto &[root, object] : state.objects) {
     (void)root;
     object.scalarPointees.clear();
+    object.prefixes.clear();
   }
   for (auto &[value, object] : state.objectValues) {
     (void)value;
     object.scalarPointees.clear();
+    object.prefixes.clear();
   }
 }
 
@@ -3118,6 +3241,8 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       }
     }
   std::vector<std::pair<ScalarAddress, ConstructedScalar>> constructed;
+  std::vector<std::pair<MirPlaceId, std::pair<PrefixField, IntegerFact>>>
+      appendedPrefixes;
   std::vector<std::pair<FieldOrigin, ScalarAddress>> pointerFields;
   for (const auto &[output, input] : summary.pointerFieldValues) {
     const auto root = output.parameter
@@ -3146,8 +3271,6 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     auto pointer =
         inputAddressForCall(closedCalls->program, address, body, aliases, state,
                             instruction, destination);
-    if (!pointer)
-      continue;
     auto value = rebased(postcondition.value, block.id, instruction.id);
     stabilize(value);
     std::optional<std::size_t> valueParameter;
@@ -3176,6 +3299,69 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                            : readonlyRecordParameter(&closedCalls->program,
                                                      address, body, operand);
     }
+    // A closed append proves construction at the old endpoint, advances that
+    // endpoint by exactly one, and leaves the pointer field unchanged. The
+    // existing typed-store profile excludes overlapping payload-width writes;
+    // raw/native/destructive effects never enter this transfer.
+    if (!destination.parameter && !destination.field.empty() &&
+        destination.elementOffset == 0 && destination.index &&
+        !destination.index->parameter && !destination.index->offset.negative &&
+        destination.index->offset.magnitude == 0 && summary.scalarStoresOnly &&
+        !summary.mayWriteGlobals && invocation &&
+        !invocation->traits.maySynchronize &&
+        summary.liveMemoryBarrier != LiveMemoryBarrier::Unknown &&
+        value.domain.width > 8 &&
+        (!summary.scalarStoreWidth ||
+         *summary.scalarStoreWidth != value.domain.width)) {
+      const auto &endPath = destination.index->field;
+      const auto update = summary.receiverUpdates.find(endPath);
+      const auto unchanged = summary.pointerFieldValues.find(
+          InputField{std::nullopt, destination.field});
+      if (update != summary.receiverUpdates.end() &&
+          update->second.field == endPath &&
+          update->second.domain == destination.index->domain &&
+          !update->second.offset.negative &&
+          update->second.offset.magnitude == 1 &&
+          unchanged != summary.pointerFieldValues.end() &&
+          unchanged->second ==
+              InputAddress{
+                  std::nullopt, destination.field, 0, std::nullopt, {}}) {
+        const auto end =
+            receiverFieldOrigin(closedCalls->program, address, body, aliases,
+                                state, instruction, endPath);
+        const auto field =
+            ownedPointerFieldOrigin(&closedCalls->program, address, body,
+                                    aliases, receiverOrigin, destination.field);
+        if (end && field && end->root == field->root)
+          if (const auto object =
+                  extractObjectFact(body, aliases, end->root, state)) {
+            const auto length = object->integers.find(end->path);
+            const PrefixField path{field->path, end->path,
+                                   destination.subobject};
+            const auto previous = object->prefixes.find(path);
+            if (length != object->integers.end() &&
+                !length->second.lower.negative &&
+                applyEntryRelative(length->second, update->second) &&
+                ((singleton(length->second) &&
+                  length->second.lower.magnitude == 0) ||
+                 (previous != object->prefixes.end() &&
+                  previous->second.domain == value.domain))) {
+              auto envelope = previous == object->prefixes.end() ||
+                                      (singleton(length->second) &&
+                                       length->second.lower.magnitude == 0)
+                                  ? value
+                                  : joinedElementFact(previous->second, value);
+              envelope.evidence =
+                  merged(envelope.evidence, length->second.evidence);
+              addInstruction(envelope.evidence, instruction.id);
+              appendedPrefixes.emplace_back(
+                  end->root, std::pair{path, std::move(envelope)});
+            }
+          }
+      }
+    }
+    if (!pointer)
+      continue;
     const auto *pointee = addressPointeeType(body, *pointer);
     if (!pointee || constantIntegerDomain(*pointee) != value.domain)
       continue;
@@ -3202,6 +3388,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         std::none_of(invocation->argumentsEscape.begin(),
                      invocation->argumentsEscape.end(),
                      [](bool escapes) { return escapes; })));
+  std::map<MirPlaceId, PrefixFacts> unchangedPrefixes;
+  if (preservesMemory)
+    for (const auto &[root, object] : state.objects)
+      if (!object.prefixes.empty())
+        unchangedPrefixes.emplace(root, object.prefixes);
   std::vector<std::pair<FieldOrigin, IntegerFact>> updatedFields;
   EntryRelativeFields composedUpdates;
   if (!summary.mayWriteGlobals && invocation &&
@@ -3437,6 +3628,16 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     add(pointer.evidence, block.id);
     addInstruction(pointer.evidence, instruction.id);
     state.fieldAddresses.insert_or_assign(field, std::move(pointer));
+  }
+  for (auto &[root, prefixes] : unchangedPrefixes)
+    if (const auto object = state.objects.find(root);
+        object != state.objects.end())
+      object->second.prefixes = std::move(prefixes);
+  for (auto &[root, prefix] : appendedPrefixes) {
+    auto &object = state.objects[root];
+    if (object.prefixes.size() < 64 || object.prefixes.contains(prefix.first))
+      object.prefixes.insert_or_assign(std::move(prefix.first),
+                                       std::move(prefix.second));
   }
   return true;
 }
@@ -3748,6 +3949,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
     object.elements.reset();
     object.elementIntegers.clear();
     object.scalarPointees.clear();
+    object.prefixes.clear();
   }
   state.arrayElements.clear();
   state.aggregateElements.clear();
@@ -3863,6 +4065,7 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
       receiver.elements.reset();
       receiver.elementIntegers.clear();
       receiver.scalarPointees.clear();
+      receiver.prefixes.clear();
       receivers.emplace(root, std::move(receiver));
     }
     for (const auto &[root, fact] : state.integerPlaces)
@@ -4162,8 +4365,9 @@ void applyInstruction(const MirBody &body,
         const auto found = state.scalarAddressValues.find(place->value);
         if (found != state.scalarAddressValues.end() &&
             place->type == instruction.info.type) {
-          if (auto value = integerAtAddress(body, state, found->second,
-                                            instruction.info.type)) {
+          if (auto value =
+                  integerAtAddress(body, state, found->second,
+                                   instruction.info.type, program, address)) {
             value->evidence = merged(value->evidence, found->second.evidence);
             state.integers[*instruction.result] =
                 rebased(std::move(*value), block.id, instruction.id,
@@ -4211,8 +4415,10 @@ void applyInstruction(const MirBody &body,
   if (program && isMirStructuralValueTransfer(*program, instruction)) {
     const auto &source = instruction.operands.front();
     auto object = objectForOperand(body, aliases, state, source);
-    if (object)
+    if (object) {
       object->scalarPointees.clear();
+      object->prefixes.clear();
+    }
     // Prepared values own an independent snapshot. In particular a later
     // argument may modify the source without modifying this earlier copy.
     // Movement retires its old place; no source correlation crosses transport.
@@ -4428,8 +4634,9 @@ void applyInstruction(const MirBody &body,
       std::optional<IntegerFact> fact;
       if (const auto pointer =
               borrowedAddressForPlace(program, body, state, source.place))
-        if (auto value = integerAtAddress(body, state, *pointer,
-                                          instruction.info.type)) {
+        if (auto value =
+                integerAtAddress(body, state, *pointer, instruction.info.type,
+                                 program, address)) {
           value->evidence = merged(value->evidence, pointer->evidence);
           fact = std::move(*value);
         }
@@ -4530,6 +4737,22 @@ void applyInstruction(const MirBody &body,
     std::optional<AlternativeFields> initializedAlternatives;
     const auto *destinationPlace = body.findPlace(destination);
     const auto *physicalDestination = body.findPlace(*instruction.destination);
+    const bool independentScalarWrite =
+        (instruction.kind == MirInstructionKind::Initialize ||
+         instruction.kind == MirInstructionKind::Assign) &&
+        physicalDestination &&
+        physicalDestination->root == MirPlaceRootKind::Binding &&
+        physicalDestination->projections.empty() &&
+        constantIntegerDomain(physicalDestination->type) &&
+        !physicalDestination->traits.containsBorrowedState &&
+        instruction.lifecycle.empty() && !instruction.rawMemoryAccess &&
+        !effect.invokesUserCode && !effect.invokesRuntime &&
+        !effect.writesUnknownMemory && !effect.maySynchronize;
+    std::map<MirPlaceId, PrefixFacts> retainedPrefixes;
+    if (referenceCarrierInitialization || independentScalarWrite)
+      for (const auto &[root, object] : state.objects)
+        if (!object.prefixes.empty())
+          retainedPrefixes.emplace(root, object.prefixes);
     const auto writtenDomain =
         physicalDestination ? constantIntegerDomain(physicalDestination->type)
                             : std::nullopt;
@@ -4642,8 +4865,10 @@ void applyInstruction(const MirBody &body,
         producer->info.type == source.type;
     // Verified final-address publication does not copy the shell again.
     // Ordinary copies, moves and replacement receive no pointee snapshots.
-    if (sourceObject && !publishesConstructedResult)
+    if (sourceObject && !publishesConstructedResult) {
       sourceObject->scalarPointees.clear();
+      sourceObject->prefixes.clear();
+    }
     // Even exact indexed writes which retain aggregate envelopes retire
     // conditional memory correlations. Independent local initialization may
     // restore only its producer's freshly captured alternatives below.
@@ -4783,6 +5008,10 @@ void applyInstruction(const MirBody &body,
     if (sourceObject) {
       seedObjectFact(body, aliases, destination, *sourceObject, state);
     }
+    for (auto &[root, prefixes] : retainedPrefixes)
+      if (const auto object = state.objects.find(root);
+          object != state.objects.end())
+        object->second.prefixes = std::move(prefixes);
     // Initializing a new independent local shell does not write the objects
     // described by the call that produced it. Reassignment/projection and
     // borrowed-state carriers deliberately receive no such restoration.
@@ -4968,6 +5197,13 @@ transferBlock(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
              contains(*right.wideningEnvelope, left)) {
     envelope = right.wideningEnvelope;
   }
+  // A threshold which itself grows on a widening edge is not a stable
+  // result-domain bound. Repeated affine updates must widen, not enumerate
+  // the trip count by expanding their hint one element at a time.
+  if (widen && envelope && left.wideningEnvelope &&
+      (compare(envelope->first, left.wideningEnvelope->first) < 0 ||
+       compare(envelope->second, left.wideningEnvelope->second) > 0))
+    envelope.reset();
   const bool envelopeContainsJoin =
       envelope && compare(envelope->first, joinedLower) <= 0 &&
       compare(envelope->second, joinedUpper) >= 0;
@@ -6225,6 +6461,31 @@ void sanitizeObject(const MirProgram &, const SemanticType &type,
 [[nodiscard]] bool mergeObject(ObjectFact &target, const ObjectFact &incoming,
                                bool widen) {
   const ObjectFact before = target;
+  const auto empty = [](const ObjectFact &object, const PrefixField &path) {
+    const auto end = object.integers.find(path.end);
+    return end != object.integers.end() && singleton(end->second) &&
+           !end->second.lower.negative && end->second.lower.magnitude == 0;
+  };
+  for (auto entry = target.prefixes.begin(); entry != target.prefixes.end();) {
+    if (empty(incoming, entry->first)) {
+      ++entry;
+      continue;
+    }
+    const auto found = incoming.prefixes.find(entry->first);
+    if (found == incoming.prefixes.end() ||
+        found->second.domain != entry->second.domain) {
+      entry = target.prefixes.erase(entry);
+      continue;
+    }
+    entry->second = empty(before, entry->first)
+                        ? found->second
+                        : joinedInteger(entry->second, found->second, widen);
+    ++entry;
+  }
+  for (const auto &[path, fact] : incoming.prefixes)
+    if (!target.prefixes.contains(path) && empty(before, path) &&
+        target.prefixes.size() < 64)
+      target.prefixes.emplace(path, fact);
   joinIntegers(target.integers, incoming.integers, widen);
   joinIntegers(target.scalarPointees, incoming.scalarPointees, widen);
   joinOptionalInteger(target.elements, incoming.elements, widen);
@@ -6796,6 +7057,15 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         block.terminator.value) {
       std::optional<IntegerFact> fact =
           integerForOperand(*body, transferred.output, *block.terminator.value);
+      if (!fact && block.terminator.value->kind == MirOperandKind::Loan &&
+          body->returnType.kind == SemanticType::Reference &&
+          body->returnType.arguments.size() == 1)
+        if (const auto pointer = transferred.output.borrowedAddresses.find(
+                block.terminator.value->loan);
+            pointer != transferred.output.borrowedAddresses.end())
+          fact = integerAtAddress(*body, transferred.output, pointer->second,
+                                  body->returnType.arguments.front(), &program,
+                                  address);
       returnFacts.push_back(std::move(fact));
       std::optional<FieldPath> returnedField;
       const auto field =

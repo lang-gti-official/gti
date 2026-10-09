@@ -128,6 +128,14 @@ def main():
         "bad_record_argument": "bad_record_argument(storage.data(), owner)",
         "bad_record_other": "bad_record_other(storage.data(), &other, owner)",
     }, "return value.narrow + 1;")
+    run_fixture(compiler, "optimizer_prefix_frontier.gti", {
+        "bad_prefix_native": "bad_prefix_native(sequence)",
+        "bad_prefix_retarget": "bad_prefix_retarget(sequence, &other)",
+        "bad_prefix_gap": "bad_prefix_gap()",
+        "bad_prefix_partial": "bad_prefix_partial()",
+        "bad_prefix_value": "bad_prefix_value()",
+        "bad_prefix_lifetime": "bad_prefix_lifetime(sequence)",
+    }, "return value + 1;")
 
 
 if __name__ == "__main__":

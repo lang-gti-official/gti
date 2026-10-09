@@ -426,5 +426,8 @@ int main() {
   checkAddressFixture(
       "optimizer_record_pointees.gti",
       {"read_narrow", "read_second_argument", "read_field_borrow"}, 6, false);
+  checkAddressFixture("optimizer_prefix_frontier.gti",
+                      {"prefix_frontier", "prefix_last", "prefix_parameter"}, 6,
+                      false, false);
   return failures == 0 ? 0 : 1;
 }
