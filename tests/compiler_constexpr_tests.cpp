@@ -1939,6 +1939,61 @@ int main() { return 0; }
          "including nested early calls, recursive generic calls, constructors "
          "and restored owners");
 
+  // An enum named only by a generic call's type arguments still needs its
+  // exact catalog row in the staged closure. Without one, MIR verification
+  // rejected the closure and the AST fallback could not select the branch.
+  lang::FrontendWorkMetrics enumMetrics;
+  const auto enumArguments =
+      lang::Frontend({.workMetrics = &enumMetrics})
+          .analyze("constexpr-enum-type-arguments.gti", R"(
+struct underlying_probe<E, U> {
+  bool matches() requires std::enum_underlying<E, U> { return true; }
+};
+struct plain_probe<T> {
+  bool matches() { return true; }
+};
+enum class small : uint8_t { low, high };
+enum class wide : uint16_t { low, high };
+enum envelope<T> { empty, held(T value) };
+constexpr int width<E>() {
+  if constexpr (requires(underlying_probe<E, uint8_t>& probe) {
+                  { probe.matches() } -> bool;
+                }) {
+    return 8;
+  } else if constexpr (requires(underlying_probe<E, uint16_t>& probe) {
+                         { probe.matches() } -> bool;
+                       }) {
+    return 16;
+  }
+  return 0;
+}
+constexpr int plain<T>() {
+  if constexpr (requires(plain_probe<T>& probe) {
+                  { probe.matches() } -> bool;
+                }) {
+    return 1;
+  }
+  return 0;
+}
+static_assert(width<small>() == 8);
+static_assert(width<wide>() == 16);
+static_assert(width<int32_t>() == 0);
+static_assert(width<envelope<small>>() == 0);
+static_assert(plain<small>() == 1);
+int main() {
+  return width<small>() + width<wide>() + width<int32_t>() +
+         width<envelope<small>>() + plain<small>() - 25;
+}
+)",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!enumArguments.canGenerateCode() || !enumArguments.diagnostics.empty())
+    for (const auto &d : enumArguments.diagnostics)
+      std::cerr << d.primary.line << ": " << d.message << '\n';
+  expect(enumArguments.canGenerateCode() && enumArguments.diagnostics.empty() &&
+             enumMetrics.constexprMirExecutions == 5,
+         "satisfied and unsatisfied member constraints over identity-only "
+         "enum type arguments select dependent branches through staged MIR");
+
   const auto selected = lang::Frontend().analyze(
       "selected-constexpr.gti",
       "constexpr int selected<uint64_t N>() { if constexpr(N == 0) { return 1; "
