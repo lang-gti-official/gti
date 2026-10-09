@@ -1,0 +1,18 @@
+#include <std/string>
+#include <std/unordered_map>
+int main() {
+  mut std::unordered_map<int32_t, int32_t> table{};
+  for (mut int32_t i = 0; i < 1000000; i++) {
+    [[discard]] table.insert(int32_t((int64_t(i) * int64_t(7919)) % int64_t(2000003)), i);
+  }
+  mut int64_t hits = 0;
+  for (mut int32_t round = 0; round < 5; round++) {
+    for (mut int32_t i = 0; i < 2000000; i++) {
+      int32_t key = i + round;
+      if (table.contains(key)) { hits += int64_t(table.at(key)); }
+    }
+  }
+  std::print("checksum ");
+  std::println(std::to_string(hits));
+  return 0;
+}
