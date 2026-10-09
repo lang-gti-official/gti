@@ -226,8 +226,8 @@
       }
     },
     "106-custom-formatters.gti": {
-      "declarations": 761,
-      "bodies": 107,
+      "declarations": 762,
+      "bodies": 108,
       "generated_items": 36,
       "generated_kinds": {
         "program_initialization": 0,
@@ -301,8 +301,8 @@
       }
     },
     "110-integral-enums.gti": {
-      "declarations": 741,
-      "bodies": 95,
+      "declarations": 742,
+      "bodies": 96,
       "generated_items": 39,
       "generated_kinds": {
         "program_initialization": 0,
@@ -676,8 +676,8 @@
       }
     },
     "134-standard-library-modules.gti": {
-      "declarations": 845,
-      "bodies": 117,
+      "declarations": 846,
+      "bodies": 118,
       "generated_items": 48,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1952,8 +1952,8 @@
     }
   },
   "totals": {
-    "declarations": 49594,
-    "bodies": 6781,
+    "declarations": 49597,
+    "bodies": 6784,
     "generated_items": 2860
   }
 }

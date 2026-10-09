@@ -322,8 +322,47 @@ expected<void, format_errc> validate_format_pattern(string_view pattern,
   return;
 }
 
+/// Makes room for `additional` more bytes. Capacity grows at least
+/// geometrically, so a sequence of formatted appends reallocates an amortized
+/// constant number of times instead of once per append.
+void reserve_additional(mut string& output, size_t additional) {
+  size_t capacity = output.capacity();
+  if (additional <= capacity - output.size()) {
+    return;
+  }
+  size_t required = output.size() + additional;
+  mut size_t grown = required;
+  if (capacity > required - capacity) {
+    grown = capacity + capacity;
+  }
+  output.reserve(grown);
+}
+
+/// Splits the padding for `count` content bytes into fill before and after.
+void split_padding(format_spec& spec, size_t count, char default_alignment,
+                   mut size_t& left, mut size_t& right) {
+  mut size_t padding = 0;
+  if (spec.width > count) {
+    padding = spec.width - count;
+  }
+  mut char alignment = spec.alignment;
+  if (alignment == '\0') {
+    alignment = default_alignment;
+  }
+  left = 0;
+  right = 0;
+  if (alignment == '<') {
+    right = padding;
+  } else if (alignment == '^') {
+    left = padding / size_t(2);
+    right = padding - left;
+  } else {
+    left = padding;
+  }
+}
+
 void append_repeat(mut string& output, char value, size_t count) {
-  output.reserve(output.size() + count);
+  reserve_additional(output, count);
   for (mut size_t index = 0; index < count; index++) {
     output.push_back(value);
   }
@@ -335,28 +374,30 @@ void append_text(mut string& output, string_view value, format_spec& spec,
   if (spec.has_precision && spec.precision < count) {
     count = spec.precision;
   }
-  mut size_t padding = 0;
-  if (spec.width > count) {
-    padding = spec.width - count;
+  mut size_t left = 0;
+  mut size_t right = 0;
+  split_padding(spec, count, default_alignment, left, right);
+  reserve_additional(output, left + count + right);
+  append_repeat(output, spec.fill, left);
+  for (mut size_t index = 0; index < count; index++) {
+    output.push_back(value[index]);
   }
-  mut char alignment = spec.alignment;
-  if (alignment == '\0') {
-    alignment = default_alignment;
+  append_repeat(output, spec.fill, right);
+}
+
+/// One character with text padding and precision, without a temporary string.
+void append_character(mut string& output, char value, format_spec& spec) {
+  mut size_t count = 1;
+  if (spec.has_precision && spec.precision < count) {
+    count = spec.precision;
   }
   mut size_t left = 0;
   mut size_t right = 0;
-  if (alignment == '<') {
-    right = padding;
-  } else if (alignment == '^') {
-    left = padding / size_t(2);
-    right = padding - left;
-  } else {
-    left = padding;
-  }
+  split_padding(spec, count, '<', left, right);
+  reserve_additional(output, left + count + right);
   append_repeat(output, spec.fill, left);
-  output.reserve(output.size() + count);
-  for (mut size_t index = 0; index < count; index++) {
-    output.push_back(value[index]);
+  if (count == size_t(1)) {
+    output.push_back(value);
   }
   append_repeat(output, spec.fill, right);
 }
@@ -396,41 +437,6 @@ char format_digit_character(uint8_t digit, bool uppercase) {
   }
 }
 
-void append_numeric_text(mut string& output, string& prefix, string& digits,
-                         format_spec& spec) {
-  size_t content = prefix.size() + digits.size();
-  mut size_t padding = 0;
-  if (spec.width > content) {
-    padding = spec.width - content;
-  }
-
-  if (spec.zero_pad && spec.alignment == '\0') {
-    output.append(prefix.view());
-    append_repeat(output, '0', padding);
-    output.append(digits.view());
-    return;
-  }
-
-  mut char alignment = spec.alignment;
-  if (alignment == '\0') {
-    alignment = '>';
-  }
-  mut size_t left = 0;
-  mut size_t right = 0;
-  if (alignment == '<') {
-    right = padding;
-  } else if (alignment == '^') {
-    left = padding / size_t(2);
-    right = padding - left;
-  } else {
-    left = padding;
-  }
-  append_repeat(output, spec.fill, left);
-  output.append(prefix.view());
-  output.append(digits.view());
-  append_repeat(output, spec.fill, right);
-}
-
 format_argument_status append_integral<std::integral T>(mut string& output,
                                                          T& value,
                                                          format_spec& spec) {
@@ -446,9 +452,7 @@ format_argument_status append_integral<std::integral T>(mut string& output,
         uint64_t(value) > uint64_t(255)) {
       return format_argument_status::invalid_specifier;
     }
-    mut string character = string();
-    character.push_back(char(uint8_t(value)));
-    append_text(output, character.view(), spec, '<');
+    append_character(output, char(uint8_t(value)), spec);
     return format_argument_status::appended;
   }
 
@@ -466,30 +470,34 @@ format_argument_status append_integral<std::integral T>(mut string& output,
     return format_argument_status::invalid_specifier;
   }
 
-  mut string prefix = string();
+  // A sign and a two-character base marker at most; digits stay in the
+  // reversed buffer, so formatting an integer allocates no temporary string.
+  mut char prefix[3] = {' ', ' ', ' '};
+  mut size_t prefix_count = 0;
   bool negative = value < T(0);
   if (negative) {
-    prefix.push_back('-');
+    prefix[prefix_count] = '-';
+    prefix_count++;
   } else if (spec.sign == '+') {
-    prefix.push_back('+');
+    prefix[prefix_count] = '+';
+    prefix_count++;
   } else if (spec.sign == ' ') {
-    prefix.push_back(' ');
+    prefix[prefix_count] = ' ';
+    prefix_count++;
   }
   if (spec.alternate) {
-    if (base == uint8_t(16)) {
-      if (uppercase) {
-        prefix.append("0X");
+    if (base == uint8_t(16) || base == uint8_t(2)) {
+      prefix[prefix_count] = '0';
+      prefix_count++;
+      if (base == uint8_t(16)) {
+        prefix[prefix_count] = uppercase ? 'X' : 'x';
       } else {
-        prefix.append("0x");
+        prefix[prefix_count] = uppercase ? 'B' : 'b';
       }
+      prefix_count++;
     } else if (base == uint8_t(8) && value != T(0)) {
-      prefix.push_back('0');
-    } else if (base == uint8_t(2)) {
-      if (uppercase) {
-        prefix.append("0B");
-      } else {
-        prefix.append("0b");
-      }
+      prefix[prefix_count] = '0';
+      prefix_count++;
     }
   }
 
@@ -510,13 +518,28 @@ format_argument_status append_integral<std::integral T>(mut string& output,
       remaining = T(remaining / T(base));
     }
   }
-  mut string digits = string();
-  digits.reserve(count);
+  size_t content = prefix_count + count;
+  mut size_t zeros = 0;
+  mut size_t left = 0;
+  mut size_t right = 0;
+  if (spec.zero_pad && spec.alignment == '\0') {
+    if (spec.width > content) {
+      zeros = spec.width - content;
+    }
+  } else {
+    split_padding(spec, content, '>', left, right);
+  }
+  reserve_additional(output, left + content + zeros + right);
+  append_repeat(output, spec.fill, left);
+  for (mut size_t index = 0; index < prefix_count; index++) {
+    output.push_back(prefix[index]);
+  }
+  append_repeat(output, '0', zeros);
   while (count > 0) {
     count--;
-    digits.push_back(format_digit_character(reversed[count], uppercase));
+    output.push_back(format_digit_character(reversed[count], uppercase));
   }
-  append_numeric_text(output, prefix, digits, spec);
+  append_repeat(output, spec.fill, right);
   return format_argument_status::appended;
 }
 
@@ -599,7 +622,7 @@ format_argument_status append_float32(mut string& output, float& value,
   if (code != uint32_t(0) || count > uint64_t(4096)) {
     return format_argument_status::invalid_specifier;
   }
-  output.reserve(output.size() + size_t(count));
+  reserve_additional(output, size_t(count));
   for (mut uint64_t index = uint64_t(0); index < count; index++) {
     output.push_back(char(buffer[index]));
   }
@@ -630,7 +653,7 @@ format_argument_status append_float64(mut string& output, double& value,
   if (code != uint32_t(0) || count > uint64_t(4096)) {
     return format_argument_status::invalid_specifier;
   }
-  output.reserve(output.size() + size_t(count));
+  reserve_additional(output, size_t(count));
   for (mut uint64_t index = uint64_t(0); index < count; index++) {
     output.push_back(char(buffer[index]));
   }
@@ -827,9 +850,7 @@ private:
         spec.has_precision) {
       return std::detail::format_argument_status::invalid_specifier;
     }
-    mut std::string character = std::string();
-    character.push_back(value);
-    std::detail::append_text(output, character.view(), spec, '<');
+    std::detail::append_character(output, value, spec);
     return std::detail::format_argument_status::appended;
   }
 };
@@ -909,6 +930,7 @@ expected<string, format_errc> try_format(string_view pattern) {
   }
 
   mut string output = string();
+  output.reserve(pattern.size());
   mut size_t cursor = 0;
   while (cursor < pattern.size()) {
     detail::append_format_literal(output, pattern, cursor);
@@ -926,7 +948,10 @@ try_format<First, Args...>(string_view pattern, First first, Args... args) requi
     return unexpected(validation.error());
   }
 
+  // One allocation covers the literal text and typical short arguments;
+  // longer results grow geometrically.
   mut string output = string();
+  output.reserve(pattern.size() + argument_count * size_t(16));
   mut size_t cursor = 0;
   mut size_t next_automatic = 0;
   mut uint8_t indexing_mode = uint8_t(0);
