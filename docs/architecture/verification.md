@@ -487,6 +487,17 @@ acceptance failures, not changed zero-proof expectations. Formatting and diff
 checks pass; broad corpus, inventories, installed consumers and performance
 acceptance are still outstanding.
 
+Handover review adds a two-level ordinary-counter reduction alongside the
+public vector size constructor. Both originally lost their exact loop-exit
+field when an older nested summary overwrote its refined enclosing path.
+The correction passes all six focused optimizer foundation/analyses/raw/
+intrinsic/object/conformance gates and the expanded 42-fixture, eight-mode
+object matrix (336 cases, six workers, 105.34 seconds). The new nested-mutation
+case retains its exact overflow location and rejects a forged discharge;
+O0 remains transformation-free and O2/O3 evidence independently replays.
+This does not close migration acceptance: a fresh run still reports the
+original six optimizer safety and three native optimization-evidence failures.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

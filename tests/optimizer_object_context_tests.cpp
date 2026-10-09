@@ -528,6 +528,87 @@ int main() {
     expect(rejected == 7,
            "every getter mutation negative exercises canonical rejection");
   }
+  const auto nestedLoopPath =
+      sourcePath.parent_path() / "optimizer_nested_getter_loop.gti";
+  const std::ifstream nestedLoopFile(nestedLoopPath);
+  const std::string nestedLoopSource{
+      std::istreambuf_iterator<char>(nestedLoopFile.rdbuf()), {}};
+  const auto nestedLoop = lang::Frontend().analyze(
+      nestedLoopPath, nestedLoopSource,
+      {library / "prelude.gti", nestedLoopPath},
+      {{std::filesystem::weakly_canonical(nestedLoopPath).string(),
+        nestedLoopSource}},
+      {library});
+  expect(nestedLoop.canGenerateCode(), "nested getter loops must lower");
+  if (nestedLoop.canGenerateCode()) {
+    const auto analysis =
+        lang::analyzeMirClosedCallSafetyChecks(nestedLoop.mir);
+    expect(analysis.converged, "nested getter loops must converge");
+    std::size_t observations = 0;
+    for (const auto &function : nestedLoop.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto name = function.source->name().lexeme;
+      if (name != "observe_nested_counter" && name != "observe_vector_length")
+        continue;
+      ++observations;
+      const auto *fact = analysis.find(
+          {.kind = lang::MirBodyKind::Function, .owner = function.id});
+      expect(fact && fact->reached && fact->returnInterval &&
+                 fact->returnInterval->lower ==
+                     lang::CheckedIntegerValue{.magnitude = 4} &&
+                 fact->returnInterval->upper ==
+                     lang::CheckedIntegerValue{.magnitude = 4},
+             std::string(name) + " must publish the exact nested loop exit");
+    }
+    expect(observations == 2, "both nested loop outcomes must be inspected");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = nestedLoop.hir, .mir = nestedLoop.mir, .level = level});
+      expect(optimized.valid(), "nested loop exit proofs independently replay");
+      if (level == lang::OptimizationLevel::O0)
+        expect(optimized.report.transformations.empty(),
+               "nested object refinement cannot introduce O0 transformations");
+    }
+    std::size_t rejected = 0;
+    for (const auto &function : nestedLoop.hir.functionInstances()) {
+      if (!function.source ||
+          function.source->name().lexeme != "changed_nested")
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      const auto *body = lang::findMirBody(nestedLoop.mir, address);
+      if (!body)
+        continue;
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto &outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto forged = nestedLoop.mir;
+              lang::MirEditor editor(forged, "forged-nested-loop-exit-fact");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "a nested write retires the refined constructor result");
+              ++rejected;
+            }
+    }
+    expect(rejected == 1, "nested mutation must exercise canonical rejection");
+  } else {
+    for (const auto &diagnostic : nestedLoop.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
   const auto prefixPath =
       sourcePath.parent_path() / "optimizer_source_prefix_fields.gti";
   const std::ifstream prefixFile(prefixPath);

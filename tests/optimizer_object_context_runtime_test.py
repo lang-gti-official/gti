@@ -154,6 +154,20 @@ if __name__ == "__main__":
             "if (true) return gauge.after_raw_write();", "return 0;"))
         paths["value_stage_success"] = path
         cases["value_stage_success"] = [((), (0, "", ""))]
+        nested = fixture.parent / "optimizer_nested_getter_loop.gti"
+        nested_source = nested.read_text()
+        nested_line = next(index for index, text in
+                           enumerate(nested_source.splitlines(), 1)
+                           if "return counter.read() + uint64_t(1);" in text)
+        paths["nested_getter_changed"] = nested
+        cases["nested_getter_changed"] = [((), (70, "",
+            f"{nested.name}:{nested_line}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "nested_getter_success.gti"
+        path.write_text(nested_source.replace("return int(changed_nested(counter));",
+                                              "return 0;"))
+        paths["nested_getter_success"] = path
+        cases["nested_getter_success"] = [((), (0, "", ""))]
         getters = fixture.parent / "optimizer_getter_fields.gti"
         getter_source = getters.read_text()
         getter_lines = getter_source.splitlines()
