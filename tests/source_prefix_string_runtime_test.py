@@ -29,7 +29,7 @@ if __name__ == "__main__":
         names=("source_prefix_string", "source_prefix_string_overflow",
                "source_prefix_string_provider_failure"),
         cases={"source_prefix_string": [((), (0, "", ""))],
-               "source_prefix_string_overflow": [((), (70, "", failure))],
+               "source_prefix_string_overflow": [((), (70, "55\n", failure))],
                "source_prefix_string_provider_failure":
                    [((), (ABORT_STATUS, "", provider_failure))]},
         native_inputs_by_name={"source_prefix_string":

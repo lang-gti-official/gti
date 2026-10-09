@@ -28669,6 +28669,39 @@ public:
           "verified MIR C++ control-flow plan failed exact coverage: " +
           controlFlowVerification.issues.front().detail);
     }
+    // A primary record needs an incoming-cleanup context only while executing
+    // cleanup. Pure propagation has nothing that can observe that context.
+    // Inspect the verified failure regions, not the owner's type or its normal
+    // path: even a nominally passive wrapper can release an application
+    // resource. Retain the scope for every executable operation and unknown
+    // terminator. Lifecycle transfers can destroy native slots, so only
+    // boundary markers without transfer events are inert here.
+    // Incoming-secondary-failure checks at producers remain necessary
+    // regardless of this local scope.
+    const bool cleanupContextRequired =
+        failureForm &&
+        std::any_of(
+            facts.body.blocks.begin(), facts.body.blocks.end(),
+            [](const MirBlock &block) {
+              if (block.activeFailure == 0)
+                return false;
+              if (block.terminator.kind !=
+                      MirTerminatorKind::PropagateFailure &&
+                  block.terminator.kind != MirTerminatorKind::Goto)
+                return true;
+              if (!block.terminator.targetArguments.empty() ||
+                  !block.terminator.successLifecycle.empty())
+                return true;
+              return std::any_of(
+                  block.instructions.begin(), block.instructions.end(),
+                  [](const MirInstruction &instruction) {
+                    if (instruction.tombstone)
+                      return false;
+                    return !instruction.lifecycle.empty() ||
+                           (instruction.kind != MirInstructionKind::EndBorrow &&
+                            instruction.kind != MirInstructionKind::Lifecycle);
+                  });
+            });
     currentFamilyLabel = familyLabel;
     output.str("");
     output << "{\n";
@@ -29964,7 +29997,8 @@ public:
             std::find(preparation->blocks.begin(), preparation->blocks.end(),
                       block.id) == preparation->blocks.end())
           continue;
-        if (block.activeFailure != 0 && !cleanupContextDeclared) {
+        if (cleanupContextRequired && block.activeFailure != 0 &&
+            !cleanupContextDeclared) {
           writeIndent();
           output << "::gti_internal::backend::mir_failure_cleanup_scope_v1 "
                     "__gti_mir_cleanup_context;\n";
@@ -30190,7 +30224,7 @@ public:
       writeIndent();
       output << plannedBlock.label << ": {\n";
       ++indentation;
-      if (failureForm && block->activeFailure != 0 &&
+      if (cleanupContextRequired && block->activeFailure != 0 &&
           block->failureParameter == block->activeFailure) {
         writeIndent();
         // Verification proves this is the unique primary entry and every

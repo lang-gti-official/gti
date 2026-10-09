@@ -20,6 +20,26 @@ Shared-owner promotion and managed-thread secondary-failure controls pass
 O0/O3 and sanitizer checks. These focused results do not replace the complete
 fallible/overflow/family, corpus and installed-consumer gates.
 
+The updated `failure_metadata` gate independently derives the ordinary
+prefix-owner cleanup recipe, including its owned raw-buffer field, and rejects
+removing that field's cleanup. Removal effects belong to the source unchecked
+pop/erase implementations, reached after their public boundary checks. The
+complete metadata gate and collection-cleanup native matrix pass at the
+`ed916e57` checkpoint (384.26 and 38.93 seconds). Scalar emission also verifies
+that its exact allocation record reaches abort before return publication,
+without publishing a contained failure or taking a cleanup-return path.
+
+The integrated `723b7aa1` candidate passes the optimized all-target build and
+all 38 preflight tests. `propagation_only_context_runtime` passes its seven
+native modes, including sanitizer checks, preserving an ancestor's first
+failure and immediate secondary-failure termination without redundant local
+cleanup scopes. The string matrix passes all 24 cases plus four loan negatives;
+size overflow prints its cleanup witness before contained termination, unlike
+provider exhaustion. The unfiltered combined suite is still in progress.
+Resource-prefix fixtures retain the known nested-constructor loan prerequisite;
+neither this evidence nor the representation-only improvement claims that the
+source-container performance or full migration acceptance is complete.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both

@@ -186,7 +186,6 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "left",
       "lower",
       "make_unexpected_result",
-      "make_unique",
       "max",
       "maximum",
       "message",
@@ -1800,15 +1799,6 @@ inline T &optional_storage_read_mut_unchecked(optional_storage<T> &value) {
 template <typename T>
 inline void optional_storage_reset(optional_storage<T> &value) {
   value.reset();
-}
-
-template <typename T, typename... Args>
-inline std::unique_ptr<T> make_unique(Args &&...args) {
-  try {
-    return std::make_unique<T>(std::forward<Args>(args)...);
-  } catch (const std::bad_alloc &) {
-    allocation_error();
-  }
 }
 
 template <typename T>

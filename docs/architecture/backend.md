@@ -100,18 +100,23 @@ types and excludes `char` from the public C ABI.
 
 Scalar unique allocation uses a status-returning native allocation helper
 selected from the verified MIR instruction. It performs the exact zero/one
-scalar initialization, publishes only on success, and routes exhaustion through
-the instruction's failure edge. A direct allocation-function call prevents
-C++ new-expression allocation elision from deleting this observable detector.
-The helper contains no constructor dispatch or source-level type selection.
+scalar initialization and publishes only on success. The instruction's exact
+allocation outcome produces a bounded record and calls the allocation-free
+abort entry point; exhaustion has no cleanup/containment edge. Its native
+nothrow new-expression permits process allocation/release elision under ADR
+022's revised policy. This does not permit deleting application resource
+calls. The helper contains no constructor dispatch or source-level selection.
 Selected ordinary class construction uses MIR's separate `AllocateObject`
 resource and exact constructor call. Raw storage has no live pointee cleanup;
 its MIR failure Drop only frees bytes. Prepared owning class arguments occupy
-lifetime slots before allocation, so exhaustion can destroy them. A successful
+lifetime slots before allocation; exhaustion aborts without destroying them.
+A successful
 constructor publishes the owner, while a failed constructor retains its
 original record and follows the explicit raw-storage cleanup edge. The
-existing bounded constructor rollback proof remains mandatory; targetless
-generated construction and broader subobject rollback remain migration work.
+existing constructor rollback proof remains mandatory. Targetless generated
+default/copy/move construction uses the same explicit storage protocol; a
+generated default requiring a field/base schedule must retain its exact
+constructor target. There is no fallback native `make_unique` execution path.
 
 ## Opt-in Source Debug Locations
 
@@ -904,9 +909,9 @@ and explicit construction use the same pending-result destination. Failure
 cleanup calls a fallible result's exact status cleanup recipe before native
 teardown; an infallible result uses native teardown directly. A wrapped
 `expected` value cleans its payload before tearing down the envelope.
-Private prefix-storage handles keep their initialized result in an SSA carrier
-until the successful Return; rollback drains that carrier on the explicit MIR
-failure edge. This does not admit arbitrary executable work or reinitialization
+Source-defined buffer/sequence results use the ordinary class-result lifetime
+and field-cleanup schedule; there is no private prefix-storage result carrier.
+This does not admit arbitrary executable work or reinitialization
 between a class result's construction and Return.
 
 When the result is the class payload of an `expected` return, cleanup may
@@ -998,8 +1003,10 @@ MIR, never as a backend analysis result. When all local overflow outcomes for a
 checked add, subtract, multiply, or negate are discharged, the C++ backend may
 emit the direct arithmetic representation. When all local outcomes for an
 admitted fixed-array read are discharged, it may emit a direct indexed read.
-An admitted prefix-storage read may select its backend-private unchecked
-helper only when its exact bounds outcome is discharged. A fully discharged
+Source container checks use the general scalar bounds detector: its exact
+outcome must be discharged before the backend can omit that detector. Raw
+element access remains a separate explicitly unsafe MIR operation, not a
+private checked/unchecked container-helper selection. A fully discharged
 `Invoke` follows its verified success edge; any retained local or callee failure
 keeps the checked representation and failure transfer.
 
@@ -2558,6 +2565,17 @@ double-failure report can perform the existing internal exception handoff.
 Cleanup scopes, activation, record construction and ordinary source functions
 receive no blanket cold, inline or exception annotation. MIR, replay evidence,
 failure identity and cleanup order are unchanged.
+
+A transformed body omits its invocation-local cleanup scope when every verified
+active-failure region only propagates the record: inert loan ends and lifecycle
+boundary markers, then direct propagation or an argument-free continuation.
+Lifecycle transfers and every executable cleanup operation (including any
+Drop, call, native/resource release or unknown terminator) retain the scope.
+This is representation-only; it neither removes checks nor changes MIR or its
+failure summary. In particular, the incoming-secondary-failure check remains
+at failure producers in propagation-only helpers: they may be called from an
+ancestor's destructor while that ancestor owns the primary record. Ordinary
+user accessors and forwarding functions use the same rule as library helpers.
 
 Unique-owner borrowing uses the failure ABI. At the intrinsic instruction the
 backend tests the represented owner for emptiness and selects only the exact
