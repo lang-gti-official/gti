@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.396.1 — Enum type arguments in compile-time branches
+
+- Fix constant evaluation of a generic `constexpr` function whose enum type
+  argument appears only as a type argument, such as a `requires` probe in
+  `if constexpr`. `static_assert(width<small>() == 8)` for an
+  `enum class small` failed with `GTI-S2057` ("The if constexpr branch was not
+  resolved by semantic analysis"); it now selects the branch like the runtime
+  call does. Generic enum arguments such as `tag<Message<int>>()` are covered
+  too.
+
 ## 0.396.0 — Small std::function targets stay inline
 
 - `std::function` and `std::move_only_function` with read-only or `mut`
