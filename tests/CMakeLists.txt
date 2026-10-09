@@ -683,6 +683,10 @@ add_test(NAME returned_field_address_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
     $<TARGET_FILE:gti>)
 set_tests_properties(returned_field_address_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME optimizer_terminal_context_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_terminal_context_runtime_test.py"
+    "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_terminal_context_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME wrapping_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wrapping_context_runtime_test.py"
     $<TARGET_FILE:gti>)
