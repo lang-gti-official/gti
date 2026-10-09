@@ -307,8 +307,8 @@ int main() {
 """, 0, ""),
         "receiver-pattern-loans": ("""
 #include <std/vector>
-enum Buffer<std::move_constructible T> { data(std::vector<T> values) };
-class Inbox<std::move_constructible T> {
+enum Buffer<std::vector_element T> { data(std::vector<T> values) };
+class Inbox<std::vector_element T> {
   mut Buffer<T> message = Buffer<T>::data(std::vector<T>());
 public:
   Inbox() {}
@@ -330,14 +330,14 @@ int main() {
 }
 """, 0, ""),
         "finite-recursive-generic-sum": (OWNING + """
-enum Tree<T> { empty, leaf(T value), branch(std::vector<Node<T>> children) };
-class Node<T> {
+enum Tree<std::vector_element T> { empty, leaf(T value), branch(std::vector<Node<T>> children) };
+class Node<std::vector_element T> {
   Tree<T> data;
 public:
   Node(Tree<T> value) : data(std::move(value)) {}
   Node(Node<T>&& other) = default;
 };
-Node<T> branch<T>(T first, T second) {
+Node<T> branch<T>(T first, T second) requires std::vector_element<T> {
   mut std::vector<Node<T>> children{};
   children.push_back(Node<T>(Tree<T>::leaf(std::move(first))));
   children.push_back(Node<T>(Tree<T>::leaf(std::move(second))));

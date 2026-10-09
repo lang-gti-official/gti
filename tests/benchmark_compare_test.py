@@ -824,19 +824,31 @@ def test_fixed_native_command_contract(module: Any, root: Path) -> None:
     )
 
 
-def arithmetic_helper_source(module: Any) -> str:
+def arithmetic_helper_source(module: Any, *, value_computing: bool = False) -> str:
     definitions = []
     for _, helper_name in module.ARITHMETIC_SUCCESS_PROXY_HELPERS:
+        if value_computing:
+            computation = (
+                "  const Target promoted_left = static_cast<Target>(left);\n"
+                "  const Target promoted_right = static_cast<Target>(right);\n"
+                "  Target value{};\n"
+                f"  {module.ARITHMETIC_VALUE_OVERFLOW_GUARDS[helper_name][0]}\n"
+            )
+        else:
+            computation = (
+                "  bool overflow = false;\n"
+                "  overflow = left > right;\n"
+                "  if (overflow) {\n"
+            )
+        publication = "value" if value_computing else "left"
         definitions.append(
             "template <typename Target, typename Left, typename Right>\n"
             f"inline mir_failure_status_v1 {helper_name}(Left left, Right right, "
             "Target *result) noexcept {\n"
-            "  bool overflow = false;\n"
-            "  overflow = left > right;\n"
-            "  if (overflow) {\n"
-            "    return failure;\n"
+            + computation
+            + "    return failure;\n"
             "  }\n"
-            "  *result = left;\n"
+            f"  *result = {publication};\n"
             "  return success;\n"
             "}\n"
         )
@@ -926,6 +938,64 @@ def test_arithmetic_success_proxy_contract(module: Any, root: Path) -> None:
         (source.replace(module.BACKEND_NAMESPACE_CLOSE, "", 1), "balanced"),
     )
     for invalid_source, message in negative_sources:
+        expect_benchmark_error(
+            module,
+            lambda invalid_source=invalid_source: (
+                module.arithmetic_success_proxy_source(invalid_source)
+            ),
+            message,
+        )
+
+    computed_source = arithmetic_helper_source(module, value_computing=True)
+    transformed, replacements = module.arithmetic_success_proxy_source(computed_source)
+    expected = computed_source
+    for guard, replacement in module.ARITHMETIC_VALUE_OVERFLOW_GUARDS.values():
+        expected = expected.replace(guard, replacement)
+    require(
+        transformed == expected
+        and transformed.count(module.ARITHMETIC_SUCCESS_GUARD) == 3
+        and transformed.count("*result = value;") == 3,
+        "value-computing proxy changed more than the exact detector and arithmetic",
+    )
+    for operator in ("+", "-", "*"):
+        require(
+            transformed.count(
+                f"value = static_cast<Target>(promoted_left {operator} promoted_right);"
+            ) == 1,
+            "value-computing proxy did not preserve the three arithmetic operations",
+        )
+    require(
+        [(item["from"], item["to"]) for item in replacements]
+        == list(module.ARITHMETIC_VALUE_OVERFLOW_GUARDS.values()),
+        "value-computing proxy lost the exact arithmetic replacement evidence",
+    )
+    add_guard = module.ARITHMETIC_VALUE_OVERFLOW_GUARDS["mir_checked_add_v1"][0]
+    malformed_computed_sources = (
+        (computed_source.replace(add_guard, "if (false) {", 1), "guard, found 0"),
+        (
+            computed_source.replace(add_guard, add_guard + "}\n" + add_guard, 1),
+            "guard, found 2",
+        ),
+        (
+            computed_source.replace(
+                add_guard, module.ARITHMETIC_OVERFLOW_GUARD + "}\n" + add_guard, 1
+            ),
+            "guard, found 2",
+        ),
+        (
+            computed_source.replace("Target value{};", "Target value;", 1),
+            "unexpected value-computing overflow shape",
+        ),
+        (
+            computed_source.replace("*result = value;", "*result = left;", 1),
+            "unexpected value-computing overflow shape",
+        ),
+        (
+            computed_source.replace("integer_add_overflows", "integer_subtract_overflows", 1),
+            "guard, found 0",
+        ),
+    )
+    for invalid_source, message in malformed_computed_sources:
         expect_benchmark_error(
             module,
             lambda invalid_source=invalid_source: (

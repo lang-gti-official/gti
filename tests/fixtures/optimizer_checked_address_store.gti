@@ -1,0 +1,78 @@
+#include <std/memory>
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Owner {};
+
+int checked_write(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 11;
+    return *address + 1;
+  }
+}
+
+int checked_compound(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value *= 3;
+    return *address;
+  }
+}
+
+int bad_checked_overflow(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 2147483647;
+    return *address + 1;
+  }
+}
+
+int bad_checked_native(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 11;
+    opaque_pointer_effect(address);
+    return *address + 1;
+  }
+}
+
+int bad_checked_other(int* address, int* other, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    mut int& value = std::assume_mut(address, owner);
+    value = 11;
+    return *other + 1;
+  }
+}
+
+void overwrite_checked(int* address, mut Owner& owner) {
+  unsafe {
+    mut int& value = std::assume_mut(address, owner);
+    value = 2147483647;
+  }
+}
+
+int bad_checked_call(int* address, mut Owner& owner) {
+  unsafe {
+    std::construct_at(address, 7);
+    overwrite_checked(address, owner);
+    return *address + 1;
+  }
+}
+
+int main() {
+  mut Owner owner{};
+  mut std::uninitialized<int> first{};
+  mut std::uninitialized<int> second{};
+  mut int other = 2147483647;
+  if (false) return bad_checked_overflow(first.data(), owner);
+  if (false) return bad_checked_native(first.data(), owner);
+  if (false) return bad_checked_other(first.data(), &other, owner);
+  if (false) return bad_checked_call(first.data(), owner);
+  return checked_write(first.data(), owner) == 12 &&
+         checked_compound(second.data(), owner) == 21 ? 0 : 1;
+}

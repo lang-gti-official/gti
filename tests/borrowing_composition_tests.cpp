@@ -2,6 +2,302 @@
 
 namespace {
 
+lang::FrontendResult analyzeBorrowFixture(std::string_view name) {
+  const auto path =
+      standardLibraryRoot().parent_path() / "tests/fixtures" / name;
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  expect(!source.empty(), "borrow fixture is available: " + std::string(name));
+  return lang::Frontend().analyze(path, source, {standardLibraryPrelude()}, {},
+                                  {standardLibraryRoot()});
+}
+
+lang::MirInstruction *instructionFor(lang::MirBody &body,
+                                     lang::MirInstructionId id) {
+  for (auto &block : body.blocks)
+    for (auto &instruction : block.instructions)
+      if (instruction.id == id)
+        return &instruction;
+  return nullptr;
+}
+
+const lang::MirInstruction *producerFor(const lang::MirBody &body,
+                                        lang::MirValueId id) {
+  const auto *value = body.findValue(id);
+  if (value)
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == value->definition)
+          return &instruction;
+  return nullptr;
+}
+
+void checkNestedConstructorArguments() {
+  const auto frontend = analyzeBorrowFixture("nested_carrier_arguments.gti");
+  expect(frontend.canGenerateCode(),
+         "nested constructed arguments retain exact reordered formal origins");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "nested constructor publications independently verify");
+  bool shared = false;
+  bool exclusive = false;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.constructorTarget ||
+            instruction.borrowFields.size() != 2 ||
+            instruction.borrowFields.front().resultFields.size() < 3)
+          continue;
+        (instruction.borrowAccess == lang::AccessMode::Mutable ? exclusive
+                                                               : shared) = true;
+        const auto reject = [&](const auto &mutate,
+                                const std::string &message) {
+          auto forged = frontend.mir;
+          auto *instance = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          mutate(*instructionFor(instance->body, instruction.id));
+          expect(!lang::verifyMirProgram(forged).valid(), message);
+        };
+        reject(
+            [](auto &call) {
+              std::swap(call.borrowFields[0].parameter,
+                        call.borrowFields[1].parameter);
+            },
+            "nested constructor cannot forge reordered parameter origins");
+        reject(
+            [](auto &call) {
+              std::swap(call.borrowFields[0].resultFields,
+                        call.borrowFields[1].resultFields);
+            },
+            "nested constructor cannot relabel destination field paths");
+        reject(
+            [](auto &call) {
+              call.borrowFields[0].sourceFields =
+                  call.borrowFields[0].resultFields;
+            },
+            "nested constructor cannot invent an input field path");
+        reject(
+            [](auto &call) {
+              call.borrowFields[0].access =
+                  call.borrowFields[0].access == lang::AccessMode::Mutable
+                      ? lang::AccessMode::ReadOnly
+                      : lang::AccessMode::Mutable;
+            },
+            "nested constructor cannot change the selected field permission");
+      }
+  expect(shared && exclusive,
+         "nested origin forgeries exercise both access modes");
+}
+
+void checkNestedResourceConstruction() {
+  const auto frontend =
+      analyzeBorrowFixture("source_resource_prefix_cleanup.gti");
+  expect(
+      frontend.canGenerateCode(),
+      "nested resource construction preserves exact parent-loan publication");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "nested resource publication independently verifies");
+}
+
+void checkNestedOwningArguments() {
+  const auto frontend =
+      analyzeBorrowFixture("nested_owning_constructor_arguments.gti");
+  expect(frontend.canGenerateCode(),
+         "unrelated nested owning arguments preserve source ancestry");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "nested owning arguments independently verify");
+  for (const auto &constructor : frontend.mir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &call : block.instructions) {
+        const auto *result =
+            call.loan ? constructor.body.findLoan(*call.loan) : nullptr;
+        if (call.kind != lang::MirInstructionKind::Construct || !result ||
+            !result->lifecycleBound || result->parent == 0 ||
+            call.operands.empty())
+          continue;
+        const auto *stage =
+            producerFor(constructor.body, call.operands.front().value);
+        if (!stage ||
+            stage->callInputKind != lang::HirCallInputKind::MoveValue ||
+            !stage->preparedParameterDrop || stage->operands.size() != 1)
+          continue;
+        const auto *argument =
+            producerFor(constructor.body, stage->operands.front().value);
+        const auto *retained = argument && argument->loan
+                                   ? constructor.body.findLoan(*argument->loan)
+                                   : nullptr;
+        if (!argument ||
+            argument->kind != lang::MirInstructionKind::Construct ||
+            !retained || !retained->lifecycleBound ||
+            retained->parent != result->parent)
+          continue;
+        const auto other =
+            std::find_if(constructor.body.loans.begin(),
+                         constructor.body.loans.end(), [&](const auto &loan) {
+                           return loan.entry &&
+                                  loan.kind == lang::MirLoanKind::Stored &&
+                                  loan.source != retained->source;
+                         });
+        if (other == constructor.body.loans.end())
+          continue;
+        const auto reject = [&](const auto &mutate,
+                                const std::string &message) {
+          auto forged = frontend.mir;
+          auto *instance = const_cast<lang::MirConstructorInstance *>(
+              forged.findConstructorInstance(constructor.id));
+          mutate(instance->body);
+          expect(!lang::verifyMirProgram(forged).valid(), message);
+        };
+        reject(
+            [&](auto &body) {
+              body.loans[retained->id - 1].parent = other->id;
+            },
+            "fresh owning argument cannot substitute another active parent");
+        reject(
+            [&](auto &body) {
+              body.loans[retained->id - 1].source = other->source;
+            },
+            "fresh owning argument cannot substitute another formal source");
+        reject(
+            [&](auto &body) {
+              body.loans[retained->id - 1].access = lang::AccessMode::Mutable;
+            },
+            "fresh owning argument cannot upgrade retained access");
+        reject(
+            [&](auto &body) {
+              instructionFor(body, stage->id)->preparedParameterDrop.reset();
+            },
+            "fresh owning argument requires its exact prepared parameter drop");
+        reject(
+            [&](auto &body) {
+              instructionFor(body, stage->id)->callInputKind =
+                  lang::HirCallInputKind::Value;
+            },
+            "fresh owning argument requires a checked moving parameter stage");
+        reject(
+            [&](auto &body) {
+              std::erase_if(
+                  instructionFor(body, call.id)->lifecycle,
+                  [&](const auto &event) {
+                    return event.kind ==
+                               lang::MirLifecycleEventKind::TransferOut &&
+                           event.source == *stage->preparedParameterDrop;
+                  });
+            },
+            "fresh owning argument requires the exact callee ownership "
+            "handoff");
+        bool checkedFailure = false;
+        for (const auto &failure : constructor.body.failureRecords) {
+          if (failure.producerInstruction != call.id)
+            continue;
+          const auto *failed =
+              constructor.body.findBlock(failure.parameterBlock);
+          const auto endpoint = std::find_if(
+              failed->instructions.begin(), failed->instructions.end(),
+              [&](const auto &instruction) {
+                return instruction.kind ==
+                           lang::MirInstructionKind::EndBorrow &&
+                       instruction.loan == retained->id;
+              });
+          expect(endpoint != failed->instructions.end(),
+                 "failed outer construction retires its consumed child before "
+                 "parent cleanup");
+          reject(
+              [&](auto &body) {
+                std::erase_if(
+                    body.blocks[failure.parameterBlock - 1].instructions,
+                    [&](const auto &instruction) {
+                      return instruction.loan == retained->id;
+                    });
+              },
+              "failed construction cannot leave its consumed child active "
+              "during parent retirement");
+          checkedFailure = true;
+        }
+        expect(checkedFailure, "fresh owning ancestry tests exercise the "
+                               "constructor failure edge");
+        return;
+      }
+  expect(false, "fresh owning ancestry forgeries exercise two independent "
+                "formal origins");
+}
+
+void checkNestedArgumentRejections() {
+  const auto reject = [](const lang::FrontendResult &frontend,
+                         std::string_view code, const std::string &message) {
+    const bool rejected =
+        !frontend.canGenerateCode() &&
+        std::any_of(frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                    [&](const auto &diagnostic) {
+                      return diagnostic.severity ==
+                                 lang::DiagnosticSeverity::Error &&
+                             diagnostic.code == code;
+                    });
+    if (!rejected)
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(rejected, message);
+    expect(std::none_of(frontend.diagnostics.begin(),
+                        frontend.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-B0001";
+                        }),
+           message + " is a source diagnostic, not an internal compiler error");
+  };
+  reject(analyzeBorrowFixture("nested_carrier_argument_loan_rejected.gti"),
+         "GTI-S2017",
+         "nested shared arguments retain the reordered second owner");
+  reject(analyzeBorrowFixture("nested_carrier_argument_alias_rejected.gti"),
+         "GTI-S2045", "nested exclusive arguments cannot duplicate an owner");
+  const auto owning = lang::Frontend().analyze(
+      "nested-owning-owner-write.gti", R"(
+#include <std/utility>
+struct View {
+  int& value;
+  View(int& value) : value(value) {}
+};
+class Lease {
+  View view;
+public:
+  Lease(View view) : view(view) {}
+  ~Lease() { int observed = this.view.value; }
+};
+class Buffer {
+  Lease lease;
+public:
+  Buffer(Lease lease) : lease(std::move(lease)) {}
+};
+class Owner {
+  Buffer buffer;
+public:
+  Owner(int& value) : buffer(Buffer(Lease(View(value)))) {}
+};
+int main() {
+  mut int resource = 7;
+  Owner owner{resource};
+  resource = 9;
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  reject(owning, "GTI-S2017",
+         "nested owning arguments retain their source through destruction");
+}
+
 void checkIndependentDependencies() {
   const auto frontend = lang::Frontend().analyze("composed-borrows.gti", R"(
 struct View {
@@ -841,6 +1137,10 @@ int main() {
 }
 
 constexpr NamedTest kTests[] = {
+    {"nested_constructor_arguments", checkNestedConstructorArguments},
+    {"nested_resource_construction", checkNestedResourceConstruction},
+    {"nested_owning_arguments", checkNestedOwningArguments},
+    {"nested_argument_rejections", checkNestedArgumentRejections},
     {"independent_dependencies", checkIndependentDependencies},
     {"mixed_dependencies", checkMixedDependencies},
     {"mixed_access_rules", checkMixedAccessRules},

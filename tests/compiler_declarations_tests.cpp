@@ -346,9 +346,9 @@ int main() {
 
 int main() {
   mut std::string text = std::string("abc");
-  mut gti_internal::prefix_storage<std::string_view> stored =
-      gti_internal::allocate_prefix_storage<std::string_view>(uint64_t(1));
-  gti_internal::prefix_storage_append(stored, text.view());
+  mut std::detail::prefix_owner<std::string_view> stored =
+      std::detail::prefix_owner<std::string_view>(uint64_t(1));
+  stored.append_value(text.view());
   return 0;
 }
 )",
@@ -356,10 +356,11 @@ int main() {
   expect(!nestedTextView.canGenerateCode() &&
              hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045") &&
              hasDiagnostic(nestedTextView.diagnostics,
-                           "cannot be nested in dynamic storage"),
-         "a dynamic string_view must not be hidden in compiler-private "
+                           "cannot be nested in raw storage"),
+         "a dynamic string_view must not be hidden in source-defined "
          "storage without a nested dependency representation");
-  if (!hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045"))
+  if (!hasDiagnostic(nestedTextView.diagnostics,
+                     "cannot be nested in raw storage"))
     for (const auto &diagnostic : nestedTextView.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 

@@ -205,7 +205,7 @@ int main() {
   returnCleanupTail();
   const auto generic = analyze("generic-collection.gti", R"(
 #include <std/vector>
-std::vector<T> wrap<std::movable T>(T element) {
+std::vector<T> wrap<T>(T element) requires std::vector_element<T> {
   std::vector<T> result = {std::move(element)};
   return std::move(result);
 }

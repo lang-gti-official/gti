@@ -5,7 +5,7 @@
 `<std/span>` provides `std::mutable_span<T>`, an exclusive, move-only view of
 initialized elements. `vector<T>::as_mutable_span() mut` and
 `string::as_mutable_span() mut` create checked views of their current size, not
-their spare capacity. This slice uses the existing prefix-storage owner
+their spare capacity. This slice uses the source-defined prefix-owner
 representation; construction from fixed arrays, arbitrary pointers and native
 memory is not supplied.
 
@@ -281,9 +281,9 @@ independently from one owner is still rejected because their loans overlap.
 ## Single-owner spans and text views
 
 `std::span<T>` is an ordinary source-defined, read-only range over one checked
-prefix-storage owner. `std::vector<T>::as_span()` and
+source prefix owner. `std::vector<T>::as_span()` and
 `std::string::as_span()` construct a complete span without exposing an address
-or pointer-length pair. A span stores an offset and count alongside the trusted
+or pointer-length pair. A span stores an offset and count alongside its checked
 read-only storage dependency and provides checked indexing, `front()`,
 `back()`, `first()`, `last()`, `subspan()`, and structural iteration. Empty
 spans remain valid. Copy and move construction preserve the same shared owner

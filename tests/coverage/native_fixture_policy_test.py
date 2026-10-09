@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import signal
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -53,6 +54,33 @@ class NativeFixturePolicy(unittest.TestCase):
                 self.assertEqual(objects, [str(root / "out.native-0.o")])
                 self.assertEqual(commands[0][1:], ["-std=c17", "-c", str(root / "native/fixture.c"),
                                                  "-o", objects[0]])
+
+
+class RuntimeExitPolicy(unittest.TestCase):
+    def test_exact_platform_abort(self):
+        for platform, expected in (("nt", 3), ("posix", -signal.SIGABRT)):
+            with self.subTest(platform=platform), patch.object(gate.os, "name", platform):
+                self.assertEqual(gate.runtime_exit_status("abort"), expected)
+        for value in (0, 1, 70, -9):
+            self.assertEqual(gate.runtime_exit_status(value), value)
+        for value in (True, None, "nonzero", "70", 70.0):
+            with self.subTest(value=value), self.assertRaises(gate.CoverageInfrastructureError):
+                gate.runtime_exit_status(value)
+
+    def test_abort_does_not_accept_contained_or_unrelated_failure(self):
+        with tempfile.TemporaryDirectory(prefix="gti-coverage-abort-") as directory:
+            root = Path(directory)
+            source = root / "fixture.gti"
+            source.write_text("int main() { return 0; }")
+            compiler = subprocess.CompletedProcess([], 0, "", "")
+            expectation = {"cases": [{"exit": "abort", "stdout": "before\n",
+                                       "stderr": "exhaustion\\n"}]}
+            for status in (gate.runtime_exit_status("abort"), 0, 70, -9):
+                with self.subTest(status=status), patch.object(gate.subprocess, "run", side_effect=[
+                    compiler, subprocess.CompletedProcess([], status, "before\n", "exhaustion\n")
+                ]):
+                    outcome, _ = gate.classify(Path("compiler"), source, root / "out", expectation)
+                    self.assertEqual(outcome, "pass" if status == gate.runtime_exit_status("abort") else "runtime")
 
 
 if __name__ == "__main__":

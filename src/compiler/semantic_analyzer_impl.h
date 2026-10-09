@@ -1853,13 +1853,6 @@ private:
   void analyzeSharedOwnerIntrinsicCall(const Call &expr,
                                        const CallableCandidate &declaration);
 
-  // The prefix-initialized storage family (P-STORAGE-01): the live
-  // elements always form the prefix [0, length). Construction appends
-  // exactly at the live length, destruction removes exactly the last live
-  // element, relocation transfers the complete prefix, and reads check the
-  // logical prefix.
-  void analyzePrefixStorageIntrinsicCall(const Call &expr,
-                                         IntrinsicKind intrinsic);
   void analyzePolymorphicStorageIntrinsicCall(const Call &expr,
                                               IntrinsicKind intrinsic);
   [[nodiscard]] bool inlinePolymorphicPayload(const SemanticType &model,
@@ -2086,8 +2079,10 @@ private:
   [[nodiscard]] static bool containsExactType(const SemanticType &type,
                                               const SemanticType &candidate);
 
-  [[nodiscard]] bool containsDisallowedCallableCaptureState(
-      const SemanticType &type, std::unordered_set<ClassId> &visiting) const;
+  [[nodiscard]] bool
+  containsDisallowedCallableCaptureState(const SemanticType &type,
+                                         std::unordered_set<ClassId> &visiting,
+                                         bool reviewedRawState = false) const;
 
   [[nodiscard]] bool
   containsDisallowedCallableCaptureState(const SemanticType &type) const;
@@ -2549,15 +2544,13 @@ private:
   [[nodiscard]] std::optional<GenericParameterId>
   activeTypePackIdentity(const TypeRef &type) const;
 
-  void validateReferencePlacement(
-      const TypeRef &type, bool allowTopLevel, std::string_view context,
-      bool allowRvalueReference = false,
-      bool allowDefaultLibraryStorageReference = false,
-      bool typeMetadata = false, bool genericFunctionParameter = false);
+  void validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
+                                  std::string_view context,
+                                  bool allowRvalueReference = false,
+                                  bool typeMetadata = false,
+                                  bool genericFunctionParameter = false);
 
-  void
-  validateReferenceReferent(const SemanticType &type, const Token &site,
-                            bool allowDefaultLibraryStorageReference = false);
+  void validateReferenceReferent(const SemanticType &type, const Token &site);
 
   [[nodiscard]] bool containsOwningPayloadEnum(const SemanticType &type) const;
 
@@ -3215,7 +3208,9 @@ private:
 
   [[nodiscard]] PredeclaredTextBorrowSource
   predeclaredTextBorrowSource(const ExprPtr &expression,
-                              const FunctionInfo &function) const;
+                              const FunctionInfo &function);
+
+  std::unordered_set<const FunctionDecl *> activeTextBorrowSummaries;
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
   dynamicTextReturnBorrowSummary(const FunctionInfo &function);

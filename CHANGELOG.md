@@ -9,6 +9,38 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.397.0 — Source-defined vector and string; allocation exhaustion aborts
+
+- **Allocation exhaustion now aborts, as in Rust.** When an infallible
+  allocation cannot be satisfied (`make_unique`, `make_shared`, vector and
+  string construction or growth, the resource vector's plain operations,
+  owning callables and boxed `inline_polymorphic` payloads), GTI writes a
+  best-effort `GTI-R0011` report to standard error without allocating and
+  aborts the process. No cleanup runs, and the exit status is the abort
+  signal rather than 70. The `try_` operations still return
+  `expected<..., std::alloc_errc>`, and size overflow is still a contained
+  defined failure. Programs that must survive exhaustion should use the
+  `try_` operations.
+- **Unused process allocations may disappear.** The optimizer may remove an
+  allocation whose memory is never used, together with its release, so the
+  process allocator is not called. Allocation through an application
+  `memory_resource` is never removed.
+- **`std::vector` and `std::string` are ordinary GTI.** They now sit on a
+  source-defined raw buffer with a single live length, replacing the
+  compiler-private prefix storage. They gain `unsafe` `get_unchecked` and
+  `get_unchecked_mut`, as do span and fixed array, and growth copies
+  bitwise-relocatable elements in one byte copy. Element shapes, final-address
+  emplacement, construction rollback, cleanup order and checked loans are
+  unchanged. A checked vector loop runs at idiomatic-C++ speed (72 ms against
+  71 ms), a record-update loop matches the previous release, and string
+  growth runs in under half its previous time, with smaller executables and
+  the same allocation counts.
+- **More checks proved in loops over user-defined containers.** The optimizer
+  now proves bounds and overflow checks through element accessors called with
+  a loop index, through records built by their own constructors in place, and
+  across writes to other fields of the same element, without recognizing any
+  container by name.
+
 ## 0.396.1 — Enum type arguments in compile-time branches
 
 - Fix constant evaluation of a generic `constexpr` function whose enum type

@@ -41,7 +41,8 @@ template <typename Enum> void census(Enum last) {
 
 void testCensus() {
   using namespace lang;
-  census(MirInstructionKind::StorageConstructPreflight);
+  census(static_cast<MirInstructionKind>(
+      static_cast<int>(MirInstructionKind::Count) - 1));
   census(MirOperation::PostDecrement);
   census(
       static_cast<IntrinsicKind>(static_cast<int>(IntrinsicKind::Count) - 1));
@@ -289,10 +290,11 @@ int main() {
   }
 
   std::size_t checked = 0;
-  for (const auto &owner : frontend.mir.constructorInstances()) {
-    for (const auto &block : owner.body.blocks) {
+  for (const auto address : enumerateMirBodyAddresses(frontend.mir)) {
+    const auto &ownerBody = *findMirBody(frontend.mir, address);
+    for (const auto &block : ownerBody.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic != IntrinsicKind::PrefixStorageAppend ||
+        if (instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
             !instruction.constructorTarget || instruction.operands.size() != 1)
           continue;
         ++checked;
@@ -300,7 +302,7 @@ int main() {
             *instruction.constructorTarget);
         const auto traits = effects(frontend.mir, instruction);
         const auto summary =
-            exactMirInvocationSummary(frontend.mir, owner.body, instruction);
+            exactMirInvocationSummary(frontend.mir, ownerBody, instruction);
         expect(target != nullptr && target->effectSummary.traits.allocates,
                "the selected user constructor must contribute allocation");
         expect(traits.allocates && traits.writesUnknownMemory &&
@@ -308,21 +310,26 @@ int main() {
                    traits.invokesUserCode && !traits.removableWhenUnused &&
                    !traits.reorderable,
                "exact instruction effects combine construction and storage");
-        expect(owner.effectSummary.traits.allocates &&
-                   owner.effectSummary.traits.writesUnknownMemory &&
-                   owner.effectSummary.traits.initializesValue,
+        const MirEffectSummary *caller =
+            address.kind == MirBodyKind::Function
+                ? &frontend.mir.findFunctionInstance(address.owner)
+                       ->effectSummary
+            : address.kind == MirBodyKind::Constructor
+                ? &frontend.mir.findConstructorInstance(address.owner)
+                       ->effectSummary
+                : nullptr;
+        expect(caller && caller->traits.allocates &&
+                   caller->traits.writesUnknownMemory &&
+                   caller->traits.initializesValue,
                "caller fixed-point summary retains both effect families");
-        expect(summary && summary->traits.allocates &&
-                   summary->traits.writesUnknownMemory &&
-                   summary->traits.initializesValue &&
-                   summary->traits.invokesRuntime &&
-                   !summary->receiverEscapes &&
-                   summary->argumentsEscape == std::vector<bool>{true},
-               "exact invocation query describes the storage argument, not "
-               "the constructor receiver");
+        expect(
+            summary && target && target->parameterTypes.empty() &&
+                *summary == target->effectSummary,
+            "exact raw-construction query retains the selected zero-argument "
+            "constructor summary, not a private storage parameter");
 
         MirProgram changed = frontend.mir;
-        auto *body = findMirBody(changed, {MirBodyKind::Constructor, owner.id});
+        auto *body = findMirBody(changed, address);
         MirInstruction *lostTarget = nullptr;
         if (body != nullptr) {
           for (auto &candidateBlock : body->blocks) {

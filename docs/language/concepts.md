@@ -5,6 +5,17 @@ that generic type arguments must provide. They are a frontend validity
 mechanism. They do not emit C++ concepts, rank overloads, or introduce a
 separate compile-time metaprogramming language.
 
+The source-defined `std::numeric<T>` contract includes bitwise relocation,
+alongside copying, ordering and default construction. Its signed, integral and
+floating refinements inherit that guarantee. Compiler-bound numeric, atomic
+scalar and integral-enum capabilities also prove complete object layout and
+absence of stored borrows for a dependent parameter, because every type they
+admit has those properties. This permits numeric generic algorithms to use
+ordinary source containers without restating their storage constraints.
+Copyability or movement alone supplies neither structural guarantee; facts
+available only in one disjunct do not escape that disjunction. Example 33
+demonstrates the numeric-container composition.
+
 The prelude's `std::integral_enum<T>` admits scoped enums with a fixed-width
 integer representation and excludes payload enums. `std::enum_underlying<T,U>`
 additionally requires `U` to be the exact declared representation, including

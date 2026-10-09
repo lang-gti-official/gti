@@ -6,6 +6,16 @@
 
 namespace {
 
+bool hasMirIntrinsicKind(const lang::FrontendResult &frontend,
+                         lang::IntrinsicKind kind) {
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.intrinsic == kind)
+          return true;
+  return false;
+}
+
 lang::FrontendResult analyzeWithMemory(std::string_view name,
                                        std::string source) {
   source.insert(0, "#include <std/memory>\n");
@@ -36,13 +46,10 @@ void testOwnershipSemanticFoundation() {
       lang::SemanticType::uniqueOwnerOf(lang::SemanticType::Int32);
   const lang::SemanticType shared =
       lang::SemanticType::sharedPointerTo(lang::SemanticType::Int32);
-  const lang::SemanticType storage =
-      lang::SemanticType::prefixStorageOf(lang::SemanticType::Int32);
   const lang::SemanticTypeTraits referenceTraits =
       lang::semanticTraits(reference);
   const lang::SemanticTypeTraits uniqueTraits = lang::semanticTraits(unique);
   const lang::SemanticTypeTraits sharedTraits = lang::semanticTraits(shared);
-  const lang::SemanticTypeTraits storageTraits = lang::semanticTraits(storage);
   expect(reference.kind == lang::SemanticType::Reference &&
              reference.referenceAccess == lang::AccessMode::Mutable &&
              referenceTraits.ownership == lang::OwnershipKind::Borrowed &&
@@ -56,10 +63,6 @@ void testOwnershipSemanticFoundation() {
              sharedTraits.drop == lang::DropKind::Lexical &&
              sharedTraits.copyable && sharedTraits.movable,
          "shared pointers should be copyable lexical owners");
-  expect(storageTraits.ownership == lang::OwnershipKind::Unique &&
-             storageTraits.drop == lang::DropKind::Lexical &&
-             !storageTraits.copyable && storageTraits.movable,
-         "compiler-private prefix storage should be a move-only lexical owner");
 
   lang::FrontendResult frontend =
       lang::Frontend().analyze("ownership-foundation.gti", R"(
@@ -1319,7 +1322,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v80\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v81\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3512,7 +3515,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v96 ") &&
+  expect(mirDump.starts_with("mir-v97 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -3647,217 +3650,172 @@ int main() { return 0; }
          "global/static accessor storage");
 }
 
-// P-STORAGE-01 slice 2: the prefix-initialized storage capability binds by
-// trusted declaration identity, analyzes its full intrinsic family, and
-// spells the dedicated backend representation.
-
+// Ordinary source prefix ownership: constructor publication, relocation and
+// receiver loans are established by general GTI calls and object lifetimes.
 void testPrefixStorageCapability() {
-  const lang::FrontendResult valid =
-      analyzeTrustedPreludeFixture("prefix-storage.gti", R"(
-class Prefixed<std::movable T> {
-  mut gti_internal::prefix_storage<T> data;
-  mut uint64_t observed = 0;
-
+  const auto valid = analyzeWithMemory("source-prefix-owner.gti", R"(
+concept prefix_fixture_element<T> = std::storage_element<T> && std::relocatable<T>;
+class Prefixed<prefix_fixture_element T> {
+  mut std::detail::prefix_owner<T> data;
 public:
-  Prefixed(uint64_t capacity)
-      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
-
-  void push(T value) mut {
-    gti_internal::prefix_storage_append(this.data, value);
-  }
-
-  void pop() mut {
-    gti_internal::prefix_storage_pop(this.data);
-  }
-
-  T& at(uint64_t index) {
-    return gti_internal::prefix_storage_read(this.data, index);
-  }
-
-  mut T& at_mut(uint64_t index) mut {
-    return gti_internal::prefix_storage_read_mut(this.data, index);
-  }
-
-  uint64_t length() {
-    return gti_internal::prefix_storage_length(this.data);
-  }
-
-  void take_from(mut Prefixed<T>& source) mut {
-    gti_internal::prefix_storage_relocate(source.data, this.data);
-  }
+  Prefixed(uint64_t capacity) : data(std::detail::prefix_owner<T>(capacity)) {}
+  void push(T value) mut { this.data.append_value(std::move(value)); }
+  void pop() mut { this.data.pop(); }
+  T& at(uint64_t index) { return this.data.read(index); }
+  mut T& at_mut(uint64_t index) mut { return this.data.read_mut(index); }
+  uint64_t length() { return this.data.length(); }
+  void take_from(mut Prefixed<T>& source) mut { source.data.relocate_to(this.data); }
 };
-
 int main() {
-  mut Prefixed<int> values = Prefixed<int>(uint64_t(4));
+  mut Prefixed<int> values{uint64_t(4)};
   values.push(7);
   values.push(9);
-  if (values.length() != uint64_t(2) or values.at(uint64_t(0)) != 7) {
-    return 1;
-  }
+  if (values.length() != uint64_t(2) or values.at(uint64_t(0)) != 7) return 1;
   mut int& slot = values.at_mut(uint64_t(1));
   slot = 11;
   values.pop();
-  mut Prefixed<int> moved = Prefixed<int>(uint64_t(4));
+  mut Prefixed<int> moved{uint64_t(4)};
   moved.take_from(values);
-  if (moved.length() != uint64_t(1) or moved.at(uint64_t(0)) != 7) {
-    return 2;
-  }
-  return 0;
+  return moved.length() == uint64_t(1) && moved.at(uint64_t(0)) == 7 ? 0 : 2;
 }
 )");
-  expect(valid.canGenerateCode(),
-         "the prefix-storage capability fixture should pass the frontend");
+  expect(valid.canGenerateCode(), "ordinary source prefix owner must pass");
   if (valid.canGenerateCode()) {
-    const lang::OptimizationResult optimizations =
-        lang::OptimizationPipeline().run(valid.hir,
-                                         lang::OptimizationLevel::O0);
-    const lang::BackendArtifact artifact =
-        gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
-    expect(
-        concreteBackendSymbols(artifact.contents, "__gti_type_", "Prefixed")
-                    .size() == 1 &&
-            artifact.contents.find("::gti_internal::backend::prefix_storage<"
-                                   "std::int32_t> data;") !=
-                std::string::npos &&
-            artifact.contents.find(
-                "::gti_internal::backend::mir_prefix_allocate_v1<"
-                "std::int32_t>(") != std::string::npos &&
-            artifact.contents.find(
-                "::gti_internal::backend::mir_prefix_append_v1(") !=
-                std::string::npos &&
-            artifact.contents.find(
-                "::gti_internal::backend::mir_prefix_pop_v1(") !=
-                std::string::npos &&
-            artifact.contents.find(
-                "::gti_internal::backend::mir_prefix_read_v1(") !=
-                std::string::npos &&
-            artifact.contents.find(
-                "::gti_internal::backend::mir_prefix_read_mut_v1(") !=
-                std::string::npos &&
-            artifact.contents.find(
-                "::gti_internal::backend::mir_prefix_relocate_v1<true>(") !=
-                std::string::npos,
-        "the prefix-storage fixture should retain its dedicated "
-        "representation and select the exact verified-MIR capability family");
+    bool checkedRead = false, checkedWrite = false;
+    for (const auto &function : valid.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          checkedRead |=
+              instruction.intrinsic == lang::IntrinsicKind::RawBorrow;
+          checkedWrite |=
+              instruction.intrinsic == lang::IntrinsicKind::RawBorrowMut;
+        }
+    const auto artifact = gti_test::emitCppText(valid);
+    expect(concreteBackendSymbols(artifact, "__gti_type_", "Prefixed").size() ==
+                   1 &&
+               artifact.find("construct_representation_at(") !=
+                   std::string::npos &&
+               artifact.find("mir_object_relocate_v1(") != std::string::npos &&
+               checkedRead && checkedWrite &&
+               artifact.find("class prefix_storage") == std::string::npos &&
+               artifact.find("mir_prefix_") == std::string::npos,
+           "source prefix policy emits ordinary classes and general "
+           "lifetime/borrow operations");
   }
 
-  const lang::FrontendResult optionalMisuse =
-      analyzeTrustedMemoryFixture("prefix-storage-optional-misuse.gti", R"(
+  const auto optionalMisuse =
+      analyzeTrustedMemoryFixture("source-prefix-optional-misuse.gti", R"(
 #include <std/optional>
 int main() {
-  mut gti_internal::prefix_storage<int> values =
-      gti_internal::allocate_prefix_storage<int>(uint64_t(1));
+  mut std::detail::prefix_owner<int> values{uint64_t(1)};
   return int(gti_internal::optional_storage_read(values));
 }
 )");
-  expect(!optionalMisuse.canGenerateCode() &&
-             hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-S2019") &&
-             hasDiagnostic(optionalMisuse.diagnostics,
-                           "Optional storage operations require the exact "
-                           "trusted gti_internal::optional_storage<T> "
-                           "capability"),
-         "optional storage operations must reject prefix storage arguments: "
-         "the two capabilities stay distinct");
+  expect(
+      !optionalMisuse.canGenerateCode() &&
+          hasDiagnosticCode(optionalMisuse.diagnostics, "GTI-S2019") &&
+          hasDiagnostic(
+              optionalMisuse.diagnostics,
+              "Optional storage operations require the exact trusted"),
+      "optional private operations reject an unrelated ordinary source owner");
 
-  const lang::FrontendResult prefixMisuse =
-      analyzeTrustedMemoryFixture("prefix-storage-prefix-misuse.gti", R"(
+  const auto retired =
+      analyzeTrustedMemoryFixture("retired-prefix-operations.gti", R"(
 int main() {
-  mut gti_internal::unique_owner<int> values =
-      gti_internal::allocate_unique_owner<int>(1);
+  mut gti_internal::prefix_storage<int> values =
+      gti_internal::allocate_prefix_storage<int>(uint64_t(1));
   return int(gti_internal::prefix_storage_read(values, uint64_t(0)));
 }
 )");
-  expect(!prefixMisuse.canGenerateCode() &&
-             hasDiagnosticCode(prefixMisuse.diagnostics, "GTI-S2019"),
-         "prefix storage operations must reject unique-owner arguments: "
-         "the two capabilities stay distinct");
-
-  const auto rejectsLiveLoan = [&](const std::string &borrowedStorage,
-                                   const std::string &operation,
-                                   const std::string &invocation) {
-    const auto result = analyzeTrustedPreludeFixture(
-        "prefix-storage-live-loan.gti", R"(
+  expect(!retired.canGenerateCode() &&
+             hasDiagnostic(retired.diagnostics, "Unknown type") &&
+             hasDiagnostic(retired.diagnostics, "Undefined qualified name"),
+         "retired prefix declarations are no longer provided by the prelude");
+  const auto ordinarySpelling =
+      analyzeTrustedMemoryFixture("ordinary-prefix-spelling.gti", R"(
+namespace gti_internal {
+  class prefix_storage<std::copy_constructible T> {
+  public:
+    T value;
+    prefix_storage(T initial) : value(initial) {}
+  };
+}
 int main() {
-  mut gti_internal::prefix_storage<int> values =
-      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
-  mut gti_internal::prefix_storage<int> other =
-      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
-  gti_internal::prefix_storage_append(values, 7);
-  gti_internal::prefix_storage_append(other, 9);
-  int& value = gti_internal::prefix_storage_read()" +
-                                            borrowedStorage +
-                                            R"(, uint64_t(0));
-)" + invocation + R"(
+  gti_internal::prefix_storage<int> first{7};
+  gti_internal::prefix_storage<int> second = first;
+  return second.value - 7;
+}
+)");
+  expect(ordinarySpelling.canGenerateCode(),
+         "even a trusted declaration with the old spelling has no special "
+         "capability identity");
+
+  const auto rejectsLiveLoan = [&](std::string_view borrowed,
+                                   std::string_view invocation) {
+    const auto result = analyzeWithMemory("source-prefix-live-loan.gti",
+                                          R"(
+int main() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = )" + std::string(borrowed) + R"(.read(uint64_t(0));
+)" + std::string(invocation) + R"(
   return value;
 }
 )");
-    expect(!result.canGenerateCode() &&
-               hasDiagnosticCode(result.diagnostics, "GTI-S2017") &&
-               hasDiagnostic(result.diagnostics,
-                             operation +
-                                 " cannot mutate storage while an "
-                                 "overlapping borrow may still be live"),
-           operation + " must reject its live " + borrowedStorage + " loan");
+    expect(
+        !result.canGenerateCode() &&
+            hasDiagnosticCode(result.diagnostics, "GTI-S2017") &&
+            (hasDiagnostic(result.diagnostics, "overlapping borrow") ||
+             hasDiagnostic(result.diagnostics, "reference borrowed from it") ||
+             hasDiagnostic(result.diagnostics,
+                           "Mutable reference argument overlaps a borrow")),
+        "ordinary prefix mutation must reject its live " +
+            std::string(borrowed) + " loan");
   };
-  rejectsLiveLoan("values", "prefix_storage_pop",
-                  "gti_internal::prefix_storage_pop(values);");
-  rejectsLiveLoan("values", "prefix_storage_append",
-                  "gti_internal::prefix_storage_append(values, 11);");
-  rejectsLiveLoan(
-      "values", "prefix_storage_insert",
-      "gti_internal::prefix_storage_insert(values, uint64_t(0), 11);");
-  rejectsLiveLoan("values", "prefix_storage_erase",
-                  "gti_internal::prefix_storage_erase(values, uint64_t(0));");
-  rejectsLiveLoan(
-      "values", "prefix_storage_read_mut",
-      "mut int& edit = gti_internal::prefix_storage_read_mut(values, "
-      "uint64_t(0));");
-  rejectsLiveLoan("values", "prefix_storage_relocate",
-                  "gti_internal::prefix_storage_relocate(values, other);");
-  rejectsLiveLoan("other", "prefix_storage_relocate",
-                  "gti_internal::prefix_storage_relocate(values, other);");
+  rejectsLiveLoan("values", "values.pop();");
+  rejectsLiveLoan("values", "values.append_value(11);");
+  rejectsLiveLoan("values", "values.insert(uint64_t(0), 11);");
+  rejectsLiveLoan("values", "values.erase(uint64_t(0));");
+  rejectsLiveLoan("values", "mut int& edit = values.read_mut(uint64_t(0));");
+  rejectsLiveLoan("values", "values.relocate_to(other);");
+  rejectsLiveLoan("other", "values.relocate_to(other);");
 
-  const auto immutable =
-      analyzeTrustedPreludeFixture("prefix-storage-immutable.gti", R"(
+  const auto immutable = analyzeWithMemory("source-prefix-immutable.gti", R"(
 int main() {
-  gti_internal::prefix_storage<int> values =
-      gti_internal::allocate_prefix_storage<int>(uint64_t(1));
-  gti_internal::prefix_storage_pop(values);
+  std::detail::prefix_owner<int> values{uint64_t(1)};
+  values.pop();
   return 0;
 }
 )");
   expect(!immutable.canGenerateCode() &&
-             hasDiagnosticCode(immutable.diagnostics, "GTI-S2019") &&
+             hasDiagnosticCode(immutable.diagnostics, "GTI-S2000") &&
              hasDiagnostic(immutable.diagnostics,
-                           "prefix_storage_pop requires mutable storage"),
-         "a trusted prefix mutator still requires a mutable binding");
+                           "Mutable method requires a mutable receiver"),
+         "ordinary prefix mutators require a writable receiver");
 
-  const auto endedLoan =
-      analyzeTrustedPreludeFixture("prefix-storage-ended-loan.gti", R"(
+  const auto endedLoan = analyzeWithMemory("source-prefix-ended-loan.gti", R"(
 int main() {
-  mut gti_internal::prefix_storage<int> values =
-      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
-  mut gti_internal::prefix_storage<int> other =
-      gti_internal::allocate_prefix_storage<int>(uint64_t(2));
-  gti_internal::prefix_storage_append(values, 7);
-  gti_internal::prefix_storage_append(other, 9);
-  int& value = gti_internal::prefix_storage_read(values, uint64_t(0));
-  // Mutating a disjoint owner does not invalidate value's loan.
-  gti_internal::prefix_storage_pop(other);
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  other.pop();
   int copied = value;
-  // The checked loan ends at its last use, not at the enclosing scope.
-  gti_internal::prefix_storage_pop(values);
-  gti_internal::prefix_storage_append(other, 9);
-  gti_internal::prefix_storage_relocate(other, values);
-  mut int& edit = gti_internal::prefix_storage_read_mut(values, uint64_t(0));
+  values.pop();
+  other.append_value(9);
+  other.relocate_to(values);
+  mut int& edit = values.read_mut(uint64_t(0));
   edit = copied;
-  gti_internal::prefix_storage_pop(values);
+  values.pop();
   return 0;
 }
 )");
-  expect(endedLoan.canGenerateCode(),
-         "prefix mutation permits disjoint storage and ended shared/mutable "
-         "loans, including both relocation operands");
+  expect(
+      endedLoan.canGenerateCode(),
+      "prefix mutations permit disjoint owners and ended shared/mutable loans");
 }
 
 void testReceiverTiedReferenceReturns() {
@@ -3873,19 +3831,19 @@ public:
   }
 };
 
-class Buffer<T> {
-  mut gti_internal::prefix_storage<T> data;
+class Buffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
 
 public:
   Buffer(uint64_t capacity)
-      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
+      : data(std::detail::prefix_owner<T>(capacity)) {}
 
   void push(T value) mut {
-    gti_internal::prefix_storage_append(this.data, value);
+    this.data.append_value(std::move(value));
   }
 
   T& at(uint64_t index) {
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 };
 
@@ -3953,27 +3911,26 @@ int main() {
               std::string::npos &&
           artifact.contents.find("*__gti_mir_out_result = __gti_mir_loan_2;") !=
               std::string::npos &&
-          artifact.contents.find(
-              "::gti_internal::backend::mir_prefix_read_v1(") !=
-              std::string::npos,
+          hasMirIntrinsicKind(frontend, lang::IntrinsicKind::RawBorrow) &&
+          artifact.contents.find("mir_prefix_read_v1") == std::string::npos,
       "receiver-tied borrows should lower through exact const loan carriers "
       "and publish the returned loan without copying its referent");
 
   const lang::FrontendResult nested =
       analyzeTrustedMemoryFixture("nested-receiver-reference.gti", R"(
 class ElementBuffer {
-  mut gti_internal::prefix_storage<int> data;
+  mut std::detail::prefix_owner<int> data;
 
 public:
   ElementBuffer()
-      : data(gti_internal::allocate_prefix_storage<int>(uint64_t(1))) {}
+      : data(std::detail::prefix_owner<int>(uint64_t(1))) {}
 
   void set(int value) mut {
-    gti_internal::prefix_storage_append(this.data, value);
+    this.data.append_value(std::move(value));
   }
 
   int& at() {
-    return gti_internal::prefix_storage_read(this.data, uint64_t(0));
+    return this.data.read(uint64_t(0));
   }
 };
 
@@ -4124,24 +4081,24 @@ int main() {
 
   const lang::FrontendResult invalidated =
       analyzeTrustedMemoryFixture("invalidated-reference.gti", R"(
-class Buffer<T> {
-  mut gti_internal::prefix_storage<T> data;
+class Buffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
 
 public:
   Buffer(uint64_t capacity)
-      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
+      : data(std::detail::prefix_owner<T>(capacity)) {}
 
   T& at(uint64_t index) {
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   void clear(uint64_t index) mut {
-    gti_internal::prefix_storage_pop(this.data);
+    this.data.pop();
   }
 
   T invalidate_receiver(uint64_t index) mut {
-    T& value = gti_internal::prefix_storage_read(this.data, index);
-    gti_internal::prefix_storage_pop(this.data);
+    T& value = this.data.read(index);
+    this.data.pop();
     return value;
   }
 };
@@ -4156,8 +4113,7 @@ int main() {
 )");
   expect(!invalidated.canGenerateCode(),
          "move-only receivers must remain stable while borrowed");
-  expect(hasDiagnostic(invalidated.diagnostics,
-                       "prefix_storage_pop cannot mutate storage") &&
+  expect(countDiagnosticCode(invalidated.diagnostics, "GTI-S2017") == 3 &&
              hasDiagnostic(invalidated.diagnostics,
                            "Cannot move storage while an overlapping borrow") &&
              hasDiagnostic(invalidated.diagnostics,
@@ -5981,9 +5937,9 @@ int main() {
   const lang::FrontendResult applicationStorageBorrow =
       lang::Frontend().analyze("application-storage-borrow.gti", R"(
 class StorageBorrow<T> {
-  gti_internal::prefix_storage<T>& data;
+  gti_internal::text_view& data;
 public:
-  StorageBorrow(gti_internal::prefix_storage<T>& source) : data(source) {}
+  StorageBorrow(gti_internal::text_view& source) : data(source) {}
 };
 int main() { return 0; }
 )");
@@ -11458,19 +11414,19 @@ int main() {
          "public storage rejects wrong index/element types, copies and reuse "
          "after movement");
 
-  // Placement restrictions belong to the surviving private capability, not the
-  // ordinary public class. Keep that separate private-boundary regression.
+  // Private placement restrictions do not apply nominally to source owners.
+  // Keep the retained unique-owner capability's separate boundary regression.
   const auto invalidPrivatePlacement =
-      analyzeTrustedMemoryFixture("invalid-prefix-storage-placement.gti", R"(
-gti_internal::prefix_storage<int> global =
-    gti_internal::allocate_prefix_storage<int>(uint64_t(1));
+      analyzeTrustedMemoryFixture("invalid-unique-owner-placement.gti", R"(
+gti_internal::unique_owner<int> global =
+    gti_internal::allocate_unique_owner<int>(1);
 int main() { return 0; }
 )");
   expect(!invalidPrivatePlacement.canGenerateCode() &&
-             hasDiagnostic(invalidPrivatePlacement.diagnostics,
-                           "only be used as a local binding or class field"),
-         "compiler-private prefix storage remains limited to local or field "
-         "owners");
+             hasDiagnostic(
+                 invalidPrivatePlacement.diagnostics,
+                 "only be local bindings, function values, or class fields"),
+         "compiler-private unique ownership retains its placement boundary");
 
   const lang::FrontendResult recoverableStorage =
       analyzeWithMemory("recoverable-source-storage.gti", R"(
@@ -11811,6 +11767,7 @@ void testFixedArrayPackForwarding() {
   bool expandedArray = false;
   bool expandedClassArray = false;
   bool sourceHelper = false;
+  bool sparseArrayForwarding = false, prefixArrayForwarding = false;
   for (const auto &function : frontend.hir.functionInstances()) {
     sourceHelper |= function.source != nullptr &&
                     function.source->name().lexeme == "forward_construct";
@@ -11819,6 +11776,12 @@ void testFixedArrayPackForwarding() {
         if (element.type == array || element.type == itemArray) {
           expandedArray |= element.type == array;
           expandedClassArray |= element.type == itemArray;
+          if (element.type == array && function.source) {
+            sparseArrayForwarding |=
+                function.source->name().lexeme == "emplace";
+            prefixArrayForwarding |=
+                function.source->name().lexeme == "append_unchecked";
+          }
           expect(element.kind == lang::HirCallInputKind::Value &&
                      element.traits.copyable &&
                      !element.traits.containsBorrowedState,
@@ -11826,7 +11789,7 @@ void testFixedArrayPackForwarding() {
                  "decay or a loan");
         }
   }
-  bool rawConstruction = false, prefixConstruction = false, mixedPrefix = false;
+  bool rawConstruction = false, mixedPrefix = false;
   bool stagedClassArray = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     const auto *hirFunction = frontend.hir.findFunctionInstance(function.id);
@@ -11845,21 +11808,24 @@ void testFixedArrayPackForwarding() {
               hirFunction != nullptr && hirFunction->source != nullptr &&
               hirFunction->source->name().lexeme == "forward_with_fixed";
         }
-        if (instruction.constructorTarget &&
+        if (instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct &&
+            instruction.constructorTarget &&
             instruction.parameterTypes.size() == 2 &&
             instruction.parameterTypes[1] == array) {
-          rawConstruction |=
-              instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
-          prefixConstruction |=
-              instruction.intrinsic == lang::IntrinsicKind::PrefixStorageAppend;
+          const auto *selected = frontend.hir.findConstructorInstance(
+              *instruction.constructorTarget);
+          if (selected && selected->source) {
+            rawConstruction |= selected->source->name().lexeme == "ArrayHolder";
+          }
         }
       }
   }
   expect(sourceHelper && expandedArray && expandedClassArray &&
              stagedClassArray && mixedPrefix && rawConstruction &&
-             prefixConstruction && lang::verifyMirProgram(frontend.mir).valid(),
-         "the exact array survives both constructor families and fixed-prefix "
-         "pack calls");
+             sparseArrayForwarding && prefixArrayForwarding &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "sparse and prefix forwarding retain the exact array and share the "
+         "general object-construction primitive");
   const auto artifact =
       gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
                         lang::OptimizationPipeline().run(
@@ -12224,23 +12190,24 @@ int main() {
               });
         });
   };
-  expect(hasHirIntrinsic(lang::IntrinsicKind::PrefixStorageInsert) &&
-             hasHirIntrinsic(lang::IntrinsicKind::PrefixStorageErase) &&
-             hasMirIntrinsic(lang::IntrinsicKind::PrefixStorageInsert) &&
-             hasMirIntrinsic(lang::IntrinsicKind::PrefixStorageErase),
-         "HIR and MIR should retain both exact storage-shift operations used "
-         "by source-defined vector insertion and erasure");
+  expect(hasHirIntrinsic(lang::IntrinsicKind::ObjectRelocate) &&
+             hasHirIntrinsic(lang::IntrinsicKind::ObjectDestroy) &&
+             hasMirIntrinsic(lang::IntrinsicKind::ObjectRelocate) &&
+             hasMirIntrinsic(lang::IntrinsicKind::ObjectDestroy),
+         "source vector shifts preserve general relocation/destruction facts "
+         "through HIR and MIR, not nominal vector operations");
 
   const lang::BackendArtifact vectorArtifact =
       gti_test::emitCpp(vectorFrontend, vectorFrontend.mir, vectorFrontend.mir,
                         lang::OptimizationPipeline().run(
                             vectorFrontend.hir, lang::OptimizationLevel::O0));
-  expect(vectorArtifact.contents.find("mir_prefix_insert_v1") !=
+  expect(vectorArtifact.contents.find("mir_object_relocate_v1(") !=
                  std::string::npos &&
-             vectorArtifact.contents.find("mir_prefix_erase_v1") !=
-                 std::string::npos,
-         "the backend should lower vector shifts through private checked "
-         "storage helpers rather than public vector recognition");
+             vectorArtifact.contents.find("mir_object_destroy_v1(") !=
+                 std::string::npos &&
+             vectorArtifact.contents.find("mir_prefix_") == std::string::npos,
+         "the backend lowers source shifts through general exact-address "
+         "lifetimes");
 
   const lang::FrontendResult forwardedPointers = lang::Frontend().analyze(
       "standard-vector-forwarded-pointers.gti", R"(
@@ -12423,13 +12390,13 @@ int main() {
 
 void testAggregateOwnershipTraits() {
   const std::string source = R"(
-class Buffer<T> {
-  mut gti_internal::prefix_storage<T> data;
+class Buffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
   uint64_t reserved;
 
 public:
   Buffer(uint64_t capacity)
-      : data(gti_internal::allocate_prefix_storage<T>(capacity)), reserved(capacity) {}
+      : data(std::detail::prefix_owner<T>(capacity)), reserved(capacity) {}
 
   uint64_t capacity() {
     return this.reserved;
@@ -12531,15 +12498,15 @@ int main() {
           : frontend.semantics.findClassLifecycle(*copyableClass);
   expect(parameter != nullptr && bufferBinding != nullptr &&
              nestedBinding != nullptr && copyableBinding != nullptr &&
-             parameter->traits.ownership == lang::OwnershipKind::Unique &&
+             parameter->traits.ownership == lang::OwnershipKind::Value &&
              !parameter->traits.copyable && parameter->traits.movable &&
              parameter->traits.drop == lang::DropKind::Lexical &&
              !bufferBinding->traits.copyable && bufferBinding->traits.movable &&
-             nestedBinding->traits.ownership == lang::OwnershipKind::Unique &&
+             nestedBinding->traits.ownership == lang::OwnershipKind::Value &&
              !nestedBinding->traits.copyable && nestedBinding->traits.movable &&
              copyableBinding->traits.copyable &&
              copyableBinding->traits.movable,
-         "binding metadata should recursively propagate aggregate traits");
+         "ordinary source values recursively retain move-only lexical cleanup");
   expect(bufferLifecycle != nullptr && copyableLifecycle != nullptr &&
              bufferLifecycle->copyConstructor ==
                  lang::SpecialMemberStatus::Deleted &&
@@ -12593,7 +12560,7 @@ int main() {
           artifact.contents.find(
               "construct_representation_at(__gti_mir_out_result, "
               "std::move(__gti_mir_p_1.get()));") != std::string::npos &&
-          artifact.contents.find("mir_prefix_allocate_v1<std::int32_t>") !=
+          artifact.contents.find("mir_prefix_allocate_v1") ==
               std::string::npos &&
           artifact.contents.find("__gti_entry__gti_mir_failure(") !=
               std::string::npos &&
@@ -12614,10 +12581,10 @@ int main() {
   const lang::FrontendResult invalid =
       analyzeTrustedMemoryFixture("invalid-aggregate-ownership.gti", R"(
 class Buffer {
-  mut gti_internal::prefix_storage<int> data;
+  mut std::detail::prefix_owner<int> data;
 
 public:
-  Buffer() : data(gti_internal::allocate_prefix_storage<int>(uint64_t(1))) {}
+  Buffer() : data(std::detail::prefix_owner<int>(uint64_t(1))) {}
 };
 
 class NestedBuffer {
@@ -12650,7 +12617,7 @@ int main() {
   expect(
       hasDiagnosticCode(invalid.diagnostics, "GTI-S2018") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
-          hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
+          hasDiagnostic(invalid.diagnostics, "would copy a move-only value") &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'nested_copy'"),
       "aggregate diagnostics should cover calls, copies, nesting, and use "
@@ -12862,23 +12829,23 @@ public:
 
 void testDestructorsAndActiveDropState() {
   const std::string source = R"(
-class CleanupBuffer<T> {
-  mut gti_internal::prefix_storage<T> data;
+class CleanupBuffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
   mut uint64_t count = 0;
 
 public:
   CleanupBuffer(uint64_t capacity)
-      : data(gti_internal::allocate_prefix_storage<T>(capacity)) {}
+      : data(std::detail::prefix_owner<T>(capacity)) {}
 
   ~CleanupBuffer() {
     while (this.count > 0) {
       this.count--;
-      gti_internal::prefix_storage_pop(this.data);
+      this.data.pop();
     }
   }
 
   void push(T value) mut {
-    gti_internal::prefix_storage_append(this.data, value);
+    this.data.append_value(std::move(value));
     this.count++;
   }
 };
@@ -12983,9 +12950,8 @@ int main() {
           artifact.contents.find(
               "GTI verified-MIR body: scalar-cfg-destructor-failure-v1") !=
               std::string::npos &&
-          artifact.contents.find(
-              "::gti_internal::backend::mir_prefix_pop_v1") !=
-              std::string::npos,
+          hasMirIntrinsicKind(frontend, lang::IntrinsicKind::ObjectDestroy) &&
+          artifact.contents.find("mir_prefix_pop_v1") == std::string::npos,
       "the backend should lower declared cleanup through an active drop state "
       "and generated safe moves");
 
@@ -14477,7 +14443,7 @@ int main() {
   const lang::FrontendResult concreteGeneric = lang::Frontend().analyze(
       "generic-range-for.gti", R"(
 #include <std/vector>
-int32_t count_all<std::copyable T>(std::vector<T>& values) {
+int32_t count_all<T>(std::vector<T>& values) requires std::vector_element<T> {
   mut int32_t total = 0;
   for (auto& value : values) { total = total + 1; }
   return total;
@@ -14489,6 +14455,12 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!concreteGeneric.canGenerateCode() ||
+      !concreteGeneric.diagnostics.empty()) {
+    for (const auto &diagnostic : concreteGeneric.diagnostics)
+      std::cerr << "Unexpected generic range-for diagnostic: "
+                << diagnostic.message << '\n';
+  }
   expect(concreteGeneric.canGenerateCode() &&
              concreteGeneric.diagnostics.empty() &&
              lang::verifyHirProgramPlans(concreteGeneric.semantics,
@@ -15462,6 +15434,47 @@ int main() {
          "not masquerade as a retained named-owner projection");
 }
 
+void testSourceOwnedExpectedRangeOrigins() {
+  const auto fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "fixtures/source_prefix_expected_range.gti";
+  std::ifstream input(fixture);
+  expect(input.good(), "the unrelated source-owned range fixture exists");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = lang::Frontend().analyze(
+      fixture, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "ordinary and Expected source-owned ranges retain the checked owner");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t ranges = 0;
+  std::size_t rejected = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &range : function.body.rangeIterations) {
+      const auto *element = function.body.findLoan(range.elementLoan);
+      const auto *parent = function.body.findLoan(range.rangeLoan);
+      expect(element != nullptr && parent != nullptr &&
+                 element->source == parent->source &&
+                 element->access == lang::AccessMode::ReadOnly &&
+                 parent->access == lang::AccessMode::ReadOnly,
+             "an opaque source cursor borrows its range owner, not its shell");
+      ++ranges;
+      if (element == nullptr)
+        continue;
+      auto forged = frontend.mir;
+      auto *body =
+          lang::findMirBody(forged, {lang::MirBodyKind::Function, function.id});
+      body->loans[element->id - 1].source = range.iterator;
+      rejected += !lang::verifyMirProgram(forged).valid();
+    }
+  }
+  expect(ranges == 2 && rejected == 2,
+         "both direct and payload ranges reject iterator-shell source forgery");
+}
+
 void testMutableRangeLoans() {
   const lang::FrontendResult fixedArrays =
       lang::Frontend().analyze("mutable-fixed-array-ranges.gti", R"(
@@ -15695,12 +15708,17 @@ int main() { return mutate_vector() + mutate_owned_temporary(); }
   const lang::BackendArtifact vectorArtifact =
       gti_test::emitCpp(standardVector, standardVector.mir, standardVector.mir,
                         vectorOptimizations);
+  bool checkedMutableRead = false;
+  for (const auto &function : standardVector.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        checkedMutableRead |=
+            instruction.intrinsic == lang::IntrinsicKind::RawBorrowMut;
   expect(vectorArtifact.contents.find("vector_mut_iterator") !=
                  std::string::npos &&
              vectorArtifact.contents.find("begin_mut__gti_mir_failure") !=
                  std::string::npos &&
-             vectorArtifact.contents.find("prefix_storage_read_mut") !=
-                 std::string::npos,
+             checkedMutableRead,
          "the C++ backend should emit the mutable iterator's transferred "
          "reference capability and mutable storage read");
 
@@ -18131,7 +18149,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v96 ") &&
+             mirDump.starts_with("mir-v97 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -21516,6 +21534,8 @@ constexpr NamedTest kTests[] = {
     {"testPassiveCleanupRangeTemporary", testPassiveCleanupRangeTemporary},
     {"testSharedPayloadSiblingReborrows", testSharedPayloadSiblingReborrows},
     {"testExpectedPayloadRangeLoans", testExpectedPayloadRangeLoans},
+    {"testSourceOwnedExpectedRangeOrigins",
+     testSourceOwnedExpectedRangeOrigins},
     {"testMutableRangeLoans", testMutableRangeLoans},
     {"testLambdas", testLambdas},
     {"testConfinedCallableParameters", testConfinedCallableParameters},

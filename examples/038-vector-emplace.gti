@@ -48,6 +48,16 @@ int main() {
   numbers.push_back(5);
   numbers[std::size_t(0)] = 6;
 
+  // Unsafe access removes the index check only. Prove the index first; the
+  // returned reference still prevents growth or mutation while it is live.
+  if (numbers.size() >= std::size_t(2)) {
+    unsafe {
+      numbers.get_unchecked_mut(std::size_t(1)) = 5;
+      int32_t& second = numbers.get_unchecked(std::size_t(1));
+      if (second != 5) { return 2; }
+    }
+  }
+
   if (first_value == 8 and total == 37 and moved.size() == 2 and
       moved.capacity() == 4 and numbers.size() == 2 and
       numbers[std::size_t(0)] + numbers[std::size_t(1)] == 11) {

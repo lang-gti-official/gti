@@ -3242,6 +3242,42 @@ void testMirEffectClassification() {
            "general construction and destruction must retain user-code and "
            "raw-memory barriers for every source-defined storage policy");
   }
+  lang::MirInstruction scalarConstruction;
+  scalarConstruction.kind = lang::MirInstructionKind::Call;
+  scalarConstruction.intrinsic = lang::IntrinsicKind::ObjectConstruct;
+  scalarConstruction.unsafeOperation =
+      lang::UnsafeOperationKind::ObjectLifetime;
+  scalarConstruction.info.type = lang::SemanticType::Void;
+  scalarConstruction.operands = {
+      {.type = lang::SemanticType::rawPointerTo(lang::SemanticType::Int32,
+                                                lang::AccessMode::Mutable)},
+      {.type = lang::SemanticType::Int32}};
+  const auto scalarEffect = lang::effects(scalarConstruction);
+  expect(lang::isMirScalarFinalAddressConstruction(scalarConstruction) &&
+             scalarEffect.writesUnknownMemory &&
+             scalarEffect.initializesValue && !scalarEffect.invokesUserCode &&
+             !scalarEffect.maySynchronize && !scalarEffect.speculatable &&
+             !scalarEffect.removableWhenUnused && !scalarEffect.reorderable,
+         "an exact scalar construction remains an observable raw write but "
+         "does not invent a user constructor or synchronization");
+  auto selectedConstruction = scalarConstruction;
+  selectedConstruction.constructorTarget = 1;
+  expect(!lang::isMirScalarFinalAddressConstruction(selectedConstruction) &&
+             lang::effects(selectedConstruction).invokesUserCode &&
+             lang::effects(selectedConstruction).maySynchronize,
+         "a selected constructor cannot inherit the scalar-only effects");
+  selectedConstruction = scalarConstruction;
+  selectedConstruction.elementCleanup = lang::MirDropType{};
+  expect(!lang::isMirScalarFinalAddressConstruction(selectedConstruction),
+         "a represented cleanup cannot inherit the scalar-only effects");
+  selectedConstruction = scalarConstruction;
+  selectedConstruction.operands.back().type = lang::SemanticType::Int64;
+  expect(!lang::isMirScalarFinalAddressConstruction(selectedConstruction),
+         "unmatched scalar argument types retain conservative effects");
+  selectedConstruction = scalarConstruction;
+  selectedConstruction.unsafeOperation = lang::UnsafeOperationKind::None;
+  expect(!lang::isMirScalarFinalAddressConstruction(selectedConstruction),
+         "a forged non-lifetime classification cannot select scalar effects");
   for (std::size_t index = 0; index < lang::synchronizationOperationKindCount;
        ++index) {
     const auto kind = static_cast<lang::SynchronizationOperationKind>(index);
@@ -3347,15 +3383,14 @@ void testMirEffectClassification() {
 
   const lang::MirEffectTraits allocation = lang::effects(lang::MirInstruction{
       .kind = lang::MirInstructionKind::Call,
-      .intrinsic = lang::IntrinsicKind::AllocatePrefixStorage});
+      .intrinsic = lang::IntrinsicKind::AllocateUniqueOwner});
   expect(allocation.allocates && allocation.invokesRuntime &&
              allocation.writesUnknownMemory && allocation.mayTrap &&
              allocation.maySynchronize,
          "runtime intrinsics should expose allocation and possible "
          "synchronization effects");
-  expect(
-      lang::effects(lang::IntrinsicKind::AllocatePrefixStorage).maySynchronize,
-      "intrinsic summaries should expose possible runtime synchronization");
+  expect(lang::effects(lang::IntrinsicKind::AllocateUniqueOwner).maySynchronize,
+         "intrinsic summaries should expose possible runtime synchronization");
 
   for (const lang::IntrinsicKind guard :
        {lang::IntrinsicKind::RequireVacantStorage,
@@ -3737,7 +3772,7 @@ int main() {
          "MIR should distinguish virtual and callable failure propagation");
 
   const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v80\n") &&
+  expect(dump.starts_with("mir-body-v81\n") &&
              dump.find("integer_overflow:addition") != std::string::npos &&
              dump.find("index_out_of_bounds:fixed_array") !=
                  std::string::npos &&

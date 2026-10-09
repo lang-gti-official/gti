@@ -5027,40 +5027,50 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 
 ### S-ALLOC-08: Rust Allocation-Failure Model
 
-- **State/role:** accepted direction from the owner (2026-10-09); not started.
-  The contract is
+- **State/role:** done in 0.397.0. The contract is
   [ADR 022's Rust allocation-failure revision](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09)
   and [ADR 007's exhaustion revision](../decisions/007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09).
 - **Outcome:** each allocation behaves as it would in Rust.
   - Infallible allocation (`make_unique`, `make_shared`, vector and string
-    growth, plain container counterparts) aborts on exhaustion after a
-    best-effort, allocation-free `GTI-R0011` report.
+    construction and growth, the resource vector's plain operations, owning
+    callables and boxed polymorphic payloads) aborts on exhaustion after a
+    best-effort, allocation-free `GTI-R0011` report. No cleanup runs.
   - Fallible `try_` allocation keeps its `expected` result.
   - Size-computation overflow stays a contained defined failure.
-  - Process allocations are not observable effects.
-- **Work:**
-  - Change the runtime's exhaustion path to report and abort.
-  - Remove allocation failure edges from infallible allocation operations in
-    MIR effects and the backend's failure paths.
-  - Let MIR or backend optimization remove unused process allocations and their
-    releases, or move them to automatic storage, without removing calls to
-    application `memory_resource` providers.
-  - Update the affected failure, cleanup and exit-status tests and the language
-    documentation.
-- **Acceptance:**
-  - Exhaustion tests show the report and abort for each infallible family, and
-    unchanged `expected` results for each fallible family.
-  - The owning-temporary workload shows the removed allocation.
-  - Resource-provider calls are never removed.
-  - The census and runtime controls show no unexplained regression.
+  - Process allocations are not observable effects; MIR optimization may
+    remove an unused process allocation and its release. Calls into an
+    application `memory_resource` are never removed.
+- **Completion evidence:**
+  - `allocation_abort_runtime` covers the direct, managed-worker,
+    observer-reentry, invalid-record, closed-stderr and broken-pipe abort
+    paths with no cleanup or allocation.
+  - Each infallible family has an exhaustion test that requires the report,
+    the abort status and an empty cleanup trace:
+    - `make_unique`: `unique_scalar_allocation_runtime`,
+      `unique_class_allocation_runtime`,
+      `inherited_unique_allocation_runtime` and
+      `existing_value_allocation_failure`;
+    - `make_shared`: `shared_ownership_failure`;
+    - vector and string growth: `source_prefix_owner_runtime` and
+      `source_prefix_string_runtime`;
+    - the resource vector's plain operations: `source_resource_prefix_runtime`;
+    - owning callables and boxed payloads: `owning_function_policy_failure` and
+      `inline_polymorphic_runtime`.
+  - Fallible families keep their exact `expected` results in
+    `allocator_storage_runtime` and `programmable_allocators_runtime`.
+  - `process_allocation_elision` shows the unused owning temporary's
+    allocation removed at O3 while an escaping owner still allocates.
+    `resource_container_usage` requires exact arena allocation and release
+    counts in every O0/O1/O3 mode, so provider calls are not removed.
+  - The census refresh is reviewed in the
+    [verification record](../architecture/verification.md).
 
 ### S-ALLOC-09: Raw-Buffer Vector And String
 
-- **State/role:** accepted target representation (2026-10-09); not scheduled.
-  The contract is
+- **State/role:** done in 0.397.0. The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
-  It covers migration candidates M01, M02 and M04 in the
-  [standard-library ledger](../architecture/standard-library-and-runtime.md#b-source-policy-candidates-still-using-private-machinery).
+  It completes migration rows M01, M02 and M04, now S22–S24 in the
+  [standard-library ledger](../architecture/standard-library-and-runtime.md#a-policy-already-implemented-in-ordinary-gti).
   M03, string's terminator, follows it.
 - **Outcome:** `std::vector` and `std::string` use Rust's `RawVec`/`Vec`
   layering in ordinary GTI, and the private `prefix_storage` capability is
@@ -5070,18 +5080,27 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   - one check per safe public operation, with raw access internally;
   - `unsafe` unchecked accessors on vector, string, span and fixed array;
   - byte-copy growth for bitwise-relocatable elements.
-- **Prerequisites:**
-  - Outlined failure paths, so the boundary checks do not inflate inlined
-    accessors (see #169).
-  - Ideally `S-ALLOC-08`, so plain growth has no exhaustion failure edge.
-- **Acceptance:**
-  - Vector and string workloads match or beat the current private path,
-    including the checked vector loop at idiomatic-C++ parity (72 ms against
-    71 ms when measured).
-  - Allocation counts and code size do not regress.
+- **Completion evidence:**
+  - The source-container optimizer proofs pass unchanged, as does native
+    optimization evidence. The general rules that recover them are described
+    in [optimization.md](../architecture/optimization.md); the compiler
+    recognizes no container or buffer name.
+  - Against the preserved private-path compiler on the same machine,
+    interleaved medians are 74.48 against 75.36 ms for the checked vector
+    loop, 78.83 against 78.97 ms for game update and 32.73 against 72.95 ms
+    for string growth. The checked vector loop measures 72.07 ms against
+    71.44 ms for idiomatic C++.
+  - Allocation counts are identical: one 20,000-byte region for the vector
+    loop and 6,800 allocations of 52,435,200 bytes for string growth.
+    Executables are smaller: 127,320 against 142,072 bytes, 143,816 against
+    164,536 and 127,928 against 146,112.
   - Final-address emplacement, construction rollback, exactly-once cleanup,
-    checked loans and string's C-string bridges are preserved.
-  - The compiler recognizes no container or buffer name.
+    checked loans and string's C-string bridges keep their focused native
+    matrices, and the full suite passes on the reconciled head.
+- **Remaining boundary:** process allocation still reaches the opaque native
+  allocator, so constructing a second sequence erases the first sequence's
+  element facts. Modeling process allocation as fresh, non-observable memory
+  is a separate precision goal.
 
 ### S-FREE-01: Freestanding Target Profile
 

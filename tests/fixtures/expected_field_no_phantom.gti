@@ -1,0 +1,50 @@
+#include <std/memory>
+
+mut int defaults = 0;
+mut int destructions = 0;
+
+class Probe {
+  int number;
+public:
+  Probe() : number(0) { defaults++; }
+  Probe(int number) : number(number) {}
+  Probe(Probe& other) = delete;
+  Probe(Probe&& other) = default;
+  ~Probe() { destructions++; }
+  int id() { return this.number; }
+};
+
+class Ticket {
+  int number;
+public:
+  Ticket(int number) : number(number) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() { destructions++; }
+  int id() { return this.number; }
+};
+
+struct Package {
+  Probe observed;
+  Ticket required;
+  Package(Probe observed, Ticket required)
+      : observed(std::move(observed)), required(std::move(required)) {}
+};
+struct Envelope {
+  Package nested;
+  Envelope(Package nested) : nested(std::move(nested)) {}
+};
+
+int main() {
+  {
+    expected<Package, int> direct = Package(Probe(7), Ticket(11));
+    expected<Envelope, int> nested =
+        Envelope(Package(Probe(13), Ticket(17)));
+    if (direct.value().observed.id() != 7 ||
+        direct.value().required.id() != 11 ||
+        nested.value().nested.observed.id() != 13 ||
+        nested.value().nested.required.id() != 17) { return 1; }
+    if (defaults != 0 || destructions != 0) { return 2; }
+  }
+  return defaults == 0 && destructions == 4 ? 0 : 3;
+}

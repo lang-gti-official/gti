@@ -6,8 +6,15 @@ int32_t checked_divide(int32_t left, int32_t right) {
   return left / right;
 }
 
+int32_t checked_add_again(int32_t left, int32_t right) {
+  return left + right;
+}
+
+#include "failure_descriptor_other_source.gti"
+
 int main() {
-  if (checked_add(1, 2) != 3 or checked_divide(6, 2) != 3) {
+  if (checked_add(1, 2) != 3 or checked_divide(6, 2) != 3 or
+      checked_add_again(1, 2) != 3 or other_source_add(1, 2) != 3) {
     return 1;
   }
   return 0;

@@ -1,0 +1,10 @@
+#include <std/vector>
+
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2});
+  unsafe {
+    int& first = values.get_unchecked(std::size_t(0));
+    values.push_back(3);
+    return first;
+  }
+}

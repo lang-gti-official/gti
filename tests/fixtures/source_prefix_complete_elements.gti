@@ -1,0 +1,56 @@
+#include <std/memory>
+#include <std/vector>
+
+mut int destroyed = 0;
+
+class Ticket {
+  int number;
+public:
+  Ticket(int number) : number(number) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() { destroyed++; }
+  int id() { return this.number; }
+};
+
+enum class Event { ticket(Ticket value), idle };
+enum class Error { unavailable };
+
+int id(Event& event) {
+  switch (event) {
+  case Event::ticket(auto& value): return value.id();
+  case Event::idle: return 0;
+  }
+}
+
+int main() {
+  {
+    mut std::vector<Event> events{};
+    events.push_back(Event::ticket(Ticket(1)));
+    events.push_back(Event::idle);
+    events.insert(std::size_t(1), Event::ticket(Ticket(2)));
+    events.reserve(std::size_t(16));
+    events.swap_elements(std::size_t(0), std::size_t(1));
+    events.erase(std::size_t(2));
+    events.shrink_to_fit();
+    int first = id(events[std::size_t(0)]);
+    int second = id(events[std::size_t(1)]);
+    if (first != 2 || second != 1) { return 1; }
+    events.clear();
+  }
+  if (destroyed != 2) { return 2; }
+  {
+    mut std::vector<expected<Ticket, Error>> results{};
+    expected<Ticket, Error> ready = Ticket(3);
+    expected<Ticket, Error> missing = unexpected(Error::unavailable);
+    results.push_back(std::move(ready));
+    results.push_back(std::move(missing));
+    results.reserve(std::size_t(16));
+    results.erase(std::size_t(1));
+    results.shrink_to_fit();
+    if (results[std::size_t(0)].value().id() != 3) { return 3; }
+    results.clear();
+  }
+  if (destroyed != 3) { return 4; }
+  return 0;
+}

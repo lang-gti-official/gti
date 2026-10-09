@@ -30,18 +30,14 @@ extern "C" int32_t native_step(int32_t, int32_t);
 int32_t owned_step(int32_t v, int32_t b) {
   int32_t result = step(v, b);
 #ifdef IDIOMATIC
-  // C++ may elide this allocation. That is an idiomatic comparison, not
-  // authority to remove GTI's observable allocation-failure operation.
+  // Both languages permit process-allocation elision (ADR 022 revision).
   auto owner = std::make_unique<int32_t>(result);
   return *owner;
 #else
-  void *raw = ::operator new(sizeof(int32_t), std::nothrow);
-  if (!raw)
+  auto owner = std::unique_ptr<int32_t>(new (std::nothrow) int32_t(result));
+  if (!owner)
     std::abort();
-  int32_t *owner = ::new (raw) int32_t(result);
-  int32_t out = *owner;
-  ::operator delete(raw);
-  return out;
+  return *owner;
 #endif
 }
 int main() {

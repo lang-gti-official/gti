@@ -128,7 +128,11 @@ cleans prepared arguments and completed subobjects; it does not publish a live
 complete object.
 
 The unsafe caller guarantees sufficient writable, correctly aligned storage,
-vacancy and nonconflicting access for construction. No allocation or live-slot
+vacancy and nonconflicting access for construction. The complete destination
+extent must not overlap another live non-byte object, even if that object's
+type differs from the selected pointee. Ending such an object's lifetime first
+is a distinct destruction operation; construction is not implicit replacement.
+No allocation or live-slot
 bitmap is hidden in this operation. Raw construction of a type containing
 checked borrowed state is currently rejected: an untracked destination address
 cannot establish that state's checked owner and escape boundary. This is a
@@ -166,9 +170,24 @@ cannot raise a defined failure or invoke a user-defined move hook. Unlike
 ordinary move construction, the raw source is retired rather than left as an
 object whose moved-from lifetime the caller must subsequently end.
 
+`unsafe void std::relocate_range_at<T>(T* destination, T* source, size_t count)`
+provides the contiguous bulk operation for `bitwise_relocatable<T>`. The caller
+must establish that all `count` source elements are live, all destination slots
+are vacant, both regions are correctly aligned and writable, the regions do
+not overlap, and `count * sizeof(T)` is representable and fits both regions.
+All source lifetimes end without GTI destruction; the destination becomes the
+sole live range. Zero count accesses neither region and permits null pointers.
+There is no allocation, runtime validity check, user hook, or per-slot metadata.
+The compiler verifies structural eligibility; owning types that require
+structural relocation use the element-wise `relocate_at` operation instead.
+The C++ backend implements the verified bitwise operation with a bulk byte copy
+and ends the retired trivial native shells, rather than inventing eligibility
+from C++ traits.
+
 [`125-manual-object-lifetimes.gti`](../../examples/125-manual-object-lifetimes.gti)
 demonstrates a source-defined fixed-address owner, checked access to an
-immovable payload, slot reuse and explicit owning relocation.
+immovable payload, slot reuse, explicit owning relocation and bitwise bulk
+relocation between disjoint carriers.
 
 ## Optional raw-pointer audit
 
@@ -435,6 +454,38 @@ initialize or release memory. They retain the bounded interprocedural analysis
 described above, rather than promising arbitrary source-call provenance
 inference. Typed allocation and object-lifetime operations are provided
 separately by `std::allocator` and `std::storage<T>`.
+
+## Owner-Witness Text Views
+
+`<std/memory>` also provides:
+
+```gti
+unsafe std::string_view assume_string_view<Owner>(const char* address,
+                                                std::size_t count,
+                                                Owner& owner);
+unsafe c_string assume_c_string<Owner>(const char* address, Owner& owner);
+```
+
+These construct the existing primitive text carriers from an asserted raw
+address while retaining a read-only checked loan of an unrelated source owner.
+They do not recognize strings or containers by name. Mutation, movement,
+destruction and escape remain subject to the witness loan, including for empty
+views. Ordinary source helpers can relay the same single argument origin;
+cyclic helper bodies or missing return-origin evidence cannot establish it.
+
+The unsafe caller proves live readable bytes, extent, alignment, owner lifetime
+and race freedom. Counted text need not be terminated. A nonnull C-string
+address must name readable zero-terminated text; a null C-string is permitted.
+A zero-length counted view permits a null address and does not inspect it.
+Arguments still execute in order before carrier construction. These operations
+do not validate arbitrary addresses, allocate bytes or erase known lifetime
+contradictions. Optional raw-lifetime auditing preserves known ended local
+origins through ordinary helpers, while static and null addresses remain valid
+controls. Mandatory checked loans apply in every audit mode.
+
+The compiler still owns primitive text representation and this raw-to-checked
+carrier transition; byte storage, termination and allocation policy can be
+ordinary source. See [the runnable owner example](../../examples/133-raw-text-owner-views.gti).
 
 ## `void*`
 
@@ -718,8 +769,9 @@ This feature does not add:
   typed-pointer reinterpretation;
 - general C arrays, unions, bit-fields, packing, or platform-layout imports;
 - direct C++ class ABI calls or exception passage;
-- source-level `new`, `delete`, placement construction, or manual object
-  lifetime;
+- source-level `new`, `delete`, or C++ placement-construction syntax (explicit
+  object lifetime is available through the typed construction, destruction and
+  relocation operations described above);
 - ownership inference or automatic destruction for raw pointers; or
 - a stable ABI for GTI-defined types.
 

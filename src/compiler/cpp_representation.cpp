@@ -553,9 +553,6 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
   case SemanticType::UniqueOwner:
     appendIdentityText(output, "unique-owner");
     return appendArguments();
-  case SemanticType::PrefixStorage:
-    appendIdentityText(output, "prefix-storage");
-    return appendArguments();
   case SemanticType::TypePack:
     if (!type.concretePack) {
       return false;
@@ -763,7 +760,6 @@ bool cppRequiresBytePreservingTransport(const MirProgram &program,
       return nativeField;
     if (current.kind == SemanticType::Reference ||
         current.kind == SemanticType::UniqueOwner ||
-        current.kind == SemanticType::PrefixStorage ||
         current.kind == SemanticType::NativeFunction)
       return false;
     if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
@@ -1192,14 +1188,6 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
   }
   case SemanticType::UniqueOwner: {
     std::string result = "std::unique_ptr<";
-    if (!type.arguments.empty()) {
-      result += spell(type.arguments.front());
-    }
-    result += '>';
-    return result;
-  }
-  case SemanticType::PrefixStorage: {
-    std::string result = "::gti_internal::backend::prefix_storage<";
     if (!type.arguments.empty()) {
       result += spell(type.arguments.front());
     }

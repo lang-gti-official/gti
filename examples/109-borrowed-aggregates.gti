@@ -27,21 +27,46 @@ struct Services {
 
 T forward_context<T>(T context) { return std::move(context); }
 
+struct ServiceBundle {
+  mut Services services;
+  ServiceBundle(Services services) : services(std::move(services)) {}
+  void update() mut { this.services.update(); }
+};
+
+struct Application {
+  mut ServiceBundle bundle;
+  Application(Settings& configuration, mut Renderer& graphics,
+              Logger& log, mut Cache& entries)
+      : bundle(ServiceBundle(Services(configuration, graphics, log, entries))) {}
+  void update() mut { this.bundle.update(); }
+};
+
 int main() {
   Settings settings{};
   mut Renderer renderer{};
   Logger logger{};
   mut Cache cache{};
 
-  Services initial{settings, renderer, logger, cache};
-  // A mixed carrier is move-only: both exclusive dependencies move with it.
-  mut Services active = forward_context<Services>(std::move(initial));
-  active.update();
-  active.update();
+  {
+    Services initial{settings, renderer, logger, cache};
+    // A mixed carrier is move-only: both exclusive dependencies move with it.
+    mut Services active = forward_context<Services>(std::move(initial));
+    active.update();
+    active.update();
+  }
 
   // After the final use, direct access to both exclusive owners resumes.
   // Accessing either owner before active's final use would be rejected.
   if (renderer.frames != 4 || cache.events != 6) { return 1; }
   renderer.advance(1);
-  return renderer.frames - 5;
+
+  // Fresh constructor arguments can compose borrowed carriers directly.
+  // Each nested field keeps its exact owner and shared/exclusive permission;
+  // the intermediate temporary shells do not become the borrowed owners.
+  {
+    mut Application application{settings, renderer, logger, cache};
+    application.update();
+    // renderer.advance(1) here would conflict with application's live loan.
+  }
+  return renderer.frames == 7 && cache.events == 9 ? 0 : 2;
 }

@@ -73,5 +73,20 @@ int main() {
   // from is vacant: no second string destructor and no automatic payload drop.
   // A carrier holding string cannot itself move; explicit relocation transfers
   // the live payload through GTI's generated ownership machinery.
+
+  // Bitwise-relocatable payloads also support bulk relocation. Here each
+  // carrier holds one int; larger contiguous regions use the same operation.
+  // The caller guarantees live source elements, vacant aligned destination
+  // storage, non-overlapping regions and sufficient representable byte size.
+  mut std::uninitialized<int> old_number{};
+  mut std::uninitialized<int> new_number{};
+  unsafe {
+    std::construct_at(old_number.data(), 42);
+    std::relocate_range_at(new_number.data(), old_number.data(), std::size_t(1));
+    int& number = std::assume_ref(new_number.data(), new_number);
+    if (number != 42) { return 1; }
+  }
+  unsafe { std::destroy_at(new_number.data()); }
+  // old_number is vacant; relocation does not duplicate its lifetime.
   return 0;
 }

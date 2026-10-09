@@ -1,0 +1,36 @@
+#include <std/numeric>
+#include <std/string>
+#include <std/vector>
+
+int add(int value) {
+  if (value < 0 || value > 8) return 0;
+  return std::wrapping_add(value, 2) + 1;
+}
+int subtract(int value) {
+  if (value < 4 || value > 8) return 0;
+  return std::wrapping_sub(value, 3) + 1;
+}
+int multiply(int value) {
+  if (value < 0 || value > 8) return 0;
+  return std::wrapping_mul(value, 2) + 1;
+}
+int add_limit(int value) {
+  return std::wrapping_add(value, 2147483647) - 1;
+}
+int sub_limit(int value) {
+  return std::wrapping_sub(value, 1) + 1;
+}
+int mul_limit(int value) {
+  return std::wrapping_mul(value, 2) + 2;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) return add_limit(1);
+  if (argc == 3) return sub_limit(int32_t(-2147483648));
+  if (argc == 4) return mul_limit(-1073741825);
+  if (add(8) != 11 || subtract(8) != 6 || multiply(8) != 17) return 1;
+  if (std::wrapping_add(int32_t(2147483647), int32_t(1)) != int32_t(-2147483648)) return 2;
+  if (std::wrapping_sub(int32_t(-2147483648), int32_t(1)) != 2147483647) return 3;
+  if (std::wrapping_mul(int32_t(-1073741825), int32_t(2)) != 2147483646) return 4;
+  return 0;
+}

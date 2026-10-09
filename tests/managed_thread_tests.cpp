@@ -569,7 +569,8 @@ int main() {
 
 void expectThreadRejection(std::string_view name, std::string source,
                            std::string_view message,
-                           bool requireRelatedCause = false) {
+                           bool requireRelatedCause = false,
+                           bool requireReviewedRawHint = false) {
   const lang::FrontendResult result = analyze(name, std::move(source));
   const bool hasRelatedCause = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(),
@@ -580,12 +581,24 @@ void expectThreadRejection(std::string_view name, std::string source,
       !result.canGenerateCode() && hasCode(result, "GTI-S2084") &&
       hasMessage(result, message) && !hasCode(result, "GTI-B0001") &&
       (!requireRelatedCause || hasRelatedCause);
+  const bool hasOwnershipHint = std::any_of(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2084" &&
+               std::any_of(diagnostic.hints.begin(), diagnostic.hints.end(),
+                           [](const auto &hint) {
+                             return hint.find("unreviewed raw pointers") !=
+                                    std::string::npos;
+                           });
+      });
   if (!rejected) {
     std::cerr << "Diagnostics for " << name << ":\n";
     printDiagnostics(result);
   }
   expect(rejected, std::string(name) +
                        " should fail at the managed-thread semantic boundary");
+  expect(!requireReviewedRawHint || hasOwnershipHint,
+         std::string(name) + " should explain the reviewed raw-state boundary");
 }
 
 void testSemanticRejections() {
@@ -658,7 +671,7 @@ int main() {
   return 0;
 }
 )",
-                        "transfer-safe exact void() task", true);
+                        "transfer-safe exact void() task", true, true);
   expectThreadRejection("nontransfer-thread-capture.gti", R"(
 #include <std/thread>
 [[no_transfer, no_share]] class local_only { int32_t value = 0; };

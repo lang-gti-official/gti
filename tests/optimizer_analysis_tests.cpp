@@ -747,6 +747,70 @@ int use_argument_relay() {
          "escape summaries onto the caller's originating MIR places");
 }
 
+void testUnborrowedLocalReferenceDisjointness() {
+  // A dereferenced reference designates storage a loan or address was formed
+  // for. A local that is never borrowed or address-taken in the body is
+  // therefore disjoint from it; a borrowed local is not.
+  const std::string source = R"(
+int32_t unborrowed(mut int32_t& target) {
+  mut int32_t counter = 1;
+  target = 5;
+  return counter;
+}
+
+int32_t borrowed(mut int32_t& target) {
+  mut int32_t counter = 1;
+  mut int32_t& view = counter;
+  view = 5;
+  target = 6;
+  return counter;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-alias-unborrowed.gti", source);
+  const lang::MirFunctionInstance *unborrowed =
+      findMirFunction(frontend, "unborrowed");
+  const lang::MirFunctionInstance *borrowed =
+      findMirFunction(frontend, "borrowed");
+  expect(frontend.canGenerateCode() && unborrowed && borrowed,
+         "unborrowed-local alias fixture should pass the frontend");
+  if (!frontend.canGenerateCode() || !unborrowed || !borrowed)
+    return;
+  const auto check = [&](const lang::MirFunctionInstance &function,
+                         bool disjoint) {
+    const lang::MirPlaceAliasEscapeAnalysis analysis =
+        lang::analyzeMirPlaceAliasEscape(
+            frontend.mir,
+            {.kind = lang::MirBodyKind::Function, .owner = function.id});
+    std::vector<lang::MirPlaceId> counters;
+    std::vector<lang::MirPlaceId> referents;
+    for (const lang::MirPlace &place : function.body.places) {
+      if (place.root != lang::MirPlaceRootKind::Binding ||
+          place.type.kind != lang::SemanticType::Int32)
+        continue;
+      if (place.projections.empty())
+        counters.push_back(place.id);
+      else if (place.projections.front().kind ==
+               lang::MirProjectionKind::Dereference)
+        referents.push_back(place.id);
+    }
+    bool matches = counters.size() == 1 && !referents.empty();
+    for (const lang::MirPlaceId referent : referents) {
+      const auto relation = analysis.relation(referent, counters.front());
+      matches = matches &&
+                relation == analysis.relation(counters.front(), referent) &&
+                (relation == lang::MirAliasRelation::NoAlias) == disjoint;
+    }
+    return matches;
+  };
+  expect(check(*unborrowed, true),
+         "an unborrowed local must be disjoint from every dereferenced "
+         "reference");
+  expect(check(*borrowed, false),
+         "a borrowed local must stay conservatively aliased with dereferenced "
+         "references");
+}
+
 void testUnknownCallEscapeAnalysis() {
   const std::string source = R"(
 extern "C" {
@@ -936,6 +1000,114 @@ int32_t read_after_add() {
          "failure edge cannot inherit the successful addition's result fact");
 }
 
+void testParallelAddressEdgeArguments() {
+  using namespace lang;
+  const auto frontend = Frontend().analyze("parallel-address-edges.gti", R"(
+int edge_addresses(bool again) {
+  mut int dangerous = 2147483647;
+  mut int safe = 7;
+  unsafe {
+    int* first = &dangerous;
+    int* second = &safe;
+    return *second + 1;
+  }
+}
+)");
+  const auto *function = findMirFunction(frontend, "edge_addresses");
+  expect(frontend.canGenerateCode() && function,
+         "parallel address edge reduction must lower");
+  if (!frontend.canGenerateCode() || !function)
+    return;
+  const MirBodyAddress address{.kind = MirBodyKind::Function,
+                               .owner = function->id};
+  // Analysis-only SSA scheduling probe. Retain the frontend's typed places,
+  // actual loads and failure site; put the final read in a loop whose two
+  // pointer parameters are optionally swapped at its backedge.
+  const auto probe = [&](bool swap) {
+    auto program = frontend.mir;
+    auto &body = *findMirBody(program, address);
+    auto &entry = body.blocks.front();
+    const auto read = std::find_if(
+        entry.instructions.begin(), entry.instructions.end(),
+        [](const auto &i) {
+          return i.kind == MirInstructionKind::Load && i.rawMemoryAccess;
+        });
+    expect(body.blocks.size() == 3 && read != entry.instructions.end(),
+           "address edge reduction retains its expected checked-load shape");
+    if (body.blocks.size() != 3 || read == entry.instructions.end())
+      return false;
+    std::vector<MirValueId> addresses;
+    for (const auto &instruction : entry.instructions)
+      if (instruction.operation == MirOperation::AddressOf &&
+          instruction.result)
+        addresses.push_back(*instruction.result);
+    expect(addresses.size() == 2, "both distinct addresses are represented");
+    if (addresses.size() != 2)
+      return false;
+    const auto pointerType = body.findValue(addresses.front())->info.type;
+    const auto first = static_cast<MirValueId>(body.values.size() + 1);
+    const auto second = first + 1;
+    const MirBlockId headerId = 4, exitId = 5;
+    body.values.push_back({.id = first,
+                           .info = {.type = pointerType},
+                           .definitionBlock = headerId});
+    body.values.push_back({.id = second,
+                           .info = {.type = pointerType},
+                           .definitionBlock = headerId});
+    MirBlock header{.id = headerId,
+                    .parameters = {{.value = first, .type = pointerType},
+                                   {.value = second, .type = pointerType}},
+                    .instructions = {read, entry.instructions.end()},
+                    .terminator = entry.terminator};
+    const auto rawPlace = header.instructions.front().operands.front().place;
+    for (auto &place : body.places)
+      if (place.id == rawPlace)
+        place.value = second;
+    for (const auto &instruction : header.instructions)
+      if (instruction.result)
+        for (auto &value : body.values)
+          if (value.id == *instruction.result)
+            value.definitionBlock = headerId;
+    entry.instructions.erase(read, entry.instructions.end());
+    entry.terminator = {
+        .kind = MirTerminatorKind::Goto,
+        .target = headerId,
+        .targetArguments = {valueOperand(addresses[0], pointerType),
+                            valueOperand(addresses[1], pointerType)}};
+    auto &latch = body.blocks[1];
+    MirBlock exit{.id = exitId, .terminator = latch.terminator};
+    const auto condition = std::find_if(
+        body.places.begin(), body.places.end(), [](const auto &place) {
+          return place.type == SemanticType::Bool && place.projections.empty();
+        });
+    expect(condition != body.places.end(),
+           "loop retains its unknown boolean condition");
+    if (condition == body.places.end())
+      return false;
+    latch.terminator = {
+        .kind = MirTerminatorKind::Branch,
+        .value = MirOperand{.kind = MirOperandKind::Copy,
+                            .place = condition->id,
+                            .type = SemanticType::Bool},
+        .target = headerId,
+        .elseTarget = exitId,
+        .targetArguments = {valueOperand(swap ? second : first, pointerType),
+                            valueOperand(swap ? first : second, pointerType)}};
+    body.blocks.push_back(std::move(header));
+    body.blocks.push_back(std::move(exit));
+    const auto safety = analyzeMirSafetyChecks(program, address);
+    return std::any_of(safety.proofs.begin(), safety.proofs.end(),
+                       [](const auto &proof) {
+                         return proof.discharge.family ==
+                                MirSafetyCheckFamily::ArithmeticOverflow;
+                       });
+  };
+  expect(probe(false),
+         "unchanged backedge addresses preserve a safe scalar load");
+  expect(!probe(true),
+         "parallel backedge swapping must not lose the overflowing pointee");
+}
+
 void testSparseConditionalConstants() {
   const std::string source = R"(
 int32_t selected(bool choose) {
@@ -1011,10 +1183,12 @@ int main() {
   testPlaceRelations();
   testExactCallEscapeAnalysis();
   testUnknownCallEscapeAnalysis();
+  testUnborrowedLocalReferenceDisjointness();
   testAliasAwareSafetyInvalidation();
   testConservativeSafetyEdgesAndUnionOverlap();
   testSparseConditionalConstants();
   testSafetyInvokeSnapshot();
+  testParallelAddressEdgeArguments();
   if (failures != 0) {
     std::cerr << failures << " optimizer analysis test(s) failed\n";
     return 1;

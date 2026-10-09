@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 
+from allocation_abort_runtime_test import ABORT_STATUS
 
 def run(command):
     return subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -43,17 +44,13 @@ def main():
                 result = run([str(binary)])
                 expected = (0, "", "")
                 if suffix == "_failure":
-                    expected = (70, "argument\n2\n3\n1\n",
+                    expected = (ABORT_STATUS, "argument\n",
                                 f"<std/memory>:{site}: runtime error[GTI-R0011]: "
                                 "allocation_failure in unique_owner\n")
                 elif suffix == "_cleanup_failure":
-                    primary = next(i for i, line in enumerate(
-                        (fixtures / f"{name}.gti").read_text().splitlines(), 1)
-                        if "return 1 / divisor;" in line)
-                    expected = (70, "cleanup\n",
-                                f"<std/memory>:{site}: runtime error[GTI-R0014]: "
-                                "failure_during_cleanup; primary [GTI-R0002] at "
-                                f"{name}.gti:{primary}; secondary [GTI-R0011]\n")
+                    expected = (ABORT_STATUS, "cleanup\n",
+                                f"<std/memory>:{site}: runtime error[GTI-R0011]: "
+                                "allocation_failure in unique_owner\n")
                 else:
                     # Both source types must coexist as distinct native generic
                     # arguments; separate translation units hide this collision.

@@ -348,7 +348,6 @@ struct SemanticType {
     Lambda,
     Expected,
     Unexpected,
-    PrefixStorage,
     FunctionSignature,
   };
 
@@ -657,10 +656,6 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType sharedPointerTo(SemanticType pointee) {
     return SemanticType(SharedPointer, {std::move(pointee)});
-  }
-
-  [[nodiscard]] static SemanticType prefixStorageOf(SemanticType element) {
-    return SemanticType(PrefixStorage, {std::move(element)});
   }
 
   friend bool operator==(const SemanticType &, const SemanticType &) = default;

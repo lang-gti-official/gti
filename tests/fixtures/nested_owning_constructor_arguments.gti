@@ -1,0 +1,39 @@
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// No allocator or standard-library carrier is involved: an ordinary owning
+// argument forwards a caller's borrowed source through two constructor levels.
+struct Source { int value = 7; };
+class Borrow {
+  Source& source;
+public:
+  Borrow(Source& source) : source(source) {}
+  int get() { return this.source.value; }
+};
+class Lease {
+  Borrow borrow;
+public:
+  Lease(Borrow borrow) : borrow(borrow) {}
+  ~Lease() { std::println(this.borrow.get()); }
+};
+class Buffer {
+  Lease lease;
+public:
+  Buffer(Lease lease, int divisor) : lease(std::move(lease)) {
+    int checked = 1 / divisor; // constructor failure
+  }
+};
+class Owner {
+  Buffer buffer;
+public:
+  Owner(Borrow borrow, Borrow unused, int divisor)
+      : buffer(Buffer(Lease(borrow), divisor)) {}
+};
+int main(int argc, std::vector<std::string> argv) {
+  Source source{};
+  Source unrelated{};
+  { Owner owner{Borrow(source), Borrow(unrelated), argc > 1 ? 0 : 1}; }
+  std::println(900);
+  return 0;
+}

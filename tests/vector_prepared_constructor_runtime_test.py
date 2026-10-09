@@ -18,10 +18,10 @@ def main():
     fixture = pathlib.Path(__file__).parent / "fixtures/vector_prepared_constructor_failure.gti"
     lines = fixture.read_text().splitlines()
     helper = fixture.parent / "prefix_constructor_test.gti"
-    helper_lines = helper.read_text().splitlines()
-    capacity_line = next(index for index, text in enumerate(helper_lines, 1)
-                         if "// capacity failure" in text)
-    capacity_failure = (f"<std/prefix_constructor_test>:{capacity_line}: "
+    memory_lines = (fixture.parents[2] / "stdlib/std/memory.gti").read_text().splitlines()
+    capacity_line = next(index for index, text in enumerate(memory_lines, 1)
+                         if "require_relocation_capacity(this.live < this.capacity())" in text)
+    capacity_failure = (f"<std/memory>:{capacity_line}: "
                         "runtime error[GTI-R0010]: invalid_storage_state in relocation_capacity\n")
 
     def line(marker):
@@ -80,8 +80,9 @@ def main():
             if built.returncode:
                 raise AssertionError(f"{mode} build:\n{built.stdout}{built.stderr}")
             text = binary.with_suffix(".gti.cpp").read_text()
-            if "mir_prefix_preflight_v1(" not in text or "mir_prefix_construct_v1(" not in text:
-                raise AssertionError("missing separately verified preflight and final-slot construction")
+            if ("prefix_slots" not in text or
+                    "::new (static_cast<void *>(::gti_internal::backend::native_pointer_value(" not in text):
+                raise AssertionError("missing source prefix guard and exact final-slot construction")
             for count, expected in enumerate(cases):
                 result = run([str(binary), *(["fail"] * count)])
                 actual = (result.returncode, result.stdout, result.stderr)

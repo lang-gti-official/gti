@@ -79,6 +79,39 @@ constexpr bool descriptor_is_exact() {
 
 static_assert(descriptor_is_exact());
 
+constexpr bool immutable_arrays_are_shared() {
+  constexpr auto &artifact =
+      ::gti_internal::backend::__gti_failure_artifact_descriptor_v1;
+  bool shared_source = false;
+  bool shared_outcomes = false;
+  bool distinct_source = false;
+  bool distinct_outcomes = false;
+  for (std::uint32_t i = 0; i < artifact.site_count; ++i) {
+    for (std::uint32_t j = 0; j < i; ++j) {
+      const auto &left = artifact.sites[i];
+      const auto &right = artifact.sites[j];
+      bool same_source = left.logical_source.length == right.logical_source.length;
+      for (std::uint64_t k = 0; same_source && k < left.logical_source.length; ++k)
+        same_source = left.logical_source.data[k] == right.logical_source.data[k];
+      bool same_outcomes = left.outcome_count == right.outcome_count;
+      for (std::uint32_t k = 0; same_outcomes && k < left.outcome_count; ++k)
+        same_outcomes = left.outcomes[k].code == right.outcomes[k].code &&
+                        left.outcomes[k].detail == right.outcomes[k].detail &&
+                        left.outcomes[k].reserved == right.outcomes[k].reserved;
+      if ((left.logical_source.data == right.logical_source.data) != same_source ||
+          (left.outcomes == right.outcomes) != same_outcomes)
+        return false;
+      shared_source |= same_source;
+      shared_outcomes |= same_outcomes;
+      distinct_source |= !same_source;
+      distinct_outcomes |= !same_outcomes;
+    }
+  }
+  return shared_source && shared_outcomes && distinct_source && distinct_outcomes;
+}
+
+static_assert(immutable_arrays_are_shared());
+
 } // namespace gti_failure_descriptor_compile_test
 """
 

@@ -133,7 +133,6 @@ overlappingFields(const MirProgram &program, SymbolId left, SymbolId right) {
   case SemanticType::RawPointer:
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::PrefixStorage:
   case SemanticType::Class:
     return true;
   default:
@@ -418,6 +417,56 @@ analyzeMirPlaceAliasEscape(const MirProgram &program, MirBodyAddress address) {
       }
     }
   }
+
+  // A dereference, raw access or loan referent designates storage some
+  // identity was formed for: a loan's protected source, an escaping or
+  // address-taken place, or storage that existed before this body. A local
+  // binding with none of these in the body is disjoint from all of them.
+  std::set<decltype(MirPlace::binding)> referenced;
+  const auto reference = [&](MirPlaceId id) {
+    if (id != 0 && id <= body->places.size() &&
+        body->places[id - 1].root == MirPlaceRootKind::Binding)
+      referenced.insert(body->places[id - 1].binding);
+  };
+  for (const MirPlace &place : body->places)
+    if (result.escapes[place.id - 1].reasons != 0)
+      reference(place.id);
+  for (const MirLoan &loan : body->loans) {
+    reference(loan.source);
+    for (const MirPlaceId source : mirLoanProtectedSources(*body, loan.id))
+      reference(source);
+  }
+  for (const MirBlock &block : body->blocks)
+    for (const MirInstruction &instruction : block.instructions) {
+      const auto identity = [&](const MirOperand &operand) {
+        if (operand.kind == MirOperandKind::Address ||
+            operand.kind == MirOperandKind::BorrowRead ||
+            operand.kind == MirOperandKind::BorrowWrite ||
+            operand.kind == MirOperandKind::Loan)
+          reference(operand.place);
+      };
+      if (instruction.receiver)
+        identity(*instruction.receiver);
+      for (const MirOperand &operand : instruction.operands)
+        identity(operand);
+    }
+  const auto designatesOther = [](const MirPlace &place) {
+    return indirectProjection(place) || rawProjection(place) ||
+           place.root == MirPlaceRootKind::Loan;
+  };
+  const auto unreferencedLocal = [&](const MirPlace &place) {
+    return place.root == MirPlaceRootKind::Binding && place.binding != 0 &&
+           !designatesOther(place) && !referenced.contains(place.binding);
+  };
+  for (std::size_t left = 0; left < result.placeCount; ++left)
+    for (std::size_t right = 0; right < result.placeCount; ++right) {
+      const MirPlace &first = body->places[left];
+      const MirPlace &second = body->places[right];
+      if ((designatesOther(first) && unreferencedLocal(second)) ||
+          (designatesOther(second) && unreferencedLocal(first)))
+        result.relations[left * result.placeCount + right] =
+            MirAliasRelation::NoAlias;
+    }
   return result;
 }
 

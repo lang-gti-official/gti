@@ -9,6 +9,9 @@
 #include <std/panic>
 
 namespace probe {
+// Enough byte capacity for the source-defined owning representations used by
+// the tests; deterministic exhaustion is controlled independently by budget.
+constexpr std::size_t buffer_bytes = std::size_t(16384);
 // A class, not a struct: taking &this.<struct field> in a constructor ICEs
 // (finding; see red/b2.gti).
 class Ledger {
@@ -22,7 +25,7 @@ public:
 };
 
 [[no_transfer, no_share]] class Bump {
-  mut uint64_t words[256] = {};
+  mut uint64_t words[2048] = {};
   mut Ledger ledger{};
   mut Ledger* book = nullptr;
   mut uint64_t* base = nullptr;
@@ -53,7 +56,7 @@ public:
       std::size_t start = remainder == std::size_t(0)
           ? this.book->next : this.book->next + (alignment - remainder);
       auto end = std::checked_add(start, request.bytes);
-      if (!end || end.value() > std::size_t(2048)) {
+      if (!end || end.value() > buffer_bytes) {
         return unexpected(std::alloc_errc::resource_exhausted);
       }
       uint8_t* bytes = std::typed_address<uint8_t>(std::erase_address(this.base));

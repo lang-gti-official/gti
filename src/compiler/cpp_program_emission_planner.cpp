@@ -557,7 +557,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         parameter.type.kind == SemanticType::UniqueOwner ||
-        parameter.type.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
     if (!reference && parameter.mutability == Mutability::Immutable &&
@@ -596,7 +595,6 @@ public:
     const bool moveOnly =
         (symbol != nullptr && isMoveOnlyOwner(symbol->traits)) ||
         projectedType.kind == SemanticType::UniqueOwner ||
-        projectedType.kind == SemanticType::PrefixStorage ||
         parameter.type.kind == SemanticType::TypeParameter ||
         parameter.type.kind == SemanticType::TypePack;
     if (!reference && parameter.mutability == Mutability::Immutable &&
@@ -4341,7 +4339,6 @@ public:
       case SemanticType::Reference:
       case SemanticType::UniqueOwner:
       case SemanticType::SharedPointer:
-      case SemanticType::PrefixStorage:
         return;
       case SemanticType::Class: {
         // The declaration-bound optional capability stores its exact value
@@ -7249,7 +7246,11 @@ public:
     prepareLoweredModuleInitialization();
 
     capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle, [&] {
-      output << "namespace __gti_program {\n";
+      // Ordinary GTI identities are implementation details of this complete
+      // lowered program, not a native C++ ABI. Keep them translation-unit-local
+      // so the native compiler can discard unused bodies and data. Native
+      // imports retain their separately selected external link labels.
+      output << "namespace {\nnamespace __gti_program {\n";
       ++indentation;
       emitLoweredTypeForwardDeclarations(0);
       emitLoweredConcreteClassForwardDeclarations();
@@ -7277,6 +7278,7 @@ public:
       }
       --indentation;
       output << "} // namespace __gti_program\n";
+      output << "} // anonymous namespace\n";
     });
     capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
             [&] { emitThreadTaskAdapterDefinitions(); });
@@ -8235,7 +8237,12 @@ public:
         // copy or move. The proof already fixed declaration order.
         output << fieldName << '(';
         emitSemanticType(initializer.fieldType);
-        output << '(';
+        const bool sequencedArguments = std::any_of(
+            initializer.constructedArguments.begin(),
+            initializer.constructedArguments.end(), [](const auto &argument) {
+              return argument.constructor.has_value();
+            });
+        output << (sequencedArguments ? '{' : '(');
         if (initializer.statusConstructor != 0) {
           if (!failureForm)
             throw std::logic_error("raising native field requires status form");
@@ -8243,6 +8250,51 @@ public:
                         initializer.statusConstructor)
                  << "{}";
         }
+        const auto emitArgument =
+            [&](const auto &self,
+                const CppMirConstructedFieldInitializerArgument &source)
+            -> void {
+          const unsigned sources = unsigned(source.literal.has_value()) +
+                                   unsigned(source.parameter.has_value()) +
+                                   unsigned(source.constructor.has_value());
+          if (sources != 1)
+            throw std::logic_error(
+                "constructed field initializer has an ambiguous argument");
+          if (source.constructor) {
+            if (source.failureStatus) {
+              if (!failureForm)
+                throw std::logic_error("nested status argument requires a "
+                                       "failure-form constructor");
+              output << "([&]() { bool __gti_nested_success = false; return ";
+            }
+            emitSemanticType(source.type);
+            output << '{';
+            if (source.failureStatus)
+              output << cppMirFailureConstructorTagSpelling(*source.constructor)
+                     << "{}";
+            for (std::size_t index = 0; index < source.arguments.size();
+                 ++index) {
+              if (index || source.failureStatus)
+                output << ", ";
+              self(self, source.arguments[index]);
+            }
+            if (source.failureStatus)
+              output << ", &__gti_nested_success, __gti_mir_failure_record";
+            output << '}';
+            if (source.failureStatus)
+              output << "; }())";
+          } else if (source.literal) {
+            emitMirLiteral(*source.literal, source.type);
+          } else {
+            if (source.moved)
+              output << "std::move(";
+            output << (preparedBase ? "__gti_prepared.parameter_"
+                                    : "__gti_mir_arg_")
+                   << *source.parameter;
+            if (source.moved)
+              output << ')';
+          }
+        };
         for (std::size_t argument = 0;
              argument < initializer.constructedArguments.size(); ++argument) {
           if (argument != 0 || initializer.statusConstructor != 0) {
@@ -8250,27 +8302,11 @@ public:
           }
           const CppMirConstructedFieldInitializerArgument &source =
               initializer.constructedArguments[argument];
-          if (source.literal.has_value() == source.parameter.has_value()) {
-            throw std::logic_error(
-                "constructed field initializer has an ambiguous argument");
-          }
-          if (source.literal) {
-            emitMirLiteral(*source.literal, source.type);
-          } else if (source.parameter) {
-            if (source.moved) {
-              output << "std::move(";
-            }
-            output << (preparedBase ? "__gti_prepared.parameter_"
-                                    : "__gti_mir_arg_")
-                   << *source.parameter;
-            if (source.moved) {
-              output << ')';
-            }
-          }
+          emitArgument(emitArgument, source);
         }
         if (initializer.statusConstructor != 0)
           output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
-        output << "))";
+        output << (sequencedArguments ? "})" : "))");
         continue;
       }
       if (initializer.kind == BindingKind::EmptyField) {
@@ -8672,6 +8708,71 @@ public:
     const std::string appendSpelling =
         loweredFunctionInstanceSpelling(*appendRow, *appendDeclaration, append);
 
+    // Only the vector remains live when argument construction/append fails.
+    // Its exact generated drop is owned by HostedStartup, including the
+    // source-owner cleanup and secondary-failure terminal edge.
+    const auto emitArgumentFailureCleanup = [&](MirHostedStartupOperationKind
+                                                    producer) {
+      const auto *body = mir.hostedStartup();
+      bool foundProducer = false;
+      const MirInstruction *dropInstruction = nullptr;
+      for (const auto &operation : hosted->operations) {
+        if (operation.kind == producer) {
+          foundProducer = true;
+          continue;
+        }
+        if (!foundProducer)
+          continue;
+        if (operation.kind !=
+                MirHostedStartupOperationKind::RouteOperationFailure &&
+            operation.kind != MirHostedStartupOperationKind::DropFailureCleanup)
+          break;
+        if (operation.kind != MirHostedStartupOperationKind::DropFailureCleanup)
+          continue;
+        const auto *block =
+            body == nullptr ? nullptr : body->findBlock(operation.block);
+        if (block != nullptr)
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == operation.instruction)
+              dropInstruction = &instruction;
+        break;
+      }
+      const auto *drop = dropInstruction == nullptr || body == nullptr ||
+                                 dropInstruction->lifecycle.size() != 1
+                             ? nullptr
+                             : body->findDropObligation(
+                                   dropInstruction->lifecycle.front().source);
+      if (drop == nullptr || drop->place != hosted->argumentVectorPlace ||
+          dropInstruction->destination != drop->place ||
+          drop->dropType != mirUniqueCleanupType(mir, entry->parameterTypes[1]))
+        throw std::logic_error(
+            "hosted argument cleanup lost its exact MIR recipe");
+      writeIndent();
+      output << "{\n";
+      ++indentation;
+      writeIndent();
+      output << "::gti_failure_record_v2 __gti_cleanup_failure{};\n";
+      writeIndent();
+      output << "::gti_internal::backend::mir_failure_cleanup_scope_v1 "
+                "__gti_cleanup_context(&__gti_failure_record, "
+                "&::gti_internal::backend::__gti_failure_artifact_descriptor_"
+                "v1);\n";
+      writeIndent();
+      output << "if (!"
+             << cppMirCleanupValueExpression(mir, drop->dropType,
+                                             "__gti_arguments",
+                                             "&__gti_cleanup_failure", "true")
+             << ") {\n";
+      ++indentation;
+      emitIncomingCleanupFailureCheck("&__gti_cleanup_failure");
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    };
+
     output << "\nint main(int __gti_native_argc, "
               "char **__gti_native_argv) {\n";
     ++indentation;
@@ -8738,6 +8839,8 @@ public:
       writeIndent();
       output << "if (!__gti_argument_success) {\n";
       ++indentation;
+      emitArgumentFailureCleanup(
+          MirHostedStartupOperationKind::ConstructArgumentString);
       emitHostedFailureTermination();
       --indentation;
       writeIndent();
@@ -8747,6 +8850,7 @@ public:
              << cppMirFailureSiblingSpelling(appendSpelling)
              << "(std::move(__gti_argument), &__gti_failure_record)) {\n";
       ++indentation;
+      emitArgumentFailureCleanup(MirHostedStartupOperationKind::CallAppend);
       emitHostedFailureTermination();
       --indentation;
       writeIndent();

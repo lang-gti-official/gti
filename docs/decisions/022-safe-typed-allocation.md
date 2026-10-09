@@ -12,15 +12,25 @@ Historical descriptions in the initial decision record their original scope;
 they are not the current implementation contract or a claim of final campaign
 validation.
 
-Direction note (2026-10-09): the owner has accepted two further revisions,
-neither implemented yet. The
+Direction note (2026-10-09): the owner has accepted two further revisions;
+implementation is in progress on the allocation/container task branch, with
+combined acceptance and integration still outstanding. The
 [Rust allocation-failure model](#revision-rust-allocation-failure-model-2026-10-09)
 replaces observable failure for infallible allocation. The
 [raw-buffer sequence representation](#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
-is the target for `std::vector`. Until they are implemented, the sections they
+is the target for `std::vector`. Until they are integrated, the sections they
 revise remain the shipped contract.
 
 ## Context
+
+Source-prefix revision (2026-10-08): the owner approved one region per
+`resource_vector` capacity reservation. Its live objects are a prefix tracked
+by one source length, so a separate live-slot bitmap and metadata allocation
+are unnecessary. This changes observable vector provider request/release
+counts, not raw provider obligations, checked loans, relocation, failure
+atomicity or element-before-region cleanup. Public sparse `resource_storage`
+and `storage` still require their two regions. Do not retain a useless metadata
+allocation solely to imitate the former vector implementation.
 
 GTI needs allocator-controlled storage for arenas, pools, containers, and
 game-engine workloads. Fixed arrays cannot represent spare or partially
@@ -512,12 +522,11 @@ cross-platform, installed-consumer or publication gates.
 
 ## Revision: Rust allocation-failure model (2026-10-09)
 
-Status: accepted direction from the owner. Not yet implemented; the current
-contract below remains in force until the implementation work in
-[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model)
-lands.
+Status: implemented in 0.397.0 by
+[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model).
+This revision supersedes the earlier contained-exhaustion rule.
 
-GTI will no longer make allocation failure observable everywhere. It adopts
+GTI no longer makes allocation failure observable everywhere. It adopts
 Rust's split between fallible and infallible allocation, and Rust's rule that
 process allocations are not observable effects:
 
@@ -583,11 +592,11 @@ Consequences:
 
 ## Revision: initialized-prefix sequences over a raw buffer (2026-10-09)
 
-Status: accepted target representation; not scheduled. The work item is
-[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-`std::vector` and `std::string` currently store elements in the private
-`gti_internal::prefix_storage<T>` capability. At some point they will instead
-adopt the layering Rust uses for `RawVec` and `Vec`, in ordinary GTI:
+Status: implemented in 0.397.0 by
+[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string),
+which retired the private `gti_internal::prefix_storage<T>` capability.
+`std::vector` and `std::string` use the layering Rust uses for `RawVec` and
+`Vec`, in ordinary GTI:
 
 - **A source-defined raw buffer.** It owns one region from a memory resource,
   the process resource by default: an element pointer and a capacity, with
@@ -628,10 +637,12 @@ guarantee:
 The compiler must not recognize vector, string or the raw-buffer type by name.
 MIR keeps verified lifecycle authority.
 
-Under ADR 012's performance requirement, `prefix_storage` is retired only
-when vector and string workloads match or beat the current private path. The
-checked vector loop currently runs at idiomatic-C++ parity (72 ms against
-71 ms). Allocation counts and code size must not regress either. Issue #169
+Under ADR 012's performance requirement, `prefix_storage` was retired only
+once vector and string workloads matched or beat the private path. The
+checked vector loop runs at idiomatic-C++ parity (72.07 ms against 71.44 ms),
+game update and the checked vector loop match the private path, and string
+growth runs in under half its time. Allocation counts are identical and
+executables are smaller. S-ALLOC-09 records the measurements. Issue #169
 showed that moving storage policy into source without this layering cost 3.68×
 on the storage workload. Migrating the same representation is not enough; the
 layering above is what removes that cost.

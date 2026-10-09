@@ -1,0 +1,29 @@
+#include <std/memory>
+#include <std/string>
+#include <std/vector>
+
+class Probe {
+  int identity;
+  int divisor;
+public:
+  Probe(int identity, int divisor) : identity(identity), divisor(divisor) {}
+  ~Probe() {
+    std::println(this.identity);
+    int checked = 1 / this.divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Probe caller{9, 1};
+  mut std::detail::prefix_owner<Probe> values{uint64_t(3)};
+  int mode = argc - 1;
+  values.append(1, 1);
+  values.append(2, mode == 0 ? 1 : 0);
+  values.append(3, mode == 2 || mode == 4 ? 0 : 1);
+  if (mode >= 3) {
+    values.erase(uint64_t(1));
+  } else {
+    values.clear();
+  }
+  return 0;
+}

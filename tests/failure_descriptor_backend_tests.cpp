@@ -74,12 +74,14 @@ std::string expectedSourceArray(const lang::FailureSiteDescriptor &site) {
   return output.str();
 }
 
-std::string expectedSite(const lang::FailureSiteDescriptor &site) {
+std::string expectedSite(const lang::FailureSiteDescriptor &site,
+                         lang::FailureSiteId source,
+                         lang::FailureSiteId outcomes) {
   std::ostringstream output;
-  output << "  {{__gti_failure_source_" << site.id << "_v1, UINT64_C("
+  output << "  {{__gti_failure_source_" << source << "_v1, UINT64_C("
          << site.logicalSource.size() << ")}, UINT64_C(" << site.line
          << "), UINT64_C(" << site.start << "), UINT64_C(" << site.end
-         << "), __gti_failure_outcomes_" << site.id << "_v1, UINT32_C("
+         << "), __gti_failure_outcomes_" << outcomes << "_v1, UINT32_C("
          << site.outcomes.size() << "), UINT32_C(0)},";
   return output.str();
 }
@@ -135,8 +137,8 @@ void testExactDescriptorEmission(const std::filesystem::path &fixture) {
                  frontend.failureMetadata.descriptorBytes() &&
              metadata.sites() == frontend.failureMetadata.sites(),
          "MIR should retain the exact canonical frontend failure snapshot");
-  expect(metadata.sites().size() == 2,
-         "the focused fixture should contain exactly two canonical sites");
+  expect(metadata.sites().size() == 4,
+         "the focused fixture should contain four canonical sites");
 
   const lang::OptimizationPipeline pipeline;
   const lang::OptimizationResult compatibility =
@@ -155,12 +157,38 @@ void testExactDescriptorEmission(const std::filesystem::path &fixture) {
              std::string::npos,
          "generated C++ should retain the exact SHA-256 artifact identity");
 
+  std::size_t sourceArrays = 0;
+  std::size_t outcomeArrays = 0;
   for (const lang::FailureSiteDescriptor &site : metadata.sites()) {
-    expect(generated.find(expectedSourceArray(site)) != std::string::npos,
+    const auto source =
+        std::find_if(metadata.sites().begin(), metadata.sites().end(),
+                     [&](const auto &other) {
+                       return other.logicalSource == site.logicalSource;
+                     });
+    const auto outcomes = std::find_if(
+        metadata.sites().begin(), metadata.sites().end(),
+        [&](const auto &other) { return other.outcomes == site.outcomes; });
+    expect(generated.find(expectedSourceArray(*source)) != std::string::npos,
            "a site should retain its exact counted logical-source bytes");
-    expect(generated.find(expectedSite(site)) != std::string::npos,
+    expect(generated.find(expectedSite(site, source->id, outcomes->id)) !=
+               std::string::npos,
            "a site should retain uint64 line/span facts and outcome count");
+    if (source->id == site.id) {
+      ++sourceArrays;
+    } else {
+      expect(generated.find(expectedSourceArray(site)) == std::string::npos,
+             "identical source bytes share one immutable array");
+    }
+    const auto outcomeDeclaration =
+        "__gti_failure_outcomes_" + std::to_string(site.id) + "_v1[] =";
+    expect((generated.find(outcomeDeclaration) != std::string::npos) ==
+               (outcomes->id == site.id),
+           "only exactly equal ordered outcomes share their array");
+    outcomeArrays += outcomes->id == site.id;
   }
+  expect(
+      sourceArrays == 2 && outcomeArrays == 2,
+      "distinct sources and outcome shapes remain distinct; duplicates share");
   expect(generated.find("{GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1, "
                         "GTI_FAILURE_DETAIL_ADDITION_V1, UINT32_C(0)}") !=
                  std::string::npos &&
@@ -172,7 +200,7 @@ void testExactDescriptorEmission(const std::filesystem::path &fixture) {
                  "GTI_FAILURE_DETAIL_INTEGER_DIVISION_V1, UINT32_C(0)}") !=
                  std::string::npos,
          "generated sites should preserve their canonical ABI-v1 outcomes");
-  expect(generated.find("__gti_failure_sites_v1,\n        UINT32_C(2),") !=
+  expect(generated.find("__gti_failure_sites_v1,\n        UINT32_C(4),") !=
                  std::string::npos &&
              generated.find("UINT64_C(" +
                             std::to_string(metadata.descriptorBytes().size()) +

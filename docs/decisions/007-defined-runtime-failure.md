@@ -269,11 +269,12 @@ with an infallible signature must map its host error to `GTI-R0012`; it shall
 not discard a native error. A corresponding recoverable API should be provided
 when callers reasonably need to handle that condition.
 
-In particular, `make_unique` and private storage remain infallible at the type
-level and map allocation exhaustion to `GTI-R0011`; future `try_make_unique`
-returns `expected`. The accepted
-[allocation exhaustion revision](#allocation-exhaustion-revision-2026-10-09)
-will replace this contained failure with an abort. Wrong-state `expected` observers map to `GTI-R0009` rather
+In particular, `make_unique` and container growth remain infallible at the
+type level and report allocation exhaustion as `GTI-R0011`; `try_` operations
+return `expected`. Under the
+[allocation exhaustion revision](#allocation-exhaustion-revision-2026-10-09),
+infallible exhaustion aborts after that report instead of terminating with
+cleanup. Wrong-state `expected` observers map to `GTI-R0009` rather
 than importing `bad_expected_access`, assertions, or undefined behavior.
 
 Compile-time diagnostics, compiler/tool resource exhaustion, IEEE-754
@@ -297,9 +298,9 @@ to clean; it is not a catch-all internal-error category.
 
 ## Allocation Exhaustion Revision (2026-10-09)
 
-Status: accepted direction; not yet implemented. Until
-[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model)
-lands, the rule above remains the shipped behavior.
+Status: implemented in 0.397.0 by
+[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model).
+This revision supersedes the earlier contained-exhaustion rule.
 
 Allocation exhaustion in an infallible operation leaves contained,
 cleanup-preserving termination. Following Rust's default `handle_alloc_error`,

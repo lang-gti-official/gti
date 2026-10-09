@@ -145,8 +145,8 @@ int main() {
         frontend, [](auto &i) { i.neverReturns = true; },
         "terminal-call authority cannot be attached to object destruction");
     forged(
-        frontend, [](auto &i) { i.storagePreflight = i.id; },
-        "container preflight cannot be attached to raw object destruction");
+        frontend, [](auto &i) { i.objectAllocation = i.id; },
+        "allocator handoff cannot be attached to raw object destruction");
     forged(
         frontend, [](auto &i) { i.info.category = lang::ValueCategory::Place; },
         "object destruction cannot publish a borrow");

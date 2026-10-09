@@ -283,18 +283,6 @@ enum class IntrinsicKind {
   IntegerCheckedSubtract,
   IntegerCheckedMultiply,
   StorageBoundsCheck,
-  AllocatePrefixStorage,
-  PrefixStorageAppend,
-  PrefixStoragePop,
-  PrefixStorageRead,
-  PrefixStorageReadMut,
-  PrefixStorageLength,
-  PrefixStorageRelocate,
-  PrefixStorageInsert,
-  PrefixStorageErase,
-  PrefixStorageTextView,
-  PrefixStorageCString,
-  PrefixStorageTryCString,
   OptionalStorageHasValue,
   OptionalStorageConstruct,
   OptionalStorageRead,
@@ -364,11 +352,15 @@ enum class IntrinsicKind {
   ObjectDestroy,
   ObjectConstruct,
   ObjectRelocate,
+  ObjectRelocateRange,
   RequireVacantStorage,
   RequireLiveStorage,
   RequireRelocationCapacity,
   RequireRelocationSource,
   RequireRelocationDestination,
+  TextViewFromAddress,
+  CStringFromAddress,
+  RequireAllocation,
   Count,
 };
 
@@ -378,6 +370,9 @@ enum class IntrinsicKind {
 [[nodiscard]] inline std::optional<DefinedFailureOutcome>
 intrinsicBooleanFailureOutcome(IntrinsicKind intrinsic) {
   switch (intrinsic) {
+  case IntrinsicKind::RequireAllocation:
+    return DefinedFailureOutcome{DefinedFailureCode::AllocationFailure,
+                                 DefinedFailureDetail::PrivateStorage};
   case IntrinsicKind::RequireKey:
     return DefinedFailureOutcome{DefinedFailureCode::KeyNotFound,
                                  DefinedFailureDetail::KeyLookup};
@@ -444,7 +439,6 @@ enum class CompilerCapabilityTypeKind {
   UniqueOwner,
   TextView,
   CString,
-  PrefixStorage,
   OptionalStorage,
   PolymorphicStorage,
   ThreadHandle,

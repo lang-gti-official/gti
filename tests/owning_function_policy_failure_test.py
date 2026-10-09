@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from allocation_abort_runtime_test import ABORT_STATUS
 
 
 def main():
@@ -34,16 +35,16 @@ def main():
              (70, "9\n", empty(mutable[0])),
              (70, "9\n", empty(read[0])),
              (70, "9\n", empty(mutable[0])),
-             (70, "8\n9\n", allocation),
-             (70, "9\n", allocation),
-             (70, "8\n7\n9\n", allocation),
+             (ABORT_STATUS, "", allocation),
+             (ABORT_STATUS, "", allocation),
+             (ABORT_STATUS, "", allocation),
              (0, "7\n8\n8\n9\n", ""),
              (70, "9\n", f"<std/memory>:{mutable[0]}: runtime error[GTI-R0008]: "
                            "empty_owner_access in dereference\n"),
              (70, "9\n", f"<std/memory>:{mutable[0]}: runtime error[GTI-R0008]: "
                            "empty_owner_access in dereference\n"),
-             (70, "8\n9\n", allocation),
-             (70, "9\n", allocation),
+             (ABORT_STATUS, "", allocation),
+             (ABORT_STATUS, "", allocation),
              (42, "9\n", ""),
              (42, "9\n", "")]
     modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])

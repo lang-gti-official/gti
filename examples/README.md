@@ -94,7 +94,7 @@ is a teaching helper, not a production server.
 | `035-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `036-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `037-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
-| `038-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
+| `038-vector-emplace.gti` | move-aware dynamic storage, checked and unsafe unchecked access, read-only iteration, and in-place construction |
 | `039-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `040-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `041-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
@@ -111,7 +111,7 @@ is a teaching helper, not a production server.
 | `052-stateful-callables.gti` | reusable stateful call operators in source-defined algorithms |
 | `053-consuming-callables.gti` | one-shot `operator() &&` objects and path-checked generic consumption |
 | `054-owned-move-captures.gti` | explicit ownership transfer into an immutable closure environment and closure movement |
-| `055-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport with exactly-once cleanup |
+| `055-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport, including source-defined string captures and exactly-once cleanup |
 | `056-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
 | `057-contextual-array-arguments.gti` | generic brace arguments as exact fixed-array values, including `std::vector<int>({1, 2, 3})` |
 | `058-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
@@ -164,7 +164,7 @@ is a teaching helper, not a production server.
 | `106-custom-formatters.gti` | application-owned formatter specializations, presentation delegation and recoverable dynamic errors |
 | `107-composable-io.gti` | generic line reading, memory input, buffered output and explicit flushing |
 | `108-mutable-slices.gti` | exclusive subviews, shared projections and parent reactivation |
-| `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, generic movement and owner reactivation |
+| `109-borrowed-aggregates.gti` | mixed shared/exclusive service dependencies, fresh nested constructor arguments, generic movement and owner reactivation |
 | `110-integral-enums.gti` | exact enum extraction, numeric formatting and application customization |
 | `111-final-address-storage.gti` | in-slot construction, scalar/struct field addresses in constructors, checked borrowing, allocation-owner movement, slot reuse and explicit release |
 | `112-raw-owner-witness.gti` | safe address formation and explicit unsafe conversion into owner-tied checked references |
@@ -174,7 +174,7 @@ is a teaching helper, not a production server.
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
 | `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
 | `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |
-| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
+| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable, nested, payload-enum, result and text types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
@@ -185,6 +185,7 @@ is a teaching helper, not a production server.
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
 | `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and JSON lookup through borrowed `expected::expect` |
+| `133-raw-text-owner-views.gti` | counted and zero-terminated text views derived from an unrelated inline byte owner, with the unsafe bridge's checked borrow tied to that owner |
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
@@ -528,6 +529,14 @@ valid move of the closure.
 layer owners behind `std::vector<std::unique_ptr<Layer>>::const_iterator` and
 `::sentinel`. It uses ordinary range traversal and deterministic object cleanup,
 without naming private implementation iterator types.
+
+## Raw text views with source-owned lifetime witnesses
+
+[`133-raw-text-owner-views.gti`](133-raw-text-owner-views.gti) derives counted
+text and zero-terminated views from an unrelated inline byte owner. The unsafe
+bridge retains the owner relationship through an ordinary source helper; the
+resulting checked borrow prevents mutation, movement or escape past that owner.
+Address validity, extent and termination remain the caller's unsafe obligations.
 
 ## Complete projects
 

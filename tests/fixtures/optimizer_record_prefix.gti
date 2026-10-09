@@ -1,0 +1,110 @@
+#include <std/memory>
+extern "C" {
+  void* malloc(uint64_t bytes);
+  void free(void* address);
+  void opaque_pointer_effect(int* pointer);
+}
+
+struct Record {
+  mut int broad = 2147483647;
+  mut int narrow = 7;
+  Record() {}
+  Record(int* target) {
+    unsafe { opaque_pointer_effect(target); }
+  }
+};
+
+class RecordSequence {
+  mut Record* pointer = nullptr;
+  mut uint64_t live = 0;
+public:
+  RecordSequence(Record* pointer) : pointer(pointer) {}
+  uint64_t size() { return this.live; }
+  unsafe void append(Record value) mut {
+    unsafe { std::construct_at(this.pointer + this.live, std::move(value)); }
+    this.live += uint64_t(1);
+  }
+  unsafe Record& at(uint64_t index) {
+    unsafe { return std::assume_ref(this.pointer + index, this); }
+  }
+  unsafe mut Record& at(uint64_t index) mut {
+    unsafe { return std::assume_mut(this.pointer + index, this); }
+  }
+  unsafe void clobber() mut {
+    unsafe {
+      mut Record& first = std::assume_mut(this.pointer, this);
+      opaque_pointer_effect(&first.narrow);
+    }
+  }
+  unsafe int construct_and_clobber() mut {
+    unsafe {
+      mut Record& first = std::assume_mut(this.pointer, this);
+      Record constructed{&first.narrow};
+      return constructed.narrow;
+    }
+  }
+};
+
+unsafe int record_prefix(RecordSequence& sequence) {
+  unsafe {
+    Record& value = sequence.at(uint64_t(4095));
+    return value.narrow + 1;
+  }
+}
+
+int inspect_record(Record value) { return value.narrow; }
+
+unsafe int bad_record_prefix_broad(RecordSequence& sequence) {
+  unsafe {
+    Record& value = sequence.at(uint64_t(4095));
+    return value.broad + 1;
+  }
+}
+
+unsafe int bad_record_prefix_store(mut RecordSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)).narrow = 2147483647;
+    Record& value = sequence.at(uint64_t(4095));
+    return value.narrow + 1;
+  }
+}
+
+unsafe int bad_record_prefix_native(mut RecordSequence& sequence) {
+  unsafe {
+    sequence.clobber();
+    Record& value = sequence.at(uint64_t(0));
+    return value.narrow + 1;
+  }
+}
+
+unsafe int bad_record_prefix_constructor(mut RecordSequence& sequence) {
+  unsafe {
+    [[discard]] sequence.construct_and_clobber();
+    Record& value = sequence.at(uint64_t(0));
+    return value.narrow + 1;
+  }
+}
+
+int main() {
+  unsafe {
+    void* bytes = malloc(uint64_t(32768));
+    if (bytes == nullptr) return 1;
+    Record* pointer = std::typed_address<Record>(bytes);
+    mut RecordSequence sequence{pointer};
+    Record value{};
+    while (sequence.size() < uint64_t(4096)) {
+      sequence.append(value);
+    }
+    if (inspect_record(Record()) != 7) return 1;
+    if (false) return bad_record_prefix_broad(sequence);
+    if (false) return bad_record_prefix_store(sequence);
+    if (false) return bad_record_prefix_native(sequence);
+    if (false) return bad_record_prefix_constructor(sequence);
+    int answer = record_prefix(sequence);
+    for (mut uint64_t index = 0; index < uint64_t(4096); index++) {
+      std::destroy_at(pointer + index);
+    }
+    free(bytes);
+    return answer == 8 ? 0 : 1;
+  }
+}

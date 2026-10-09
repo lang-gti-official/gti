@@ -1,0 +1,21 @@
+class Write {
+  mut int& value;
+public:
+  Write(mut int& value) : value(value) {}
+};
+class Pair {
+  Write first;
+  Write second;
+public:
+  Pair(Write first, Write second) : first(std::move(first)), second(std::move(second)) {}
+};
+class Duplicate {
+  Pair pair;
+public:
+  Duplicate(mut int& value) : pair(Pair(Write(value), Write(value))) {}
+};
+int main() {
+  mut int value = 0;
+  Duplicate invalid{value};
+  return 0;
+}

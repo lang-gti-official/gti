@@ -20,7 +20,7 @@ from unique_class_allocation_runtime_test import run
 
 EXPECTED = """scalar bitwise true holder true bytes 4
 pair bitwise true holder true bytes 16
-text bitwise false holder false bytes 40
+text bitwise false holder false string-sized true
 4142
 4346
 """
