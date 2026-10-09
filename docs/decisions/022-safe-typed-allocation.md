@@ -12,6 +12,14 @@ Historical descriptions in the initial decision record their original scope;
 they are not the current implementation contract or a claim of final campaign
 validation.
 
+Direction note (2026-10-09): the owner has accepted two further revisions,
+neither implemented yet. The
+[Rust allocation-failure model](#revision-rust-allocation-failure-model-2026-10-09)
+replaces observable failure for infallible allocation. The
+[raw-buffer sequence representation](#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
+is the target for `std::vector`. Until they are implemented, the sections they
+revise remain the shipped contract.
+
 ## Context
 
 GTI needs allocator-controlled storage for arenas, pools, containers, and
@@ -501,3 +509,129 @@ verified operations. Sparse initialization-set optimization is retired with its
 old intrinsic clients rather than being inferred from new source wrappers.
 This revision records implementation authority, not completion of production,
 cross-platform, installed-consumer or publication gates.
+
+## Revision: Rust allocation-failure model (2026-10-09)
+
+Status: accepted direction from the owner. Not yet implemented; the current
+contract below remains in force until the implementation work in
+[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model)
+lands.
+
+GTI will no longer make allocation failure observable everywhere. It adopts
+Rust's split between fallible and infallible allocation, and Rust's rule that
+process allocations are not observable effects:
+
+- **Fallible allocation is unchanged.** An operation whose signature returns
+  `expected<..., std::alloc_errc>` reports failure as a value, exactly as
+  today: `try_storage`, `try_reserve`, `try_push_back`, `try_emplace_back`,
+  the `try_make_*` factories and a `memory_resource` provider's
+  `unsafe allocate`. This corresponds to Rust's `try_reserve` and other
+  `try_` APIs.
+- **Exhaustion in infallible allocation aborts.** An operation with no
+  allocation error in its signature does not return allocation failure. This
+  covers `make_unique`, `make_shared`, vector and string construction and
+  growth, the plain counterparts of `resource_vector`'s `try_` operations and
+  other infallible container growth. If the allocator cannot supply the
+  memory, the runtime writes a best-effort `GTI-R0011` (`allocation_failure`)
+  report to standard error without allocating, then terminates the process
+  immediately, as by `abort`. This matches Rust's default
+  `handle_alloc_error`. No cleanup runs and no failure record propagates to
+  callers, guards or cleanup handlers. Exhaustion during failure cleanup also
+  aborts; it no longer reports `GTI-R0014`.
+- **Size overflow remains a defined failure.** Overflow while computing a
+  requested size, for example a count times the element size, is a
+  programming error rather than exhaustion. Infallible operations keep
+  reporting it as a cleanup-preserving defined runtime failure, as Rust's
+  "capacity overflow" panic does. Fallible operations keep returning
+  `alloc_errc::size_overflow`.
+- **Process allocations are not observable effects.** Programs must not rely on
+  an allocation served by the process allocator actually happening, even when
+  the source requests it explicitly. The optimizer may remove an allocation
+  whose memory is unused, together with its release, or move it to automatic
+  storage, so the allocator is never invoked. A `try_` request removed this way
+  succeeds. This is Rust's rule for the global allocator (the `GlobalAlloc`
+  documentation). Allocation through an application `memory_resource` is an
+  ordinary call into GTI code, and this rule does not remove it.
+
+Rationale: making every infallible allocation a cleanup-propagating failure
+gives each allocation site a failure edge. That edge is what forbids removing
+allocations, and it inflates failure paths throughout container code. The
+measured owning-temporary workload runs about 100× slower than idiomatic C++,
+because GTI may not remove a single short-lived allocation. Applications that
+must handle exhaustion already have the `try_` operations. Infallible APIs
+promise success, and exhaustion is treated as unrecoverable process failure,
+as in Rust.
+
+Consequences:
+
+- `GTI-R0011` keeps its stable code and category. Its meaning changes from a
+  contained, cleanup-preserving failure to the report written before an
+  exhaustion abort. ADR 007's
+  [allocation rule](007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09)
+  records the corresponding exception to contained termination.
+- Infallible allocation operations no longer carry allocation failure edges in
+  MIR effects. MIR, optimization and the backend may then remove unused process
+  allocations, and allocation sites no longer need cleanup paths for
+  exhaustion.
+- An exhaustion abort terminates an embedding host, as a Rust library's abort
+  would. A host that needs containment must call the `try_` operations or
+  supply a resource that never exhausts. A separate embedding policy may add a
+  contained alternative later; this revision does not.
+- Tests and documentation that expect cleanup output or exit status 70 after
+  infallible exhaustion change with the implementation. Tests of fallible
+  allocation are unaffected.
+
+## Revision: initialized-prefix sequences over a raw buffer (2026-10-09)
+
+Status: accepted target representation; not scheduled. The work item is
+[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
+`std::vector` and `std::string` currently store elements in the private
+`gti_internal::prefix_storage<T>` capability. At some point they will instead
+adopt the layering Rust uses for `RawVec` and `Vec`, in ordinary GTI:
+
+- **A source-defined raw buffer.** It owns one region from a memory resource,
+  the process resource by default: an element pointer and a capacity, with
+  no per-element state. It allocates, grows by acquiring a new region and
+  relocating the live prefix, and releases. Its element operations are
+  `unsafe` raw-pointer operations.
+- **A sequence is a raw buffer plus a length.** Elements `[0, length)` are
+  live and the rest are uninitialized. There is no per-slot occupancy metadata
+  and no second metadata allocation; the initialized-prefix invariant replaces
+  them. This applies ADR 012's rule that an initialized-prefix sequence should
+  not inherit arbitrary-slot bookkeeping.
+- **One check per public operation.** Safe operations check bounds, capacity
+  and size overflow once at the API boundary. Internally they use unchecked
+  raw access, with failure paths outlined from the successful path.
+- **Unchecked access under `unsafe`.** Following Rust's `get_unchecked`,
+  `get_unchecked_mut`, `as_mut_ptr` and `set_len`, the sequences will gain
+  `unsafe` element access without a bounds check. The caller's obligation is
+  that the index is below `size()`. They may also gain raw data and
+  length-setting operations for bulk initialization. Span and fixed array
+  gain matching unchecked accessors. These are unsafe APIs; safe APIs keep
+  every check.
+- **Bulk relocation.** Growth relocates a structurally bitwise-relocatable
+  element type as one byte copy, as Rust's `ptr::copy_nonoverlapping` does,
+  instead of moving elements one at a time. Other element types keep verified
+  per-element relocation.
+- **The allocation model above applies.** Plain growth is infallible and
+  aborts on exhaustion; `try_reserve` and the other `try_` operations stay
+  fallible.
+
+The migration must preserve everything the current vector and string
+guarantee:
+- final-address emplacement and the existing element shapes;
+- construction-failure rollback and exactly-once, reverse-order cleanup;
+- checked loans and mutation exclusion;
+- string's hidden trailing terminator and its C-string bridges (migration
+  candidate M03).
+
+The compiler must not recognize vector, string or the raw-buffer type by name.
+MIR keeps verified lifecycle authority.
+
+Under ADR 012's performance requirement, `prefix_storage` is retired only
+when vector and string workloads match or beat the current private path. The
+checked vector loop currently runs at idiomatic-C++ parity (72 ms against
+71 ms). Allocation counts and code size must not regress either. Issue #169
+showed that moving storage policy into source without this layering cost 3.68×
+on the storage workload. Migrating the same representation is not enough; the
+layering above is what removes that cost.

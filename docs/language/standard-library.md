@@ -756,6 +756,18 @@ for insertion-result movement and scoped mutable access.
 
 ### Sequential Storage
 
+**Planned representation.** `std::vector` and `std::string` currently store
+elements in a compiler-private prefix-storage capability. They will move to
+Rust's `RawVec`/`Vec` layering, in ordinary GTI:
+- a source-defined raw buffer plus a length, with no per-slot metadata;
+- one check per safe public operation, then raw access internally;
+- `unsafe` unchecked accessors in the style of `get_unchecked`;
+- byte-copy relocation for bitwise-relocatable elements.
+
+Safe behavior does not change, apart from the allocation-failure model below.
+See
+[ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
+
 `vector::swap`, `string::swap`, and `forward_list::swap` exchange their owned
 storage in constant time without allocation or copying, moving, or destroying
 elements. Vector and string capacities follow the exchanged storage; sizes and
@@ -949,6 +961,10 @@ container over that storage. It supports `size`, `capacity`, `empty`, indexed
 read-only/mutable access, `front`, `back`, read-only range iteration, `pop_back`,
 `clear` and `release`. `try_reserve`, `try_push_back` and `try_emplace_back`
 report allocation errors; their plain counterparts panic on allocation failure.
+Under the accepted
+[Rust allocation-failure model](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09),
+the plain counterparts will abort on exhaustion instead. The `try_` operations
+are unchanged.
 An insertion argument is consumed even when growth fails, but existing elements
 remain unchanged. Growable elements must be movable, structurally relocatable
 and layout-queryable; use fixed-address storage for immovable types.
