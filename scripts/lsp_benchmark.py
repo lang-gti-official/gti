@@ -301,10 +301,10 @@ def run_workload(executable, standard_library, fixture, run_root, dependency_cou
                 },
             }
         )
+        # The opened text is exactly what the root already read from disk, so
+        # the root keeps its analysis; only the dependency is analysed.
         dependency_open = session.receive(diagnostics_for(dependency_uri, 1))
-        root_refresh = session.receive(diagnostics_for(root_uri, 2))
         assert not dependency_open["params"]["diagnostics"], dependency_open
-        assert not root_refresh["params"]["diagnostics"], root_refresh
 
         changed_dependency = dependency_source.replace("value + 0", "value + 100")
         start = time.perf_counter_ns()
@@ -431,8 +431,9 @@ def frontend_work_summary(samples, dependency_count):
         matching_trace(sample, "analysis", "dep_00.gti", 2)
         for sample in samples
     ]
+    # main.gti generations: 1 open, 2 root edit, 3 dirty dependency.
     dirty_dependant = [
-        matching_trace(sample, "analysis", "main.gti", 4) for sample in samples
+        matching_trace(sample, "analysis", "main.gti", 3) for sample in samples
     ]
     superseded = [
         matching_trace(sample, "analysis", "main.gti", last=True)
