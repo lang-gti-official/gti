@@ -1,0 +1,60 @@
+#include <std/memory>
+extern "C" { void opaque_wide_store(uint64_t* target); }
+
+void write_small(mut int32_t& value) { value = int32_t(7); }
+void write_wide(mut uint64_t& value) { value = uint64_t(18446744073709551615); }
+unsafe void write_raw(uint64_t* value) {
+  unsafe { *value = uint64_t(18446744073709551615); }
+}
+unsafe void replace_wide(uint64_t* value) {
+  unsafe {
+    std::destroy_at(value);
+    std::construct_at(value, uint64_t(18446744073709551615));
+  }
+}
+
+class Metadata {
+  mut uint64_t wide = uint64_t(4);
+public:
+  uint64_t after_small_store(mut int32_t& value) mut {
+    this.wide = uint64_t(4);
+    value = int32_t(7);
+    return this.wide + uint64_t(1);
+  }
+  uint64_t after_small_call(mut int32_t& value) mut {
+    this.wide = uint64_t(4);
+    write_small(value);
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_same_width() mut {
+    this.wide = uint64_t(4);
+    write_wide(this.wide);
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_native_width() mut {
+    this.wide = uint64_t(4);
+    unsafe { opaque_wide_store(&this.wide); }
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_raw_width() mut {
+    this.wide = uint64_t(4);
+    unsafe { write_raw(&this.wide); }
+    return this.wide + uint64_t(1);
+  }
+  uint64_t bad_lifetime_width() mut {
+    this.wide = uint64_t(4);
+    unsafe { replace_wide(&this.wide); }
+    return this.wide + uint64_t(1);
+  }
+};
+
+int main() {
+  mut Metadata data{};
+  mut int32_t value = int32_t(0);
+  if (false) return int(data.bad_same_width());
+  if (false) return int(data.bad_native_width());
+  if (false) return int(data.bad_raw_width());
+  if (false) return int(data.bad_lifetime_width());
+  return data.after_small_store(value) == uint64_t(5) &&
+         data.after_small_call(value) == uint64_t(5) && value == int32_t(7) ? 0 : 1;
+}
