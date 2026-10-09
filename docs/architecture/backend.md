@@ -1952,10 +1952,10 @@ fail closed.
 A shared-reference carrier with generated, observation-free destruction may
 retain its bound native shell during constructor rollback. This is not an
 empty-state capability: its references must already be bound by the exact
-first-field parameter-copy prefix (Load, Initialize, dependency publication,
+contiguous declaration-ordered parameter-copy prefix (Load, Initialize, dependency publication,
 source-loan retirement, full-expression boundary), or an independently proven
 native constructed-field publication. The shell proof recursively excludes
-exclusive references, active cleanup, user destructors, capability classes,
+exclusive references on the copying route, active cleanup, user destructors, capability classes,
 unions and bases. Later constructor work and failure cleanup remain in MIR;
 neither reference binding nor user cleanup is reconstructed by the backend.
 
@@ -2028,19 +2028,54 @@ On entering the parent body, its status is captured before the parent's result
 is reset; the original MIR Invoke branches on that status. Child failure cannot
 be turned into a known-success edge, publish the parent, or arm the child's
 field rollback obligation. The child's unpublished shell must independently
-support observation-free retirement. Multiple fallible native prefixes,
-mutable-reference inputs and nonempty unclaimed siblings remain excluded;
+support observation-free retirement. Multiple fallible native prefixes and
+nonempty unclaimed siblings remain excluded;
 this bounded route alone is not complete allocator/container validation.
 
-The same exact first-field schedule also admits a passive shared-reference
-child with generated, observation-free destruction. This separate branch
+The same exact first-field schedule also admits a passive reference-bearing
+child with generated, observation-free destruction. This branch
 requires no child value drop, success activation, field rollback obligation or
 reparenting; it still checks the selected constructor, original Invoke failure
 identity, adjacent field/dependency publication and both source-loan endpoints.
-A cleanup-bearing or exclusive-reference child cannot use that passive branch.
+A cleanup-bearing child cannot use that passive branch. Exclusive fields require
+the exact construction/movement proof below, never the generated-copy route.
 The bound native shell is not an empty-state witness, and later field/body work
 is not hoisted. This supports ordinary nested view construction and copied
 field returns without inventing a second cleanup schedule.
+
+Nested constructor inputs extend that prefix through a typed, pointer-free
+argument tree. Each row names either an exact enclosing formal or an actual
+selected ordinary constructor, never a reconstructed source expression. Every
+claimed producer and prepared input has one matching SSA consumer; the normal
+block sequence must match the complete postorder tree before field publication.
+Direct and nested inputs use that same proof and rollback graph matcher rather
+than separate parameter-list exceptions.
+Reference leaves preserve the formal's access mode, including the exact entry
+Parameter loan for an exclusive formal. Passive shared carriers use generated
+copies. A whole owning formal may instead use its explicit Move, Binding-to-Value
+handoff, prepared-slot reparenting and callee TransferOut witness. Such a formal
+cannot also acquire a body-local owner or be cleaned as an unmoved value.
+Passive exclusive carriers are admitted only on exact construction/movement
+paths; this does not grant copying or empty reference shells.
+
+Every inner constructor is independently proved genuinely non-failing before
+its Invoke can be fused. Braced native argument lists retain GTI's left-to-right
+evaluation even for sibling constructions. The final field producer keeps its
+ordinary or status-tag overload, original failure record and outer Invoke;
+no native exception or unchecked success assumption replaces that boundary.
+Rollback replays the exact failed-child and intermediate loan retirement,
+previous field drops, formal cleanup, cleanup boundary and secondary-failure
+terminators. A consumed owning formal's generated moved-from shell is inert,
+but its MIR retirement and failure graph remain verified. No runtime loan
+metadata, extra allocation or default-constructed reference member is added.
+
+Genuinely fallible inner producers still require a staged pre-constructor
+execution facility: it must evaluate the prepared tree before native member
+binding, retain failure records and exactly-once ownership cleanup, and pass
+the same ordering/rollback matrix. Arbitrary factories, argument packs and
+non-formal computations are not admitted by this bounded native argument proof.
+This is a remaining backend goal, not permission to guess a constructor origin
+or convert a real failure edge into success.
 
 Reference fields may also bind an exact shared reference formal whose referent
 itself carries a borrow. The native binding remains that formal, while the

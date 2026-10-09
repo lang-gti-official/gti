@@ -7894,8 +7894,8 @@ int32_t main() {
           if (emitter.supportsFailureBodyText(allocationAddress)) {
             const auto allocationText = emitter.emitFailureBodyText(
                 allocationAddress, "scalar-allocation-test-v0", 1);
-            const auto allocate = allocationText.text.find(
-                "mir_allocate_unique_scalar_v1<");
+            const auto allocate =
+                allocationText.text.find("mir_allocate_unique_scalar_v1<");
             const auto check = allocationText.text.find(
                 ".code == GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1");
             const auto record = allocationText.text.find(
@@ -10172,6 +10172,158 @@ void testPassiveBorrowedConstructedFieldPrefix() {
          "nested passive constructor and copied field return reach production");
 }
 
+void testNestedConstructorArgumentPublication() {
+  std::size_t checked = 0;
+  std::size_t nested = 0;
+  std::size_t movedFormals = 0;
+  for (const auto name : {"nested_carrier_arguments.gti",
+                          "nested_owning_constructor_arguments.gti",
+                          "source_resource_prefix_cleanup.gti"}) {
+    const auto fixture =
+        std::filesystem::path(__FILE__).parent_path() / "fixtures" / name;
+    std::ifstream input(fixture);
+    expect(input.good(), "nested argument fixture must exist");
+    const std::string source{std::istreambuf_iterator<char>(input), {}};
+    const auto frontend = analyzeWithStandardLibrary(fixture.string(), source);
+    expect(frontend.canGenerateCode(), "nested argument fixture must verify");
+    if (!frontend.canGenerateCode())
+      continue;
+    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+    for (const auto &constructor : frontend.mir.constructorInstances()) {
+      const auto fields = lang::cppMirConstructedFieldInitializerBindings(
+          frontend.mir, constructor);
+      for (const auto &field : fields) {
+        const bool tree =
+            std::any_of(field.arguments.begin(), field.arguments.end(),
+                        [](const auto &argument) {
+                          return argument.constructor.has_value();
+                        });
+        const bool formal = std::any_of(
+            field.arguments.begin(), field.arguments.end(),
+            [](const auto &argument) {
+              return argument.moved && argument.parameter.has_value();
+            });
+        if (!tree && !formal)
+          continue;
+        ++checked;
+        nested += tree;
+        movedFormals += formal;
+        const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
+                                           constructor.id};
+        expect(
+            field.constructBlock != constructor.body.entry || formal,
+            "nested argument publication follows its actual successful prefix");
+        expect(
+            field.argumentInstructions.size() == field.argumentValues.size(),
+            "every claimed nested producer and input has one exact SSA result");
+        expect(lang::CppMirBodyEmitter(frontend.mir, map)
+                   .supportsFailureBodyText(address),
+               "nested argument tree preserves the outer status and rollback "
+               "route");
+        for (int mutation = 0; mutation != 13; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(constructor.id));
+          const auto instruction =
+              [&](lang::MirInstructionId id) -> lang::MirInstruction * {
+            for (auto &block : changed->body.blocks)
+              for (auto &candidate : block.instructions)
+                if (candidate.id == id)
+                  return &candidate;
+            return nullptr;
+          };
+          auto *root = instruction(field.constructInstruction);
+          auto *block = const_cast<lang::MirBlock *>(
+              changed->body.findBlock(field.constructBlock));
+          auto *success = const_cast<lang::MirBlock *>(
+              changed->body.findBlock(block->terminator.target));
+          auto *failure = const_cast<lang::MirBlock *>(
+              changed->body.findBlock(block->terminator.elseTarget));
+          auto *stage = instruction(field.argumentInstructions.front());
+          auto *prepared = stage;
+          for (const auto id : field.argumentInstructions)
+            if (auto *candidate = instruction(id);
+                candidate->preparedParameterDrop)
+              prepared = candidate;
+          expect(root && block && success && failure && stage &&
+                     prepared->preparedParameterDrop,
+                 "nested tree retains concrete producer, stage and failure "
+                 "identities");
+          if (!root || !block || !success || !failure || !stage ||
+              !prepared->preparedParameterDrop)
+            continue;
+          if (mutation == 0)
+            stage->info.type = lang::SemanticType::Int32;
+          if (mutation == 1)
+            prepared->callSite = 0;
+          if (mutation == 2)
+            prepared->callInputIndex = 999;
+          if (mutation == 3)
+            prepared->callInputKind = lang::HirCallInputKind::Value;
+          if (mutation == 4)
+            prepared->lifecycle.clear();
+          if (mutation == 5)
+            root->lifecycle.push_back(
+                {.kind = lang::MirLifecycleEventKind::TransferOut,
+                 .source = 999});
+          if (mutation == 6)
+            block->terminator.failureRecord = 0;
+          if (mutation == 7)
+            success->instructions[1].operands.front().value = 0;
+          if (mutation == 8)
+            failure->activeFailure = 0;
+          if (mutation == 9)
+            const_cast<lang::MirLoan *>(changed->body.findLoan(*root->loan))
+                ->escapes = true;
+          if (mutation == 10)
+            instruction(field.initializeInstruction)->info.type =
+                lang::SemanticType::Int32;
+          if (mutation == 11)
+            instruction(field.boundaryInstruction)->fullExpressionEnd = 0;
+          if (mutation == 12) {
+            auto *drop = const_cast<lang::MirDropObligation *>(
+                changed->body.findDropObligation(
+                    *prepared->preparedParameterDrop));
+            drop->initiallyActive = true;
+          }
+          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                                 *changed)
+                         .empty() &&
+                     !lang::CppMirBodyEmitter(malformed, map)
+                          .supportsFailureBodyText(address),
+                 "nested tree rejects lost types, input order, transfer, "
+                 "publication, "
+                 "rollback and lifetime activation " +
+                     std::to_string(mutation) + " in " + name);
+        }
+        if (tree) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(constructor.id));
+          const auto argument =
+              std::find_if(field.arguments.begin(), field.arguments.end(),
+                           [](const auto &candidate) {
+                             return candidate.constructor.has_value();
+                           });
+          auto *child = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(*argument->constructor));
+          child->definitionKind = lang::MirDefinitionKind::Declaration;
+          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                                 *changed)
+                     .empty(),
+                 "unproved inner constructor cannot move across its Invoke "
+                 "boundary");
+        }
+      }
+    }
+    expect(!gti_test::emitCpp(frontend).contents.empty(),
+           "nested constructor fixture reaches production emission");
+  }
+  expect(checked >= 4 && nested >= 3 && movedFormals >= 1,
+         "fixtures cover shared, exclusive, owning and moved resource-formal "
+         "trees");
+}
+
 void testPhysicalCarrierReferencePublication() {
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/borrowed_physical_adapter.gti";
@@ -12083,6 +12235,8 @@ constexpr NamedTest kTests[] = {
     {"testNativeStatusFieldRollback", testNativeStatusFieldRollback},
     {"testPassiveBorrowedConstructedFieldPrefix",
      testPassiveBorrowedConstructedFieldPrefix},
+    {"testNestedConstructorArgumentPublication",
+     testNestedConstructorArgumentPublication},
     {"testPhysicalCarrierReferencePublication",
      testPhysicalCarrierReferencePublication},
     {"testPassiveExpectedMoveReturnHasNoSsaShell",

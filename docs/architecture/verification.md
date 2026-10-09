@@ -1850,6 +1850,19 @@ cleanup fixture separately checks the same general ancestry rule. None of
 these tests grants authority from a standard-library name or matching caller
 metadata alone.
 
+`testNestedConstructorArgumentPublication` additionally checks the native
+argument-tree plan for shared, exclusive, owning and moved resource-formal
+inputs. Thirteen mutation families reject lost type/input/transfer identities,
+premature activation, missing publication or endpoints, and broken rollback;
+an unproved inner constructor is not fused. The two nested fixture matrices
+pass all sixteen C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan cases, including
+exactly-once owning cleanup after outer-constructor failure. The resource-prefix
+cleanup fixture passes eight modes with exact normal, element-failure and
+explicit-release observations. Example 109 builds and runs with an optimized
+compiler and now contributes 31 MIR/lowered bodies (132 declarations and two
+generated items). These focused results do not assert that the pending combined
+allocator/optimizer campaign has passed its full release inventory.
+
 Integral-enum regressions cover exact-width signed/unsigned defaults, integer
 presentations, explicit formatter precedence, malformed customization,
 recoverable errors and panic reporting. Unrelated protocol-encoding code uses

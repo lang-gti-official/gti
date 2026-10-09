@@ -272,7 +272,7 @@
     },
     "109-borrowed-aggregates.gti": {
       "declarations": 132,
-      "bodies": 23,
+      "bodies": 31,
       "generated_items": 2,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1953,7 +1953,7 @@
   },
   "totals": {
     "declarations": 49594,
-    "bodies": 6781,
+    "bodies": 6789,
     "generated_items": 2860
   }
 }
