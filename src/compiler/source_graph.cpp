@@ -7,6 +7,15 @@
 
 namespace lang {
 
+std::uint64_t sourceTextDigest(std::string_view source) {
+  std::uint64_t result = 14695981039346656037ULL;
+  for (const unsigned char byte : source) {
+    result ^= byte;
+    result *= 1099511628211ULL;
+  }
+  return result;
+}
+
 SourceUnitId SourceGraph::entryUnit() const { return entry; }
 
 const std::vector<SourceUnit> &SourceGraph::sourceUnits() const {

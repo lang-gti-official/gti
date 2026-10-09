@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +35,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -49,10 +52,32 @@ using SteadyClock = std::chrono::steady_clock;
 
 // Darwin's default secondary-thread stack is too small for the recursive
 // frontend in an unoptimized build: native exhaustion can otherwise precede
-// the compiler's structured 64-level parser diagnostic. Keep the two workers
-// long-lived, but give both compiler-facing queues the same practical stack
-// budget as an ordinary compiler process.
+// the compiler's structured 64-level parser diagnostic. Keep the frontend
+// workers long-lived, but give every compiler-facing worker the same practical
+// stack budget as an ordinary compiler process.
 constexpr unsigned frontendWorkerStackSize = 8U * 1024U * 1024U;
+
+// Every open document is its own whole-program root, so one shared-dependency
+// edit queues an independent analysis per open dependant. A small pool runs
+// them concurrently. Each in-flight analysis holds a complete frontend result,
+// which is why the default stays well below the host's core count.
+constexpr unsigned maximumDefaultAnalysisWorkers = 4;
+constexpr unsigned maximumAnalysisWorkers = 16;
+
+unsigned analysisWorkerCountFromEnvironment() {
+  if (const char *configured = std::getenv("GTI_LSP_ANALYSIS_WORKERS");
+      configured != nullptr && *configured != '\0') {
+    const char *end = configured + std::strlen(configured);
+    unsigned value = 0;
+    const auto [last, error] = std::from_chars(configured, end, value);
+    if (error == std::errc{} && last == end && value >= 1 &&
+        value <= maximumAnalysisWorkers) {
+      return value;
+    }
+  }
+  return std::clamp(std::thread::hardware_concurrency() / 2, 1U,
+                    maximumDefaultAnalysisWorkers);
+}
 
 #if !defined(GTI_BUILD_STDLIB_ROOT)
 #define GTI_BUILD_STDLIB_ROOT ""
@@ -1593,7 +1618,8 @@ struct PendingSemanticRequest {
 
 struct DocumentAnalysis {
   std::vector<LspDiagnostic> diagnostics;
-  std::unordered_set<std::string> dependencies;
+  // Every loaded dependency's URI and the digest of the exact text read.
+  std::unordered_map<std::string, std::uint64_t> dependencies;
   std::string rootPath;
   std::shared_ptr<const lang::FrontendResult> frontend;
   lang::FrontendWorkMetrics workMetrics;
@@ -1605,7 +1631,13 @@ struct DocumentAnalysis {
 struct AnalysisSnapshot {
   std::uint64_t generation = 0;
   std::string rootPath;
+  // Released as soon as the root's generation advances; see
+  // `advanceAnalysisGenerationLocked`. Every reader requires a current
+  // generation and a non-null frontend.
   std::shared_ptr<const lang::FrontendResult> frontend;
+  // Copied from the frontend so dependency invalidation can still read it
+  // after a stale frontend has been released.
+  bool includeSuggestionsRequested = false;
 };
 
 struct CachedSemanticTokens {
@@ -1734,14 +1766,26 @@ public:
         executionProfileOverride(executionProfileOverride),
         rawPointerAuditOverride(rawPointerAuditOverride),
         frontendTracePath(frontendTracePathFromEnvironment()),
-        analysisWorker(std::optional<unsigned>{frontendWorkerStackSize},
-                       [this] { runAnalysisWorker(); }),
         completionWorker(std::optional<unsigned>{frontendWorkerStackSize},
-                         [this] { runCompletionWorker(); }) {}
+                         [this] { runCompletionWorker(); }) {
+    const unsigned workers = analysisWorkerCountFromEnvironment();
+    analysisWorkers.reserve(workers);
+    for (unsigned index = 0; index < workers; ++index) {
+      analysisWorkers.emplace_back(
+          std::optional<unsigned>{frontendWorkerStackSize},
+          [this] { runAnalysisWorker(); });
+    }
+    // Frontend destruction recurses through deep syntax trees, so it gets
+    // the same stack budget as the workers that built them.
+    reclamationWorker =
+        llvm::thread(std::optional<unsigned>{frontendWorkerStackSize},
+                     [this] { runReclamationWorker(); });
+  }
 
   ~LanguageServer() {
     stopCompletionWorker();
     stopAnalysisWorker();
+    stopReclamationWorker();
   }
 
   int run() {
@@ -1774,6 +1818,7 @@ public:
     }
     stopCompletionWorker();
     stopAnalysisWorker();
+    stopReclamationWorker();
     return 0;
   }
 
@@ -1935,6 +1980,7 @@ private:
       const std::lock_guard lock(stateMutex);
       clientUris[uri] = clientUri;
       openClientUris[uri].insert(clientUri);
+      const bool alreadyOpen = documents.contains(uri);
       documents[uri] = stringMember(document, "text");
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
@@ -1948,13 +1994,16 @@ private:
       }
       semanticTokenCache.erase(uri);
       ++contentGenerations[uri];
-      // Generation checks make the prior snapshot inaccessible to requests.
-      // Retaining it until replacement keeps its large frontend graph from
-      // being destroyed synchronously on the protocol thread.
-      requests.push_back(
-          makeAnalysisRequestLocked(uri, version, ++analysisGenerations[uri]));
+      requests.push_back(makeAnalysisRequestLocked(
+          uri, version, advanceAnalysisGenerationLocked(uri)));
       std::unordered_set<std::string> affected;
-      invalidateDependentsLocked(uri, affected, requests);
+      // Dependants read this file from disk while it was closed. Only those
+      // whose text differs from the opened overlay need analysing again.
+      invalidateDependentsLocked(
+          uri, affected, requests,
+          alreadyOpen ? std::nullopt
+                      : std::optional<std::uint64_t>(
+                            lang::sourceTextDigest(documents[uri])));
       publications = publicationsForLocked(affected);
     }
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
@@ -1994,10 +2043,8 @@ private:
         }
         semanticTokenCache.erase(uri);
         ++contentGenerations[uri];
-        // Keep the stale snapshot alive until the worker publishes its
-        // replacement; all readers require an exact generation match.
         requests.push_back(makeAnalysisRequestLocked(
-            uri, version, ++analysisGenerations[uri]));
+            uri, version, advanceAnalysisGenerationLocked(uri)));
         std::unordered_set<std::string> affected;
         invalidateDependentsLocked(uri, affected, requests);
         publications = publicationsForLocked(affected);
@@ -2054,11 +2101,11 @@ private:
       }
       documentVersions.erase(uri);
       semanticTokenCache.erase(uri);
+      advanceAnalysisGenerationLocked(uri);
       analysisSnapshots.erase(uri);
       diagnosticsByRoot.erase(uri);
       dependenciesByRoot.erase(uri);
       pendingAnalyses.erase(uri);
-      ++analysisGenerations[uri];
       ++contentGenerations[uri];
       invalidateDependentsLocked(uri, affected, requests);
       publications = publicationsForLocked(affected);
@@ -2134,7 +2181,7 @@ private:
           version == documentVersions.end()
               ? std::nullopt
               : std::optional<std::int64_t>(version->second),
-          ++analysisGenerations[uri]));
+          advanceAnalysisGenerationLocked(uri)));
     }
   }
 
@@ -2984,15 +3031,22 @@ private:
       return result;
     }
     const SteadyClock::time_point frontendStart = SteadyClock::now();
-    result.frontend = std::make_shared<const lang::FrontendResult>(
+    lang::FrontendResult frontend =
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary.prelude},
                      request.sourceOverrides, {standardLibrary.root},
-                     project.packageSourceRoots));
+                     project.packageSourceRoots);
     result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
             .count());
+    // HIR runs so that instantiated generic bodies report the same
+    // diagnostics as `gti check`; those diagnostics are already in
+    // `frontend.diagnostics`. No editor query reads HIR, so it is released
+    // here instead of being retained with every open document's snapshot.
+    frontend.hir = lang::HirProgram{};
+    result.frontend =
+        std::make_shared<const lang::FrontendResult>(std::move(frontend));
     const lang::FrontendResult &analysis = *result.frontend;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
@@ -3008,8 +3062,9 @@ private:
               .digest = unit.sourceDigest});
       if (unit.id != analysis.sourceGraph.entryUnit() &&
           loadedSource != rootPath) {
-        result.dependencies.insert(
-            fileUriFromPath(std::filesystem::path(loadedSource)));
+        result.dependencies.emplace(
+            fileUriFromPath(std::filesystem::path(loadedSource)),
+            unit.sourceDigest);
       }
     }
     for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
@@ -3049,16 +3104,24 @@ private:
     return request;
   }
 
-  void invalidateDependentsLocked(const std::string &changedUri,
-                                  std::unordered_set<std::string> &affected,
-                                  std::vector<AnalysisRequest> &requests) {
+  // `openedDigest` is the digest of a newly opened overlay. A root whose
+  // published analysis read exactly that text sees no change and keeps its
+  // result; opening a file the editor merely navigated to is then free.
+  void invalidateDependentsLocked(
+      const std::string &changedUri, std::unordered_set<std::string> &affected,
+      std::vector<AnalysisRequest> &requests,
+      std::optional<std::uint64_t> openedDigest = std::nullopt) {
     for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
       const auto snapshot = analysisSnapshots.find(rootUri);
-      const bool discovering =
-          snapshot != analysisSnapshots.end() &&
-          snapshot->second.frontend->includeSuggestionsRequested;
+      const bool discovering = snapshot != analysisSnapshots.end() &&
+                               snapshot->second.includeSuggestionsRequested;
+      const auto dependency = dependencies.find(changedUri);
       if (rootUri == changedUri ||
-          (!dependencies.contains(changedUri) && !discovering)) {
+          (dependency == dependencies.end() && !discovering)) {
+        continue;
+      }
+      if (openedDigest && dependency != dependencies.end() &&
+          dependency->second != 0 && dependency->second == *openedDigest) {
         continue;
       }
       if (const auto previous = diagnosticsByRoot.find(rootUri);
@@ -3069,7 +3132,7 @@ private:
         diagnosticsByRoot.erase(previous);
       }
       pendingAnalyses.erase(rootUri);
-      const std::uint64_t generation = ++analysisGenerations[rootUri];
+      const std::uint64_t generation = advanceAnalysisGenerationLocked(rootUri);
       if (documents.contains(rootUri)) {
         const auto version = documentVersions.find(rootUri);
         requests.push_back(makeAnalysisRequestLocked(
@@ -3364,47 +3427,65 @@ private:
     analysisCondition.notify_one();
   }
 
+  // Takes the next runnable analysis, or nothing. A document already being
+  // analysed is not started again on another worker: its newer request stays
+  // pending until the running analysis finishes, so rapid edits to one file
+  // cannot occupy the whole pool with results that will be discarded.
+  [[nodiscard]] std::optional<AnalysisRequest> takeNextAnalysisLocked() {
+    const auto take = [this](std::unordered_map<std::string,
+                                                AnalysisRequest>::iterator
+                                 pending) {
+      AnalysisRequest request = std::move(pending->second);
+      pendingAnalyses.erase(pending);
+      activeAnalysisUris.insert(request.uri);
+      return request;
+    };
+    // A queued hover, definition, or similar request waits for its
+    // document's analysis. Run that analysis before dependants queued
+    // ahead of it; the order entry it leaves behind is skipped later.
+    for (const PendingSemanticRequest &waiting : pendingSemanticRequests) {
+      const auto pending = pendingAnalyses.find(waiting.uri);
+      if (pending != pendingAnalyses.end() &&
+          !activeAnalysisUris.contains(waiting.uri)) {
+        return take(pending);
+      }
+    }
+    for (auto entry = analysisOrder.begin(); entry != analysisOrder.end();) {
+      const auto pending = pendingAnalyses.find(*entry);
+      if (pending == pendingAnalyses.end()) {
+        entry = analysisOrder.erase(entry);
+        continue;
+      }
+      if (activeAnalysisUris.contains(*entry)) {
+        ++entry;
+        continue;
+      }
+      analysisOrder.erase(entry);
+      return take(pending);
+    }
+    return std::nullopt;
+  }
+
   void runAnalysisWorker() {
     while (true) {
       AnalysisRequest request;
       {
         std::unique_lock lock(stateMutex);
-        analysisCondition.wait(lock, [this] {
-          return stoppingAnalysis || !analysisOrder.empty();
+        std::optional<AnalysisRequest> next;
+        analysisCondition.wait(lock, [this, &next] {
+          if (stoppingAnalysis) {
+            return true;
+          }
+          next = takeNextAnalysisLocked();
+          return next.has_value();
         });
         if (stoppingAnalysis) {
+          if (next) {
+            activeAnalysisUris.erase(next->uri);
+          }
           return;
         }
-
-        // A queued hover, definition, or similar request waits for its
-        // document's analysis. Run that analysis before dependants queued
-        // ahead of it; the order entry it leaves behind is skipped later.
-        for (const PendingSemanticRequest &waiting : pendingSemanticRequests) {
-          const auto pending = pendingAnalyses.find(waiting.uri);
-          if (pending == pendingAnalyses.end()) {
-            continue;
-          }
-          request = std::move(pending->second);
-          pendingAnalyses.erase(pending);
-          ++activeAnalyses;
-          break;
-        }
-        while (request.uri.empty() && !analysisOrder.empty()) {
-          const std::string uri = std::move(analysisOrder.front());
-          analysisOrder.pop_front();
-          const auto pending = pendingAnalyses.find(uri);
-          if (pending == pendingAnalyses.end()) {
-            continue;
-          }
-          request = std::move(pending->second);
-          pendingAnalyses.erase(pending);
-          ++activeAnalyses;
-          break;
-        }
-        if (request.uri.empty()) {
-          analysisCondition.notify_all();
-          continue;
-        }
+        request = std::move(*next);
       }
 
       // Driver resolution runs on the worker but outside the crash guard. The
@@ -3429,9 +3510,16 @@ private:
       }
       switch (guarded.status) {
       case GuardedAnalysisStatus::Completed:
-        recordFrontendWork("analysis", request.uri, request.generation,
-                           guarded.analysis->frontendElapsedMicroseconds,
-                           guarded.analysis->workMetrics);
+        if (frontendTracePath) {
+          std::size_t retained = 0;
+          {
+            const std::lock_guard lock(stateMutex);
+            retained = retainedFrontendCountLocked();
+          }
+          recordFrontendWork("analysis", request.uri, request.generation,
+                             guarded.analysis->frontendElapsedMicroseconds,
+                             guarded.analysis->workMetrics, retained);
+        }
         try {
           publishAnalysis(request, std::move(*guarded.analysis));
         } catch (const std::exception &error) {
@@ -3458,8 +3546,10 @@ private:
 
       {
         const std::lock_guard lock(stateMutex);
-        --activeAnalyses;
+        activeAnalysisUris.erase(request.uri);
       }
+      // Wakes idle workers for a newer request of this document and lets
+      // `flushAnalyses` observe the pool becoming idle.
       analysisCondition.notify_all();
     }
   }
@@ -3516,7 +3606,6 @@ private:
     std::vector<DiagnosticPublication> publications;
     std::optional<AnalysisRequest> retry;
     std::deque<PendingSemanticRequest> semanticRequests;
-    std::shared_ptr<const lang::FrontendResult> retiredFrontend;
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
@@ -3529,11 +3618,19 @@ private:
       bool dependencyChanged =
           analysis.frontend && analysis.frontend->includeSuggestionsRequested &&
           request.includeDiscoveryGeneration != includeDiscoveryGeneration;
-      for (const std::string &dependency : analysis.dependencies) {
-        if (!documents.contains(dependency)) {
+      for (const auto &[dependency, digest] : analysis.dependencies) {
+        const auto overlay = documents.find(dependency);
+        if (overlay == documents.end()) {
           continue;
         }
         const auto snapshot = request.documentGenerations.find(dependency);
+        // The dependency opened after this request was made, so the analysis
+        // read it from disk. That is still its text if the overlay that
+        // opened is exactly what was read.
+        if (snapshot == request.documentGenerations.end() && digest != 0 &&
+            digest == lang::sourceTextDigest(overlay->second)) {
+          continue;
+        }
         const auto current = contentGenerations.find(dependency);
         if (snapshot == request.documentGenerations.end() ||
             current == contentGenerations.end() ||
@@ -3549,7 +3646,7 @@ private:
             version == documentVersions.end()
                 ? std::nullopt
                 : std::optional<std::int64_t>(version->second),
-            ++analysisGenerations[request.uri]);
+            advanceAnalysisGenerationLocked(request.uri));
       } else {
         for (const auto &[path, identity] : analysis.sourceIdentities) {
           frontendSnapshots.publish(path, identity);
@@ -3567,13 +3664,16 @@ private:
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         dependenciesByRoot[request.uri] = std::move(analysis.dependencies);
         if (const auto previous = analysisSnapshots.find(request.uri);
-            previous != analysisSnapshots.end()) {
-          retiredFrontend = previous->second.frontend;
+            previous != analysisSnapshots.end() && previous->second.frontend) {
+          retireFrontendLocked(std::move(previous->second.frontend));
         }
+        const bool includeSuggestionsRequested =
+            analysis.frontend && analysis.frontend->includeSuggestionsRequested;
         analysisSnapshots[request.uri] = {
             .generation = request.generation,
             .rootPath = std::move(analysis.rootPath),
-            .frontend = std::move(analysis.frontend)};
+            .frontend = std::move(analysis.frontend),
+            .includeSuggestionsRequested = includeSuggestionsRequested};
         semanticTokenCache.erase(request.uri);
         publications = publicationsForLocked(affected);
         for (auto pending = pendingSemanticRequests.begin();
@@ -3597,8 +3697,61 @@ private:
     publish(std::move(publications));
     dispatchSemanticRequests(std::move(semanticRequests));
     requestSemanticTokenRefresh();
-    // `retiredFrontend` is intentionally released after diagnostics and
-    // queued semantic replies have been sent, outside `stateMutex`.
+  }
+
+  // Advances a root's analysis generation. Its retained snapshot can then no
+  // longer serve any request, so the frontend result is released now rather
+  // than when the replacement publishes. A shared-dependency edit otherwise
+  // holds a stale and a new whole-program result for every dependant at once.
+  std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
+    if (const auto snapshot = analysisSnapshots.find(uri);
+        snapshot != analysisSnapshots.end() && snapshot->second.frontend) {
+      retireFrontendLocked(std::move(snapshot->second.frontend));
+    }
+    return ++analysisGenerations[uri];
+  }
+
+  // Destroying a frontend graph is slow, so it happens on the reclamation
+  // worker rather than on the protocol thread or under `stateMutex`. A
+  // request still holding the result keeps it alive until it finishes.
+  void retireFrontendLocked(
+      std::shared_ptr<const lang::FrontendResult> frontend) {
+    retiredFrontends.push_back(std::move(frontend));
+    reclamationCondition.notify_one();
+  }
+
+  void runReclamationWorker() {
+    while (true) {
+      std::vector<std::shared_ptr<const lang::FrontendResult>> retired;
+      {
+        std::unique_lock lock(stateMutex);
+        reclamationCondition.wait(lock, [this] {
+          return stoppingReclamation || !retiredFrontends.empty();
+        });
+        retired.swap(retiredFrontends);
+        if (retired.empty()) {
+          return;
+        }
+      }
+      retired.clear();
+    }
+  }
+
+  void stopReclamationWorker() {
+    {
+      const std::lock_guard lock(stateMutex);
+      stoppingReclamation = true;
+    }
+    reclamationCondition.notify_all();
+    if (reclamationWorker.joinable()) {
+      reclamationWorker.join();
+    }
+  }
+
+  [[nodiscard]] std::size_t retainedFrontendCountLocked() const {
+    return static_cast<std::size_t>(std::count_if(
+        analysisSnapshots.begin(), analysisSnapshots.end(),
+        [](const auto &entry) { return entry.second.frontend != nullptr; }));
   }
 
   void requestSemanticTokenRefresh() {
@@ -3725,15 +3878,17 @@ private:
   void flushAnalyses() {
     std::unique_lock lock(stateMutex);
     analysisCondition.wait(lock, [this] {
-      return pendingAnalyses.empty() && analysisOrder.empty() &&
-             activeAnalyses == 0;
+      return pendingAnalyses.empty() && activeAnalysisUris.empty();
     });
   }
 
-  void recordFrontendWork(std::string_view kind, std::string_view uri,
-                          std::uint64_t generation,
-                          std::uint64_t elapsedMicroseconds,
-                          const lang::FrontendWorkMetrics &metrics) const {
+  // `retainedFrontends` is the number of published snapshots still holding a
+  // whole-program result when an analysis finished, before it publishes.
+  void recordFrontendWork(
+      std::string_view kind, std::string_view uri, std::uint64_t generation,
+      std::uint64_t elapsedMicroseconds,
+      const lang::FrontendWorkMetrics &metrics,
+      std::optional<std::size_t> retainedFrontends = std::nullopt) const {
     if (!frontendTracePath) {
       return;
     }
@@ -3743,6 +3898,13 @@ private:
         {"uri", std::string(uri)},
         {"generation", static_cast<std::int64_t>(generation)},
         {"elapsedMicroseconds", static_cast<std::int64_t>(elapsedMicroseconds)},
+        // Monotonic time since server start, so concurrent work can be
+        // ordered: the work ran over [finished - elapsed, finished].
+        {"finishedMicroseconds",
+         static_cast<std::int64_t>(
+             std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - serverStart)
+                 .count())},
         {"sourceBytes", static_cast<std::int64_t>(metrics.sourceBytes)},
         {"sourceLoadMicroseconds",
          static_cast<std::int64_t>(metrics.sourceLoadMicroseconds)},
@@ -3786,6 +3948,9 @@ private:
          static_cast<std::int64_t>(cacheStats.limits.maximumEntries)},
         {"maximumEstimatedBytes",
          static_cast<std::int64_t>(cacheStats.limits.maximumEstimatedBytes)}};
+    if (retainedFrontends) {
+      record["retainedFrontends"] = static_cast<std::int64_t>(*retainedFrontends);
+    }
     const std::string encoded =
         llvm::formatv("{0}", JsonValue(std::move(record))).str();
     const std::lock_guard lock(frontendTraceMutex);
@@ -3831,8 +3996,10 @@ private:
       abandoned.swap(pendingSemanticRequests);
     }
     analysisCondition.notify_all();
-    if (analysisWorker.joinable()) {
-      analysisWorker.join();
+    for (llvm::thread &worker : analysisWorkers) {
+      if (worker.joinable()) {
+        worker.join();
+      }
     }
   }
 
@@ -3842,10 +4009,13 @@ private:
   // Protected by stateMutex; workers consume only their captured request value.
   std::optional<std::string> projectProfile;
   std::optional<std::filesystem::path> frontendTracePath;
+  const std::chrono::steady_clock::time_point serverStart =
+      std::chrono::steady_clock::now();
   mutable std::mutex frontendTraceMutex;
   lang::lsp::FrontendSnapshotState frontendSnapshots;
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
+  std::condition_variable reclamationCondition;
   std::condition_variable completionCondition;
   std::unordered_map<std::string, std::string> clientUris;
   std::unordered_map<std::string, std::unordered_set<std::string>>
@@ -3853,7 +4023,7 @@ private:
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
-  std::unordered_map<std::string, std::unordered_set<std::string>>
+  std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
   // Advances only when an open document's own text or overlay presence
@@ -3871,9 +4041,12 @@ private:
   std::deque<PendingSemanticRequest> pendingSemanticRequests;
   std::unordered_set<std::string> activeCompletionRequests;
   std::unordered_set<std::string> canceledRequests;
-  std::size_t activeAnalyses = 0;
+  // Documents whose analysis is running on a pool worker.
+  std::unordered_set<std::string> activeAnalysisUris;
   std::size_t activeCompletions = 0;
   bool stoppingAnalysis = false;
+  bool stoppingReclamation = false;
+  std::vector<std::shared_ptr<const lang::FrontendResult>> retiredFrontends;
   bool stoppingCompletion = false;
   bool shutdownRequested = false;
   bool markdownHover = false;
@@ -3891,8 +4064,9 @@ private:
   bool preferredCodeActions = false;
   bool hierarchicalDocumentSymbols = false;
   std::atomic<std::uint64_t> nextServerRequestId{1};
-  llvm::thread analysisWorker;
   llvm::thread completionWorker;
+  std::vector<llvm::thread> analysisWorkers;
+  llvm::thread reclamationWorker;
 };
 
 } // namespace

@@ -9,13 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.395.4 — Long function bodies compile in linear time
+## 0.395.7 — Long function bodies compile in linear time
 
 - Fix compile time that grew with the cube of a single function body's
-  length. A `main()` of about 1,100 `std::try_format` or `std::format`
-  statements ran for more than 18 CPU-minutes; it now compiles in about two
-  seconds, no slower than the same statements split into small functions.
-  Generated C++ is unchanged.
+  length. For a `main()` of about 1,100 `std::try_format` or `std::format`
+  statements, GTI ran for more than 18 CPU-minutes; it now finishes its part
+  in about two seconds, no slower than for the same statements split into
+  small functions. Generated C++ is unchanged.
+
+## 0.395.4 — Fewer allocations in std::format
+
+- `std::format`, `try_format`, `print` and `println` with a pattern now
+  allocate once for a typical short result, instead of about once per
+  argument and per append. Integers are written straight into the output
+  without temporary strings, padding no longer builds intermediate text, and
+  the output grows geometrically. Formatted text and errors are unchanged.
+  Formatting two integers runs about twice as fast, a string-keyed map
+  workload that formats its keys 44% faster, and a pattern `println` loop 27%
+  faster.
 
 ## 0.395.2 — Owning arguments before conditional arguments
 

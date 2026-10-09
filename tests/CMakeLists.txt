@@ -2240,6 +2240,12 @@ if(Python3_Interpreter_FOUND)
         "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_runtime_test.py"
         "$<TARGET_FILE:gti>")
     set_tests_properties(extensible_formatting_runtime PROPERTIES TIMEOUT 240)
+    add_test(NAME format_output_matrix_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/format_output_matrix_runtime_test.py"
+        "$<TARGET_FILE:gti>"
+        "${PROJECT_SOURCE_DIR}/tests/fixtures/format_output_matrix.expected")
+    set_tests_properties(format_output_matrix_runtime PROPERTIES TIMEOUT 600)
     add_test(NAME integral_enum_formatting_runtime
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/integral_enum_formatting_runtime_test.py"

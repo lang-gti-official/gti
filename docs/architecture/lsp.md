@@ -464,8 +464,23 @@ compiler work.
 - `didOpen`/`didChange` replace the full synchronized source, advance the
   document and canonical-source generations, erase the prior learned digest,
   invalidate affected dependants, and schedule analysis over all open-buffer
-  overlays. A stale result snapshot may remain allocated until its replacement
-  is published, but generation checks make it inaccessible to requests.
+  overlays. Generation checks make a stale result snapshot inaccessible to
+  requests, so advancing a root's analysis generation also releases that
+  snapshot's frontend result instead of keeping it until the replacement
+  publishes. A dedicated reclamation worker destroys released results, so
+  neither the protocol thread nor `stateMutex` pays for tearing down a large
+  frontend graph, and a request that already holds a result keeps it alive.
+  The snapshot keeps its generation and include-discovery flag for
+  diagnostic aggregation and dependency invalidation. Before this, a
+  shared-dependency edit held a stale and a new whole-program result for
+  every dependant at once.
+- Each published analysis records, for every dependency it loaded, the
+  digest of the exact text it read (`lang::sourceTextDigest`, the identity the
+  frontend cache already uses for loaded text). Opening a document is not a
+  change for a dependant that read exactly the opened text from disk, so that
+  dependant keeps its result; going to a definition in another project file
+  then costs one analysis, not one per open dependant. A dependant that read
+  different text is reanalysed as before.
 - `didClose` removes the overlay and snapshot, clears diagnostics, invalidates
   the overlay source identity and pending work, and reanalyzes dependants whose
   view changes. The next analysis must read the disk source before learning its
@@ -477,7 +492,9 @@ compiler work.
   `didChange`, `didClose`). A request captures the content generations of
   every open document.
 - Completed analysis is published only if the root's analysis generation and
-  the content generation of each open dependency still match. Only then may its
+  the content generation of each open dependency still match. A dependency
+  that opened after the request was made is also current when its overlay has
+  the digest of the text the analysis read. Only then may its
   source digests be learned. Stale semantic requests and stale digest
   publications are rejected. Dependency staleness never compares analysis
   generations: re-analysing an unchanged dependant then invalidated every
@@ -520,8 +537,11 @@ This is deliberately not a semantic snapshot cache. Semantic analysis and HIR
 still run over the complete compatible parsed program, producing new
 snapshot-local identities and records. The benchmark exposes exact loaded,
 lexed, parsed, semantically analysed, and cache-hit unit lists plus phase times
-through the opt-in `GTI_LSP_FRONTEND_TRACE` stream. The same report records the
-configured cache limits and observed estimated occupancy.
+through the opt-in `GTI_LSP_FRONTEND_TRACE` stream. Each record also carries a
+monotonic `finishedMicroseconds` time since server start, so concurrent work
+can be ordered, and analysis records carry `retainedFrontends`, the number of
+published snapshots still holding a whole-program result. The same report records the configured cache limits and
+observed estimated occupancy.
 
 Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
@@ -530,19 +550,34 @@ The analysis queue is first-in first-out, except that a root with a queued
 semantic request (hover, definition, references, and similar) runs before
 dependants queued ahead of it, so the document under the cursor is not
 answered last after a shared-dependency edit.
-Both queues use one long-lived LLVM thread with an explicit 8 MiB stack. That
-avoids Darwin's 512 KiB secondary-thread default and ensures the compiler's
-bounded-depth recovery runs before native stack exhaustion in debug builds,
-without creating a new thread for every edit or completion request.
+
+Every open document is its own whole-program root, so opening a project or
+editing a shared dependency queues one independent analysis per affected
+document. A small pool of interchangeable analysis workers runs those
+concurrently: half the host's hardware threads, at most four, or 1-16 through
+`GTI_LSP_ANALYSIS_WORKERS`. The bound exists because each in-flight analysis
+holds a complete frontend result until it is published. A document is never
+analysed on two workers at once. Its newer request waits for the running
+analysis to finish, so rapid edits to one file cannot fill the pool with
+results that generation checks would discard. The workers share no
+compiler state beyond the thread-safe frontend cache; publication still
+happens under `stateMutex`, after the guarded compiler work.
+
+Completion keeps one worker. Every worker is a long-lived LLVM thread with an
+explicit 8 MiB stack. That avoids Darwin's 512 KiB secondary-thread default
+and ensures the compiler's bounded-depth recovery runs before native stack
+exhaustion in debug builds, without creating a new thread for every edit or
+completion request.
 
 Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
 compiler-owned discovery point for concrete generic instances, so stopping at
 symbolic semantics made valid editor snapshots omit diagnostics that
 `gti check` reports for instantiated generic bodies and dependent
-`static_assert` declarations. The LSP does not query HIR directly, and it still
-does not build failure metadata or MIR; retaining the HIR result is the current
-cost of publishing the compiler's complete source-level semantic diagnostic
-set. Code generation remains disabled.
+`static_assert` declarations. The LSP does not query HIR, and it does not
+build failure metadata or MIR. It releases the HIR program as soon as the
+analysis returns, once HIR's diagnostics are in the result, so retained
+snapshots hold syntax, semantics, and source identity only. Code generation
+remains disabled.
 
 Before analysis and completion, the LSP asks the driver for immutable
 `ProjectFacts` for the package containing the entry document. The facts select
@@ -823,6 +858,7 @@ features share compiler semantics.
 GTI does not need C++ preambles/PCH, compile-command borrowing, macro
 spelling/expansion locations, background index shards, remote indexes,
 clangd-style full semantic translation-unit AST caches, or one worker per
-translation unit. Its bounded exact-content parsed-unit reuse is narrower and
+translation unit. The analysis pool is a fixed, small set of interchangeable
+workers, not a per-document scheduler. Its bounded exact-content parsed-unit reuse is narrower and
 contains no semantic records. Preserve the boundaries that allow measured
 evolution without importing those systems preemptively.
