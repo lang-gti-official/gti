@@ -615,9 +615,15 @@ def test_dependency_chain_reanalysis_count(executable, root):
             if record["kind"] == "analysis"
         ]
 
+    # One worker makes the request-first ordering below observable; the pool
+    # test covers concurrent workers.
     session = LspSession(
         executable,
-        environment=dict(os.environ, GTI_LSP_FRONTEND_TRACE=str(trace_path)),
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_ANALYSIS_WORKERS="1",
+        ),
     )
     closed = False
     try:
@@ -685,6 +691,85 @@ def test_dependency_chain_reanalysis_count(executable, root):
         reanalyzed = analyses()[len(paths):]
         assert sorted(reanalyzed) == sorted(path.name for path in paths), reanalyzed
         assert reanalyzed.index(paths[-1].name) <= 1, reanalyzed
+    finally:
+        if not closed:
+            session.close()
+
+
+def test_analysis_pool_runs_one_analysis_per_document(executable, root):
+    # With several pool workers, a burst of edits to one document must not
+    # start a second analysis of it while the first is still running. The
+    # newest edit waits and replaces every intermediate one.
+    path = root / "pool-burst.gti"
+    # Large enough that each analysis is still running while the later edits
+    # arrive, so free workers would otherwise pick them up.
+    source = "".join(f"int pool_{index} = {index};\n" for index in range(8000))
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    trace_path = root / "pool-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+    session = LspSession(
+        executable,
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_ANALYSIS_WORKERS="4",
+        ),
+    )
+    closed = False
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+        last_version = 11
+        for version in range(2, last_version + 1):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": version},
+                        "contentChanges": [
+                            {"text": source + f"// edit {version}\n"}
+                        ],
+                    },
+                }
+            )
+            time.sleep(0.05)
+        final = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == last_version,
+            timeout=60,
+        )
+        assert not has_error_diagnostics(final["params"])
+        session.close()
+        closed = True
+        records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+        ]
+        intervals = sorted(
+            (
+                record["finishedMicroseconds"] - record["elapsedMicroseconds"],
+                record["finishedMicroseconds"],
+                record["generation"],
+            )
+            for record in records
+            if record["kind"] == "analysis"
+        )
+        assert len(intervals) >= 2, intervals
+        for earlier, later in zip(intervals, intervals[1:]):
+            assert earlier[1] <= later[0], intervals
     finally:
         if not closed:
             session.close()
@@ -10032,6 +10117,10 @@ def main():
                 test_dependency_chain_reanalysis_count(
                     sys.argv[1], pathlib.Path(root)
                 )
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-pool-") as root:
+                test_analysis_pool_runs_one_analysis_per_document(
+                    sys.argv[1], pathlib.Path(root)
+                )
             print("GTI dependency chain reanalysis LSP test passed")
         elif sys.argv[2] == "io":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-io-") as root:
@@ -11009,6 +11098,7 @@ def main():
 
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
     test_dependency_chain_reanalysis_count(sys.argv[1], root)
+    test_analysis_pool_runs_one_analysis_per_document(sys.argv[1], root)
     test_duplicate_dependency_diagnostics_keep_include_context(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)
