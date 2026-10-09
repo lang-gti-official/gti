@@ -3768,8 +3768,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
                                  : nullptr;
     const CallableParameterContract *targetContract =
         callableParameterContract(candidate.id, index);
-    const bool lexicalClosure =
-        containsClosureObjectType(argumentTypes[index]);
+    const bool lexicalClosure = containsClosureObjectType(argumentTypes[index]);
     const bool ordinaryValueContract = sourceContract != nullptr &&
                                        sourceContract->ownedTransport &&
                                        sourceContract->ownedTransport->kind ==

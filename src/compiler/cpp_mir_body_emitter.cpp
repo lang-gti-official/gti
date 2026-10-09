@@ -38962,7 +38962,8 @@ private:
           instruction.operands.empty()
               ? nullptr
               : storageStagedPlace(facts.body, instruction.operands.front());
-      if (storage == nullptr || !polymorphicStorageType(program, storage->type)) {
+      if (storage == nullptr ||
+          !polymorphicStorageType(program, storage->type)) {
         throw std::logic_error(
             "verified MIR polymorphic storage operation lost its slot");
       }
@@ -48455,11 +48456,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          return row.type == polymorphicRead->info.type &&
                                 !row.spelling.empty();
                        }) ||
-          loan.access !=
-              (polymorphicRead->intrinsic ==
-                       IntrinsicKind::PolymorphicStorageReadMut
-                   ? AccessMode::Mutable
-                   : AccessMode::ReadOnly)) {
+          loan.access != (polymorphicRead->intrinsic ==
+                                  IntrinsicKind::PolymorphicStorageReadMut
+                              ? AccessMode::Mutable
+                              : AccessMode::ReadOnly)) {
         return false;
       }
     } else if (referenceCall != nullptr) {
@@ -52202,11 +52202,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                         instruction.info.type ==
                             storage->type.arguments.front() &&
                         typeRow(instruction.info.type) &&
-                        loan->access == (instruction.intrinsic ==
-                                                 IntrinsicKind::
-                                                     PolymorphicStorageReadMut
-                                             ? AccessMode::Mutable
-                                             : AccessMode::ReadOnly)
+                        loan->access ==
+                            (instruction.intrinsic ==
+                                     IntrinsicKind::PolymorphicStorageReadMut
+                                 ? AccessMode::Mutable
+                                 : AccessMode::ReadOnly)
                   : !instruction.result &&
                         instruction.info.type == SemanticType::Void;
           if (instruction.functionTarget || instruction.constructorTarget ||

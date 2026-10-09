@@ -162,10 +162,9 @@ void testPolymorphicStorageContract() {
           : artifact.contents.substr(begin, end - begin);
   const std::size_t tableBegin =
       artifact.contents.find("polymorphic_storage_operations_for{");
-  const std::string table =
-      tableBegin == std::string::npos
-          ? std::string{}
-          : artifact.contents.substr(tableBegin, 600);
+  const std::string table = tableBegin == std::string::npos
+                                ? std::string{}
+                                : artifact.contents.substr(tableBegin, 600);
   expect(!representation.empty() &&
              representation.find("alignas(Align) std::byte bytes_[Bytes]") !=
                  std::string::npos &&
@@ -183,15 +182,16 @@ void testPolymorphicStorageContract() {
          "the C++ slot relocates through each payload's generated move and "
          "never byte-copies or allocates a polymorphic payload");
 
-  const auto rejects = [&](const char *label,
-                           const std::function<bool(lang::MirInstruction &)>
-                               &mutation) {
-    lang::MirProgram forged = frontend.mir;
-    const bool changed = mutateFirst(forged, mutation);
-    expect(changed && !lang::verifyMirProgram(forged).valid(),
-           std::string("verification should reject a slot operation with ") +
-               label);
-  };
+  const auto rejects =
+      [&](const char *label,
+          const std::function<bool(lang::MirInstruction &)> &mutation) {
+        lang::MirProgram forged = frontend.mir;
+        const bool changed = mutateFirst(forged, mutation);
+        expect(
+            changed && !lang::verifyMirProgram(forged).valid(),
+            std::string("verification should reject a slot operation with ") +
+                label);
+      };
   rejects("a relabelled read", [](lang::MirInstruction &instruction) {
     if (instruction.intrinsic != lang::IntrinsicKind::PolymorphicStorageRead)
       return false;
