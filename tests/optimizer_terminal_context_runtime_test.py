@@ -27,6 +27,10 @@ def main():
         ("overflow", source.replace("if (false) return bad_surviving_value", "if (true) return bad_surviving_value"),
          (70, "", f"overflow.gti:{overflow_line}: runtime error[GTI-R0001]: integer_overflow in addition\n")),
     ]
+    for call in ("choose_exact", "choose_equal"):
+        site = next(i for i, line in enumerate(lines, 1) if f"return {call}(0) + 1" in line)
+        cases.append((call, source.replace(f"{call}(0)", f"{call}(1)"),
+                      (70, "", f"{call}.gti:{site}: runtime error[GTI-R0001]: integer_overflow in addition\n")))
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"])
              for standard in ("c++20", "c++23") for level in ("O0", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1", "--",

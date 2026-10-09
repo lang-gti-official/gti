@@ -340,7 +340,9 @@ if __name__ == "__main__":
         previous_library = os.environ.get("GTI_STDLIB_PATH")
         os.environ["GTI_STDLIB_PATH"] = str(library)
         try:
-            main(names=tuple(paths), cases=cases, fixture_paths=paths)
+            native = fixture.parent / "optimizer_object_context_native.cpp"
+            main(names=tuple(paths), cases=cases, fixture_paths=paths,
+                 native_inputs_by_name={name: [str(native)] for name in variants})
         finally:
             if previous_library is None:
                 os.environ.pop("GTI_STDLIB_PATH", None)

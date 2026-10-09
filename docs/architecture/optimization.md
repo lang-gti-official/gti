@@ -403,6 +403,11 @@ call is still discovered for analysis of its own instructions, but ends only
 that normal path. It never waits for a successful-return postcondition or
 prevents summarizing a separate successful branch. Its original failure edges,
 cleanup and terminal behavior remain in MIR; no successful result is invented.
+Integer comparisons whose two same-domain operands are exact singleton values
+also discard their impossible analysis edge. This includes the non-equality
+edge that an interval intersection alone cannot represent; it does not replace
+or reorder the executed comparison. Native-selected regression branches keep
+mutation and alias negatives reachable independently of proved comparisons.
 Opaque synchronizing
 effects invalidate mutable memory even when the effect summary reports no
 direct write; they cannot establish a closed recurrence edge. Recursive SCCs, native
