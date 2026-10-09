@@ -892,17 +892,25 @@ namespace {
 
 [[nodiscard]] MirEffectTraits finishInstructionEffects(
     const MirInstruction &instruction, MirEffectTraits result,
-    bool structuralValueTransfer = false, bool structuralConstruction = false) {
+    bool structuralValueTransfer = false, bool structuralConstruction = false,
+    bool exactConstructor = false) {
   if (instruction.tombstone) {
     return harmless();
   }
   if (instruction.kind == MirInstructionKind::Call &&
       instruction.intrinsic != IntrinsicKind::None) {
+    // With its exact source constructor merged separately, final-address
+    // construction itself only initializes the vacant pointee and runs that
+    // constructor; synchronization comes from the constructor's own summary.
     result = (structuralConstruction ||
               isMirScalarFinalAddressConstruction(instruction))
                  ? MirEffectTraits{.writesUnknownMemory = true,
                                    .initializesValue = true}
-                 : effects(instruction.intrinsic);
+             : exactConstructor ? MirEffectTraits{.writesUnknownMemory = true,
+                                                  .mayTrap = true,
+                                                  .initializesValue = true,
+                                                  .invokesUserCode = true}
+                                : effects(instruction.intrinsic);
   } else if (instruction.kind == MirInstructionKind::Call &&
              instruction.synchronization.kind !=
                  SynchronizationOperationKind::None) {
@@ -1041,7 +1049,11 @@ exactInvocationShell(const MirInstruction &instruction,
     result = effects(instruction.kind);
     break;
   }
-  return finishInstructionEffects(instruction, result);
+  return finishInstructionEffects(
+      instruction, result, false, false,
+      instruction.kind == MirInstructionKind::Call &&
+          instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+          instruction.constructorTarget.has_value());
 }
 
 [[nodiscard]] const MirEffectSummary *
@@ -1805,13 +1817,12 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
         return safe;
       }
       // Every admitted polymorphic payload has failure-free relocation.
-      const bool safe =
-          owner->compilerCapability ==
-              CompilerCapabilityTypeKind::PolymorphicStorage ||
-          (owner->compilerCapability ==
-               CompilerCapabilityTypeKind::OptionalStorage &&
-           candidate.arguments.size() == 1 &&
-           self(self, candidate.arguments.front()));
+      const bool safe = owner->compilerCapability ==
+                            CompilerCapabilityTypeKind::PolymorphicStorage ||
+                        (owner->compilerCapability ==
+                             CompilerCapabilityTypeKind::OptionalStorage &&
+                         candidate.arguments.size() == 1 &&
+                         self(self, candidate.arguments.front()));
       classes.erase(owner->id);
       return safe;
     }

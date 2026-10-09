@@ -747,6 +747,70 @@ int use_argument_relay() {
          "escape summaries onto the caller's originating MIR places");
 }
 
+void testUnborrowedLocalReferenceDisjointness() {
+  // A dereferenced reference designates storage a loan or address was formed
+  // for. A local that is never borrowed or address-taken in the body is
+  // therefore disjoint from it; a borrowed local is not.
+  const std::string source = R"(
+int32_t unborrowed(mut int32_t& target) {
+  mut int32_t counter = 1;
+  target = 5;
+  return counter;
+}
+
+int32_t borrowed(mut int32_t& target) {
+  mut int32_t counter = 1;
+  mut int32_t& view = counter;
+  view = 5;
+  target = 6;
+  return counter;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("optimizer-alias-unborrowed.gti", source);
+  const lang::MirFunctionInstance *unborrowed =
+      findMirFunction(frontend, "unborrowed");
+  const lang::MirFunctionInstance *borrowed =
+      findMirFunction(frontend, "borrowed");
+  expect(frontend.canGenerateCode() && unborrowed && borrowed,
+         "unborrowed-local alias fixture should pass the frontend");
+  if (!frontend.canGenerateCode() || !unborrowed || !borrowed)
+    return;
+  const auto check = [&](const lang::MirFunctionInstance &function,
+                         bool disjoint) {
+    const lang::MirPlaceAliasEscapeAnalysis analysis =
+        lang::analyzeMirPlaceAliasEscape(
+            frontend.mir,
+            {.kind = lang::MirBodyKind::Function, .owner = function.id});
+    std::vector<lang::MirPlaceId> counters;
+    std::vector<lang::MirPlaceId> referents;
+    for (const lang::MirPlace &place : function.body.places) {
+      if (place.root != lang::MirPlaceRootKind::Binding ||
+          place.type.kind != lang::SemanticType::Int32)
+        continue;
+      if (place.projections.empty())
+        counters.push_back(place.id);
+      else if (place.projections.front().kind ==
+               lang::MirProjectionKind::Dereference)
+        referents.push_back(place.id);
+    }
+    bool matches = counters.size() == 1 && !referents.empty();
+    for (const lang::MirPlaceId referent : referents) {
+      const auto relation = analysis.relation(referent, counters.front());
+      matches = matches &&
+                relation == analysis.relation(counters.front(), referent) &&
+                (relation == lang::MirAliasRelation::NoAlias) == disjoint;
+    }
+    return matches;
+  };
+  expect(check(*unborrowed, true),
+         "an unborrowed local must be disjoint from every dereferenced "
+         "reference");
+  expect(check(*borrowed, false),
+         "a borrowed local must stay conservatively aliased with dereferenced "
+         "references");
+}
+
 void testUnknownCallEscapeAnalysis() {
   const std::string source = R"(
 extern "C" {
@@ -1119,6 +1183,7 @@ int main() {
   testPlaceRelations();
   testExactCallEscapeAnalysis();
   testUnknownCallEscapeAnalysis();
+  testUnborrowedLocalReferenceDisjointness();
   testAliasAwareSafetyInvalidation();
   testConservativeSafetyEdgesAndUnionOverlap();
   testSparseConditionalConstants();
