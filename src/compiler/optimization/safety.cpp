@@ -100,8 +100,9 @@ struct ScalarAddress {
 };
 
 // One exact typed address, never an allocation extent or a whole initialized
-// region. Different bases are not a disjointness proof. Only successful
-// construction establishes a pointee fact; writes/destruction invalidate it.
+// region. Different bases are not a disjointness proof. Successful construction
+// or an exact checked scalar store establishes a pointee fact; unsupported
+// writes/destruction invalidate it.
 struct ScalarAddressKey {
   AddressOriginKind kind;
   MirPlaceId place;
@@ -173,8 +174,8 @@ void publishFieldFact(const MirBody &body, AbstractState &state,
 struct ObjectFact {
   std::map<FieldPath, IntegerFact> integers;
   // Mutable contents at exact ordinary owned pointer-field values. Only
-  // successful scalar construction supplies these facts; they imply neither
-  // allocation extent nor disjointness from other pointer fields.
+  // successful scalar construction/checked stores supply these facts; they
+  // imply neither allocation extent nor disjointness from other pointer fields.
   IntegerFieldFacts scalarPointees;
   std::optional<IntegerFact> elements;
   IntegerFieldFacts elementIntegers;
@@ -1873,6 +1874,10 @@ compoundIntegerFact(const MirBody &body, const MirProgram *program,
     return std::nullopt;
   }
   std::optional<IntegerFact> left;
+  if (const auto pointer =
+          borrowedAddressForPlace(body, state, *instruction.destination))
+    if (const auto *place = body.findPlace(*instruction.destination))
+      left = integerAtAddress(body, state, *pointer, place->type);
   if (const std::optional<IndexedAggregateAccess> indexed =
           indexedAggregateAccess(program, body, aliases,
                                  *instruction.destination)) {
@@ -4181,6 +4186,26 @@ void applyInstruction(const MirBody &body,
     const MirOperand &source = instruction.operands.front();
     std::optional<AlternativeFields> initializedAlternatives;
     const auto *destinationPlace = body.findPlace(destination);
+    const auto checkedAddress =
+        instruction.kind == MirInstructionKind::Assign && destinationPlace &&
+                !instruction.rawMemoryAccess &&
+                instruction.unsafeOperation == UnsafeOperationKind::None &&
+                instruction.lifecycle.empty() && !effect.invokesUserCode &&
+                !effect.invokesRuntime && !effect.writesUnknownMemory &&
+                !effect.maySynchronize &&
+                constantIntegerDomain(destinationPlace->type) &&
+                constantIntegerDomain(destinationPlace->type)->width > 8
+            ? borrowedAddressForPlace(body, state, *instruction.destination)
+            : std::nullopt;
+    // A typed non-byte scalar write cannot replace a live pointer/reference
+    // carrier. Retain address identities, not other mutable pointee values.
+    // The exact selected cell is republished only on the successful edge.
+    const auto savedFieldAddresses = checkedAddress
+                                         ? state.fieldAddresses
+                                         : decltype(state.fieldAddresses){};
+    const auto savedBorrowedAddresses =
+        checkedAddress ? state.borrowedAddresses
+                       : decltype(state.borrowedAddresses){};
     if (instruction.kind == MirInstructionKind::Initialize &&
         destinationPlace &&
         destinationPlace->root == MirPlaceRootKind::Binding &&
@@ -4256,6 +4281,26 @@ void applyInstruction(const MirBody &body,
     if (!referenceCarrierInitialization &&
         (!indexed || (!previousAggregateElements && !previousAggregateField))) {
       invalidatePlaceRoot(body, aliases, state, destination);
+    }
+    if (checkedAddress) {
+      // A raw-derived checked reference may write a caller-owned object. This
+      // is not vacant construction: callers must invalidate possible aliases
+      // before consuming the exact successful postcondition.
+      state.hasOpaqueEffects = true;
+      state.liveMemoryBarrier = LiveMemoryBarrier::Unknown;
+      state.fieldAddresses = savedFieldAddresses;
+      state.borrowedAddresses = savedBorrowedAddresses;
+      const auto *pointee = addressPointeeType(body, *checkedAddress);
+      if (fact && pointee && *pointee == destinationPlace->type &&
+          constantIntegerDomain(*pointee) == fact->domain) {
+        auto stored = *fact;
+        stored.evidence = merged(stored.evidence, checkedAddress->evidence);
+        add(stored.evidence, block.id);
+        addInstruction(stored.evidence, instruction.id);
+        addPlace(stored.evidence, destination);
+        publishConstructedScalar(state, addressKey(*checkedAddress),
+                                 ConstructedScalar{std::move(stored)});
+      }
     }
     if (scalarAddress && body.findPlace(destination) &&
         body.findPlace(destination)->type == source.type) {
