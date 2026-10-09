@@ -1,0 +1,64 @@
+#include <std/format>
+#include <std/polymorphic>
+#include <std/string>
+#include <std/vector>
+
+namespace application {
+interface sensor {
+  std::string name();
+  int sample(int tick) mut;
+};
+
+// Small, relocatable and cleanup-free: lives inside its owner.
+class counter_sensor : public sensor {
+  mut int count = 0;
+  int step;
+public:
+  counter_sensor(int step) : step(step) {}
+  std::string name() override { return std::string("counter"); }
+  int sample(int tick) mut override {
+    this.count += this.step;
+    return this.count;
+  }
+};
+
+// Owns a string, whose cleanup is not inert: boxed on the heap instead.
+class labelled_sensor : public sensor {
+  std::string label;
+public:
+  labelled_sensor(std::string label) : label(std::move(label)) {}
+  std::string name() override { return this.label.clone(); }
+  int sample(int tick) mut override { return tick * 10; }
+};
+
+using sensor_slot = std::inline_polymorphic<sensor, 32, 8>;
+}
+
+int main() {
+  mut std::vector<application::sensor_slot> sensors{};
+  for (mut int index = 0; index < 6; index++) {
+    mut application::sensor_slot slot{};
+    if (index % 3 == 2) {
+      slot.replace(application::labelled_sensor(std::format("probe-{}", index)));
+    } else {
+      slot.replace(application::counter_sensor(index + 1));
+    }
+    // Growth moves inline sensors with their state; nothing is copied bytewise.
+    sensors.push_back(std::move(slot));
+  }
+  for (mut int tick = 1; tick <= 2; tick++) {
+    for (mut std::size_t index = 0; index < sensors.size(); index++) {
+      mut application::sensor_slot& slot = sensors[index];
+      int value = slot.get().sample(tick);
+      std::string name = slot.get().name();
+      std::string_view placement = slot.is_inline() ? "inline" : "boxed";
+      std::println(std::format("{} {} {}", name.view(), placement, value));
+    }
+  }
+  // Replacing a boxed sensor with a small one frees its allocation.
+  mut application::sensor_slot& probe = sensors[std::size_t(2)];
+  probe.replace(application::counter_sensor(7));
+  std::string name = probe.get().name();
+  std::println(std::format("{} {}", name.view(), probe.is_inline() ? "inline" : "boxed"));
+  return 0;
+}

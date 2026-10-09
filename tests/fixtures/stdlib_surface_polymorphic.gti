@@ -1,0 +1,39 @@
+#include <std/polymorphic>
+#include <std/string>
+
+interface shape {
+  int area();
+  void scale(int factor) mut;
+};
+
+class square : public shape {
+  mut int side;
+public:
+  square(int side) : side(side) {}
+  int area() override { return this.side * this.side; }
+  void scale(int factor) mut override { this.side = this.side * factor; }
+};
+
+class named : public shape {
+  std::string name;
+public:
+  named(std::string name) : name(std::move(name)) {}
+  int area() override { return int(this.name.size()); }
+  void scale(int factor) mut override {}
+};
+
+int admitted<M>() requires std::inline_polymorphic_payload<M, shape> { return 1; }
+
+int main() {
+  std::inline_polymorphic<shape, 32, 8> empty{};
+  if (empty.has_value() || empty.is_inline()) { return 1; }
+  mut std::inline_polymorphic<shape, 32, 8> value{square(2)};
+  if (!value.is_inline() || value.get().area() != 4) { return 2; }
+  value.get().scale(2);
+  if (value.get().area() != 16) { return 3; }
+  value.replace(named(std::string("abc")));
+  if (value.is_inline() || value.get().area() != 3) { return 4; }
+  value.reset();
+  if (value.has_value()) { return 5; }
+  return admitted<square>() - 1;
+}

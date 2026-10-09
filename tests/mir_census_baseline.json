@@ -46,6 +46,8 @@
     "131-inferred-references.gti": 158,
     "132-qualified-type-members.gti": 72,
     "134-standard-library-modules.gti": 118,
+    "135-inline-polymorphic-values.gti": 150,
+    "136-inline-closure-cells.gti": 94,
     "14-operators.gti": 28,
     "15-variadic-generics.gti": 26,
     "16-move-generics.gti": 40,
@@ -116,7 +118,7 @@
     "83-complete-ranges.gti": 71,
     "84-optional-values.gti": 31,
     "85-payload-enum-fields.gti": 16,
-    "86-owning-callbacks.gti": 213,
+    "86-owning-callbacks.gti": 247,
     "87-associative-containers.gti": 193,
     "88-consuming-builders.gti": 57,
     "89-library-workflow.gti": 422,
@@ -131,5 +133,5 @@
     "98-shared-ownership.gti": 58,
     "99-borrowed-expected.gti": 66
   },
-  "total": 6781
+  "total": 7059
 }

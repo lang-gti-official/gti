@@ -1139,6 +1139,19 @@ Fresh-lambda inferred returns, implicit ownership copies, namespace/static
 closure storage, borrowed captures, and callable-reference erasure remain
 outside this contract.
 
+A raw pointer transports an address, not the closure object it may name. It
+holds no capture and invokes nothing, so passing `holder<Callable>*` to a
+generic helper creates no callable argument boundary, and a raw pointer
+member of a type argument does not either. General object-lifetime helpers
+such as `std::construct_at`, `std::assume_ref`, `std::destroy_at` and
+`std::layout_of` therefore accept closure-bearing objects. Reaching the object
+again keeps its explicit unsafe obligation, and the checked reference that
+`assume_ref`/`assume_mut` return borrows a closure-free owner witness. A
+reference to a closure-bearing object is still a callable boundary, so
+`int peek<T>(T& value)` still rejects a lambda argument with GTI-S2046.
+[`136-inline-closure-cells.gti`](../../examples/136-inline-closure-cells.gti)
+keeps a closure in an application-defined inline cell this way.
+
 The semantic model records which immutable bindings are explicitly moved. The
 C++ backend must not equate those bindings with physical C++ `const`, while HIR
 represents the operation directly as `Move` rather than an ordinary function
@@ -1539,8 +1552,13 @@ annotation or unsafe opt-in is needed.
 
 `std::bitwise_relocatable<T>` refines this to passive scalar state, fixed arrays
 of eligible elements, and classes whose fields are all bitwise-eligible and
-which have no bases, polymorphism, or declared cleanup. Deleted copy
-construction alone does not deny it: relocation is not copying. Cleanup-owning
+which have no bases, polymorphism, or declared cleanup. A closure is an
+aggregate of its captures with no self-reference, base or source destructor:
+it is bitwise relocatable exactly when every capture is, structural when some
+capture is only structural (an owning string, say), and unavailable when a
+capture is borrowed or cannot relocate. A class holding such a closure follows
+the ordinary field rule. Deleted copy construction alone does not deny it:
+relocation is not copying. Cleanup-owning
 classes and tagged/optional carriers use generated structural transfer, not
 bytewise copying. These concepts are constraints, not boolean expressions.
 

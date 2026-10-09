@@ -34,7 +34,8 @@ identity, never by qualified spelling or a public wrapper name. Shared prefix
 storage, text, and core constraint identities live in the trusted prelude.
 Module-specific identities live only in their exact trusted source units:
 unique ownership and general object-lifetime operations in `<std/memory>`,
-managed threads in `<std/thread>`, checked one-slot storage in `<std/optional>`, atomics in
+managed threads in `<std/thread>`, checked one-slot storage in `<std/optional>`,
+inline polymorphic storage in `<std/polymorphic>`, atomics in
 `<std/atomic>`, mutexes in `<std/mutex>`, defined integer arithmetic in
 `<std/numeric>`, iterators in `<std/iterator>`, and callable relations in
 `<std/functional>`. Unrelated programs therefore do not carry those private
@@ -337,8 +338,16 @@ The current implemented foundation includes:
   explicit ownership transfer. `function` requires copy-constructible targets
   and exposes an explicit deep `clone()`; the wrapper itself is move-only, as
   with the other owning containers. `move_only_function` also accepts move-only
-  captures and has no clone. Allocation uses `make_unique`, and invoking an
-  empty wrapper follows checked null-owner failure, not C++ exceptions.
+  captures and has no clone. The four repeatable forms own their target in a
+  `std::inline_polymorphic<target, 32, 8>`: a target that is an
+  `inline_polymorphic_payload` and fits the 32-byte slot (a vtable pointer plus
+  up to 24 bytes of captures) is stored inline and moves with the wrapper, so
+  constructing, replacing, cloning and moving it never allocate. Owning,
+  cleanup-bearing or larger targets use `make_unique`; a boxed replacement is
+  allocated before the current target is destroyed. The `R(Args...) &&` forms
+  keep a boxed target because consuming invocation projects ownership through
+  a unique-owner accessor. Invoking an empty wrapper follows checked
+  null-owner failure, not C++ exceptions.
   Borrowed captures/results, inferred fresh-lambda return types, global closure
   storage, and native callback conversion are outside this wrapper contract.
   Combined validation and local-delivery evidence is recorded under L-CALL-02; and
@@ -363,6 +372,23 @@ The current implemented foundation includes:
   `member_cloneable<T>` and `cloneable<T>` expose those contracts. Vector cloning
   applies the helper to every element, supporting owned strings and nested
   vectors; shared pointers retain sharing. See [concepts](concepts.md); and
+- `<std/polymorphic>` source-defined `std::inline_polymorphic<Interface,
+  Bytes, Align>`, an owner of at most one object whose dynamic type implements
+  a polymorphic `Interface`. `replace(value)` stores an
+  `std::inline_polymorphic_payload<Model, Interface>` inline when its runtime
+  layout fits `Bytes` and `Align`, and boxes any other model with
+  `make_unique`; `get()`, `has_value()`, `is_inline()` and `reset()` complete
+  the surface. A payload is a concrete class publicly derived from
+  `Interface` whose generated relocation cannot fail, whose cleanup runs no
+  source code, that retains no checked borrow, and whose erasure grants no
+  concurrency capability it lacks. Moving or move-assigning the owner
+  relocates an inline payload through that payload's generated move and ends
+  the source lifetime; a polymorphic payload is never copied as bytes, and the
+  interface is recomputed from the new address. References from `get()`
+  borrow the owner, so no checked reference observes a move. The private
+  `gti_internal::polymorphic_storage` slot binds by declaration identity; its
+  preconditions are library invariants that trap if violated. Consuming
+  invocation of an inline payload is not yet provided;
 - `<std/optional>` source-defined move-only `std::optional<T>` for
   `std::move_constructible T`, including nested optionals whose payloads
   cannot be assigned. Payloads cannot contain borrowed state and cannot be

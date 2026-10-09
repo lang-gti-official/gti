@@ -1282,6 +1282,7 @@ struct RowFunctionFacts {
   std::vector<SemanticType> parameterTypes;
   std::string spelling;
   bool concreteSpelling = false;
+  bool callableSpelling = false;
   bool cLinkage = false;
   bool runtimeBinding = false;
   bool voidFailureResultParameter = false;
@@ -1401,6 +1402,7 @@ public:
               callable.value_or(cppFunctionSpelling(*info, declaration.name)))),
           .concreteSpelling =
               concrete.has_value() || concreteMember.has_value(),
+          .callableSpelling = !concrete && !concreteMember && callable,
           .cLinkage = info->linkage == LanguageLinkage::C,
           .runtimeBinding =
               info->definitionKind == MirDefinitionKind::RuntimeBinding,
@@ -2148,6 +2150,7 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       spelling += "::";
     }
     spelling += info->spelling;
+    bool callSiteTemplateArguments = false;
     // A generic parameter that appears in no parameter type cannot be
     // deduced at a call site, so the instance's call spelling carries its
     // substituted arguments explicitly — exactly like the compatibility
@@ -2210,7 +2213,9 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
           break;
         }
       }
-      if (needsExplicit) {
+      if (needsExplicit && info->callableSpelling) {
+        callSiteTemplateArguments = true;
+      } else if (needsExplicit) {
         spelling += '<';
         for (std::size_t index = 0; index < function.typeArguments.size();
              ++index) {
@@ -2243,7 +2248,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
         {.address = {.kind = MirBodyKind::Function, .owner = function.id},
          .spelling = std::move(spelling),
          .voidFailureResultParameter = info->voidFailureResultParameter,
-         .conditionalResultParameter = info->conditionalResultParameter});
+         .conditionalResultParameter = info->conditionalResultParameter,
+         .callSiteTemplateArguments = callSiteTemplateArguments});
   }
 
   // A failure-capable Module/0 body (or a failure-free shape outside the

@@ -23,6 +23,9 @@ struct CppSupportPreambleFeatures {
   bool atomicStorageDeclared = false;
   bool mutexStorageDeclared = false;
   bool mutexLockTokenDeclared = false;
+  // The <std/polymorphic> slot templates are pure templates; a declared
+  // capability class selects them.
+  bool polymorphicStorage = false;
   bool atomics = false;
   bool mutexes = false;
   bool simd = false;

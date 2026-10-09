@@ -9044,6 +9044,184 @@ exactOptionalStorageIntrinsicContract(const MirProgram &program,
   }
 }
 
+// The polymorphic slot's admitted payloads have failure-free relocation and
+// inert cleanup, so none of its operations carries a failure, a cleanup
+// recipe, or a source constructor. MIR re-proves the payload contract
+// independently of the semantic admission that produced it.
+[[nodiscard]] bool
+exactPolymorphicStorageIntrinsicContract(const MirProgram &program,
+                                         const MirBody &body,
+                                         const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.lambdaTarget ||
+      instruction.bodyTarget || instruction.callableInvocation ||
+      instruction.constructorTarget || instruction.elementCleanup ||
+      instruction.operands.empty() ||
+      instruction.parameterTypes.size() != instruction.operands.size() ||
+      !std::equal(instruction.parameterTypes.begin(),
+                  instruction.parameterTypes.end(),
+                  instruction.operands.begin(),
+                  [](const SemanticType &parameter, const MirOperand &operand) {
+                    return parameter == operand.type;
+                  }) ||
+      !instruction.callableArguments.empty() ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.safetyDischarges.empty()) {
+    return false;
+  }
+  const MirOperand &storageOperand = instruction.operands.front();
+  const MirClassInstance *storageClass =
+      exactMirCapabilityClass(program, storageOperand.type,
+                              CompilerCapabilityTypeKind::PolymorphicStorage);
+  if (storageClass == nullptr || storageClass->type.arguments.size() != 1 ||
+      storageClass->type.valueArguments.size() != 2 ||
+      storageClass->requiresActiveCleanup ||
+      storageOperand.kind != MirOperandKind::Value ||
+      storageOperand.value == 0 || storageOperand.place != 0 ||
+      storageOperand.loan != 0 || storageOperand.literal) {
+    return false;
+  }
+  const MirInstruction *stage = definitionFor(body, storageOperand.value);
+  if (stage == nullptr || !stage->result ||
+      *stage->result != storageOperand.value || stage->operands.size() != 1 ||
+      stage->info.type != storageClass->type ||
+      stage->operands.front().place == 0) {
+    return false;
+  }
+  const MirPlace *storagePlace = body.findPlace(stage->operands.front().place);
+  const bool mutates =
+      instruction.intrinsic == IntrinsicKind::PolymorphicStorageConstruct ||
+      instruction.intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
+      instruction.intrinsic == IntrinsicKind::PolymorphicStorageReset;
+  if (storagePlace == nullptr || storagePlace->type != storageClass->type ||
+      !((stage->kind == MirInstructionKind::Load &&
+         stage->operands.front().kind == MirOperandKind::Copy) ||
+        (stage->kind == MirInstructionKind::CallInput &&
+         stage->operands.front().kind ==
+             (mutates ? MirOperandKind::BorrowWrite
+                      : MirOperandKind::BorrowRead)))) {
+    return false;
+  }
+  const SemanticType &interfaceType = storageClass->type.arguments.front();
+  const auto exactResult = [&](const SemanticType &type, ValueCategory category,
+                               AccessMode access) {
+    return instruction.info.type == type &&
+           instruction.info.category == category &&
+           instruction.info.access == access &&
+           (type == SemanticType::Void ? !instruction.result
+                                       : instruction.result.has_value());
+  };
+  const bool noLoanResult =
+      !instruction.loan && instruction.borrowOrigin == BorrowOriginKind::None &&
+      instruction.borrowArgument == 0 &&
+      instruction.borrowAccess == AccessMode::ReadOnly;
+  // Interface must be a base of the payload's concrete instance, reached
+  // through its exact recorded base instances.
+  const auto derivesInterface = [&](const auto &self,
+                                    const MirClassInstance &candidate,
+                                    std::size_t depth) -> bool {
+    if (depth > program.classInstances().size())
+      return false;
+    return std::any_of(candidate.bases.begin(), candidate.bases.end(),
+                       [&](const HirBaseInstance &base) {
+                         const MirClassInstance *instance =
+                             program.findClassInstance(base.instance);
+                         return instance != nullptr &&
+                                instance->type == base.type &&
+                                (base.type == interfaceType ||
+                                 self(self, *instance, depth + 1));
+                       });
+  };
+
+  switch (instruction.intrinsic) {
+  case IntrinsicKind::PolymorphicStorageHasValue:
+    return instruction.operands.size() == 1 && instruction.lifecycle.empty() &&
+           exactResult(SemanticType::Bool, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult;
+  case IntrinsicKind::PolymorphicStorageReset:
+    return instruction.operands.size() == 1 && instruction.lifecycle.empty() &&
+           exactResult(SemanticType::Void, ValueCategory::Value,
+                       AccessMode::ReadOnly) &&
+           noLoanResult;
+  case IntrinsicKind::PolymorphicStorageConstruct: {
+    // One completed payload, never an arbitrary native construction.
+    if (instruction.operands.size() != 2 ||
+        !exactResult(SemanticType::Void, ValueCategory::Value,
+                     AccessMode::ReadOnly) ||
+        !noLoanResult)
+      return false;
+    const MirOperand &payload = instruction.operands[1];
+    const MirClassInstance *model = nullptr;
+    for (const MirClassInstance &candidate : program.classInstances()) {
+      if (payload.type.kind != SemanticType::Class ||
+          candidate.type != payload.type)
+        continue;
+      if (model != nullptr)
+        return false;
+      model = &candidate;
+    }
+    const MirInstruction *producer =
+        payload.kind == MirOperandKind::Value && payload.value != 0 &&
+                payload.place == 0 && payload.loan == 0 && !payload.literal
+            ? definitionFor(body, payload.value)
+            : nullptr;
+    if (model == nullptr || model->abstract || model->unionLayout ||
+        model->compilerCapability != CompilerCapabilityTypeKind::None ||
+        model->requiresActiveCleanup || model->requiresActiveDropState ||
+        model->traits.containsBorrowedState ||
+        model->moveConstructor != SpecialMemberStatus::Generated ||
+        mirTypeRelocationKind(program, model->type) ==
+            RelocationKind::Unavailable ||
+        !derivesInterface(derivesInterface, *model, 0) ||
+        producer == nullptr || !producer->result ||
+        *producer->result != payload.value)
+      return false;
+    // An inert payload owns no drop obligation; only a prepared argument
+    // slot may hand its exact obligation to the slot.
+    if (producer->preparedParameterDrop) {
+      const MirDropObligation *prepared =
+          body.findDropObligation(*producer->preparedParameterDrop);
+      return prepared != nullptr &&
+             prepared->kind == MirDropObligationKind::PreparedParameter &&
+             prepared->dropType.type == payload.type &&
+             instruction.lifecycle.size() == 1 &&
+             instruction.lifecycle.front().kind ==
+                 MirLifecycleEventKind::TransferOut &&
+             instruction.lifecycle.front().source == prepared->id &&
+             instruction.lifecycle.front().target == 0 &&
+             !instruction.lifecycle.front().conditional &&
+             !instruction.lifecycle.front().failureCleanup;
+    }
+    return instruction.lifecycle.empty();
+  }
+  case IntrinsicKind::PolymorphicStorageRead:
+  case IntrinsicKind::PolymorphicStorageReadMut: {
+    if (instruction.operands.size() != 1 || !instruction.lifecycle.empty())
+      return false;
+    const AccessMode access =
+        instruction.intrinsic == IntrinsicKind::PolymorphicStorageReadMut
+            ? AccessMode::Mutable
+            : AccessMode::ReadOnly;
+    const MirLoan *loan =
+        instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+    return exactResult(interfaceType, ValueCategory::Place, access) &&
+           instruction.borrowOrigin == BorrowOriginKind::Argument &&
+           instruction.borrowArgument == 0 &&
+           instruction.borrowAccess == access && loan != nullptr &&
+           loan->kind == MirLoanKind::CallResult && !loan->lifecycleBound &&
+           !loan->entry && !loan->escapes && loan->parent == 0 &&
+           loan->source == storagePlace->id && loan->access == access &&
+           loan->producedBy == instruction.hirValue;
+  }
+  default:
+    return false;
+  }
+}
+
 [[nodiscard]] bool
 exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
                             const MirInstruction &instruction) {
@@ -10600,6 +10778,26 @@ verifyMirProgramContracts(const MirProgram &program) {
             instruction.intrinsic == IntrinsicKind::OptionalStorageRead ||
             instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
             instruction.intrinsic == IntrinsicKind::OptionalStorageReset;
+        const bool polymorphicStorageIntrinsic =
+            instruction.intrinsic == IntrinsicKind::PolymorphicStorageHasValue ||
+            instruction.intrinsic ==
+                IntrinsicKind::PolymorphicStorageConstruct ||
+            instruction.intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+            instruction.intrinsic ==
+                IntrinsicKind::PolymorphicStorageReadMut ||
+            instruction.intrinsic == IntrinsicKind::PolymorphicStorageReset;
+        if (polymorphicStorageIntrinsic &&
+            !exactPolymorphicStorageIntrinsicContract(program, body,
+                                                      instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "polymorphic storage intrinsic does not retain its "
+                          "exact capability, staged place, inert payload, "
+                          "result, and loan contract"});
+        }
         if (optionalStorageIntrinsic && !exactOptionalStorageIntrinsicContract(
                                             program, body, instruction)) {
           result.errors.push_back(
