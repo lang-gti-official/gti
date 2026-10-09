@@ -756,7 +756,7 @@
     {
       "id": "numeric-source-storage",
       "mode": "run",
-      "source": "examples/33-source-concepts.gti",
+      "source": "examples/033-source-concepts.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2480,7 +2480,7 @@
       "operations": ["std::bitwise_relocatable", "std::numeric", "std::relocatable"],
       "case_ids": ["structural-relocation", "numeric-source-storage"],
       "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class", "numeric scalar in source vector"],
-      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "examples/33-source-concepts.gti", "stdlib/prelude.gti"]
+      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "examples/033-source-concepts.gti", "stdlib/prelude.gti"]
     },
     {
       "id": "process.executable",
