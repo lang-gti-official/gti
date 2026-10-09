@@ -2578,8 +2578,15 @@ initialization may intervene. The proof also covers a nested read-receiver or
 free function call, or an exact constructor, with scalar inputs and a cleanup-free nominal result whose
 sole consumer is an exact prepared argument slot for the outer call. Its
 failure edge precedes publication; result preparation does not change the
-borrowed local's address. Other user-call shapes, owning result transfers, raw
-memory, loans, and arbitrary stores remain outside this proof. Thus the deferred local
+borrowed local's address. An owning class argument for the same call may also
+be prepared before the conditional. It is either an exact constructor with
+scalar inputs, activated on its checked Invoke success edge or at a
+construction that cannot fail, or another local moved or copied into its exact
+prepared argument slot. Each prepared slot keeps its own failure-edge cleanup
+and sole handoff to the call, and none is the borrowed place. Whether the
+receiver is a method object or a local lambda does not change this proof.
+Other user-call shapes, other owning transfers, raw memory, loans, and
+arbitrary stores remain outside this proof. Thus the deferred local
 address denotes the same object that was selected before argument evaluation;
 the backend does not reorder an observable address computation across a branch.
 
