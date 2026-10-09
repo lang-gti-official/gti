@@ -40,8 +40,8 @@ def main():
                          f"-{optimization}", "--progress", "never", "-o", str(executable),
                          "--", str(native), "-fno-elide-constructors"])
                     executed = run([str(executable)])
-                    expected_output = ("structured bindings worked\n" if source.name.startswith("32-") else
-                                       "fixed arrays keep their bounds\n" if source.name.startswith("12-") else "")
+                    expected_output = ("structured bindings worked\n" if source.name.startswith("032-") else
+                                       "fixed arrays keep their bounds\n" if source.name.startswith("012-") else "")
                     assert executed.stdout == expected_output and executed.stderr == "", executed
         for source in sources[:7]:
             executable = scratch / f"{source.stem}-sanitized"
