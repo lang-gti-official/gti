@@ -1,0 +1,24 @@
+manifest-version = 1
+
+[package]
+name = "scoped-configuration"
+version = "0.1.0"
+
+[build]
+defines = ["PSYCH_PROJECT"]
+
+[targets.game]
+kind = "executable"
+root = "src/main.gti"
+defines = ["PSYCH_GAME"]
+
+[targets.unit]
+kind = "test"
+root = "tests/unit.gti"
+defines = ["PSYCH_TESTS"]
+
+[profiles.dev]
+defines = ["PSYCH_ASSERTIONS"]
+
+[profiles.release]
+optimization = 3

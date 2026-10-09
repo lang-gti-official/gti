@@ -1,6 +1,12 @@
 #include "lowered_program_closure.h"
 
+#include "gti/lowered_program_printer.h"
+
 #include <algorithm>
+#include <array>
+#include <cstring>
+#include <ostream>
+#include <streambuf>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -117,15 +123,93 @@ programInitializationBodyCallCount(const MirProgram &program) {
   return result;
 }
 
-[[nodiscard]] std::uint64_t fingerprint(std::string_view text) {
-  constexpr std::uint64_t offset = 14695981039346656037ULL;
-  constexpr std::uint64_t prime = 1099511628211ULL;
-  std::uint64_t result = offset;
-  for (const unsigned char byte : text) {
-    result ^= byte;
-    result *= prime;
+namespace {
+
+// Hashes eight bytes at a time as text arrives. The result depends only on the
+// byte sequence, not on how the printer chunks its writes.
+class SealHashBuffer final : public std::streambuf {
+public:
+  SealHashBuffer() { setp(buffer.data(), buffer.data() + buffer.size()); }
+
+  [[nodiscard]] std::uint64_t finish() {
+    consume(pbase(), pptr());
+    setp(buffer.data(), buffer.data() + buffer.size());
+    std::uint64_t tail = 0;
+    std::memcpy(&tail, pending.data(), pendingSize);
+    std::uint64_t result = state ^ mix(tail ^ (length * 0x9E3779B97F4A7C15ULL));
+    result ^= result >> 33;
+    result *= 0xFF51AFD7ED558CCDULL;
+    result ^= result >> 33;
+    result *= 0xC4CEB9FE1A85EC53ULL;
+    return result ^ (result >> 33);
   }
-  return result;
+
+protected:
+  int_type overflow(int_type character) override {
+    consume(pbase(), pptr());
+    setp(buffer.data(), buffer.data() + buffer.size());
+    if (!traits_type::eq_int_type(character, traits_type::eof())) {
+      *pptr() = traits_type::to_char_type(character);
+      pbump(1);
+    }
+    return traits_type::not_eof(character);
+  }
+
+  int sync() override {
+    consume(pbase(), pptr());
+    setp(buffer.data(), buffer.data() + buffer.size());
+    return 0;
+  }
+
+private:
+  [[nodiscard]] static std::uint64_t mix(std::uint64_t value) {
+    value *= 0x87C37B91114253D5ULL;
+    value = (value << 31) | (value >> 33);
+    return value * 0x4CF5AD432745937FULL;
+  }
+
+  void word(std::uint64_t value) {
+    state ^= mix(value);
+    state = ((state << 27) | (state >> 37)) * 5 + 0x52DCE729;
+  }
+
+  void consume(const char *begin, const char *end) {
+    length += static_cast<std::uint64_t>(end - begin);
+    while (begin != end && pendingSize != 0 && pendingSize < pending.size()) {
+      pending[pendingSize++] = *begin++;
+    }
+    if (pendingSize == pending.size()) {
+      std::uint64_t value = 0;
+      std::memcpy(&value, pending.data(), pending.size());
+      word(value);
+      pendingSize = 0;
+    }
+    while (end - begin >= 8) {
+      std::uint64_t value = 0;
+      std::memcpy(&value, begin, 8);
+      word(value);
+      begin += 8;
+    }
+    while (begin != end) {
+      pending[pendingSize++] = *begin++;
+    }
+  }
+
+  std::array<char, 1 << 16> buffer{};
+  std::array<char, 8> pending{};
+  std::size_t pendingSize = 0;
+  std::uint64_t length = 0;
+  std::uint64_t state = 0x6A09E667F3BCC908ULL;
+};
+
+} // namespace
+
+std::uint64_t constructionSeal(const LoweredProgram &program) {
+  SealHashBuffer hash;
+  std::ostream output(&hash);
+  LoweredProgramPrinter().print(program, output);
+  output.flush();
+  return hash.finish();
 }
 
 void addIssue(std::vector<LoweredProgramIssue> &issues,

@@ -124,15 +124,17 @@ def main() -> int:
 
     backend_header = (root / "include/gti/backend.h").read_text(encoding="utf-8")
     if not re.search(
-        r"generate\s*\(\s*const\s+LoweredProgram\s*&\s*program\s*\)\s*=\s*0",
+        r"generate\s*\(\s*LoweredProgram\s+program\s*\)\s*=\s*0",
         without_comments(backend_header),
     ):
         failures.append("include/gti/backend.h: Backend does not expose exactly LoweredProgram")
 
     emitter_header = (root / "include/gti/cpp_emitter.h").read_text(encoding="utf-8")
     emitter_code = without_comments(emitter_header)
+    # The backend verifies its LoweredProgram once and hands the emitter that
+    # evidence; the emitter has no other input.
     if not re.search(
-        r"CppEmitter\s*\(\s*const\s+LoweredProgram\s*&\s*program\s*,\s*"
+        r"CppEmitter\s*\(\s*const\s+VerifiedLoweredProgram\s*&\s*program\s*,\s*"
         r"CppStandard\s+standard\s*,\s*bool\s+debugInfo\s*\)",
         emitter_code,
     ):

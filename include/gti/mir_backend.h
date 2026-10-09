@@ -16,8 +16,7 @@ class MirBackend final : public Backend {
 public:
   [[nodiscard]] std::string_view name() const override { return "mir"; }
 
-  [[nodiscard]] BackendArtifact
-  generate(const LoweredProgram &program) override;
+  [[nodiscard]] BackendArtifact generate(LoweredProgram program) override;
 };
 
 } // namespace lang

@@ -17,7 +17,11 @@ int main() {
   using namespace ::gti_internal::backend;
   ::gti_failure_record_v2 primary{}, secondary{};
   const auto *artifact = &__gti_failure_artifact_descriptor_v1;
+  // Worker failure handoff may unwind through this boundary. Outlining must
+  // never turn the helper into an exception firewall or a terminal first-failure check.
+  static_assert(!noexcept(mir_check_incoming_cleanup_failure_v1(nullptr, nullptr)));
   if (mir_incoming_failure_cleanup_v1() != nullptr) return 1;
+  mir_check_incoming_cleanup_failure_v1(nullptr, nullptr);
   {
     mir_failure_cleanup_scope_v1 outer(&primary, artifact);
     {
@@ -77,6 +81,11 @@ def main():
             text, replaced = re.subn(r"^int main\(", "int __gti_scope_original_main(",
                                      generated.read_text(), flags=re.MULTILINE)
             assert replaced == 1, "probe must replace exactly the native entry point"
+            cold_helper = ("#if defined(__GNUC__) || defined(__clang__)\n"
+                           "__attribute__((__cold__, __noinline__))\n"
+                           "#endif\n"
+                           "inline void mir_check_incoming_cleanup_failure_v1(")
+            assert text.count(cold_helper) == 1, "failure-only check must have its bounded cold hint"
             generated.write_text(text + PROBE)
             for level in ("-O0", "-O3"):
                 binary = work / f"{standard}-{level}"

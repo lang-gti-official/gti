@@ -387,6 +387,7 @@ add_library(
   "src/compiler/native_header.cpp"
   "src/compiler/optimization/alias.cpp"
   "src/compiler/optimization/coverage.cpp"
+  "src/compiler/optimization/closed_world.cpp"
   "src/compiler/optimization/devirtualization.cpp"
   "src/compiler/mir_effects.cpp"
   "src/compiler/optimization/loops.cpp"
@@ -732,6 +733,10 @@ install(FILES "stdlib/prelude.gti"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain)
 install(DIRECTORY "stdlib/std"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
+        COMPONENT gti_toolchain
+        FILES_MATCHING PATTERN "*.gti")
+install(DIRECTORY "stdlib/modules"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain
         FILES_MATCHING PATTERN "*.gti")

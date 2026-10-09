@@ -85,18 +85,29 @@ parameter, initializer, or unfinished declaration must not disappear into a
 valid program. The loader resolves named
 imports only through supplied `PackageSourceRoot::modules` registrations and
 direct dependency aliases; quoted imports use the same canonical path and
-package-containment authority. Includes cannot load an interface and imports
-cannot load a legacy unit. An imported interface starts from compiler-supplied
+package-containment authority. The name `std` is reserved for the configured
+standard library in both direct and project compilation: `import std.name;`
+selects `<root>/modules/name.gti` beneath a standard-library root, a fixed
+layout rather than a search, and the loaded interface has the
+`StandardLibrary` role and the logical name `modules/name`. Its module name
+does not collide with an application interface of the same name. The bare
+`import std;` is rejected, because the library has no aggregate module.
+Includes cannot load an interface and imports cannot load a legacy unit. An
+interface's `export #include` resolves exactly as an include, then records an
+`ExportInclude` edge that republishes that one legacy unit to importers. An imported interface starts from compiler-supplied
 configuration flags and restores the importer's flag state on return. Each
 legacy include runs once per module configuration domain. On reuse in a new
 domain, the loader processes the retained source snapshot through the same
 directive processor, including nested includes, while retaining one canonical
 source identity and dependency edge set. Repeated inclusion in that domain
-does not reapply flag mutations. Different incoming flags or selected syntax
-are diagnosed rather than silently selecting the first module's context;
-matching incoming flags alone cannot prove compatibility when nested include
-history differs. Parsed and lexical cache reuse preserve this check, including
-unsaved source overlays.
+does not reapply flag mutations. The replay may start from different incoming
+flags; a unit that never observes the difference is shared. Replay that
+selects different syntax, in the unit or any nested include, is diagnosed
+rather than silently selecting the first module's context. Comparing incoming
+flags could not decide this anyway: equal flags do not prove compatibility
+when nested include history differs, and unequal flags rejected every
+application `#define` that preceded a standard-library include. Parsed and
+lexical cache reuse preserve this check, including unsaved source overlays.
 
 The parser retains an optional export token on declarations. Frontend assembly
 collects their exact ranges, including inherited namespace exports in selected
@@ -104,14 +115,24 @@ configuration branches, from the fresh or cached AST. These are syntax requests,
 not a separate symbol catalog.
 Semantic analysis validates export eligibility and publishes each declaration
 and overload through `SourceGraph::isDeclarationVisible`. Ordinary source
-edges remain direct-only; import edges also follow explicit re-export edges.
+edges remain direct-only; import edges also follow explicit re-export and
+republished-include edges. A republished legacy unit exposes all of its own
+declarations, as an include does, but not its nested includes.
 Definition-site generic context preserves private implementation lookup. A
 public result can retain an inferred private nominal type without exposing its
 name. Tooling consumes resolved semantic scope/occurrence facts rather than
 filtering reachable members by module name. Initialization, failure provenance
-and caches retain the ordered source graph, including both new edge kinds.
+and caches retain the ordered source graph, including all three module edge
+kinds.
 HIR/MIR and C++ emission use existing executable contracts; this is not binary
 or separate compilation.
+
+Artifact builds set `FrontendOptions::lowerReachableOnly`. The complete program
+is still analyzed and lowered to HIR, so diagnostics are unchanged, but MIR
+and everything after it receive only the instances reachable from the program
+roots; see [HIR](hir.md#reachable-executable-prefix). An imported or included
+library therefore costs lowering, optimization, and emission only for what the
+program uses.
 
 ### Reusable lexical and parsed units
 

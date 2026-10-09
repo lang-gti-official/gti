@@ -22,15 +22,18 @@ FrontendResult analyze(const CompilationRequest &request,
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
-  FrontendOptions options{.target = request.target(),
-                          .configurationFlags = request.configurationFlags(),
-                          .toolingOccurrences = false,
-                          .requireEntryPoint = request.requiresEntryPoint(),
-                          .requireFunctionDefinitions =
-                              request.requiresFunctionDefinitions(),
-                          .progress = progress};
+  FrontendOptions options{
+      .target = request.target(),
+      .configurationFlags = request.configurationFlags(),
+      .declaredConfigurationFlags = request.declaredConfigurationFlags(),
+      .toolingOccurrences = false,
+      .requireEntryPoint = request.requiresEntryPoint(),
+      .requireFunctionDefinitions = request.requiresFunctionDefinitions(),
+      .progress = progress};
   options.rawPointerAudit = request.rawPointerAudit();
   options.program = request.program();
+  // Artifacts contain only code the program roots reach.
+  options.lowerReachableOnly = true;
   FrontendResult result = Frontend(options).analyzeLoaded(
       request.entry(), std::move(inputs.sourceGraph), std::move(inputs.sources),
       std::move(inputs.diagnostics), inputs.sourceValid);
@@ -157,7 +160,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
   LoweredProgram loweredProgram = std::move(*loweredBuild.program);
 
   try {
-    result.artifact = backend.generate(loweredProgram);
+    result.artifact = backend.generate(std::move(loweredProgram));
   } catch (const BackendUnsupportedError &exception) {
     return backendLimitation(exception.what());
   } catch (const std::exception &exception) {
@@ -175,9 +178,11 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
 
 AnalysisConfiguration::AnalysisConfiguration(
     TargetInfo target, ExecutionProfile executionProfile,
-    RuntimeProfile runtimeProfile, ConfigurationFlags configurationFlags)
+    RuntimeProfile runtimeProfile, ConfigurationFlags configurationFlags,
+    ConfigurationFlags declaredConfigurationFlags)
     : targetInfo(std::move(target)), selectedRuntimeProfile(runtimeProfile),
-      configuredFlags(std::move(configurationFlags)) {
+      configuredFlags(std::move(configurationFlags)),
+      declaredFlags(std::move(declaredConfigurationFlags)) {
   targetInfo.executionProfile = executionProfile;
   targetInfo.runtimeCapabilities = {};
   if (selectedRuntimeProfile == RuntimeProfile::Hosted &&
@@ -185,6 +190,7 @@ AnalysisConfiguration::AnalysisConfiguration(
     targetInfo.runtimeCapabilities.threads = true;
   }
   normalizeConfigurationFlags(configuredFlags);
+  normalizeConfigurationFlags(declaredFlags);
 }
 
 const TargetInfo &AnalysisConfiguration::target() const { return targetInfo; }
@@ -195,6 +201,11 @@ RuntimeProfile AnalysisConfiguration::runtimeProfile() const {
 
 const ConfigurationFlags &AnalysisConfiguration::configurationFlags() const {
   return configuredFlags;
+}
+
+const ConfigurationFlags &
+AnalysisConfiguration::declaredConfigurationFlags() const {
+  return declaredFlags;
 }
 
 PackageWarningPolicy::PackageWarningPolicy(
@@ -245,18 +256,21 @@ CompilationRequest::CompilationRequest(
     ConfigurationFlags configurationFlags,
     OptimizationOutputRequest optimizationOutputs, WarningPolicy warnings,
     bool debugInfo, PackageWarningPolicy packageWarnings,
-    RawPointerAuditMode rawPointerAudit, ProgramRequest program)
+    RawPointerAuditMode rawPointerAudit, ProgramRequest program,
+    ConfigurationFlags declaredConfigurationFlags)
     : entryPath(std::move(entry)),
       standardLibraryLayout(std::move(standardLibrary)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
       backendStandard(cppStandard),
       packageSourceRootSet(std::move(packageSourceRoots)),
       configuredFlags(std::move(configurationFlags)),
+      declaredFlags(std::move(declaredConfigurationFlags)),
       requestedOptimizationOutputs(optimizationOutputs),
       requestedProgram(std::move(program)), warningPolicy(std::move(warnings)),
       packageWarningPolicy(std::move(packageWarnings)),
       sourceDebugInfo(debugInfo), rawPointerAuditMode(rawPointerAudit) {
   normalizeConfigurationFlags(configuredFlags);
+  normalizeConfigurationFlags(declaredFlags);
 }
 
 const std::filesystem::path &CompilationRequest::entry() const {
@@ -288,6 +302,11 @@ CompilationRequest::packageSources() const {
 
 const ConfigurationFlags &CompilationRequest::configurationFlags() const {
   return configuredFlags;
+}
+
+const ConfigurationFlags &
+CompilationRequest::declaredConfigurationFlags() const {
+  return declaredFlags;
 }
 
 const OptimizationOutputRequest &
@@ -338,7 +357,7 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request,
         request.entry(), std::nullopt, {request.standardLibrary().prelude}, {},
         {request.standardLibrary().root}, std::nullopt,
         request.packageSources(), request.target(),
-        request.configurationFlags());
+        request.configurationFlags(), request.declaredConfigurationFlags());
     loadProgress.update({}, inputs.sourceGraph.sourceUnits().size(),
                         inputs.sourceGraph.sourceUnits().size());
   }

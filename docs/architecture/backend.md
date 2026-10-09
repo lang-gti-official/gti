@@ -40,6 +40,14 @@ traits, while an owning enum argument produced by a call reuses that call's
 proved success-only result slot and ordinary ordered transfer/failure cleanup.
 No AST/HIR-only enum execution route is introduced.
 
+A staged call receiver can cross the existing scalar conditional-argument
+control flow when its exact origin remains unchanged. Checked numeric alias
+and concrete type-parameter conversions use MIR's numeric-intrinsic `Call`
+representation; they receive the same staging admission as `Compute/Convert`.
+The conversion still executes at its own instruction, with its original Invoke
+and failure cleanup before later arguments. This does not admit arbitrary
+intervening calls, receiver mutation, raw memory operations or new loan shapes.
+
 Signature-pattern primaries retain both their resolved public argument shapes
 and binder projections in sealed lowered declarations. Native template carriers
 spell a primary with the public arity and one patterned definition; GTI has
@@ -126,7 +134,7 @@ reinterpreted as larger records.
 `include/gti/backend.h` defines one executable-backend operation:
 
 ```cpp
-BackendArtifact generate(const LoweredProgram &program);
+BackendArtifact generate(LoweredProgram program);
 ```
 
 Backend policy is explicit state of the selected backend. For example,
@@ -153,6 +161,16 @@ and follows the caller's verified cleanup edge. This does not extend the native
 ABI or permit converting between distinct opaque handle types.
 
 ### Raw Address Representation
+
+An `AddressOf` result with no uses in the verified body's use table needs no
+SSA storage. The C++ backend still evaluates its address expression and emits
+every checked projection and failure successor in MIR order, but discards the
+result rather than assigning it to a fabricated carrier. Nested native-array
+indexing uses this rule: later element places already contain the complete
+projection path, so an unused C row address must not be stored as a pointer to
+an ordinary GTI `std::array`. This is a representation-only repair, not dead
+instruction removal or a native-array cast. Used address values retain their
+existing typed storage, and checked element borrows retain their loans.
 
 Ordinary GTI raw-pointer values use an artifact-private union
 `raw_address<T>` with one live native `T*` member. Its implicit union
@@ -334,6 +352,60 @@ contains:
 or cyclic records and an invalid construction seal. `LoweredProgramPrinter`
 provides deterministic full text for comparison and independent tooling.
 
+The builder runs every inventory check and seals the value only if they all
+pass; it never re-checks a seal it has just computed. Each consumer verifies
+the complete inventory and seal once. `verifiedLoweredProgram` returns a
+`VerifiedLoweredProgram`, owning evidence about that exact immutable value.
+A seal match alone is insufficient: the deterministic inspection print is not
+an exhaustive serialization of every verified invariant. For example, changing
+the independent program kind without its embedding plan must be rejected even
+if the print is unchanged. The C++, MIR, and native-header backends all use
+this admission boundary. `CppBackend` hands the
+evidence to the emitter, emission planner, and representation snapshot, so no
+stage checks again. The `LoweredProgram` overloads of those stages still check
+first, so a direct or test caller cannot bypass rejection. `verifyLoweredProgram`
+is also available for independent tooling and tests. The PR #176 audit
+therefore retains streamed hashing and shared evidence, but rejects its
+seal-only admission shortcut.
+
+Evidence owns a const snapshot, shared between consumer stages. Acquiring it
+copies an lvalue program or moves an rvalue program. `Backend::generate`
+accepts a value, and the driver moves its finished program into this boundary;
+C++ emission moves that value into the proof without another full-program
+copy. Callers that need to retain their input can still pass an lvalue. Later
+assignment, movement or destruction of the caller's original value cannot
+detach the proof from the checked contents. Merely holding a const pointer to
+a caller-owned program would not establish this, because `LoweredProgram`
+itself remains an assignable value.
+
+The seal is a 64-bit hash of the deterministic print. Both printers write to a
+stream, and the seal hashes the text as it arrives, eight bytes at a time,
+without materializing it; a large program's print is around 100 MB. Seals
+are compared only with seals of the same compiler, so the hash is not a stable
+external format.
+
+Lookups by class, function, constructor, storage, symbol, enum, or generic
+parameter identity use row hints built at construction. A hint is used only
+after its row is confirmed to still carry that identity; otherwise the lookup
+scans, so mutated test values keep their exact behavior. The hints are derived
+data and are not part of the printed contract.
+
+Several C++ representation facts depend on the whole program rather than on
+the type being spelled:
+
+- the closure of classes that keep a native template representation;
+- whether any lexical closure forces the shared template carrier;
+- whether a class supports direct representation, which depends on its
+  member rows;
+- the conditional class-return arms of a MIR body.
+
+`CppRepresentationScope` is opened by the emission planner and the
+representation snapshot once they hold verification evidence. While it is
+open on a thread, queries about that exact program compute each such fact
+once. A nested stage of the same consumer reuses the open scope. Queries about
+any other value, and every query outside a scope, compute the same answers
+directly.
+
 ## Generated Items
 
 Every generated family has a target-independent contract:
@@ -436,12 +508,27 @@ identical.
 
 Generated support is likewise a compiled backend component rather than a
 mutable block inside the coordinator. `CppSupportPreambleFeatures` records the
-selected C++ standard and exact Expected, storage, managed-thread,
-atomic, defined-failure, runtime-binding, and C-ABI text-view needs. The preamble and
+selected C++ standard and exact Expected, storage, managed-thread, C-thread,
+atomic, mutex, SIMD, defined-failure, runtime-binding, and C-ABI text-view
+needs. The preamble and
 failure-support writers receive those explicit values and an output sink;
 they do not query program meaning. Storage and defined-failure support remain
 universal only because that is the current artifact contract, not because the
 writers infer their use.
+
+Capability support has two levels. A lowered class declaration whose
+compiler capability kind is shared owner, atomic storage, mutex storage, or
+mutex lock token selects only a forward declaration of the backend class
+template that represents it. Declarations retained without an instance, such
+as the generic library classes left by an unused `#include`, still emit
+uninstantiated C++ class templates whose members spell those qualified
+template names, and C++ resolves a qualified template name where the
+template is defined. The complete definitions and their native headers
+(`<atomic>`, `<mutex>`) require a concrete MIR capability instance or a
+verified capability operation. The managed-thread handle representation is
+not a template, so a retained thread-handle declaration selects its complete
+support. `dormant_capability_runtime` builds and runs each family's
+include-only program natively.
 
 ### Executable Bodies
 
@@ -658,6 +745,10 @@ ordinary default constructor once and a distinct status overload for each
 selected MIR constructor. Out-of-line specializations execute those bodies;
 an inline native default or `noexcept` body must not replace them. Direct
 concrete representations retain their single exact-owner declaration.
+The retained primary likewise declares a source-generic constructor's identical
+native parameter list only once across concrete owners. This shares only the
+declaration: each selected owner retains its own verified-MIR definition and
+every fallible instance retains its distinct status-tag overload.
 
 Constructor fields of `Expected<T, E>` can publish a separately produced
 success value, owned unexpected value, or passive scalar alternative into a
@@ -1218,6 +1309,9 @@ Type-only aliases also require forward declarations for any direct concrete
 class names in their resolved type argument graph, even when no executable
 MIR class instance uses them. Declaration planning uses the same concrete-name
 authority as runtime uses and emits each forward identity once before aliases.
+This includes the exact member-alias catalog of each concrete MIR class
+instance: a dependent declaration-level alias alone cannot name its resolved
+type/value argument application. Repeated targets share one forward declaration.
 It does not instantiate layouts, constructors, or methods merely for an alias,
 and does not recursively expand the alias members of a referenced generic
 class. Dependent aliases retain their existing native-template spelling. This
@@ -1293,6 +1387,13 @@ obligation; repeated evaluation resets only their representation storage.
 Class captures retain their lexical lifetime obligation even when destruction
 is passive. Thus scalar moves and class copies occur before the branch too.
 Other frozen passive closures still use the existing checked fused representation.
+Taking a checked local reference prevents that fusion: the closure factory
+materializes its environment once, and the ordinary MIR loan/pointer carrier
+aliases it. The body-local closure type also names reference carriers and
+their dereference places. Invocations through these places reuse that exact
+environment; they neither repeat captures nor acquire a cleanup obligation.
+Borrow endpoints and owner cleanup remain the verified MIR schedule, including
+reborrows and failure cleanup.
 Exact lambdas with owned class parameters use the shared parameter-slot prelude;
 class results publish into the same verified destination slots as function
 results. Prepared argument shells are retired after invocation, including its
@@ -2366,6 +2467,18 @@ that contract as runtime descriptors and transformed failure siblings where
 the native ABI requires them. It does not infer failure from emitted C++ or use
 C++ exceptions to reconstruct GTI semantics.
 
+The generated incoming-cleanup failure check is outlined with guarded
+`cold`/`noinline` native hints on GNU-compatible compilers. Its only production
+call sites are failure edges. Keeping its emergency-record construction and
+thread-local lookup outside native inlining reduces successful-path costs in
+source-storage clients without removing any operation. Other native compilers
+use the identical unannotated helper. It is neither `noexcept` nor terminal:
+it returns when no primary cleanup failure is active, and a managed-worker
+double-failure report can perform the existing internal exception handoff.
+Cleanup scopes, activation, record construction and ordinary source functions
+receive no blanket cold, inline or exception annotation. MIR, replay evidence,
+failure identity and cleanup order are unchanged.
+
 Unique-owner borrowing uses the failure ABI. At the intrinsic instruction the
 backend tests the represented owner for emptiness and selects only the exact
 code/detail carried by MIR. Its `Invoke` routes failure through cleanup; the
@@ -2485,7 +2598,11 @@ A call resolved to a concrete override initially remains virtual in MIR; the
 C++ backend does not infer devirtualization. The bounded optimizer
 `exact-receiver-dispatch` proof may refine it to a static source override,
 which backend admission accepts and emits with explicit qualification from
-the sealed MIR target. It preserves the existing failure/status contract,
+the sealed MIR target. A closed-world parameter refinement keeps the
+interface-typed receiver place. `isMirExactReceiverPresentation` admits it
+only when `dispatchOwner` names the target's owner and that owner directly
+implements the receiver's interface. The backend then spells
+`static_cast<const Owner &>(receiver)` before the qualified call. It preserves the existing failure/status contract,
 argument staging, and cleanup; native type analysis is not proof authority.
 For a conservatively failure-capable virtual
 call, the backend validates the exact contract roots and candidate owners, then

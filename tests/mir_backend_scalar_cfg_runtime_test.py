@@ -23,22 +23,12 @@ SELECTED = (
     "cfg_comma_local",
     "cfg_grouped_condition",
 )
-# Standard-library scalar bodies selected per body once compiler-private
-# declarations were admitted; the fixture links them through the lean prelude.
-STDLIB_SELECTED = (
-    "write_stdout_byte",
-)
 FAILURE_SELECTED = (
     "compatibility_checked",
     "compatibility_call_target",
     "compatibility_call",
     "compatibility_reference",
-    # The native-boundary and formatting chains can report a defined host
-    # failure, so they publish exclusively through the explicit failure ABI.
-    "write_stdout",
-    "print",
-    "println",
-    "print_decimal_digit",
+    "entry",
 )
 
 
@@ -66,14 +56,14 @@ def function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    # The verified-empty text-view capability initializers and empty module
-    # body join the named function bodies (the initializer slice).
+    # Only reachable function bodies and the module are lowered. The fixture
+    # does not use the prelude text-view classes or its output functions.
     if (
         generated.count(f"{MARKER} function-instance")
-        != len(SELECTED) + len(STDLIB_SELECTED)
-        or generated.count(f"{FAILURE_MARKER} function-instance") != 11
-        or generated.count(f"{MARKER} field-initializers-instance") != 2
-        or generated.count(f"{MARKER} static-field-initializers-instance") != 2
+        != len(SELECTED)
+        or generated.count(f"{FAILURE_MARKER} function-instance") != len(FAILURE_SELECTED)
+        or generated.count(f"{MARKER} field-initializers-instance") != 0
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 0
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(
@@ -93,7 +83,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             "MIR CFG representation\n"
         )
         return False
-    for name in SELECTED + STDLIB_SELECTED:
+    for name in SELECTED:
         if MARKER not in function_definition(generated, name):
             sys.stderr.write(
                 f"{optimization}/{standard} did not select {name} from MIR\n"
@@ -109,15 +99,15 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             )
             return False
     if (
-        "_print__gti_mir_failure(char8_t" not in generated
-        or "_println__gti_mir_failure(char8_t" not in generated
+        "_print__gti_mir_failure(" in generated
+        or "_println__gti_mir_failure(" in generated
         or f"{FAILURE_MARKER} function-instance" not in function_definition(
             generated, "entry__gti_mir_failure"
         )
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} lost a transformed char-output or "
-            "hosted-entry body\n"
+            f"{optimization}/{standard} emitted unused output bodies or "
+            "lost the hosted-entry body\n"
         )
         return False
     return True

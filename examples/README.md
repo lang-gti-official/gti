@@ -25,6 +25,9 @@ You do not need to read the entire sequence to find an API pattern:
 
 | I want to… | Start here |
 | --- | --- |
+| Use the standard library through imports instead of includes | [134: standard-library modules](134-standard-library-modules.gti) |
+| Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
+| Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
@@ -113,6 +116,7 @@ is a teaching helper, not a production server.
 | `58-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
 | `59-default-parameters.gti` | caller-side defaults for functions, constructors, methods, and concrete generic calls |
 | `60-configuration-and-comments.gti` | configuration flags, ordinary comments, and `///` hover documentation |
+| `scoped-configuration/` | package, target and profile defines; run `gti run game`, `gti run game --release` and `gti test unit` in the directory |
 | `61-global-borrow-returns.gti` | checked mutable borrows returned from exact global and static storage |
 | `62-native-c-boundaries.gti` | fixed-array C records, link-name aliases, NUL-terminated strings, pointer-count results, and exact callbacks |
 | `63-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
@@ -179,6 +183,8 @@ is a teaching helper, not a production server.
 | `128-inline-object-pool.gti` | an application-defined two-slot pool using public manual-lifetime facilities, immovable owning objects, recoverable capacity failure and checked access |
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
+| `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and JSON lookup through borrowed `expected::expect` |
+| `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
@@ -423,7 +429,9 @@ three-argument function item.
 The owning callback example below also demonstrates retaining one in a wrapper.
 
 `83-complete-ranges.gti` defines an application-owned range with the exact
-read-only, mutable, and sized structural protocol. The same source-defined
+read-only, mutable, and sized structural protocol. It names the wrapped
+vector's `const_iterator`, `iterator`, and `sentinel` member aliases rather
+than `std::detail` types. The same source-defined
 `std::all_of` and `std::fill` implementations accept that nominal range and a
 fixed array; `std::sized_range` also proves a generic `size()` call without
 compiler recognition of either the range or algorithm name.
@@ -496,6 +504,14 @@ slot bytes inline, returns a recoverable error when full, reuses erased slots,
 and relies on ordinary reverse field cleanup. Its immovable nodes own strings;
 the compiler does not recognize the pool or cell names. A slot index is not a
 generation-checked handle: after erasure and reuse it names the replacement.
+
+## Qualified generic type members
+
+[`132-qualified-type-members.gti`](132-qualified-type-members.gti) spells
+`ValueBox<T>::value_type` in a generic signature and wraps a vector of unique
+layer owners behind `std::vector<std::unique_ptr<Layer>>::const_iterator` and
+`::sentinel`. It uses ordinary range traversal and deterministic object cleanup,
+without naming private implementation iterator types.
 
 ## Complete projects
 

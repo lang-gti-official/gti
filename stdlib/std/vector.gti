@@ -120,6 +120,10 @@ class vector<std::move_constructible T> {
   }
 
 public:
+  using iterator = detail::vector_mut_iterator<T>;
+  using const_iterator = detail::vector_iterator<T>;
+  using sentinel = detail::vector_sentinel;
+
   vector() : data(gti_internal::allocate_prefix_storage<T>(uint64_t(0))) {}
 
   /// Collection-brace protocol: reserve once, then consume each owned element.
@@ -234,15 +238,15 @@ public:
     return gti_internal::prefix_storage_read_mut(this.data, index);
   }
 
-  detail::vector_iterator<T> begin() {
+  const_iterator begin() {
     return detail::vector_iterator<T>(this.data, size_t(0));
   }
 
-  detail::vector_mut_iterator<T> begin_mut() mut {
+  iterator begin_mut() mut {
     return detail::vector_mut_iterator<T>(this.data, size_t(0));
   }
 
-  detail::vector_sentinel end() {
+  sentinel end() {
     return detail::vector_sentinel(
         gti_internal::prefix_storage_length(this.data));
   }

@@ -808,7 +808,7 @@ private:
         NativeType node;
         node.kind = NativeTypeKind::Pointer;
         node.constPointee = clang_isConstQualifiedType(pointee) != 0;
-        node.pointee = mapFunctionType(pointee);
+        node.pointee = mapType(pointee);
         return result_.model.addType(std::move(node));
       }
       NativeType node;
@@ -889,9 +889,7 @@ private:
     }
     case CXType_FunctionProto:
     case CXType_FunctionNoProto:
-      return makeUnsupported(owned(clang_getTypeSpelling(type)),
-                             "an unnamed function type is outside the bounded "
-                             "surface; name it with a typedef");
+      return mapFunctionType(type);
     case CXType_Unexposed:
     default: {
       const CXType canonical = clang_getCanonicalType(type);
@@ -917,6 +915,13 @@ private:
       written = clang_Type_getNamedType(written);
     }
     const CXType canonical = clang_getCanonicalType(written);
+    if (canonical.kind == CXType_FunctionProto ||
+        canonical.kind == CXType_FunctionNoProto) {
+      NativeType pointer;
+      pointer.kind = NativeTypeKind::Pointer;
+      pointer.pointee = mapType(written);
+      return result_.model.addType(std::move(pointer));
+    }
     if (canonical.kind == CXType_ConstantArray ||
         canonical.kind == CXType_IncompleteArray ||
         canonical.kind == CXType_VariableArray) {
@@ -1154,13 +1159,36 @@ private:
     declaration.scope = rootScope_;
     declaration.origin = origin(cursor);
     declaration.inPolicy = inPolicy(declaration.origin);
+    const CXType integerType =
+        clang_getCanonicalType(clang_getEnumDeclIntegerType(cursor));
+    declaration.enumIntegerType = mapType(integerType);
+    const CXType enumType = clang_getCursorType(cursor);
+    const long long integerSize = clang_Type_getSizeOf(integerType);
+    const long long integerAlignment = clang_Type_getAlignOf(integerType);
+    declaration.enumLayoutMatchesInteger =
+        integerSize > 0 && integerAlignment > 0 &&
+        clang_Type_getSizeOf(enumType) == integerSize &&
+        clang_Type_getAlignOf(enumType) == integerAlignment;
+    const NativeType *integer =
+        result_.model.findType(declaration.enumIntegerType);
+    const bool readable = integer != nullptr &&
+                          integer->kind == NativeTypeKind::Integer &&
+                          integer->bitWidth <= 64;
     for (const CXCursor child : childrenOf(cursor)) {
-      if (clang_getCursorKind(child) != CXCursor_EnumConstantDecl) {
+      if (clang_getCursorKind(child) != CXCursor_EnumConstantDecl ||
+          !readable) {
         continue;
       }
-      declaration.enumerators.push_back(
-          {owned(clang_getCursorSpelling(child)),
-           static_cast<std::int64_t>(clang_getEnumConstantDeclValue(child))});
+      NativeEnumerator enumerator;
+      enumerator.name = owned(clang_getCursorSpelling(child));
+      if (integer->isSigned) {
+        enumerator.value =
+            static_cast<std::int64_t>(clang_getEnumConstantDeclValue(child));
+      } else {
+        enumerator.value = static_cast<std::uint64_t>(
+            clang_getEnumConstantDeclUnsignedValue(child));
+      }
+      declaration.enumerators.push_back(std::move(enumerator));
     }
     const NativeDeclarationId id =
         result_.model.addDeclaration(std::move(declaration));
@@ -1213,34 +1241,10 @@ private:
         return;
       }
     }
-    // `typedef ret (*Name)(params);` stores the function shape directly —
-    // the model convention the planner's callback policy expects.
-    if (canonical.kind == CXType_Pointer) {
-      const CXType pointee = clang_getPointeeType(canonical);
-      const CXType pointeeCanonical = clang_getCanonicalType(pointee);
-      if (pointeeCanonical.kind == CXType_FunctionProto ||
-          pointeeCanonical.kind == CXType_FunctionNoProto) {
-        CXType sugared = underlying;
-        while (sugared.kind == CXType_Elaborated) {
-          sugared = clang_Type_getNamedType(sugared);
-        }
-        const CXType shape = sugared.kind == CXType_Pointer
-                                 ? clang_getPointeeType(sugared)
-                                 : pointeeCanonical;
-        addTypedefDeclaration(name, mapFunctionType(shape), at, usr);
-        return;
-      }
-    }
-    if (canonical.kind == CXType_FunctionProto ||
-        canonical.kind == CXType_FunctionNoProto) {
-      addTypedefDeclaration(
-          name,
-          makeUnsupported(owned(clang_getTypeSpelling(underlying)),
-                          "a function typedef without a pointer declarator "
-                          "is outside the bounded surface"),
-          at, usr);
-      return;
-    }
+    // Preserve every C pointer level. A function type and a pointer to that
+    // function are distinct native facts, even though the latter becomes a
+    // named callback value in GTI. In particular Callback* is a writable slot,
+    // not another spelling of Callback.
     addTypedefDeclaration(name, mapType(underlying), at, usr);
   }
 

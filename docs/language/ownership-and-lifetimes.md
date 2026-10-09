@@ -10,6 +10,18 @@ or deterministic cleanup rules. Source-level `new` and `delete` remain absent.
 
 ## Public Ownership Surface
 
+An initialized local `auto& name = expression;` requests a read-only checked
+reference with an inferred exact referent type. `mut auto&` requests mutable
+access without upgrading a read-only initializer. Both use the explicit
+reference contract: the same owner/place dependencies, reborrow restrictions,
+last-use endpoints, escape checks and cleanup obligations apply. Only the
+written type is inferred; ownership is not. Fresh owned temporaries cannot
+initialize a retained reference, while a temporary `expected<T&, E>` may
+publish a borrow of its stable external owner through `?` or `.expect()`.
+Plain `auto` remains a value binding and can therefore reject a move-only
+copy that `auto&` would validly borrow. Whole-array and raw-pointer referents
+remain outside ordinary local reference support in either spelling.
+
 The implemented unique ownership surface is:
 
 ```gti
@@ -1247,6 +1259,15 @@ implicit owner conversion.
 This is not a general implicit class conversion. In particular, an ordinary
 call such as `consume(nullptr)` does not construct a `unique_ptr` argument;
 call arguments still require an exact parameter type.
+
+**Planned change.** GTI is adopting Rust's allocation-failure model; see
+[ADR 022](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09).
+Once it is implemented, exhaustion in an infallible allocation such as
+`make_unique` or vector growth will write a `GTI-R0011` report and abort the
+process, with no cleanup. Recoverable allocation will remain the `try_`
+operations' `expected` result. The optimizer will also be allowed to remove
+an unused allocation from the process allocator. The paragraph below
+describes the current contained-failure behavior.
 
 The default `make_unique` operation is infallible at the type level: allocation
 exhaustion raises `GTI-R0011` with detail `unique_owner`. Future

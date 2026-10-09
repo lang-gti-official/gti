@@ -10,13 +10,79 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace lang {
+
+struct CppRepresentationScope::Facts {
+  explicit Facts(const LoweredProgram &program) : program(&program) {
+    for (const LoweredDeclaration &row : program.declarations()) {
+      children[row.parent].push_back(&row);
+    }
+    for (const MirBodyAddress address :
+         enumerateMirBodyAddresses(program.mir())) {
+      if (const MirBody *body = findMirBody(program.mir(), address)) {
+        bodies.insert(body);
+      }
+    }
+  }
+
+  const LoweredProgram *program;
+  std::unordered_map<LoweredDeclarationId,
+                     std::vector<const LoweredDeclaration *>>
+      children;
+  std::map<std::pair<ClassId, LoweredDeclarationId>, bool> directRepresentation;
+  std::optional<std::unordered_set<ClassId>> templateClosure;
+  std::optional<bool> callableTemplateCarrier;
+  std::unordered_set<const MirBody *> bodies;
+  std::map<std::pair<const MirBody *, std::string>, std::shared_ptr<void>>
+      bodyAnalyses;
+};
+
+namespace {
+
+thread_local CppRepresentationScope::Facts *activeRepresentationFacts = nullptr;
+
+[[nodiscard]] CppRepresentationScope::Facts *
+representationFacts(const LoweredProgram &program) {
+  return activeRepresentationFacts != nullptr &&
+                 activeRepresentationFacts->program == &program
+             ? activeRepresentationFacts
+             : nullptr;
+}
+
+} // namespace
+
+CppRepresentationScope::CppRepresentationScope(
+    const VerifiedLoweredProgram &program)
+    : previous(activeRepresentationFacts) {
+  // A nested stage of the same consumer keeps the facts already computed.
+  if (previous == nullptr || previous->program != &program.program()) {
+    facts = std::make_unique<Facts>(program.program());
+    activeRepresentationFacts = facts.get();
+  }
+}
+
+CppRepresentationScope::~CppRepresentationScope() {
+  activeRepresentationFacts = previous;
+}
+
+std::shared_ptr<void> *cppScopedBodyAnalysis(const MirBody &body,
+                                             std::string_view kind) {
+  if (activeRepresentationFacts == nullptr ||
+      !activeRepresentationFacts->bodies.contains(&body)) {
+    return nullptr;
+  }
+  return &activeRepresentationFacts->bodyAnalyses[{&body, std::string(kind)}];
+}
 
 namespace {
 
@@ -74,25 +140,12 @@ appendConcreteValueIdentity(std::vector<std::uint8_t> &output,
 
 [[nodiscard]] const LoweredDeclaration *
 classDeclarationRow(const LoweredProgram &program, ClassId id) {
-  for (const LoweredDeclaration &row : program.declarations()) {
-    const auto *declaration =
-        std::get_if<LoweredClassDeclaration>(&row.payload);
-    if (declaration != nullptr && declaration->id == id) {
-      return &row;
-    }
-  }
-  return nullptr;
+  return program.findClassDeclarationRow(id);
 }
 
 [[nodiscard]] const LoweredDeclaration *
 enumDeclarationRow(const LoweredProgram &program, const SemanticType &type) {
-  for (const LoweredDeclaration &row : program.declarations()) {
-    const auto *declaration = std::get_if<LoweredEnumDeclaration>(&row.payload);
-    if (declaration != nullptr && declaration->type == type) {
-      return &row;
-    }
-  }
-  return nullptr;
+  return program.findEnumDeclarationRow(type);
 }
 
 [[nodiscard]] const LoweredClassDeclaration *
@@ -113,7 +166,7 @@ concreteClassPrimaryRow(const LoweredProgram &program,
                             : classDeclarationRow(program, primary->id);
 }
 
-[[nodiscard]] bool concreteClassSupportsDirectRepresentation(
+[[nodiscard]] bool computeConcreteClassSupportsDirectRepresentation(
     const LoweredProgram &program, const LoweredClassDeclaration &declaration,
     const LoweredDeclaration &primaryRow) {
   if (declaration.compilerCapability != CompilerCapabilityTypeKind::None ||
@@ -125,10 +178,22 @@ concreteClassPrimaryRow(const LoweredProgram &program,
       std::holds_alternative<LoweredClassDeclaration>(parent->payload)) {
     return false;
   }
-  for (const LoweredDeclaration &candidate : program.declarations()) {
-    if (candidate.parent != primaryRow.id) {
-      continue;
+  std::vector<const LoweredDeclaration *> scanned;
+  const std::vector<const LoweredDeclaration *> *children = nullptr;
+  if (const auto *facts = representationFacts(program)) {
+    static const std::vector<const LoweredDeclaration *> none;
+    const auto found = facts->children.find(primaryRow.id);
+    children = found == facts->children.end() ? &none : &found->second;
+  } else {
+    for (const LoweredDeclaration &candidate : program.declarations()) {
+      if (candidate.parent == primaryRow.id) {
+        scanned.push_back(&candidate);
+      }
     }
+    children = &scanned;
+  }
+  for (const LoweredDeclaration *child : *children) {
+    const LoweredDeclaration &candidate = *child;
     if (const auto *storage =
             std::get_if<LoweredStorageDeclaration>(&candidate.payload)) {
       const auto containsUniqueOwner = [&](const auto &self,
@@ -168,6 +233,26 @@ concreteClassPrimaryRow(const LoweredProgram &program,
   return true;
 }
 
+[[nodiscard]] bool concreteClassSupportsDirectRepresentation(
+    const LoweredProgram &program, const LoweredClassDeclaration &declaration,
+    const LoweredDeclaration &primaryRow) {
+  auto *facts = representationFacts(program);
+  if (facts == nullptr) {
+    return computeConcreteClassSupportsDirectRepresentation(
+        program, declaration, primaryRow);
+  }
+  const std::pair<ClassId, LoweredDeclarationId> key{declaration.id,
+                                                     primaryRow.id};
+  if (const auto found = facts->directRepresentation.find(key);
+      found != facts->directRepresentation.end()) {
+    return found->second;
+  }
+  const bool result = computeConcreteClassSupportsDirectRepresentation(
+      program, declaration, primaryRow);
+  facts->directRepresentation.emplace(key, result);
+  return result;
+}
+
 [[nodiscard]] bool
 semanticTypeContainsLexicalClosure(const SemanticType &type) {
   return type.kind == SemanticType::Lambda ||
@@ -179,9 +264,10 @@ semanticTypeContainsLexicalClosure(const SemanticType &type) {
 // that concrete MIR calls address. Propagate template representation through
 // those declaration dependencies; otherwise a dependent `Carrier<T>` silently
 // creates a second native class beside the hashed concrete `Carrier<int>`.
-[[nodiscard]] bool
-concreteClassHasTemplateDependency(const LoweredProgram &program,
-                                   ClassId requested) {
+// The resulting closure of template-represented classes depends on the whole
+// program, not on the class being spelled.
+[[nodiscard]] std::unordered_set<ClassId>
+templateDependencyClosure(const LoweredProgram &program) {
   std::vector<ClassId> templates;
   const auto add = [&](ClassId id) {
     const LoweredClassDeclaration *declaration =
@@ -231,9 +317,6 @@ concreteClassHasTemplateDependency(const LoweredProgram &program,
   };
   for (std::size_t index = 0; index < templates.size(); ++index) {
     const ClassId owner = templates[index];
-    if (owner == requested) {
-      return true;
-    }
     const auto *declaration = program.findClassDeclaration(owner);
     const auto *ownerRow = classDeclarationRow(program, owner);
     for (const auto &base : declaration->bases) {
@@ -272,13 +355,24 @@ concreteClassHasTemplateDependency(const LoweredProgram &program,
       }
     }
   }
-  return false;
+  return {templates.begin(), templates.end()};
 }
 
 [[nodiscard]] bool
-concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
-                                       const SemanticType &type) {
-  static_cast<void>(type);
+concreteClassHasTemplateDependency(const LoweredProgram &program,
+                                   ClassId requested) {
+  auto *facts = representationFacts(program);
+  if (facts == nullptr) {
+    return templateDependencyClosure(program).contains(requested);
+  }
+  if (!facts->templateClosure) {
+    facts->templateClosure = templateDependencyClosure(program);
+  }
+  return facts->templateClosure->contains(requested);
+}
+
+[[nodiscard]] bool
+computeConcreteClassIsCallableTemplateCarrier(const LoweredProgram &program) {
   for (const MirFunctionInstance &instance :
        program.mir().functionInstances()) {
     const bool lexicalClosure =
@@ -300,6 +394,21 @@ concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
     return true;
   }
   return false;
+}
+
+[[nodiscard]] bool
+concreteClassIsCallableTemplateCarrier(const LoweredProgram &program,
+                                       const SemanticType &type) {
+  static_cast<void>(type);
+  auto *facts = representationFacts(program);
+  if (facts == nullptr) {
+    return computeConcreteClassIsCallableTemplateCarrier(program);
+  }
+  if (!facts->callableTemplateCarrier) {
+    facts->callableTemplateCarrier =
+        computeConcreteClassIsCallableTemplateCarrier(program);
+  }
+  return *facts->callableTemplateCarrier;
 }
 
 [[nodiscard]] bool appendConcreteTypeIdentity(std::vector<std::uint8_t> &output,

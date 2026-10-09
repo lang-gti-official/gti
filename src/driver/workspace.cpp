@@ -167,6 +167,31 @@ ConfigurationFlags ProjectWorkspace::configurationFlags() const {
   return flags;
 }
 
+ConfigurationFlags ProjectWorkspace::declaredConfigurationFlags() const {
+  ConfigurationFlags flags = configurationFlags();
+  const auto &manifest = selectedPackage().manifest;
+  for (const auto &profile : manifest.profiles()) {
+    flags.insert(flags.end(), profile.defines.begin(), profile.defines.end());
+  }
+  for (const auto &target : manifest.targets()) {
+    flags.insert(flags.end(), target.defines.begin(), target.defines.end());
+  }
+  normalizeConfigurationFlags(flags);
+  return flags;
+}
+
+ConfigurationFlags
+composeProjectConfigurationFlags(ConfigurationFlags packageFlags,
+                                 const ConfigurationFlags &profileFlags,
+                                 const ConfigurationFlags &targetFlags,
+                                 const ConfigurationFlags &commandFlags) {
+  for (const auto *flags : {&profileFlags, &targetFlags, &commandFlags}) {
+    packageFlags.insert(packageFlags.end(), flags->begin(), flags->end());
+  }
+  normalizeConfigurationFlags(packageFlags);
+  return packageFlags;
+}
+
 std::string ProjectWorkspace::modelIdentity() const {
   std::string identity = "gti-workspace-v1";
   for (const ResolvedProjectPackage &package : resolvedPackages) {

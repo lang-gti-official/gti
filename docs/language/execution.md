@@ -1329,7 +1329,11 @@ should have a recoverable sibling when callers need control.
 Consequently wrong-state `expected.value()` and `expected.error()` access uses
 `GTI-R0009`; it never inherits native `bad_expected_access`, assertion, or
 undefined behavior. `make_unique` and private storage map exhaustion to
-`GTI-R0011`, while recoverable allocation factories return `expected`.
+`GTI-R0011`, while recoverable allocation factories return `expected`. This is
+the current behavior. Under the accepted
+[Rust allocation-failure model](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09),
+infallible exhaustion will instead write the `GTI-R0011` report and abort
+without cleanup. Process allocations will no longer be observable effects.
 
 Compile-time diagnostics, compiler resource exhaustion, IEEE-754 nontrapping
 results, explicit `expected` errors, native error/sentinel values,

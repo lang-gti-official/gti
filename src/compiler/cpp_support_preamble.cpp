@@ -1178,6 +1178,13 @@ private:
   mir_failure_cleanup_context_v1 context_{};
   bool active_ = false;
 };
+// This helper is reached only after a MIR operation fails. Keep its emergency
+// record/TLS work out of the successful caller's native inlining cost. It may
+// return for a first failure or unwind through the managed-worker handoff;
+// neither noexcept nor a terminal-function annotation would be sound here.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((__cold__, __noinline__))
+#endif
 inline void mir_check_incoming_cleanup_failure_v1(
     const ::gti_failure_record_v2 *secondary,
     const ::gti_failure_artifact_descriptor_v1 *artifact) {
@@ -2258,11 +2265,24 @@ unique_owner_upcast(std::unique_ptr<Derived> &&owner) noexcept {
   return std::unique_ptr<Base>(std::move(owner));
 }
 
-// Dormant source templates may name this dependent representation without
-// instantiating a shared capability (and therefore without requiring atomics).
-template <typename T> class shared_owner;
-
 )";
+  // C++ resolves a qualified template name where a template is defined, so an
+  // uninstantiated generic definition (for example, one retained by a dormant
+  // import) needs these names declared. A declaration adds no native header
+  // or support; only a concrete instance or verified operation selects the
+  // definitions below.
+  if (features.sharedOwnerDeclared) {
+    output << "template <typename T> class shared_owner;\n";
+  }
+  if (features.atomicStorageDeclared) {
+    output << "template <typename T> class atomic_value;\n";
+  }
+  if (features.mutexStorageDeclared) {
+    output << "template <typename T> class mutex_value;\n";
+  }
+  if (features.mutexLockTokenDeclared) {
+    output << "template <typename T> class mutex_lock_token;\n";
+  }
   if (usesAtomics) {
     output << R"(
 

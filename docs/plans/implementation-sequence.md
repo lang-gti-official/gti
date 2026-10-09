@@ -33,6 +33,46 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Runtime Performance Requirement: 2026-10-09
+
+Runtime performance is now a first-class design and delivery requirement under
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09).
+This explicitly supersedes benchmark/proxy-first admission restrictions in the
+older O-PERF, O-MIR and RT rows below. General optimization architecture can be
+designed and implemented from a reasoned cost model and the needs of systems
+operation families; no previously benchmarked regression, individual hot client
+or minimum proxy speedup is required to start. Technical prerequisites, phase
+authority, correctness proofs and task scope still apply.
+
+Measurements remain implementation acceptance evidence, not permission to work.
+Validate optimized representative execution and its runtime, allocation,
+code-size and relevant compile/memory tradeoffs. Material regressions require
+correction or explicit owner acceptance; functional success plus a follow-up
+issue no longer suffices. Historical completed campaigns and their measurements
+remain historical facts, not proof that runtime performance is finished or that
+new architecture must wait for another regression. This documentation revision
+does not itself implement an optimizer or storage migration.
+
+## Runtime audit follow-up: 2026-10-09
+
+`RT-1` is complete as a bounded client: reduce source-storage success-path costs
+by outlining only the incoming cleanup-failure check. PR #166 is reviewed as
+proposal input, with immediate versus future dispositions in
+[optimization.md](optimization.md#pr-166-audit-disposition-2026-10-09).
+Prerequisite: reconciled modules/reachability integration (#174, main
+`b6614cb4`), a semantics-preserving current-head proxy, and unchanged source
+storage policy. Acceptance: exact frozen-snapshot production comparison,
+complete allocation/destructor observations, runtime/code-size/memory controls,
+and cleanup/panic/managed-thread/sanitizer/malformed-MIR tests. Clean optimized
+`f2fea6c7` passes all 570 unfiltered CTests, both 130-example corpus oracles,
+thirteen staged-library consumers and the installed source-provider matrix.
+Production storage medians improve 70.464→59.177 ms and 76.490→66.230 ms,
+with full-build time essentially unchanged and the small size/memory tradeoffs
+recorded in [the performance evidence](performance-tooling.md#production-comparison).
+The earlier historical regression in #169 is not considered fully recovered merely because
+this one cause improves. Follow-on RT-2 through RT-10 need their individual
+prerequisites and measured clients; they are not added to this implementation.
+
 ## Stabilization Reset: 2026-10-08
 
 The owner paused new issue-campaign work to finish the existing lifetime/storage
@@ -1382,6 +1422,129 @@ with moved-binding reuse rejection, a later successful argument before capture
 cleanup, and malformed eager-input HIR plans. The 0.361.0 and 0.362.0 combined
 runs also retain these regressions.
 
+## L-INFER-01: Local Inferred Reference Bindings
+
+**Status: Complete in 0.387.0; combined acceptance passed for 0.390.0.** Local
+reference inference shares ordinary referent/binding validation and retained
+loans. Paired semantic, HIR/MIR, native cleanup and LSP checks pass, including
+borrowed closures and external borrowed-expected extraction. Example 131 is the
+runnable client. The reconciled candidate passed all 565 local CTests and the
+staged SDK/consumer checks described in the canonical verification document.
+Whole-array and raw-pointer references retain their existing explicit-reference
+boundary; no backend inference or new owner is introduced.
+
+**Outcome:** Applications can retain a checked borrow without spelling a long
+concrete type. For example, reading an array nested in a parsed JSON document
+permits:
+
+```gti
+auto& scopes_array = parsed.get("scopes").expect("scopes are required");
+for (auto& scope : scopes_array.elements()) {
+  auto text = scope.as_string().expect("scope must be a string");
+  scopes.push_back(std::move(text));
+}
+```
+
+### Evidence And Prerequisites
+
+At proposal time `SemanticVisitor::Impl::analyzeInferredVariable` explicitly rejected
+ordinary local `auto&`. Its reference path already constructed a
+resolved reference type, calls `validateReferenceBinding`, and records retained
+borrows. Explicit local `T&` declarations use the same reference validation and
+retained-borrow machinery. This overlap supports a bounded generalization;
+removing the diagnostic alone is not sufficient implementation evidence.
+
+Borrowed `expected<T&, E>` extraction through `.expect()` is implemented and
+documented in [expected values](../language/expected.md). It yields a place tied
+to the original owner, even after destruction of the temporary expected shell.
+`std::json::value::get` returns this shape; it does not yield an owned JSON node.
+The move-only-copy diagnostic on `mut auto value = borrowed_result` rejects a
+real attempted copy. The old unconditional movement hint has been replaced:
+current guidance explains `auto&` and conditional explicit cloning, and suggests
+movement only for a legally transferable whole owner. It does not offer an
+ownership-changing fix-it.
+
+### Language Rule
+
+An initialized ordinary local declaration `auto& name = expression;` infers
+the exact complete referent type and requests a read-only checked reference.
+`mut auto& name = expression;` infers that same type and requests mutable
+access. Each form must accept exactly the initializer shapes accepted by the
+corresponding explicit `T&` or `mut T&` declaration, subject to existing generic
+instance analysis. Expression referent types and value categories must be used
+without accidentally creating a reference-to-reference type.
+
+Plain `auto` continues to infer a value binding. The written `&` is what
+requests borrowing; `mut` cannot upgrade a read-only result to mutable access.
+Inference performs no copy, movement, conversion ranking, lifetime extension,
+or independent ownership creation. The initializer is evaluated once.
+
+The origin place or dependency set, access mode, permitted escape boundary,
+and loan endpoint must be identical to those of an explicit reference binding.
+Borrowed referents remain owned and dropped by their original owner. Existing
+last-use, invalidation, reborrow, and escape rules remain authoritative.
+Fresh owned temporaries remain invalid local reference initializers; a
+temporary carrier that returns a checked borrow of stable external storage is
+judged by that storage's established lifetime, not merely by call syntax.
+
+The initial scope is ordinary initialized local declarations, including locals
+in concretely analyzed generic bodies. It adds no inference for fields,
+namespace/global declarations, function parameters, returns, structured
+bindings, `auto&&`, untyped braces, or explicit `auto` array declarators.
+Reference inference from an existing fixed-array place must follow explicit
+array-reference support and preserve extents rather than decay to a pointer.
+
+Prove the general rule with an unrelated application type as well as JSON:
+
+```gti
+struct Record { mut int count = 1; };
+
+int main() {
+  mut Record owner{};
+  auto& observed = owner;
+  int snapshot = observed.count;
+  mut auto& writable = owner; // shared borrow has reached its last use
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+```
+
+### Implementation And Acceptance
+
+1. Semantics must resolve inferred references through the ordinary reference
+   contract. Audit inferred/range/generated-local special cases and factor
+   only the shared logic needed to prevent explicit and inferred drift.
+2. HIR and MIR must preserve the same concrete binding types, origin/dependency
+   facts, access, loan endpoints, and cleanup behavior as explicit references.
+   The backend consumes these resolved facts; it must not delegate inference
+   or borrow permission to generated C++ `auto&`.
+3. Add paired explicit/inferred positive and negative tests for stable locals,
+   fields, supported array places, checked reference-returning calls, borrowed
+   expected extraction, concrete generic instances, mutation conflicts,
+   read-only-to-mutable upgrades, moved owners, temporary owners, and escaping
+   local storage. Unsupported retained reborrow families remain rejected in
+   both spellings. Exercise later failure and exactly-once owner cleanup.
+4. Improve copy-attempt hints where a stable read-only initializer can be
+   borrowed: explain `auto&` and explicit cloning where applicable. Offer
+   movement only when it represents a legal ownership transfer. Do not
+   automatically change owning code into borrowing code through a fix-it.
+5. LSP diagnostics and hover must use compiler facts, display the inferred
+   referent/access accurately, and retain definition/navigation identity.
+   Test edits from `auto` to `auto&` and `mut auto&`, incomplete source, recovery,
+   and dirty dependency overlays. Confirm formatter and Tree-sitter support
+   the syntax without introducing separate inference rules.
+6. Add a runnable example under `examples/` and update its index, corpus and
+   census registrations. Update current static semantics, ownership and grammar
+   docs, revise `R-INFERENCE`, and apply the user-visible language version policy
+   only when the implementation lands. This proposal itself changes no VERSION.
+
+**Exit gate:** The inferred and explicit forms agree on semantic admission and
+borrow effects for the tested structural families; valid examples execute with
+an optimized host compiler across C++20/C++23 and GTI O0/O3; invalid cases stop
+with frontend diagnostics; relevant MIR verification and LSP gates pass. Any
+missing structural family must name its prerequisite and remain rejected in
+both forms rather than gaining a nominal exception for one library type.
+
 ## Explicit Cloning And Native Bridge Follow-Up
 
 The explicit-duplication slice supplies source-defined `std::clone`,
@@ -1468,6 +1631,31 @@ game-update controls show no material regression. Final evidence and
 limitations live in the existing performance-tooling plan. General C++
 compile-time comparability remains an open target, not a claim of this slice.
 
+### C-TIME-04: Optimizer Proof And State Bookkeeping
+
+**State:** bounded implementation and paired performance acceptance complete;
+delivered through PR #181. General compiler-latency improvement remains open.
+
+The outcome is a faster optimized edit/build loop for the existing HTTP/JSON
+client, without changing its GTI program or native representation. CPU sampling
+identifies repeated proof-vector allocation/sorting and whole-state copies in
+SCCP joins. Internal evidence now uses ordered insertion and canonical set
+union; SCCP detects per-fact changes without copying the complete destination.
+Facts, complete proof identities, failure edges, convergence budgets and
+independent replay remain unchanged. This does not change language semantics,
+add a persistent cache or remove verification.
+
+Exhaustive evidence-set regressions and the owning optimizer/native checks
+pass. All 130 runnable examples produce byte-identical C++, optimized MIR,
+optimizer reports and diagnostics with the baseline and candidate. HTTP/JSON
+O2 emission takes 14.3% less time and full builds 10.6% less time in five paired
+measurements; O0 emission is unchanged. Controls and shared-host/platform
+limitations are recorded in
+[`performance-tooling.md`](performance-tooling.md#c-time-04-optimizer-proofstate-bookkeeping-2026-10-09).
+Further analysis-state and
+proof-construction costs remain opportunities for separately validated work;
+this slice does not establish a compile-time limit.
+
 ### Tea Constructor-Emission Follow-Up
 
 The release fix covers nonassignable empty-field placement and qualified or
@@ -1509,7 +1697,7 @@ Every row has one of these states:
 | **planned** | A goal is identified; named prerequisites or design work remain before its acceptance criteria can pass. |
 | **active** | One task owns the row and has recorded its bounded scope. |
 | **done** | The implementation, tests, and canonical documentation passed the exit gate. |
-| **measured defer** | No demonstrated client or payoff justifies the work yet. |
+| **measured defer** | A prior measurement deferred that slice. For runtime architecture, this is historical evidence, not a benchmark prerequisite to renewed work under ADR 012. |
 | **later breadth** | No current systems-readiness workload requires the broader form; evidence may move it earlier. |
 
 Readiness role is separate from dependency state:
@@ -4200,9 +4388,12 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-06: General Object Lifetimes And Source-Defined Storage
 
-- **State/role:** implementation consolidated into the PR #94 release candidate,
-  following completed `S-ALLOC-04/05`. Completion requires the combined
-  [release gate](../architecture/verification.md#combined-lifetimestorage-and-payload-enum-release-gate).
+- **State/role:** implemented through PR #94 and the subsequent issue-campaign
+  integration, following completed `S-ALLOC-04/05`. The combined
+  [release gate](../architecture/verification.md#combined-lifetimestorage-and-payload-enum-release-gate)
+  records its original reconciliation evidence; the
+  [S-ALLOC-07 completion acceptance](../architecture/verification.md#completion-acceptance-2026-10-08)
+  also reruns the source-storage/resource integration on current main.
   This brief records the accepted direction; canonical language documentation
   and source describe the implemented API and its structural bounds.
 - **Outcome:** an application can implement inline typed storage and an
@@ -4213,7 +4404,7 @@ do not expose C++ object layout as GTI semantics.
   This is a generalization of the completed work, not a restart of Phase 2.
   Reconcile current source before using historical progress descriptions.
 
-#### Implementation Audit And Accepted Choices (2026-10-07)
+#### Historical Implementation Audit And Accepted Choices (2026-10-07)
 
 The source sparse/resource-owner integration now passes the focused resource
 contract and native allocator matrix, including same-resource metadata failure
@@ -4621,15 +4812,16 @@ unless requested.
 
 ### S-ALLOC-07: Source-Defined Process Allocation Over Native Byte Providers
 
-- **State/role:** in progress. The owner authorized provider-layer preparation
-  in parallel with `S-ALLOC-06`. This independent slice moves process
-  request validation, native-size/zero handling, target selection and failure
-  mapping into GTI, using POSIX/CRT forwarding adapters. The combined candidate
-  now routes default sparse storage and its metadata through that provider and
-  retires generated sparse allocation. Final acceptance remains coupled to
-  `S-ALLOC-06`; this checkpoint does not complete the campaign. The owner delegates the
-  source/compiler/platform split described here. This is not a claim that
-  every allocation client has migrated or every ABI adapter is removable.
+- **State/role:** source-provider migration and completion acceptance are done
+  through PR #94, the issue reconciliation release and PR #162. The final local
+  gates pass; unavailable native-platform evidence and the measured performance
+  regression remain explicitly reported below and in follow-up #169.
+  Process request validation, native-size/zero handling, target selection and
+  failure mapping are GTI source policy over POSIX/CRT forwarding adapters.
+  Default sparse storage and its metadata both use that provider; generated
+  sparse allocation is retired. The completion audit below records the
+  evidence. This does not claim every allocation client has migrated or every
+  ABI adapter is removable.
 - **Outcome:** the default typed-storage and process-resource paths acquire
   bytes through source-defined GTI policy and ordinary native bindings, rather
   than specialized C++ allocation policy. Application pools and resource-backed
@@ -4637,6 +4829,30 @@ unless requested.
 - **Continuation:** reuse the preceding campaign and Phase 2 context. Do not
   reopen their accepted lifetime or unsafe boundaries, or duplicate their
   construction/destruction/relocation machinery.
+
+#### Completion Audit (2026-10-08)
+
+The audit starts from canonical main `f0ba8383`, after the issue campaign was
+integrated. The implementation already satisfied the named source-provider
+migration. PR #162 completes its acceptance evidence and corrects stale boundary
+descriptions, rather than introducing a second allocator implementation. It also
+fixes the general checked-numeric-argument admission defect exposed by the final
+cleanup fixture (#165); the fully tested implementation revision is `fa72b523`.
+
+| Required outcome | Owning implementation and evidence |
+| --- | --- |
+| Source request policy and canonical platform boundary | `gti_internal::process_resource` is an ordinary class in `stdlib/std/memory.gti`; no compiler source recognises its name. `process_provider_target_contract` selects POSIX/CRT calls for macOS, Linux and Windows; the C ABI smoke fixes their exact signatures. |
+| Default typed clients and source metadata | `std::allocator::try_storage`, process leases and `try_allocate_sparse` use two same-provider regions. `process_storage_policy.gti` observes their exact requests, one metadata byte per slot, zero/invalid/overflow requests, first/second acquisition failure, rollback, simultaneous owners, immovable owning elements, slot reuse, owner movement and element-before-region release. |
+| Existing custom resources and checked safety | `resource_protocol_contract`, `programmable_allocators_runtime`, `storage_adoption_contract`, source-storage/lifetime matrices and allocator Off/Warn parity retain resource/element borrow rejection, malformed descriptor checks, failed growth, constructor/destructor failure and original release authority. |
+| Retired and remaining mechanisms | Production `include`, `src`, `stdlib` and `runtime` contain no old `gti_rt_memory_allocate_v1`/`release_v1`, sparse capability or sparse backend allocator. The [allocation inventory](../architecture/standard-library-and-runtime.md#allocation-inventory-and-remaining-boundaries) identifies remaining prefix, unique/shared and host-service families. |
+| Installed and runnable clients | The provider matrix has an explicit installed mode that rejects missing stage resources and pins their exact paths, preventing build-tree fallback. CI and release staging run it; the installed library smoke links the native memory boundary. Examples 119–121, 125–126, 128–129 and `libc-region-provider` exercise the existing public APIs. Their source, example index and census identities are unchanged. |
+| Broad, platform and performance acceptance | The clean optimized `fa72b523` candidate passes the full 558-test production/tooling suite, 13 installed consumers, both native/installed provider matrices and 14 staged example executions. A quiet-host frozen comparison records a material runtime regression (process 3.68×, resource 2.12× baseline), unchanged scalar/destructor state and the deliberate doubling of resource acquisitions for source metadata. [Completion evidence](../architecture/verification.md#completion-acceptance-2026-10-08) includes the investigation and [performance follow-up #169](https://git.internal.howetotech.dev/gti-lang/gti/issues/169). Local execution is macOS arm64; Linux native CI is queued without a runner and Windows native execution is unavailable. Target/ABI checks are retained without claiming native execution on those platforms. |
+
+The ABI-adapter rationale is revised explicitly in ADR 022: native `c_size_t`
+and nested `void**` are now supported. Unique forwarding symbols still avoid
+occupying applications' C declarations, while Windows reserved symbols and
+target facts justify the remaining small adapters. No semantics or allocation
+policy change is required for that correction.
 
 #### Starting Point And Architectural Purpose
 
@@ -4808,6 +5024,64 @@ unchanged safety/cleanup behavior. It does not require moving compiler host
 allocation into GTI, migrating every distinct owning representation, inventing
 a second backend or implementing freestanding allocation. Follow the existing
 PR lifecycle and local-main synchronization; installation remains opt-in.
+
+### S-ALLOC-08: Rust Allocation-Failure Model
+
+- **State/role:** accepted direction from the owner (2026-10-09); not started.
+  The contract is
+  [ADR 022's Rust allocation-failure revision](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09)
+  and [ADR 007's exhaustion revision](../decisions/007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09).
+- **Outcome:** each allocation behaves as it would in Rust.
+  - Infallible allocation (`make_unique`, `make_shared`, vector and string
+    growth, plain container counterparts) aborts on exhaustion after a
+    best-effort, allocation-free `GTI-R0011` report.
+  - Fallible `try_` allocation keeps its `expected` result.
+  - Size-computation overflow stays a contained defined failure.
+  - Process allocations are not observable effects.
+- **Work:**
+  - Change the runtime's exhaustion path to report and abort.
+  - Remove allocation failure edges from infallible allocation operations in
+    MIR effects and the backend's failure paths.
+  - Let MIR or backend optimization remove unused process allocations and their
+    releases, or move them to automatic storage, without removing calls to
+    application `memory_resource` providers.
+  - Update the affected failure, cleanup and exit-status tests and the language
+    documentation.
+- **Acceptance:**
+  - Exhaustion tests show the report and abort for each infallible family, and
+    unchanged `expected` results for each fallible family.
+  - The owning-temporary workload shows the removed allocation.
+  - Resource-provider calls are never removed.
+  - The census and runtime controls show no unexplained regression.
+
+### S-ALLOC-09: Raw-Buffer Vector And String
+
+- **State/role:** accepted target representation (2026-10-09); not scheduled.
+  The contract is
+  [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
+  It covers migration candidates M01, M02 and M04 in the
+  [standard-library ledger](../architecture/standard-library-and-runtime.md#b-source-policy-candidates-still-using-private-machinery).
+  M03, string's terminator, follows it.
+- **Outcome:** `std::vector` and `std::string` use Rust's `RawVec`/`Vec`
+  layering in ordinary GTI, and the private `prefix_storage` capability is
+  retired:
+  - a source-defined raw buffer over a memory resource;
+  - an initialized-prefix length invariant with no per-slot metadata;
+  - one check per safe public operation, with raw access internally;
+  - `unsafe` unchecked accessors on vector, string, span and fixed array;
+  - byte-copy growth for bitwise-relocatable elements.
+- **Prerequisites:**
+  - Outlined failure paths, so the boundary checks do not inflate inlined
+    accessors (see #169).
+  - Ideally `S-ALLOC-08`, so plain growth has no exhaustion failure edge.
+- **Acceptance:**
+  - Vector and string workloads match or beat the current private path,
+    including the checked vector loop at idiomatic-C++ parity (72 ms against
+    71 ms when measured).
+  - Allocation counts and code size do not regress.
+  - Final-address emplacement, construction rollback, exactly-once cleanup,
+    checked loans and string's C-string bridges are preserved.
+  - The compiler recognizes no container or buffer name.
 
 ### S-FREE-01: Freestanding Target Profile
 
@@ -7921,8 +8195,9 @@ complete.
   Verification rejects under-approximation and permits conservative
   over-approximation. The older defined-failure facts remain their separate
   exact failure contract.
-- **Remaining scope:** add precision only with a measured transformation that
-  can prove an existing conservative boundary more exactly.
+- **Remaining scope:** add precision for general transformations that can prove
+  an existing conservative boundary more exactly. Define consumers and validate
+  their performance; no prior measured speedup is required.
 - **Exit gate:** separate-compilation assumptions are not invented; unknown or
   recursive calls remain safe barriers; focused optimizer tests cover each
   effect dimension.
@@ -8252,10 +8527,10 @@ in [`performance-tooling.md`](performance-tooling.md).
 
 ### O-PERF-04: Exact Fast Path For Undischargeable Checked Loops
 
-- **State/role:** measured defer on exact clean commit `4dbb50bd`; the required
-  source-proxy gate rejected a transform. Re-enter only with a benchmark whose
-  hot inputs remain genuinely opaque after the static rows and whose exact
-  proxy demonstrates at least 30% available value.
+- **State/role:** historically measured-defer on exact clean commit `4dbb50bd`;
+  the then-required source-proxy gate rejected a transform. ADR 012 now permits
+  renewed architectural work without a proxy or 30% entry threshold. Preserve
+  this row's opaque-input and exact-failure correctness requirements.
 - **Rejected audit shape:** PR #164's wrapping block plus sticky predicate and
   replay is not accepted as semantics-preserving as written. Its own
   side-effect-free legality rule excludes the flagship `scale` loop because
@@ -8272,9 +8547,9 @@ in [`performance-tooling.md`](performance-tooling.md).
   or may-alias mutation unless a complete snapshot/commit proof exists.
   Reordered integer evaluation must prove all introduced intermediates and the
   exact result, not just the original sequential prefixes.
-- **Entry/exit gate:** a disposable source-MIR proxy on the opaque workload
-  improves median runtime by at least 30% before infrastructure lands. The
-  implementation then preserves exact successful output, first-failure site
+- **Entry/exit gate:** identify the legality and cost model for the opaque-input
+  fast path; a disposable proxy is optional investigation, not an admission
+  gate. The implementation preserves exact successful output, first-failure site
   and record, partial mutation trace, cleanup, O0 identity, fallback behavior,
   and every rejected near miss. It must bring the checked-vector/core-loop gate
   to at most 1.5x idiomatic C++ or close as measured-defer with the next cause
@@ -8373,24 +8648,24 @@ admitted. Exact report identity and raw samples live in
 - **Bounded scope:** consume only `O-MIR-06` single-latch affine facts to prove
   one existing fixed-array bounds family over a reducible loop. Reuse the
   existing safety-discharge transform and replay path; add no loop rewrite.
-- **Entry/exit gate:** reconsider only when source MIR produces replayable
-  loop-carried affine facts and an upper-bound proxy demonstrates material
-  runtime value after native optimization. Then a representative checked loop
-  must show removed operations and an end-to-end improvement; every induction,
+- **Entry/exit gate:** establish replayable source-MIR loop-carried affine facts;
+  no upper-bound proxy is required to begin architecture work. A representative
+  checked loop must show removed operations and an end-to-end improvement; every induction,
   bound, overflow, early-exit, mutation, and irreducible near-miss retains
   checks; O0/O2/O3 runtime and failure-origin parity passes.
 
 ### O-MIR-09: Alias-Safe Local Memory Client
 
 - **State/role:** measured defer; not implemented.
-- **Bounded scope:** choose exactly one redundant-load or store-to-load family
-  only after a benchmark demonstrates value. Add the smallest explicit local
+- **Bounded scope:** begin with a redundant-load or store-to-load family based
+  on its semantic and execution-cost model. Add the smallest explicit local
   memory-version fact needed to prove no intervening write using `O-MIR-07`
   and exact call effects.
 - **Entry/exit gate:** projected aliases, calls, raw memory, borrows, moves,
   drops, synchronization, and lifetime boundaries retain the operation unless
-  proved safe. Introduce MemorySSA only if this measured family cannot remain
-  sound and maintainable with bounded local versions.
+  proved safe. Introduce MemorySSA when general memory reasoning cannot remain
+  sound and maintainable with bounded local versions; a measured client is not
+  a prerequisite. Validate the production transforms and their runtime costs.
 
 ### O-MIR-10: First Interprocedural Transform
 
@@ -8401,8 +8676,10 @@ admitted. Exact report identity and raw samples live in
   identity, cleanup, provenance, failure, and deterministic cost gates there.
   A distinct return-range summary remains value analysis rather than an effect
   flag. Devirtualization remains outside the campaign.
-- **Entry/exit gate:** the row may reopen only for a new measured client not
-  already served by the completed `O-PERF-02` summary mechanism.
+- **Entry/exit gate:** the row may reopen for general interprocedural
+  optimization needs not already served by the completed `O-PERF-02` summary
+  mechanism, without a benchmark-first gate. Verify and measure the resulting
+  production implementation.
 
 Incremental dominance and LLVM bit-vector adoption remain measured/client-
 gated. A future LLVM backend requires complete MIR layout, ABI,
@@ -8558,12 +8835,12 @@ owned by the rows and domain plans above.
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
-| Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
-| Runtime performance | **exclusive campaign complete** | `O-PERF-00` through `O-PERF-05` and `O-GAME-01` closed in exact order; later work requires a new measured client and bounded row |
+| Associative containers | **systems-readiness work with performance acceptance** | `L-CONT-02`, exact capabilities, allocator proposal; no benchmark-first design gate |
+| Runtime performance | **ongoing design and delivery requirement** | Earlier O-PERF/O-GAME campaigns are historical completions; ADR 012 permits proactive general optimization architecture and requires performance acceptance |
 | MIR transformations | **bounded local production pipeline** | `O-MIR-01` through `O-MIR-07` provide current transforms/analyses; `O-MIR-08/09` are measured-defer; the closed interprocedural client was subsumed by `O-PERF-02` |
 | MIR-backed C++ emission | **ADR 016 complete** | every body in `tests/mir_census_baseline.json` uses the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
-| Natural-loop/range facts | **complete bounded analysis; transform measured-defer** | `O-MIR-06`; `O-MIR-08` reopens only for a source-MIR client with demonstrated native runtime value |
+| Natural-loop/range facts | **complete bounded analysis; transform not implemented** | `O-MIR-06`; `O-MIR-08` may proceed from architectural need with replayable source-MIR facts and performance acceptance |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
 | Compiler structural ownership | **exclusive campaign complete** | `R-STRUCT-00` through `R-STRUCT-05`; [archived closure report](archive/compiler-structural-refactor.md) |
@@ -8572,7 +8849,7 @@ owned by the rows and domain plans above.
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
 | LSP project index/process isolation | client/risk-gated | project facts or stronger containment requirement |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | Source-interface reconciliation candidate; combined validation pending | ADR 024 defines imports, explicit exports/re-exports and package maps for library APIs; legacy includes remain unchanged. Separate compilation and independent module linkage identities remain follow-up work. |
+| Module vocabulary | Source interfaces implemented; standard-library modules implemented in 0.393.0 | ADR 024 defines imports, explicit exports/re-exports, package maps, and `export #include` republication; every public `<std/name>` unit is importable as `std.name`, and legacy includes remain unchanged. Remaining: an aggregate `import std;`. Its lowering prerequisite landed in 0.393.0, so artifacts lower only reachable code, but every imported unit is still analyzed, and the platform-gated units (`tcp`, `process`) need a selection rule. Also remaining: migrating standard units from republished legacy sources to real exports; separate compilation and independent module linkage identities. |
 
 ## Required Architectural Corrections
 

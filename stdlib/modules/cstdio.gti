@@ -1,0 +1,3 @@
+// Module std.cstdio: the public surface of <std/cstdio>.
+export module cstdio;
+export #include <std/cstdio>

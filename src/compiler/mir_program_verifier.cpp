@@ -1460,6 +1460,22 @@ verifyMirCallableMetadata(const MirProgram &program, const MirBody &body,
                   instruction.receiver->kind == MirOperandKind::Value
               ? definitionFor(body, instruction.receiver->value)
               : nullptr;
+      if (instruction.receiver &&
+          isMirExactReceiverPresentation(program, instruction,
+                                         instruction.receiver->type) &&
+          (functionTarget->receiverMutability != ReceiverMutability::ReadOnly ||
+           receiverInput == nullptr ||
+           receiverInput->kind != MirInstructionKind::CallInput ||
+           receiverInput->callInputRole != MirCallInputRole::Receiver ||
+           receiverInput->callInputKind != HirCallInputKind::ReadBorrow ||
+           receiverInput->operands.size() != 1 ||
+           receiverInput->operands.front().kind != MirOperandKind::BorrowRead ||
+           receiverInput->info.type != instruction.receiver->type)) {
+        return verificationFailure(body, owner,
+                                   "exact receiver presentation requires one "
+                                   "read-only interface borrow",
+                                   block.id, instruction.id);
+      }
       const bool temporaryReceiver =
           receiverInput != nullptr &&
           (receiverInput->callInputKind ==

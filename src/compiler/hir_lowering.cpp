@@ -3,11 +3,14 @@
 #include "diagnostic_registry.h"
 #include "gti/semantic_analyzer.h"
 
+#include <unordered_set>
+
 namespace lang {
 
 class HirLowerer::Impl {
 public:
-  explicit Impl(TargetInfo target) : target(std::move(target)) {}
+  explicit Impl(TargetInfo target, bool reachablePrefix)
+      : target(std::move(target)), reachablePrefixRequested(reachablePrefix) {}
 
   [[nodiscard]] HirLoweringResult lowerConstantFunction(
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
@@ -91,18 +94,41 @@ public:
       output.program.valid_ = false;
       return std::move(output);
     }
-    seedDeclarations(source.declarations(), std::nullopt);
+    // For a reachable prefix, discover everything reachable from the program
+    // roots first. Every instance is appended to its table when first
+    // enqueued and is complete once processed, so the tables at this point
+    // are a closed prefix of the final program: nothing discovered later is
+    // referenced from it. Otherwise every declaration is seeded first, which
+    // keeps the complete program's established instance order.
+    if (reachablePrefixRequested) {
+      seedProgramRoots(source.declarations());
+    } else {
+      seedDeclarations(source.declarations(), std::nullopt);
+    }
     lowerEmbeddingPlan();
     lowerProgramInitializationPlan();
     lowerHostedProgramEntryPlan();
     finalizeLifetimes(output.program.moduleBody, *baseModel, false);
     lowerLoans(*baseModel, output.program.moduleBody);
     processPendingInstances();
+    const InstanceCounts reachable = instanceCounts();
+    // Every other declaration is still lowered: concrete semantic analysis of
+    // its instances is what reports their diagnostics.
+    if (reachablePrefixRequested) {
+      seedDeclarations(source.declarations(), std::nullopt);
+      processPendingInstances();
+    }
     output.program.valid_ =
         !hasErrorDiagnostics(output.diagnostics) && lifecycleValid;
     if (output.program.valid_ &&
         !verifyHirProgramPlans(*baseModel, output.program).valid()) {
       output.program.valid_ = false;
+    }
+    if (output.program.valid_ && reachable != instanceCounts()) {
+      HirProgram prefix = reachablePrefix(reachable);
+      if (verifyHirProgramPlans(*baseModel, prefix).valid()) {
+        output.reachable = std::move(prefix);
+      }
     }
     return std::move(output);
   }
@@ -309,6 +335,19 @@ private:
     const SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
+    // An existing instance discovered its arguments when it was created, and
+    // admission is monotone, so revisiting them can only propagate a first
+    // instantiation site. Re-walking them on every hit made each lookup of a
+    // nested generic proportional to its whole argument tree.
+    if (resolvedType.kind == SemanticType::Class && resolvedType.classId != 0) {
+      if (const std::optional<std::size_t> existing = instanceIndex.findClass(
+              resolvedType.classId, resolvedType.arguments,
+              resolvedType.valueArguments);
+          existing &&
+          (!site || output.program.classes[*existing - 1].instantiationSite)) {
+        return *existing;
+      }
+    }
     for (const SemanticType &argument : resolvedType.arguments) {
       (void)enqueueClass(argument, site);
     }
@@ -585,6 +624,10 @@ private:
             appendTarget;
       }
     }
+    seedInstanceSignatureClasses(
+        output.program.functions[id - 1].typeArguments,
+        output.program.functions[id - 1].returnType,
+        output.program.functions[id - 1].parameterTypes);
     return id;
   }
 
@@ -728,6 +771,9 @@ private:
     instanceIndex.recordConstructor(identity, *owner,
                                     construction.typeArguments,
                                     construction.valueArguments, id);
+    seedInstanceSignatureClasses(
+        output.program.constructors[id - 1].typeArguments, SemanticType::Void,
+        output.program.constructors[id - 1].parameterTypes);
     return id;
   }
 
@@ -862,6 +908,170 @@ private:
     for (const EnumeratorInfo &enumerator : info->enumerators) {
       for (const SemanticType &payload : enumerator.payloadTypes) {
         (void)enqueueClass(payload);
+      }
+    }
+  }
+
+  struct InstanceCounts {
+    std::size_t enums = 0;
+    std::size_t symbols = 0;
+    std::size_t classes = 0;
+    std::size_t functions = 0;
+    std::size_t nativeCallbacks = 0;
+    std::size_t threadTasks = 0;
+    std::size_t constructors = 0;
+    std::size_t destructors = 0;
+    std::size_t lambdas = 0;
+
+    friend bool operator==(const InstanceCounts &,
+                           const InstanceCounts &) = default;
+  };
+
+  [[nodiscard]] InstanceCounts instanceCounts() const {
+    const HirProgram &program = output.program;
+    return {.enums = program.enums.size(),
+            .symbols = program.concreteSymbols.size(),
+            .classes = program.classes.size(),
+            .functions = program.functions.size(),
+            .nativeCallbacks = program.nativeCallbacks.size(),
+            .threadTasks = program.threadTasks.size(),
+            .constructors = program.constructors.size(),
+            .destructors = program.destructors.size(),
+            .lambdas = program.lambdas.size()};
+  }
+
+  // Instance identities are table positions, so truncating every table keeps
+  // all identities in the prefix unchanged.
+  [[nodiscard]] HirProgram reachablePrefix(const InstanceCounts &counts) const {
+    HirProgram prefix = output.program;
+    prefix.enums.resize(counts.enums);
+    prefix.concreteSymbols.resize(counts.symbols);
+    prefix.classes.resize(counts.classes);
+    prefix.functions.resize(counts.functions);
+    prefix.nativeCallbacks.resize(counts.nativeCallbacks);
+    prefix.threadTasks.resize(counts.threadTasks);
+    prefix.constructors.resize(counts.constructors);
+    prefix.destructors.resize(counts.destructors);
+    prefix.lambdas.resize(counts.lambdas);
+    return prefix;
+  }
+
+  // Program roots are the hosted entry, library exports, and the C boundary:
+  // C declarations and records form the native interface that the native
+  // header and layout checks publish whether or not GTI uses them. Native
+  // code reaches GTI functions only through callback conversions that GTI
+  // code performs. Every other executable instance is discovered from these
+  // roots by ordinary enqueueing. Enum identities stay complete because
+  // type-only uses do not enqueue them.
+  void seedProgramRoots(const StmtList &declarations) {
+    std::unordered_set<FunctionId> roots;
+    if (const auto &entry = baseModel->hostedProgramEntryPlan()) {
+      roots.insert(entry->entry);
+    }
+    if (const auto &embedding = baseModel->embeddingPlan()) {
+      for (const SemanticEmbeddingExport &selected : embedding->exports) {
+        roots.insert(selected.function);
+      }
+    }
+    seedRootDeclarations(declarations, roots);
+  }
+
+  // Complete lowering already has an instance of every non-generic class. A
+  // reachable prefix must also discover a class that an instance names only
+  // in its type arguments or signature: no value of it may ever be
+  // constructed, yet the instance's identity and signature spell it.
+  void seedInstanceSignatureClasses(std::vector<SemanticType> typeArguments,
+                                    SemanticType returnType,
+                                    std::vector<SemanticType> parameterTypes) {
+    if (!reachablePrefixRequested) {
+      return;
+    }
+    for (const SemanticType &argument : typeArguments) {
+      seedConcreteDeclarationType(argument);
+    }
+    seedConcreteDeclarationType(returnType);
+    for (const SemanticType &parameter : parameterTypes) {
+      seedConcreteDeclarationType(parameter);
+    }
+  }
+
+  // Template declarations are emitted whether or not they are instantiated,
+  // so the concrete classes their signatures, fields, and bases name are
+  // seeded exactly as complete seeding does for every declaration.
+  void seedTemplateSignature(const SemanticType &returnType,
+                             const std::vector<SemanticType> &parameters) {
+    seedConcreteDeclarationType(returnType);
+    for (const SemanticType &parameter : parameters) {
+      seedConcreteDeclarationType(parameter);
+    }
+  }
+
+  void seedRootDeclarations(const StmtList &declarations,
+                            const std::unordered_set<FunctionId> &roots,
+                            bool templateContext = false) {
+    for (const StmtPtr &statement : declarations) {
+      if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          seedRootDeclarations(*branch, roots, templateContext);
+        }
+      } else if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+        seedRootDeclarations(space->declarations(), roots, templateContext);
+      } else if (const auto *externC = stmtAs<ExternCDecl>(statement.get())) {
+        seedRootDeclarations(externC->declarations(), roots, templateContext);
+      } else if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
+        if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
+          seedAliasEnumIdentities(info->type);
+      } else if (const auto *classDeclaration =
+                     stmtAs<ClassDecl>(statement.get())) {
+        const ClassTypeInfo *info = baseModel->findClassType(*classDeclaration);
+        const bool emittedAsTemplate =
+            templateContext ||
+            (info != nullptr && !info->genericParameters.empty());
+        if (info != nullptr && !emittedAsTemplate &&
+            (info->cAbiRecord || info->cOpaqueHandle)) {
+          (void)enqueueClass(SemanticType::classType(info->id));
+        }
+        if (info != nullptr && emittedAsTemplate) {
+          for (const ClassBaseTypeInfo &base : info->bases) {
+            seedConcreteDeclarationType(base.type);
+          }
+          for (const ClassFieldTypeInfo &field : info->fields) {
+            seedConcreteDeclarationType(field.type);
+          }
+          for (const ClassFieldTypeInfo &field : info->staticFields) {
+            seedConcreteDeclarationType(field.type);
+          }
+        }
+        seedRootDeclarations(classDeclaration->members(), roots,
+                             emittedAsTemplate);
+      } else if (const auto *enumDeclaration =
+                     stmtAs<EnumDecl>(statement.get())) {
+        const EnumTypeInfo *info = baseModel->findEnumType(*enumDeclaration);
+        if (info != nullptr && info->genericParameters.empty()) {
+          enqueueEnum(SemanticType::enumType(info->id));
+        }
+      } else if (const auto *constructor =
+                     stmtAs<ConstructorDecl>(statement.get())) {
+        const ConstructorInfo *info = baseModel->findConstructor(*constructor);
+        if (info != nullptr &&
+            (templateContext || !info->genericParameters.empty())) {
+          seedTemplateSignature(SemanticType::Void, info->parameterTypes);
+        }
+      } else if (const auto *function = stmtAs<FunctionDecl>(statement.get())) {
+        const FunctionInfo *info = baseModel->findFunction(*function);
+        if (info == nullptr) {
+          continue;
+        }
+        if (templateContext || !info->genericParameters.empty()) {
+          seedTemplateSignature(info->returnType, info->parameterTypes);
+          continue;
+        }
+        if (info->ownerClass != 0 || (!roots.contains(info->id) &&
+                                      info->linkage != LanguageLinkage::C)) {
+          continue;
+        }
+        (void)enqueueFunction(*info, {}, {}, {}, {}, info->returnType,
+                              info->parameterTypes);
       }
     }
   }
@@ -5604,6 +5814,10 @@ private:
                             {}, resolved->returnType, resolved->parameterTypes);
       }
     }
+    // A function target is this instance's exact selection. A generic
+    // callable call inherits its deferred record from the primary analysis,
+    // but once the instance selects operator() or a function item, that
+    // signature's argument conversions are planned like any ordinary call.
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && kind == HirValueKind::Call &&
         value.intrinsic == IntrinsicKind::None && !value.constructorTarget &&
@@ -5611,8 +5825,6 @@ private:
         (model.findOperator(*call) == nullptr ||
          model.findOperator(*call)->kind == OverloadedOperator::Call) &&
         model.findLambdaCall(*call) == nullptr &&
-        (model.findDeferredCallableCall(*call) == nullptr ||
-         model.findOperator(*call) != nullptr) &&
         value.parameterTypes.size() >= call->arguments().size() &&
         value.parameterTypes.size() <= value.operands.size()) {
       const std::size_t argumentCount = value.parameterTypes.size();
@@ -5877,6 +6089,7 @@ private:
   }
 
   TargetInfo target;
+  bool reachablePrefixRequested = false;
   SemanticInstanceProvider *instanceProvider = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
@@ -5922,8 +6135,8 @@ private:
   std::unordered_set<HirValueId> collectionResults;
 };
 
-HirLowerer::HirLowerer(TargetInfo target)
-    : impl(std::make_unique<Impl>(std::move(target))) {}
+HirLowerer::HirLowerer(TargetInfo target, bool reachablePrefix)
+    : impl(std::make_unique<Impl>(std::move(target), reachablePrefix)) {}
 
 HirLowerer::~HirLowerer() = default;
 HirLowerer::HirLowerer(HirLowerer &&) noexcept = default;

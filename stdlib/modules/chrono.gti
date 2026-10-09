@@ -1,0 +1,3 @@
+// Module std.chrono: the public surface of <std/chrono>.
+export module chrono;
+export #include <std/chrono>

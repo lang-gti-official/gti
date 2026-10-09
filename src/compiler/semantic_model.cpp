@@ -1012,6 +1012,28 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
   if (type.kind != SemanticType::Class || type.classId == 0) {
     return type;
   }
+  // Only a recorded specialization of the root's canonical primary can
+  // match. Canonicalizing the complete key for every nested class made
+  // resolving a deeply nested generic quadratic in its depth.
+  ClassId primary = type.classId;
+  for (const ClassTypeInfo *info = findClassType(primary);
+       info != nullptr && info->exactSpecializationPrimary != 0;
+       info = findClassType(primary)) {
+    primary = info->exactSpecializationPrimary;
+  }
+  bool specialized = false;
+  for (const SemanticModel *model = this; model != nullptr && !specialized;
+       model = model->base) {
+    specialized = std::any_of(
+        model->exactClassSpecializations.begin(),
+        model->exactClassSpecializations.end(),
+        [&](const ExactClassSpecializationRecord &candidate) {
+          return candidate.primary == primary;
+        });
+  }
+  if (!specialized) {
+    return type;
+  }
 
   const auto canonicalize = [&](const auto &self,
                                 SemanticType value) -> SemanticType {

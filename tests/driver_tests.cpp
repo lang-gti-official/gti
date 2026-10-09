@@ -5,6 +5,7 @@
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
+#include "gti/lowered_program.h"
 #include "gti/support.h"
 
 #include <algorithm>
@@ -147,8 +148,7 @@ public:
     return "throwing-test";
   }
 
-  [[nodiscard]] lang::BackendArtifact
-  generate(const lang::LoweredProgram &) override {
+  [[nodiscard]] lang::BackendArtifact generate(lang::LoweredProgram) override {
     invoked = true;
     if (standardException) {
       throw std::runtime_error("deliberate backend failure");
@@ -170,8 +170,7 @@ public:
     return "unsupported-test";
   }
 
-  [[nodiscard]] lang::BackendArtifact
-  generate(const lang::LoweredProgram &) override {
+  [[nodiscard]] lang::BackendArtifact generate(lang::LoweredProgram) override {
     invoked = true;
     throw lang::BackendUnsupportedError("missing bounded test capability");
   }

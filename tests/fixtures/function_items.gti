@@ -11,6 +11,33 @@ void run() {}
 int32_t answer() { return 42; }
 }
 
+interface Operation { int32_t run(int32_t value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int32_t run(int32_t value) override { return value + 1; }
+};
+
+namespace operations {
+int32_t inspect(Operation& selected, int32_t value) {
+  return selected.run(value);
+}
+int32_t update(mut Operation& selected, int32_t value) {
+  return selected.run(value);
+}
+}
+
+// The function item's exact base-reference parameter receives a derived
+// object, as an ordinary direct call to the same function would.
+int32_t apply_to_increment<Function>(Function function) {
+  Increment concrete{};
+  return function(concrete, 40);
+}
+int32_t apply_to_mutable_increment<Function>(Function function) {
+  mut Increment concrete{};
+  return function(concrete, 41);
+}
+
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
   auto positive_count = std::count_if(values, tasks::positive);
@@ -39,6 +66,10 @@ int main() {
   auto answer = result.join();
   if (!answer.has_value() || answer.value() != 42) {
     return 5;
+  }
+  if (apply_to_increment(operations::inspect) != 41 ||
+      apply_to_mutable_increment(operations::update) != 42) {
+    return 6;
   }
   return 0;
 }

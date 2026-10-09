@@ -203,6 +203,13 @@ against the compiler installation, not relative to the application or through
 the native C++ header search path. Library files remain ordinary independently
 parsed GTI source units and do not re-export their own dependencies.
 
+`stdlib/modules/` holds one module interface per public unit, so
+`import std.array;` is the import spelling of `#include <std/array>`. Each
+interface is `export module name;` followed by `export #include <std/name>`,
+and `stdlib_modules_test.py` keeps the two directories in exact
+correspondence. Add a module interface whenever a public unit is added. See
+[standard-library modules](../docs/language/standard-library.md#standard-library-modules).
+
 Comparison algorithms and function objects use source-defined
 `std::equality_comparable` and `std::totally_ordered` concepts from the prelude.
 The same prelude exposes compiler-backed `std::transferable`,
@@ -349,6 +356,10 @@ movement, and other overlapping owner operations are rejected while that range
 is active. Owned vector temporaries are supported and destroyed once after
 range cleanup. Precise public invalidation effects, iterator-position mutation,
 allocator customization, and a complete C++ `vector` API remain future work.
+The iterator types are named by the public member aliases `const_iterator`
+(`begin()`), `iterator` (`begin_mut()`), and `sentinel` (`end()`), as on the
+other containers and views; application code should not spell their
+`std::detail` names.
 `swap` exchanges storage and capacity without allocation or element movement.
 Private receiver methods replace their own storage and return the previous
 owner; no move through a borrowed reference is needed. Both owners must be

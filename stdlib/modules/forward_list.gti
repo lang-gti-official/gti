@@ -1,0 +1,3 @@
+// Module std.forward_list: the public surface of <std/forward_list>.
+export module forward_list;
+export #include <std/forward_list>

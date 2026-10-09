@@ -1,0 +1,318 @@
+// Public member aliases name every iterator and sentinel type a container or
+// view returns, so application code never spells std::detail. GTI has no
+// implicit class conversions: binding each begin()/begin_mut()/end() result to
+// a declaration of the alias type proves the alias names that exact type.
+// Mutable iterators are range-for carriers only, so they are proved through
+// range classes whose begin_mut() returns the alias.
+#include <std/array>
+#include <std/deque>
+#include <std/list>
+#include <std/map>
+#include <std/memory>
+#include <std/resource>
+#include <std/resource_vector>
+#include <std/set>
+#include <std/span>
+#include <std/string>
+#include <std/unordered_map>
+#include <std/unordered_set>
+#include <std/vector>
+#include "../../examples/allocator-support/arena.gti"
+
+using Ints = std::vector<int32_t>;
+using Triple = std::array<int32_t, 3>;
+using Queue = std::deque<int32_t>;
+using Chain = std::list<int32_t>;
+using Ordered = std::map<int32_t, int32_t>;
+using Hashed = std::unordered_map<int32_t, int32_t>;
+using Keys = std::set<int32_t>;
+using HashedKeys = std::unordered_set<int32_t>;
+using View = std::span<int32_t>;
+using MutableView = std::mutable_span<int32_t>;
+using Text = std::string;
+using Pooled = std::resource_vector<int32_t, engine::Arena>;
+
+int32_t sum_ints(Ints& values) {
+  mut Ints::const_iterator position = values.begin();
+  Ints::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_triple(Triple& values) {
+  mut Triple::const_iterator position = values.begin();
+  Triple::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_queue(Queue& values) {
+  mut Queue::const_iterator position = values.begin();
+  Queue::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_chain(Chain& values) {
+  mut Chain::const_iterator position = values.begin();
+  Chain::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_ordered(Ordered& values) {
+  mut Ordered::const_iterator position = values.begin();
+  Ordered::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += (*position).second;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_hashed(Hashed& values) {
+  mut Hashed::const_iterator position = values.begin();
+  Hashed::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += (*position).second;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_keys(Keys& values) {
+  mut Keys::const_iterator position = values.begin();
+  Keys::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_hashed_keys(HashedKeys& values) {
+  mut HashedKeys::const_iterator position = values.begin();
+  HashedKeys::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_view(View& values) {
+  mut View::const_iterator position = values.begin();
+  View::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t sum_mutable_view(MutableView& values) {
+  // A mutable view's read-only iterator reborrows the view, so the sentinel
+  // is taken first.
+  MutableView::sentinel last = values.end();
+  mut MutableView::const_iterator position = values.begin();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+int32_t count_text(Text& text) {
+  mut Text::const_iterator position = text.begin();
+  Text::sentinel last = text.end();
+  mut int32_t count = 0;
+  while (position != last) {
+    if (*position == 'a') {
+      count++;
+    }
+    ++position;
+  }
+  return count;
+}
+
+int32_t sum_pooled(Pooled& values) {
+  mut Pooled::const_iterator position = values.begin();
+  Pooled::sentinel last = values.end();
+  mut int32_t total = 0;
+  while (position != last) {
+    total += *position;
+    ++position;
+  }
+  return total;
+}
+
+class scaled_ints {
+  mut Ints values = Ints({1, 2, 3});
+
+public:
+  scaled_ints() = default;
+  Ints::const_iterator begin() { return this.values.begin(); }
+  Ints::iterator begin_mut() mut { return this.values.begin_mut(); }
+  Ints::sentinel end() { return this.values.end(); }
+  int32_t total() { return sum_ints(this.values); }
+};
+
+class scaled_triple {
+  mut Triple values = Triple({1, 2, 3});
+
+public:
+  scaled_triple() = default;
+  Triple::const_iterator begin() { return this.values.begin(); }
+  Triple::iterator begin_mut() mut { return this.values.begin_mut(); }
+  Triple::sentinel end() { return this.values.end(); }
+  int32_t total() { return sum_triple(this.values); }
+};
+
+class scaled_queue {
+  mut Queue values{};
+
+public:
+  scaled_queue() {
+    this.values.push_back(1);
+    this.values.push_back(2);
+    this.values.push_back(3);
+  }
+  Queue::const_iterator begin() { return this.values.begin(); }
+  Queue::iterator begin_mut() mut { return this.values.begin_mut(); }
+  Queue::sentinel end() { return this.values.end(); }
+  int32_t total() { return sum_queue(this.values); }
+};
+
+class scaled_chain {
+  mut Chain values{};
+
+public:
+  scaled_chain() {
+    this.values.push_back(1);
+    this.values.push_back(2);
+    this.values.push_back(3);
+  }
+  Chain::const_iterator begin() { return this.values.begin(); }
+  Chain::iterator begin_mut() mut { return this.values.begin_mut(); }
+  Chain::sentinel end() { return this.values.end(); }
+  int32_t total() { return sum_chain(this.values); }
+};
+
+int32_t mutable_iterators() {
+  mut scaled_ints ints{};
+  mut scaled_triple triple{};
+  mut scaled_queue queue{};
+  mut scaled_chain chain{};
+  for (mut int32_t& value : ints) { value *= 10; }
+  for (mut int32_t& value : triple) { value *= 10; }
+  for (mut int32_t& value : queue) { value *= 10; }
+  for (mut int32_t& value : chain) { value *= 10; }
+  return ints.total() + triple.total() + queue.total() + chain.total();
+}
+
+class scaled_view {
+  mut MutableView view;
+
+public:
+  scaled_view(MutableView view) : view(std::move(view)) {}
+  MutableView::const_iterator begin() { return this.view.begin(); }
+  MutableView::iterator begin_mut() mut { return this.view.begin_mut(); }
+  MutableView::sentinel end() { return this.view.end(); }
+};
+
+int32_t mutable_view_iterator() {
+  mut Ints values = Ints({1, 2, 3});
+  {
+    MutableView view = values.as_mutable_span();
+    if (sum_mutable_view(view) != 6) {
+      return 1;
+    }
+  }
+  {
+    mut scaled_view range{values.as_mutable_span()};
+    for (mut int32_t& value : range) { value += 1; }
+  }
+  return sum_ints(values) == 9 ? 0 : 2;
+}
+
+int32_t pooled(std::resource_ref<engine::Arena> resource) {
+  mut Pooled values{resource};
+  values.push_back(4);
+  values.push_back(5);
+  return sum_pooled(values);
+}
+
+int main() {
+  Ints ints = Ints({1, 2, 3});
+  if (sum_ints(ints) != 6) { return 1; }
+  Triple triple = Triple({1, 2, 3});
+  if (sum_triple(triple) != 6) { return 2; }
+
+  mut Queue queue{};
+  queue.push_back(1);
+  queue.push_back(2);
+  if (sum_queue(queue) != 3) { return 3; }
+  mut Chain chain{};
+  chain.push_back(3);
+  chain.push_back(4);
+  if (sum_chain(chain) != 7) { return 4; }
+
+  mut Ordered ordered{};
+  [[discard]] ordered.insert(1, 10);
+  [[discard]] ordered.insert(2, 20);
+  if (sum_ordered(ordered) != 30) { return 5; }
+  mut Hashed hashed{};
+  [[discard]] hashed.insert(1, 5);
+  [[discard]] hashed.insert(2, 6);
+  if (sum_hashed(hashed) != 11) { return 6; }
+
+  mut Keys keys{};
+  [[discard]] keys.insert(7);
+  [[discard]] keys.insert(8);
+  if (sum_keys(keys) != 15) { return 7; }
+  mut HashedKeys hashed_keys{};
+  [[discard]] hashed_keys.insert(9);
+  [[discard]] hashed_keys.insert(1);
+  if (sum_hashed_keys(hashed_keys) != 10) { return 8; }
+
+  {
+    View view = ints.as_span();
+    if (sum_view(view) != 6) { return 9; }
+  }
+  Text text = Text("banana");
+  if (count_text(text) != 3) { return 10; }
+
+  if (mutable_iterators() != 240) { return 11; }
+  if (mutable_view_iterator() != 0) { return 12; }
+
+  engine::Arena arena{std::size_t(4096), std::size_t(64)};
+  unsafe {
+    // The arena supplies aligned, writable, disjoint regions until matching
+    // release, and nothing resets it independently while it is bound.
+    auto resource = std::bind_resource(arena);
+    if (pooled(resource) != 9) { return 13; }
+  }
+  return 0;
+}

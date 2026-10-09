@@ -2,7 +2,11 @@
 
 ## RT-AUDIT-01: runtime optimization screen (2026-10-08)
 
-Status: audit evidence only. No compiler, library, or runtime behavior changed.
+Status: historical audit evidence for the frozen compiler identified below.
+This section changes no compiler, library, or runtime behavior. Subsequent
+implementation results remain separately recorded below; current priorities
+and corrected prerequisites are in the
+[PR #166 disposition](optimization.md#pr-166-audit-disposition-2026-10-09).
 Findings and recommendations are in the
 [runtime optimization audit](optimization.md#runtime-optimization-audit-2026-10-08).
 
@@ -117,6 +121,311 @@ within about 10% of `base` are not distinguishable from interference.
     discharge family numeric_conversion_out_of_range/numeric_cast`.
   - In `matrix`, every index-arithmetic overflow check in `multiply` is
     discharged, but `vector::operator[]` keeps its public bounds check.
+## Closed-world exact parameter receivers (2026-10-09)
+
+Status: implemented as a proposal; targeted validation only. The full suite is
+deferred to reconciliation. The change adds
+[closed-world call-site facts](../architecture/optimization.md#closed-world-call-site-facts)
+and their first client,
+[exact parameter receivers](../architecture/optimization.md#exact-parameter-receivers).
+
+Both compilers are Release builds from the same LLVM 22.1.8 configuration. The
+baseline is merged main `e659c93f`; the candidate is that tree plus this
+change. The machine is an Apple M2 Max, macOS 27.0 (`26A428`), Apple Clang
+21.0.0 (`clang-2100.3.34.2`), GTI `-O3`, default native flags. Each probe was
+built by both compilers and its complete stdout was hashed. Outputs match
+pairwise. The run had 3 warmups, then 15 seeded interleaved rounds, with no
+concurrent build or test work:
+
+| Probe (`benchmarks/probes/runtime-facilities`) | Baseline median ms | Candidate median ms | Ratio | Binary bytes |
+| --- | ---: | ---: | ---: | --- |
+| `interface` (helper taking `Update&`) | 374.97 | 257.02 | 0.685 | 145488 -> 145600 |
+| `interface-local` (local-receiver slice) | 257.29 | 257.41 | 1.000 | unchanged |
+| `interface-proxy` (direct-call ceiling) | 237.14 | 237.70 | 1.002 | unchanged |
+| `callback` | 518.48 | 517.18 | 0.997 | unchanged |
+| `soa` | 558.27 | 560.57 | 1.004 | unchanged |
+
+`interface` now matches the existing local-receiver result. Its only C++
+difference is the one refined call:
+`static_cast<const Linear &>(*p).::Linear::run__gti_mir_failure(...)`. The
+`interface-local`, `interface-proxy`, `callback`, `callback-proxy`, `soa`,
+`cross-unit`, `vector-checked-loop` and `game-update-stage` sources emit
+byte-identical C++. `owner` and `checked-scalar-chain` differ only in
+`__gti_inst_`/`__gti_type_` digests. Internal-linkage identities hash their
+source path, and the two checkouts differ, so executable hashes differ even
+for these controls.
+
+GTI-only compile time (`-O3 --emit-cpp`, 7 interleaved samples after one
+warmup) shows no measurable change. Ratios are 0.980-0.996 on `interface.gti`,
+`examples/128-inline-object-pool.gti`, `examples/121-programmable-allocators.gti`
+and the `game-update-stage` workload. A first `examples/86-owning-callbacks.gti`
+sample read 1.044; a dedicated rerun read 0.996. That example has 7 virtual-call
+candidates, none refined: its receivers are allocated `std::function` models
+reached through owning pointers. They are the next client for this fact
+family, not a regression.
+
+Limits: one machine and one native compiler. The probe is a source proxy, not
+a production application. The canonical `interface-exact-dispatch` workload
+measures the local form and is unchanged.
+
+## RT-1: source-storage failure-path cost
+
+Status: complete bounded implementation; frozen before/after measurements,
+focused safety matrices and full completion validation pass.
+This is a partial cause of #169, not a claim that the historical storage
+regression has been fully recovered.
+
+The reconciled optimized compiler is `7577bf93` (identical production sources
+to merged main `b6614cb4`), SHA-256
+`224cba3989a6b1a87b39d83334b9f41e3227a6e2f515c5c6637851532ec658b4`.
+Its runtime archive is
+`4e98f7fc9bac4711ec39abb888016c6b840987339db422756f1ed45710e01e52`.
+The M4 Pro Mac mini uses Apple Clang 21.0.0 (`clang-2100.3.34.2`), arm64
+Darwin 27.0.0. All pairs use native O2/C++23, strict floating-point options,
+the same source/runtime and a warm filesystem. Only the incoming cleanup
+failure helper receives cold/noinline hints in the disposable generated-C++
+proxy; no failure check, exception boundary or allocation policy changes.
+
+After the first measurement, an independent repeat verifies the binary hashes,
+performs five warmups and 41 seeded randomized/interleaved pairs per workload,
+and checks complete output after every execution:
+
+| Workload | Baseline median ms | One-helper proxy ms |
+| --- | ---: | ---: |
+| Source storage, process provider | 74.018 | 63.661 |
+| Source storage, explicit resource | 77.515 | 68.124 |
+| Fixed-array loop proof | 104.889 | 104.916 |
+| Checked vector loop | 81.334 | 81.342 |
+| Scalar floating-point update | 79.571 | 79.652 |
+| Game update | 57.574 | 57.586 |
+| Checked scalar chain | 318.034 | 318.091 |
+| Managed-thread parallelism | 170.378 | 171.323 |
+
+Median paired candidate/baseline ratios are 0.8565 (95% bootstrap interval
+0.8439–0.8657) and 0.8652 (0.8566–0.8769) for storage. The thread control has
+a small, detectable approximately 0.6% cost, below the existing 5% material
+regression gate; do not describe it as exactly unchanged. Code-size cost is
+2.0–4.5% across these clients. Single native compile RSS observations increase
+2–10%; they are screening data, not repeated compile/memory acceptance.
+
+Native inline remarks reduce the resource access wrapper cost from 200 to 145,
+while inner sparse reads remain above the native inline threshold (305 to 285).
+This isolates a real representation cost but not all of #169's old 3.68x
+process regression. Explicit resource allocation/release counts remain
+100000/100000, destruction count 4800000, destructor sum 542222784, and process
+and resource sums 364681856/729363712. The intentional separate same-provider
+metadata allocation is retained. No old private storage capability is restored.
+
+The raw proxy record has SHA-256
+`15975c8c580eec58f204a8fb6658030a2bc904a6fd942c0c79ae456a277bb881`;
+the independent repeat is
+`a68926890dc6178abc3ab274abc28a45c8f90917a49c8ea5787b9db017007b3c`.
+Local temporary evidence is in `/private/tmp/gti-reconciled-perf.xkcFxt/`;
+the Mac mini's `/tmp/gti-reconciled-perf.xWl0NZ/evidence/` additionally retains
+MIR reports, native commands, remarks, disassembly, binaries and RSS records.
+These paths are evidence locations, not durable repository artifacts.
+
+For production before/after comparisons with **two source-storage revisions**,
+use `scripts/storage_migration_compare.py` with
+`--baseline-resource-allocations 100000`. Its default remains 50000 for the
+historical pre-migration baseline. Both policies are explicit oracles; an
+unexpected count still fails, rather than silently normalizing the observation.
+Freeze optimized compiler/runtime/library snapshots, record exact revisions,
+and compare full builds as well as emission and execution. PR #166's broader
+recommendations and their prerequisites are audited in
+[optimization.md](optimization.md#pr-166-audit-disposition-2026-10-09).
+
+### Production comparison
+
+The clean optimized candidate is `f2fea6c7`, compiler SHA-256
+`885c23fa5de49d0e6bc72f3a504333c5576d37f138555e1e7a6d3c0c2064a917`.
+Its runtime archive is
+`bc80d3c130a099bf1d7376c7035f453a5c37b6f7402fcddbc91b371ca83178af`;
+all sixteen object members are byte-identical to the baseline archive. Only
+archive metadata differs. Production sources differ from the baseline only
+in the seven helper-hint/comment lines. Re-emitting with identical source
+and library paths independently proves that these lines are also the entire
+generated-C++ delta, without normalizing away executable differences.
+
+The frozen comparison uses seven randomized/interleaved compile batches after
+one warmup and 31 execution pairs after two warmups on the same M4 Pro host:
+
+| Measurement | Baseline median ms | Production candidate ms |
+| --- | ---: | ---: |
+| GTI emission | 438.711 | 436.219 |
+| Complete GTI/native build | 1023.815 | 1023.422 |
+| Storage, process provider | 70.464 | 59.177 |
+| Storage, explicit resource | 76.490 | 66.230 |
+
+Median paired runtime ratios are 0.8388 (95% paired bootstrap interval
+0.8344–0.8405) and 0.8653 (0.8605–0.8692); complete-build ratio is 0.9994
+(0.9984–1.0054). Bootstrap uses 10,000 resamples with seed 169. Every execution
+retains the complete scalar, destruction and allocation oracle above. The
+baseline's explicit source-metadata policy is selected as 100000 allocations;
+unsupported allocation-policy values fail before measurement starts.
+
+Independent production controls use five warmups and 21 execution pairs, plus
+five interleaved native compile/RSS pairs after a warmup. Runtime memory is
+measured in five separate pairs so the timing wrapper is not part of runtime
+samples. Both compilers emit ordinary unmodified C++ for every workload:
+
+| Control | Baseline ms | Candidate ms | Native compile time change | Native compile peak RSS change | Binary size change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Fixed-array loop | 104.712 | 104.747 | +1.5% | +3.0% | +3.7% |
+| Vector loop | 80.847 | 80.442 | +1.3% | +2.4% | +2.6% |
+| Scalar FP | 79.810 | 79.760 | +2.7% | +2.6% | +3.2% |
+| Game update | 57.779 | 57.810 | +2.6% | +2.2% | +2.9% |
+| Scalar chain | 318.682 | 318.357 | +2.2% | +2.8% | +2.9% |
+| Managed threads | 170.711 | 171.565 | -1.4% | +0.7% | +2.0% |
+
+The independent storage repeat measures 69.988→59.016 ms and
+76.190→66.541 ms. Its native compile time is 585.789→581.043 ms, peak RSS
+127107072→132595712 bytes (+4.3%), and binary size 295752→308952 bytes
+(+4.5%). Runtime RSS across all controls changes by at most 32768 bytes
+(under 2%). These are small real representation costs, not zero-cost claims.
+Runtime controls remain below the existing 5% material-regression screen;
+the separately reported compile, size and memory costs also stay under 5% on
+this host. The approximately 0.5% thread runtime cost remains visible. No timing
+threshold is added to CI, and macOS/Apple Clang evidence does not establish performance
+on Linux, Windows or other native toolchains.
+
+The storage report SHA-256 is
+`b3f33a509c89d8625e99677b2fb0dfee1b2792722867914744738d5cf6380a16`;
+the independent production controls report is
+`164a2d6850b467ff275b3d2fefce75b854afa568d87a7e425e8d1609c0175a35`.
+Local evidence is `/private/tmp/gti-cold-production-evidence.wzddQK/`;
+the Mac mini retains frozen resources, MIR optimization reports, commands,
+unmodified emitted C++, native remarks/disassembly, binaries, RSS and raw
+samples under `/tmp/gti-cold-production.aKyJuB/`. These are temporary evidence
+locations; the hashes and summarized methodology remain in this document.
+
+The optimized all-target build passes, followed by all 570 unfiltered CTest
+gates with no failures or skips (1132.96 seconds). This includes both complete
+130-example MIR/native oracles, all 427 language-coverage programs, independent
+optimization replay, malformed lowered-program rejection, cleanup/panic and
+managed-thread matrices, ASan/UBSan clients and native thread/atomic/mutex TSan.
+All thirteen staged-library consumers pass, as does the installed-only source
+provider's eight-mode matrix and Off/Warn parity. Formatting checks all 502
+first-party C/C++ files. Only evidence/status documentation changes after the
+tested `f2fea6c7` production source checkpoint.
+
+Full-suite JUnit SHA-256 is
+`3069953a715185fee4d27d0b328eaa9bf204b718285a324582ccbdf3a1ca1c51`;
+the raw full-suite log is
+`d474de23a57e5127eddd4f5e36666964bc94e7d12758dcecb3114626206f001b`.
+Native execution evidence is macOS arm64 only; target/ABI tests and guarded
+fallback emission do not substitute for Linux or Windows native execution.
+
+The remaining #169 gap is deliberately separate: ordinary sparse accessors
+still exceed the native inline threshold, and source resource storage still
+performs its required metadata allocation. Profile those remaining clients
+against a fresh reconciled baseline before selecting another facility. This
+change neither restores private container semantics nor removes lifetime,
+allocation, bounds, overflow or failure checks.
+
+## C-TIME-04: Optimizer proof/state bookkeeping (2026-10-09)
+
+Status: bounded compiler improvement, not a compile-time plateau. The outcome
+is a faster optimized edit/build loop for ordinary library consumers, with no
+new language rule or runtime representation. Integration uses PR #181.
+
+CPU sampling of `examples/93-http-json-client.gti` identifies safety-dataflow
+proof construction and SCCP state copying in both optimization and its
+independent coherence replay. SCCP now detects changes per fact instead of
+copying the whole destination state; internal canonical evidence sets use
+ordered insertion and set union instead of append/sort/unique on every join.
+Complete facts and provenance, solver budgets, failure edges and independent
+verification are unchanged. External evidence acquires no sorted-input
+assumption. See the implemented
+[bookkeeping contract](../architecture/optimization.md#canonical-proof-evidence-bookkeeping).
+
+### Paired measurements
+
+Both compiler executables were freshly built Release/Ninja with Apple Clang
+21.0.0 and LLVM 22.1.8 on an Apple M2 Max (12 cores), macOS 27 arm64. The
+baseline is clean `e659c93f`; the measured candidate is clean `c5b24d85`.
+Their SHA-256 identities are respectively
+`e13da26f2b9aec6bb6f60fca3eab4efd143165e68bb7a35b70d374041b6eaa9d` and
+`791937c4e117d80d15bb18db5b06944819e53b19015385fc71c34618339e26fd`.
+Subsequent edits only record evidence and status; production sources are the
+measured checkpoint's sources.
+
+One warmup and five seeded (`20261009`) randomized/interleaved sequential
+pairs per workload use identical source/stdlib/runtime paths, a warm
+filesystem, no project cache, C++23 and `/usr/bin/clang++`. Emission uses
+`--emit-cpp`; full builds use `--keep-cpp`; both disable progress and color.
+Each pair overwrites the same output path to avoid path-dependent differences.
+The controls are the existing `benchmarks/workloads/{game-update-stage,
+vector-checked-loop,fixed-array-loop-proof}/main.gti` programs.
+
+| Workload | Mode | Baseline median s | Candidate median s | Less wall time |
+| --- | --- | ---: | ---: | ---: |
+| HTTP/JSON | O2 emission | 6.333 | 5.426 | 14.3% |
+| HTTP/JSON | O2 complete native build | 8.776 | 7.848 | 10.6% |
+| HTTP/JSON | O0 emission | 1.553 | 1.550 | effectively unchanged |
+| Game update | O2 emission | 1.994 | 1.590 | 20.3% |
+| Vector loop | O2 emission | 0.323 | 0.286 | 11.4% |
+| Fixed-array loop | O2 emission | 0.295 | 0.274 | 7.0% |
+
+These are shared-desktop measurements, not isolated-machine certification.
+A competing multi-job build invalidated an earlier exploratory batch, which
+is excluded above. The final batch had one other agent's long-running
+single-threaded compiler test active, as well as ordinary desktop processes;
+no process was stopped. Child CPU medians agree closely: HTTP O2 emission
+6.322→5.420 s and full builds 8.802→7.869 s. All five measured pairs improve
+for each optimized row. Timing thresholds are not CI gates, and these results
+do not establish Linux/Windows performance, no-op cache latency, host compiler
+build speed or an equivalent gain for every user program.
+
+All 72 measured/warmup emissions are byte-identical within their before/after
+workload. Diagnostics are identical. Every full-build executable runs the
+offline HTTP recipe successfully with identical complete output and file size;
+no network request or credentials are used. The independently checked 130
+runnable examples also retain byte-identical generated C++, optimized MIR,
+optimizer proof reports and diagnostics at O2. Thus this slice does not trade
+runtime checks, generated-code size or runtime behavior for compiler speed.
+
+Three additional alternating HTTP O2 emission pairs under `/usr/bin/time -l`
+measure median peak compiler RSS at 649.9→630.5 MiB. Ranges are 634.2–656.1
+and 554.6–637.9 MiB respectively; this is a noisy memory screen, not a precise
+allocation-count or guaranteed memory-reduction claim. Full-build executable
+size is unchanged at 674792 bytes.
+
+### Validation and reproduction
+
+The evidence helper has exhaustive 64×64 set-union tests, including sparse
+64-bit identities, duplicates, zero insertion, self-aliasing and allocation
+preservation on subset joins. Existing SCCP equal-constant/different-evidence,
+forged-proof rejection, safety failure-edge, loop, mutable-call and independent
+replay regressions remain in force. Thirteen selected CTest gates cover the
+compiler aggregate, optimizer foundation/safety/analyses/conformance/coverage,
+devirtualization and native execution, safety native evidence, mutable-call
+runtime, scalar optimizer runtime, backend preflight and compile-time harness.
+The pinned formatter checks all 503 first-party C/C++ files. This is focused
+compiler-wide evidence, not a full unfiltered repository-suite rerun.
+
+Local raw samples, exact commands, input/tool hashes and full-build execution
+results are retained in `/private/tmp/gti-compile-final/report.json`; the
+adjacent `rss.json` records separate peak-memory observations. The local
+runner is `/private/tmp/gti-compile-final.py`. Corpus output hashes and retained
+CPP/MIR/proof artifacts are in `/private/tmp/gti-optimizer-output-comparison/`.
+The measured candidate is frozen as
+`/private/tmp/gti-compile-final/gti-candidate-c5b24d85`; later documentation-only
+build identity refreshes do not replace that evidence. Raw timing, RSS and
+corpus report SHA-256 values are respectively
+`6995ddfbd7590fbfd861b490558753b7a7cb22eb0214b084c116b2aa1a3a5767`,
+`48c3e667329907e7392920f01a5774062ec4f5f3170f19e48021b4a153391f3b` and
+`9899bcc205cf0ae2ea42e3fc24f3ccfa37db114faa22ad87b717bf1114f69355`.
+These are temporary evidence locations, not durable repository fixtures.
+The workloads, source diff and owning tests are checked in; the existing
+`scripts/compile_time_compare.py --baseline-gti ... --gti ...` also reproduces
+the registered benchmark controls. Keep both toolchains optimized, select
+identical stdlib/runtime paths and report emission separately from full builds.
+
+Remaining analysis-state copies, proof construction and repeated dataflow work
+are candidates for future profiling and general improvements. This result is
+positive evidence that the compiler has **not** reached an optimization limit;
+it is not permission to omit independent proof replay or weaken GTI guarantees.
 
 ## C-TIME-03: HTTP/JSON representation-admission latency (2026-10-07)
 

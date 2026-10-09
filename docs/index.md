@@ -9,6 +9,11 @@ general language facilities. The reference C++ backend implements GTI semantics;
 it does not define them. [ADR 012](decisions/012-outcome-first-systems-readiness.md)
 records this direction and the goal-oriented planning policy.
 
+Runtime performance is a first-class design and delivery requirement.
+[ADR 012's performance revision](decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
+removes benchmark-first permission gates for optimization architecture work;
+measurement still validates results and performance acceptance.
+
 Read historical decisions and bounded implementation slices in their original
 scope. Their assumptions may need explicit revision as the language grows;
 neither an old restriction nor a current backend limitation automatically defines
@@ -36,7 +41,10 @@ while canonical language documents continue to describe actual support.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)
-  — ordinary GTI policy, compiler-private capabilities, C ABI, and host code.
+  — ordinary GTI policy, compiler-private capabilities, C ABI, and host code;
+  the [operation ownership ledger](architecture/standard-library-and-runtime.md#operation-ownership-ledger)
+  separates implemented source policy, migration candidates, compiler facts,
+  native services and algorithms delegated by choice.
 - [Build and driver](architecture/build-and-driver.md) — direct/project
   orchestration, workspaces/local package graphs, verified whole-program
   caching, and the
