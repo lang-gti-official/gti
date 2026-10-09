@@ -1,0 +1,17 @@
+#include <std/string>
+#include <std/vector>
+int main() {
+  mut uint64_t checksum = 0;
+  for (mut int32_t round = 0; round < 300; round++) {
+    mut std::vector<int32_t> values{};
+    for (mut int32_t i = 0; i < 200000; i++) {
+      values.push_back(i ^ round);
+    }
+    for (int32_t& value : values) {
+      checksum += uint64_t(value);
+    }
+  }
+  std::print("checksum ");
+  std::println(std::to_string(checksum));
+  return 0;
+}
