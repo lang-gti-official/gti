@@ -100,6 +100,17 @@ acceptance. Quiet interleaved timing, uninstrumented code-size attribution and
 peak-memory comparison remain required before claiming string performance
 parity. Full-state and allocation-observer execution is not timing evidence.
 
+The uninstrumented string comparison isolates a backend representation cost:
+the source-prefix executable is 191,008 bytes versus 146,096 for the preserved
+private path. Interning identical immutable failure source/outcome arrays
+reduces the candidate to 175,856 bytes, with native text unchanged at 51,092
+bytes and canonical descriptor bytes identical. The fixture independently
+checks distinct and shared source/outcome arrays, exact site rows and artifact
+identity. All six descriptor/native-compile, runtime-failure, allocation-abort,
+panic and source-string gates pass (138.54 seconds). This is a measured partial
+reduction, not code-size or overall performance acceptance: the remaining
+private-path gap, quiet repeated timings and peak-memory comparison are open.
+
 The resource-growth corpus oracle now requires portable exact abort status,
 not merely nonzero termination. A C17 helper makes its cleanup witnesses
 unbuffered before execution. The harness rejects status 70 and unrelated

@@ -5,10 +5,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <ostream>
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace lang {
 namespace {
@@ -210,6 +213,15 @@ public:
 namespace gti_internal::backend {
 
 )";
+    // Intern immutable representation bytes only. Every canonical site and
+    // outcome order remains intact; neither identity nor failure eligibility
+    // is inferred from this sharing. First-site IDs make naming deterministic.
+    using OutcomeKey =
+        std::vector<std::pair<DefinedFailureCode, DefinedFailureDetail>>;
+    std::map<std::string_view, FailureSiteId> sourceArrays;
+    std::map<OutcomeKey, FailureSiteId> outcomeArrays;
+    std::vector<std::pair<FailureSiteId, FailureSiteId>> siteArrays;
+    siteArrays.reserve(metadata.sites().size());
     for (const FailureSiteDescriptor &site : metadata.sites()) {
       requireFailureUint64(site.logicalSource.size());
       requireFailureUint64(site.start);
@@ -218,27 +230,42 @@ namespace gti_internal::backend {
         throw std::logic_error(
             "verified failure outcome count exceeds the runtime ABI");
       }
-      emitFailureSourceArray(site);
-      output << "[[maybe_unused]] static constexpr "
-                "::gti_failure_outcome_descriptor_v1 "
-             << "__gti_failure_outcomes_" << site.id << "_v1[] = {\n";
+      const auto [source, newSource] =
+          sourceArrays.emplace(site.logicalSource, site.id);
+      if (newSource)
+        emitFailureSourceArray(site);
+      OutcomeKey key;
+      key.reserve(site.outcomes.size());
       for (const DefinedFailureOutcome outcome : site.outcomes) {
-        output << "  {" << failureCodeAbiConstant(outcome.code) << ", "
-               << failureDetailAbiConstant(outcome.detail)
-               << ", UINT32_C(0)},\n";
+        key.emplace_back(outcome.code, outcome.detail);
       }
-      output << "};\n\n";
+      const auto [outcomes, newOutcomes] =
+          outcomeArrays.emplace(std::move(key), site.id);
+      siteArrays.emplace_back(source->second, outcomes->second);
+      if (newOutcomes) {
+        output << "[[maybe_unused]] static constexpr "
+                  "::gti_failure_outcome_descriptor_v1 "
+               << "__gti_failure_outcomes_" << site.id << "_v1[] = {\n";
+        for (const DefinedFailureOutcome outcome : site.outcomes) {
+          output << "  {" << failureCodeAbiConstant(outcome.code) << ", "
+                 << failureDetailAbiConstant(outcome.detail)
+                 << ", UINT32_C(0)},\n";
+        }
+        output << "};\n\n";
+      }
     }
 
     if (!metadata.sites().empty()) {
       output << "[[maybe_unused]] static constexpr "
                 "::gti_failure_site_descriptor_v1 "
                 "__gti_failure_sites_v1[] = {\n";
-      for (const FailureSiteDescriptor &site : metadata.sites()) {
-        output << "  {{__gti_failure_source_" << site.id << "_v1, UINT64_C("
+      for (std::size_t index = 0; index < metadata.sites().size(); ++index) {
+        const auto &site = metadata.sites()[index];
+        const auto [source, outcomes] = siteArrays[index];
+        output << "  {{__gti_failure_source_" << source << "_v1, UINT64_C("
                << site.logicalSource.size() << ")}, UINT64_C(" << site.line
                << "), UINT64_C(" << site.start << "), UINT64_C(" << site.end
-               << "), __gti_failure_outcomes_" << site.id << "_v1, UINT32_C("
+               << "), __gti_failure_outcomes_" << outcomes << "_v1, UINT32_C("
                << site.outcomes.size() << "), UINT32_C(0)},\n";
       }
       output << "};\n\n";
