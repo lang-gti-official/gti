@@ -22,6 +22,32 @@
 
 namespace lang {
 
+bool isMirExactReceiverPresentation(const MirProgram &program,
+                                    const MirInstruction &instruction,
+                                    const SemanticType &receiverType) {
+  const MirFunctionInstance *target =
+      instruction.kind == MirInstructionKind::Call &&
+              instruction.dispatch == CallDispatch::Static &&
+              instruction.receiver && instruction.functionTarget
+          ? program.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  const MirClassInstance *owner =
+      target != nullptr && target->owner && !target->staticMember
+          ? program.findClassInstance(*target->owner)
+          : nullptr;
+  if (owner == nullptr || instruction.dispatchOwner != owner->type ||
+      receiverType == owner->type) {
+    return false;
+  }
+  return std::any_of(owner->bases.begin(), owner->bases.end(),
+                     [&](const HirBaseInstance &base) {
+                       const MirClassInstance *instance =
+                           program.findClassInstance(base.instance);
+                       return base.type == receiverType && instance != nullptr &&
+                              instance->kind == ClassKind::Interface;
+                     });
+}
+
 bool isMirNativeIndirectCall(const MirProgram &program, const MirBody &body,
                              const MirInstruction &instruction) {
   if (!instruction.nativeCalleeType ||
@@ -400,14 +426,16 @@ bool mirTransformRecordLess(const MirTransformRecord &left,
                   left.requiredAnalyses.dominance,
                   left.requiredAnalyses.scalarPromotion,
                   left.requiredAnalyses.safetyChecks,
-                  left.requiredAnalyses.sparseConstants) <
+                  left.requiredAnalyses.sparseConstants,
+                  left.requiredAnalyses.closedWorld) <
          std::tie(right.requiredAnalyses.valueUses,
                   right.requiredAnalyses.effects,
                   right.requiredAnalyses.reachability,
                   right.requiredAnalyses.dominance,
                   right.requiredAnalyses.scalarPromotion,
                   right.requiredAnalyses.safetyChecks,
-                  right.requiredAnalyses.sparseConstants);
+                  right.requiredAnalyses.sparseConstants,
+                  right.requiredAnalyses.closedWorld);
 }
 
 bool hasMirSafetyDischarge(const MirInstruction &instruction,

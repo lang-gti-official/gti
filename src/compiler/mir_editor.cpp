@@ -480,9 +480,17 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
   MirProgram candidate = program;
   std::vector<MirBodyAddress> touched;
   std::sort(queuedExactReceivers.begin(), queuedExactReceivers.end(), keyLess);
+  // Closed-world facts are re-derived from the pre-edit program rather than
+  // trusted from the pass. Receiver refinement never changes a direct call's
+  // arguments or a function's openness, so one snapshot serves every claim.
+  const std::optional<MirClosedWorldFacts> closedWorld =
+      queuedExactReceivers.empty()
+          ? std::nullopt
+          : std::optional(analyzeMirClosedWorldFacts(program));
   for (const auto &claim : queuedExactReceivers) {
     auto record =
-        rewriteMirExactReceiver(candidate, claim.body, claim.instruction, pass);
+        rewriteMirExactReceiver(candidate, claim.body, claim.instruction, pass,
+                                closedWorld ? &*closedWorld : nullptr);
     if (!record) {
       addError(result, claim.body, 0, claim.instruction,
                "MIR exact receiver refinement lacks an independent proof");
