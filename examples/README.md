@@ -26,6 +26,7 @@ You do not need to read the entire sequence to find an API pattern:
 | I want to… | Start here |
 | --- | --- |
 | Use the standard library through imports instead of includes | [134: standard-library modules](134-standard-library-modules.gti) |
+| Own small polymorphic objects without allocating | [135: inline polymorphic values](135-inline-polymorphic-values.gti) |
 | Import C enums, including high-bit flags and native-width values | [native enum bindings project](native-enum-bindings/README.md) |
 | Import callback slots, function typedefs, text and fixed-array aliases | [native callback slots project](native-callback-slots/README.md) |
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
@@ -185,6 +186,8 @@ is a teaching helper, not a production server.
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
 | `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and JSON lookup through borrowed `expected::expect` |
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
+| `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
+| `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
@@ -504,6 +507,19 @@ slot bytes inline, returns a recoverable error when full, reuses erased slots,
 and relies on ordinary reverse field cleanup. Its immovable nodes own strings;
 the compiler does not recognize the pool or cell names. A slot index is not a
 generation-checked handle: after erasure and reuse it names the replacement.
+
+[`135-inline-polymorphic-values.gti`](135-inline-polymorphic-values.gti) owns
+application sensors through `std::inline_polymorphic<sensor, 32, 8>`. Sensors
+with scalar state live inside their owner, so vector growth relocates them with
+their counters; a sensor that owns a string is boxed. Replacing the boxed sensor
+with a small one frees its allocation. No compiler rule names the sensor types.
+
+[`136-inline-closure-cells.gti`](136-inline-closure-cells.gti) keeps a closure in
+an erased inline cell. Raw addresses of the closure-bearing holder pass through
+`construct_at`, `assume_ref` and `destroy_at` without becoming callable
+boundaries, `std::layout_of` sizes the holder, and the `bitwise_relocatable`
+constraint, derived from the captures, is what makes moving the cell's bytes a
+valid move of the closure.
 
 ## Qualified generic type members
 

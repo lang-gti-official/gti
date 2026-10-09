@@ -12324,7 +12324,9 @@ enum class EmptyFieldUse { Construction, Assignment };
            (instance->compilerCapability ==
                 CompilerCapabilityTypeKind::MutexStorage ||
             instance->compilerCapability ==
-                CompilerCapabilityTypeKind::OptionalStorage) &&
+                CompilerCapabilityTypeKind::OptionalStorage ||
+            instance->compilerCapability ==
+                CompilerCapabilityTypeKind::PolymorphicStorage) &&
            instance->type.arguments.size() == 1 &&
            instance->declaredFields.empty() && !instance->abstract &&
            !instance->polymorphic && !instance->cAbiRecord &&
@@ -15146,8 +15148,13 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       !producer->functionTarget &&
       producer->constructorKind == ConstructorKind::Ordinary &&
       constructorTarget != nullptr && constructedOwner != nullptr &&
-      constructedOwner->compilerCapability ==
-          CompilerCapabilityTypeKind::None &&
+      // The cleanup-free polymorphic slot constructs natively in place.
+      (constructedOwner->compilerCapability ==
+           CompilerCapabilityTypeKind::None ||
+       (constructedOwner->compilerCapability ==
+            CompilerCapabilityTypeKind::PolymorphicStorage &&
+        nativeOptionalStorageConstructorTarget(program, *constructorTarget,
+                                               *constructedOwner))) &&
       constructedOwner->type == value->info.type &&
       value->info.category == ValueCategory::Value &&
       value->info.traits.drop == DropKind::Lexical &&
@@ -21375,6 +21382,8 @@ loanReferentType(const MirProgram &program, const MirBody &body,
     if (producer != nullptr &&
         (producer->intrinsic == IntrinsicKind::MutexGuardRead ||
          producer->intrinsic == IntrinsicKind::MutexGuardReadMut ||
+         producer->intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+         producer->intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
          producer->intrinsic == IntrinsicKind::SharedOwnerBorrow ||
          producer->intrinsic == IntrinsicKind::RawBorrow ||
          producer->intrinsic == IntrinsicKind::RawBorrowMut) &&
@@ -23606,6 +23615,25 @@ namespace {
          intrinsic == IntrinsicKind::OptionalStorageReadMut;
 }
 
+// The polymorphic slot's operations have no defined failure: their only
+// preconditions are private library invariants, so none carries an edge.
+[[nodiscard]] bool polymorphicStorageIntrinsic(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::PolymorphicStorageHasValue ||
+         intrinsic == IntrinsicKind::PolymorphicStorageConstruct ||
+         intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+         intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
+         intrinsic == IntrinsicKind::PolymorphicStorageReset;
+}
+
+[[nodiscard]] bool polymorphicStorageType(const MirProgram &program,
+                                          const SemanticType &type) {
+  const MirClassInstance *instance = uniqueClassInstanceForType(program, type);
+  return instance != nullptr && type.kind == SemanticType::Class &&
+         type.arguments.size() == 1 && type.valueArguments.size() == 2 &&
+         instance->compilerCapability ==
+             CompilerCapabilityTypeKind::PolymorphicStorage;
+}
+
 [[nodiscard]] bool optionalStorageIntrinsic(IntrinsicKind intrinsic) {
   return intrinsic == IntrinsicKind::OptionalStorageHasValue ||
          intrinsic == IntrinsicKind::OptionalStorageConstruct ||
@@ -25236,6 +25264,31 @@ producedCallResultLoan(const MirBody &body, const MirInstruction &producer) {
           mir_detail::rawBorrowResultLoan(body, instruction) == &loan)
         return &instruction;
   return nullptr;
+}
+
+[[nodiscard]] const MirInstruction *
+polymorphicStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
+  if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
+      loan.producedBy == 0) {
+    return nullptr;
+  }
+  const MirInstruction *found = nullptr;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Call ||
+          (instruction.intrinsic != IntrinsicKind::PolymorphicStorageRead &&
+           instruction.intrinsic != IntrinsicKind::PolymorphicStorageReadMut) ||
+          instruction.hirValue != loan.producedBy ||
+          producedCallResultLoan(body, instruction) != &loan) {
+        continue;
+      }
+      if (found != nullptr) {
+        return nullptr;
+      }
+      found = &instruction;
+    }
+  }
+  return found;
 }
 
 [[nodiscard]] const MirInstruction *
@@ -28758,7 +28811,8 @@ storageReadFailureHelperSpelling(IntrinsicKind intrinsic) {
   }
   const MirPlace *place = body.findPlace(definition->operands.front().place);
   return place != nullptr && (place->type.kind == SemanticType::PrefixStorage ||
-                              optionalStorageType(program, place->type));
+                              optionalStorageType(program, place->type) ||
+                              polymorphicStorageType(program, place->type));
 }
 
 [[nodiscard]] bool exactEnumExtraction(const MirProgram &program,
@@ -30927,10 +30981,28 @@ private:
                                ? "const "
                                : "") +
                bodyLocalTypeSpelling(body, element) + " &";
-      if (type.kind == SemanticType::RawPointer)
-        return std::string(type.pointerAccess == AccessMode::ReadOnly ? "const "
-                                                                      : "") +
-               bodyLocalTypeSpelling(body, element) + '*';
+      if (type.kind == SemanticType::RawPointer) {
+        // The same address carrier as every other raw pointer; a nested
+        // pointer names a native pointer slot, qualified at its own layer.
+        const bool readOnly = type.pointerAccess == AccessMode::ReadOnly;
+        if (element.kind != SemanticType::RawPointer)
+          return "::gti_internal::backend::raw_address<" +
+                 std::string(readOnly ? "const " : "") +
+                 bodyLocalTypeSpelling(body, element) + '>';
+        const auto native = [&](const auto &self,
+                                const SemanticType &pointer) -> std::string {
+          const SemanticType &pointee = pointer.arguments.front();
+          const bool constPointee =
+              pointer.pointerAccess == AccessMode::ReadOnly;
+          if (pointee.kind == SemanticType::RawPointer)
+            return self(self, pointee) + (constPointee ? " const *" : " *");
+          return std::string(constPointee ? "const " : "") +
+                 bodyLocalTypeSpelling(body, pointee) + " *";
+        };
+        const std::string slot = native(native, element);
+        return "::gti_internal::backend::raw_address<" +
+               (readOnly ? "std::add_const_t<" + slot + '>' : slot) + '>';
+      }
       if (type.kind == SemanticType::UniqueOwner)
         return "std::unique_ptr<" + bodyLocalTypeSpelling(body, element) + '>';
     }
@@ -31280,11 +31352,17 @@ private:
         function.owner ? program.findClassInstance(*function.owner) : nullptr;
     const bool retainedOwner =
         owner != nullptr && containsLambdaType(owner->type);
-    if (function.typeArguments.empty() ||
-        (!retainedOwner &&
-         !std::any_of(function.typeArguments.begin(),
-                      function.typeArguments.end(), containsLambdaType)) ||
-        !hasRuntimeParameterPack(function))
+    // A closure-bearing instance with an argument that occurs in no
+    // parameter type, such as `layout_of<Holder<Lambda>>()`, cannot be
+    // deduced or spelled program-wide.
+    const bool callSite =
+        bodyRepresentation(function.id).callSiteTemplateArguments;
+    if (!callSite &&
+        (function.typeArguments.empty() ||
+         (!retainedOwner &&
+          !std::any_of(function.typeArguments.begin(),
+                       function.typeArguments.end(), containsLambdaType)) ||
+         !hasRuntimeParameterPack(function)))
       return;
     // The transformed ABI has trailing result/failure parameters, so native
     // deduction cannot recover a preceding pack. MIR already owns the exact
@@ -31295,6 +31373,16 @@ private:
       if (index != 0)
         output << ", ";
       output << bodyLocalTypeSpelling(caller, function.typeArguments[index]);
+    }
+    for (std::size_t index = 0; index < function.valueArguments.size();
+         ++index) {
+      if (index != 0 || !function.typeArguments.empty())
+        output << ", ";
+      const CompileTimeValue &argument = function.valueArguments[index];
+      if (argument.kind != CompileTimeValue::UInt64)
+        throw std::logic_error(
+            "closure-bearing call lost a concrete value argument");
+      output << argument.value;
     }
     output << '>';
   }
@@ -38178,6 +38266,53 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
+        polymorphicStorageIntrinsic(instruction.intrinsic)) {
+      const MirPlace *storage =
+          instruction.operands.empty()
+              ? nullptr
+              : storageStagedPlace(facts.body, instruction.operands.front());
+      if (storage == nullptr || !polymorphicStorageType(program, storage->type)) {
+        throw std::logic_error(
+            "verified MIR polymorphic storage operation lost its slot");
+      }
+      std::string_view helper;
+      switch (instruction.intrinsic) {
+      case IntrinsicKind::PolymorphicStorageHasValue:
+        if (!instruction.result)
+          throw std::logic_error(
+              "verified MIR polymorphic observer lost its result");
+        output << "__gti_mir_v_" << *instruction.result << " = ";
+        helper = "polymorphic_storage_has_value";
+        break;
+      case IntrinsicKind::PolymorphicStorageRead:
+      case IntrinsicKind::PolymorphicStorageReadMut: {
+        const MirLoan *loan = producedCallResultLoan(facts.body, instruction);
+        if (loan == nullptr)
+          throw std::logic_error(
+              "verified MIR polymorphic read lost its call-result loan");
+        output << "__gti_mir_loan_" << loan->id << " = &";
+        helper = instruction.intrinsic == IntrinsicKind::PolymorphicStorageRead
+                     ? "polymorphic_storage_read"
+                     : "polymorphic_storage_read_mut";
+        break;
+      }
+      case IntrinsicKind::PolymorphicStorageConstruct:
+        helper = "polymorphic_storage_construct";
+        break;
+      default:
+        helper = "polymorphic_storage_reset";
+        break;
+      }
+      output << "::gti_internal::backend::" << helper << '(';
+      emitStoragePlaceValue(facts, *storage);
+      if (instruction.intrinsic == IntrinsicKind::PolymorphicStorageConstruct) {
+        output << ", ";
+        emitCallArgument(instruction.operands.back(), false, false);
+      }
+      output << ");\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::OptionalStorageHasValue ||
          instruction.intrinsic == IntrinsicKind::OptionalStorageReset)) {
       const MirPlace *storage =
@@ -43608,7 +43743,12 @@ nativeMutexStorageConstructorTarget(const MirProgram &program,
 nativeOptionalStorageConstructorTarget(const MirProgram &program,
                                        const MirConstructorInstance &target,
                                        const MirClassInstance &owner) {
-  if (owner.compilerCapability != CompilerCapabilityTypeKind::OptionalStorage ||
+  // Both sealed inline slots declare one empty source constructor whose
+  // native representation is the empty slot's default construction.
+  if ((owner.compilerCapability !=
+           CompilerCapabilityTypeKind::OptionalStorage &&
+       owner.compilerCapability !=
+           CompilerCapabilityTypeKind::PolymorphicStorage) ||
       owner.type.arguments.size() != 1 || target.owner != owner.id ||
       target.definitionKind != MirDefinitionKind::Source ||
       !target.typeArguments.empty() || !target.valueArguments.empty() ||
@@ -47351,10 +47491,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 fallibleExpectedRead == nullptr
             ? mutexGuardReadLoanProducer(body, loan)
             : nullptr;
-    const MirInstruction *referenceCall =
+    const MirInstruction *polymorphicRead =
         discharged == nullptr && checkedStorageRead == nullptr &&
                 expectedPayloadRead == nullptr &&
                 fallibleExpectedRead == nullptr && mutexGuardRead == nullptr
+            ? polymorphicStorageReadLoanProducer(body, loan)
+            : nullptr;
+    const MirInstruction *referenceCall =
+        discharged == nullptr && checkedStorageRead == nullptr &&
+                expectedPayloadRead == nullptr &&
+                fallibleExpectedRead == nullptr && mutexGuardRead == nullptr &&
+                polymorphicRead == nullptr
             ? loanProducingReferenceCall(program_, body, loan)
             : nullptr;
     if (rawBorrowLoanProducer(body, loan) != nullptr) {
@@ -47418,6 +47565,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           mutexGuardRead->info.type != loanSource->type.arguments.front() ||
           loan.access !=
               (mutexGuardRead->intrinsic == IntrinsicKind::MutexGuardReadMut
+                   ? AccessMode::Mutable
+                   : AccessMode::ReadOnly)) {
+        return false;
+      }
+    } else if (polymorphicRead != nullptr) {
+      // The pointer local declares from the interface row; the slot itself
+      // recomputes the interface address from the payload's current bytes.
+      if (!polymorphicStorageType(program_, loanSource->type) ||
+          polymorphicRead->operands.size() != 1 ||
+          polymorphicRead->info.type != loanSource->type.arguments.front() ||
+          std::none_of(representations_.types().begin(),
+                       representations_.types().end(),
+                       [&](const CppMirTypeRepresentation &row) {
+                         return row.type == polymorphicRead->info.type &&
+                                !row.spelling.empty();
+                       }) ||
+          loan.access !=
+              (polymorphicRead->intrinsic ==
+                       IntrinsicKind::PolymorphicStorageReadMut
                    ? AccessMode::Mutable
                    : AccessMode::ReadOnly)) {
         return false;
@@ -49237,7 +49403,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                instruction.objectAllocation != 0) ||
               instruction.intrinsic == IntrinsicKind::PrefixStorageAppend ||
               instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
-              optionalStorageIntrinsic(instruction.intrinsic))) ||
+              optionalStorageIntrinsic(instruction.intrinsic) ||
+              polymorphicStorageIntrinsic(instruction.intrinsic))) ||
             consumingFailureConstructor ||
             // A prepared by-value argument can itself construct a carrier
             // from earlier staged reference arguments. Its exact slot proof
@@ -51151,6 +51318,55 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               storageReadFailureHelperSpelling(instruction.intrinsic).empty() ||
               !typeRow(instruction.info.type) ||
               !typeRow(storage->type.arguments.front())) {
+            return false;
+          }
+          if (!consumeStorageStage(instruction.operands.front())) {
+            return false;
+          }
+          continue;
+        }
+        if (polymorphicStorageIntrinsic(instruction.intrinsic)) {
+          const MirPlace *storage =
+              instruction.operands.empty()
+                  ? nullptr
+                  : storageStagedPlace(body, instruction.operands.front());
+          const bool constructing = instruction.intrinsic ==
+                                    IntrinsicKind::PolymorphicStorageConstruct;
+          const bool reads =
+              instruction.intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+              instruction.intrinsic == IntrinsicKind::PolymorphicStorageReadMut;
+          const MirLoan *loan =
+              reads ? producedCallResultLoan(body, instruction) : nullptr;
+          const bool resultReady =
+              instruction.intrinsic == IntrinsicKind::PolymorphicStorageHasValue
+                  ? instruction.result.has_value() &&
+                        instruction.info.type == SemanticType::Bool
+              : reads
+                  ? instruction.result.has_value() && loan != nullptr &&
+                        storage != nullptr &&
+                        !storage->type.arguments.empty() &&
+                        instruction.info.type ==
+                            storage->type.arguments.front() &&
+                        typeRow(instruction.info.type) &&
+                        loan->access == (instruction.intrinsic ==
+                                                 IntrinsicKind::
+                                                     PolymorphicStorageReadMut
+                                             ? AccessMode::Mutable
+                                             : AccessMode::ReadOnly)
+                  : !instruction.result &&
+                        instruction.info.type == SemanticType::Void;
+          if (instruction.functionTarget || instruction.constructorTarget ||
+              instruction.bodyTarget || instruction.lambdaTarget ||
+              instruction.callableInvocation || instruction.receiver ||
+              storage == nullptr ||
+              !polymorphicStorageType(program_, storage->type) ||
+              instruction.operands.size() != (constructing ? 2u : 1u) ||
+              (constructing &&
+               (instruction.operands.back().kind != MirOperandKind::Value ||
+                !typeRow(instruction.operands.back().type))) ||
+              !instruction.localFailureSites.empty() ||
+              !instruction.definedFailure.empty() ||
+              !instruction.lifecycle.empty() || !resultReady) {
             return false;
           }
           if (!consumeStorageStage(instruction.operands.front())) {

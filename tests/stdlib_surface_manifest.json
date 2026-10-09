@@ -17,7 +17,7 @@
     "stdlib/std/filesystem.gti": "1018e88ac78adb603b80f0e83427a431c7c6225e00f39b0924721edcc4820687",
     "stdlib/std/format.gti": "293bf5c533f00901dd04491788a7ad929e6999a7f3227053c64547f6f9c56d97",
     "stdlib/std/forward_list.gti": "270c138f347f77a7c991395e21316d5cc2846f8fe66d3c8a1d7b0c395b1266fa",
-    "stdlib/std/functional.gti": "2fa13a7b511a42cb3cd87d6ca1a6550e77c77109320b5457f5292bb3e5333540",
+    "stdlib/std/functional.gti": "502eca2d667f29c6643d9ba605056fd6ee307cb7891a47de9f9acc0c2935b50a",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "c08502a5c686ad0df6ee193e5222741dcce8276269259a03f184365763484d50",
@@ -30,6 +30,7 @@
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
     "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
+    "stdlib/std/polymorphic.gti": "e268ceecabf64fd3ea834354aede98efd2eb68236f8a7912211d53c81face2c2",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
@@ -861,6 +862,13 @@
       "id": "panic-expected",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_panic_expected.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "polymorphic",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_polymorphic.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -1848,7 +1856,7 @@
       "operations": ["std::function::clone", "std::function::empty", "std::function::function", "std::function::operator()", "std::function::replace", "std::function::reset", "std::move_only_function::empty", "std::move_only_function::move_only_function", "std::move_only_function::operator()", "std::move_only_function::replace", "std::move_only_function::reset"],
       "case_ids": ["owning-function", "owning-function-borrows", "owning-function-items", "owning-function-schema", "owning-function-temporary-target", "owning-function-mutable", "owning-function-mutable-arguments", "owning-function-mutable-arguments-cleanup"],
       "required_instantiations": ["int(int) copyable captured lambda, explicit clone and setter transfer", "void() read-callable lambda", "int(int) move-only unique-owner capture", "mixed read-only reference/value arguments with noncopyable referents", "stored and returned namespace function items, capture, replacement, clone and callee evaluation order", "nested immutable command schema with vector children and an owned leaf handler", "int(int) mut stateful targets, independent clone state, replacement, reset and exactly-once destruction"],
-      "evidence": ["tests/fixtures/owning_function.gti", "tests/fixtures/owning_function_borrows.gti", "tests/fixtures/owning_function_items.gti", "tests/fixtures/owning_function_schema.gti", "tests/fixtures/owning_function_mutable.gti", "tests/fixtures/owning_function_mutable_arguments.gti", "tests/owning_function_tests.cpp", "tests/owning_function_runtime_test.py", "stdlib/std/functional.gti"]
+      "evidence": ["tests/fixtures/owning_function.gti", "tests/fixtures/owning_function_borrows.gti", "tests/fixtures/owning_function_items.gti", "tests/fixtures/owning_function_schema.gti", "tests/fixtures/owning_function_mutable.gti", "tests/fixtures/owning_function_mutable_arguments.gti", "tests/fixtures/owning_function_policy_failure.gti", "tests/fixtures/inline_polymorphic_lifecycle.gti", "tests/owning_function_tests.cpp", "tests/owning_function_runtime_test.py", "tests/owning_function_policy_failure_test.py", "tests/inline_polymorphic_runtime_test.py", "stdlib/std/functional.gti"]
     },
     {
       "id": "http.executable",
@@ -2354,6 +2362,15 @@
       "case_ids": ["panic-expected"],
       "required_instantiations": ["raw counted message", "formatted int argument"],
       "evidence": ["tests/fixtures/stdlib_surface_panic_expected.gti", "tests/panic_runtime_test.py", "tests/panic_contract_tests.cpp", "stdlib/std/panic.gti"]
+    },
+    {
+      "id": "polymorphic.executable",
+      "source": "stdlib/std/polymorphic.gti",
+      "status": "executable",
+      "operations": ["std::inline_polymorphic::get", "std::inline_polymorphic::has_value", "std::inline_polymorphic::inline_polymorphic", "std::inline_polymorphic::is_inline", "std::inline_polymorphic::replace", "std::inline_polymorphic::reset"],
+      "case_ids": ["polymorphic"],
+      "required_instantiations": ["application interface with inline scalar models, boxed owning and oversized models, move, move assignment, replacement, vector growth and exactly-once cleanup"],
+      "evidence": ["tests/fixtures/stdlib_surface_polymorphic.gti", "tests/fixtures/inline_polymorphic_lifecycle.gti", "tests/fixtures/inline_polymorphic_allocations.cpp", "tests/inline_polymorphic_runtime_test.py", "tests/polymorphic_storage_compiler_tests.cpp", "tests/inline_closure_owner_runtime_test.py", "stdlib/std/polymorphic.gti"]
     },
     {
       "id": "prelude.c-scalars",
