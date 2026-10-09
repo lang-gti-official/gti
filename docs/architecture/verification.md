@@ -273,6 +273,13 @@ directory. Compilation during laptop contention is not compile-time acceptance
 evidence. Final reconciled-head optimization and full-suite acceptance remain
 required.
 
+The later reconciliation with `099f523c` includes upstream PRs #196 and #197
+(parallel LSP analysis and allocation-lean formatting). The earlier census
+counts remain the frozen-checkpoint evidence, not acceptance of that combined
+source. Regenerate both example inventories with the combined optimized
+compiler and source library before final validation; retaining either branch's
+old counts alone does not establish the new representation inventory.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both
