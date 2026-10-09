@@ -525,6 +525,17 @@ pointee snapshots or initialized-element summaries. An unrelated source
 `Ledger` exercises publication through a nested member followed by a sibling
 store, with direct/borrowed/raw/native mutation negatives and canonical replay.
 
+A checked non-byte integer store through an exactly relayed address updates
+that cell's value on the successful edge. Compound assignment reads the same
+current cell fact before computing its checked result. The store cannot rebind
+live pointer/reference carriers, but retires other possible pointee aliases;
+it does not certify a region or neighbouring cells. Its call summary remains
+an unknown live-memory mutation, not vacant construction: caller memory is
+invalidated before the exact postcondition is applied. Raw/native writes and
+unresolved addresses retain the conservative path. The checked-address-store
+fixture tests replacement, compound assignment, overflow, native mutation and
+a distinct target, including forged-discharge rejection and O0 parity.
+
 Exact source summaries export constructed addresses rooted in raw-pointer
 formals or an ordinary pointer field of a receiver/checked-reference formal,
 relative to the receiver or formal ordinal, owned field path and element
