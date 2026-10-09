@@ -11,6 +11,11 @@ public:
   ~Marker() { std::println(this.identity); }
 };
 
+class Implicit {
+public:
+  ~Implicit() { std::println(88); }
+};
+
 struct Copyable { int32_t number = 12; };
 
 class Value {
@@ -44,6 +49,12 @@ int32_t fail_cleanup(int32_t divisor) {
 }
 
 int main(int argc, std::vector<std::string> argv) {
+  if (argc == 6 || argc == 7) {
+    Marker outer = Marker(77);
+    if (argc == 6) { unsafe { gti_test_fail_scalar_allocation(1); } }
+    auto implicit = std::make_unique<Implicit>();
+    return 0;
+  }
   if (argc == 4) { return fail_cleanup(0); }
   Marker outer = Marker(1);
   auto previously = std::make_unique<Marker>(3);

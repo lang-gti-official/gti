@@ -155,7 +155,7 @@ not permission to weaken existing safety or reject previously supported users.
 
 | ID | Operation to move | Current owner | Prerequisite/acceptance boundary |
 | --- | --- | --- | --- |
-| M01 | Prefix allocation, length and live-prefix bookkeeping | Source `prefix_slots<T>` and matching leases; private native/prelude/IR/representation/optimizer family removed. | S-ALLOC-09 raw-buffer layering, final admission, corpus and measured performance acceptance. One authoritative count, no sparse metadata, allocation rollback and exactly-once cleanup. |
+| M01 | Prefix allocation, length and live-prefix bookkeeping | Source `raw_buffer<T, Lease>` owns a lease, element pointer and capacity; `prefix_slots<T, Lease>` adds the sole live count. Private native/prelude/IR/representation/optimizer family removed. | S-ALLOC-09 final admission, corpus and measured performance acceptance. No sparse metadata, allocation rollback and exactly-once cleanup. |
 | M02 | Prefix append, pop, insertion, erasure and reserve | Source prefix-owner policy using general object construction/destruction/relocation. | Preserve final-address emplacement, failure-free relocation bounds, ordered arguments, mutation exclusion and all existing element shapes. Complete campaign evidence remains required; first/secondary failure fixtures already exercise source drains. |
 | M03 | Character trailing-NUL policy | Source terminated-prefix owner and embedded-NUL scan. | Empty static sentinel and hidden initialized terminator; checked views retain actual owner. Primitive text/C-string carrier conversion remains an identity-bound general compiler bridge, not a private string-storage engine. |
 | M04 | Views and iterators over migrated storage | Span/vector/string wrappers borrow ordinary source prefix owners through general carrier contracts. | Full corpus/installed-consumer evidence remains required. Raw text conversion uses an exact checked owner witness; primitive text representation itself is not claimed source-defined. |
@@ -176,8 +176,10 @@ This follows Rust's `RawVec`/`Vec` layering, and is recorded in
 [ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
 and planned as
 [`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-The revised layering and unchecked API remain incomplete; the rows above
-describe the existing source-prefix implementation that this task is extending.
+The revised layering and unchecked APIs are implemented on the task branch.
+General nested resource-constructor MIR publication and combined functional,
+corpus and performance acceptance remain incomplete; these rows do not claim
+the migration is accepted.
 
 Evidence: [vector](../../stdlib/std/vector.gti),
 [string](../../stdlib/std/string.gti),
@@ -487,13 +489,15 @@ a secondary failure records the emergency and stops further capture/result
 cleanup without destroying still-active native shells. This also applies when
 cleanup itself has already produced an emergency before returning to the adapter.
 
-The process prefix owner acquires bytes into its member lease first and finishes
-temporary allocation-result cleanup before publishing its slot address, capacity
-and empty live count. The lease remains the unique byte owner throughout;
-temporary descriptors never acquire release authority. Empty reservation
-publishes null/zero fields without requesting a region. This source sequencing
-preserves ordinary constructor postconditions across conservative cleanup
-analysis; it grants no fresh-region or initialized-element optimizer invariant.
+The source `raw_buffer<T, Lease>` owns one byte-region lease, element pointer
+and capacity, with no knowledge of initialized objects. `prefix_slots<T, Lease>`
+contains that buffer and one live count. Its destructor drains the count before
+ordinary field cleanup releases the buffer's lease. Process and checked resource
+owners share this policy; resource growth exchanges allocation descriptors only
+between leases retaining the same provider binding. No bitmap or second region
+is acquired. Allocation-result cleanup finishes before publishing pointer and
+capacity, and an empty reservation makes no provider call. Descriptor copies
+remain passive and never gain release authority.
 
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI
@@ -1216,23 +1220,30 @@ applications cannot forge its identity or choose an arbitrary category/detail.
 This keeps public `vector`/`string` origins in source/library policy without
 asking a backend to inspect names or call stacks.
 
-`std::vector` derives its live size and capacity directly from its source
-prefix owner. It has no mirrored element count or capacity: construction,
-append, insertion, erasure, pop, clear, resize, relocation, movement, iteration,
-and indexed access therefore observe one length authority. Public accessors
-perform the identity-bound logical vector check; source-owner access retains
-its own bounds guard. The former private prefix-length optimizer relation is
-not a proof for arbitrary source calls. Cross-call elimination requires
-general analysis rather than nominal recognition; this cutover does not claim
-that optimization parity.
+`std::vector` derives live size and capacity directly from its source prefix
+owner, without mirrored counts. Public accessors perform the identity-bound
+logical bounds check and then use unsafe source access that adds no second
+bounds guard. Capacity-established construction and mutation similarly use
+unchecked internal operations. Independently callable checked detail-owner
+methods retain their own boundary checks. Span constructors validate their
+extent once; span element access checks its logical extent and uses the same
+unchecked backing access. Unsafe `get_unchecked` and `get_unchecked_mut`
+accessors preserve ordinary checked owner loans while requiring the caller to
+prove the index. Fixed-array unchecked access forms an element pointer under
+the concrete nonempty-extent branch; empty arrays have no valid unchecked index.
+No former private prefix-length optimizer relation proves arbitrary source
+calls, and this source cutover does not itself establish optimization parity.
 
 Sparse and prefix relocation consume semantic `RelocationKind` facts verified
-against concrete MIR type tables. Source loops select their traversal and
-capacity/liveness preconditions, then call general `relocate_at`. The backend
-transfers each exact object under its verified recipe; native representation
-traits may restrict lowering but never decide a GTI concept. Source lifetimes
-end, destination lifetimes become live, and source string policy preserves its
-terminator. Resource lease authority is moved, never duplicated by byte copying.
+against concrete MIR type tables. Raw-buffer growth selects general
+`relocate_range_at` for structurally bitwise-relocatable elements, transferring
+the entire live prefix in one nonoverlapping byte copy. Other eligible elements
+retain a source traversal over general `relocate_at`; insertion and erasure
+also use exact per-element relocation. Native representation traits may restrict
+lowering but never decide a GTI concept. Source lifetimes end, destination
+lifetimes become live, and string relocation includes its hidden terminator.
+Resource lease authority is transferred separately, never duplicated by the
+element byte copy.
 
 Utility `swap` and `exchange` are ordinary constrained GTI wrappers over
 private restoring-transfer declarations in the prelude. Declaration identity,

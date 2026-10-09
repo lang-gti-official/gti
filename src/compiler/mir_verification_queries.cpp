@@ -433,8 +433,11 @@ bool generatedUniqueConstruction(const MirInstruction &instruction) {
       instruction.receiver || !instruction.result ||
       instruction.info.type.kind != SemanticType::UniqueOwner ||
       instruction.info.type.arguments.size() != 1 ||
-      instruction.info.type.arguments.front().kind != SemanticType::Class ||
-      instruction.operands.size() != 1 ||
+      instruction.info.type.arguments.front().kind != SemanticType::Class)
+    return false;
+  if (instruction.constructorKind == ConstructorKind::Ordinary)
+    return instruction.operands.empty() && instruction.parameterTypes.empty();
+  if (instruction.operands.size() != 1 ||
       instruction.parameterTypes.size() != 1)
     return false;
   const auto &pointee = instruction.info.type.arguments.front();

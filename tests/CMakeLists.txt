@@ -1518,6 +1518,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(unique_scalar_allocation_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME process_allocation_elision
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/process_allocation_elision_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(process_allocation_elision PROPERTIES TIMEOUT 300)
+  add_test(
     NAME unique_class_allocation_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/unique_class_allocation_runtime_test.py"

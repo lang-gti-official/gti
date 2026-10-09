@@ -592,11 +592,11 @@ Consequences:
 
 ## Revision: initialized-prefix sequences over a raw buffer (2026-10-09)
 
-Status: accepted target representation; not scheduled. The work item is
+Status: accepted target representation; implementation and acceptance in progress. The work item is
 [`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-`std::vector` and `std::string` currently store elements in the private
-`gti_internal::prefix_storage<T>` capability. At some point they will instead
-adopt the layering Rust uses for `RawVec` and `Vec`, in ordinary GTI:
+`std::vector` and `std::string` are migrating from the private
+`gti_internal::prefix_storage<T>` capability to the layering Rust uses for
+`RawVec` and `Vec`, in ordinary GTI:
 
 - **A source-defined raw buffer.** It owns one region from a memory resource,
   the process resource by default: an element pointer and a capacity, with

@@ -47,13 +47,14 @@ if __name__ == "__main__":
                "raw_text_owner_example",
                "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup",
                "source_prefix_payload_return_cleanup", "sequence_unchecked_access",
-               "nested_carrier_arguments"),
+               "sequence_unchecked_resource", "nested_carrier_arguments"),
         cases={
             "source_prefix_owner": [((), (0, "2\n1\n4\n3\n", ""))],
             "source_prefix_vector": [((), (0, "", ""))],
             "source_prefix_expected_range": [((), (0, "", ""))],
             "source_prefix_complete_elements": [((), (0, "", ""))],
             "sequence_unchecked_access": [((), (0, "", ""))],
+            "sequence_unchecked_resource": [((), (0, "", ""))],
             "nested_carrier_arguments": [((), (0, "", ""))],
             "generic_payload_enum": [((), (0, "1\n4\n3\n2\n", ""))],
             "raw_text_owner_example": [((), (0, "hello\nHello\n", ""))],
@@ -86,6 +87,7 @@ if __name__ == "__main__":
         "sequence_unchecked_loan_rejected": ("values.push_back(3);", "GTI-S2017"),
         "sequence_unchecked_mutation_rejected": ("text.clear();", "GTI-S2017"),
         "nested_carrier_argument_loan_rejected": ("right = 11;", "GTI-S2017"),
+        "nested_carrier_argument_alias_rejected": ("Pair pair;", "GTI-S2045"),
     }
     with tempfile.TemporaryDirectory(prefix="gti-unchecked-negatives-") as temporary:
         for name, (operation, code) in rejected.items():
@@ -104,3 +106,16 @@ if __name__ == "__main__":
                 assert "GTI-B0001" not in result.stderr, (name, audit, result.stderr)
                 assert not artifact.exists(), (name, audit, artifact)
                 print(f"PASS {name}/{audit}", flush=True)
+        # Successful values alone cannot distinguish byte-copy growth from a
+        # per-element fallback. Check the selected verified lifetime operation.
+        for name, bulk in (("source_prefix_vector", True), ("source_prefix_owner", False)):
+            source = Path(__file__).parent / "fixtures" / f"{name}.gti"
+            artifact = Path(temporary) / f"{name}.mir"
+            result = subprocess.run(
+                [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
+                 "--progress", "never"], capture_output=True, text=True, timeout=60)
+            assert result.returncode == 0, (name, result.stderr)
+            lowered = artifact.read_text()
+            assert ("intrinsic=object-relocate-range " in lowered) == bulk, name
+            assert "intrinsic=object-relocate " in lowered, name
+            print(f"PASS {name}/relocation-selection", flush=True)
