@@ -8,20 +8,21 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from allocation_abort_runtime_test import ABORT_STATUS
 
 if __name__ == "__main__":
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     overflow = fixtures / "source_prefix_string_overflow.gti"
-    # The logical capacity precheck must retain allocation failure, never
-    # overflow while trying to reserve the extra NUL slot.
+    # The hidden NUL slot is part of the requested extent. Its size overflow
+    # remains a cleanup-preserving programming error, not exhaustion.
     standard = pathlib.Path(__file__).parent.parent / "stdlib/std/string.gti"
-    allocation_line = next(index for index, text in enumerate(standard.read_text().splitlines(), 1)
-                           if "require_allocation(requested !=" in text)
-    failure = (f"<std/string>:{allocation_line}: runtime error[GTI-R0011]: "
-               "allocation_failure in private_storage\n")
+    overflow_line = next(index for index, text in enumerate(standard.read_text().splitlines(), 1)
+                         if "replacement{requested + size_t(1)}" in text)
+    failure = (f"<std/string>:{overflow_line}: runtime error[GTI-R0001]: "
+               "integer_overflow in addition\n")
     memory = pathlib.Path(__file__).parent.parent / "stdlib/std/memory.gti"
     provider_line = next(index for index, text in enumerate(memory.read_text().splitlines(), 1)
-                         if "require_allocation(allocated.has_value())" in text)
+                         if "require_allocation(false)" in text)
     provider_failure = (f"<std/memory>:{provider_line}: runtime error[GTI-R0011]: "
                         "allocation_failure in private_storage\n")
     run_runtime_matrix(
@@ -30,7 +31,7 @@ if __name__ == "__main__":
         cases={"source_prefix_string": [((), (0, "", ""))],
                "source_prefix_string_overflow": [((), (70, "", failure))],
                "source_prefix_string_provider_failure":
-                   [((), (70, "90\nlive=0\n", provider_failure))]},
+                   [((), (ABORT_STATUS, "", provider_failure))]},
         native_inputs_by_name={"source_prefix_string":
                                [str(fixtures / "source_text_address_bridge.cpp")],
                                "source_prefix_string_provider_failure":

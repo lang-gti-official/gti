@@ -124,6 +124,29 @@ struct DefinedFailureOperation {
     return localOrigins.empty() && propagation == FailurePropagationKind::None;
   }
 
+  // Infallible exhaustion is a process-terminal outcome, not a cleanup or
+  // containment edge. Keep its source/outcome metadata for reporting while
+  // distinguishing it from failures that can propagate through GTI cleanup.
+  // Unknown outcome codes remain conservative until ordinary verification
+  // rejects them; only the compiler-owned allocation category is terminal.
+  [[nodiscard]] bool mayUnwind() const {
+    if (propagation != FailurePropagationKind::None)
+      return true;
+    for (const auto &origin : localOrigins)
+      for (const auto outcome : origin.outcomes)
+        if (outcome.code != DefinedFailureCode::AllocationFailure)
+          return true;
+    return false;
+  }
+
+  [[nodiscard]] bool mayAbortAllocation() const {
+    for (const auto &origin : localOrigins)
+      for (const auto outcome : origin.outcomes)
+        if (outcome.code == DefinedFailureCode::AllocationFailure)
+          return true;
+    return false;
+  }
+
   friend bool operator==(const DefinedFailureOperation &,
                          const DefinedFailureOperation &) = default;
 };

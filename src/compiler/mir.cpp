@@ -5720,6 +5720,10 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
 
 bool requiresMirFailureControlFlow(const MirInstruction &instruction,
                                    MirFailureControlFlowPosition position) {
+  // A terminal allocation detector either completes this instruction or
+  // aborts the process. It has no record handoff, cleanup successor or Invoke.
+  if (!instruction.definedFailure.mayUnwind())
+    return false;
   // Forming a checked reference evaluates its indexed place without loading
   // the referent. Failure must propagate before any reference is published;
   // it is not a terminal containment boundary merely because it is a Borrow.
@@ -7309,7 +7313,12 @@ static MirVerificationResult verifyObjectAllocations(const MirBody &body,
       }
       for (const auto &event : instruction.lifecycle) {
         if (rawEvent(event) &&
-            !((instruction.kind == MirInstructionKind::Lifecycle &&
+            !((instruction.kind == MirInstructionKind::AllocateObject &&
+               instruction.objectAllocation == event.target &&
+               event ==
+                   MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
+                                     .target = instruction.objectAllocation}) ||
+              (instruction.kind == MirInstructionKind::Lifecycle &&
                instruction.objectAllocation == event.source &&
                event.kind == MirLifecycleEventKind::TransferOut) ||
               (instruction.kind == MirInstructionKind::Drop &&
@@ -7367,14 +7376,24 @@ static MirVerificationResult verifyObjectAllocations(const MirBody &body,
     if (drop.kind != MirDropObligationKind::ObjectAllocation)
       continue;
     const auto &protocol = protocols[drop.id - 1];
+    const MirInstruction *afterAllocation = nullptr;
+    if (protocol.allocate && protocol.allocationBlock) {
+      bool found = false;
+      for (const auto &instruction : protocol.allocationBlock->instructions) {
+        if (instruction.tombstone)
+          continue;
+        if (found) {
+          afterAllocation = &instruction;
+          break;
+        }
+        found = &instruction == protocol.allocate;
+      }
+    }
     if (!protocol.allocate || !protocol.construct || !protocol.retire ||
-        protocol.allocationBlock->terminator.kind !=
-            MirTerminatorKind::Invoke ||
-        protocol.allocationBlock->terminator.invokeInstruction !=
-            protocol.allocate->id ||
-        firstLive(
-            body.findBlock(protocol.allocationBlock->terminator.target)) !=
-            protocol.construct) {
+        protocol.allocationBlock != protocol.constructionBlock ||
+        afterAllocation != protocol.construct ||
+        protocol.allocate->successResultDrop ||
+        protocol.allocate->definedFailure.mayUnwind()) {
       return failure(
           body, owner,
           "object allocation must construct only on allocation success");
@@ -8957,10 +8976,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              !instruction.functionTarget && !instruction.constructorTarget &&
              !instruction.bodyTarget && !instruction.lambdaTarget &&
              instruction.intrinsic == IntrinsicKind::None &&
-             instruction.lifecycle.empty() && allocation != nullptr &&
+             allocation != nullptr &&
              allocation->kind == MirDropObligationKind::ObjectAllocation &&
              allocation->place == *instruction.destination &&
-             instruction.successResultDrop == allocation->id &&
+             !instruction.successResultDrop &&
+             instruction.lifecycle ==
+                 std::vector<MirLifecycleEvent>{
+                     {.kind = MirLifecycleEventKind::Initialize,
+                      .target = allocation->id}} &&
              allocation->dropType.type == instruction.info.type;
     }
     case MirInstructionKind::InitializeBase: {
@@ -10303,6 +10326,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           boundToInstruction =
               target != nullptr &&
               (initializationTargetsObligation(instruction, *target) ||
+               (instruction.kind == MirInstructionKind::AllocateObject &&
+                target->kind == MirDropObligationKind::ObjectAllocation &&
+                instruction.objectAllocation == target->id &&
+                instruction.destination == target->place &&
+                instruction.info.type == target->dropType.type) ||
                ((instruction.kind == MirInstructionKind::Compute ||
                  instruction.kind == MirInstructionKind::Move ||
                  instruction.kind == MirInstructionKind::CallInput ||

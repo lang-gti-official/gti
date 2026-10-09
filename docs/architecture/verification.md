@@ -1,5 +1,17 @@
 # Compiler Verification
 
+## Allocation-exhaustion abort foundation (candidate)
+
+`allocation_abort_runtime` tests the runtime-only S-ALLOC-08 terminal primitive
+in subprocesses: direct exhaustion, a managed worker, reentry from an active
+failure observer, a malformed native record, closed stderr and a broken pipe.
+It requires process abort, an exact best-effort GTI-R0011 report when writable,
+and no local destructor, exit handler, worker cleanup or join continuation.
+The fixture forbids C++ heap allocation while the terminal path runs. Existing
+failure-report, panic, ABI and containment tests remain separate controls.
+These tests do not claim source allocation uses the new path yet; compiler
+detector/cleanup-edge changes and the fallible/overflow matrices remain required.
+
 ## Issue-campaign audit and reconciliation gate
 
 PR #152 reconciles the previously separate issue-fix handoffs and independently

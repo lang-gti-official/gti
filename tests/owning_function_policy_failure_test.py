@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from allocation_abort_runtime_test import ABORT_STATUS
 
 
 def main():
@@ -29,16 +30,16 @@ def main():
              (70, "9\n", empty(mutable[1])),
              (70, "9\n", empty(read[1])),
              (70, "9\n", empty(mutable[1])),
-             (70, "8\n9\n", allocation),
-             (70, "9\n", allocation),
-             (70, "8\n7\n9\n", allocation),
+             (ABORT_STATUS, "", allocation),
+             (ABORT_STATUS, "", allocation),
+             (ABORT_STATUS, "", allocation),
              (0, "7\n8\n8\n9\n", ""),
              (70, "9\n", f"<std/memory>:{mutable[0]}: runtime error[GTI-R0008]: "
                            "empty_owner_access in dereference\n"),
              (70, "9\n", f"<std/memory>:{mutable[0]}: runtime error[GTI-R0008]: "
                            "empty_owner_access in dereference\n"),
-             (70, "8\n9\n", allocation),
-             (70, "9\n", allocation)]
+             (ABORT_STATUS, "", allocation),
+             (ABORT_STATUS, "", allocation)]
     modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
              for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),

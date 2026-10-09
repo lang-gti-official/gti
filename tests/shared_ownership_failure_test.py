@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Shared allocation rollback and final-release failure obey MIR cleanup."""
+"""Shared exhaustion aborts; ordinary final-release failure obeys MIR cleanup."""
 
 import argparse
 from pathlib import Path
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from allocation_abort_runtime_test import ABORT_STATUS
 
 
 def main():
@@ -31,8 +32,8 @@ def main():
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             cases = [
                 (70, "99\n", "empty_owner_access in dereference"),
-                (70, "1\n7\n12\n99\n", "allocation_failure in shared_owner"),
-                (70, "1\n7\n", "failure_during_cleanup"),
+                (ABORT_STATUS, "1\n", "allocation_failure in shared_owner"),
+                (ABORT_STATUS, "1\n", "allocation_failure in shared_owner"),
                 (70, "1\n2\n7\n99\n", "division_by_zero"),
                 (0, "1\n2\n7\n12\n99\n", ""),
             ]
@@ -41,12 +42,12 @@ def main():
                 assert result.returncode == status and result.stdout == output, (
                     name, phase, result.returncode, result.stdout, result.stderr)
                 assert diagnostic in result.stderr, (name, phase, result.stderr)
-                code = ("GTI-R0008", "GTI-R0011", "GTI-R0014", "GTI-R0002", "")[phase]
+                code = ("GTI-R0008", "GTI-R0011", "GTI-R0011", "GTI-R0002", "")[phase]
                 if code:
                     assert f"runtime error[{code}]" in result.stderr, (name, phase, result.stderr)
                 if phase == 2:
-                    assert "primary [GTI-R0011]" in result.stderr, result.stderr
-                    assert "secondary [GTI-R0002]" in result.stderr, result.stderr
+                    assert "GTI-R0014" not in result.stderr, result.stderr
+                    assert "GTI-R0002" not in result.stderr, result.stderr
                 if not diagnostic:
                     assert not result.stderr, (name, phase, result.stderr)
             print(f"shared ownership failure: {name} passed", flush=True)

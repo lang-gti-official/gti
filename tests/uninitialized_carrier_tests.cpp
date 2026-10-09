@@ -184,5 +184,94 @@ int main() {
         "b); return 0; }"})
     expect(!analyze(prefix + body).canGenerateCode(),
            "invalid raw relocation rejected");
+
+  const auto range = analyze(prefix + R"(
+void transfer(Plain* destination, Plain* source, std::size_t count) {
+  unsafe { std::relocate_range_at(destination, source, count); }
+}
+int main() { transfer(nullptr, nullptr, std::size_t(0)); return 0; }
+)");
+  expect(range.canGenerateCode(),
+         "bitwise range relocation forms verified MIR");
+  if (range.canGenerateCode()) {
+    const auto emitted = gti_test::emitCppText(range);
+    expect(emitted.find(
+               "::gti_internal::backend::mir_object_relocate_range_v1(") !=
+               std::string::npos,
+           "production MIR emitter consumes bulk relocation");
+    for (int mutation = 0; mutation != 7; ++mutation) {
+      auto mir = range.mir;
+      bool changed = false;
+      for (auto &function :
+           const_cast<std::vector<lang::MirFunctionInstance> &>(
+               mir.functionInstances()))
+        for (auto &block : function.body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed || instruction.intrinsic !=
+                               lang::IntrinsicKind::ObjectRelocateRange)
+              continue;
+            const auto effects = lang::effects(instruction);
+            expect(effects.readsUnknownMemory && effects.writesUnknownMemory &&
+                       effects.movesValue && effects.initializesValue &&
+                       !effects.mayTrap && !effects.allocates &&
+                       !effects.invokesUserCode && !effects.removableWhenUnused,
+                   "bulk relocation retains its exact lifetime/memory barrier");
+            switch (mutation) {
+            case 0:
+              instruction.unsafeOperation = lang::UnsafeOperationKind::None;
+              break;
+            case 1:
+              instruction.parameterTypes[1].pointerAccess =
+                  lang::AccessMode::ReadOnly;
+              break;
+            case 2:
+              instruction.parameterTypes[2] = lang::SemanticType::Int64;
+              break;
+            case 3:
+              instruction.operands.pop_back();
+              break;
+            case 4:
+              instruction.definedFailure.propagation =
+                  lang::FailurePropagationKind::Destructor;
+              break;
+            case 5:
+              instruction.intrinsic = lang::IntrinsicKind::ObjectRelocate;
+              break;
+            case 6:
+              instruction.operands[2].kind = lang::MirOperandKind::BorrowRead;
+              break;
+            }
+            changed = true;
+          }
+      expect(changed && !lang::verifyMirProgram(mir).valid(),
+             "forged range relocation rejected by MIR");
+      bool rejected = false;
+      try {
+        (void)gti_test::emitCpp(range, range.mir, mir);
+      } catch (const std::exception &) {
+        rejected = true;
+      }
+      expect(rejected, "backend rejects forged range relocation");
+    }
+  } else {
+    for (const auto &diagnostic : range.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  for (const auto *body :
+       {"void transfer(std::string* a, std::string* b) { unsafe { "
+        "std::relocate_range_at(a, b, std::size_t(1)); } }",
+        "void transfer(Stationary* a, Stationary* b) { unsafe { "
+        "std::relocate_range_at(a, b, std::size_t(1)); } }",
+        "void transfer(int* a, const int* b) { unsafe { "
+        "std::relocate_range_at(a, b, std::size_t(1)); } }",
+        "void transfer(int* a, int* b) { std::relocate_range_at(a, b, "
+        "std::size_t(1)); }",
+        "void transfer(int* a, int* b) { unsafe { std::relocate_range_at(a, b, "
+        "-1); } }"}) {
+    expect(
+        !analyze(prefix + body + "int main() { return 0; }").canGenerateCode(),
+        "range relocation rejects non-bitwise, read-only, safe and "
+        "signed-count uses");
+  }
   return failures == 0 ? 0 : 1;
 }

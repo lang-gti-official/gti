@@ -255,17 +255,15 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .invokesRuntime = true,
                     .mayTrap = true},          // Panic
     MirEffectTraits{.initializesValue = true}, // SharedOwnerEmpty
-    // Promotion consumes the unique owner. Allocation rollback may execute
-    // the pointee's source cleanup through the explicit failure channel.
+    // Promotion consumes the unique owner. Exhaustion aborts before cleanup;
+    // successful publication does not execute the pointee's source body.
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .allocates = true,
                     .invokesRuntime = true,
                     .mayTrap = true,
                     .movesValue = true,
-                    .initializesValue = true,
-                    .dropsValue = true,
-                    .invokesUserCode = true}, // SharedOwnerFromUnique
+                    .initializesValue = true}, // SharedOwnerFromUnique
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .invokesRuntime = true,
@@ -337,6 +335,10 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .writesUnknownMemory = true,
                     .movesValue = true,
                     .initializesValue = true}, // ObjectRelocate
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectRelocateRange
     MirEffectTraits{.mayTrap = true},          // RequireVacantStorage
     MirEffectTraits{.mayTrap = true},          // RequireLiveStorage
     MirEffectTraits{.mayTrap = true},          // RequireRelocationCapacity
@@ -562,6 +564,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "object-destroy",
     "object-construct",
     "object-relocate",
+    "object-relocate-range",
     "require-vacant-storage",
     "require-live-storage",
     "require-relocation-capacity",

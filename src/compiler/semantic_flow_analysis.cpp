@@ -2087,6 +2087,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::OptionalStorageReset:
         case IntrinsicKind::ObjectDestroy:
         case IntrinsicKind::ObjectRelocate:
+        case IntrinsicKind::ObjectRelocateRange:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         // The expected extractions' defined-failure outcomes anchor in

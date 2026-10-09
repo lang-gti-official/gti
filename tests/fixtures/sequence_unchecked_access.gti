@@ -1,0 +1,68 @@
+#include <std/array>
+#include <std/vector>
+#include <std/string>
+#include <std/resource_vector>
+#include <std/resource>
+
+// A passive application record selects bulk growth; owning records in the
+// source-prefix matrix separately exercise verified per-element relocation.
+struct Sample {
+  mut int value;
+  int channel;
+  Sample(int value, int channel) : value(value), channel(channel) {}
+};
+
+int main() {
+  mut std::vector<Sample> values{};
+  [[discard]] values.emplace_back(3, 10);
+  [[discard]] values.emplace_back(5, 20);
+  values.reserve(std::size_t(64));
+  unsafe {
+    values.get_unchecked_mut(std::size_t(1)).value = 7;
+    if (values.get_unchecked(std::size_t(0)).channel != 10) { return 1; }
+  }
+  {
+    auto complete = values.as_span();
+    auto view = complete.subspan(std::size_t(1), std::size_t(1));
+    unsafe { if (view.get_unchecked(std::size_t(0)).value != 7) { return 2; } }
+  }
+  {
+    mut auto view = values.as_mutable_span();
+    unsafe {
+      view.get_unchecked_mut(std::size_t(0)).value = 9;
+      if (view.get_unchecked(std::size_t(1)).channel != 20) { return 3; }
+    }
+  }
+  values.shrink_to_fit();
+  if (values.size() != 2 || values.capacity() != 2 || values.front().value != 9) { return 4; }
+
+  int initial[3] = {2, 4, 6};
+  mut std::array<int, 3> fixed{initial};
+  unsafe {
+    fixed.get_unchecked_mut(std::size_t(1)) = 8;
+    if (fixed.get_unchecked(std::size_t(1)) != 8) { return 5; }
+  }
+  mut int total = 0;
+  for (int value : fixed) { total += value; }
+  if (total != 16) { return 6; }
+
+  mut std::string text{"raw"};
+  text.reserve(std::size_t(100));
+  unsafe {
+    text.get_unchecked_mut(std::size_t(0)) = 'R';
+    if (text.get_unchecked(std::size_t(2)) != 'w') { return 7; }
+  }
+  text.shrink_to_fit();
+  if (text.view() != "Raw" || text.try_c_string() == nullptr) { return 8; }
+
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> placed{resource};
+    placed.push_back(11);
+    placed.reserve(std::size_t(32));
+    placed.get_unchecked_mut(std::size_t(0)) = 13;
+    if (placed.get_unchecked(std::size_t(0)) != 13) { return 9; }
+  }
+  return 0;
+}

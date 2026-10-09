@@ -5376,6 +5376,7 @@ private:
         value.intrinsic = resolved->intrinsic;
         if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
              value.intrinsic == IntrinsicKind::ObjectRelocate ||
+             value.intrinsic == IntrinsicKind::ObjectRelocateRange ||
              value.intrinsic == IntrinsicKind::ObjectConstruct) &&
             resolved->typeArguments.size() == 1)
           (void)seedConcreteDeclarationType(resolved->typeArguments.front());

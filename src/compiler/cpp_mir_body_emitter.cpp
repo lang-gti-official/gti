@@ -22821,17 +22821,13 @@ private:
              instruction.definedFailure.propagation ==
                  FailurePropagationKind::Constructor &&
              instruction.definedFailure.localOrigins.empty());
-        // A class unique-owner allocation contains its failure terminally
-        // inside the backend helper — the compatibility call site carries
-        // no handling either — so no Invoke, record, or cleanup successor
-        // exists to demand.
+        // The compiler-owned allocation outcome is process-terminal. Its
+        // source descriptor is consumed by the detector epilogue, never by a
+        // cleanup/containment successor. Exact operation admission below still
+        // verifies each allocation capability and its lifecycle protocol.
         const bool terminalAllocation =
-            instruction.kind == MirInstructionKind::Call &&
-            (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
-             instruction.objectAllocation == 0 &&
-             instruction.info.type.arguments.size() == 1 &&
-             instruction.info.type.arguments.front().kind ==
-                 SemanticType::Class);
+            instruction.definedFailure.mayAbortAllocation() &&
+            !instruction.definedFailure.mayUnwind();
         // An unconsumed constructor-initializer argument publishes into
         // its field: the binding resolves through the initializer's HIR
         // argument, and the field row must exist or the body fails
@@ -29948,6 +29944,18 @@ public:
       output << typeSpelling(*loanedType) << " *__gti_mir_loan_" << loan.id
              << "{};\n";
     }
+    if (!failureForm) {
+      for (const auto &block : facts.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (!instruction.tombstone &&
+              instruction.definedFailure.mayAbortAllocation()) {
+            writeIndent();
+            output << "::gti_internal::backend::mir_failure_status_v1 "
+                      "__gti_mir_failure_status_"
+                   << instruction.id
+                   << " = ::gti_internal::backend::mir_failure_success_v1;\n";
+          }
+    }
     if (failureForm) {
       bool cleanupFailureRecordDeclared = false;
       bool cleanupContextDeclared = false;
@@ -30257,6 +30265,7 @@ public:
           continue;
         emitDebugLocation(facts, block->id, instruction.id);
         emitInstruction(*block, instruction, facts);
+        emitAllocationAbort(instruction);
         emitStagedFieldPublication(instruction, facts);
         emitGeneratedLocation();
       }
@@ -37082,48 +37091,8 @@ private:
                     " : ::gti_internal::backend::mir_failure_status_v1{"
                     "GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1, "
                     "GTI_FAILURE_DETAIL_SHARED_OWNER_V1};\n";
-          const auto cleanup =
-              mirUniqueCleanupType(program, instruction.operands.front().type);
-          if (!cleanup)
-            throw std::logic_error(
-                "shared promotion lost consumed-owner cleanup");
-          writeIndent();
-          output << "if (__gti_mir_failure_status_" << instruction.id
-                 << ".code != GTI_FAILURE_CODE_NONE_V1) {\n";
-          ++indentation;
-          emitFailureRecordWrite(instruction);
-          writeIndent();
-          output << "::gti_failure_record_v2 __gti_shared_secondary{};\n";
-          writeIndent();
-          // The intrinsic has consumed this exact staged value. Its rollback
-          // runs under the allocation failure before the caller's edge cleanup.
-          const std::string source =
-              "__gti_mir_v_" +
-              std::to_string(instruction.operands.front().value);
-          output << "if (!("
-                 << cppMirCleanupValueExpression(program, *cleanup, source,
-                                                 "&__gti_shared_secondary",
-                                                 "true")
-                 << ")) {\n";
-          ++indentation;
-          writeIndent();
-          output << "const ::gti_failure_emergency_v2 __gti_shared_emergency{"
-                    "GTI_FAILURE_ABI_VERSION_V2, UINT32_C(0), "
-                    "*__gti_mir_failure_record, "
-                    "__gti_shared_secondary};\n";
-          writeIndent();
-          output << "::gti_rt_failure_terminate_cleanup_v2(&__gti_shared_"
-                    "emergency, "
-                    "&::gti_internal::backend::__gti_failure_artifact_"
-                    "descriptor_v1, "
-                    "&::gti_internal::backend::__gti_failure_artifact_"
-                    "descriptor_v1);\n";
-          --indentation;
-          writeIndent();
-          output << "}\n";
-          --indentation;
-          writeIndent();
-          output << "}\n";
+          // Exhaustion aborts before any consumed-owner rollback. The common
+          // detector epilogue consumes MIR's terminal allocation outcome.
         } else {
           emitCallArgument(instruction.operands.front(), false, false);
           output << ".clone_into(__gti_mir_v_" << *instruction.result
@@ -37897,15 +37866,20 @@ private:
       return;
     }
     if (instruction.kind == MirInstructionKind::Call &&
-        instruction.intrinsic == IntrinsicKind::ObjectRelocate) {
-      output << "::gti_internal::backend::mir_object_relocate_v1(";
+        (instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
+         instruction.intrinsic == IntrinsicKind::ObjectRelocateRange)) {
+      output << (instruction.intrinsic == IntrinsicKind::ObjectRelocateRange
+                     ? "::gti_internal::backend::mir_object_relocate_range_v1("
+                     : "::gti_internal::backend::mir_object_relocate_v1(");
       for (std::size_t index = 0; index < instruction.operands.size();
            ++index) {
         if (index != 0)
           output << ", ";
-        output << "::gti_internal::backend::native_pointer_value(";
+        if (index < 2)
+          output << "::gti_internal::backend::native_pointer_value(";
         emitCallArgument(instruction.operands[index], false, false);
-        output << ')';
+        if (index < 2)
+          output << ')';
       }
       output << ");\n";
       return;
@@ -37969,7 +37943,8 @@ private:
       return;
     }
     if (explicitFailureCall(instruction)) {
-      if (!failureForm || !exactExplicitFailure(program, instruction)) {
+      if ((!failureForm && instruction.definedFailure.mayUnwind()) ||
+          !exactExplicitFailure(program, instruction)) {
         throw std::logic_error(
             "verified container check lost its exact failure contract");
       }
@@ -38530,10 +38505,10 @@ private:
             "verified MIR unique-owner allocation lost its instance shape");
       }
       if (scalarUniqueAllocation(instruction)) {
-        if (!failureForm ||
-            !invokePairedInstruction(facts.body, instruction.id)) {
-          throw std::logic_error(
-              "scalar allocation requires the MIR failure ABI");
+        if (!instruction.definedFailure.mayAbortAllocation() ||
+            instruction.definedFailure.mayUnwind()) {
+          throw std::logic_error("scalar allocation requires the MIR terminal "
+                                 "allocation contract");
         }
         output << "__gti_mir_failure_status_" << instruction.id
                << " = ::gti_internal::backend::mir_allocate_unique_scalar_v1<"
@@ -41337,7 +41312,29 @@ private:
            << "; }";
   }
 
-  void emitFailureRecordWrite(const MirInstruction &instruction) {
+  void emitAllocationAbort(const MirInstruction &instruction) {
+    if (instruction.tombstone ||
+        !instruction.definedFailure.mayAbortAllocation())
+      return;
+    writeIndent();
+    output << "if (__gti_mir_failure_status_" << instruction.id
+           << ".code == GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1) {\n";
+    ++indentation;
+    writeIndent();
+    output << "::gti_failure_record_v2 __gti_allocation_record{};\n";
+    emitFailureRecordWrite(instruction, "__gti_allocation_record");
+    writeIndent();
+    output
+        << "::gti_rt_failure_abort_allocation_v2(&__gti_allocation_record, "
+           "&::gti_internal::backend::__gti_failure_artifact_descriptor_v1);\n";
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
+  void emitFailureRecordWrite(
+      const MirInstruction &instruction,
+      std::string_view recordTarget = "*__gti_mir_failure_record") {
     if (instruction.localFailureSites.size() != 1 ||
         instruction.definedFailure.localOrigins.size() != 1 ||
         program.failureMetadata().findSite(
@@ -41360,7 +41357,7 @@ private:
       ++indentation;
     }
     writeIndent();
-    output << "*__gti_mir_failure_record = ::gti_failure_record_v2{\n";
+    output << recordTarget << " = ::gti_failure_record_v2{\n";
     ++indentation;
     writeIndent();
     output << "GTI_FAILURE_ABI_VERSION_V2, __gti_mir_failure_status_"
@@ -48721,7 +48718,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       case MirInstructionKind::AllocateObject:
         if (!failureForm || !instruction.destination ||
             !objectAllocationForPlace(body, *instruction.destination) ||
-            !invokePairedInstruction(body, instruction.id) ||
+            instruction.definedFailure.mayUnwind() ||
             !typeRow(instruction.info.type)) {
           return false;
         }
@@ -50643,12 +50640,15 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             return false;
           continue;
         }
-        if (instruction.intrinsic == IntrinsicKind::ObjectRelocate) {
+        if (instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
+            instruction.intrinsic == IntrinsicKind::ObjectRelocateRange) {
           if (!mir_detail::objectRelocate(program_, instruction) ||
               !typeRow(instruction.parameterTypes.front()) ||
               !typeRow(instruction.parameterTypes.front().arguments.front()) ||
               !valueOperand(instruction.operands[0]) ||
-              !valueOperand(instruction.operands[1]))
+              !valueOperand(instruction.operands[1]) ||
+              (instruction.operands.size() == 3 &&
+               !valueOperand(instruction.operands[2])))
             return false;
           continue;
         }
@@ -51607,7 +51607,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !typeRow(instruction.info.type) ||
                 (sharedOwnerFailure(instruction) &&
                  (!failureForm || instruction.localFailureSites.size() != 1 ||
-                  !invokePairedInstruction(body, instruction.id))))
+                  (instruction.definedFailure.mayUnwind() &&
+                   !invokePairedInstruction(body, instruction.id)))))
               return false;
             if (sharedOwnerResult(instruction) &&
                 !sharedOwnerType(program_, instruction.info.type))
@@ -51793,9 +51794,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             continue;
           }
           if (explicitFailureCall(instruction)) {
-            if (!failureForm || !exactExplicitFailure(program_, instruction) ||
+            if (!exactExplicitFailure(program_, instruction) ||
                 !valueOperand(instruction.operands.front()) ||
-                !invokePairedInstruction(body, instruction.id))
+                (instruction.definedFailure.mayUnwind() &&
+                 (!failureForm ||
+                  !invokePairedInstruction(body, instruction.id))))
               return false;
             continue;
           }
@@ -52000,10 +52003,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             for (const auto &operand : instruction.operands)
               if (const auto *stage = borrowStagedCallInput(body, operand))
                 consumedStaged.push_back(*stage->result);
-            if ((scalarUniqueAllocation(instruction) &&
-                 (!failureForm ||
-                  !invokePairedInstruction(body, instruction.id))) ||
-                !instruction.result || instruction.receiver ||
+            if (!instruction.result || instruction.receiver ||
                 instruction.functionTarget ||
                 instruction.info.type.kind != SemanticType::UniqueOwner ||
                 instruction.info.type.arguments.size() != 1 ||

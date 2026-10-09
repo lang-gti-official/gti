@@ -558,16 +558,18 @@ bool completeObjectType(const MirProgram &program,
 
 bool objectRelocate(const MirProgram &program,
                     const MirInstruction &instruction) {
+  const bool range =
+      instruction.intrinsic == IntrinsicKind::ObjectRelocateRange;
   if (instruction.kind != MirInstructionKind::Call ||
-      instruction.intrinsic != IntrinsicKind::ObjectRelocate ||
+      (!range && instruction.intrinsic != IntrinsicKind::ObjectRelocate) ||
       instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
       instruction.info.type != SemanticType::Void ||
       instruction.info.category != ValueCategory::Value ||
       instruction.info.access != AccessMode::ReadOnly ||
       instruction.info.traits != semanticTraits(SemanticType::Void) ||
       instruction.info.updateArithmeticType != SemanticType::Unknown ||
-      instruction.operands.size() != 2 ||
-      instruction.parameterTypes.size() != 2)
+      instruction.operands.size() != (range ? 3 : 2) ||
+      instruction.parameterTypes.size() != (range ? 3 : 2))
     return false;
   const auto &pointer = instruction.parameterTypes.front();
   if (pointer.kind != SemanticType::RawPointer ||
@@ -576,12 +578,19 @@ bool objectRelocate(const MirProgram &program,
       !completeObjectType(program, pointer.arguments.front()) ||
       !mirTypeRelocationIsDefinedFailureFree(program,
                                              pointer.arguments.front()) ||
+      (range && mirTypeRelocationKind(program, pointer.arguments.front()) !=
+                    RelocationKind::Bitwise) ||
       instruction.parameterTypes[1] != pointer ||
-      !std::all_of(instruction.operands.begin(), instruction.operands.end(),
+      !std::all_of(instruction.operands.begin(),
+                   instruction.operands.begin() + 2,
                    [&](const MirOperand &operand) {
                      return operand.kind == MirOperandKind::Value &&
                             operand.type == pointer;
                    }))
+    return false;
+  if (range && (instruction.parameterTypes[2] != SemanticType::UInt64 ||
+                instruction.operands[2].kind != MirOperandKind::Value ||
+                instruction.operands[2].type != SemanticType::UInt64))
     return false;
   const MirInstruction exact{.id = instruction.id,
                              .kind = MirInstructionKind::Call,
@@ -592,7 +601,7 @@ bool objectRelocate(const MirProgram &program,
                                  UnsafeOperationKind::ObjectLifetime,
                              .operands = instruction.operands,
                              .parameterTypes = instruction.parameterTypes,
-                             .intrinsic = IntrinsicKind::ObjectRelocate,
+                             .intrinsic = instruction.intrinsic,
                              .info = instruction.info};
   return instruction == exact;
 }

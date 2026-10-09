@@ -136,6 +136,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "assign_representation",
       "mir_restoring_exchange_into_v1",
       "mir_object_relocate_v1",
+      "mir_object_relocate_range_v1",
       "from_storage_address",
       "bytes",
       "callable",
@@ -749,6 +750,18 @@ template <typename T>
 void mir_object_relocate_v1(T *destination, T *source) {
   construct_representation_at(destination, std::move(*source));
   std::destroy_at(source);
+}
+
+// MIR has verified bitwise relocation, not merely failure-free movement.
+// memcpy begins the implicit-lifetime native representations; ending the old
+// trivial shells never invokes GTI cleanup. Extent and nonoverlap are unsafe
+// caller obligations, shared with the source API (including byte-size fit).
+template <typename T>
+void mir_object_relocate_range_v1(T *destination, T *source, std::uint64_t count) {
+  static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
+  if (count == 0) return;
+  std::memcpy(destination, source, static_cast<std::size_t>(count) * sizeof(T));
+  std::destroy_n(source, static_cast<std::size_t>(count));
 }
 
 template <typename T>
@@ -1888,8 +1901,8 @@ public:
     std::swap(state_, other.state_);
     std::swap(view_, other.view_);
   }
-  // Failure leaves the consumed input intact for the caller's MIR failure
-  // rollback. Allocation succeeds before ownership is detached from it.
+  // Exhaustion leaves the input intact until the MIR allocation detector
+  // aborts, without cleanup. Ownership detaches only after allocation succeeds.
   static bool promote(std::unique_ptr<T> &source,
                       shared_owner &destination) noexcept {
     if (destination.state_ != nullptr || destination.view_ != nullptr)

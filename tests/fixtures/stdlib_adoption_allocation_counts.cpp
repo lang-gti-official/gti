@@ -7,9 +7,21 @@
 #include <new>
 #if defined(_WIN32)
 #include <malloc.h>
+#else
+#include <sys/resource.h>
 #endif
 
 namespace {
+// Cleanup markers must remain visible even when exhaustion immediately aborts.
+struct ConfigureAllocationProcess {
+  ConfigureAllocationProcess() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+#if !defined(_WIN32)
+    const rlimit limit{0, 0};
+    setrlimit(RLIMIT_CORE, &limit);
+#endif
+  }
+} configureAllocationProcess;
 bool enabled = false;
 std::uint64_t allocations = 0;
 std::uint64_t bytes = 0;

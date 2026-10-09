@@ -15,6 +15,7 @@ uint64_t object_alignment<T>();
 void object_destroy<T>(T* address);
 void object_construct<T, Args...>(T* address, Args... args);
 void object_relocate<T>(T* destination, T* source);
+void object_relocate_range<T>(T* destination, T* source, uint64_t count);
 gti_internal::text_view text_view_from_address<Owner>(
     const char* address, uint64_t count, Owner& owner);
 gti_internal::c_string c_string_from_address<Owner>(
@@ -153,6 +154,16 @@ public:
 unsafe void relocate_at<T>(T* destination, T* source)
     requires layout_queryable<T> && relocatable<T> {
   unsafe { gti_internal::object_relocate(destination, source); }
+}
+
+/// Bulk transfer of count live bitwise-relocatable objects into vacant storage.
+/// The caller guarantees nonoverlapping regions of at least count complete T
+/// objects, valid alignment, exclusive access and a representable byte extent.
+/// All source lifetimes end without cleanup; exactly count destination objects
+/// become live. A zero count accesses neither pointer (null is then permitted).
+unsafe void relocate_range_at<T>(T* destination, T* source, size_t count)
+    requires layout_queryable<T> && bitwise_relocatable<T> {
+  unsafe { gti_internal::object_relocate_range(destination, source, count); }
 }
 
 /// Asserts that address denotes a live T whose lifetime is covered by owner.
@@ -324,6 +335,19 @@ struct raw_allocation {
 } // namespace std::detail
 
 namespace gti_internal {
+// Infallible source policy distinguishes exhaustion from a malformed or
+// overflowing request. Fallible callers keep the original alloc_errc value.
+[[noreturn, track_caller]]
+void fail_allocation(std::alloc_errc error) {
+  if (error == std::alloc_errc::resource_exhausted) {
+    gti_internal::require_allocation(false);
+  }
+  if (error == std::alloc_errc::size_overflow) {
+    gti_internal::panic("Allocation size overflow");
+  }
+  gti_internal::panic("Invalid allocation request or resource region");
+}
+
 class process_resource {
 public:
   process_resource() {}
@@ -397,6 +421,7 @@ public:
     return previous;
   }
   unsafe void attach(std::detail::raw_allocation allocation) mut { this.allocation = allocation; }
+  uint64_t alignment() { return this.allocation.alignment; }
   void release() mut {
     std::detail::raw_allocation previous = this.take();
     gti_internal::process_resource process{};
@@ -453,91 +478,196 @@ public:
   ~prefix_suffix_drain() { this.finish(); }
 };
 
-[[unsafe_transfer(T), unsafe_share(T)]]
-class prefix_slots<sparse_element T> {
+// Byte ownership has no knowledge of initialized objects. A sequence supplies
+// its one live length; every raw operation requires that sequence's proof.
+class bulk_relocation_probe<T> {
+public:
+  void available() requires std::bitwise_relocatable<T> {}
+};
+
+class raw_buffer<sparse_element T, byte_lease Lease> {
+public:
+  // Compiler-private namespace visibility seals these source-only fields.
+  // Direct field projection preserves the resource's original checked loan.
+  mut Lease lease;
+private:
   mut T* objects = nullptr;
   mut uint64_t slots = 0;
-  mut uint64_t live = 0;
 public:
-  prefix_slots() {}
-  prefix_slots(prefix_slots<T>& other) = delete;
-  prefix_slots(prefix_slots<T>&& other) = default;
+  raw_buffer() requires std::default_initializable<Lease> : lease(Lease()) {}
+  raw_buffer(Lease lease) : lease(std::move(lease)) {}
+  raw_buffer(raw_buffer<T, Lease>& other) = delete;
+  raw_buffer(raw_buffer<T, Lease>&& other) = default;
   uint64_t capacity() { return this.slots; }
-  uint64_t length() { return this.live; }
   unsafe const T* address() { return this.objects; }
   unsafe T* address() mut { return this.objects; }
-  // The caller proves writable vacant extent/alignment and retains its lease
-  // through all element cleanup. No public spelling grants compiler trust.
-  unsafe void attach(T* objects, uint64_t count) mut {
-    require_relocation_capacity(this.slots == uint64_t(0));
-    this.objects = objects;
-    this.slots = count;
-    this.live = uint64_t(0);
+  // Both leases must refer to the same resource. Their checked bindings stay
+  // in place; only allocation authority and its passive shape are exchanged.
+  unsafe void swap_allocation(mut raw_buffer<T, Lease>& other) mut {
+    std::detail::raw_allocation previous = this.lease.take();
+    unsafe {
+      this.lease.attach(other.lease.take());
+      other.lease.attach(previous);
+    }
+    T* previous_objects = this.objects;
+    this.objects = other.objects;
+    other.objects = previous_objects;
+    uint64_t previous_slots = this.slots;
+    this.slots = other.slots;
+    other.slots = previous_slots;
   }
+  expected<void, std::alloc_errc> try_allocate(uint64_t count) mut {
+    return this.try_allocate(count, std::layout_of<T>().alignment);
+  }
+  expected<void, std::alloc_errc> try_allocate(uint64_t count, uint64_t minimum) mut {
+    if (this.slots != uint64_t(0)) {
+      return unexpected(std::alloc_errc::invalid_state);
+    }
+    mut T* address = nullptr;
+    {
+      auto allocated = try_allocate_objects<T, Lease>(this.lease, count, minimum);
+      if (!allocated) { return unexpected(allocated.error()); }
+      if (count != uint64_t(0)) {
+        std::detail::raw_allocation region = std::move(allocated).value();
+        address = std::typed_address<T>(region.address);
+      }
+    }
+    this.objects = address;
+    this.slots = count;
+    return;
+  }
+  // Both buffers are distinct; count live source objects fit in vacant
+  // destination storage. Relocation cannot fail or call custom movement.
+  unsafe void relocate_to(mut raw_buffer<T, Lease>& destination, uint64_t count) mut
+      requires std::relocatable<T> {
+    if (count == uint64_t(0)) { return; }
+    unsafe {
+      if constexpr (requires(bulk_relocation_probe<T>& probe) {
+        { probe.available() } -> void;
+      }) {
+        std::relocate_range_at(destination.objects, this.objects, count);
+      } else {
+        for (mut uint64_t index = 0; index < count;
+             index = integer_wrapping_add(index, uint64_t(1))) {
+          std::relocate_at(destination.objects + index, this.objects + index);
+        }
+      }
+    }
+  }
+};
+
+class prefix_slots<sparse_element T, byte_lease Lease> {
+public:
+  mut raw_buffer<T, Lease> buffer;
+private:
+  mut uint64_t live = 0;
+public:
+  prefix_slots() requires std::default_initializable<Lease>
+      : buffer(raw_buffer<T, Lease>()) {}
+  prefix_slots(Lease lease) : buffer(raw_buffer<T, Lease>(std::move(lease))) {}
+  prefix_slots(prefix_slots<T, Lease>& other) = delete;
+  prefix_slots(prefix_slots<T, Lease>&& other) = default;
+  uint64_t capacity() { return this.buffer.capacity(); }
+  uint64_t length() { return this.live; }
+  expected<void, std::alloc_errc> try_allocate(uint64_t count) mut {
+    return this.buffer.try_allocate(count);
+  }
+  expected<void, std::alloc_errc> try_allocate(uint64_t count, uint64_t minimum) mut {
+    return this.buffer.try_allocate(count, minimum);
+  }
+  unsafe const T* address() { unsafe { return this.buffer.address(); } }
+  unsafe T* address() mut { unsafe { return this.buffer.address(); } }
   T& read(uint64_t index) {
     index_bounds_check(index, this.live);
-    unsafe { return std::assume_ref(this.objects + index, this); }
+    unsafe { return this.read_unchecked(index); }
   }
   mut T& read_mut(uint64_t index) mut {
     index_bounds_check(index, this.live);
-    unsafe { return std::assume_mut(this.objects + index, this); }
+    unsafe { return this.read_mut_unchecked(index); }
+  }
+  unsafe T& read_unchecked(uint64_t index) {
+    unsafe { return std::assume_ref(this.buffer.address() + index, this); }
+  }
+  unsafe mut T& read_mut_unchecked(uint64_t index) mut {
+    unsafe { return std::assume_mut(this.buffer.address() + index, this); }
   }
   void append<Args...>(Args... args) mut {
-    require_relocation_capacity(this.live < this.slots);
-    unsafe { std::construct_at(this.objects + this.live, args...); }
-    this.live++;
+    require_relocation_capacity(this.live < this.capacity());
+    unsafe { this.append_unchecked(args...); }
+  }
+  unsafe void append_unchecked<Args...>(Args... args) mut {
+    unsafe { std::construct_at(this.buffer.address() + this.live, args...); }
+    this.live = integer_wrapping_add(this.live, uint64_t(1));
   }
   void append_value(T value) mut {
-    require_relocation_capacity(this.live < this.slots);
-    unsafe { std::detail::construct_value_at(this.objects + this.live, std::move(value)); }
-    this.live++;
+    require_relocation_capacity(this.live < this.capacity());
+    unsafe { this.append_value_unchecked(std::move(value)); }
+  }
+  unsafe void append_value_unchecked(T value) mut {
+    unsafe { std::detail::construct_value_at(this.buffer.address() + this.live, std::move(value)); }
+    this.live = integer_wrapping_add(this.live, uint64_t(1));
   }
   void pop() mut {
     require_live_storage(this.live > uint64_t(0));
-    this.live--;
-    unsafe { std::destroy_at(this.objects + this.live); }
+    unsafe { this.pop_unchecked(); }
+  }
+  unsafe void pop_unchecked() mut {
+    this.live = integer_wrapping_sub(this.live, uint64_t(1));
+    unsafe { std::destroy_at(this.buffer.address() + this.live); }
   }
   void clear() mut {
-    mut prefix_drain<T> pending{this.objects, &this.live};
-    pending.finish();
+    unsafe {
+      mut prefix_drain<T> pending{this.buffer.address(), &this.live};
+      pending.finish();
+    }
   }
-  void relocate_to(mut prefix_slots<T>& destination) mut
+  void relocate_to(mut prefix_slots<T, Lease>& destination) mut
       requires std::relocatable<T> {
     require_relocation_destination(destination.live == uint64_t(0));
-    require_relocation_capacity(destination.slots >= this.live);
-    unsafe {
-      for (mut uint64_t index = 0; index < this.live; index++) {
-        std::relocate_at(destination.objects + index, this.objects + index);
-        destination.live++;
-      }
-    }
+    require_relocation_capacity(destination.capacity() >= this.live);
+    unsafe { this.relocate_to_unchecked(destination); }
+  }
+  unsafe void relocate_to_unchecked(mut prefix_slots<T, Lease>& destination) mut
+      requires std::relocatable<T> {
+    unsafe { this.buffer.relocate_to(destination.buffer, this.live); }
+    destination.live = this.live;
     this.live = uint64_t(0);
   }
   void insert(uint64_t index, T value) mut requires std::relocatable<T> {
     if (index > this.live) index_bounds_check(index, this.live);
-    require_relocation_capacity(this.live < this.slots);
+    require_relocation_capacity(this.live < this.capacity());
+    unsafe { this.insert_unchecked(index, std::move(value)); }
+  }
+  unsafe void insert_unchecked(uint64_t index, T value) mut requires std::relocatable<T> {
     unsafe {
+      T* objects = this.buffer.address();
       mut uint64_t destination = this.live;
       while (destination > index) {
-        uint64_t source = destination - uint64_t(1);
-        std::relocate_at(this.objects + destination, this.objects + source);
-        destination--;
+        uint64_t source = integer_wrapping_sub(destination, uint64_t(1));
+        std::relocate_at(objects + destination, objects + source);
+        destination = source;
       }
-      std::detail::construct_value_at(this.objects + index, std::move(value));
+      std::detail::construct_value_at(objects + index, std::move(value));
     }
-    this.live++;
+    this.live = integer_wrapping_add(this.live, uint64_t(1));
   }
   void erase(uint64_t index) mut requires std::relocatable<T> {
     index_bounds_check(index, this.live);
+    unsafe { this.erase_unchecked(index); }
+  }
+  unsafe void erase_unchecked(uint64_t index) mut requires std::relocatable<T> {
     uint64_t previous = this.live;
     this.live = index;
-    mut prefix_suffix_drain<T> pending{this.objects, index + uint64_t(1), previous};
-    unsafe { std::destroy_at(this.objects + index); }
-    pending.disarm();
     unsafe {
-      for (mut uint64_t source = index + uint64_t(1); source < previous; source++) {
-        std::relocate_at(this.objects + source - uint64_t(1), this.objects + source);
-        this.live++;
+      T* objects = this.buffer.address();
+      uint64_t next = integer_wrapping_add(index, uint64_t(1));
+      mut prefix_suffix_drain<T> pending{objects, next, previous};
+      std::destroy_at(objects + index);
+      pending.disarm();
+      for (mut uint64_t source = next; source < previous;
+           source = integer_wrapping_add(source, uint64_t(1))) {
+        std::relocate_at(objects + integer_wrapping_sub(source, uint64_t(1)), objects + source);
+        this.live = integer_wrapping_add(this.live, uint64_t(1));
       }
     }
   }
@@ -545,13 +675,24 @@ public:
       requires std::relocatable<T> {
     index_bounds_check(left, this.live);
     index_bounds_check(right, this.live);
+    unsafe { this.swap_elements_unchecked(left, right); }
+  }
+  unsafe void swap_elements_unchecked(uint64_t left, uint64_t right) mut
+      requires std::relocatable<T> {
     if (left == right) { return; }
     mut std::uninitialized<T> temporary{};
     unsafe {
-      std::relocate_at(temporary.data(), this.objects + left);
-      std::relocate_at(this.objects + left, this.objects + right);
-      std::relocate_at(this.objects + right, temporary.data());
+      T* objects = this.buffer.address();
+      std::relocate_at(temporary.data(), objects + left);
+      std::relocate_at(objects + left, objects + right);
+      std::relocate_at(objects + right, temporary.data());
     }
+  }
+  unsafe void swap(mut prefix_slots<T, Lease>& other) mut {
+    unsafe { this.buffer.swap_allocation(other.buffer); }
+    uint64_t previous_live = this.live;
+    this.live = other.live;
+    other.live = previous_live;
   }
   ~prefix_slots() { this.clear(); }
 };
@@ -728,6 +869,8 @@ concept byte_lease<L> = requires(L& lease, std::layout request) {
   unsafe { lease.attach(allocation) } -> void;
 } && requires(mut L& lease) {
   { lease.release() } -> void;
+} && requires(mut L& lease) {
+  { lease.take() } -> std::detail::raw_allocation;
 };
 
 // Internal owner operation: the supplied lease must be empty. Callers retain
@@ -761,20 +904,6 @@ expected<std::detail::raw_allocation, std::alloc_errc> try_allocate_objects<T, L
     }
     return std::move(region);
   }
-}
-
-expected<void, std::alloc_errc> try_allocate_prefix<T, Lease>(
-    mut Lease& objects, mut prefix_slots<T>& destination,
-    uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
-  if (destination.capacity() != uint64_t(0)) {
-    return unexpected(std::alloc_errc::invalid_state);
-  }
-  auto allocated = try_allocate_objects<T, Lease>(objects, count, minimum);
-  if (!allocated) { return unexpected(allocated.error()); }
-  if (count == uint64_t(0)) { return; }
-  std::detail::raw_allocation region = std::move(allocated).value();
-  unsafe { destination.attach(std::typed_address<T>(region.address), count); }
-  return;
 }
 
 expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
@@ -832,26 +961,14 @@ expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
 namespace std {
 namespace detail {
 // Source owner: one process region and one initialized length, no slot map.
+[[unsafe_transfer(T), unsafe_share(T)]]
 class prefix_owner<std::storage_element T> {
-  mut process_lease objects;
-  mut gti_internal::prefix_slots<T> data;
+  mut gti_internal::prefix_slots<T, process_lease> data;
 public:
   prefix_owner() {}
   prefix_owner(uint64_t count) {
-    uint64_t minimum = std::layout_of<T>().alignment;
-    mut T* address = nullptr;
-    // Finish allocation-result cleanup before publishing the slot state.
-    // The member lease, not either temporary descriptor, owns the bytes.
-    {
-      auto allocated = gti_internal::try_allocate_objects<T, process_lease>(this.objects,
-          count, minimum);
-      gti_internal::require_allocation(allocated.has_value());
-      if (count != uint64_t(0)) {
-        std::detail::raw_allocation region = std::move(allocated).value();
-        address = std::typed_address<T>(region.address);
-      }
-    }
-    unsafe { this.data.attach(address, count); }
+    auto allocated = this.data.try_allocate(count);
+    if (!allocated) { gti_internal::fail_allocation(allocated.error()); }
   }
   prefix_owner(prefix_owner<T>& other) = delete;
   prefix_owner(prefix_owner<T>&& other) = default;
@@ -861,18 +978,44 @@ public:
   unsafe T* address() mut { unsafe { return this.data.address(); } }
   T& read(uint64_t index) { return this.data.read(index); }
   mut T& read_mut(uint64_t index) mut { return this.data.read_mut(index); }
+  unsafe T& read_unchecked(uint64_t index) {
+    unsafe { return this.data.read_unchecked(index); }
+  }
+  unsafe mut T& read_mut_unchecked(uint64_t index) mut {
+    unsafe { return this.data.read_mut_unchecked(index); }
+  }
   void append<Args...>(Args... args) mut { this.data.append(args...); }
   void append_value(T value) mut { this.data.append_value(std::move(value)); }
+  unsafe void append_unchecked<Args...>(Args... args) mut {
+    unsafe { this.data.append_unchecked(args...); }
+  }
+  unsafe void append_value_unchecked(T value) mut {
+    unsafe { this.data.append_value_unchecked(std::move(value)); }
+  }
   void pop() mut { this.data.pop(); }
+  unsafe void pop_unchecked() mut { unsafe { this.data.pop_unchecked(); } }
   void clear() mut { this.data.clear(); }
   void relocate_to(mut prefix_owner<T>& destination) mut
       requires std::relocatable<T> { this.data.relocate_to(destination.data); }
+  unsafe void relocate_to_unchecked(mut prefix_owner<T>& destination) mut
+      requires std::relocatable<T> {
+    unsafe { this.data.relocate_to_unchecked(destination.data); }
+  }
   void insert(uint64_t index, T value) mut requires std::relocatable<T> {
     this.data.insert(index, std::move(value));
   }
   void erase(uint64_t index) mut requires std::relocatable<T> { this.data.erase(index); }
+  unsafe void insert_unchecked(uint64_t index, T value) mut requires std::relocatable<T> {
+    unsafe { this.data.insert_unchecked(index, std::move(value)); }
+  }
+  unsafe void erase_unchecked(uint64_t index) mut requires std::relocatable<T> {
+    unsafe { this.data.erase_unchecked(index); }
+  }
   void swap_elements(uint64_t left, uint64_t right) mut requires std::relocatable<T> {
     this.data.swap_elements(left, right);
+  }
+  unsafe void swap_elements_unchecked(uint64_t left, uint64_t right) mut requires std::relocatable<T> {
+    unsafe { this.data.swap_elements_unchecked(left, right); }
   }
 };
 }

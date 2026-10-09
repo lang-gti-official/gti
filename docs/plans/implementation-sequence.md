@@ -5002,7 +5002,10 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 
 ### S-ALLOC-08: Rust Allocation-Failure Model
 
-- **State/role:** accepted direction from the owner (2026-10-09); not started.
+- **State/role:** implementation in progress on the source-prefix task branch;
+  not integrated or accepted. The allocation-free runtime abort entry point
+  has focused subprocess coverage; compiler detector wiring, failure-edge
+  removal, allocation elision and the complete acceptance matrix remain open.
   The contract is
   [ADR 022's Rust allocation-failure revision](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09)
   and [ADR 007's exhaustion revision](../decisions/007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09).
@@ -5031,7 +5034,10 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 
 ### S-ALLOC-09: Raw-Buffer Vector And String
 
-- **State/role:** accepted target representation (2026-10-09); not scheduled.
+- **State/role:** scheduled by the owner as the current task (2026-10-09);
+  implementation in progress, not integrated or accepted. The source-prefix
+  migration below is its existing implementation base, not proof that the
+  revised raw-buffer/checking/performance requirements are complete.
   The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
   It covers migration candidates M01, M02 and M04 in the
@@ -5074,7 +5080,15 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   or fails early with a target-capability diagnostic, never a native link
   surprise.
 
-### S-ALLOC-08: Source Prefix Ownership And Container Cutover
+### Source Prefix Ownership And Container Cutover — S-ALLOC-09 Working Ledger
+
+This work began under the provisional label S-ALLOC-08. The accepted allocation
+revision assigns that identifier to the allocation-failure model; this ledger
+now records the source-prefix implementation and evidence for S-ALLOC-09/M01.
+Earlier positive optimizer expectations remain evidence, not authority to keep
+redundant inner checks required by the old representation. Any change to those
+expectations must follow the new one-boundary-check contract and retain the
+same behavior, invalid-input, replay and performance guarantees.
 
 - **State:** implementation in progress; not accepted or integrated. The source
   prefix engine, vector/views, terminated string owner and one-region resource

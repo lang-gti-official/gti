@@ -1824,7 +1824,7 @@ or resource lease releases bytes after the live prefix has been drained. Sparse
 storage remains a distinct policy for arbitrary initialized-slot patterns.
 The private prefix-storage type, operations, construction-preflight instruction
 and optimizer model are retired. Remaining regression migration and full
-admission/performance acceptance are tracked by S-ALLOC-08.
+admission/performance acceptance are tracked by S-ALLOC-09.
 
 ## Source-Defined Vector
 
