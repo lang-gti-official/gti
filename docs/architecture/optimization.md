@@ -422,6 +422,11 @@ an exact integer refines both the independent SSA value and its current field,
 so a getter-based loop can establish its exit field bound. A proved nonwriting
 getter also preserves a caller's narrower field interval rather than replacing
 it with the callee's joined calling-context interval.
+Refinement updates every existing exact owned-subobject representation of that
+field, as well as represented scalar places. A nested receiver summary cannot
+overwrite a loop-exit refinement with its older, wider interval when the
+enclosing object is extracted. This rule also applies to unrelated nested
+records; it does not infer aliasing through a stored reference or raw pointer.
 
 Field identity is not numerical equality or a persistent borrow. Overlapping
 writes, ancestor replacement, movement, raw/unknown memory and lifetime

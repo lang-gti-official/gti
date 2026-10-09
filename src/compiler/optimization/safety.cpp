@@ -58,6 +58,9 @@ struct FieldOrigin {
                                                  MirPlaceId placeId,
                                                  bool includeRoot);
 [[nodiscard]] MirPlaceId thisRoot(const MirBody &body);
+struct AbstractState;
+void publishFieldFact(const MirBody &body, AbstractState &state,
+                      const FieldOrigin &origin, const IntegerFact &fact);
 
 struct ObjectFact {
   std::map<FieldPath, IntegerFact> integers;
@@ -865,15 +868,7 @@ void refineCondition(const MirBody &body, MirBlockId block,
       return;
     }
     current.wideningEnvelope = variableFact->wideningEnvelope;
-    fields.insert_or_assign(origin->second.path, current);
-    // Keep represented leaf places coherent with their abstract owned path.
-    // Root zero itself is never added to proof evidence or the place table.
-    for (const auto &place : body.places) {
-      const auto path = fieldPath(body, origin->second.root, place.id, false);
-      if (path && *path == origin->second.path &&
-          constantIntegerDomain(place.type) == current.domain)
-        state.integerPlaces[place.id] = current;
-    }
+    publishFieldFact(body, state, origin->second, current);
   }
 }
 
@@ -1126,6 +1121,36 @@ struct IndexedAggregateAccess {
   MirPlaceId root = 0;
   FieldPath field;
 };
+
+void publishFieldFact(const MirBody &body, AbstractState &state,
+                      const FieldOrigin &origin, const IntegerFact &fact) {
+  // The same owned field may be represented relative to both an enclosing
+  // object and a selected nested receiver. A branch refines its current value,
+  // not just one of those representations. Keep existing subobject summaries
+  // coherent so extracting the outer object cannot overwrite the refinement
+  // with an older, wider inner summary. Only exact owned paths participate;
+  // this is not alias propagation through stored references or raw pointers.
+  for (auto &[root, object] : state.objects) {
+    if (const auto prefix = fieldPath(body, origin.root, root, true);
+        prefix && prefix->size() < origin.path.size() &&
+        std::equal(prefix->begin(), prefix->end(), origin.path.begin())) {
+      const FieldPath suffix(origin.path.begin() + prefix->size(),
+                             origin.path.end());
+      object.integers.insert_or_assign(suffix, fact);
+    } else if (const auto prefix = fieldPath(body, root, origin.root, true)) {
+      auto path = *prefix;
+      path.insert(path.end(), origin.path.begin(), origin.path.end());
+      object.integers.insert_or_assign(std::move(path), fact);
+    }
+  }
+  state.objects[origin.root].integers.insert_or_assign(origin.path, fact);
+  // Root zero itself is never added to proof evidence or the place table.
+  for (const auto &place : body.places)
+    if (const auto path = fieldPath(body, origin.root, place.id);
+        path && *path == origin.path &&
+        constantIntegerDomain(place.type) == fact.domain)
+      state.integerPlaces[place.id] = fact;
+}
 
 [[nodiscard]] std::optional<IndexedAggregateAccess>
 indexedAggregateAccess(const MirProgram *program, const MirBody &body,
@@ -2038,14 +2063,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       // cannot write memory. The return identity is independently proved.
       state.integers[*instruction.result] = rebased(
           *currentResultField, block.id, instruction.id, *instruction.result);
-      state.objects[resultField->root].integers.insert_or_assign(
-          resultField->path, *currentResultField);
-      for (const auto &place : body.places)
-        if (const auto path = fieldPath(body, resultField->root, place.id);
-            path && *path == resultField->path &&
-            constantIntegerDomain(place.type) == currentResultField->domain)
-          state.integerPlaces[canonicalPlace(aliases, place.id)] =
-              *currentResultField;
+      publishFieldFact(body, state, *resultField, *currentResultField);
     }
   } else if (instruction.result)
     state.fieldOrigins.erase(*instruction.result);

@@ -5087,6 +5087,14 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   source-owner requirements remain unchanged; ordinary owning-class movement and
   raw initialized-element coverage are separate prerequisites. Neither is
   inferred from a getter name.
+  Handover review reproduced a separate general loss of precision in nested
+  ordinary counters: the refined outer field was overwritten while extracting
+  an older inner-object summary. Refinement now keeps exact owned-subobject
+  representations coherent. The unrelated two-level counter and the public
+  vector size constructor both publish exact length four; nested mutation
+  still rejects a forged stale overflow discharge. This is a prerequisite
+  correction, not completion of the remaining original optimizer requirements
+  or migration acceptance.
   A further general prerequisite distinguishes inert address arithmetic and
   typed pointer conversion from actual pointee/lifetime operations, and avoids
   repeating an operation at an empty full-expression marker. Selected unsafe
