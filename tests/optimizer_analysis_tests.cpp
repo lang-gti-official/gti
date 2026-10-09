@@ -889,6 +889,114 @@ int32_t read_after_add() {
          "failure edge cannot inherit the successful addition's result fact");
 }
 
+void testParallelAddressEdgeArguments() {
+  using namespace lang;
+  const auto frontend = Frontend().analyze("parallel-address-edges.gti", R"(
+int edge_addresses(bool again) {
+  mut int dangerous = 2147483647;
+  mut int safe = 7;
+  unsafe {
+    int* first = &dangerous;
+    int* second = &safe;
+    return *second + 1;
+  }
+}
+)");
+  const auto *function = findMirFunction(frontend, "edge_addresses");
+  expect(frontend.canGenerateCode() && function,
+         "parallel address edge reduction must lower");
+  if (!frontend.canGenerateCode() || !function)
+    return;
+  const MirBodyAddress address{.kind = MirBodyKind::Function,
+                               .owner = function->id};
+  // Analysis-only SSA scheduling probe. Retain the frontend's typed places,
+  // actual loads and failure site; put the final read in a loop whose two
+  // pointer parameters are optionally swapped at its backedge.
+  const auto probe = [&](bool swap) {
+    auto program = frontend.mir;
+    auto &body = *findMirBody(program, address);
+    auto &entry = body.blocks.front();
+    const auto read = std::find_if(
+        entry.instructions.begin(), entry.instructions.end(),
+        [](const auto &i) {
+          return i.kind == MirInstructionKind::Load && i.rawMemoryAccess;
+        });
+    expect(body.blocks.size() == 3 && read != entry.instructions.end(),
+           "address edge reduction retains its expected checked-load shape");
+    if (body.blocks.size() != 3 || read == entry.instructions.end())
+      return false;
+    std::vector<MirValueId> addresses;
+    for (const auto &instruction : entry.instructions)
+      if (instruction.operation == MirOperation::AddressOf &&
+          instruction.result)
+        addresses.push_back(*instruction.result);
+    expect(addresses.size() == 2, "both distinct addresses are represented");
+    if (addresses.size() != 2)
+      return false;
+    const auto pointerType = body.findValue(addresses.front())->info.type;
+    const auto first = static_cast<MirValueId>(body.values.size() + 1);
+    const auto second = first + 1;
+    const MirBlockId headerId = 4, exitId = 5;
+    body.values.push_back({.id = first,
+                           .info = {.type = pointerType},
+                           .definitionBlock = headerId});
+    body.values.push_back({.id = second,
+                           .info = {.type = pointerType},
+                           .definitionBlock = headerId});
+    MirBlock header{.id = headerId,
+                    .parameters = {{.value = first, .type = pointerType},
+                                   {.value = second, .type = pointerType}},
+                    .instructions = {read, entry.instructions.end()},
+                    .terminator = entry.terminator};
+    const auto rawPlace = header.instructions.front().operands.front().place;
+    for (auto &place : body.places)
+      if (place.id == rawPlace)
+        place.value = second;
+    for (const auto &instruction : header.instructions)
+      if (instruction.result)
+        for (auto &value : body.values)
+          if (value.id == *instruction.result)
+            value.definitionBlock = headerId;
+    entry.instructions.erase(read, entry.instructions.end());
+    entry.terminator = {
+        .kind = MirTerminatorKind::Goto,
+        .target = headerId,
+        .targetArguments = {valueOperand(addresses[0], pointerType),
+                            valueOperand(addresses[1], pointerType)}};
+    auto &latch = body.blocks[1];
+    MirBlock exit{.id = exitId, .terminator = latch.terminator};
+    const auto condition = std::find_if(
+        body.places.begin(), body.places.end(), [](const auto &place) {
+          return place.type == SemanticType::Bool && place.projections.empty();
+        });
+    expect(condition != body.places.end(),
+           "loop retains its unknown boolean condition");
+    if (condition == body.places.end())
+      return false;
+    latch.terminator = {
+        .kind = MirTerminatorKind::Branch,
+        .value = MirOperand{.kind = MirOperandKind::Copy,
+                            .place = condition->id,
+                            .type = SemanticType::Bool},
+        .target = headerId,
+        .elseTarget = exitId,
+        .targetArguments = {valueOperand(swap ? second : first, pointerType),
+                            valueOperand(swap ? first : second, pointerType)}};
+    body.blocks.push_back(std::move(header));
+    body.blocks.push_back(std::move(exit));
+    const auto safety = analyzeMirSafetyChecks(program, address);
+    return std::any_of(safety.proofs.begin(), safety.proofs.end(),
+                       [](const auto &proof) {
+                         return proof.discharge.family ==
+                                MirSafetyCheckFamily::ArithmeticOverflow;
+                       });
+  };
+  expect(probe(false),
+         "unchanged backedge addresses preserve a safe scalar load");
+  expect(!probe(true),
+         "parallel backedge swapping must not lose the overflowing pointee");
+}
+
 void testSparseConditionalConstants() {
   const std::string source = R"(
 int32_t selected(bool choose) {
@@ -967,6 +1075,7 @@ int main() {
   testConservativeSafetyEdgesAndUnionOverlap();
   testSparseConditionalConstants();
   testSafetyInvokeSnapshot();
+  testParallelAddressEdgeArguments();
   if (failures != 0) {
     std::cerr << failures << " optimizer analysis test(s) failed\n";
     return 1;

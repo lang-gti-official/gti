@@ -564,6 +564,16 @@ Source-owner, resource-prefix and terminated-string runtime gates also pass
 with this optimized implementation (93.36 seconds). Formatting and diff checks
 pass; the outer migration retains its existing 0.394.0 version advance.
 
+The following loop-edge regression exposed an unsound sequential block-argument
+transfer: swapping a safe and overflowing pointee could forget the latter.
+The analysis now snapshots all argument facts before publishing parameters.
+The unchanged-edge positive still proves its addition; the swapping backedge
+retains overflow. Both use the frontend's actual typed load and failure site.
+The optimized eight-gate selection passes (43.09 seconds), including all 188
+compiler cases; the 64-case/eight-mode raw-context matrix passes in 22.21
+seconds. This repairs a prerequisite correctness defect, not the remaining
+source-region coverage or whole-migration acceptance.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
