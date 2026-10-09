@@ -386,6 +386,19 @@ actual prepared operands; matching caller/callee field maps alone are not
 proof. Reordered and multi-owner inputs preserve their individual paths and
 permissions. The native backend erases this proven publication without
 changing the existing field construction or rollback schedule.
+The child formal itself may receive a fresh ordinary constructor result.
+Origin replay peels its exact prepared input and follows the selected field
+through that result's executable constructor before reaching an enclosing
+formal; a primary loan source is not a substitute for this field-wise proof.
+The replay is bounded by the body value and concrete constructor inventories.
+For a fresh owning argument, body verification also requires its active stored
+loan's exact source, access and parent ancestry, plus the checked moving
+parameter slot and that slot's transfer into the consuming constructor.
+If this constructor fails, its callee has already drained the consumed
+parameter. Lowering retires the caller-local child capability before draining
+its external parent, without adding another object drop. Copied or borrowed
+arguments keep their existing retirement schedule. These are compile-time
+loan/publication facts, not runtime lifetime metadata or new allocations.
 An owned return may publish a distinct dependency before intervening fallible
 local cleanup. Its result must belong to the original carrier's exact typed
 drop-transfer chain. If that cleanup fails, the exported dependency remains
