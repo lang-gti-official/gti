@@ -19,8 +19,8 @@ void testExampleCorpusEmissionReadiness() {
     buffer << input.rdbuf();
     const std::filesystem::path standardLibrary = repository / "stdlib";
     lang::TargetInfo target = lang::TargetInfo::host();
-    if (source.filename() == "66-managed-threads.gti" ||
-        source.filename() == "76-scalar-atomics.gti") {
+    if (source.filename() == "066-managed-threads.gti" ||
+        source.filename() == "076-scalar-atomics.gti") {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
       target.runtimeCapabilities.threads = true;
     }

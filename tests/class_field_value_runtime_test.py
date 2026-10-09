@@ -19,7 +19,7 @@ def main():
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     sources = [repository / "tests/fixtures/class_field_values.gti",
                repository / "tests/fixtures/owning_class_field_values.gti",
-               repository / "examples/23-direct-initialization.gti"] + [
+               repository / "examples/023-direct-initialization.gti"] + [
         repository / f"tests/coverage/reproducers/{name}.gti"
         for name in ("a01-class-value-into-field", "a01-call-result-into-field",
                      "a01-field-assign-from-call-result-method",

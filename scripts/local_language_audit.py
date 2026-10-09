@@ -31,8 +31,8 @@ EXAMPLES_ROOT = REPOSITORY_ROOT / "examples"
 # requirement here so the full audit validates them under their supported
 # configuration instead of silently excluding them from the corpus.
 PUBLIC_EXAMPLE_EXECUTION_PROFILES = {
-    "66-managed-threads.gti": "concurrent",
-    "76-scalar-atomics.gti": "concurrent",
+    "066-managed-threads.gti": "concurrent",
+    "076-scalar-atomics.gti": "concurrent",
 }
 
 INTERNAL_FAILURE_MARKERS = (

@@ -27,7 +27,7 @@ def main():
                      "a40-c-abi-record-pointer-array-field",
                      "a51-binding-over-class-array", "a51-binding-over-class-array-invalid-cpp")
     ] + [repository / f"examples/{name}.gti" for name in (
-        "32-structured-bindings", "12-fixed-arrays", "111-final-address-storage")]
+        "032-structured-bindings", "012-fixed-arrays", "111-final-address-storage")]
     with tempfile.TemporaryDirectory(prefix="gti-aggregate-projection-") as directory:
         scratch = Path(directory)
         native = scratch / "native.o"
