@@ -574,6 +574,26 @@ compiler cases; the 64-case/eight-mode raw-context matrix passes in 22.21
 seconds. This repairs a prerequisite correctness defect, not the remaining
 source-region coverage or whole-migration acceptance.
 
+The pointer-return prerequisite adds direct and nested source relays plus
+reassignment of a by-value pointer formal. The same source helper is called
+with both safe and overflowing pointees, so callee identity cannot substitute
+one caller's value into another. Raw and checked-reference writes, selection
+of different addresses and ordinary lifetime replacement remain negative
+controls. All ten address negatives reject forged overflow discharges;
+seven positives prove their addition at O2/O3 while retaining their raw loads,
+and O0 remains transformation-free. The eight focused gates pass in 44.86
+seconds (including 188 compiler cases). The expanded address/raw matrix passes
+96 native cases in 30.00 seconds, and the existing object/lifetime matrix
+passes 456 cases in 141.83 seconds; both cover all eight modes including
+no-elide and ASan/UBSan. The unmodified original acceptance gates still fail
+six safety and three native-evidence assertions (20.51 seconds). Region
+construction coverage, field/index address relations and full migration
+acceptance remain outstanding. Formatting and version-policy checks pass.
+The source-owner, resource-prefix and terminated-string runtime gates also
+pass on this implementation (92.61 seconds). No new syntax or public API is
+introduced by this optimizer prerequisite; the source-owner examples remain
+part of the outer migration's required final corpus gate.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

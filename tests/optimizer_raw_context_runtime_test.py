@@ -22,14 +22,17 @@ if __name__ == "__main__":
     source_path = fixture.parent / "optimizer_scalar_addresses.gti"
     source = source_path.read_text()
     functions = ("bad_replaced", "bad_joined", "bad_alias", "bad_raw_write",
-                 "bad_pointer_alias", "bad_lifetime")
+                 "bad_pointer_alias", "bad_lifetime", "bad_return_write",
+                 "bad_return_choice", "bad_return_redirect", "bad_return_alias")
     cases["scalar_addresses"] = [((), (0, "", ""))]
     paths = {"optimizer_raw_context": fixture, "scalar_addresses": source_path}
     with tempfile.TemporaryDirectory(prefix="gti-scalar-addresses-") as temporary:
         for function in functions:
             name = f"scalar_addresses_{function}"
             path = Path(temporary) / f"{name}.gti"
-            call = f"{function}(true)" if function == "bad_joined" else f"{function}()"
+            call = (f"{function}(true)"
+                    if function in ("bad_joined", "bad_return_choice")
+                    else f"{function}()")
             dispatch = f"if (false) return {call};"
             assert source.count(dispatch) == 1
             path.write_text(source.replace(dispatch, f"if (true) return {call};"))

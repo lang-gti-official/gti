@@ -5136,10 +5136,15 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   without changing the raw load or its unsafe obligation. Changed/ambiguous
   addresses, checked aliases, raw writes and lifetime replacement retain their
   failure checks and reject forged discharges. This body-local prerequisite
-  does not yet provide raw-region initialization coverage, pointer-return
-  summaries or source-element envelopes; the original nine optimizer/native
-  assertions remain open. The next slice must derive actual typed address
-  expressions through selected source calls and prove successful construction
+  does not yet provide raw-region initialization coverage or source-element
+  envelopes; the original nine optimizer/native assertions remain open.
+  The following selected-call prerequisite carries an exact raw-pointer formal
+  identity through ordinary returns and nested forwarding. It distinguishes a
+  passed address from the callee's own pointer-variable storage and permits
+  plain reassignment of that independent variable without interpreting it as
+  a pointee write. Raw/checked-alias writes and differing returned addresses
+  retain their checks. The next slice must extend actual typed address
+  expressions to owned fields/indexes and prove successful construction
   coverage before exporting element facts, without equating a witness with an
   allocation or assuming an indexed write initializes its complete interval.
   A further general prerequisite distinguishes inert address arithmetic and
