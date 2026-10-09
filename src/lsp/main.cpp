@@ -1316,7 +1316,16 @@ collectSemanticTokens(std::string_view source,
     }
   }
   for (std::size_t index = 0; index < classifications.size(); ++index) {
-    if (inactive[index] && classifications[index]) {
+    if (inactive[index]) {
+      if (!classifications[index]) {
+        if (configurationRoles[index]) {
+          // Preserve defined(...)'s dedicated syntax capture in conditions.
+          continue;
+        }
+        // Inactive punctuation needs an overlay too; leave active punctuation
+        // to the syntax highlighter rather than inventing semantic identities.
+        classifications[index] = SemanticClassification{Operator, 0};
+      }
       classifications[index]->modifiers |= InactiveCode;
     }
   }
@@ -1536,6 +1545,7 @@ struct AnalysisRequest {
   std::optional<std::int64_t> version;
   std::uint64_t generation = 0;
   std::uint64_t includeDiscoveryGeneration = 0;
+  std::optional<std::string> projectProfile;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::unordered_map<std::string, std::uint64_t> documentGenerations;
   lang::lsp::FrontendSourceSnapshot frontendSources;
@@ -1549,6 +1559,7 @@ struct CompletionRequest {
   std::string source;
   std::uint64_t generation = 0;
   std::size_t byteOffset = 0;
+  std::optional<std::string> projectProfile;
   std::unordered_map<std::string, std::string> sourceOverrides;
   lang::lsp::FrontendSourceSnapshot frontendSources;
   bool snippetSupport = false;
@@ -1610,6 +1621,7 @@ struct DiagnosticPublication {
 // failure is retained as a structured diagnostic while frontend recovery
 // continues without inventing a partial package graph.
 struct ProjectAnalysisInputs {
+  bool configurationValid = true;
   lang::RawPointerAuditMode rawPointerAudit = lang::RawPointerAuditMode::Off;
   lang::driver::AnalysisConfiguration configuration;
   std::vector<lang::PackageSourceRoot> packageSourceRoots;
@@ -1623,6 +1635,7 @@ struct ProjectAnalysisInputs {
 
 ProjectAnalysisInputs resolveProjectAnalysisInputs(
     const std::filesystem::path &entryPath,
+    const std::optional<std::string> &requestedProfile,
     std::optional<lang::ExecutionProfile> executionProfileOverride,
     std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride) {
   const lang::TargetInfo host = lang::TargetInfo::host();
@@ -1649,11 +1662,31 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   }
 
   const lang::driver::ProjectFacts &facts = *project.facts;
+  const std::string &profileName =
+      requestedProfile ? *requestedProfile : facts.defaultProfileName();
+  const auto *profile = facts.findProfile(profileName);
+  if (profile == nullptr) {
+    result.configurationValid = false;
+    lang::Diagnostic diagnostic = lang::makeDiagnostic(
+        "GTI-B1202", lang::DiagnosticPhase::Driver,
+        lang::SourceSpan{canonicalPath(entryPath).string(), 0, 1, 1},
+        "Unknown build profile '" + profileName + "'.");
+    std::string available;
+    for (const auto &candidate : facts.profiles()) {
+      if (!available.empty()) {
+        available += ", ";
+      }
+      available += "'" + candidate.name + "'";
+    }
+    diagnostic.hints.push_back(
+        "Select an available editor profile: " + available + ".");
+    result.diagnostics.push_back(std::move(diagnostic));
+    return result;
+  }
   const auto *projectTarget = facts.targetForSource(entryPath);
   const std::optional<lang::driver::AnalysisConfiguration>
       projectConfiguration = facts.analysisConfiguration(
-          facts.defaultProfileName(), host,
-          lang::driver::RuntimeProfile::Hosted,
+          profileName, host, lang::driver::RuntimeProfile::Hosted,
           projectTarget ? std::optional<std::string_view>(projectTarget->name)
                         : std::nullopt);
   if (projectConfiguration) {
@@ -1671,12 +1704,10 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
         result.configuration.declaredConfigurationFlags());
   }
   result.packageSourceRoots = facts.packageSourceRoots();
-  if (const auto *profile = facts.findProfile(facts.defaultProfileName())) {
-    result.rawPointerAudit =
-        rawPointerAuditOverride.value_or(profile->rawPointerAudit);
-    result.warnings = profile->warningPolicy;
-    result.packageWarnings = facts.packageWarnings(profile->name);
-  }
+  result.rawPointerAudit =
+      rawPointerAuditOverride.value_or(profile->rawPointerAudit);
+  result.warnings = profile->warningPolicy;
+  result.packageWarnings = facts.packageWarnings(profile->name);
   result.includeSearchRoots = lang::driver::projectIncludeSearchRoots(facts);
   for (const auto &target : facts.targets()) {
     if (canonicalPath(target.root) == canonicalPath(entryPath)) {
@@ -1769,6 +1800,8 @@ private:
       didClose(params);
     } else if (method == "workspace/didChangeWatchedFiles") {
       didChangeWatchedFiles(params);
+    } else if (method == "workspace/didChangeConfiguration") {
+      didChangeConfiguration(params);
     } else if (method == "$/cancelRequest") {
       cancelRequest(params);
     } else if (method == "textDocument/semanticTokens/full") {
@@ -1802,6 +1835,9 @@ private:
   }
 
   JsonValue initializeResult(const JsonValue *params) {
+    if (const JsonValue *options = member(params, "initializationOptions")) {
+      updateProjectProfile(member(options, "profile"));
+    }
     markdownHover = supportsHoverFormat(params, "markdown");
     markdownCompletionDocumentation =
         supportsCompletionDocumentationMarkdown(params);
@@ -2067,20 +2103,77 @@ private:
         invalidateDependentsLocked(uri, affected, requests);
       }
       if (projectModelChanged) {
-        requests.clear();
-        for (const auto &[documentUri, documentSource] : documents) {
-          (void)documentSource;
-          affected.insert(documentUri);
-          semanticTokenCache.erase(documentUri);
-          const auto version = documentVersions.find(documentUri);
-          requests.push_back(makeAnalysisRequestLocked(
-              documentUri,
-              version == documentVersions.end()
-                  ? std::nullopt
-                  : std::optional<std::int64_t>(version->second),
-              ++analysisGenerations[documentUri]));
-        }
+        invalidateProjectSnapshotsLocked(affected, requests);
       }
+      publications = publicationsForLocked(affected);
+    }
+    rejectPendingSemanticRequests(requests, -32801, "Content modified");
+    publish(std::move(publications));
+    scheduleAnalyses(std::move(requests));
+  }
+
+  void
+  invalidateProjectSnapshotsLocked(std::unordered_set<std::string> &affected,
+                                   std::vector<AnalysisRequest> &requests) {
+    requests.clear();
+    ++includeDiscoveryGeneration;
+    for (const auto &[uri, source] : documents) {
+      (void)source;
+      affected.insert(uri);
+      semanticTokenCache.erase(uri);
+      const auto version = documentVersions.find(uri);
+      requests.push_back(makeAnalysisRequestLocked(
+          uri,
+          version == documentVersions.end()
+              ? std::nullopt
+              : std::optional<std::int64_t>(version->second),
+          ++analysisGenerations[uri]));
+    }
+  }
+
+  void didChangeConfiguration(const JsonValue *params) {
+    const JsonValue *settings = member(params, "settings");
+    const JsonValue *gti = member(settings, "gti");
+    if (gti == nullptr) {
+      return;
+    }
+    if (gti->getAsObject() == nullptr) {
+      reportConfigurationError("GTI settings must be an object.");
+      return;
+    }
+    updateProjectProfile(member(gti, "profile"));
+  }
+
+  void reportConfigurationError(std::string message) {
+    sendJson(JsonObject{
+        {"jsonrpc", "2.0"},
+        {"method", "window/showMessage"},
+        {"params", JsonObject{{"type", 1}, {"message", std::move(message)}}}});
+  }
+
+  void updateProjectProfile(const JsonValue *value) {
+    std::optional<std::string> selected;
+    if (value != nullptr && value->kind() != JsonValue::Null) {
+      const auto name = value->getAsString();
+      if (!name || !lang::driver::isPortableProjectName(*name)) {
+        reportConfigurationError(
+            "gti.profile must be null or a portable build profile name "
+            "(for example, 'dev' or 'release'). The previous selection is "
+            "unchanged.");
+        return;
+      }
+      selected = name->str();
+    }
+    std::vector<AnalysisRequest> requests;
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      if (selected == projectProfile) {
+        return;
+      }
+      projectProfile = std::move(selected);
+      std::unordered_set<std::string> affected;
+      invalidateProjectSnapshotsLocked(affected, requests);
       publications = publicationsForLocked(affected);
     }
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
@@ -2667,6 +2760,7 @@ private:
         request.uri = uri;
         request.source = source;
         request.generation = generation->second;
+        request.projectProfile = projectProfile;
         request.snippetSupport = completionSnippets;
         request.markdownDocumentation = markdownCompletionDocumentation;
         request.frontendSources = frontendSnapshots.capture();
@@ -2875,6 +2969,13 @@ private:
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, project.sources, rootPath, uri, source));
     }
+    if (!project.configurationValid) {
+      // An invalid editor selection must not fabricate default-profile
+      // semantics or inactive spans. Keep a current, empty semantic snapshot
+      // so queries can return lexical/empty recovery instead of staying queued.
+      result.frontend = std::make_shared<const lang::FrontendResult>();
+      return result;
+    }
     const SteadyClock::time_point frontendStart = SteadyClock::now();
     result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
@@ -2924,6 +3025,7 @@ private:
                             .version = version,
                             .generation = generation};
     request.includeDiscoveryGeneration = includeDiscoveryGeneration;
+    request.projectProfile = projectProfile;
     for (const auto &[documentUri, documentSource] : documents) {
       const std::optional<std::filesystem::path> path =
           filePathFromUri(documentUri);
@@ -3182,25 +3284,28 @@ private:
         const SteadyClock::time_point frontendStart = SteadyClock::now();
         try {
           ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
-              request.entryPath, executionProfileOverride,
-              rawPointerAuditOverride);
-          completion = lang::LanguageQueries().complete(
-              {.entryPath = request.entryPath,
-               .source = request.source,
-               .byteOffset = request.byteOffset,
-               .target = project.configuration.target(),
-               .configurationFlags = project.configuration.configurationFlags(),
-               .declaredConfigurationFlags =
-                   project.configuration.declaredConfigurationFlags(),
-               .rawPointerAudit = project.rawPointerAudit,
-               .preludePaths = {standardLibrary.prelude},
-               .sourceOverrides = request.sourceOverrides,
-               .standardLibraryRoots = {standardLibrary.root},
-               .packageSourceRoots = project.packageSourceRoots,
-               .workMetrics = &workMetrics,
-               .cache = request.frontendSources.cache,
-               .sourceGenerations = request.frontendSources.generations,
-               .sourceDigests = request.frontendSources.digests});
+              request.entryPath, request.projectProfile,
+              executionProfileOverride, rawPointerAuditOverride);
+          if (project.configurationValid) {
+            completion = lang::LanguageQueries().complete(
+                {.entryPath = request.entryPath,
+                 .source = request.source,
+                 .byteOffset = request.byteOffset,
+                 .target = project.configuration.target(),
+                 .configurationFlags =
+                     project.configuration.configurationFlags(),
+                 .declaredConfigurationFlags =
+                     project.configuration.declaredConfigurationFlags(),
+                 .rawPointerAudit = project.rawPointerAudit,
+                 .preludePaths = {standardLibrary.prelude},
+                 .sourceOverrides = request.sourceOverrides,
+                 .standardLibraryRoots = {standardLibrary.root},
+                 .packageSourceRoots = project.packageSourceRoots,
+                 .workMetrics = &workMetrics,
+                 .cache = request.frontendSources.cache,
+                 .sourceGenerations = request.frontendSources.generations,
+                 .sourceDigests = request.frontendSources.digests});
+          }
         } catch (const std::exception &) {
           completion = {};
         }
@@ -3290,8 +3395,9 @@ private:
         ProjectAnalysisInputs project;
         if (const std::optional<std::filesystem::path> path =
                 filePathFromUri(request.uri)) {
-          project = resolveProjectAnalysisInputs(
-              *path, executionProfileOverride, rawPointerAuditOverride);
+          project = resolveProjectAnalysisInputs(*path, request.projectProfile,
+                                                 executionProfileOverride,
+                                                 rawPointerAuditOverride);
         }
         guarded = runIsolatedAnalysis(request, project);
       } catch (const std::exception &error) {
@@ -3713,6 +3819,8 @@ private:
   lang::StandardLibraryLayout standardLibrary;
   std::optional<lang::ExecutionProfile> executionProfileOverride;
   std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride;
+  // Protected by stateMutex; workers consume only their captured request value.
+  std::optional<std::string> projectProfile;
   std::optional<std::filesystem::path> frontendTracePath;
   mutable std::mutex frontendTraceMutex;
   lang::lsp::FrontendSnapshotState frontendSnapshots;

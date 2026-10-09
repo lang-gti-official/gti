@@ -156,8 +156,9 @@ proveMirExactReceiver(const MirProgram &program, MirBodyAddress address,
     // The parameter form keeps the receiver borrow, its place and loans
     // unchanged, so the referent's own cleanup is not part of this proof.
     const SemanticType *exact =
-        closedWorld ? closedWorld->exactParameterClass(address.owner, *parameter)
-                    : nullptr;
+        closedWorld
+            ? closedWorld->exactParameterClass(address.owner, *parameter)
+            : nullptr;
     if (!exact)
       return reject("receiver parameter has no closed-world exact class");
     const auto *interface = program.findClassInstance(*root->owner);
@@ -319,23 +320,23 @@ rewriteMirExactReceiver(MirProgram &program, MirBodyAddress address,
               FailurePropagationKind::DirectCall;
         }
     const auto *call = locate(*body, id).instruction;
-    return MirTransformRecord{
-        .pass = std::move(pass),
-        .kind = MirTransformKind::DevirtualizeCall,
-        .proof = MirTransformProofKind::ExactParameterReceiver,
-        .body = address,
-        .block = proof->block,
-        .instruction = id,
-        .sourceValue = call->hirValue,
-        .sourceStatement = call->hirStatement,
-        .relatedInstructions = {proof->receiverInput},
-        .relatedValues = {proof->receiverValue},
-        .relatedPlaces = {proof->concretePlace},
-        .requiredAnalyses = {.valueUses = true,
-                             .effects = true,
-                             .reachability = true,
-                             .dominance = true,
-                             .closedWorld = true}};
+    return MirTransformRecord{.pass = std::move(pass),
+                              .kind = MirTransformKind::DevirtualizeCall,
+                              .proof =
+                                  MirTransformProofKind::ExactParameterReceiver,
+                              .body = address,
+                              .block = proof->block,
+                              .instruction = id,
+                              .sourceValue = call->hirValue,
+                              .sourceStatement = call->hirStatement,
+                              .relatedInstructions = {proof->receiverInput},
+                              .relatedValues = {proof->receiverValue},
+                              .relatedPlaces = {proof->concretePlace},
+                              .requiredAnalyses = {.valueUses = true,
+                                                   .effects = true,
+                                                   .reachability = true,
+                                                   .dominance = true,
+                                                   .closedWorld = true}};
   }
   const auto *object = body->findPlace(proof->concretePlace);
   for (auto &block : body->blocks)
