@@ -1547,6 +1547,10 @@ struct AnalysisRequest {
   std::uint64_t includeDiscoveryGeneration = 0;
   std::optional<std::string> projectProfile;
   std::unordered_map<std::string, std::string> sourceOverrides;
+  // Content generations of every open document captured with the request.
+  // Publication compares them with `contentGenerations`, never with another
+  // document's analysis generation: re-analysing an unchanged dependency must
+  // not invalidate the dependants that already used its current text.
   std::unordered_map<std::string, std::uint64_t> documentGenerations;
   lang::lsp::FrontendSourceSnapshot frontendSources;
 };
@@ -1943,6 +1947,7 @@ private:
         documentVersions[uri] = *version;
       }
       semanticTokenCache.erase(uri);
+      ++contentGenerations[uri];
       // Generation checks make the prior snapshot inaccessible to requests.
       // Retaining it until replacement keeps its large frontend graph from
       // being destroyed synchronously on the protocol thread.
@@ -1988,6 +1993,7 @@ private:
           documentVersions[uri] = *version;
         }
         semanticTokenCache.erase(uri);
+        ++contentGenerations[uri];
         // Keep the stale snapshot alive until the worker publishes its
         // replacement; all readers require an exact generation match.
         requests.push_back(makeAnalysisRequestLocked(
@@ -2053,6 +2059,7 @@ private:
       dependenciesByRoot.erase(uri);
       pendingAnalyses.erase(uri);
       ++analysisGenerations[uri];
+      ++contentGenerations[uri];
       invalidateDependentsLocked(uri, affected, requests);
       publications = publicationsForLocked(affected);
       clientUris.erase(uri);
@@ -3033,8 +3040,8 @@ private:
         continue;
       }
       request.sourceOverrides[canonicalPath(*path).string()] = documentSource;
-      if (const auto current = analysisGenerations.find(documentUri);
-          current != analysisGenerations.end()) {
+      if (const auto current = contentGenerations.find(documentUri);
+          current != contentGenerations.end()) {
         request.documentGenerations[documentUri] = current->second;
       }
     }
@@ -3369,7 +3376,20 @@ private:
           return;
         }
 
-        while (!analysisOrder.empty()) {
+        // A queued hover, definition, or similar request waits for its
+        // document's analysis. Run that analysis before dependants queued
+        // ahead of it; the order entry it leaves behind is skipped later.
+        for (const PendingSemanticRequest &waiting : pendingSemanticRequests) {
+          const auto pending = pendingAnalyses.find(waiting.uri);
+          if (pending == pendingAnalyses.end()) {
+            continue;
+          }
+          request = std::move(pending->second);
+          pendingAnalyses.erase(pending);
+          ++activeAnalyses;
+          break;
+        }
+        while (request.uri.empty() && !analysisOrder.empty()) {
           const std::string uri = std::move(analysisOrder.front());
           analysisOrder.pop_front();
           const auto pending = pendingAnalyses.find(uri);
@@ -3514,9 +3534,9 @@ private:
           continue;
         }
         const auto snapshot = request.documentGenerations.find(dependency);
-        const auto current = analysisGenerations.find(dependency);
+        const auto current = contentGenerations.find(dependency);
         if (snapshot == request.documentGenerations.end() ||
-            current == analysisGenerations.end() ||
+            current == contentGenerations.end() ||
             snapshot->second != current->second) {
           dependencyChanged = true;
           break;
@@ -3836,6 +3856,12 @@ private:
   std::unordered_map<std::string, std::unordered_set<std::string>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
+  // Advances only when an open document's own text or overlay presence
+  // changes (open, change, close). Analysis generations also advance when a
+  // document is merely re-analysed because a dependency changed; using those
+  // for dependency staleness made each publication along an include chain
+  // invalidate every dependant above it.
+  std::unordered_map<std::string, std::uint64_t> contentGenerations;
   std::uint64_t includeDiscoveryGeneration = 0;
   std::unordered_map<std::string, AnalysisSnapshot> analysisSnapshots;
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
