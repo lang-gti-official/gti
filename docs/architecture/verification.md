@@ -229,6 +229,50 @@ results are retained in `/private/tmp/gti-resource-corpus-zfrntseh/report.json`.
 All thirteen external SDK consumers pass against a clean temporary stage at
 `/private/tmp/gti-s08-s09-sdk.Bx3eeV`; this does not update the user's installation.
 
+The frozen, clean `f8c9193c` checkpoint includes PRs #193 and #194 and passes
+the Release all-target build. Its unfiltered 596-test run completes in
+2720.87 seconds with 592 passes and four failures: `optimizer_safety` (the
+same six unmet proofs), `optimizer_safety_native_evidence` (the same three
+unmet assertions), `stdlib_surface` (one JSON O3 compilation exceeds 300
+seconds under concurrent laptop workloads), and `benchmark_harness` (the
+experimental arithmetic proxy expects the pre-#190 helper shape). Neither
+failure is hidden by a changed timeout or expectation. Complete MIR/emitter
+censuses, the native corpus oracle, allocation/failure controls, LSP and
+installed-runtime gates pass. The raw log and JUnit record are retained at
+`/private/tmp/gti-s08-s09-f8c9193c-full.log` and the adjacent `.xml`.
+
+An isolated Mac mini rerun uses the byte-identical optimized compiler, runtime
+archive and a published-source archive. The unchanged `stdlib_surface` passes
+all 153 cases/73 executable entries with one case worker and the same 300-second
+per-compilation limit (705.74 seconds overall, 8,066,138,112-byte maximum resident
+set). Its three JSON cases pass. This supports a contention contribution to the
+timeout, not a claim of negligible compilation cost: the generated JSON unit
+contains approximately 639,000 lines and repeated cleanup paths. The remote log
+is retained locally as `/private/tmp/gti-s08-s09-f8c9193c-remote-stdlib-surface.log`.
+The arithmetic proxy repair separately passes its complete harness on that
+runner in 10.03 seconds; original and current helper contracts both retain their
+successful computations and reject unknown/duplicate shapes. A fresh clean SDK
+stage at `/private/tmp/gti-s08-s09-sdk-f8c9193c.rj4DLr` passes all 13 external
+consumers. No installed user toolchain was changed.
+
+Independent runtime controls for the same compiler snapshot use five warmups
+and 25 seeded, interleaved samples on the Mac mini. Median milliseconds for
+candidate/private-prefix/idiomatic-C++ are respectively 105.99/105.90/105.40
+(fixed array), 81.04/80.83/80.27 (scalar floating point), and
+154.90/58.75/58.37 (game update). Managed-thread sequential/four-thread candidate
+medians are 598.14/161.98, versus 596.61/162.10 for the private-prefix baseline.
+The game update therefore remains a material regression, alongside the vector
+gap; passing fixed-array, scalar and thread controls does not waive it.
+Executable sizes are smaller and peak memory is comparable in these controls.
+The game complete-state comparison matches all four fields of every entity and
+the final digest across GTI candidate/private and both C++ twins (21,131 bytes,
+SHA-256 `7f2a6707b03db69c41bad2e368a742fbe47411f48c31c77e0e0c68a18a23e739`).
+Exact commands, identities, raw timings, disassembly and state evidence are
+retained in `gti-allocation-controls-f8c9193c-jvel5z_5` under the host temporary
+directory. Compilation during laptop contention is not compile-time acceptance
+evidence. Final reconciled-head optimization and full-suite acceptance remain
+required.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both
@@ -4360,6 +4404,12 @@ unexpected helpers. The generated binary must produce the same successful
 result record and participates in interleaved timing, but is marked
 non-semantic, successful-path-only, and ineligible for exact-head proof. It is
 an attribution ceiling, never optimization correctness evidence.
+Both the earlier boolean-detector shape and the current value-computing
+integer-detector shape are recognized. The latter must retain its exact staged
+result publication: replacing its condition alone would discard the arithmetic
+and publish zero. The proxy explicitly computes the successful-path arithmetic
+instead, recording the exact source replacement. Its failure/overflow behavior
+remains non-semantic; this is not an unchecked production compilation mode.
 
 Schema-1 records omit execution profiles and provenance. Schema-2 GTI records
 consume the driver's versioned `--build-report` sidecar, whose source closure

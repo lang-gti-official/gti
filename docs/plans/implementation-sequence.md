@@ -5032,9 +5032,11 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   has focused subprocess coverage. Scalar/class/shared detector wiring and
   terminal allocation edges have focused native evidence, including implicit
   default classes; scalar process-owner elision has an O0/O3 counting oracle.
-  Remaining family/fallible/overflow controls, complete acceptance and measured
-  source-container performance remain open; the owner-loop probe still trails
-  its C++ comparisons despite allocation removal.
+  The frozen `f8c9193c` full run passes family/fallible/overflow controls and
+  complete corpus gates. Combined acceptance and measured source-container
+  performance remain open: six optimizer proof requirements and three native
+  evidence assertions still fail, and vector/game-update workloads materially
+  trail the private-path comparisons. Allocation removal alone is insufficient.
   The contract is
   [ADR 022's Rust allocation-failure revision](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09)
   and [ADR 007's exhaustion revision](../decisions/007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09).
@@ -5067,6 +5069,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   implementation in progress, not integrated or accepted. The source-prefix
   migration below is its existing implementation base, not proof that the
   revised raw-buffer/checking/performance requirements are complete.
+  At frozen `f8c9193c`, nested resource-constructor publication, complete corpus
+  gates and all 13 staged SDK consumers pass. The unfiltered suite has 592/596
+  passes; isolated unchanged stdlib validation and the benchmark-harness repair
+  pass on the Mac mini. The two optimizer suites and vector/game-update runtime
+  parity remain the acceptance blockers. See the canonical verification record
+  for exact revisions, failures and measurement scope.
   The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
   It covers migration candidates M01, M02 and M04 in the

@@ -177,9 +177,11 @@ This follows Rust's `RawVec`/`Vec` layering, and is recorded in
 and planned as
 [`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
 The revised layering and unchecked APIs are implemented on the task branch.
-General nested resource-constructor MIR publication and combined functional,
-corpus and performance acceptance remain incomplete; these rows do not claim
-the migration is accepted.
+General nested resource-constructor MIR publication, complete corpus gates and
+the 13 staged SDK consumers pass at frozen `f8c9193c`. The original optimizer
+proof requirements and vector/game-update performance parity remain incomplete;
+final reconciled-head full-suite acceptance is still required. These rows do
+not claim the migration is accepted.
 
 Evidence: [vector](../../stdlib/std/vector.gti),
 [string](../../stdlib/std/string.gti),
