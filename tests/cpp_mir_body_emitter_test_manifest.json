@@ -2,6 +2,10 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testPropagationOnlyFailureContext",
+      "suite": "preflight"
+    },
+    {
       "name": "testBoundedSecondaryFailureRecordStorage",
       "suite": "preflight"
     },
