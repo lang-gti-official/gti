@@ -56,6 +56,45 @@ loan equality with an unrelated primary analysis is not a provenance proof.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
+### Reachable executable prefix
+
+Concrete analysis must cover every declaration, because instance reanalysis
+reports the diagnostics of generic bodies. Executable lowering needs only what
+the program can run. With `FrontendOptions::lowerReachableOnly`, which artifact
+builds set, `HirLowerer` first seeds only the program roots and drains the
+worklist:
+
+- the hosted entry;
+- library exports;
+- every C declaration and `[[c_abi]]` or `[[c_opaque]]` record, because the
+  native header and layout checks publish the C boundary whether or not GTI
+  uses it;
+- non-generic enum identities;
+- the concrete classes that template declarations name in signatures, fields,
+  and bases, because templates are emitted whether or not they are
+  instantiated.
+
+It then seeds every other declaration exactly as complete lowering does, and
+drains the worklist again.
+
+Instances are appended to their tables when first enqueued, and are finished
+once processed. Ordinary on-demand enqueueing discovers everything else the
+roots use: callees, constructors, destructors, virtual members of reachable
+classes, callback and thread-task adapters, and argument-append targets. So
+the tables after the first drain are a closed prefix of the final program, and
+a later instance is never referenced from them. Instance identities are table
+positions, so truncating every table to the prefix keeps each identity. The
+truncated tables are classes, functions, constructors, destructors, lambdas,
+both adapter families, enums, and instance symbols.
+
+`HirLoweringResult::reachable` carries that prefix only when it is smaller and
+passes `verifyHirProgramPlans`; otherwise lowering uses the complete program.
+The frontend lowers the prefix to MIR. The lowered-program declaration
+inventory then omits a non-generic class, function, or constructor that has no
+instance. Generic declarations remain, because retained templates can name
+them. Without the option, seeding and instance order are unchanged, so
+inspection of every declaration's lowering keeps its established form.
+
 The concrete discovery worklist retains the first outer requesting source span
 alongside its existing depth bookkeeping. Missing-definition diagnostics from
 semantic instance reanalysis use that requesting call as primary and preserve
@@ -400,7 +439,15 @@ the unused generic owner or its executable method bodies.
 Before a class type enters the worklist, lowering asks the semantic model for
 its exact-specialization identity recursively. A matching primary application
 therefore enqueues the specialization's distinct `ClassId`; a nonmatching
-application enqueues the primary plus its concrete arguments. HIR does not
+application enqueues the primary plus its concrete arguments. Resolution
+builds a complete canonical key only for a class whose primary has a recorded
+specialization. Reusing an existing class instance does not rediscover its
+arguments, which were discovered when the instance was created; discovery is
+monotone. Only a first instantiation site still propagates to them. Both rules
+keep a deeply nested generic, such as polymorphic recursion through `Box<T>`,
+proportional to its size rather than its depth squared. Before them, the
+`a06` reproducer took about 20 seconds to reach `GTI-S2105`; it now takes
+under one. HIR does not
 compare specialization syntax, rank candidates, or defer selection to C++.
 Each canonical generic class instance also retains the first source span that
 requested it. That span is diagnostic provenance for concrete semantic
@@ -624,8 +671,11 @@ receive a temporary stage with exact `Once` capability. Non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
 does not reconstruct their receiver. Lambdas, unresolved deferred callables,
 and unsupported construction remain outside the slice. A concretely selected
-`operator()` uses the same exact target even when its
-generic source call still has a deferred-callable base record. Its receiver is
+`operator()` or namespace function item uses the same exact target even when
+its generic source call still has a deferred-callable base record; the
+instance's selected signature, not that inherited record, plans each argument.
+A derived class object for a base-reference parameter is therefore the same
+ordered borrow input as in a direct call. A planned receiver is
 a read or mutable borrow for a place, a value for a reusable value receiver, or
 a `MoveValue` for an explicitly moved receiver. Ordinary consuming methods
 and value operators retain the same exact invocation capability. A fresh

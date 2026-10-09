@@ -2866,8 +2866,15 @@ int main(mut int argc, mut arguments_type argv) {
           : valid.semantics.findFunction(mainInfo->entryArgumentAppendFunction);
   const std::unordered_set<std::string> appendNames =
       concreteBackendSymbols(generated, "__gti_member_", "push_back");
+  // Public member aliases can require the native template carrier instead of
+  // a concrete owner spelling. Both representations must invoke the exact
+  // selected GTI append declaration; neither may rely on native overload
+  // lookup.
   const std::string appendName =
-      appendNames.size() == 1 ? *appendNames.begin() : std::string{};
+      appendNames.size() == 1 ? *appendNames.begin()
+      : appendNames.empty() && append != nullptr
+          ? "__gti_fn_" + std::to_string(append->id) + "_push_back"
+          : std::string{};
   expect(generated.find(
              "int main(int __gti_native_argc, char **__gti_native_argv)") !=
                  std::string::npos &&

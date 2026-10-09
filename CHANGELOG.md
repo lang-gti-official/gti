@@ -9,6 +9,115 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.394.0 — Static dispatch through interface parameters
+
+- At `-O2` and `-O3`, a call through an interface reference parameter becomes
+  a direct, inlinable call when every call of the enclosing function in the
+  program passes the same concrete class. That covers a local object passed
+  directly, through other functions' reference parameters, or recursively.
+  The proof uses only the program's own calls: no implementation counting and
+  no library names. A function that something other than a visible call can
+  invoke keeps dynamic dispatch: a function item value, a C callback, a
+  thread task, an export, the entry point, or a virtual override. Evaluation
+  order, the first runtime failure and cleanup are unchanged. An
+  interface-helper probe runs 31% faster, matching the local-object form.
+- `--optimization-report` records the new `exact-parameter-receiver` proof
+  and a `closedWorld` required analysis. `--optimization-remarks` explain why
+  a parameter receiver stayed virtual.
+
+### Fixes
+
+- Fix an internal compiler error when a generic callable parameter holding a
+  function item, such as `call(apply)` invoking `function(concrete, 40)`, passes
+  a derived class object to the function's base-class reference parameter.
+  The call now binds the argument exactly as a direct `apply(concrete, 40)`
+  does, for read-only and `mut` references.
+- Rejecting runaway generic recursion is fast again. Polymorphic recursion
+  such as `depth<T>` calling `depth<Box<T>>` reported `GTI-S2105` only after
+  about 20 seconds of instance discovery; it now fails in under a second. The
+  cost came from re-resolving and rediscovering nested generic types at every
+  depth.
+
+## 0.393.0 — Standard-library modules and reachable compilation
+
+- Builds lower, optimize and natively compile only code reachable from the
+  program: its entry point, library exports, global initialization and the C
+  boundary, plus everything those reach. Every declaration is still checked,
+  so an error in unused code, including in a generic it instantiates, is
+  still reported. Including or importing a large library avoids MIR,
+  optimization and native compilation work for unused bodies; parsing and
+  semantic analysis still cover the imported source.
+- `extern "C"` declarations and C records stay in the generated native header
+  and layout checks whether or not GTI code uses them.
+- Less compiler work per build: whole-program C++ representation facts are
+  computed once per build, the lowered program's seal is hashed as it is
+  printed, consumer stages share owning verification evidence, and the
+  remaining declaration lookups no longer scan the whole program. Backend
+  admission retains full verification rather than relying on the seal alone.
+
+### Standard-library modules
+
+- Import the standard library instead of including it: `import std.vector;`
+  makes `<std/vector>` visible, in direct compilation and in projects alike.
+  Each public `<std/name>` unit is the module `std.name`, and an import exposes
+  exactly what the include does. Existing `#include <std/...>` code is
+  unchanged, and both spellings can be mixed. There is no aggregate
+  `import std;` yet.
+- A module interface can republish one legacy unit with
+  `export #include "legacy.gti"`. A library can then offer an import before
+  its sources are converted to explicit exports.
+- A `#define` before an include no longer prevents that unit from being shared
+  with a module. Sharing is rejected only when the flag selects different
+  code in the shared unit.
+- `std` can no longer be registered as a `[modules]` name.
+- Backend stages share owning verification evidence for the exact accepted
+  lowered program instead of repeating full checks. The driver transfers this
+  value without a full-program copy, and common declaration lookups use
+  identity-checked indices. These reduce compiler work without changing GTI
+  checks or the generated program; gains depend on the imported workload.
+- Fix native build failures when a program includes `<std/atomic>` or
+  `<std/mutex>` without using their types, in either execution profile. Such
+  includes still add no native atomic or mutex support to the executable.
+
+## 0.390.0 — Target and profile configuration flags
+
+- Set `defines` in individual `gti.toml` targets and profiles. Build, check,
+  metadata and editor analysis share the selected configuration; flags from
+  unselected targets and profiles remain inactive, without false typo warnings.
+- Selected flags combine with package/dependency build flags and command-line
+  `-D` additions. Cached builds and editor snapshots invalidate when the
+  configuration changes. See `examples/scoped-configuration`.
+
+## 0.389.0 — Qualified generic type members
+
+- Name public member aliases directly through generic owners, such as
+  `std::vector<T>::const_iterator` or `Box<int>::value_type`, including nested
+  alias qualifiers. The same spelling works in generic signatures, fields,
+  aliases and local declarations, with existing access and ownership checks.
+- Editor navigation, completion, highlighting and formatting retain the
+  specialized owner and selected alias. Example 132 demonstrates a range
+  wrapper over unique-owned layers.
+
+## 0.388.0 — Public names for container iterators
+
+- Name the iterator and sentinel types of standard containers and views
+  without `std::detail`: read-only iteration exposes `const_iterator` (from
+  `begin()`) and `sentinel` (from `end()`); containers supporting mutable
+  iteration also expose `iterator` (from `begin_mut()`). The aliases cover
+  `vector`, `array`, `deque`, `list`, `forward_list`, `span`, `mutable_span`,
+  `string`, `resource_vector`, and the maps and sets. `forward_list` iteration
+  remains declaration-only scaffolding. Name the aliases
+  through an alias of a concrete type, for example
+  `using Ints = std::vector<int>;` then `Ints::iterator`.
+
+## 0.387.0 — Checked local reference inference
+
+- Use `auto&` and `mut auto&` for local checked references without spelling
+  long types, including borrowed results extracted with `?` or `.expect()`.
+  The same access and lifetime rules as explicit references apply; plain
+  `auto` still creates a value. Copy diagnostics explain borrowing and cloning
+  alternatives without suggesting movement of borrowed results.
+
 ## 0.384.0 — Program installation and quieter builds
 
 - Install a project's executable with `gti install` and remove it with

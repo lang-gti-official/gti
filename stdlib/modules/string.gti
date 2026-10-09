@@ -1,0 +1,3 @@
+// Module std.string: the public surface of <std/string>.
+export module string;
+export #include <std/string>

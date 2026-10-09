@@ -148,6 +148,7 @@ public:
   using size_type = size_t;
   using iterator = detail::unordered_map_mut_iterator<K, V>;
   using const_iterator = detail::unordered_map_iterator<K, V>;
+  using sentinel = detail::unordered_map_sentinel;
   unordered_map()
     requires std::default_initializable<Hash> && std::default_initializable<KeyEqual> &&
              std::read_callable<Hash, K, std::size_t> &&

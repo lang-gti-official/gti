@@ -1,5 +1,75 @@
 # GTI Optimization Architecture Proposal
 
+## Runtime Performance Policy Revision (2026-10-09)
+
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
+supersedes this plan's earlier benchmark-first entry restrictions. Runtime
+performance is required; architectural rationale and a defined cost model can
+justify general analyses, transforms and representation work without a measured
+regression, proxy or minimum predicted speedup. Historical measured-defer
+records remain evidence, not permission barriers to reopening the architecture.
+This revision does not claim the proposed facilities are implemented or waive
+their semantic proofs, independent verification and performance acceptance.
+
+## Closed-world call-site facts (2026-10-09)
+
+`optimization/closed_world` now provides the closed-world contract that
+interprocedural rows need (see
+[the architecture](../architecture/optimization.md#closed-world-call-site-facts)).
+Its first fact, exact referent classes of reference parameters, devirtualizes
+interface calls through forwarded parameters. Later clients should extend
+this fact family rather than add a second notion of a closed function:
+
+- argument scalar ranges for RT-2;
+- exact `this` classes for member helpers;
+- exact owned-pointee classes from allocation origins, for owning callback
+  models;
+- the callee-set inventory that RT-10 inlining and specialization need.
+
+The existing closed-call safety analysis keeps its own root and rejection
+rules. Reconciling the two inventories is follow-up work.
+
+## PR #166 audit disposition (2026-10-09)
+
+The reviewed proposal is `1636c1df`, not an implementation authority. Its
+screen is useful for finding clients, but minimum-of-seven timings under
+competing builds, non-interleaved attribution samples, and unsafe check-removal
+ceilings do not establish a production speedup. Its runner also fails to
+forward the selected C++ compiler/standard to the GTI build. Do not import that
+runner as the canonical measurement path. Reuse the existing benchmark and
+frozen-storage comparison harnesses with complete-state oracles, exact source
+and tool identities, warmups and interleaved samples.
+
+The immediately justified slice is **RT-1: one cold failure-only helper**.
+An independent current-head storage proxy improves runtime without removing
+checks; broad cold scope/activation/destructor annotations instead regress it.
+Production code adopts only the incoming-cleanup check's guarded cold/noinline
+hint. Frozen production comparisons, runtime/compile/size/memory controls,
+all 570 CTest gates and staged consumers now pass; the proxy alone was not
+treated as completion evidence. See
+[performance-tooling.md](performance-tooling.md#rt-1-source-storage-failure-path-cost).
+
+The rest is future work, not implicitly implemented by this change. The rows
+below retain their technical prerequisites under the revised admission policy:
+
+| Finding | Disposition, prerequisite and acceptance |
+| --- | --- |
+| RT-1 broader outlining/inline policy | Design from successful-path and failure-path representation costs; validate the resulting policy on representative clients. Keep managed-worker handoff exception-transparent; blanket `noexcept`, forced inlining and higher global thresholds are not justified by this revision. |
+| RT-2 contextual narrowing | Prepare a bounded post-fixpoint refinement, re-establishing conservative coverage of **every** reachable call context. Current closed-call contexts widen but do not narrow; simply replacing widened inputs with attractive return ranges is not a proof. Require independent replay, conflicting callers/recursion/budget negatives, and loop-carried performance validation at acceptance. |
+| RT-3 conversions/division/shifts | A general proof family, beginning with exact integral conversion domains. Each failure outcome needs its own rule and replay: zero and signed-minimum/-1 for division, and all GTI shift preconditions, not merely a bounded shift count. Require boundary negatives and representative byte/text performance validation; a prior measured gain is not required to broaden the family. |
+| RT-4 refreshed infallibility | Requires effect derivation on optimized MIR plus an independently replayed Invoke-to-Call edit, including CFG/identity repair. Native, recursive, synchronizing and cleanup boundaries remain conservative. No backend inference from apparently empty failure blocks. |
+| RT-5 relational index/length facts | Begin with a body-local relation whose origin, dominance and mutation/alias invalidation are proved. Crossing an accessor requires an admitted precondition/specialization or bounded inlining; a container's public name is not authority. Require opaque-call/mutation negatives and exact failure parity. |
+| RT-6 affine loop versioning | Requires a non-failing, side-effect-free preflight and an unchanged checked fallback. Hoisting may not change the first failure, partial stores, evaluation order or floating-point ordering. The fallback's presence alone does not prove the preflight safe. Validate representative clients and preflight costs as part of acceptance. |
+| RT-7 iterator counters/reductions | Prove length fits the **counter's** domain; allocation capacity alone does not prove a `ptrdiff_t` counter cannot overflow. Speculative reductions additionally require non-observable, exactly restorable state and ordered first-failure replay. Do not apply a wrapping accumulator to ordinary effectful loops. |
+| RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
+| RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. |
+| RT-10 bounded MIR inlining | General optimization architecture may justify this work without a prior workload speedup or proxy. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual boundaries, cost limits and independent replay. Validate representative call chains and code-size/compile-time tradeoffs. |
+
+Closed-world executable lowering from #176 is already integrated; the old
+whole-stdlib code-size observations must be remeasured, not used as current
+evidence. None of the above authorizes removal of GTI-observable checks without
+canonical proof or an exactly equivalent, independently verified fallback.
+
 > **Plan status:** Non-canonical staged design. The implemented optimizer
 > boundary is documented in
 > [`docs/architecture/optimization.md`](../architecture/optimization.md).
@@ -11,10 +81,12 @@ exclusive runtime-performance campaign and every follow-on optimizer row are
 sequenced only in
 [`implementation-sequence.md`](implementation-sequence.md).
 
-Audit update (2026-10-08): a measured
+Historical audit (2026-10-08): a measured
 [runtime optimization audit](#runtime-optimization-audit-2026-10-08) records
-findings RT-1 through RT-10 and the release-check boundary. None of them is
-implemented or scheduled.
+findings RT-1 through RT-10 and the release-check boundary. Their current
+disposition and prerequisites are recorded in the
+[2026-10-09 revision](#pr-166-audit-disposition-2026-10-09), not the original
+audit's scheduling statements.
 
 Implementation update (2026-10-01): the exhaustive optimizer language-growth
 gate is reconciled at `72a8087a`. The measured follow-up implements one bounded
@@ -109,15 +181,15 @@ in
 plan does not own or duplicate that order.
 
 Operational ordering is maintained in
-[`implementation-sequence.md`](implementation-sequence.md). Infrastructure
-continues to land only with a real client: the current analysis cache exists
+[`implementation-sequence.md`](implementation-sequence.md). The current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
-and alias facts remain available for later measured performance rows, but they
-do not dictate a pass. General loop transforms, MemorySSA, general/contextual
+and alias facts remain available for further performance work, but they do not
+dictate a pass. General loop transforms, MemorySSA, general/contextual
 devirtualization, an LLVM backend, and broad optimizer frameworks remain
-deferred until a measured bottleneck and the sole operational sequence require
-them.
+unimplemented. Their design and scheduling may follow architectural need under
+ADR 012 without waiting for a measured bottleneck; the operational sequence
+still owns task ordering and each facility retains its technical prerequisites.
 
 This proposal defines how GTI grows from typed-HIR compatibility folding into
 a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -133,12 +205,15 @@ specified separately in
 
 ## Runtime Optimization Audit (2026-10-08)
 
-Status: audit findings only. Nothing in this section is implemented,
-scheduled, or a claim about current behavior. Each finding names the GTI rule
-it must preserve and the evidence a first slice would need. Rows enter
-[`implementation-sequence.md`](implementation-sequence.md) only by the usual
-selection process; the 2026-10-08 stabilization reset currently pauses new
-campaign work.
+Status: historical audit of compiler `f0ba8383`, not a claim about the current
+implementation. The original findings and suggested first slices below retain
+their dated context. Current status, corrected prerequisites, and scheduling
+policy are governed by the [2026-10-09 disposition](#pr-166-audit-disposition-2026-10-09)
+and [runtime-performance policy](#runtime-performance-policy-revision-2026-10-09).
+That revision supersedes the original stabilization pause and benchmark-first
+priority restrictions; the implementation sequence remains the scheduling
+authority. Each finding still names the GTI rule it must preserve and the
+evidence an implementation needs.
 
 The audit asked which established compiler techniques could make ordinary GTI
 programs faster without weakening GTI safety or semantics, including removing
@@ -916,7 +991,7 @@ verbosity are also independent of semantic optimization level.
 | redundant load/store removal | analysis gates partly complete; transform absent | MIR places | place alias/escape; exact call effects; memory versions or a proved local substitute; lifetime boundaries |
 | bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
 | loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
-| devirtualization | bounded local exact-receiver slice implemented; general/contextual forms deferred | verified MIR calls, local loans, concrete instances and override identities | exact confined receiver, initialization dominance, authoritative effects, failure/cleanup compatibility, independent replay |
+| devirtualization | bounded local and closed-world reference-parameter exact-receiver slices implemented; owned-pointee, `this`, pointer and specialization forms deferred | verified MIR calls, local loans, closed-world call-site facts, concrete instances and override identities | exact confined or closed-world receiver, initialization dominance or exact caller facts, authoritative effects, failure/cleanup compatibility, independent replay |
 | inlining/specialization | one candidate among the `O-PERF-02` choices; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; exact profile/proxy evidence |
 
 Do not implement a pass when one of its gates is represented only by C++
@@ -950,7 +1025,8 @@ The migration must avoid two permanent optimization authorities.
 Status: complete. Reusable verification/repair, deterministic printing,
 complete conservative effects, stable typed edits, source replay, the
 client-backed pass/analysis manager, and opt-in dumps/reports are implemented.
-General infrastructure still grows only with clients.
+General infrastructure may grow from architectural requirements under ADR 012;
+identify its production consumers and validation, not a prior speedup threshold.
 
 - Maintain deterministic MIR printing, public validation utilities, effect
   traits, and the bounded controlled editor. Add broader editor or analysis
@@ -968,8 +1044,8 @@ implemented and cross-checked. New passes do not use shadow authority.
 
 - Preserve the implemented primitive identity cross-check until its body family
   consumes optimized MIR.
-- Port another compatibility fold only when a measured transform client or an
-  active migration phase requires it.
+- Port another compatibility fold when general optimization architecture or an
+  active migration phase requires it; validate its production consumer.
 - Treat disagreement as a compiler test failure, not as permission to choose
   whichever result the C++ emitter prefers.
 
@@ -1304,8 +1380,9 @@ Acceptance criteria:
 Resolve these before the pass families that depend on them:
 
 - memory versioning for transformations that must distinguish intervening
-  writes; add MemorySSA only after a measured client proves existing place and
-  effect facts insufficient;
+  writes; introduce MemorySSA when existing place and effect facts cannot
+  express the required general reasoning soundly and maintainably, without a
+  benchmark-first entry gate;
 - transform-specific loop legality, failure-order proof, and cost evidence;
 - general temporary lifetime and active-drop transitions in MIR;
 - backend-neutral object layout, data layout, virtual tables, and calling

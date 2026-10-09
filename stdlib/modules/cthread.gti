@@ -1,0 +1,3 @@
+// Module std.cthread: the public surface of <std/cthread>.
+export module cthread;
+export #include <std/cthread>

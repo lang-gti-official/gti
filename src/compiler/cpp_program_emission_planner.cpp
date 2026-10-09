@@ -35,20 +35,12 @@ namespace lang {
 
 class CppProgramEmissionPlanner final {
 public:
-  explicit CppProgramEmissionPlanner(const LoweredProgram &program,
+  explicit CppProgramEmissionPlanner(const VerifiedLoweredProgram &verified,
                                      CppStandard standard, bool debugInfo)
-      : standard(standard), mir(program.mir()), loweredProgram(program),
-        debugInfo(debugInfo) {
-    const std::vector<LoweredProgramIssue> loweredIssues =
-        verifyLoweredProgram(loweredProgram);
-    if (!loweredIssues.empty()) {
-      throw std::logic_error(
-          "C++ emitter requires a verified lowered program: " +
-          loweredIssues.front().detail);
-    }
-
+      : standard(standard), mir(verified.program().mir()),
+        loweredProgram(verified.program()), debugInfo(debugInfo) {
     CppMirRepresentationSnapshotBuild snapshot =
-        buildCppMirRepresentationSnapshot(loweredProgram, standard, debugInfo);
+        buildCppMirRepresentationSnapshot(verified, standard, debugInfo);
     if (!snapshot.valid()) {
       const auto internal =
           std::find_if(snapshot.issues.begin(), snapshot.issues.end(),
@@ -110,6 +102,14 @@ public:
         .storage = true,
         .managedThreads = loweredProgramContainsManagedThreads(),
         .cThreads = mir.requiresCThreadRuntime(),
+        .sharedOwnerDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::SharedOwner),
+        .atomicStorageDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::AtomicStorage),
+        .mutexStorageDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::MutexStorage),
+        .mutexLockTokenDeclared = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::MutexLockToken),
         .atomics = loweredProgramContainsAtomics(),
         .mutexes = loweredProgramContainsMutexes(),
         .simd = loweredProgramContainsSimd(),
@@ -274,16 +274,25 @@ public:
         });
   }
 
+  // A retained capability class declaration is the structural fact that lets
+  // an emitted declaration spell the backend representation of that class.
+  [[nodiscard]] bool
+  loweredProgramDeclaresCapability(CompilerCapabilityTypeKind kind) const {
+    return std::any_of(
+        loweredProgram.declarations().begin(),
+        loweredProgram.declarations().end(),
+        [kind](const LoweredDeclaration &row) {
+          const auto *type = std::get_if<LoweredClassDeclaration>(&row.payload);
+          return type != nullptr && type->compilerCapability == kind;
+        });
+  }
+
   [[nodiscard]] bool loweredProgramContainsManagedThreads() const {
-    if (std::any_of(loweredProgram.declarations().begin(),
-                    loweredProgram.declarations().end(),
-                    [](const LoweredDeclaration &row) {
-                      const auto *type =
-                          std::get_if<LoweredClassDeclaration>(&row.payload);
-                      return type != nullptr &&
-                             type->compilerCapability ==
-                                 CompilerCapabilityTypeKind::ThreadHandle;
-                    })) {
+    // The handle representation is not a template, so even an uninstantiated
+    // generic definition names it non-dependently and needs it complete; a
+    // retained declaration therefore selects the complete support.
+    if (loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::ThreadHandle)) {
       return true;
     }
     for (const MirBodyAddress address : enumerateMirBodyAddresses(mir)) {
@@ -310,9 +319,11 @@ public:
   }
 
   [[nodiscard]] bool loweredProgramContainsAtomics() const {
-    // Generic library declarations survive a dormant import. Native atomic
-    // support is needed only once semantic instantiation creates a concrete
-    // sealed storage capability (including construct-without-operation).
+    // Generic library declarations survive a dormant import; they need only
+    // the forward declaration selected by loweredProgramDeclaresCapability.
+    // Native atomic support is needed only once semantic instantiation creates
+    // a concrete sealed storage capability (including
+    // construct-without-operation).
     if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
                     [](const MirClassInstance &instance) {
                       return instance.compilerCapability ==
@@ -346,9 +357,10 @@ public:
 
   [[nodiscard]] bool loweredProgramContainsMutexes() const {
     // Generic standard-library declarations are present after a dormant
-    // import but do not require native support. Concrete MIR capability
-    // instances are created only once a mutex owner/guard is instantiated,
-    // including the construct-without-lock case.
+    // import; they need only the forward declarations selected by
+    // loweredProgramDeclaresCapability, not native support. Concrete MIR
+    // capability instances are created only once a mutex owner/guard is
+    // instantiated, including the construct-without-lock case.
     if (std::any_of(mir.classInstances().begin(), mir.classInstances().end(),
                     [](const MirClassInstance &instance) {
                       return instance.compilerCapability ==
@@ -1439,6 +1451,11 @@ public:
     };
     for (const MirClassInstance &instance : mir.classInstances()) {
       emitType(emitType, instance.type);
+      // A dependent member alias can become concrete only in this sealed
+      // instance catalog. Its target still need not have an executable layout.
+      for (const MirClassTypeAlias &alias : instance.typeAliases) {
+        emitType(emitType, alias.type);
+      }
     }
     for (const LoweredDeclaration &row : loweredProgram.declarations()) {
       if (const auto *alias =
@@ -2975,14 +2992,23 @@ public:
       output << ");\n";
     }
     if (generic) {
+      std::unordered_set<std::string> declaredParameters;
       for (const MirConstructorInstance *instance : instances) {
         if (!loweredConstructorInstanceIsNameable(*instance)) {
           continue;
         }
-        writeIndent();
-        output << "explicit " << classRow.name << '(';
+        // A retained primary can represent several concrete owners with the
+        // same native parameter list. Declare that ordinary overload once;
+        // its owner-specific definitions and failure-tag overloads stay exact.
+        std::ostringstream saved = std::move(output);
+        output = std::ostringstream{};
         emitLoweredMirParameters(instance->parameterTypes);
-        output << ");\n";
+        const std::string parameters = output.str();
+        output = std::move(saved);
+        if (!declaredParameters.insert(parameters).second)
+          continue;
+        writeIndent();
+        output << "explicit " << classRow.name << '(' << parameters << ");\n";
       }
     }
     deferLoweredMember(row);
@@ -9097,6 +9123,20 @@ public:
 CppProgramEmissionPlan
 buildCppProgramEmissionPlan(const LoweredProgram &program, CppStandard standard,
                             bool debugInfo) {
+  std::vector<LoweredProgramIssue> issues;
+  const std::optional<VerifiedLoweredProgram> verified =
+      verifiedLoweredProgram(program, issues);
+  if (!verified) {
+    throw std::logic_error("C++ emitter requires a verified lowered program: " +
+                           issues.front().detail);
+  }
+  return buildCppProgramEmissionPlan(*verified, standard, debugInfo);
+}
+
+CppProgramEmissionPlan
+buildCppProgramEmissionPlan(const VerifiedLoweredProgram &program,
+                            CppStandard standard, bool debugInfo) {
+  const CppRepresentationScope representation(program);
   return CppProgramEmissionPlanner(program, standard, debugInfo).build();
 }
 

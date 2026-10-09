@@ -44,7 +44,8 @@ public:
        std::optional<std::size_t> completionOffset = std::nullopt,
        const std::vector<PackageSourceRoot> &packageSourceRoots = {},
        TargetInfo target = TargetInfo::host(),
-       ConfigurationFlags configurationFlags = {});
+       ConfigurationFlags configurationFlags = {},
+       ConfigurationFlags declaredConfigurationFlags = {});
 
   [[nodiscard]] bool hadError() const;
 
@@ -64,7 +65,6 @@ private:
     // Includes run once in each isolated module configuration domain. The
     // source graph and selected syntax still have one canonical identity.
     std::unordered_set<SourceUnitId> configurationDomains;
-    std::unordered_set<std::string> inputFlags;
   };
 
   struct ResolvedInclude {
@@ -91,6 +91,11 @@ private:
 
   [[nodiscard]] std::optional<std::string>
   standardLibraryNameForExistingPath(const std::filesystem::path &path) const;
+
+  // `modules/name` for an interface in a configured root's fixed module
+  // directory; that interface belongs to the reserved `std` module owner.
+  [[nodiscard]] std::optional<std::string>
+  standardModuleNameForExistingPath(const std::filesystem::path &path) const;
 
   SourceUnitId
   loadFile(const std::filesystem::path &path, bool isEntry, bool isPrelude,

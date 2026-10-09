@@ -533,6 +533,170 @@ void testConfigurationFlagManifest() {
          "identifiers");
 }
 
+void testScopedConfigurationFlags() {
+  TemporaryDirectory temporary;
+  const auto root = temporary.root();
+  const auto manifest = root / "gti.toml";
+  expect(writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(root / "src/test.gti", "int main() { return 0; }\n"),
+         "scoped define roots should exist");
+  const std::string text = validManifest(R"(
+[targets.game]
+kind = "executable"
+root = "src/main.gti"
+defines = ["GAME", "COMMON", "GAME"]
+[targets.unit]
+kind = "test"
+root = "src/test.gti"
+defines = ["UNIT"]
+)") + R"(
+[build]
+defines = ["BASE", "COMMON"]
+[profiles.dev]
+defines = ["DEBUG", "COMMON", "DEBUG"]
+)";
+  expect(writeFile(manifest, text), "scoped defines manifest should exist");
+  const auto loaded = lang::driver::loadProjectManifest(manifest);
+  expect(loaded.succeeded(), "target and profile defines should be accepted");
+  if (!loaded.manifest) {
+    return;
+  }
+  const auto &game = loaded.manifest->targets().front();
+  const auto &dev = loaded.manifest->profiles().front();
+  expect(game.defines == lang::ConfigurationFlags({"COMMON", "GAME"}) &&
+             game.defineDeclarations.size() == 2 &&
+             text.substr(game.defineDeclarations[1].start,
+                         game.defineDeclarations[1].end -
+                             game.defineDeclarations[1].start) == "\"GAME\"" &&
+             dev.defines == lang::ConfigurationFlags({"COMMON", "DEBUG"}) &&
+             dev.defineDeclarations.size() == 2,
+         "scoped defines should normalize names and preserve exact spans");
+
+  const auto facts = lang::driver::resolveProjectFacts(root);
+  expect(facts.succeeded() && facts.facts,
+         "scoped project facts should resolve");
+  if (!facts.facts) {
+    return;
+  }
+  expect(facts.facts->configurationFlags() ==
+                 lang::ConfigurationFlags({"BASE", "COMMON"}) &&
+             facts.facts->findTarget("game") &&
+             facts.facts->findTarget("game")->defines == game.defines &&
+             facts.facts->findProfile("dev")->defines == dev.defines,
+         "read-only facts should retain scoped defines separately");
+  const auto &resolved = *facts.facts;
+  const auto *gameTarget = resolved.targetForSource(root / "src/main.gti");
+  const auto *unitTarget = resolved.targetForSource(root / "src/test.gti");
+  expect(gameTarget && gameTarget->name == "game" && unitTarget &&
+             unitTarget->name == "unit" &&
+             resolved.targetForSource(root / "src/shared.gti") == nullptr,
+         "editor target inference must not mix unrelated targets");
+  for (const std::string &profile : {"dev", "release"}) {
+    for (const std::string &target : {"game", "unit"}) {
+      const auto plan =
+          lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+              root, target, profile, lang::TargetInfo::host()));
+      const auto configuration = resolved.analysisConfiguration(
+          profile, lang::TargetInfo::host(), lang::driver::RuntimeProfile::None,
+          target);
+      expect(plan.succeeded() && plan.plan && configuration &&
+                 plan.plan->configurationFlags() ==
+                     configuration->configurationFlags() &&
+                 plan.plan->declaredConfigurationFlags() ==
+                     configuration->declaredConfigurationFlags() &&
+                 configuration->declaredConfigurationFlags() ==
+                     lang::ConfigurationFlags(
+                         {"BASE", "COMMON", "DEBUG", "GAME", "UNIT"}),
+             "build and editor configurations must agree for each selection");
+      if (configuration) {
+        const auto &flags = configuration->configurationFlags();
+        expect(std::binary_search(flags.begin(), flags.end(), "DEBUG") ==
+                       (profile == "dev") &&
+                   std::binary_search(flags.begin(), flags.end(), "GAME") ==
+                       (target == "game") &&
+                   std::binary_search(flags.begin(), flags.end(), "UNIT") ==
+                       (target == "unit"),
+               "only selected target/profile defines may enter configuration");
+      }
+    }
+  }
+  const auto profileOnly = resolved.analysisConfiguration(
+      "dev", lang::TargetInfo::host(), lang::driver::RuntimeProfile::None);
+  expect(profileOnly &&
+             profileOnly->configurationFlags() ==
+                 lang::ConfigurationFlags({"BASE", "COMMON", "DEBUG"}) &&
+             !resolved.analysisConfiguration("dev", lang::TargetInfo::host(),
+                                             lang::driver::RuntimeProfile::None,
+                                             "missing"),
+         "unselected and unknown targets must not leak target configuration");
+
+  lang::driver::ProjectBuildOverrides overrides;
+  overrides.configurationFlags = {"CLI", "DEBUG", "COMMON"};
+  const auto cli =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, "game", "dev", lang::TargetInfo::host(), overrides));
+  expect(cli.succeeded() && cli.plan &&
+             cli.plan->configurationFlags() ==
+                 lang::ConfigurationFlags(
+                     {"BASE", "CLI", "COMMON", "DEBUG", "GAME"}),
+         "CLI defines should form a normalized union with all selected scopes");
+
+  std::string ambiguous = text;
+  ambiguous.replace(ambiguous.find("src/test.gti"), 12, "src/main.gti");
+  expect(writeFile(manifest, ambiguous),
+         "ambiguous entry fixture should exist");
+  const auto ambiguousFacts = lang::driver::resolveProjectFacts(root);
+  expect(ambiguousFacts.facts && ambiguousFacts.facts->targetForSource(
+                                     root / "src/main.gti") == nullptr,
+         "shared entry roots must not silently select either target's flags");
+  expect(writeFile(manifest, validManifest()),
+         "single-target fixture should exist");
+  const auto single = lang::driver::resolveProjectFacts(root);
+  expect(
+      single.facts && single.facts->targetForSource(root / "src/shared.gti") &&
+          single.facts->targetForSource(root / "src/shared.gti")->name ==
+              "game",
+      "a single-target package can supply its configuration to shared files");
+
+  for (const std::string &scope : {"target", "profile"}) {
+    for (const std::string &value :
+         {"\"DEBUG\"", "[3]", "[\"not-valid!\"]", "[\"DEBUG=1\"]",
+          "[\"class\"]", "[\"\"]"}) {
+      const auto prefix = scope == "target"
+                              ? "[targets.game]\nkind = \"executable\"\nroot = "
+                                "\"src/main.gti\"\n"
+                              : "[profiles.dev]\n";
+      const auto invalidText = validManifest(scope == "target" ? "" : R"(
+[targets.game]
+kind = "executable"
+root = "src/main.gti"
+)") + "\n" + prefix +
+                               "defines = " + value + "\n";
+      expect(writeFile(manifest, invalidText),
+             "invalid scoped fixture should exist");
+      const auto invalid = lang::driver::loadProjectManifest(manifest);
+      const auto code =
+          (value == "\"DEBUG\"" || value == "[3]") ? "GTI-B1004" : "GTI-B1005";
+      const auto *diagnostic = findDiagnostic(invalid.diagnostics, code);
+      expect(!invalid.succeeded() && diagnostic &&
+                 diagnostic->phase == lang::DiagnosticPhase::Driver &&
+                 diagnostic->primary.source ==
+                     std::filesystem::canonical(manifest).string() &&
+                 diagnostic->primary.start ==
+                     invalidText.find("defines = ") +
+                         std::string_view("defines = ").size() +
+                         (value.front() == '[' ? 1 : 0) &&
+                 invalidText.substr(diagnostic->primary.start,
+                                    diagnostic->primary.end -
+                                        diagnostic->primary.start) ==
+                     (value.front() == '[' ? value.substr(1, value.size() - 2)
+                                           : value),
+             "malformed " + scope +
+                 " defines should have located driver errors");
+    }
+  }
+}
+
 void testDependencyConfigurationFlags() {
   TemporaryDirectory temporary;
   const auto root = temporary.root();
@@ -546,7 +710,9 @@ void testDependencyConfigurationFlags() {
              writeFile(app / "src/main.gti", "int main() { return 0; }\n") &&
              writeFile(root / "other/src/main.gti",
                        "int main() { return 0; }\n") &&
-             writeFile(root / "left/src/api.gti", "namespace left {}\n") &&
+             writeFile(root / "left/src/api.gti",
+                       "namespace left { int api() { return 0; } }\n"
+                       "int main() { return left::api(); }\n") &&
              writeFile(root / "right/src/api.gti", "namespace right {}\n") &&
              writeFile(root / "leaf/src/api.gti", "namespace leaf {}\n"),
          "dependency configuration sources should be writable");
@@ -572,9 +738,13 @@ void testDependencyConfigurationFlags() {
                             "\"src/main.gti\"\n")) &&
           writeFile(
               root / "left/gti.toml",
-              package("left",
-                      "[build]\ndefines = [\"LEFT\", \"COMMON\"]\n"
-                      "[dependencies]\nleaf = { path = \"../leaf\" }\n")) &&
+              package(
+                  "left",
+                  "[build]\ndefines = [\"LEFT\", \"COMMON\"]\n"
+                  "[dependencies]\nleaf = { path = \"../leaf\" }\n"
+                  "[profiles.dev]\ndefines = [\"DEPENDENCY_PROFILE\"]\n"
+                  "[targets.left]\nkind = \"test\"\nroot = \"src/api.gti\"\n"
+                  "defines = [\"DEPENDENCY_TARGET\"]\n")) &&
           writeFile(
               root / "right/gti.toml",
               package("right",
@@ -584,6 +754,11 @@ void testDependencyConfigurationFlags() {
               root / "leaf/gti.toml",
               package("leaf", "[build]\ndefines = [\"LEAF\", \"COMMON\"]\n")),
       "dependency configuration manifests should be writable");
+  const auto dependencyManifest =
+      lang::driver::loadProjectManifest(root / "left/gti.toml");
+  expect(
+      dependencyManifest.succeeded(),
+      "the dependency test-target fixture must satisfy the manifest contract");
   const auto facts = lang::driver::resolveProjectFacts(app);
   const lang::ConfigurationFlags expected{"APP", "COMMON", "LEAF", "LEFT",
                                           "RIGHT"};
@@ -601,6 +776,9 @@ void testDependencyConfigurationFlags() {
                  lang::ConfigurationFlags(
                      {"APP", "CLI", "COMMON", "LEAF", "LEFT", "RIGHT"}),
          "build configuration must share dependency facts and merge CLI flags");
+  expect(build.plan && build.plan->declaredConfigurationFlags() == expected,
+         "dependency target/profile flags must not suppress unknown-flag "
+         "diagnostics in the consumer");
   const auto rootFacts =
       lang::driver::resolveProjectFacts(root, "workspace_root");
   expect(rootFacts.succeeded() && rootFacts.facts &&
@@ -3349,7 +3527,8 @@ void testModuleManifest() {
         "main = \"src/api.cpp\"", "main = \"src\"", "import = \"src/api.gti\"",
         "\"bad.name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
         "main = \"src/api.gti\"\nother = \"src/api.gti\"",
-        "main = \"src/api.gti\"\nMAIN = \"src/other.gti\""}) {
+        "main = \"src/api.gti\"\nMAIN = \"src/other.gti\"",
+        "std = \"src/api.gti\""}) {
     expect(writeFile(manifest, base + "\n[modules]\n" + registration + "\n"),
            "invalid module fixture should be writable");
     const auto invalid = lang::driver::loadProjectManifest(manifest);
@@ -3357,6 +3536,15 @@ void testModuleManifest() {
            "invalid module map must fail before frontend entry: " +
                registration);
   }
+  expect(writeFile(manifest, base + "\n[modules]\nstd = \"src/api.gti\"\n"),
+         "reserved module fixture should be writable");
+  const auto reserved = lang::driver::loadProjectManifest(manifest);
+  const auto *reservedDiagnostic =
+      findDiagnostic(reserved.diagnostics, "GTI-B1005");
+  expect(reservedDiagnostic != nullptr &&
+             reservedDiagnostic->message.find("reserved for the standard "
+                                              "library") != std::string::npos,
+         "the standard library owns the module name 'std'");
   TemporaryDirectory outside;
   expect(writeFile(outside.root() / "api.gti", "export module main;"),
          "external fixture exists");
@@ -3396,6 +3584,7 @@ int main(int argc, char *argv[]) {
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
   testConfigurationFlagManifest();
+  testScopedConfigurationFlags();
   testDependencyConfigurationFlags();
   testTargetSelectionDiagnostics();
   testTestTargetResolution();

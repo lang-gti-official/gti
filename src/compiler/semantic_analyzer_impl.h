@@ -3578,7 +3578,8 @@ private:
   void captureUnqualifiedCompletion(const Token &completion);
 
   void captureQualifiedCompletion(const NamePath &path,
-                                  const TypeRef *ownerType = nullptr);
+                                  const TypeRef *ownerType = nullptr,
+                                  bool typeOnly = false);
 
   void captureMemberCompletion(const Token &completion,
                                const SemanticType &objectType,
@@ -3628,6 +3629,13 @@ private:
 
   [[nodiscard]] std::optional<ResolvedTypeAlias>
   resolveTypeAliasPath(const NamePath &path,
+                       const std::vector<std::string> &fromScope) const;
+
+  [[nodiscard]] std::optional<ResolvedTypeAlias>
+  resolveMemberTypeAlias(ClassId owner, const std::string &name) const;
+
+  [[nodiscard]] std::optional<ResolvedTypeAlias>
+  resolveTypeAliasPath(const TypeRef &type,
                        const std::vector<std::string> &fromScope) const;
 
   [[nodiscard]] std::optional<TypeAliasId>

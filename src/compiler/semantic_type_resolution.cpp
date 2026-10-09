@@ -3063,8 +3063,8 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     diagnostic.related.push_back({tokenSpan(classInfo(alias.ownerClass).name),
                                   "Generic owning type is declared here."});
     diagnostic.hints.emplace_back(
-        "Use the alias inside its declaring generic class, or name the "
-        "concrete target type directly.");
+        "Write a specialized owning type before '::' (or a named alias to "
+        "it), or use the alias inside its declaring generic class.");
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
@@ -3074,6 +3074,31 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
 auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                          bool allowNativeFunctionType) -> void {
   const std::size_t diagnosticStart = diagnostics.size();
+  if (type.qualifiedOwner) {
+    validateType(*type.qualifiedOwner);
+    if (diagnostics.size() != diagnosticStart) {
+      return;
+    }
+    const SemanticType owner = typeOf(*type.qualifiedOwner);
+    if (owner.kind != SemanticType::Class) {
+      report(type.qualifiedOwner->name.last(),
+             "A qualified type member requires a class-like owner, but '" +
+                 typeRefSpelling(*type.qualifiedOwner) + "' is not one.",
+             "GTI-S2030");
+      return;
+    }
+    if (type.name.last().completion) {
+      captureQualifiedCompletion(type.name, type.qualifiedOwner.get(), true);
+      return;
+    }
+    if (!resolveTypeAliasPath(type, currentNamespace)) {
+      report(type.name.last(),
+             "Type '" + typeSpelling(owner) + "' has no direct type alias '" +
+                 type.name.last().lexeme + "'.",
+             "GTI-S2030");
+      return;
+    }
+  }
   if (type.name.last().completion) {
     if (type.name.segments.size() == 1) {
       captureUnqualifiedCompletion(type.name.last());
@@ -3571,7 +3596,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   }
 
   if (const std::optional<ResolvedTypeAlias> alias =
-          resolveTypeAliasPath(type.name, currentNamespace)) {
+          resolveTypeAliasPath(type, currentNamespace)) {
     (void)validateTypeAliasAccess(*alias, type.name.last());
     validateConcreteEnumPayloads(typeOf(type), type.name.last());
     if (!type.arguments.empty()) {
@@ -5697,6 +5722,9 @@ auto SemanticVisitor::Impl::resolveGenericParameterDefaults(
     if (parameter.defaultType) {
       const auto referencesUnavailableParameter =
           [&](const auto &self, const TypeRef &type) -> bool {
+        if (type.qualifiedOwner && self(self, *type.qualifiedOwner)) {
+          return true;
+        }
         if (type.name.segments.size() == 1 &&
             std::any_of(parameters.begin(), parameters.end(),
                         [&](const GenericParameter &candidate) {
@@ -6761,6 +6789,9 @@ auto SemanticVisitor::Impl::validateParameterPacks(
            activeTypePackIdentity(syntax) == pack->id;
   };
   const auto expandsPack = [&](const auto &self, const TypeRef &type) -> bool {
+    if (type.qualifiedOwner && self(self, *type.qualifiedOwner)) {
+      return true;
+    }
     const auto parameter = resolveTypeParameter(type.name);
     if (type.packExpansion && parameter && pack != nullptr &&
         activeTypePackIdentity(type) == pack->id) {

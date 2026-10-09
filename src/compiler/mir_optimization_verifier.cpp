@@ -569,12 +569,22 @@ verifyMirOptimizationCoherence(const MirProgram &source,
     }
     rebuildMirReachability(*body);
   }
+  // Parameter receivers are replayed against closed-world facts derived
+  // independently from the same folded canonical snapshot the optimizer saw.
+  std::optional<MirClosedWorldFacts> replayClosedWorld;
+  if (std::any_of(
+          records.begin(), records.end(), [](const MirTransformRecord &record) {
+            return record.kind == MirTransformKind::DevirtualizeCall;
+          })) {
+    replayClosedWorld = analyzeMirClosedWorldFacts(candidate);
+  }
   for (std::size_t index = 0; index < records.size(); ++index) {
     const auto &record = records[index];
     if (consumed[index] || record.kind != MirTransformKind::DevirtualizeCall)
       continue;
-    auto replay = rewriteMirExactReceiver(candidate, record.body,
-                                          record.instruction, record.pass);
+    auto replay = rewriteMirExactReceiver(
+        candidate, record.body, record.instruction, record.pass,
+        replayClosedWorld ? &*replayClosedWorld : nullptr);
     if (!replay || *replay != record) {
       reject(record.body,
              "exact receiver transformation does not replay from canonical MIR",

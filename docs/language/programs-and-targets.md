@@ -134,8 +134,27 @@ A project may seed it for every target/profile plan in `gti.toml`:
 defines = ["DEBUG", "USE_EPOLL"]
 ```
 
+Flags can also be scoped to the selected profile or named build target:
+
+```toml
+[profiles.dev]
+defines = ["PSYCH_ASSERTIONS"]
+
+[targets.game]
+kind = "executable"
+root = "src/main.gti"
+defines = ["PSYCH_GAME"]
+```
+
+`gti run game` selects the default dev profile and both flags. A release build
+selects the game flag but not the dev-only assertion flag. Profiles do not
+implicitly define `DEBUG`; declare the flag explicitly when needed.
+
 For a project invocation, manifest flags are the sorted, deduplicated union
-from the selected package and its transitive dependencies. They seed the one
+of `[build]` flags from the selected package and its transitive dependencies,
+plus the selected consumer profile's and target's `defines`. Dependency
+target/profile flags and unselected targets/profiles do not contribute.
+They seed the one
 program-wide configuration, not package-private configurations; use distinct
 flag names to avoid unintended interactions. Unrelated workspace members do
 not contribute flags. Direct one-file compilation does not resolve dependency
@@ -143,9 +162,11 @@ manifests.
 
 CLI flags are added to manifest flags. Source directives are then applied in
 load order, so a later source `#undef` can deliberately remove either input.
-Flag names use ordinary GTI identifier syntax. Referencing a flag that is
-defined nowhere in the loaded program produces warning `GTI-S2075` and still
-evaluates false.
+Flag names use ordinary GTI identifier syntax. Flags declared in another
+consumer profile or target are known but inactive, so testing a dev-only flag
+in release does not produce a typo warning. Referencing a flag declared neither
+in source nor in the applicable manifest configuration produces warning
+`GTI-S2075` and still evaluates false.
 
 `#error "message"` is a compile-time diagnostic directive. It is syntactically
 valid wherever compile-time conditionals are valid and makes the program
@@ -295,6 +316,21 @@ In particular, an implementation shall not expose as GTI semantics:
 
 Resource exhaustion may prevent successful translation, but an implementation
 should diagnose it distinctly from an ill-formed program.
+
+Every declaration in a program, including every concrete generic instance it
+requires, is checked whether or not the program uses it. An unused function
+with an error therefore still makes the program ill-formed. The executable,
+however, need not contain code the program cannot reach. The reference
+compiler emits only what is reachable from the program roots:
+
+- the hosted entry;
+- library exports;
+- global and static initialization;
+- the C boundary, meaning every `extern "C"` declaration and C record.
+
+Everything those roots reach is emitted too, including virtual members of the
+classes that are used. Code that is never reached costs no lowering,
+optimization, or native compilation.
 
 ## 6.4 Diagnostics
 

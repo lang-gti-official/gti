@@ -13,6 +13,15 @@ Compiler-private declarations reside under `gti_internal`. They may enforce an
 irreducible invariant unavailable to ordinary GTI, but they are not stable
 application APIs and shall not expose public container or ownership policy.
 
+Nested `detail` namespaces such as `std::detail` hold library implementation
+types. They are not stable application APIs, but unlike `gti_internal` they are
+ordinary namespaces: nothing prevents application source from naming them.
+The container iteration operations listed under
+[Iteration Type Names](#iteration-type-names) publish member aliases for their
+`detail` types. Application code should
+name those aliases rather than `std::detail` spellings. See
+[`R-STD-DETAIL-NAMES`](../plans/language-alignment.md#ranges-and-standard-library-completion).
+
 The source graph distinguishes application, implicit-prelude, and installed
 standard-library units. Only the latter two roles are compiler-trusted, and
 standard-library trust requires a physical source unit beneath a configured
@@ -69,6 +78,38 @@ values or convert terminal failures into recoverable results.
 
 Optional units are loaded using `<std/name>` and are independently parsed GTI
 source. An optional unit does not automatically re-export its own dependencies.
+
+### Standard-library modules
+
+Every public unit can be imported instead of included:
+
+```gti
+import std.format;
+import std.string;
+import std.vector;
+
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(42);
+  std::println(std::format("{}", values[std::size_t(0)]));
+  return 0;
+}
+```
+
+`import std.name;` loads the interface `stdlib/modules/name.gti`, which declares
+`export module name;` and republishes `<std/name>` with
+`export #include <std/name>`. The import exposes the same declarations as the
+include, and nothing more: `<std/vector>` uses `<std/span>`, but `std::span` stays
+invisible to a file that imports only `std.vector`. Mixing the two spellings, or
+including a unit that another module imports, loads each unit once. An
+application interface can pass a standard module on to its importers with
+`export import std.vector;`.
+
+Imports and includes use the same compilation pipeline; an import does not
+precompile anything or promise a compilation speedup. `import std;` is rejected: the cost of
+compiling a unit does not depend on how much of it a program uses, and the
+whole library takes several seconds to compile, so an aggregate module would
+slow every program that used it. Import each unit you use.
 
 ### Fixed-lane SIMD
 
@@ -205,7 +246,13 @@ The current implemented foundation includes:
   read-only traversal, in-place emplacement, explicit cloneable-element
   cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
-  owned array parameter and therefore requires copyable `T` when used; and
+  owned array parameter and therefore requires copyable `T` when used. Public
+  type aliases are `std::vector<T>::const_iterator` (read-only), `::iterator`
+  (exclusive writable traversal), and `::sentinel`. `begin()` returns
+  `const_iterator`, `begin_mut() mut` returns `iterator`, and `end()` returns
+  `sentinel`, not `iterator`. These names
+  preserve the underlying checked owner loans; no public code needs to name
+  `std::detail` to wrap vector traversal. Reverse iteration is not yet provided; and
 - `<std/forward_list>` `std::forward_list<T>` as a move-only linked owner with
   constant-time front access/push/pop, iterative clear, resize, reverse, stable
   merge/sort, removal, and adjacent uniqueness; and
@@ -613,6 +660,56 @@ ordinary GTI fields. Compiler-private capabilities may supply unique ownership
 or partially initialized storage without exposing raw addresses, manual
 deallocation, logical size, or capacity policy as public language state.
 
+### Iteration Type Names
+
+Containers and views name the types their iteration operations return with
+public member aliases:
+
+| Alias | Names the result of |
+| --- | --- |
+| `const_iterator` | `begin()` |
+| `iterator` | `begin_mut()` |
+| `sentinel` | `end()` |
+
+`vector`, `array`, `deque`, `list`, and `mutable_span` provide all three.
+`span`, `string`, `resource_vector`, and `forward_list` iterate read-only and
+provide `const_iterator` and `sentinel`; `forward_list`'s `begin()` and `end()`
+remain declaration scaffolds. `map` and `unordered_map` add `sentinel` to their
+existing `iterator` and `const_iterator`, which also name the results of
+`find_mut` and `find`. `set` and `unordered_set` add `sentinel`; their
+`iterator` names the insertion-result iterator.
+
+Each alias is transparent and names exactly the `std::detail` type the
+operation returns, so it changes no borrowing rule. A mutable `iterator` is
+still a range-`for` carrier, so it can be returned from a range's own
+`begin_mut()` but not stored in an ordinary local. Outside the owner, the
+aliases can be named through an alias of a concrete specialization:
+
+```gti
+#include <std/vector>
+
+using samples = std::vector<int32_t>;
+
+class readings {
+  mut samples values = samples({2, 4, 6});
+
+public:
+  readings() = default;
+  samples::const_iterator begin() { return this.values.begin(); }
+  samples::iterator begin_mut() mut { return this.values.begin_mut(); }
+  samples::sentinel end() { return this.values.end(); }
+};
+```
+
+The specialized spelling also works directly: `std::vector<int>::const_iterator`
+or, inside an appropriately constrained generic, `std::vector<T>::iterator`.
+This uses the general [member-type path](static-semantics.md) rules, preserving
+the owner's constraints and the alias's visibility and borrowed lifetime.
+[`83-complete-ranges.gti`](../../examples/83-complete-ranges.gti) shows the
+named-alias pattern in a complete range;
+[`132-qualified-type-members.gti`](../../examples/132-qualified-type-members.gti)
+demonstrates direct specialized owners and an unrelated user-defined type.
+
 ### Associative Containers
 
 `map` uses an AVL tree; `unordered_map` uses bucket chains and cached hashes.
@@ -622,8 +719,8 @@ an exclusive iterator or reference. A retained iterator or element reference
 protects the whole container against conflicting access; these APIs do not
 promise C++'s more permissive node-invalidation rules.
 
-Both expose `key_type`, `mapped_type`, `value_type`, `size_type`, `iterator`, and
-`const_iterator`, along with `size`, `empty`, `contains`, `count`, `at`, `find`,
+Both expose `key_type`, `mapped_type`, `value_type`, `size_type`, `iterator`,
+`const_iterator`, and `sentinel`, along with `size`, `empty`, `contains`, `count`, `at`, `find`,
 `find_mut`, `begin`, `begin_mut`, `end`, `erase(key)`, and `clear`. `end()` is a
 distinct sentinel. Read-only traversal permits shared aliases; mutable
 traversal carries one exclusive dependency. `map` additionally provides
@@ -658,6 +755,18 @@ See [`87-associative-containers.gti`](../../examples/87-associative-containers.g
 for insertion-result movement and scoped mutable access.
 
 ### Sequential Storage
+
+**Planned representation.** `std::vector` and `std::string` currently store
+elements in a compiler-private prefix-storage capability. They will move to
+Rust's `RawVec`/`Vec` layering, in ordinary GTI:
+- a source-defined raw buffer plus a length, with no per-slot metadata;
+- one check per safe public operation, then raw access internally;
+- `unsafe` unchecked accessors in the style of `get_unchecked`;
+- byte-copy relocation for bitwise-relocatable elements.
+
+Safe behavior does not change, apart from the allocation-failure model below.
+See
+[ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
 
 `vector::swap`, `string::swap`, and `forward_list::swap` exchange their owned
 storage in constant time without allocation or copying, moving, or destroying
@@ -852,6 +961,10 @@ container over that storage. It supports `size`, `capacity`, `empty`, indexed
 read-only/mutable access, `front`, `back`, read-only range iteration, `pop_back`,
 `clear` and `release`. `try_reserve`, `try_push_back` and `try_emplace_back`
 report allocation errors; their plain counterparts panic on allocation failure.
+Under the accepted
+[Rust allocation-failure model](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09),
+the plain counterparts will abort on exhaustion instead. The `try_` operations
+are unchanged.
 An insertion argument is consumed even when growth fails, but existing elements
 remain unchanged. Growable elements must be movable, structurally relocatable
 and layout-queryable; use fixed-address storage for immovable types.
@@ -1162,6 +1275,7 @@ The following component families remain planned or incomplete:
   and general stored borrowing graphs;
 - complete vector copy, allocator, iterator reassignment, and precise iterator
   invalidation support;
+- an enforced boundary for library-private `detail` namespaces;
 - the remaining callable, output/random-access complete-range, heterogeneous
   accumulation, and hash generic-capability families;
 - named/dynamic-field formatting, formatter customization, buffered streams,

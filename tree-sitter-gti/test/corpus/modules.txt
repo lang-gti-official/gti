@@ -30,3 +30,23 @@ export namespace shape {
               (initializer_expression
                 (primary_expression
                   (literal (integer_literal)))))))))))
+
+==================
+Republished includes and standard-library modules
+==================
+
+export module vector;
+export #include <std/vector>
+import std.span;
+#include "local.gti"
+
+---
+
+(source_file
+  (module_declaration (identifier))
+  (include_directive
+    (standard_library_path
+      (standard_library_component (identifier))
+      (standard_library_component (identifier))))
+  (import_declaration (module_name (identifier) (identifier)))
+  (include_directive (string_literal)))

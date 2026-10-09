@@ -231,8 +231,8 @@ target is forwarded to Clang and selects the C data model, including LP64
 `long` on macOS/Linux and LLP64 `long` on Windows. Complete
 passive records become `[[c_abi]]` structs, incomplete or inexpressible
 records become `[[c_opaque]]` handles so pointer-based APIs stay usable,
-enums become an `int32_t` alias plus `constexpr` constants, a bare anonymous
-enum becomes its `constexpr int32_t` constants alone, function-pointer
+enums become aliases to their native-compatible C integer family plus exact
+`constexpr` constants, a bare anonymous enum contributes those constants alone, function-pointer
 typedefs become named callback aliases, and prototypes fill one `extern "C"`
 block. A configured function rename emits its GTI source spelling plus
 `[[link_name("original_symbol")]]`; a portable assembler label recorded by
@@ -241,7 +241,7 @@ set, including callback fields and fixed arrays with multiple extents or record,
 pointer, callback, and scalar elements; `restrict` qualifiers are read and
 dropped because they do not change the caller's contract. Field positions the
 record surface
-rejects — unsupported nested pointers — degrade the record to an
+rejects — for example pointers to whole arrays — degrade the record to an
 opaque handle with the reason recorded, so generated source always satisfies
 this contract's own validation. Everything
 the bounded surface cannot express is reported with its
@@ -255,6 +255,63 @@ generated source has no special status: this language contract remains the
 sole ABI authority when it is compiled. The tool's architecture and growth
 phases are recorded in
 [the native-bindings-import plan](../plans/native-bindings-import.md).
+
+### Composable typedef imports
+
+The importer preserves every native pointer level. For
+`typedef int (*Callback)(int)`, `Callback` is a callback value and
+`Callback*` is a pointer to a slot containing that value, including in records,
+results and nested pointers. `const Callback*` makes the slot read-only, not
+the function. A bare function typedef such as `typedef int Operation(int)`
+also produces a named callback signature: native `Operation*` and a C
+function-typed parameter use that signature after the native pointer/parameter
+adjustment. The generated declarations use existing GTI types, not new compiler
+privileges. Hidden or system callback names get deterministic synthesized aliases.
+
+Reusable `const char*` typedefs use `const c_char*` storage, so their record and
+nested-pointer uses remain ABI-faithful. Direct call-boundary uses retain the
+existing `c_string` convenience. Fixed-array aliases compose through other
+array aliases and record fields; C array parameters decay to element pointers.
+Zero-length array extensions, pointers to whole arrays, variadic callbacks and
+prototype-less callbacks are reported rather than approximated.
+
+See the runnable [callback-slot project](../../examples/native-callback-slots/README.md).
+Native multidimensional array fields support checked element reads and writes;
+each index keeps its bounds check and evaluation order, including failure before
+evaluating a later index. This repairs the backend row-address representation
+defect tracked in [#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175)
+without adding whole-array pointer or reference support.
+
+### Imported enum representation
+
+The reader records Clang's compatible integer type, signedness, width, native
+size/alignment agreement, and evaluated enumerator values. The planner admits
+8-, 16-, 32- and 64-bit C integer representations whose layout matches the enum.
+Signed minima and the full unsigned 64-bit range are preserved. The writer uses
+ordinary aliases, explicit integer conversions and `constexpr` expressions;
+this is not a new GTI enum kind or an unchecked conversion facility.
+
+For example, on the LP64 import profile, `enum Flags { HIGH = 0x80000000U };`
+becomes `using Flags = c_uint;` and
+`constexpr Flags HIGH = Flags(2147483648);`. The same representation applies
+through typedefs, native function/callback signatures, record fields, arrays,
+and qualified nested pointers. An excluded or system-provenance enum's uses
+resolve to the compatible integer without referencing an ungenerated alias.
+An incompatible layout (such as independent over-alignment), unsupported
+integer type, or invalid emitted name receives a skip reason; dependent uses
+are rejected consistently and containing records can degrade to opaque handles.
+
+Enum values and representation are C-target facts, not portable GTI promises.
+The current declaration reader selects canonical LP64 Unix or LLP64
+MSVC-compatible Clang profiles from the requested target's data model. In
+particular, MSVC-compatible ordinary enum rules can evaluate wide constants
+differently from Unix rules. Regenerate per target and match the native
+library's ABI; enum-changing compiler flags such as `-fshort-enums` are not
+currently forwarded as declaration-reader options. Fixed-underlying enum
+extensions accepted by Clang retain their explicit integer family. This slice
+does not expand the separate integer-macro evaluator's range.
+
+See the runnable [native enum bindings project](../../examples/native-enum-bindings/README.md).
 
 ## Native Callback Types
 
@@ -962,17 +1019,17 @@ The process byte provider in `<std/resource>` is ordinary GTI over target-select
 native calls. Its remaining `<gti/memory.h>` adapters expose native `size_t`
 limits, POSIX alignment/error constants and minimal allocation forwarding.
 Fixed-width `uint64_t` is not declared as if it were native `size_t`; source
-checks the limit before the adapter narrows. POSIX `void**` and Windows reserved
-CRT symbol spellings also require adapters under the current bounded ABI.
-`free(void*)` is expressible directly, but the provider's uniquely named release
-adapter avoids monopolizing that public symbol while compatible repeated C
-declarations are unsupported. Applications can declare ordinary `free` alongside
+checks the limit before the adapter narrows. Native `c_size_t` and POSIX
+`void**` are expressible directly. The uniquely named allocation/release
+forwarders avoid monopolizing `posix_memalign` and `free` while compatible
+repeated C declarations are unsupported; Windows reserved CRT symbol spellings
+also require adapters. Applications can declare either ordinary C symbol alongside
 `<std/resource>`. None of these functions confers
 ownership, initialization or safety merely by name.
 
 The runnable [`libc-region-provider`](../../examples/libc-region-provider/)
-project demonstrates a separate application byte owner with a minimal native
-size bridge, ordinary `free`, source-owned empty/exhaustion policy and move-only
+project demonstrates a separate application byte owner with direct
+`malloc(c_size_t)`/`free` bindings, source-owned empty/exhaustion policy and move-only
 exactly-once cleanup. It does not pretend that raw bytes are initialized GTI
 objects. Run `gti run` in the project directory.
 

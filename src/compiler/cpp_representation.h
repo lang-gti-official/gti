@@ -3,11 +3,37 @@
 #include "gti/cpp_emitter.h"
 #include "gti/lowered_program.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace lang {
+
+// Whole-program representation facts are pure functions of one verified,
+// immutable LoweredProgram. While a scope is open on this thread, queries
+// about that exact value compute each such fact once instead of rescanning
+// every declaration for each type they spell. Queries about any other value,
+// and all queries outside a scope, compute the same answers directly.
+class CppRepresentationScope final {
+public:
+  explicit CppRepresentationScope(const VerifiedLoweredProgram &program);
+  ~CppRepresentationScope();
+  CppRepresentationScope(const CppRepresentationScope &) = delete;
+  CppRepresentationScope &operator=(const CppRepresentationScope &) = delete;
+
+  struct Facts;
+
+private:
+  std::unique_ptr<Facts> facts;
+  Facts *previous = nullptr;
+};
+
+// Storage for a derived per-body analysis while a scope is open on the program
+// that owns `body`; null otherwise. `kind` distinguishes analyses. The stored
+// index must depend only on the immutable body.
+[[nodiscard]] std::shared_ptr<void> *
+cppScopedBodyAnalysis(const MirBody &body, std::string_view kind);
 
 [[nodiscard]] std::string
 cppClassTemplateNameSpelling(const LoweredProgram &program, ClassId id);

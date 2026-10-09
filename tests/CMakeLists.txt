@@ -2,6 +2,37 @@
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+add_executable(gti_qualified_type_member_tests qualified_type_member_tests.cpp)
+target_link_libraries(gti_qualified_type_member_tests PRIVATE gti_compiler)
+add_test(NAME qualified_type_members COMMAND gti_qualified_type_member_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME qualified_type_member_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/qualified_type_member_runtime_test.py"
+      $<TARGET_FILE:gti>
+      "${PROJECT_SOURCE_DIR}/examples/132-qualified-type-members.gti")
+  set_tests_properties(qualified_type_member_runtime PROPERTIES TIMEOUT 600)
+  if(TARGET gti_lsp)
+    add_test(NAME qualified_type_member_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/qualified_type_member_lsp_test.py"
+        $<TARGET_FILE:gti_lsp>)
+    set_tests_properties(qualified_type_member_lsp PROPERTIES TIMEOUT 60)
+  endif()
+endif()
+
+add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
+target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend)
+add_test(NAME local_reference_inference COMMAND gti_local_reference_inference_tests)
+add_test(NAME local_reference_inference_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(local_reference_inference_runtime PROPERTIES TIMEOUT 300)
+if(TARGET gti_lsp)
+  add_test(NAME local_reference_inference_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(local_reference_inference_lsp PROPERTIES TIMEOUT 120)
+endif()
+
 add_executable(gti_prvalue_direct_initialization_tests
                prvalue_direct_initialization_tests.cpp)
 target_link_libraries(gti_prvalue_direct_initialization_tests PRIVATE gti_cpp_backend)
@@ -399,6 +430,9 @@ target_link_libraries(gti_cleanup_bound_backend_mutation_tests PRIVATE gti_cpp_b
 add_test(NAME cleanup_bound_backend_mutations
          COMMAND gti_cleanup_bound_backend_mutation_tests)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME process_resource_policy_harness
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_harness_test.py")
   add_test(NAME process_resource_policy
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_test.py"
@@ -632,6 +666,15 @@ add_test(NAME optimizer_devirtualization_runtime
                  "${PROJECT_SOURCE_DIR}/tests/fixtures/optimizer_exact_receiver.gti"
                  "${CMAKE_CXX_COMPILER}")
 set_tests_properties(optimizer_devirtualization_runtime PROPERTIES TIMEOUT 180)
+add_test(NAME optimizer_devirtualization_parameter_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_devirtualization_runtime_test.py"
+                 "$<TARGET_FILE:gti>"
+                 "${PROJECT_SOURCE_DIR}/tests/fixtures/optimizer_exact_parameter_receiver.gti"
+                 "${CMAKE_CXX_COMPILER}"
+                 "exact-parameter-receiver")
+set_tests_properties(optimizer_devirtualization_parameter_runtime
+                     PROPERTIES TIMEOUT 180)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT MSVC)
   add_test(NAME optimizer_coverage_growth
            COMMAND "${Python3_EXECUTABLE}"
@@ -702,6 +745,15 @@ add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
 add_executable("gti_bindgen_tests" "${PROJECT_SOURCE_DIR}/tests/bindgen_tests.cpp")
 target_link_libraries("gti_bindgen_tests" PRIVATE gti_bindgen gti_compiler)
 add_test(NAME bindgen_pipeline COMMAND gti_bindgen_tests)
+add_test(NAME native_enum_bindgen
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(native_enum_bindgen PROPERTIES TIMEOUT 300)
+add_test(NAME native_typedef_bindgen
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py" $<TARGET_FILE:gti> --example native-callback-slots)
+set_tests_properties(native_typedef_bindgen PROPERTIES TIMEOUT 300)
+add_test(NAME native_array_index_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_array_index_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(native_array_index_runtime PROPERTIES TIMEOUT 300)
 
 add_executable("gti_native_record_tests" "${PROJECT_SOURCE_DIR}/tests/native_record_tests.cpp")
 target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)
@@ -1677,6 +1729,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_manifest_test.py"
             "${PROJECT_SOURCE_DIR}"
   )
+  add_test(
+    NAME stdlib_modules
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/stdlib_modules_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}"
+  )
+  set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
   add_test(
     NAME generic_algorithm_breadth
     COMMAND "${Python3_EXECUTABLE}"
@@ -3136,6 +3196,14 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   add_test(
+    NAME scoped_configuration_defines
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/scoped_configuration_defines_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/examples/scoped-configuration"
+  )
+  set_tests_properties(scoped_configuration_defines PROPERTIES TIMEOUT 180)
+  add_test(
     NAME objective_cpp_bridge
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/objective_cpp_bridge_test.py"
@@ -3280,6 +3348,13 @@ if(Python3_Interpreter_FOUND)
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
+    add_test(
+      NAME dormant_capability_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/dormant_capability_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(dormant_capability_runtime PROPERTIES TIMEOUT 300)
     if(GTI_ENABLE_THREAD_SANITIZER_TESTS)
       set(gti_tsan_supported 1)
     else()

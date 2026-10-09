@@ -9,6 +9,15 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+Inferred move-only copy errors (`GTI-S2003`) distinguish plain `auto` value
+construction from checked `auto&` borrowing when the initializer has stable
+storage. Movement advice is limited to available movable whole local/parameter
+owners without overlapping loans, never a checked accessor's borrowed result.
+An explicit clone remains an option if the type provides it. These alternatives
+are hints, not automatic ownership-changing edits; the LSP publishes the same
+source-anchored diagnostic. Invalid inferred references use the existing
+explicit-reference diagnostics (`GTI-S2017` and related structural families).
+
 `GTI-S2091` distinguishes an untyped designated initializer from an ineligible
 destination struct. With no contextual destination, it anchors the opening
 brace and recommends an explicitly typed binding, without guessing the type
@@ -294,7 +303,9 @@ from the same semantic expected surface, including consuming `&&` qualifiers.
 
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
 missing registration, name mismatch, duplicate interfaces, package escapes,
-inconsistent shared legacy-unit configuration, and include/import bypasses.
+inconsistent shared legacy-unit configuration, include/import bypasses,
+misplaced or interface-naming `export #include`, unknown standard-library
+modules, and the unsupported aggregate `import std;`.
 Point at the source directive; relate the interface declaration for name
 mismatches or duplicates. Imports retain their tokens through parsing, so an
 import embedded in an otherwise unfinished declaration receives `GTI-P0001`

@@ -100,6 +100,27 @@ failure stops callee-local cleanup immediately on a second failure, including
 managed task destruction. They retain exact output and both failure identities.
 Native scope probes independently check earliest-primary preservation,
 thread isolation, scope restoration and rejection of forged managed envelopes.
+`cleanup_context_scope_runtime` also checks that the one outlined incoming
+failure helper retains a non-`noexcept` signature, can return for a first
+failure, and receives only its guarded cold/noinline hint. The ordinary
+scope-restoration and managed-handoff checks still run at native O0/O3 under
+C++20/C++23; inherited cleanup and panic matrices exercise real second-failure
+reporting. Performance hints never replace these behavioral checks.
+
+The RT-1 bounded failure-helper change at clean optimized `f2fea6c7` passes
+the all-target Release/Ninja build and all 570 unfiltered CTests, without
+failures or skips (1132.96 seconds). Both corpus oracles pass all 130 examples:
+the complete body-emitter oracle admits 22241 bodies and matches all 13611
+applicable general emissions, while the reachable native corpus preserves
+6778 reviewed body identities at its two endpoints. Language coverage passes
+267 programs and correctly rejects 160 negatives. Independent replay, malformed
+lowered-program rejection, exact cleanup/panic, managed-worker handoff,
+ASan/UBSan and thread/atomic/mutex TSan gates pass. All thirteen staged-library
+consumers and the installed-only process-provider eight-mode matrix and
+Off/Warn parity pass. The [performance record](../plans/performance-tooling.md#production-comparison)
+retains exact identities, timing/size/memory tradeoffs and raw evidence hashes.
+Only evidence documentation changes after this tested implementation. Native
+execution evidence is macOS arm64, not a claim of Linux/Windows native runs.
 
 ## Consolidated lifetime and enum acceptance checkpoint
 
@@ -234,7 +255,110 @@ declarations run still reports two obsolete generated-default spelling
 assertions already under maintenance in the parallel enum reconciliation;
 that aggregate is not counted as passing at this checkpoint.
 
-## Source-defined process byte provider (S-ALLOC-07 checkpoint)
+## Source-defined process byte provider (S-ALLOC-07)
+
+### Completion acceptance (2026-10-08)
+
+The completion candidate in PR #162 is built from clean revision `fa72b523`
+(0.386.1), using optimized Release/Ninja, AppleClang 21 and LLVM 22.1.8 on
+macOS arm64. The unfiltered production CTest suite passes **558/558**, with no
+failures or skips. This includes the source-provider/default-storage matrix,
+programmable allocators, lifetime and borrow rejection, malformed MIR,
+Off/Warn parity, LSP, tooling, ABI and installed-artifact contracts. The emitter
+corpus admits all 21,106 bodies from 127 sources; the independent cutover oracle
+builds and runs all 127 examples at both endpoints with 21,103 reviewed body
+identities unchanged. The coverage corpus passes 267 programs and rejects the
+expected 160 negatives (427 total).
+
+Separate clean staging passes **13/13 installed-library consumers**, including
+the native memory boundary. The provider matrix passes all eight native modes
+against both build-tree and explicitly pinned installed resources, including
+no-elide and ASan/UBSan, plus Off/Warn emission parity. Its harness rejects
+missing or ambiguous installed resources rather than falling back to a source
+tree. Examples 119–121, 125–126 and 128–129 pass with that staged compiler at
+C++20/O0 and C++23/O3 (14 executions); `libc-region-provider` additionally runs
+inside the provider matrix. Tree-sitter grammar/query/shipped-source contracts
+and the full 500-file first-party formatting check pass.
+
+Injected-provider observations now cover exact object/metadata extents,
+zero/invalid/overflow requests, first and second acquisition failure,
+rollback, simultaneous owners, immovable owning elements, slot reuse and
+movement of owners without moving elements. Constructor and destructor failure
+traces retain their original GTI error/source, completed-field cleanup and
+element-before-region release. The observer checks matching descriptors,
+exactly-once release and absence of leaked regions independently of the GTI
+owner's accounting.
+
+That final cleanup fixture exposed #165: the representation gate rejected an
+already verified numeric alias/type-parameter conversion before a conditional
+argument. The narrow repair admits the existing exact scalar intrinsic Call
+form and its checked Invoke edge; it does not infer new language semantics or
+recognise an allocator name. An unrelated generic `Pair` regression exercises
+both conditional outcomes and both conversion-failure paths, retaining
+GTI-R0006 and destructor observations. Backend mutation tests reject wrong
+intrinsic identity, extraneous operands/receiver and malformed failure control
+flow. This user-visible compiler fix accounts for the patch-version advance.
+
+Raw full-suite and installed-consumer reports are retained locally at
+`/private/tmp/gti-source-process-allocation-final.xml` and
+`/private/tmp/gti-source-process-allocation-installed-final.xml`. Subsequent
+completion-report edits leave the tested implementation and test sources
+unchanged from `fa72b523`.
+
+Native execution evidence is macOS arm64. Linux native CI is queued without an
+available runner; native Windows execution is unavailable. The full local suite
+retains the Linux/Windows provider selection and target ABI contracts, but
+neither is a claim of execution on those hosts. Completion reporting must keep
+this platform limitation explicit.
+
+### Final cost comparison and open performance follow-up
+
+After the other agents' compiler/test workers exited, the same-host frozen
+snapshot comparison measured baseline `229f095f` against clean `fa72b523`.
+Both use C++23/O2; five interleaved compilation samples and nine runtime samples
+follow warmups. The candidate repository checkpoint `964fc6e9` changes only
+completion documentation relative to the tested compiler. Raw commands,
+snapshots, hashes, build/optimization reports, individual samples and complete
+outputs are retained in
+`/private/tmp/gti-source-process-allocation-cost-final-20261008/report.json`.
+
+| Operation | Baseline median | Final candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Emit C++ | 1,828.34 ms | 2,214.24 ms | +21.1% |
+| Full direct compilation | 3,067.85 ms | 3,798.82 ms | +23.8% |
+| Process-storage workload | 27.84 ms | 102.57 ms | +268.4% |
+| Resource-storage workload | 52.80 ms | 112.10 ms | +112.3% |
+
+This is a material regression, not performance parity: process samples range
+27.75–28.15 ms versus 101.82–103.91 ms, and resource samples 52.69–53.31 ms
+versus 111.43–113.25 ms. Generated C++ grows 2,424,838→3,098,270 bytes and the
+executable 461,784→537,928 bytes. Scalar/destructor observations are identical
+to the oracle below. Explicit resource acquisitions/releases grow
+50,000→100,000, as required by the separate same-provider metadata policy;
+process-mode zero resource counters are not a claim of zero allocation.
+
+The comparison includes later general compiler changes as well as source
+storage migration; it does not isolate the cost of libc or the #165 fix.
+Inspection finds a concrete additional lead: the baseline process loop inlines
+emplacement and reads, while the final loop calls source storage methods and
+read wrappers call another checked method. ARM64 `sparse_slots::read_mut`
+reserves a 0x480-byte local frame for cold failure handling; process `exercise`
+reserves 0x4a0 versus baseline 0x80. The baseline report discharges zero
+storage-state checks, so loss of an applied initialized-set optimization does
+not explain the measured change. These code observations and the additional
+allocation explain what changed, not each factor's measured causal share.
+
+[Issue #169](https://git.internal.howetotech.dev/gti-lang/gti/issues/169) records
+reproduction and the follow-up to profile/bisect allocation, access, general
+failure-path code size and host inlining separately. Any optimization must
+preserve cleanup/failure identity and source-owned policy, rather than remove
+safety checks or restore a nominal sparse-storage compiler exception. The
+S-ALLOC-07 migration/measurement gates are complete with this performance
+follow-up explicitly open; the phase never specified a timing-parity threshold.
+Neither these bounded local observations nor the historical samples below are
+a general or cross-platform performance guarantee.
+
+### Historical pre-reconciliation measurement and provider checkpoint
 
 The pre-reconciliation storage-cost probe uses frozen optimized compiler,
 runtime and library snapshots: clean baseline `229f095f` (0.381.0), and the
@@ -291,11 +415,11 @@ Linux and Windows targets, requiring only the corresponding POSIX/CRT adapter
 family. `resource_memory_runtime` checks actual target facts, writable aligned
 extents and matching native release. The C ABI header smoke fixes the exact
 fixed-width adapter signatures. These are local macOS arm64 tests with optimized
-compiler libraries, not evidence of native Windows/Linux execution. Native CI,
-installed consumers and production gates remain required before the full
-S-ALLOC-07 campaign is complete. The combined candidate now includes the sparse
-metadata/default-factory migration described above; the provider checkpoint's
-independent tests alone do not validate that integration.
+compiler libraries, not evidence of native Windows/Linux execution. At this
+historical checkpoint, installed consumers and production gates were still
+outstanding; the completion evidence above now covers that integration. Native
+platform limitations remain explicit. The independent provider tests alone are
+not the evidence for the combined sparse-metadata and default-factory migration.
 
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
@@ -538,6 +662,57 @@ two processors for the two case workers and remains in the complete coverage
 census.
 
 ## Native scalar, recursive pointer and callable integration
+
+### Native enum importer follow-up
+
+The native enum binding slice is validated with an optimized Release/Ninja
+compiler on macOS arm64 (LLVM/libclang 22.1.8). `bindgen_pipeline` covers high-bit
+unsigned flags, signed minima and unsigned maxima through 64 bits, fixed
+underlying types through typedefs, anonymous and filtered/system enums, native
+records/callbacks/nested pointers, compatible packed enums, independent alignment
+rejection, invalid emitted names, and unsupported 128-bit enum integers. CLI
+checks select both LP64 Unix and LLP64 MSVC-compatible profiles; those are
+cross-profile generation checks, not Windows runtime evidence.
+
+`native_enum_bindgen` generates bindings for the runnable
+`examples/native-enum-bindings` project, builds/runs it, checks cache reuse and
+byte-stable regeneration, then links independently compiled C17 in six
+C++20/C++23 O0/O1/O3 modes and one ASan/UBSan mode. No-elide construction is
+enabled throughout the direct matrix. Native C validates the values transported
+in records and supplies their size/alignment; pointer writeback and a native
+function pointer round-trip the same enum representations.
+
+`native_typedef_bindgen` applies the same project/cache/determinism and seven-mode
+native runtime harness to `examples/native-callback-slots`: C replaces callback
+slots, passes a bare function-typed parameter, returns a native record containing
+qualified callback/text pointers and typedef-defined arrays, and independently
+checks layout and values. `bindgen_pipeline` also checks typedef chains,
+filtered/system callback aliases, non-writable const slots, zero-array rejection,
+and retained rejection of whole-array pointers, variadic and prototype-less
+callbacks. These imports use existing language capabilities; there is no new
+syntax or numbered-example census change. Matrix transport is checked in C and
+GTI reads/writes its elements. `native_array_index_runtime` additionally covers
+three dimensions, scalar and record elements, constant and dynamic indices, read-only and mutable owners,
+element loans, independent C verification of writes, and out-of-bounds reads
+and writes in each dimension. It checks that a failed prefix prevents later
+index side effects in C++20/23 O0/O1/O3 and ASan/UBSan modes. The native-record
+pipeline pins unused-address storage elision without dropping prefix/terminal
+checks. These gates regress [#175](https://git.internal.howetotech.dev/gti-lang/gti/issues/175).
+
+The native-record/header/callback pipelines and runtime oracles, compiler/backend/
+driver library boundaries, LLVM link-policy checks, complete CLI/project
+workflows and relocated installed macOS toolchain check also pass. Formatting
+checks the curated first-party C/C++ surface. This is selected local evidence,
+not a full repository-suite run or Linux/Windows runtime certification.
+
+No GTI syntax, borrow contract, HIR/MIR operation, runtime capability or LSP
+publication rule changes: generated bindings are ordinary source. The project
+has its own CTest gate and example-index entry; it is not part of the numbered
+top-level `.gti` body census, whose expectations are unchanged. Existing CLI
+fixture expectations now require native-typed enum constants and an explicit
+conversion when passing one to a separately declared `int` parameter.
+
+### Earlier scalar and pointer integration
 
 The combined candidate uses a Release compiler on macOS arm64 with LLVM
 22.1.8. Focused scalar checks cover six selected target profiles, including
@@ -1685,6 +1860,16 @@ recursive concrete aliases, both expected alternatives with passive record
 errors, checked extraction of copyable class payloads, direct/generic lambdas
 returning copyable and move-only records, temporary operator arguments and
 nested receiver arrays. `type_only_alias_runtime` passes C++20/C++23 at O0/O3.
+Its member-alias regression also instantiates two value-generic user-defined
+owners whose unused aliases name otherwise uninstantiated classes, including
+nested type arguments. `cpp_mir_representation_snapshot` requires the exact
+forward identities from each concrete member-alias catalog, deduplicated before
+use, without inventing target layouts or executable bodies.
+The unrelated `Packet<T>` constructor regression retains four concrete bodies
+while requiring one native-primary declaration per exact parameter list, plus
+distinct per-instance failure adapters. Its runtime fixture covers matching and
+different argument lists at both native standards and optimization endpoints;
+the full forward-list emplacement/cleanup matrix also exercises this path.
 `passive_record_runtime` passes 35 executions and `nested_receiver_array_runtime`
 passes 49 executions across C++20/C++23 at O0/O1/O3 and an ASan/UBSan case.
 These include error-constructor failure, later-argument failure, checked array
@@ -3307,8 +3492,9 @@ upstream code.
 
 | CTest target | Owns |
 | --- | --- |
-| `optimizer_devirtualization` | Exact local receiver proof, unrelated implementations and state, O0 identity, O2/O3 refinement, atomic editor rejection, conservative parameter/mutable/escaping/raw/synchronizing/native/recursive/cleanup boundaries, and missing/forged evidence rejection. |
+| `optimizer_devirtualization` | Exact local receiver proof, unrelated implementations and state, O0 identity, O2/O3 refinement, atomic editor rejection, conservative mutable/escaping/raw/synchronizing/native/recursive/cleanup boundaries, and missing/forged evidence rejection. Closed-world parameter receivers through direct, forwarded and recursive calls; mixed classes, local-reference origins, function-item escapes and uncalled functions stay virtual; analysis mutations for non-direct references, inexact arguments and rebound references; a record without its closed-world input is rejected. |
 | `optimizer_devirtualization_runtime` | Exact evaluation order, overflow failure identity, partial effects and caller cleanup across O0/O2/O3 and C++20/C++23. |
+| `optimizer_devirtualization_parameter_runtime` | The same matrix for a receiver that is a forwarded reference parameter, with exactly one `exact-parameter-receiver` record at O2/O3. |
 | `function_signature_types` | `R(Args...)` aliases and generic identity/substitution; metadata-only signature/nominal pack deduction, constraints, repeated/explicit agreement and ambiguity; class type-list and by-value method packs, exact calls and virtual dispatch; invalid components/storage and repeated move diagnostics; formatting and compiler queries; canonical concrete signatures and MIR body/interface-pack mutation rejection |
 | `function_signature_runtime` | concrete signature tags, class packs, ordinary/operator()/interface calls, empty forwarding, and exactly-once move-only argument cleanup under C++20/C++23 at O0/O1/O3; does not establish owning callback storage |
 | `signature_pack_deduction_runtime` | exact empty, multi-argument, reference, explicit, repeated, prefixed and value-pack deductions; symbolic forwarding and returned nominal metadata under C++20/C++23 at O0/O1/O3; separated from the ownership/dispatch fixture to keep focused native matrices bounded |
@@ -3425,6 +3611,8 @@ upstream code.
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
+| `stdlib_modules` | every public `<std/name>` unit has exactly one canonical `stdlib/modules/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
+| `dormant_capability_runtime` | include-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |
 | `encoding_runtime` | strict standard-alphabet padded Base64 and lowercase/dual-case hexadecimal across every byte value, RFC 4648 tail vectors, malformed length/character/padding/canonical-bit rejection, and C++20/C++23 O0/O1/O3 plus no-elide and ASan/UBSan execution |
 | `forward_list_runtime` | source-defined resize/merge/remove/unique/reverse/stable sort with scalar and move-only elements; 30,000-node iterative clear/destruction; exact cleanup on failing comparisons and checked owner-field assignment; verified-MIR emission at O0/O1/O3 under C++20/C++23 plus ASan/UBSan |
 | `unique_owner_access_runtime` | all four unique-owner dereference/arrow overloads; successful read/write, empty and reset access, nested caller cleanup, staged-RHS cleanup, and exact `GTI-R0008`/`GTI-R0014` reports at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` independently rejects forged owner detectors, missing edges, and mismatched loans |
@@ -3503,7 +3691,19 @@ terminal status 70 plus its report. The installed-library workflow repeats the
 runtime/compiler header-coexistence gate from one staged include directory so
 neither public contract can overwrite the other.
 
-Performance measurements are never ordinary CI timing gates. The
+Runtime performance is a required acceptance dimension under
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09),
+not an optional consequence of passing the functional suite. A benchmark is
+not required to authorize architectural work. Changes affecting execution must
+validate representative optimized runtime and report allocation, code-size and
+relevant build/memory costs, with an equivalent-contract baseline where one
+exists. New facilities require an explicit cost model and controls instead of
+an invented historical baseline. A material regression requires correction or
+explicit owner acceptance of the documented tradeoff; recording a follow-up
+does not itself satisfy acceptance. Earlier completion records retain their
+historical meaning and are not retroactively reclassified by this policy.
+
+Performance measurements are not ordinary shared-CI wall-time gates. The
 repository-owned `scripts/benchmark_compare.py` first validates versioned
 descriptors, builds every declared variant beneath a controlled output root,
 and requires one matching `GTI-BENCH-1` correctness record before collecting
@@ -3731,6 +3931,17 @@ completion, semantic tokens, and nested document symbols. The Tree-sitter
 corpus, highlight, and shipped-source gates own editor parsing and captures;
 example 79 is the native compile/run composition. Aliases are static type
 members, so HIR and MIR intentionally gain no operation.
+
+`qualified_type_members` extends that static contract to written specialized
+owners, nested alias qualifiers, owner defaults/value arguments, exact-definition
+alias restrictions, private/cyclic/missing aliases, generic signatures, retained iterator
+loans and move-only targets. `qualified_type_member_lsp` checks completion,
+hover, definition, references, tokens, precise diagnostic ranges, recovery and
+format/reanalysis. `qualified_type_member_runtime` compiles and runs example 132
+at O0/O1/O3 under C++20/C++23, including unique-owner cleanup. The example also
+participates in the standard MIR and LoweredProgram censuses and the Tree-sitter
+shipped-source gate. This slice extends type contexts, not dependent alias
+templates or direct specialized-alias constructor expression spelling.
 
 For owning-string output, `string_owned_output_runtime` is the focused
 source-defined-library gate. It keeps the existing named-owner `string&`
@@ -4381,6 +4592,40 @@ observations.
 
 ## Development And Completion Cadence
 
+`local_reference_inference` pairs explicit and inferred reference programs,
+checking admission and concrete binding/drop facts, HIR owner dependencies and
+MIR loan records. Detached local-loan source mutations must fail verification.
+Its native counterpart compares C++20/C++23 O0/O1/O3 success and failure traces
+with copy elision disabled, including borrowed `expected` extraction, exactly-once
+cleanup and external panic attribution. Lambda references retain one environment
+for captureless, copied-snapshot and owning-capture closures; nested reborrows
+preserve results and exactly-once cleanup on division failure. Forged owner
+identities fail MIR verification, and semantic negatives reject invalidating a
+borrowed environment, permission upgrades and references to fresh closures.
+`local_reference_inference_lsp` checks
+inferred type/access hover, declaration navigation, copy hints, mutation/upgrade
+errors, UTF-16 spans, malformed-source recovery, dirty dependency overlays and
+format/reanalysis. These focused gates do not substitute for combined validation.
+Example 131 demonstrates an unrelated mutable record and a retained JSON node.
+Its reconciled inventory contributes 1,254 declarations, 530 bodies and 76
+generated items after the public container aliases are included. The standalone
+inference feature added no bodies or generated items to existing examples.
+
+The 0.390.0 integration of local reference inference, public container aliases,
+qualified member types and scoped configuration passed the complete unfiltered
+565-test CTest suite at `7cc97682` (zero failures, errors, disabled or skipped
+tests; 2,299.60 seconds). Evidence uses a Release compiler on macOS arm64,
+AppleClang 21 and LLVM 22.1.8. Separate intermediate heads passed four inference/
+CLI gates, twelve alias/inference/library/corpus gates and ten qualified-type/
+inference/corpus gates. The staged SDK passed thirteen CMake consumers, both
+language examples, closure success/failure sanitizers, three LSP suites, scoped
+CLI/cache checks, alias native tests and the eight-mode process-provider matrix.
+The earlier 560/565 run was not accepted: its constructor-declaration regression
+and four stale diagnostic/representation/source-line expectations were repaired
+before the complete rerun. Post-validation integration and documentation updates
+must retain the tested production source; this is local acceptance evidence,
+not a claim of a newly executed Linux/Windows matrix.
+
 The borrowed-reference issue checkpoint extends example 99 with two passive
 source-defined owner/referent types, nested read-only accessors and a fallible
 projected-parameter relay. Its reviewed closure adds seven source bodies
@@ -4559,17 +4804,68 @@ tests use an optimized host compiler; the tested program intentionally uses
 `-O0`. Parser/semantics/formatter/Tree-sitter/LSP syntax is unchanged.
 
 The source-module slice is owned by `testSourceModuleInterfaces`,
-`testSourceModuleResolution`, and `testSourceModuleConfigurationDomains` in
-`compiler_frontend`, `testModuleManifest` in
+`testSourceModuleResolution`, `testSourceModuleConfigurationDomains`, and
+`testStandardLibraryModules` in `compiler_frontend`, `testModuleManifest` in
 `project_model`, and build-provenance round trips in `driver_pipeline`.
+`testStandardLibraryModules` covers direct and project `std.name` resolution,
+the standard-library role and `ExportInclude` edge, non-republication of
+nested includes, the rejected aggregate and unknown modules, application
+interfaces that re-export a standard module and republish their own legacy
+unit, `export #include` misuse, same-name application modules, and a legacy
+standard unit shared with a module domain whose source-local flags differ.
+`stdlib_modules` imports every standard module individually.
+
+Reachable executable lowering is owned by `testReachableExecutableLowering` in
+`compiler_frontend`. It covers:
+
+- the hosted root's closure;
+- that unreferenced functions, methods, and classes are omitted;
+- that C declarations and records are kept;
+- that complete lowering is unchanged without the option;
+- that an error in a generic instantiated only by unreachable code is still
+  reported.
+
+The census gates measure the reduced artifact inventory:
+
+- `lowered_program_corpus_census` builds with the same option as artifact
+  builds;
+- `mir_census_regression` drives the CLI.
+
+Before the baselines were refreshed, every example was built and run with both
+the previous and the pruning compiler, and their exit status and output
+matched. `mir_cutover_corpus_oracle`, `cpp_mir_body_emitter_corpus`,
+`stdlib_surface`, `practical_examples`, and the native-header, callback,
+record, embedding, and C-oracle gates exercise the pruned artifacts.
+The scalar-family CLI tests count only reachable user bodies and explicitly
+reject unused prelude/output and uncalled scalar bodies. Full-program unit
+tests separately retain emission coverage for uncalled declarations. The
+failure-descriptor and default-cleanup fixtures actually call the operations
+whose descriptors and lifecycle helpers they inspect; optimized descriptor
+emission carries the original transform records through independent replay.
+C-thread terminal fixtures check their actual destroy calls, not unused
+unlock/wait wrappers. Their exit-status, C++20/C++23, optimization and sanitizer
+matrices remain unchanged.
 `source_modules_runtime` covers imported globals, private helper bodies,
 re-exported classes and constrained generics at O0/O1/O3 with C++20/C++23,
 then project imports, build-report edges, cache hits, export revocation and
-module-map invalidation. `source_modules_lsp` covers private-name filtering,
+module-map invalidation. It also runs a program that imports standard modules
+through an application facade at O0 with C++20 and O3 with C++23, and a project
+build whose report records the `export-include` edge. `source_modules_lsp` covers private-name filtering,
 hover/definition, incomplete code, unsaved interfaces, close/reload, and
 inferred private result types. Grammar corpus and highlight checks include
 module declarations, all import forms and exported namespaces. These gates
 supplement rather than replace the unchanged include and package regressions.
+
+The standard-library module audit also checks verification-evidence ownership.
+`lowered_program_contract` replaces a caller's already-verified program through
+public value assignment, rejects newly acquired evidence for that invalid
+replacement, and proves the original evidence still owns the accepted snapshot
+after the caller destroys its value. Copies of the evidence share that same
+const snapshot. An owning handoff additionally proves the accepted snapshot
+retains the original declaration storage without copying it. A borrowed
+pointer alone failed the replacement regression. The module
+grammar is regenerated with the pinned Tree-sitter 0.25.10; all 78 grammar
+corpus cases pass. These focused checks are not a full-suite acceptance claim.
 
 Use the existing CMake targets and test filters to keep the development loop
 proportional to the edit. A broad verification plan describes the evidence

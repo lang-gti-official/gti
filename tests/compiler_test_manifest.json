@@ -26,6 +26,14 @@
       "suite": "frontend"
     },
     {
+      "name": "testStandardLibraryModules",
+      "suite": "frontend"
+    },
+    {
+      "name": "testReachableExecutableLowering",
+      "suite": "frontend"
+    },
+    {
       "name": "testPackageImports",
       "suite": "frontend"
     },

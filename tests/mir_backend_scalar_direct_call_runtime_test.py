@@ -16,7 +16,6 @@ SELECTED = (
     "direct_chain_middle",
     "selected_chain",
     "direct_chain",
-    "direct_unused",
     "direct_choose",
     "direct_nested",
     "direct_call_zero",
@@ -26,7 +25,6 @@ SELECTED = (
     "direct_loop",
     "direct_cross_namespace",
     "direct_identity_leaf",
-    "direct_alternate_leaf",
     "direct_heterogeneous_leaf",
     "direct_first",
     "direct_pair",
@@ -34,7 +32,6 @@ SELECTED = (
     "direct_sink",
     "direct_zero",
     "scoped_leaf",
-    "write_stdout_byte",
     # Callers the old whole-graph contract had to reject even though their
     # own bodies are ordinary now emit from verified MIR too.
     "pass",
@@ -51,14 +48,11 @@ FAILURE_SELECTED = (
     "checked_target",
     "compatibility_checked_target",
     "compatibility_checked_call",
-    "compatibility_recursive",
     "checked_increment",
-    "print",
-    "println",
     "entry",
-    "write_stdout",
-    "print_decimal_digit",
 )
+UNREACHABLE = ("direct_unused", "direct_alternate_leaf", "compatibility_recursive",
+               "write_stdout_byte", "print", "println", "write_stdout", "print_decimal_digit")
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, check=False)
 
@@ -87,12 +81,12 @@ def failure_function_definition(generated: str, source_name: str) -> str:
 
 
 def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    # The verified initializer bodies and empty module remain structural
+    # Only StaticTarget's initializer bodies and the empty module remain structural
     # invariants; function coverage is checked by exact source name below so
     # unrelated prelude additions do not create count churn.
     if (
-        generated.count(f"{MARKER} field-initializers-instance") != 3
-        or generated.count(f"{MARKER} static-field-initializers-instance") != 3
+        generated.count(f"{MARKER} field-initializers-instance") != 1
+        or generated.count(f"{MARKER} static-field-initializers-instance") != 1
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(
@@ -100,6 +94,10 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             "scalar MIR bodies plus the initializer and module markers\n"
         )
         return False
+    for name in UNREACHABLE:
+        if function_definition(generated, name) or failure_function_definition(generated, name):
+            sys.stderr.write(f"{optimization}/{standard} emitted unreachable body {name}\n")
+            return False
     for name in SELECTED:
         if MARKER not in function_definition(generated, name):
             sys.stderr.write(

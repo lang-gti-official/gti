@@ -46,6 +46,10 @@ class array<T, uint64_t N> {
   mut T values[N];
 
 public:
+  using iterator = detail::array_mut_iterator<T, N>;
+  using const_iterator = detail::array_iterator<T, N>;
+  using sentinel = detail::array_sentinel;
+
   constexpr array() : values({}) {}
 
   constexpr array(T initial[N]) : values(std::move(initial)) {}

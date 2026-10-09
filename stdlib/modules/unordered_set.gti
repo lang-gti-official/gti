@@ -1,0 +1,3 @@
+// Module std.unordered_set: the public surface of <std/unordered_set>.
+export module unordered_set;
+export #include <std/unordered_set>

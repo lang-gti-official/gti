@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <sstream>
@@ -2248,6 +2249,18 @@ packElementParameterIndex(const MirProgram &program, const MirBody &body,
     uses.push_back(use);
   }
   return uses;
+}
+
+// An address calculation can exist solely to perform a checked projection.
+// Its later element uses already carry the complete MIR place; they need not
+// consume the intermediate row pointer. Preserve evaluation and failure edges,
+// but do not invent a storage representation for an unused address result.
+// In particular, native C array rows are not GTI std::array objects.
+[[nodiscard]] bool unusedAddressResult(const MirBody &body,
+                                       const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Compute &&
+         instruction.operation == MirOperation::AddressOf &&
+         instruction.result && body.usesOf(*instruction.result).empty();
 }
 
 struct ClassCopyAssignmentFusion {
@@ -7495,6 +7508,44 @@ conditionalClassReturnJoinArm(const MirBody &body, MirValueId valueId) {
 // function result, and the explicit TransferOut ends the moved-from C++
 // object's lifetime. Requiring the whole diamond prevents a generic
 // class-phi heuristic from inventing initialization or cleanup policy.
+// Every conditional arm in one body, grouped by its shared slot in value
+// order. Join queries run for many candidate slots and transfers; building the
+// grouping once per body avoids re-deriving every value's arm for each query.
+using ConditionalClassReturnJoinArms =
+    std::unordered_map<MirPlaceId, std::vector<ConditionalClassReturnJoinArm>>;
+
+[[nodiscard]] ConditionalClassReturnJoinArms
+collectConditionalClassReturnJoinArms(const MirBody &body) {
+  ConditionalClassReturnJoinArms result;
+  for (const MirValue &value : body.values) {
+    ConditionalClassReturnJoinArm arm =
+        conditionalClassReturnJoinArm(body, value.id);
+    if (arm.slot != nullptr) {
+      result[arm.slot->id].push_back(arm);
+    }
+  }
+  return result;
+}
+
+[[nodiscard]] std::vector<ConditionalClassReturnJoinArm>
+conditionalClassReturnJoinArmsFor(const MirBody &body, MirPlaceId slot) {
+  ConditionalClassReturnJoinArms uncached;
+  const ConditionalClassReturnJoinArms *arms = &uncached;
+  if (std::shared_ptr<void> *stored =
+          cppScopedBodyAnalysis(body, "conditional-class-return-join-arms")) {
+    if (!*stored) {
+      *stored = std::make_shared<ConditionalClassReturnJoinArms>(
+          collectConditionalClassReturnJoinArms(body));
+    }
+    arms = static_cast<const ConditionalClassReturnJoinArms *>(stored->get());
+  } else {
+    uncached = collectConditionalClassReturnJoinArms(body);
+  }
+  const auto found = arms->find(slot);
+  return found == arms->end() ? std::vector<ConditionalClassReturnJoinArm>{}
+                              : found->second;
+}
+
 [[nodiscard]] ConditionalClassReturnJoin
 conditionalClassReturnJoin(const MirBody &body, const MirPlace &slot) {
   if (slot.root != MirPlaceRootKind::Temporary || slot.temporary == 0 ||
@@ -7504,12 +7555,8 @@ conditionalClassReturnJoin(const MirBody &body, const MirPlace &slot) {
   }
 
   ConditionalClassReturnJoin result;
-  for (const MirValue &value : body.values) {
-    ConditionalClassReturnJoinArm arm =
-        conditionalClassReturnJoinArm(body, value.id);
-    if (arm.slot == nullptr || arm.slot->id != slot.id) {
-      continue;
-    }
+  for (const ConditionalClassReturnJoinArm &arm :
+       conditionalClassReturnJoinArmsFor(body, slot.id)) {
     if (result.slotDrop != nullptr && result.slotDrop != arm.slotDrop) {
       return {};
     }
@@ -10302,10 +10349,18 @@ materializedCallableReceiverPlace(const MirProgram &program,
     return nullptr;
   }
   const MirPlace *source = body.findPlace(load->operands.front().place);
-  if (source == nullptr || source->type != value->info.type ||
-      !source->projections.empty()) {
+  if (source == nullptr || source->type != value->info.type) {
     return nullptr;
   }
+  // A checked local reference denotes the existing environment. Its carrier
+  // is a pointer, not another closure or a fresh capture evaluation. The MIR
+  // loan verifies availability/access; the exact closure factory supplies the
+  // otherwise unnameable body-local referent type.
+  if (directReferenceCarrier(body, *source) != nullptr &&
+      materializedClosureForType(program, body, source->type))
+    return source;
+  if (!source->projections.empty())
+    return nullptr;
   const bool localMaterialized =
       source->root == MirPlaceRootKind::Binding &&
       (source->traits.drop == DropKind::Lexical ||
@@ -29501,6 +29556,10 @@ public:
         // move-only storage and not present in MIR.
         continue;
       }
+      if (valueDefinition &&
+          unusedAddressResult(facts.body, *valueDefinition)) {
+        continue;
+      }
       if (valueDefinition && valueDefinition->loan) {
         const auto *loan = facts.body.findLoan(*valueDefinition->loan);
         if (loan && fallibleExpectedBorrowLoanProducer(facts.body, *loan) ==
@@ -32103,7 +32162,10 @@ private:
       output << ";\n";
       return;
     }
-    output << "__gti_mir_v_" << *instruction.result << " = ";
+    const bool discardAddress = unusedAddressResult(facts.body, instruction);
+    if (!discardAddress) {
+      output << "__gti_mir_v_" << *instruction.result << " = ";
+    }
     if (instruction.operation == MirOperation::Literal) {
       emitLiteral(*instruction.literal, instruction.info.type);
       output << ";\n";
@@ -32158,6 +32220,9 @@ private:
         throw std::logic_error(
             "verified MIR address formation lost its source place");
       }
+      if (discardAddress) {
+        output << "static_cast<void>(";
+      }
       output << "::gti_internal::backend::raw_address_of(&";
       if (!instruction.localFailureSites.empty() &&
           !allMirLocalFailuresDischarged(instruction)) {
@@ -32183,7 +32248,7 @@ private:
       } else {
         emitPlaceExpression(facts, *place);
       }
-      output << ");\n";
+      output << (discardAddress ? "));\n" : ");\n");
       return;
     }
     if (instruction.operation == MirOperation::PointerAdd ||
@@ -32739,10 +32804,15 @@ private:
             ++branches;
             writeIndent();
           }
-          output << "__gti_mir_v_" << *instruction.result
-                 << " = ::gti_internal::backend::raw_address_of(&";
+          const bool discard = unusedAddressResult(facts.body, instruction);
+          if (discard) {
+            output << "static_cast<void>(";
+          } else {
+            output << "__gti_mir_v_" << *instruction.result << " = ";
+          }
+          output << "::gti_internal::backend::raw_address_of(&";
           emitElement();
-          output << ");\n";
+          output << (discard ? "));\n" : ");\n");
           closeCheckedArrayChain(branches);
         };
         if (const auto access = arrayFieldElementAccess(facts.body, *place)) {
@@ -39165,10 +39235,14 @@ private:
           target->receiverMutability == ReceiverMutability::Consuming;
     }
     const auto emitReceiverExpression = [&] {
+      // Virtual dispatch presents the receiver at its static owner; a static
+      // exact-parameter refinement presents it at the target's owner.
       const bool exactVirtualDispatch =
           receiverPlace != nullptr && target != nullptr &&
-          instruction.dispatch == CallDispatch::Virtual &&
-          instruction.dispatchOwner.kind == SemanticType::Class;
+          ((instruction.dispatch == CallDispatch::Virtual &&
+            instruction.dispatchOwner.kind == SemanticType::Class) ||
+           isMirExactReceiverPresentation(program, instruction,
+                                          receiverPlace->type));
       if (exactVirtualDispatch) {
         output << "static_cast<";
         if (target->receiverMutability == ReceiverMutability::ReadOnly) {
@@ -47750,7 +47824,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           std::find(parameterBindings->begin(), parameterBindings->end(),
                     place.binding) != parameterBindings->end();
       const MirLoan *carrier = loanCarriedByBinding(body, place.binding);
-      if (!typeRow(place.type) || place.type.arguments.size() != 1 ||
+      if (!lambdaDependentTypeRepresentable(program_, representations_, body,
+                                            place.type) ||
+          place.type.arguments.size() != 1 ||
           (!parameter && carrier == nullptr)) {
         {
           return false;
@@ -47774,7 +47850,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   base->type.arguments.size() == 1
               ? &base->type.arguments.front()
               : nullptr;
-      if (referent == nullptr || !typeRow(place.type) ||
+      if (referent == nullptr ||
+          !lambdaDependentTypeRepresentable(program_, representations_, body,
+                                            place.type) ||
           !exactFieldProjectionRows(program_, representations_, *referent,
                                     place.projections, 1, place.type, true)) {
         {
@@ -48710,6 +48788,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           return false;
         }
         switch (instruction.kind) {
+        case MirInstructionKind::Call:
+          // Alias and concrete type-parameter conversions use the same
+          // checked numeric detector as Compute/Convert. They cannot carry or
+          // replace the frozen receiver, and keep their exact MIR Invoke and
+          // failure cleanup before any later conditional argument executes.
+          if ((instruction.intrinsic != IntrinsicKind::NumericAliasConversion &&
+               instruction.intrinsic !=
+                   IntrinsicKind::NumericTypeParameterConversion) ||
+              instruction.functionTarget || instruction.constructorTarget ||
+              instruction.lambdaTarget || instruction.bodyTarget ||
+              instruction.callableInvocation || !instruction.result ||
+              instruction.destination || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Value ||
+              !isPassiveScalarValueType(instruction.operands.front().type) ||
+              !isPassiveScalarValueType(instruction.info.type) ||
+              (!instruction.definedFailure.empty() &&
+               !invokePairedInstruction(body, instruction.id))) {
+            return false;
+          }
+          break;
         case MirInstructionKind::Compute:
         case MirInstructionKind::Load:
         case MirInstructionKind::CallInput:
@@ -49497,7 +49595,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           continue;
         }
         const MirPlace *source = body.findPlace(loan->source);
-        if (source == nullptr || !typeRow(source->type)) {
+        if (source == nullptr ||
+            !lambdaDependentTypeRepresentable(program_, representations_, body,
+                                              source->type)) {
           {
             return false;
           }
@@ -51594,13 +51694,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // contains that owner. C++ member lookup then performs the exact
           // base adjustment; an unrelated wrapper or implicit owner
           // dereference still fails closed.
+          // An exact-parameter refinement presents an interface-typed
+          // receiver at its target's owner; MIR verification and
+          // optimization coherence own that proof.
           const MirClassInstance *ownerInstance =
               program_.findClassInstance(*target->owner);
+          const bool exactPresentation = isMirExactReceiverPresentation(
+              program_, instruction, receiverPlace->type);
           if (ownerInstance == nullptr ||
               (instruction.dispatch == CallDispatch::Virtual &&
                !typeRow(instruction.dispatchOwner)) ||
-              !classTypeIsOrDerivesFrom(program_, receiverPlace->type,
-                                        ownerInstance->id)) {
+              (exactPresentation && !typeRow(instruction.dispatchOwner)) ||
+              (!exactPresentation &&
+               !classTypeIsOrDerivesFrom(program_, receiverPlace->type,
+                                         ownerInstance->id))) {
             {
               return false;
             }

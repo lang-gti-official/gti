@@ -56,7 +56,7 @@ choice enters a compilation request, manifest, executable or cache key.
 - `src/cli/` owns argument routing, diagnostics/output presentation, and exit
   status. It constructs driver requests rather than reimplementing compilation.
 - `gti_lsp` is built whenever `GTI_BUILD_LSP` is enabled. It links the driver
-  for canonical read-only manifest discovery/parsing of `[build].defines`, but
+  for canonical read-only manifest discovery and selected configuration, but
   does not construct compilation, backend, or native-process requests. Its
   private JSON protocol machinery reuses the mandatory LLVM support dependency,
   so LSP availability no longer depends on discovering or bundling a separate
@@ -591,14 +591,26 @@ ordinary CLI never enables this policy, so released manifests diagnose
 published. Internal tests may resolve the plan and run the ordinary frontend
 `check` path. Activation and native publication remain owned by `B-LIB-02`.
 
-An optional top-level `[build]` table accepts
-`defines = ["DEBUG", "FEATURE"]`. Names must be ordinary GTI identifiers;
-they are sorted and deduplicated. Repeatable project-command `-D NAME` values
-are added to the union from the selected package and its transitive dependency
-closure, excluding unrelated workspace members. `ProjectWorkspace` computes
-this one program-wide set for both build plans and read-only `ProjectFacts`,
-so editor analysis, check, build and metadata agree. Flags are not private to
-their declaring package; source `#undef` still applies in load order.
+The top-level `[build]`, selected `[profiles.<name>]` and selected
+`[targets.<name>]` tables accept `defines = ["DEBUG", "FEATURE"]`. Names must
+be ordinary GTI identifiers; all scopes use one parser that sorts and
+deduplicates flags while retaining each selected declaration span. The
+effective set is the union of selected-package and transitive-dependency
+`[build]` flags, the consumer's selected profile and target flags, and repeatable
+project-command `-D NAME` values. Unselected targets/profiles, dependency
+target/profile flags and unrelated workspace members do not contribute.
+`ProjectWorkspace` collects package flags, and `composeProjectConfigurationFlags`
+combines scoped inputs for both immutable build plans and read-only
+`ProjectFacts`, so check, build, metadata and editor analysis share that policy.
+Flags remain program-wide, not private to their declaring package; source
+`#undef` still applies in load order. These are additive valueless switches;
+there is no manifest undefinition or automatic `DEBUG` flag for the dev profile.
+The driver also publishes declared flag names from all consumer profiles and
+targets. Source loading uses this separate set only for `GTI-S2075` typo
+diagnostics: a dev-only switch remains known but false in a release build.
+Dependency target/profile names do not enter this declaration set. Both active
+and declared sets participate in frontend/build cache identities, and immutable
+compilation requests preserve them through build, check and editor completion.
 The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
 the shared frontend request. Metadata schema 14 reports that effective `defines`
@@ -905,6 +917,21 @@ mechanism and the alias shares the dependency-alias namespace (a collision
 is a manifest diagnostic). Every package in the resolved graph generates its
 own imports; aliases do not leak to dependents.
 
+Imported enums retain the selected native integer family and evaluated values,
+including unsigned high-bit flags and supported 64-bit ranges. See
+[enum representation](../language/native-c-interop.md#imported-enum-representation)
+for the current reader profiles and ABI-option boundary. Existing handwritten
+`int32_t` arguments may need an explicit conversion after regenerating older
+bindings; that type change corrects the native declaration, not GTI's conversion
+rules. The runnable `examples/native-enum-bindings` project exercises this path.
+
+Callback-slot imports likewise preserve pointer depth: a native `Callback*`
+must regenerate as a slot pointer, not a callback value. Function typedefs,
+text-storage aliases and fixed-array aliases use the same importer in direct
+and manifest modes; see [composable typedef imports](../language/native-c-interop.md#composable-typedef-imports)
+and `examples/native-callback-slots`. Release identity invalidates stale
+generated files when these import rules change.
+
 Generation is deterministic and keyed: a `bindings.key` sidecar hashes the
 preprocessed translation unit (which captures every transitive header
 fact), the ordered options, the resolved target triple, and the GTI release
@@ -988,7 +1015,8 @@ main = "src/api.gti"
 geometry = "src/geometry_api.gti"
 ```
 
-Each key is one non-reserved GTI identifier. Each value is a package-relative
+Each key is one non-reserved GTI identifier other than `std`, which names the
+standard library's modules (`import std.vector;`). Each value is a package-relative
 path to an existing regular `.gti` interface. Canonical paths must remain inside
 the package, including through symlinks. Duplicate physical files, portable
 case-fold name collisions, invalid names/types and missing paths are rejected
@@ -1527,10 +1555,15 @@ The published facts are the workspace root and whether a `[workspace]` table
 declared it, the resolved package closure with each package's identity,
 membership, manifest/package/source roots, selectability, git provenance, and
 direct alias edges, the package source-root graph, the selected package's
-declared profiles and targets, package-level configuration flags, the profile
+declared profiles and targets with their own configuration flags, package-level
+configuration flags, the profile
 a command selects when none is named, and the workspace-graph model identity.
-`analysisConfiguration` assembles one declared profile's configuration exactly
-as the build path assembles it. Profiles also publish their warning groups and
+`analysisConfiguration` assembles a declared profile and optional named target
+using the same flag composition as the build path. An unknown profile or named
+target returns no configuration; omission of a target includes package/profile
+flags only. `targetForSource` infers a unique matching entry root or the only
+target in a single-target package; ambiguous roots and shared files in a
+multi-target package have no inferred target. Profiles also publish their warning groups and
 dependency-warning setting; `packageWarnings` resolves the same consumer-owned
 package policy used by build plans. Native settings, output layout, and cache
 policy are build concerns and are deliberately absent.

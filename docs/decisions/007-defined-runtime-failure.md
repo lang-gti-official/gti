@@ -271,7 +271,9 @@ when callers reasonably need to handle that condition.
 
 In particular, `make_unique` and private storage remain infallible at the type
 level and map allocation exhaustion to `GTI-R0011`; future `try_make_unique`
-returns `expected`. Wrong-state `expected` observers map to `GTI-R0009` rather
+returns `expected`. The accepted
+[allocation exhaustion revision](#allocation-exhaustion-revision-2026-10-09)
+will replace this contained failure with an abort. Wrong-state `expected` observers map to `GTI-R0009` rather
 than importing `bad_expected_access`, assertions, or undefined behavior.
 
 Compile-time diagnostics, compiler/tool resource exhaustion, IEEE-754
@@ -292,6 +294,26 @@ hosted boundary exits without running native teardown. This quarantine is not
 detach and cannot resume program execution.
 `GTI-R0013` is only for detected hosted contract input/state that is still safe
 to clean; it is not a catch-all internal-error category.
+
+## Allocation Exhaustion Revision (2026-10-09)
+
+Status: accepted direction; not yet implemented. Until
+[`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model)
+lands, the rule above remains the shipped behavior.
+
+Allocation exhaustion in an infallible operation leaves contained,
+cleanup-preserving termination. Following Rust's default `handle_alloc_error`,
+the runtime writes a best-effort, allocation-free `GTI-R0011` report and
+aborts. No cleanup runs, and no record propagates to callers, guards or
+cleanup handlers. Exhaustion during failure cleanup aborts the same way
+instead of reporting `GTI-R0014`.
+
+This is deliberately the one return to abort-style termination. The other
+`GTI-R` categories, including size-computation overflow in an allocating
+operation, keep this ADR's contained termination. Recoverable allocation stays
+an explicit `expected` result from the `try_` operations. The full rule,
+including the optimizer's freedom to remove unused process allocations, is in
+[ADR 022](022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09).
 
 ## Phase Ownership
 

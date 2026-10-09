@@ -20,10 +20,19 @@ class Chain<T> {
   using Next = Chain<Chain<T>>;
   using Entry = Box<Data>;
 };
+struct ShelfItem<T, uint64_t N> { T value; };
+class Shelf<T, uint64_t N> {
+  using Entry = ShelfItem<T, N>;
+  using NestedEntry = Box<ShelfItem<T, N>>;
+public:
+  Shelf() {}
+};
 }
 
 int main() {
   Options options{};
   independent::Catalog catalog{};
+  independent::Shelf<int, 3> first{};
+  independent::Shelf<int, 4> second{};
   return 0;
 }
