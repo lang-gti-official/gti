@@ -4,7 +4,10 @@
 #include "gti/optimizer.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <string_view>
 
@@ -217,5 +220,101 @@ int main() {
           }
   expect(checkedForgedDischarge,
          "the raw-write fixture must expose a checked overflow outcome");
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/optimizer_scalar_addresses.gti";
+  const std::ifstream file(path);
+  const std::string text{std::istreambuf_iterator<char>(file.rdbuf()), {}};
+  const auto library =
+      path.parent_path().parent_path().parent_path() / "stdlib";
+  const auto addresses = lang::Frontend().analyze(
+      path, text, {library / "prelude.gti", path},
+      {{std::filesystem::weakly_canonical(path).string(), text}}, {library});
+  expect(addresses.canGenerateCode(),
+         "typed scalar address fixture must lower");
+  if (!addresses.canGenerateCode()) {
+    for (const auto &diagnostic : addresses.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return 1;
+  }
+  const auto addressContexts =
+      lang::analyzeMirClosedCallSafetyChecks(addresses.mir);
+  expect(addressContexts.converged, "typed address contexts must converge");
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+        lang::OptimizationLevel::O3}) {
+    const auto optimized = pipeline.run(
+        {.hir = addresses.hir, .mir = addresses.mir, .level = level});
+    expect(optimized.valid(), "typed address facts must independently replay");
+    if (level == lang::OptimizationLevel::O0)
+      expect(optimized.report.transformations.empty(), "O0 remains unchanged");
+    std::size_t positives = 0, negatives = 0;
+    for (const auto &instance : addresses.hir.functionInstances()) {
+      if (!instance.source)
+        continue;
+      const auto name = instance.source->name().lexeme;
+      const bool positive = name == "copied_address" ||
+                            name == "replaced_address" ||
+                            name == "read_address" || name == "joined_same";
+      if (!positive && !name.starts_with("bad_"))
+        continue;
+      positive ? ++positives : ++negatives;
+      const auto *context = addressContexts.find(
+          {.kind = lang::MirBodyKind::Function, .owner = instance.id});
+      expect(context && context->reached,
+             "all address controls must be reached");
+      std::size_t discharges = 0, rawLoads = 0;
+      const auto *body = optimized.mir.findFunctionInstance(instance.id);
+      for (const auto &block : body->body.blocks)
+        for (const auto &instruction : block.instructions) {
+          rawLoads += !instruction.tombstone && instruction.rawMemoryAccess &&
+                      instruction.kind == lang::MirInstructionKind::Load;
+          discharges += std::count_if(
+              instruction.safetyDischarges.begin(),
+              instruction.safetyDischarges.end(), [](const auto &proof) {
+                return proof.family ==
+                       lang::MirSafetyCheckFamily::ArithmeticOverflow;
+              });
+        }
+      expect(rawLoads > 0, "value evidence must not erase actual raw access");
+      if (discharges !=
+          (positive && level != lang::OptimizationLevel::O0 ? 1 : 0))
+        std::cerr << "address control " << name << " discharges=" << discharges
+                  << '\n';
+      expect(discharges ==
+                 (positive && level != lang::OptimizationLevel::O0 ? 1 : 0),
+             "exact addresses prove positives but not stale/ambiguous values");
+    }
+    expect(positives == 4 && negatives == 6, "complete scalar-address census");
+  }
+  std::size_t forgedAddresses = 0;
+  for (const auto &instance : addresses.hir.functionInstances()) {
+    if (!instance.source || !instance.source->name().lexeme.starts_with("bad_"))
+      continue;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = instance.id};
+    const auto *body = lang::findMirBody(addresses.mir, address);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        for (std::size_t origin = 0;
+             origin < instruction.definedFailure.localOrigins.size(); ++origin)
+          for (const auto outcome :
+               instruction.definedFailure.localOrigins[origin].outcomes) {
+            if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+              continue;
+            auto forged = addresses.mir;
+            lang::MirEditor editor(forged, "forged-scalar-address");
+            editor.queueSafetyDischarge(
+                {.body = address, .instruction = instruction.id},
+                {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                 .origin = origin,
+                 .outcome = outcome});
+            const auto result = editor.apply();
+            expect(!result.valid() && !result.changed,
+                   "stale address facts cannot be forged");
+            ++forgedAddresses;
+          }
+  }
+  expect(forgedAddresses == 6,
+         "every scalar-address negative rejects a forged discharge");
   return failures == 0 ? 0 : 1;
 }

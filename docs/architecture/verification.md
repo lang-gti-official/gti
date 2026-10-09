@@ -546,6 +546,24 @@ this checkpoint is not migration acceptance.
 The same optimized compiler also passes the source-owner, resource-prefix,
 terminated-string and raw-context runtime gates together in 51.87 seconds.
 
+The actual scalar-address prerequisite preserves typed local/owned-field
+address identity separately from owner witnesses. Four positive controls cover
+copies, reassignment, member fields and equal-address CFG joins. Six reached
+negative controls retain their overflow after replacement, unequal-address
+joins, checked referent aliases, raw writes, pointer-field aliases and lifetime
+replacement. All six reject forged discharges. The raw loads remain present
+in O0/O2/O3 MIR; proof replay passes and O0 performs no transformations.
+The optimized eight-gate selection passes in 44.02 seconds, including 188
+compiler cases. The final strengthened raw-context unit passes in 0.61 seconds.
+The address/raw matrix passes 64 native cases across eight modes (six workers,
+18.39 seconds); the existing 456-case object matrix passes in 136.25 seconds.
+Both matrices include no-elide and ASan/UBSan. The fresh original acceptance
+run still reports six safety and three native-evidence failures (19.99 seconds).
+No initialized-region, returned-pointer or full migration acceptance is claimed.
+Source-owner, resource-prefix and terminated-string runtime gates also pass
+with this optimized implementation (93.36 seconds). Formatting and diff checks
+pass; the outer migration retains its existing 0.394.0 version advance.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
