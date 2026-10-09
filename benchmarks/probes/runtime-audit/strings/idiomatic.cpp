@@ -7,7 +7,8 @@ int main() {
   uint64_t checksum = 0;
   for (int32_t round = 0; round < 400; round++) {
     std::string text;
-    for (int32_t i = 0; i < 50000; i++) text.push_back(alphabet[std::size_t((i * 7 + round) % 26)]);
+    for (int32_t i = 0; i < 50000; i++)
+      text.push_back(alphabet[std::size_t((i * 7 + round) % 26)]);
     std::size_t position = text.find('q');
     while (position != std::string::npos) {
       checksum += position;
