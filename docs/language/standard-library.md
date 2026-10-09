@@ -216,8 +216,8 @@ The current implemented foundation includes:
   read-only `at`, `front`, and `back` methods support constexpr evaluation for
   supported elements; mutable access and iterator traversal remain runtime
   operations; and
-- `<std/string>` `std::string` as a move-only owner over private character
-  storage, including
+- `<std/string>` `std::string` as a move-only owner over a source-defined
+  terminated character prefix, including
   construction from an exact input iterator/sentinel pair whose dereference
   referent is `char`, indexed half-open range copying, front/back and mutable
   checked access, resize, owner-tied `c_string()` and checked
@@ -756,16 +756,23 @@ for insertion-result movement and scoped mutable access.
 
 ### Sequential Storage
 
-**Planned representation.** `std::vector` and `std::string` currently store
-elements in a compiler-private prefix-storage capability. They will move to
-Rust's `RawVec`/`Vec` layering, in ordinary GTI:
-- a source-defined raw buffer plus a length, with no per-slot metadata;
-- one check per safe public operation, then raw access internally;
-- `unsafe` unchecked accessors in the style of `get_unchecked`;
-- byte-copy relocation for bitwise-relocatable elements.
+`std::vector` and `std::string` use a source-defined raw buffer and one
+initialized-prefix count. The buffer owns its resource lease, pointer and
+capacity; it allocates no per-slot metadata. Safe operations check their
+logical bounds at the public boundary and use raw access internally. Growth
+transfers bitwise-relocatable elements as one byte copy; other supported
+elements retain verified per-element relocation. String's physical prefix
+includes one hidden initialized NUL, excluded from public size and capacity.
+Combined S-ALLOC-09 migration and performance acceptance remains in progress.
 
-Safe behavior does not change, apart from the allocation-failure model below.
-See
+`get_unchecked(size_t index)` on vector, string, array and span returns a
+read-only element reference and requires an explicit `unsafe` context. Vector,
+string, array and mutable span also provide `get_unchecked_mut(size_t index)`.
+The caller must establish `index < size()`; these operations perform no dynamic
+index check. The returned references still retain checked owner loans and
+exclude conflicting mutation. A string's hidden terminator and every index
+into an empty sequence are outside this contract. Safe `at` and `operator[]`
+keep their defined bounds failures. See
 [ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
 
 `vector::swap`, `string::swap`, and `forward_list::swap` exchange their owned

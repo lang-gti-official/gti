@@ -9,7 +9,7 @@ bool enabled = false;
 std::uint64_t attempts = 0;
 std::uint64_t releases = 0;
 void *observed_allocation = nullptr;
-}
+} // namespace
 
 extern "C" void allocation_probe_begin() {
   attempts = releases = 0;
@@ -50,4 +50,6 @@ void operator delete(void *value) noexcept {
   }
   std::free(value);
 }
-void operator delete(void *value, std::size_t) noexcept { ::operator delete(value); }
+void operator delete(void *value, std::size_t) noexcept {
+  ::operator delete(value);
+}

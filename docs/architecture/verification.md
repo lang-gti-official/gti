@@ -2,15 +2,42 @@
 
 ## Allocation-exhaustion abort foundation (candidate)
 
-`allocation_abort_runtime` tests the runtime-only S-ALLOC-08 terminal primitive
+`allocation_abort_runtime` tests the S-ALLOC-08 terminal primitive
 in subprocesses: direct exhaustion, a managed worker, reentry from an active
 failure observer, a malformed native record, closed stderr and a broken pipe.
 It requires process abort, an exact best-effort GTI-R0011 report when writable,
 and no local destructor, exit handler, worker cleanup or join continuation.
 The fixture forbids C++ heap allocation while the terminal path runs. Existing
 failure-report, panic, ABI and containment tests remain separate controls.
-These tests do not claim source allocation uses the new path yet; compiler
-detector/cleanup-edge changes and the fallible/overflow matrices remain required.
+Scalar and class owner detectors now emit the exact MIR-site report and abort
+without an exhaustion cleanup edge. Class allocation includes implicit default
+construction: it uses the same explicit raw-storage/publication protocol, not
+the former native `make_unique` fallback. Verifier mutations reject forged
+storage stages and missing generated-constructor schedules. The class native
+matrix covers explicit/default success, exhaustion, field/constructor rollback
+and exhaustion during cleanup; ordinary cleanup failures remain contained.
+Shared-owner promotion and managed-thread secondary-failure controls pass
+O0/O3 and sanitizer checks. These focused results do not replace the complete
+fallible/overflow/family, corpus and installed-consumer gates.
+
+`process_allocation_elision` forces one escaping allocation as a positive
+control and checks that a nonescaping scalar owner's allocation/release vanish
+at O3 in both C++20/C++23, preserving the computed value. O0 retains both
+allocations. Counting replacement process allocation is a test oracle, not a
+new language observability guarantee; application resource calls remain
+observable. The owner facility probe preserves complete-state output and raw
+measurement evidence at `/private/tmp/gti-s08-owner-5e1c1914-native/report.json`.
+Its five warmups/twenty interleaved samples give approximately 508 ms for GTI,
+118 ms for checked C++ and 22 ms for idiomatic C++. Allocation removal alone
+therefore does **not** prove container/call-chain runtime acceptance; that gap
+remains under investigation, with an exact private-path vector baseline still
+required. The benchmark semantic twin now reflects ADR 022's revised elision
+permission instead of forcing the old observable-allocation model.
+
+`uninitialized_carrier_runtime` covers all four fixtures in eight modes,
+including direct bulk relocation and the extended runnable manual-lifetimes
+example. The 32-case matrix preserves move-only bitwise values, vacant source
+reuse, immovable inline owners, reverse cleanup and sanitizer behavior.
 
 ## Issue-campaign audit and reconciliation gate
 

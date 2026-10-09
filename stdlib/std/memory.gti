@@ -430,6 +430,11 @@ public:
   ~process_lease() { this.release(); }
 };
 
+class bulk_relocation_probe<T> {
+public:
+  bool available() requires std::bitwise_relocatable<T> { return true; }
+};
+
 }
 
 namespace gti_internal {
@@ -480,11 +485,6 @@ public:
 
 // Byte ownership has no knowledge of initialized objects. A sequence supplies
 // its one live length; every raw operation requires that sequence's proof.
-class bulk_relocation_probe<T> {
-public:
-  void available() requires std::bitwise_relocatable<T> {}
-};
-
 class raw_buffer<sparse_element T, byte_lease Lease> {
 public:
   // Compiler-private namespace visibility seals these source-only fields.
@@ -542,8 +542,8 @@ public:
       requires std::relocatable<T> {
     if (count == uint64_t(0)) { return; }
     unsafe {
-      if constexpr (requires(bulk_relocation_probe<T>& probe) {
-        { probe.available() } -> void;
+      if constexpr (requires(std::detail::bulk_relocation_probe<T>& probe) {
+        { probe.available() } -> bool;
       }) {
         std::relocate_range_at(destination.objects, this.objects, count);
       } else {

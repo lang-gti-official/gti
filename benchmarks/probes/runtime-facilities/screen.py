@@ -13,11 +13,14 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent
+KINDS = ['callback', 'interface', 'owner', 'soa', 'cross-unit']
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('command', choices=['build', 'measure'])
 parser.add_argument('--gti', required=True, type=Path)
 parser.add_argument('--cxx', default='/usr/bin/clang++')
 parser.add_argument('--output', required=True, type=Path)
+parser.add_argument('--kind', action='append', choices=KINDS,
+                    help='Select candidate(s); default runs the complete screen')
 args = parser.parse_args()
 OUT = args.output.resolve()
 GTI = str(args.gti.resolve())
@@ -27,7 +30,8 @@ if args.command == 'build':
 elif not OUT.is_dir():
     parser.error('measure requires an existing build output directory')
 COMMON = ['-O3', '-std=c++23', '-fno-fast-math', '-ffp-contract=off']
-KINDS = ['callback', 'interface', 'owner', 'soa', 'cross-unit']
+if args.kind:
+    KINDS = list(dict.fromkeys(args.kind))
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -80,11 +84,15 @@ def build():
         group = [b for b in builds if b['kind'] == kind]
         if len({b['output_sha256'] for b in group}) != 1 or any(b['output_lines'] != 1024 for b in group):
             raise RuntimeError('complete-state mismatch: ' + kind)
-    report = {'compiler':GTI, 'compiler_sha256':sha(GTI), 'native_compiler_sha256':sha(CXX), 'native': [native, native_lto], 'builds':builds}
+    report = {'compiler':GTI, 'compiler_sha256':sha(GTI), 'native_compiler_sha256':sha(CXX), 'native': [native, native_lto], 'builds':builds,
+              'kinds': KINDS,
+              'compiler_version': subprocess.check_output([GTI, '--version'], text=True),
+              'native_compiler_version': subprocess.check_output([CXX, '--version'], text=True)}
     (OUT/'builds.json').write_text(json.dumps(report,indent=2))
 
 def measure():
     report = json.loads((OUT/'builds.json').read_text())
+    kinds = report.get('kinds', KINDS)
     if sha(GTI) != report['compiler_sha256']:
         raise RuntimeError('selected compiler changed since the probe build')
     for build in report['builds']:
@@ -94,7 +102,7 @@ def measure():
             raise RuntimeError('probe source changed: ' + build['name'])
     rng = random.Random(1001)
     results = []
-    for kind in KINDS:
+    for kind in kinds:
         builds = [b for b in report['builds'] if b['kind'] == kind]
         samples = {b['name']:[] for b in builds}
         warmups = {b['name']:[] for b in builds}

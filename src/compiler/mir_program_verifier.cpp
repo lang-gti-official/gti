@@ -8377,8 +8377,7 @@ exactScalarUniqueAllocationContract(const MirProgram &program,
   }
   const SemanticType &pointee = instruction.info.type.arguments.front();
   if (pointee.kind == SemanticType::Class) {
-    if (instruction.constructorKind != ConstructorKind::Ordinary &&
-        !instruction.constructorTarget) {
+    if (!instruction.constructorTarget) {
       if (!mir_detail::generatedUniqueConstruction(instruction) ||
           instruction.objectAllocation == 0 ||
           !instruction.definedFailure.empty() ||
@@ -8389,6 +8388,9 @@ exactScalarUniqueAllocationContract(const MirProgram &program,
           [&](const auto &instance) { return instance.type == pointee; });
       if (owner == program.classInstances().end())
         return false;
+      if (instruction.constructorKind == ConstructorKind::Ordinary)
+        return owner->defaultConstructor == SpecialMemberStatus::Generated &&
+               !owner->generatedDefaultRequiresSchedule;
       return instruction.constructorKind == ConstructorKind::Copy
                  ? owner->copyConstructor == SpecialMemberStatus::Generated &&
                        owner->traits.copyable
