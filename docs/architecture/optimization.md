@@ -12,6 +12,17 @@ backend or non-body representation input. No new optimizer pass may use AST
 shape, source spelling, HIR replacement tables, emitted C++, or public
 standard-library names as transformation authority.
 
+## Runtime Performance Contract
+
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
+makes efficient execution an architectural and delivery requirement. General
+optimization infrastructure may be justified by its operation families, cost
+model and information requirements without a prior benchmark or proxy speedup.
+Measurements validate the implementation and its tradeoffs, rather than grant
+permission to build the architecture. Current conservative analyses remain
+sound implementation boundaries, not permanent reasons to defer generality.
+This changes development policy, not the implemented pass inventory above.
+
 ## Language-Growth Conformance Gate
 
 `optimization/coverage.h` and `optimization/coverage.cpp` own one exhaustive
@@ -582,8 +593,11 @@ The bounded follow-on milestones are numbered in
 [`implementation-sequence.md`](../plans/implementation-sequence.md). New
 transforms must consume one of these analyses through typed evidence and
 independent replay; analysis availability alone never authorizes a rewrite.
-MemorySSA is introduced only when a measured memory transformation cannot be
-proved from existing place/effect facts.
+MemorySSA or another memory-version representation may be introduced when
+general memory transformations need facts existing place/effect analysis
+cannot express soundly and maintainably. Explain its consumers and invalidation
+rules; no prior measured speedup is required. Validate the resulting production
+path and performance separately from transformation correctness.
 
 See [`docs/plans/optimization.md`](../plans/optimization.md) and
 [`docs/plans/performance-tooling.md`](../plans/performance-tooling.md) for the
