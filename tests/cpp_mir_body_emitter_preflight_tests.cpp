@@ -2629,6 +2629,180 @@ int main() { return 0; }
       "ordinary concrete native field cannot forge a dependent cell accessor");
 }
 
+void testPlainExpectedPayloadConstruction() {
+  const auto frontend = analyze("plain-expected-payload.gti", R"(
+class Ticket {
+  int first;
+  int second;
+public:
+  Ticket(int first, int second) : first(first), second(second) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() {}
+};
+int exercise(int first, int second) {
+  expected<Ticket, int> value = Ticket(first, second);
+  return 0;
+}
+int main() { return exercise(1, 2); }
+)");
+  expect(frontend.canGenerateCode(), "plain Expected payload must lower");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto function = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &candidate) {
+        return !candidate.owner && candidate.parameterTypes.size() == 2;
+      });
+  expect(function != frontend.mir.functionInstances().end(),
+         "plain Expected payload fixture has its source function");
+  if (function == frontend.mir.functionInstances().end())
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = function->id};
+  const lang::MirInstruction *construct = nullptr;
+  const lang::MirInstruction *initialize = nullptr;
+  const lang::MirInstruction *stage = nullptr;
+  for (const auto &block : function->body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == lang::MirInstructionKind::Construct)
+        construct = &instruction;
+      if (instruction.kind == lang::MirInstructionKind::Initialize &&
+          instruction.info.type.kind == lang::SemanticType::Expected)
+        initialize = &instruction;
+      if (instruction.kind == lang::MirInstructionKind::CallInput)
+        stage = &instruction;
+    }
+  expect(
+      construct && initialize && stage && construct->definedFailure.empty() &&
+          construct->operands.size() == 2 && construct->lifecycle.size() == 1 &&
+          initialize->lifecycle.size() == 2,
+      "nonraising constructor retains prepared arguments and two ownership "
+      "stages");
+  if (!construct || !initialize || !stage)
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    const auto text =
+        function->mayRaiseDefinedFailure
+            ? emitter.emitFailureBodyText(address, "plain-payload", 1)
+            : emitter.emitBodyText(address, "plain-payload", 1);
+    expect(text.emitted() &&
+               text.text.find(".construct_from([&]() { return ") !=
+                   std::string::npos,
+           "nonraising payload executes at Construct in its explicit lifetime "
+           "slot");
+    expect(
+        text.text.find(".construct(std::move(__gti_mir_v_") !=
+                std::string::npos &&
+            text.text.find(".destroy();") != std::string::npos,
+        "Expected publication consumes the payload and retires its old shell");
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto forged = frontend.mir;
+      auto *body = &const_cast<lang::MirFunctionInstance *>(
+                        forged.findFunctionInstance(function->id))
+                        ->body;
+      auto *producer = findPreflightInstruction(*body, construct->id);
+      auto *publication = findPreflightInstruction(*body, initialize->id);
+      auto *input = findPreflightInstruction(*body, stage->id);
+      if (mutation == 0)
+        producer->lifecycle.clear();
+      else if (mutation == 1)
+        publication->lifecycle.front().source = 0;
+      else if (mutation == 2)
+        publication->lifecycle.back().target = 0;
+      else if (mutation == 3)
+        input->callInputIndex = 99;
+      else
+        producer->parameterTypes.front() = lang::SemanticType::Bool;
+      const lang::CppMirBodyEmitter rejected(forged, map);
+      expect(
+          !rejected.supportsBodyText(address) &&
+              !rejected.supportsFailureBodyText(address),
+          "forged Expected payload construction/publication must fail closed");
+    }
+  }
+}
+
+void testExpectedReferenceHasOnlyLoanStorage() {
+  const auto frontend =
+      analyzeWithStandardLibrary("expected-reference-storage.gti", R"(
+#include <std/memory>
+class Ticket {
+  int number;
+public:
+  Ticket(int number) : number(number) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() {}
+  int id() { return this.number; }
+};
+expected<Ticket, int>& relay(expected<Ticket, int>& value) { return value; }
+expected<Ticket, int>& raw_relay(expected<Ticket, int>& value) {
+  unsafe { return std::assume_ref(&value, value); }
+}
+int main() {
+  expected<Ticket, int> value = Ticket(7);
+  expected<Ticket, int>& first = relay(value);
+  expected<Ticket, int>& second = raw_relay(first);
+  return second.value().id() == 7 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(), "Expected reference relay must lower");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    std::size_t identities = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (!instruction.result || !instruction.loan ||
+              instruction.kind != lang::MirInstructionKind::Call ||
+              instruction.info.type.kind != lang::SemanticType::Expected ||
+              instruction.info.category != lang::ValueCategory::Place)
+            continue;
+          const auto text =
+              function.mayRaiseDefinedFailure
+                  ? emitter.emitFailureBodyText(address, "expected-reference",
+                                                1)
+                  : emitter.emitBodyText(address, "expected-reference", 1);
+          expect(text.emitted(), "Expected reference body must emit");
+          expect(text.text.find(" __gti_mir_v_" +
+                                std::to_string(*instruction.result) + "{};") ==
+                     std::string::npos,
+                 "a checked reference must not default-construct a phantom "
+                 "Expected");
+          expect(text.text.find("__gti_mir_loan_" +
+                                std::to_string(*instruction.loan)) !=
+                     std::string::npos,
+                 "the actual checked loan remains the referent carrier");
+          auto forged = frontend.mir;
+          auto *body = lang::findMirBody(forged, address);
+          auto *loan =
+              const_cast<lang::MirLoan *>(body->findLoan(*instruction.loan));
+          loan->producedBy = 0;
+          const lang::CppMirBodyEmitter malformed(forged, map);
+          expect(
+              !malformed.supportsBodyText(address) &&
+                  !malformed.supportsFailureBodyText(address),
+              "reference storage erasure cannot hide a detached loan producer");
+          ++identities;
+        }
+    }
+    expect(identities >= 4,
+           "ordinary and raw-backed Expected relays are covered");
+  }
+}
+
 void testNativeExpectedCopyPublication() {
   auto frontend = analyze("cpp-mir-native-expected-copy.gti", R"(
 [[c_abi]] struct Native { const int* pointer; int value; };
@@ -5196,6 +5370,10 @@ constexpr NamedTest kTests[] = {
     {"testByteFieldRepresentationFailsClosed",
      testByteFieldRepresentationFailsClosed},
     {"testNativeExpectedCopyPublication", testNativeExpectedCopyPublication},
+    {"testPlainExpectedPayloadConstruction",
+     testPlainExpectedPayloadConstruction},
+    {"testExpectedReferenceHasOnlyLoanStorage",
+     testExpectedReferenceHasOnlyLoanStorage},
     {"testConcreteClassStaticStorage", testConcreteClassStaticStorage},
     {"testDischargedArrayReadAnalysis", testDischargedArrayReadAnalysis},
     {"testDefaultPrefixConstructorStatusAdmission",

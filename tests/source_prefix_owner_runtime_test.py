@@ -38,7 +38,8 @@ if __name__ == "__main__":
                          "failure_during_cleanup; primary [GTI-R0002] at "
                          f"{payload.name}:{payload_primary_line}; secondary [GTI-R0002]\n")
     runtime_matrix(
-        names=("source_prefix_owner", "source_prefix_vector", "source_prefix_expected_range", "generic_payload_enum",
+        names=("source_prefix_owner", "source_prefix_vector", "source_prefix_expected_range",
+               "source_prefix_complete_elements", "generic_payload_enum",
                "raw_text_owner_example",
                "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup",
                "source_prefix_payload_return_cleanup"),
@@ -46,6 +47,7 @@ if __name__ == "__main__":
             "source_prefix_owner": [((), (0, "2\n1\n4\n3\n", ""))],
             "source_prefix_vector": [((), (0, "", ""))],
             "source_prefix_expected_range": [((), (0, "", ""))],
+            "source_prefix_complete_elements": [((), (0, "", ""))],
             "generic_payload_enum": [((), (0, "1\n4\n3\n2\n", ""))],
             "raw_text_owner_example": [((), (0, "hello\nHello\n", ""))],
             "source_prefix_drain_failure": [

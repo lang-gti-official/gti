@@ -16614,11 +16614,12 @@ expectedPayloadInitialize(const MirProgram &program, const MirBody &body,
       definition->constructorKind == ConstructorKind::Ordinary &&
       constructor->definitionKind == MirDefinitionKind::Source &&
       !constructor->mayRaiseDefinedFailure &&
-      constructor->parameterTypes.empty() && definition->operands.empty() &&
-      definition->parameterTypes.empty() && !definition->functionTarget &&
-      !definition->receiver && !definition->destination &&
-      !definition->lambdaTarget && !definition->bodyTarget &&
-      !definition->callableInvocation &&
+      constructor->parameterTypes == definition->parameterTypes &&
+      constructor->parameterTypes.size() == definition->operands.size() &&
+      hasCompleteCallInputSchedule(body, *definition) &&
+      !definition->functionTarget && !definition->receiver &&
+      !definition->destination && !definition->lambdaTarget &&
+      !definition->bodyTarget && !definition->callableInvocation &&
       definition->callableArguments.empty() &&
       definition->definedFailure.empty() &&
       definition->localFailureSites.empty() && !definition->successResultDrop &&
@@ -16658,13 +16659,26 @@ expectedPayloadInitialize(const MirProgram &program, const MirBody &body,
       initialize && destination &&
       expectedConstructorFieldDestination(body, *initialize) == destination;
   if (plainConstruction) {
-    if (!fieldDestination || invokePairedInstruction(body, definition->id) ||
-        definition->lifecycle.size() != 1)
+    if (invokePairedInstruction(body, definition->id) ||
+        definition->lifecycle.size() != 1 || valueDrop->initiallyActive)
       return nullptr;
     const auto &event = definition->lifecycle.front();
     if (event.kind != MirLifecycleEventKind::Initialize || event.source ||
         event.target != valueDrop->id || event.conditional ||
         event.failureCleanup)
+      return nullptr;
+    // Construct executes before publication, using its already prepared inputs.
+    // The sole adjacent Initialize transfers the payload obligation into the
+    // Expected owner; no intervening operation may need its temporary cleanup.
+    const auto *block = body.findBlock(value->definitionBlock);
+    if (!block || block->id != uses.front().block)
+      return nullptr;
+    const auto position = std::find_if(
+        block->instructions.begin(), block->instructions.end(),
+        [&](const auto &candidate) { return &candidate == definition; });
+    if (position == block->instructions.end() ||
+        std::next(position) == block->instructions.end() ||
+        &*std::next(position) != initialize)
       return nullptr;
   }
   const MirDropObligation *bindingDrop = nullptr;
@@ -16832,16 +16846,15 @@ expectedConstructorFieldPublication(const MirProgram &program,
              : nullptr;
 }
 
-// The failure-free staging writer is intentionally narrower than the general
-// checked payload proof: it constructs one exact zero-argument payload object
-// at this instruction, whose sole adjacent consumer publishes the proven field.
+// Failure-free construction uses the same payload slot and typed publication
+// proof as a checked constructor. Keep constructor execution at Construct and
+// transfer the live payload only at its sole adjacent Initialize. Fields still
+// require the additional unpublished-shell/rollback proof.
 [[nodiscard]] bool
-plainExpectedConstructorFieldPayload(const MirProgram &program,
-                                     const MirBody &body,
-                                     const MirInstruction &construct) {
+plainExpectedPayloadConstruction(const MirProgram &program, const MirBody &body,
+                                 const MirInstruction &construct) {
   if (construct.kind != MirInstructionKind::Construct || !construct.result ||
-      !construct.constructorTarget || !construct.operands.empty() ||
-      !construct.parameterTypes.empty() || !construct.definedFailure.empty() ||
+      !construct.constructorTarget || !construct.definedFailure.empty() ||
       !construct.localFailureSites.empty() ||
       invokePairedInstruction(body, construct.id))
     return false;
@@ -16850,7 +16863,8 @@ plainExpectedConstructorFieldPayload(const MirProgram &program,
   const auto *value = body.findValue(*construct.result);
   return publication && value && value->definition == construct.id &&
          publication->operands.front().value == *construct.result &&
-         expectedConstructorFieldPublication(program, body, *publication);
+         (!expectedConstructorFieldDestination(body, *publication) ||
+          expectedConstructorFieldPublication(program, body, *publication));
 }
 
 struct ExpectedDefaultPayloadInitialization {
@@ -26317,11 +26331,26 @@ valueRootedClassPrvalueAssignmentSlot(
 
 // A reference-returning call's SSA result is only the semantic identity of
 // the referent. The paired CallResult loan is the physical pointer carrier,
-// so an otherwise unused class-typed value must not materialize storage.
-[[nodiscard]] bool callResultLoanIdentity(const MirBody &body,
+// so an otherwise unused lvalue must not materialize storage, regardless of
+// its referent's type. A by-value borrowed carrier still needs its own object.
+[[nodiscard]] bool callResultLoanIdentity(const MirProgram &program,
+                                          const MirBody &body,
                                           const MirValue &value) {
   const MirInstruction *definition = findInstruction(body, value.definition);
-  return definition != nullptr &&
+  const auto *target =
+      definition && definition->functionTarget
+          ? program.findFunctionInstance(*definition->functionTarget)
+          : nullptr;
+  // A synthesized operator destination may record the enclosing assignment's
+  // value category. Its selected reference-returning declaration remains the
+  // authority for the call's physical result, not that contextual category.
+  const bool selectedReference =
+      target && target->returnType.kind == SemanticType::Reference &&
+      target->returnType.arguments.size() == 1 &&
+      target->returnType.arguments.front() == value.info.type;
+  return (target ? selectedReference
+                 : value.info.category == ValueCategory::Place) &&
+         definition != nullptr && definition->info == value.info &&
          definition->kind == MirInstructionKind::Call && definition->result &&
          *definition->result == value.id && definition->loan &&
          producedCallResultLoan(body, *definition) ==
@@ -29039,6 +29068,11 @@ public:
           std::find(preparation->values.begin(), preparation->values.end(),
                     value.id) == preparation->values.end())
         continue;
+      if (callResultLoanIdentity(program, facts.body, value)) {
+        // The exact loan is the representation. A parallel object would
+        // invent default construction and cleanup of an unrelated referent.
+        continue;
+      }
       const auto *arrayStage =
           value.info.type.kind == SemanticType::Array
               ? findInstruction(facts.body, value.definition)
@@ -29419,9 +29453,6 @@ public:
           }
           output << typeSpelling(value.info.type) << " *__gti_mir_ref_v_"
                  << value.id << "{};\n";
-          continue;
-        }
-        if (callResultLoanIdentity(facts.body, value)) {
           continue;
         }
         if (directTemporaryBorrowForValue(facts.body, value.id) ||
@@ -35696,10 +35727,9 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Construct &&
         instruction.result) {
-      if (plainExpectedConstructorFieldPayload(program, facts.body,
-                                               instruction)) {
-        // Preserve execution at Construct. The matching Initialize replaces
-        // only its unpublished field shell and retires this moved-from slot.
+      if (plainExpectedPayloadConstruction(program, facts.body, instruction)) {
+        // Preserve execution at Construct. The matching Initialize publishes
+        // the Expected owner and retires this moved-from payload slot.
         // As for an owning Unexpected payload, the factory keeps source
         // constructor access checking in the original lexical context.
         output << "__gti_mir_v_" << *instruction.result
@@ -47539,6 +47569,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
   }
   for (const MirValue &value : body.values) {
+    if (callResultLoanIdentity(program_, body, value) &&
+        typeRow(value.info.type))
+      continue;
     const auto *arrayStage = value.info.type.kind == SemanticType::Array
                                  ? findInstruction(body, value.definition)
                                  : nullptr;
@@ -47830,10 +47863,6 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            (definition->intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
             definition->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
            nonRootRecordUses(body, value.id).empty()) ||
-          // A transformed reference-returning call publishes its referent
-          // through the paired call-result loan pointer. The MIR value only
-          // identifies that result and must not materialize a class local.
-          callResultLoanIdentity(body, value) ||
           // A nested contained-member call result spells inline at its
           // consuming argument and never declares a local.
           inlineNestedCallResult(program_, representations_, body, value.id) !=
@@ -48652,8 +48681,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       case MirInstructionKind::Lifecycle:
         continue;
       case MirInstructionKind::Construct: {
-        if (plainExpectedConstructorFieldPayload(program_, body, instruction) &&
-            typeRow(instruction.info.type))
+        if (plainExpectedPayloadConstruction(program_, body, instruction) &&
+            typeRow(instruction.info.type) &&
+            std::all_of(instruction.operands.begin(),
+                        instruction.operands.end(), valueOperand))
           continue;
         if (instruction.result &&
             expectedDefaultPayloadInitialization(program_, body,

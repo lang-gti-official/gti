@@ -5186,10 +5186,18 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   Full admission/corpus/performance coverage
   still needs acceptance; no performance-parity claim follows from retiring
   the private proof model.
-  The `source_prefix_complete_elements` composition probe remains unaccepted:
-  its owning-payload/expected-vector native entry profile fails with both the
-  baseline and source-owner implementations. Preserve that reduction while
-  auditing admitted shapes; frontend/MIR success alone is not native evidence.
+  The `source_prefix_complete_elements` composition probe exposed two general
+  backend defects: local Expected publication rejected a nonraising owning
+  payload constructor, and checked reference results spuriously declared native
+  referent objects. The existing payload construction/publication proof now
+  admits complete prepared arguments and local destinations; exact loan-result
+  representation no longer invents default construction. This probe is now
+  registered in the source-owner native matrix, covering owning payload enums,
+  both Expected alternatives, growth, insertion, relocation, shrinking and
+  exactly-once destruction. Dedicated native controls also check argument
+  failure, primary/secondary cleanup, and a default-constructible referent with
+  observable constructor/destructor side effects. Full migration acceptance
+  still requires the remaining optimizer, corpus and performance gates.
   Cutover exposed a general range-origin gap: synthesized cursors backed by
   an accessor's `CallResult` loan selected their iterator shell instead of the
   checked range owner. Lowering and the independent source-identity verifier

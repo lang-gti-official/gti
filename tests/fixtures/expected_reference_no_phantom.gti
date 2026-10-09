@@ -1,0 +1,33 @@
+#include <std/memory>
+
+mut int default_constructed = 0;
+mut int destroyed = 0;
+
+class Probe {
+  int number;
+public:
+  Probe() : number(0) { default_constructed = 1; }
+  Probe(int number) : number(number) {}
+  Probe(Probe& other) = delete;
+  Probe(Probe&& other) = default;
+  ~Probe() { destroyed++; }
+  int id() { return this.number; }
+};
+
+expected<Probe, int>& read(expected<Probe, int>& value) { return value; }
+mut expected<Probe, int>& write(mut expected<Probe, int>& value) { return value; }
+expected<Probe, int>& raw(expected<Probe, int>& value) {
+  unsafe { return std::assume_ref(&value, value); }
+}
+
+int main() {
+  {
+    mut expected<Probe, int> value = Probe(7);
+    if (read(value).value().id() != 7) { return 1; }
+    if (write(value).value().id() != 7) { return 2; }
+    if (raw(value).value().id() != 7) { return 3; }
+    if (default_constructed != 0 || destroyed != 0) { return 4; }
+  }
+  if (default_constructed != 0 || destroyed != 1) { return 5; }
+  return 0;
+}
