@@ -3247,27 +3247,106 @@ inline Target numeric_cast(Source value) {
   return static_cast<Target>(value);
 }
 
+// Exact integer overflow detection shared by every checked, saturating and
+// expected-returning integer operation. GCC and Clang lower the builtins to
+// the target's overflow flags; the portable comparisons compute the same
+// mathematical predicate. `*result` is written only when no overflow occurs
+// on the portable path and is unspecified after an overflow on either path.
+// Define GTI_PORTABLE_OVERFLOW_CHECKS to select the portable path.
+#if !defined(GTI_PORTABLE_OVERFLOW_CHECKS) &&                                  \
+    (defined(__GNUC__) || defined(__clang__))
+#define GTI_OVERFLOW_BUILTINS_V1 1
+#else
+#define GTI_OVERFLOW_BUILTINS_V1 0
+#endif
+
+template <typename Value>
+inline constexpr bool integer_add_overflows(Value left, Value right,
+                                            Value *result) noexcept {
+  static_assert(std::is_integral_v<Value> && !std::is_same_v<Value, bool>);
+#if GTI_OVERFLOW_BUILTINS_V1
+  return __builtin_add_overflow(left, right, result);
+#else
+  bool overflow = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    overflow = left > (std::numeric_limits<Value>::max)() - right;
+  } else {
+    overflow =
+        (right > 0 && left > (std::numeric_limits<Value>::max)() - right) ||
+        (right < 0 && left < (std::numeric_limits<Value>::min)() - right);
+  }
+  if (!overflow) {
+    *result = static_cast<Value>(left + right);
+  }
+  return overflow;
+#endif
+}
+
+template <typename Value>
+inline constexpr bool integer_subtract_overflows(Value left, Value right,
+                                                 Value *result) noexcept {
+  static_assert(std::is_integral_v<Value> && !std::is_same_v<Value, bool>);
+#if GTI_OVERFLOW_BUILTINS_V1
+  return __builtin_sub_overflow(left, right, result);
+#else
+  bool overflow = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    overflow = left < right;
+  } else {
+    overflow =
+        (right > 0 && left < (std::numeric_limits<Value>::min)() + right) ||
+        (right < 0 && left > (std::numeric_limits<Value>::max)() + right);
+  }
+  if (!overflow) {
+    *result = static_cast<Value>(left - right);
+  }
+  return overflow;
+#endif
+}
+
+template <typename Value>
+inline constexpr bool integer_multiply_overflows(Value left, Value right,
+                                                 Value *result) noexcept {
+  static_assert(std::is_integral_v<Value> && !std::is_same_v<Value, bool>);
+#if GTI_OVERFLOW_BUILTINS_V1
+  return __builtin_mul_overflow(left, right, result);
+#else
+  constexpr Value minimum = (std::numeric_limits<Value>::min)();
+  constexpr Value maximum = (std::numeric_limits<Value>::max)();
+  bool overflow = false;
+  if (left != 0 && right != 0) {
+    if constexpr (std::is_unsigned_v<Value>) {
+      overflow = left > maximum / right;
+    } else if ((left == -1 && right == minimum) ||
+               (right == -1 && left == minimum)) {
+      overflow = true;
+    } else if (left > 0) {
+      overflow = right > 0 ? left > maximum / right : right < minimum / left;
+    } else {
+      overflow = right > 0 ? left < minimum / right : left < maximum / right;
+    }
+  }
+  if (!overflow) {
+    *result = static_cast<Value>(left * right);
+  }
+  return overflow;
+#endif
+}
+
 template <typename Left, typename Right>
 inline auto add(Left left, Right right) {
   using Result = decltype(left + right);
   const Result promoted_left = static_cast<Result>(left);
   const Result promoted_right = static_cast<Result>(right);
   if constexpr (std::is_integral_v<Result>) {
-    if constexpr (std::is_unsigned_v<Result>) {
-      if (promoted_left >
-          (std::numeric_limits<Result>::max)() - promoted_right) {
-        integer_domain_error("integer addition overflow");
-      }
-    } else if ((promoted_right > 0 &&
-                promoted_left >
-                    (std::numeric_limits<Result>::max)() - promoted_right) ||
-               (promoted_right < 0 &&
-                promoted_left <
-                    (std::numeric_limits<Result>::min)() - promoted_right)) {
+    Result value{};
+    if (integer_add_overflows(promoted_left, promoted_right, &value)) {
       integer_domain_error("integer addition overflow");
     }
+    return value;
+  } else {
+    return static_cast<Result>(promoted_left + promoted_right);
   }
-  return static_cast<Result>(promoted_left + promoted_right);
 }
 
 template <typename Left, typename Right>
@@ -3276,20 +3355,14 @@ inline auto subtract(Left left, Right right) {
   const Result promoted_left = static_cast<Result>(left);
   const Result promoted_right = static_cast<Result>(right);
   if constexpr (std::is_integral_v<Result>) {
-    if constexpr (std::is_unsigned_v<Result>) {
-      if (promoted_left < promoted_right) {
-        integer_domain_error("integer subtraction overflow");
-      }
-    } else if ((promoted_right > 0 &&
-                promoted_left <
-                    (std::numeric_limits<Result>::min)() + promoted_right) ||
-               (promoted_right < 0 &&
-                promoted_left >
-                    (std::numeric_limits<Result>::max)() + promoted_right)) {
+    Result value{};
+    if (integer_subtract_overflows(promoted_left, promoted_right, &value)) {
       integer_domain_error("integer subtraction overflow");
     }
+    return value;
+  } else {
+    return static_cast<Result>(promoted_left - promoted_right);
   }
-  return static_cast<Result>(promoted_left - promoted_right);
 }
 
 template <typename Left, typename Right>
@@ -3298,39 +3371,14 @@ inline auto multiply(Left left, Right right) {
   const Result promoted_left = static_cast<Result>(left);
   const Result promoted_right = static_cast<Result>(right);
   if constexpr (std::is_integral_v<Result>) {
-    if constexpr (std::is_unsigned_v<Result>) {
-      if (promoted_right != 0 &&
-          promoted_left >
-              (std::numeric_limits<Result>::max)() / promoted_right) {
-        integer_domain_error("integer multiplication overflow");
-      }
-    } else if (promoted_left != 0 && promoted_right != 0) {
-      if ((promoted_left == -1 &&
-           promoted_right == (std::numeric_limits<Result>::min)()) ||
-          (promoted_right == -1 &&
-           promoted_left == (std::numeric_limits<Result>::min)())) {
-        integer_domain_error("integer multiplication overflow");
-      }
-      if (promoted_left > 0) {
-        if ((promoted_right > 0 &&
-             promoted_left >
-                 (std::numeric_limits<Result>::max)() / promoted_right) ||
-            (promoted_right < 0 &&
-             promoted_right <
-                 (std::numeric_limits<Result>::min)() / promoted_left)) {
-          integer_domain_error("integer multiplication overflow");
-        }
-      } else if ((promoted_right > 0 &&
-                  promoted_left <
-                      (std::numeric_limits<Result>::min)() / promoted_right) ||
-                 (promoted_right < 0 &&
-                  promoted_left <
-                      (std::numeric_limits<Result>::max)() / promoted_right)) {
-        integer_domain_error("integer multiplication overflow");
-      }
+    Result value{};
+    if (integer_multiply_overflows(promoted_left, promoted_right, &value)) {
+      integer_domain_error("integer multiplication overflow");
     }
+    return value;
+  } else {
+    return static_cast<Result>(promoted_left * promoted_right);
   }
-  return static_cast<Result>(promoted_left * promoted_right);
 }
 
 template <typename Value>
@@ -3363,60 +3411,46 @@ inline constexpr Value wrapping_mul(Value left, Value right) {
 template <typename Value>
 inline constexpr Value saturating_add(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
-  constexpr Value minimum = (std::numeric_limits<Value>::min)();
-  constexpr Value maximum = (std::numeric_limits<Value>::max)();
-  if constexpr (std::is_unsigned_v<Value>) {
-    if (left > maximum - right) {
-      return maximum;
+  Value value{};
+  if (integer_add_overflows(left, right, &value)) {
+    if constexpr (std::is_unsigned_v<Value>) {
+      return (std::numeric_limits<Value>::max)();
+    } else {
+      return right > 0 ? (std::numeric_limits<Value>::max)()
+                       : (std::numeric_limits<Value>::min)();
     }
-  } else if (right > 0 && left > maximum - right) {
-    return maximum;
-  } else if (right < 0 && left < minimum - right) {
-    return minimum;
   }
-  return static_cast<Value>(left + right);
+  return value;
 }
 
 template <typename Value>
 inline constexpr Value saturating_sub(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
-  constexpr Value minimum = (std::numeric_limits<Value>::min)();
-  constexpr Value maximum = (std::numeric_limits<Value>::max)();
-  if constexpr (std::is_unsigned_v<Value>) {
-    if (left < right) {
-      return minimum;
+  Value value{};
+  if (integer_subtract_overflows(left, right, &value)) {
+    if constexpr (std::is_unsigned_v<Value>) {
+      return (std::numeric_limits<Value>::min)();
+    } else {
+      return right > 0 ? (std::numeric_limits<Value>::min)()
+                       : (std::numeric_limits<Value>::max)();
     }
-  } else if (right > 0 && left < minimum + right) {
-    return minimum;
-  } else if (right < 0 && left > maximum + right) {
-    return maximum;
   }
-  return static_cast<Value>(left - right);
+  return value;
 }
 
 template <typename Value>
 inline constexpr Value saturating_mul(Value left, Value right) {
   static_assert(std::is_integral_v<Value>);
-  constexpr Value minimum = (std::numeric_limits<Value>::min)();
-  constexpr Value maximum = (std::numeric_limits<Value>::max)();
-  if (left == 0 || right == 0) {
-    return Value{0};
-  }
-  bool overflow = false;
-  if constexpr (std::is_unsigned_v<Value>) {
-    overflow = left > maximum / right;
-  } else if (left > 0) {
-    overflow = right > 0 ? left > maximum / right : right < minimum / left;
-  } else {
-    overflow = right > 0 ? left < minimum / right : left < maximum / right;
-  }
-  if (overflow) {
+  Value value{};
+  if (integer_multiply_overflows(left, right, &value)) {
     if constexpr (std::is_unsigned_v<Value>) {
-      return maximum;
+      return (std::numeric_limits<Value>::max)();
+    } else {
+      return (left < 0) != (right < 0) ? (std::numeric_limits<Value>::min)()
+                                       : (std::numeric_limits<Value>::max)();
     }
-    return (left < 0) != (right < 0) ? minimum : maximum;
   }
-  return static_cast<Value>(left * right);
+  return value;
 }
 )";
   if (usesExpected) {
@@ -3426,61 +3460,33 @@ template <typename Error, typename Value>
 inline constexpr expected_result<Value, Error> checked_add(Value left,
                                                            Value right) {
   static_assert(std::is_integral_v<Value>);
-  constexpr Value minimum = (std::numeric_limits<Value>::min)();
-  constexpr Value maximum = (std::numeric_limits<Value>::max)();
-  bool outside = false;
-  if constexpr (std::is_unsigned_v<Value>) {
-    outside = left > maximum - right;
-  } else {
-    outside = (right > 0 && left > maximum - right) ||
-              (right < 0 && left < minimum - right);
-  }
-  if (outside) {
+  Value value{};
+  if (integer_add_overflows(left, right, &value)) {
     return make_unexpected_result(Error{});
   }
-  return static_cast<Value>(left + right);
+  return value;
 }
 
 template <typename Error, typename Value>
 inline constexpr expected_result<Value, Error> checked_sub(Value left,
                                                            Value right) {
   static_assert(std::is_integral_v<Value>);
-  constexpr Value minimum = (std::numeric_limits<Value>::min)();
-  constexpr Value maximum = (std::numeric_limits<Value>::max)();
-  bool outside = false;
-  if constexpr (std::is_unsigned_v<Value>) {
-    outside = left < right;
-  } else {
-    outside = (right > 0 && left < minimum + right) ||
-              (right < 0 && left > maximum + right);
-  }
-  if (outside) {
+  Value value{};
+  if (integer_subtract_overflows(left, right, &value)) {
     return make_unexpected_result(Error{});
   }
-  return static_cast<Value>(left - right);
+  return value;
 }
 
 template <typename Error, typename Value>
 inline constexpr expected_result<Value, Error> checked_mul(Value left,
                                                            Value right) {
   static_assert(std::is_integral_v<Value>);
-  constexpr Value minimum = (std::numeric_limits<Value>::min)();
-  constexpr Value maximum = (std::numeric_limits<Value>::max)();
-  if (left == 0 || right == 0) {
-    return Value{0};
-  }
-  bool outside = false;
-  if constexpr (std::is_unsigned_v<Value>) {
-    outside = left > maximum / right;
-  } else if (left > 0) {
-    outside = right > 0 ? left > maximum / right : right < minimum / left;
-  } else {
-    outside = right > 0 ? left < minimum / right : left < maximum / right;
-  }
-  if (outside) {
+  Value value{};
+  if (integer_multiply_overflows(left, right, &value)) {
     return make_unexpected_result(Error{});
   }
-  return static_cast<Value>(left * right);
+  return value;
 }
 )";
   }
