@@ -127,7 +127,7 @@ struct ConstructedScalar {
 };
 using ConstructedScalars = std::map<ScalarAddressKey, ConstructedScalar>;
 
-struct ConstructedParameter {
+struct InputAddress {
   // A missing ordinal denotes the receiver. An empty path denotes a raw
   // pointer formal; otherwise the address is that input object's entry field
   // value. No callee-local place identity crosses the call boundary.
@@ -135,8 +135,7 @@ struct ConstructedParameter {
   FieldPath field;
   std::uint64_t elementOffset;
   std::optional<EntryIndex> index;
-  friend auto operator<=>(const ConstructedParameter &,
-                          const ConstructedParameter &) = default;
+  friend auto operator<=>(const InputAddress &, const InputAddress &) = default;
 };
 
 // Equality with one owned receiver field at entry, not an interval inferred
@@ -249,9 +248,9 @@ struct ClosedCallSummary {
   LiveMemoryBarrier liveMemoryBarrier = LiveMemoryBarrier::None;
   ObservedFact<IntegerFact> result;
   ObservedFact<FieldPath> receiverResultField;
-  std::optional<std::size_t> returnedPointerParameter;
+  std::optional<InputAddress> returnedPointer;
   bool localPointerWritesOnly = false;
-  std::map<ConstructedParameter, ConstructedScalar> constructedParameters;
+  std::map<InputAddress, ConstructedScalar> constructedParameters;
   ObservedFact<ObjectFact> receiver;
   EntryRelativeFields receiverUpdates;
   std::vector<ObservedFact<ObjectFact>> argumentObjects;
@@ -843,22 +842,21 @@ void joinEntryRelative(std::map<Key, EntryRelativeField> &target,
 
 [[nodiscard]] std::optional<EntryRelativeField>
 computeEntryRelative(const MirBody &body, const AbstractState &state,
-                     const MirInstruction &instruction) {
+                     const MirInstruction &instruction,
+                     MirOperation operation) {
   if (!instruction.result)
     return std::nullopt;
   const auto domain = constantIntegerDomain(instruction.info.type);
-  if (instruction.operation == MirOperation::Identity &&
-      instruction.operands.size() == 1) {
+  if (operation == MirOperation::Identity && instruction.operands.size() == 1) {
     auto value = entryRelativeValue(state, instruction.operands.front());
     return value && domain == value->domain ? value : std::nullopt;
   }
-  if ((instruction.operation != MirOperation::Add &&
-       instruction.operation != MirOperation::Subtract) ||
+  if ((operation != MirOperation::Add && operation != MirOperation::Subtract) ||
       instruction.operands.size() != 2)
     return std::nullopt;
   auto value = entryRelativeValue(state, instruction.operands[0]);
   auto constant = integerForOperand(body, state, instruction.operands[1]);
-  if (!value && instruction.operation == MirOperation::Add) {
+  if (!value && operation == MirOperation::Add) {
     value = entryRelativeValue(state, instruction.operands[1]);
     constant = integerForOperand(body, state, instruction.operands[0]);
   }
@@ -866,7 +864,7 @@ computeEntryRelative(const MirBody &body, const AbstractState &state,
       constant->domain != value->domain)
     return std::nullopt;
   auto offset = constant->lower;
-  if (instruction.operation == MirOperation::Subtract)
+  if (operation == MirOperation::Subtract)
     offset.negative = !offset.negative;
   if (!checkedIntegerFits(normalizeCheckedInteger(offset),
                           {.width = 64, .signedValue = true}))
@@ -2417,6 +2415,40 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   return true;
 }
 
+// Substitute the actual current input address before applying a call's effects.
+// A field path is not a fresh allocation or a license to recreate an entry
+// identity after mutation. Both return transport and construction
+// postconditions use this exact lookup; missing caller storage facts remain
+// unknown.
+[[nodiscard]] std::optional<ScalarAddress> inputAddressForCall(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const AbstractState &state, const MirInstruction &instruction,
+    const InputAddress &input) {
+  if (input.parameter && *input.parameter >= instruction.operands.size())
+    return std::nullopt;
+  const auto *operand =
+      input.parameter
+          ? &instruction.operands[*input.parameter]
+          : (instruction.receiver ? &*instruction.receiver : nullptr);
+  if (!operand)
+    return std::nullopt;
+  if (input.field.empty())
+    return scalarAddressForOperand(body, state, *operand);
+  const auto root = objectOriginForOperand(body, aliases, state, *operand);
+  if (!root)
+    return std::nullopt;
+  for (const auto &place : body.places) {
+    const auto path = fieldPath(body, root, place.id);
+    if (!path || *path != input.field)
+      continue;
+    if (const auto found =
+            state.scalarAddressPlaces.find(canonicalPlace(aliases, place.id));
+        found != state.scalarAddressPlaces.end())
+      return found->second;
+  }
+  return std::nullopt;
+}
+
 [[nodiscard]] bool
 applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                 const MirBlock &block, const MirInstruction &instruction,
@@ -2479,48 +2511,20 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   const auto invocation =
       exactMirInvocationSummary(closedCalls->program, body, instruction);
   const bool pointerRelayOnly =
-      summary.returnedPointerParameter && !summary.hasOpaqueEffects &&
+      summary.returnedPointer && !summary.hasOpaqueEffects &&
       !summary.mayWriteGlobals && invocation &&
       (!invocation->traits.writesPlace || summary.localPointerWritesOnly) &&
       !invocation->traits.writesUnknownMemory &&
       !invocation->traits.maySynchronize;
   std::optional<ScalarAddress> returnedAddress;
-  if (pointerRelayOnly &&
-      *summary.returnedPointerParameter < instruction.operands.size())
-    returnedAddress = scalarAddressForOperand(
-        body, state, instruction.operands[*summary.returnedPointerParameter]);
+  if (pointerRelayOnly)
+    returnedAddress = inputAddressForCall(body, aliases, state, instruction,
+                                          *summary.returnedPointer);
   std::vector<std::pair<ScalarAddress, ConstructedScalar>> constructed;
   for (const auto &[destination, postcondition] :
        summary.constructedParameters) {
-    if (destination.parameter &&
-        *destination.parameter >= instruction.operands.size())
-      continue;
-    const auto *operand =
-        destination.parameter
-            ? &instruction.operands[*destination.parameter]
-            : (instruction.receiver ? &*instruction.receiver : nullptr);
-    if (!operand)
-      continue;
-    std::optional<ScalarAddress> pointer;
-    if (destination.field.empty()) {
-      pointer = scalarAddressForOperand(body, state, *operand);
-    } else {
-      const auto root = objectOriginForOperand(body, aliases, state, *operand);
-      // The actual prepared object's current pointer is required. A callee's
-      // field path alone cannot invent a caller entry identity after a write.
-      if (root)
-        for (const auto &place : body.places) {
-          const auto path = fieldPath(body, root, place.id);
-          if (!path || *path != destination.field)
-            continue;
-          if (const auto found = state.scalarAddressPlaces.find(
-                  canonicalPlace(aliases, place.id));
-              found != state.scalarAddressPlaces.end()) {
-            pointer = found->second;
-            break;
-          }
-        }
-    }
+    auto pointer =
+        inputAddressForCall(body, aliases, state, instruction, destination);
     if (!pointer)
       continue;
     if (destination.index) {
@@ -3508,7 +3512,8 @@ void applyInstruction(const MirBody &body,
         state.scalarAddressValues[*instruction.result] = std::move(*origin);
       }
     }
-    if (auto relative = computeEntryRelative(body, state, instruction)) {
+    if (auto relative = computeEntryRelative(body, state, instruction,
+                                             instruction.operation)) {
       add(relative->evidence, block.id);
       addInstruction(relative->evidence, instruction.id);
       addValue(relative->evidence, *instruction.result);
@@ -3905,6 +3910,45 @@ void applyInstruction(const MirBody &body,
       // destination, but does not itself introduce unknown execution effects.
       killUnknownMemory(body, state);
     }
+    return;
+  }
+
+  if ((instruction.intrinsic == IntrinsicKind::IntegerWrappingAdd ||
+       instruction.intrinsic == IntrinsicKind::IntegerWrappingSubtract ||
+       instruction.intrinsic == IntrinsicKind::IntegerWrappingMultiply) &&
+      instruction.result && !instruction.receiver &&
+      instruction.operands.size() == 2) {
+    // Modular arithmetic agrees with checked arithmetic only in a proved
+    // non-wrapping input envelope. Failure to prove that envelope loses the
+    // fact, never adds a trap or assumes native signed-overflow semantics.
+    const auto operation =
+        instruction.intrinsic == IntrinsicKind::IntegerWrappingAdd
+            ? CheckedIntegerOperation::Add
+        : instruction.intrinsic == IntrinsicKind::IntegerWrappingSubtract
+            ? CheckedIntegerOperation::Subtract
+            : CheckedIntegerOperation::Multiply;
+    const auto left = integerForOperand(body, state, instruction.operands[0]);
+    const auto right = integerForOperand(body, state, instruction.operands[1]);
+    state.integers.erase(*instruction.result);
+    if (left && right &&
+        constantIntegerDomain(instruction.info.type) == left->domain)
+      if (const auto fact = binaryFact(operation, *left, *right)) {
+        state.integers[*instruction.result] =
+            rebased(*fact, block.id, instruction.id, *instruction.result);
+        const auto relativeOperation =
+            operation == CheckedIntegerOperation::Add ? MirOperation::Add
+            : operation == CheckedIntegerOperation::Subtract
+                ? MirOperation::Subtract
+                : MirOperation::Multiply;
+        if (auto relative = computeEntryRelative(body, state, instruction,
+                                                 relativeOperation)) {
+          relative->evidence = merged(relative->evidence, fact->evidence);
+          add(relative->evidence, block.id);
+          addInstruction(relative->evidence, instruction.id);
+          addValue(relative->evidence, *instruction.result);
+          state.entryRelativeValues[*instruction.result] = std::move(*relative);
+        }
+      }
     return;
   }
 
@@ -5623,7 +5667,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   std::vector<AbstractState> exits;
   std::vector<std::optional<IntegerFact>> returnFacts;
   std::vector<std::optional<FieldPath>> returnFields;
-  std::vector<std::optional<std::size_t>> returnPointers;
+  std::vector<std::optional<InputAddress>> returnPointers;
   std::vector<std::optional<ObjectFact>> returnObjects;
   for (const MirBlock &block : body->blocks) {
     const bool successfulExit =
@@ -5657,10 +5701,12 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
           returnedField = field->second.path;
       }
       returnFields.push_back(std::move(returnedField));
-      std::optional<std::size_t> returnedPointer;
+      std::optional<InputAddress> returnedPointer;
       if (const auto pointer = scalarAddressForOperand(
               *body, transferred.output, *block.terminator.value);
-          pointer && pointer->kind == AddressOriginKind::EntryPointer &&
+          pointer &&
+          (pointer->kind == AddressOriginKind::EntryPointer ||
+           pointer->kind == AddressOriginKind::EntryPointerField) &&
           pointer->elementOffset == 0 && !pointer->index) {
         const auto *origin = body->findPlace(pointer->place);
         const auto bindings = parameterBindings(program, address);
@@ -5670,8 +5716,13 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
           for (std::size_t index = 0;
                index < bindings.size() && index < types.size(); ++index)
             if (bindings[index] == origin->binding &&
-                types[index] == body->returnType)
-              returnedPointer = index;
+                types[index] == origin->type)
+              returnedPointer = InputAddress{index, pointer->field, 0, {}};
+        if (pointer->kind == AddressOriginKind::EntryPointerField &&
+            (!pointer->place ||
+             (origin && origin->root == MirPlaceRootKind::This &&
+              origin->projections.empty())))
+          returnedPointer = InputAddress{std::nullopt, pointer->field, 0, {}};
       }
       returnPointers.push_back(returnedPointer);
       if (body->returnType.kind == SemanticType::Class) {
@@ -5718,8 +5769,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         (!pointer.place || (origin && origin->root == MirPlaceRootKind::This &&
                             origin->projections.empty()))) {
       result.summary.constructedParameters.emplace(
-          ConstructedParameter{std::nullopt, pointer.field,
-                               pointer.elementOffset, pointer.index},
+          InputAddress{std::nullopt, pointer.field, pointer.elementOffset,
+                       pointer.index},
           value);
       continue;
     }
@@ -5733,8 +5784,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       if (pointerBindings[index] == origin->binding &&
           pointerTypes[index] == origin->type)
         result.summary.constructedParameters.emplace(
-            ConstructedParameter{index, pointer.field, pointer.elementOffset,
-                                 pointer.index},
+            InputAddress{index, pointer.field, pointer.elementOffset,
+                         pointer.index},
             value);
   }
   if (!returnPointers.empty() && returnPointers.size() == exits.size() &&
@@ -5743,7 +5794,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
                   [&](const auto &candidate) {
                     return candidate == returnPointers.front();
                   })) {
-    result.summary.returnedPointerParameter = returnPointers.front();
+    result.summary.returnedPointer = returnPointers.front();
     result.summary.localPointerWritesOnly =
         onlyLocalPointerAssignments(program, address);
   }

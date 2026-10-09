@@ -1,0 +1,84 @@
+#include <std/memory>
+
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class AddressOwner {
+public:
+  mut int* slot = nullptr;
+  mut int* other = nullptr;
+  AddressOwner(int* slot, int* other) : slot(slot), other(other) {}
+
+  unsafe int* address() { return this.slot; }
+  unsafe int* different_address() { return this.other; }
+  unsafe int* ambiguous_address(bool choice) {
+    return choice ? this.slot : this.other;
+  }
+  unsafe int* mutating_address() {
+    unsafe { *this.slot = 2147483647; }
+    return this.slot;
+  }
+
+  unsafe int returned_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_different_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.different_address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_ambiguous_field(bool choice) {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.ambiguous_address(choice);
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_mutating_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      int* pointer = this.mutating_address();
+      return *pointer + 1;
+    }
+  }
+  unsafe int bad_opaque_field() {
+    unsafe {
+      std::construct_at(this.slot, 7);
+      opaque_pointer_effect(this.slot);
+      int* pointer = this.address();
+      return *pointer + 1;
+    }
+  }
+};
+
+unsafe int* reference_address(AddressOwner& owner) { return owner.slot; }
+unsafe int returned_reference_field(AddressOwner& owner) {
+  unsafe {
+    std::construct_at(owner.slot, 7);
+    int* pointer = reference_address(owner);
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  mut std::uninitialized<int> storage{};
+  mut int other = 2147483647;
+  unsafe {
+    AddressOwner owner{storage.data(), &other};
+    if (false) return owner.bad_different_field();
+    if (false) return owner.bad_ambiguous_field(false);
+    if (false) return owner.bad_ambiguous_field(true);
+    if (false) return owner.bad_mutating_field();
+    if (false) return owner.bad_opaque_field();
+    if (owner.returned_field() != 8) return 1;
+    std::destroy_at(storage.data());
+    if (returned_reference_field(owner) != 8) return 2;
+    std::destroy_at(storage.data());
+  }
+  return 0;
+}
