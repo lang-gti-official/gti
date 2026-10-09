@@ -187,7 +187,7 @@ int main(int argc, std::vector<std::string> argv) {
     return 0;
   }
   if (argc == 2) {
-    // A failed boxed allocation leaves the current object in place.
+    // An exhausted boxed allocation reports and aborts without cleanup.
     mut slot value{tracked(1)};
     inline_polymorphic_fail_next();
     value.replace(tracked(2));

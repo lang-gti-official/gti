@@ -71,13 +71,22 @@ void describe<Callable>(std::string_view label, Callable callable) {
                            std::layout_of<holder<Callable>>().bytes));
 }
 
+// A one-string capture is exactly as large as the library's string, whatever
+// representation that string uses.
+void describe_text<Callable>(Callable callable) {
+  std::println(std::format("text bitwise {} holder {} string-sized {}",
+                           bitwise<Callable>(), bitwise<holder<Callable>>(),
+                           std::layout_of<holder<Callable>>().bytes ==
+                               std::layout_of<std::string>().bytes));
+}
+
 int main() {
   int offset = 40;
   int64_t scale = 3;
   describe("scalar", [offset](int value) -> int { return value + offset; });
   describe("pair", [offset, scale](int value) -> int { return value + offset + int(scale); });
   std::string label = std::string("abc");
-  describe("text", [label = std::move(label)](int value) -> int { return value + int(label.size()); });
+  describe_text([label = std::move(label)](int value) -> int { return value + int(label.size()); });
   std::println(moved_cell([offset](int value) -> int { return value + offset; }));
   std::println(moved_cell([offset, scale](int value) -> int { return value * int(scale) + offset; }));
   return 0;

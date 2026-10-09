@@ -101,7 +101,7 @@ public:
 
   /// Owns `value` in place of the current object. An inline replacement
   /// cannot fail once selected; a boxed replacement is allocated before the
-  /// current object is destroyed, so allocation failure leaves it in place.
+  /// current object is destroyed, and exhausting that allocation aborts.
   void replace<Model>(Model value) mut {
     if constexpr (requires(std::detail::inline_payload_probe<Model, Interface>& probe) {
                     { probe.matches() } -> bool;
