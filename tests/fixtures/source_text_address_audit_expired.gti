@@ -1,0 +1,16 @@
+#include <std/memory>
+unsafe std::string_view relayed_text(const char* address, char& witness) {
+  unsafe { return std::assume_string_view(address, uint64_t(1), witness); }
+}
+int main() {
+  char witness = 'w';
+  mut const char* address = nullptr;
+  {
+    char local[2] = {'a', '\0'};
+    address = &local[0];
+  }
+  unsafe {
+    auto text = relayed_text(address, witness);
+    return text.size() == uint64_t(1) ? 0 : 1;
+  }
+}

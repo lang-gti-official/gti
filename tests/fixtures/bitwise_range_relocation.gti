@@ -1,0 +1,62 @@
+#include <std/memory>
+
+extern "C" {
+  void* malloc(std::size_t bytes);
+  void free(void* address);
+}
+
+// An unrelated application type, not a container/compiler capability.
+class Packet {
+  int identity;
+  double weight;
+public:
+  Packet(int identity, double weight) : identity(identity), weight(weight) {}
+  int id() { return this.identity; }
+  double mass() { return this.weight; }
+};
+
+class Ticket {
+  int identity;
+public:
+  Ticket(int identity) : identity(identity) {}
+  Ticket(Ticket& source) = delete;
+  Ticket(Ticket&& source) = default;
+  int id() { return this.identity; }
+};
+
+int main() {
+  unsafe {
+    Packet* absent = nullptr;
+    std::relocate_range_at(absent, absent, std::size_t(0));
+    void* first = malloc(std::layout_of<Packet>().bytes * std::size_t(4));
+    void* second = malloc(std::layout_of<Packet>().bytes * std::size_t(4));
+    if (first == nullptr || second == nullptr) {
+      free(first);
+      free(second);
+      return 1;
+    }
+    Packet* source = std::typed_address<Packet>(first);
+    Packet* destination = std::typed_address<Packet>(second);
+    for (mut std::size_t index = 0; index < std::size_t(4); ++index) {
+      std::construct_at(source + index, int(index), double(index) + 0.5);
+    }
+    std::relocate_range_at(destination, source, std::size_t(4));
+    for (mut std::size_t index = 0; index < std::size_t(4); ++index) {
+      if ((destination + index)->id() != int(index) ||
+          (destination + index)->mass() != double(index) + 0.5) { return 2; }
+      // Relocation ended the source lifetimes: reusing the same slots is valid.
+      std::construct_at(source + index, int(index) + 10, double(index));
+      std::destroy_at(source + index);
+      std::destroy_at(destination + index);
+    }
+    free(first);
+    free(second);
+    mut std::uninitialized<Ticket> old_ticket{};
+    mut std::uninitialized<Ticket> new_ticket{};
+    std::construct_at(old_ticket.data(), 42);
+    std::relocate_range_at(new_ticket.data(), old_ticket.data(), std::size_t(1));
+    if (new_ticket.data()->id() != 42) { return 3; }
+    std::destroy_at(new_ticket.data());
+  }
+  return 0;
+}

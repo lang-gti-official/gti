@@ -1,0 +1,17 @@
+#include <std/memory>
+class Owner {
+  mut char data[2] = {'a', '\0'};
+public:
+  Owner() {}
+  const char* address() { return &this.data[0]; }
+  void mutate() mut { this.data[0] = 'b'; }
+};
+int main() {
+  mut Owner owner{};
+  unsafe {
+    std::string_view view = std::assume_string_view(owner.address(), uint64_t(1), owner);
+    owner.mutate();
+    std::println(view);
+  }
+  return 0;
+}

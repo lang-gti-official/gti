@@ -1,3 +1,5 @@
+#include "../src/compiler/cpp_mir_body_emitter.h"
+#include "../src/compiler/cpp_mir_body_text_writer.h"
 #include "../src/compiler/cpp_mir_representation_snapshot.h"
 #include "../src/compiler/cpp_program_emission_plan.h"
 #include "../src/compiler/cpp_program_text_writer.h"
@@ -2643,7 +2645,109 @@ int main() { return exercise() - 5; }
   }
 }
 
+void testScopedBodyQueryParity() {
+  const auto makeProgram = [](int seed) {
+    const auto frontend =
+        lang::Frontend().analyze("scoped-body-queries.gti", R"gti(
+class Parcel {
+  int32_t item;
+public:
+  Parcel(int32_t value) : item(value) {}
+  ~Parcel() {}
+  int32_t read() { return this.item; }
+};
+expected<Parcel, int32_t> choose(bool success) {
+  if (!success) { return unexpected(int32_t(3)); }
+  return Parcel()gti" + std::to_string(seed) + R"gti();
+}
+int32_t inspect(bool success) {
+  auto result = choose(success);
+  if (!result) { return result.error(); }
+  return result.value().read();
+}
+int main() { return inspect(true) + inspect(false); }
+)gti");
+    expect(frontend.canGenerateCode(),
+           "scoped query fixture must lower owning Expected and root records");
+    if (!frontend.canGenerateCode()) {
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      return std::optional<lang::VerifiedLoweredProgram>{};
+    }
+    std::vector<lang::LoweredProgramIssue> issues;
+    return lang::verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  };
+  const auto first = makeProgram(5);
+  const auto other = makeProgram(9);
+  expect(first.has_value() && other.has_value(),
+         "scope parity fixtures must own independently verified snapshots");
+  if (!first || !other)
+    return;
+
+  const auto texts = [](const lang::VerifiedLoweredProgram &verified) {
+    const auto &program = verified.program();
+    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
+        program, lang::CppStandard::Cpp23));
+    const auto plan =
+        lang::CppMirBodyEmitter(program.mir(), map).buildProgramPlan();
+    expect(plan.ready(), "scoped and direct body plans must both be admitted");
+    std::vector<std::string> result;
+    for (const auto &body : plan.bodies()) {
+      for (const auto form :
+           {lang::CppMirBodyTextForm::Plain, lang::CppMirBodyTextForm::Failure,
+            lang::CppMirBodyTextForm::BaseGate,
+            lang::CppMirBodyTextForm::BasePreparation}) {
+        const auto text =
+            lang::CppMirBodyTextWriter::write(body, form, "test", 2);
+        result.push_back(std::to_string(text.emitted()) + ":" + text.text);
+      }
+    }
+    return result;
+  };
+  const auto directFirst = texts(*first);
+  const auto directOther = texts(*other);
+  expect(directFirst != directOther,
+         "distinct snapshots must exercise different emitted instructions");
+  const auto &firstBody = first->program().mir().module();
+  const auto &otherBody = other->program().mir().module();
+  expect(lang::cppScopedBodyAnalysis(firstBody, "scope-test") == nullptr,
+         "unscoped queries must not retain body indexes");
+  {
+    const lang::CppRepresentationScope scope(*first);
+    expect(texts(*first) == directFirst,
+           "indexed instruction and root-use queries must preserve every byte");
+    const auto *slot = lang::cppScopedBodyAnalysis(firstBody, "scope-test");
+    expect(slot != nullptr, "owned immutable bodies must have scoped storage");
+    {
+      const lang::CppRepresentationScope same(*first);
+      expect(lang::cppScopedBodyAnalysis(firstBody, "scope-test") == slot &&
+                 texts(*first) == directFirst,
+             "nested same-program consumers must reuse only that snapshot");
+    }
+    const lang::MirBody copied = firstBody;
+    expect(lang::cppScopedBodyAnalysis(copied, "scope-test") == nullptr &&
+               lang::cppScopedBodyAnalysis(otherBody, "scope-test") ==
+                   nullptr &&
+               texts(*other) == directOther,
+           "body copies and foreign snapshots must retain direct queries");
+    {
+      const lang::CppRepresentationScope nested(*other);
+      expect(lang::cppScopedBodyAnalysis(firstBody, "scope-test") == nullptr &&
+                 texts(*other) == directOther,
+             "a different nested program must not consume outer body indexes");
+    }
+    expect(lang::cppScopedBodyAnalysis(firstBody, "scope-test") == slot &&
+               texts(*first) == directFirst,
+           "leaving a nested snapshot must restore the exact outer scope");
+  }
+  expect(lang::cppScopedBodyAnalysis(firstBody, "scope-test") == nullptr &&
+             texts(*first) == directFirst,
+         "scope destruction must retire all indexes without changing output");
+}
+
 int main() {
+  testScopedBodyQueryParity();
   testImmutableProgramPlanOwnsOrderedText();
   testExhaustiveSealedInventory();
   testNativeCallbackGeneratedItemRows();

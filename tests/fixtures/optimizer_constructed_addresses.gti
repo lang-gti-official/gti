@@ -1,0 +1,181 @@
+#include <std/memory>
+
+unsafe int constructed_scalar(int* address) {
+  unsafe {
+    std::construct_at(address, 7);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe void initialize_scalar(int* address, int value) {
+  unsafe {
+    std::construct_at(address, value);
+  }
+}
+
+unsafe int constructed_relay(int* address) {
+  unsafe {
+    initialize_scalar(address, 7);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int constructed_pair(int* address) {
+  unsafe {
+    std::construct_at(address, 7);
+    std::construct_at(address + 1, 9);
+    int* first = address;
+    int* second = address + 1;
+    return *first + *second;
+  }
+}
+
+unsafe void initialize_pack<Args...>(int* address, Args... args) {
+  unsafe { std::construct_at(address, args...); }
+}
+
+unsafe int constructed_pack(int* address) {
+  unsafe {
+    initialize_pack(address, 7);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int constructed_subtract(int* address) {
+  unsafe {
+    std::construct_at(address, 7);
+    int* following = address + 1;
+    int* pointer = following - 1;
+    return *pointer + 1;
+  }
+}
+
+unsafe void overwrite_scalar(int* address) {
+  unsafe { *address = 2147483647; }
+}
+
+unsafe void initialize_replaced(int* address, mut int value) {
+  value = 2147483647;
+  unsafe { std::construct_at(address, value); }
+}
+
+unsafe int bad_constructed_value(int* address) {
+  unsafe {
+    std::construct_at(address, 2147483647);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_hole(int* address) {
+  unsafe {
+    std::construct_at(address, 7);
+    int* pointer = address + 1;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_conditional(int* address, bool initialize) {
+  unsafe {
+    if (initialize) std::construct_at(address, 7);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_alias(int* address) {
+  unsafe {
+    std::construct_at(address, 7);
+    int* pointer = address;
+    *pointer = 2147483647;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_replacement(int* address) {
+  unsafe {
+    std::construct_at(address, 7);
+    std::destroy_at(address);
+    std::construct_at(address, 2147483647);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_call_write(int* address) {
+  unsafe {
+    initialize_scalar(address, 7);
+    overwrite_scalar(address);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_second_alias(int* address, int* other) {
+  unsafe {
+    std::construct_at(address, 7);
+    *other = 2147483647;
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_parameter(int* address) {
+  unsafe {
+    initialize_replaced(address, 7);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_redirect(mut int* address, int* other) {
+  unsafe {
+    std::construct_at(address, 7);
+    address = other;
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_constructed_pack(int* address) {
+  unsafe {
+    initialize_pack(address, 2147483647);
+    int* pointer = address;
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  mut std::uninitialized<int> storage{};
+  mut int pair[2] = {0, 2147483647};
+  unsafe {
+    if (false) return bad_constructed_value(storage.data());
+    if (false) {
+      std::destroy_at(&pair[0]);
+      return bad_constructed_hole(&pair[0]);
+    }
+    if (false) return bad_constructed_conditional(&pair[1], false);
+    if (false) return bad_constructed_alias(storage.data());
+    if (false) return bad_constructed_replacement(storage.data());
+    if (false) return bad_constructed_call_write(storage.data());
+    if (false) return bad_constructed_second_alias(storage.data(), storage.data());
+    if (false) return bad_constructed_parameter(storage.data());
+    if (false) return bad_constructed_redirect(storage.data(), &pair[1]);
+    if (false) return bad_constructed_pack(storage.data());
+    if (constructed_scalar(storage.data()) != 8) return 1;
+    std::destroy_at(storage.data());
+    if (constructed_relay(storage.data()) != 8) return 2;
+    std::destroy_at(storage.data());
+    if (constructed_pack(storage.data()) != 8) return 4;
+    std::destroy_at(storage.data());
+    if (constructed_subtract(storage.data()) != 8) return 5;
+    std::destroy_at(storage.data());
+    std::destroy_at(&pair[0]);
+    std::destroy_at(&pair[1]);
+    if (constructed_pair(&pair[0]) != 16) return 3;
+  }
+  return 0;
+}

@@ -5,7 +5,7 @@
 #include <std/vector>
 
 concept measurable<T> = requires(T& value) { { value.weight() } -> int32_t; };
-concept stockable<T> = measurable<T> && std::movable<T>;
+concept stockable<T> = measurable<T> && std::movable<T> && std::vector_element<T>;
 
 mut int32_t released_weight = 0;
 

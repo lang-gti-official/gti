@@ -1,0 +1,14 @@
+#include <std/resource_vector>
+#include <std/resource>
+
+int main() {
+  std::process_resource provider{};
+  unsafe {
+    auto binding = std::bind_resource(provider);
+    mut std::resource_vector<int, std::process_resource> values{binding};
+    values.push_back(7);
+    int& selected = values.front();
+    values.push_back(8);
+    return selected;
+  }
+}

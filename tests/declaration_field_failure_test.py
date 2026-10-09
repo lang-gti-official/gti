@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from allocation_abort_runtime_test import ABORT_STATUS
 
 
 def main():
@@ -29,9 +30,10 @@ def main():
                              "division_by_zero in integer_division\n")
     # Completed fields unwind before the constructor parameter, which unwinds
     # before the caller. A failed Resource construction never drops Resource.
+    # Exhaustion is different: it aborts before any constructor rollback.
     cases = [(0, "8\n10\n2\n1\n9\n", ""),
-             (70, "8\n9\n", allocation),
-             (70, "1\n8\n9\n", allocation),
+             (ABORT_STATUS, "", allocation),
+             (ABORT_STATUS, "", allocation),
              (70, "1\n8\n9\n", division(constructor_site)),
              (70, "2\n1\n8\n9\n", division(body_site)),
              (0, "3\n1\n9\n", ""),

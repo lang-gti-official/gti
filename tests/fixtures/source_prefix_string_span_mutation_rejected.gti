@@ -1,0 +1,7 @@
+#include <std/string>
+int main() {
+  mut std::string text{"abc"};
+  auto characters = text.as_span();
+  text.reserve(uint64_t(20));
+  return characters.size() == uint64_t(3) ? 0 : 1;
+}

@@ -5,6 +5,81 @@
 #include "gti/mir_effects.h"
 
 int main() {
+  for (const std::string policy :
+       {"[[unsafe_transfer]]", "[[unsafe_transfer(T)]]", "", "[[unsafe_share]]",
+        "[[no_transfer]]"}) {
+    const auto reviewed = analyzeTrustedPreludeFixture(
+        "reviewed-callable-state.gti",
+        "#include <std/string>\n" + policy + R"( class Reviewed<T> {
+  T* pointer = nullptr;
+public:
+  Reviewed() {}
+};
+void retain<T>(T callback) {}
+int main() {
+  Reviewed<int> owner{};
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));
+  return 0;
+}
+)");
+    const bool permitted = policy.find("unsafe_transfer") != std::string::npos;
+    expect(reviewed.canGenerateCode() == permitted,
+           "owned callable respects the exact wrapper transfer assertion: " +
+               policy);
+    if (permitted && reviewed.canGenerateCode())
+      expect(!gti_test::emitCppText(reviewed).empty(),
+             "reviewed raw-state captures reach verified MIR emission");
+    if (!permitted)
+      expect(hasDiagnosticCode(reviewed.diagnostics, "GTI-S2046"),
+             "sharing or absence of transfer cannot authorize raw captures");
+  }
+  for (const std::string state :
+       {"[[no_transfer]] struct Payload {}; "
+        "[[unsafe_transfer(T)]] struct State<T> { T* pointer = nullptr; }; "
+        "using Capture = State<Payload>;",
+        "[[unsafe_transfer]] struct Capture { std::string_view view = \"\"; "
+        "};"}) {
+    const auto rejected = analyzeTrustedPreludeFixture(
+        "nonindependent-callable-state.gti", "#include <std/string>\n" + state +
+                                                 R"(
+void retain<T>(T callback) {}
+int main() {
+  Capture owner{};
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));
+  return 0;
+}
+)");
+    const bool boundaryRejected =
+        !rejected.canGenerateCode() &&
+        hasDiagnosticCode(rejected.diagnostics, "GTI-S2046") &&
+        !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001");
+    if (!boundaryRejected) {
+      std::cerr << state << '\n';
+      for (const auto &diagnostic : rejected.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    expect(
+        boundaryRejected,
+        "false conditional transfer and asserted tracked views stay rejected");
+  }
+  const auto sourceOwner =
+      analyzeTrustedPreludeFixture("source-owner-callable.gti", R"(
+#include <std/string>
+void retain<T>(T callback) {}
+int main() {
+  std::string text{"owned"};
+  auto callback = [text = std::move(text)]() -> int { return int(text.size()); };
+  retain(std::move(callback));
+  return 0;
+}
+)");
+  expect(sourceOwner.canGenerateCode(),
+         "source-owned string capture remains valid ordinary owned transport");
+  if (sourceOwner.canGenerateCode())
+    expect(!gti_test::emitCppText(sourceOwner).empty(),
+           "source-owner capture preserves executable MIR cleanup");
   const auto copiedCallable =
       analyzeTrustedPreludeFixture("copied-owned-callable.gti", R"(
 void retain<T>(T callback) {}
@@ -1014,6 +1089,20 @@ int main() {
              !hasDiagnosticCode(borrowedPack.diagnostics, "GTI-B0001"),
          "owned pack rejects borrowed capture after an ordinary argument "
          "before MIR");
+  const auto borrowedDiagnostic = std::find_if(
+      borrowedPack.diagnostics.begin(), borrowedPack.diagnostics.end(),
+      [](const auto &diagnostic) { return diagnostic.code == "GTI-S2046"; });
+  expect(borrowedDiagnostic != borrowedPack.diagnostics.end() &&
+             !borrowedDiagnostic->related.empty() &&
+             borrowedDiagnostic->fixes.empty() &&
+             std::any_of(borrowedDiagnostic->hints.begin(),
+                         borrowedDiagnostic->hints.end(),
+                         [](const auto &hint) {
+                           return hint.find("unsafe transfer contract") !=
+                                  std::string::npos;
+                         }),
+         "owned capture diagnostic explains the reviewed boundary without "
+         "suggesting an unsafe automatic edit");
   const auto implicitPackCopy =
       analyzeTrustedPreludeFixture("implicit-callable-pack-copy.gti", R"(
 void accept<Args...>(Args... args) {}

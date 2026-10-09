@@ -239,11 +239,10 @@ synchronization.
 body-local abstract interpreter that propagates checked fixed-width integer
 intervals through CFG edges, refines those intervals from branch predicates,
 tracks fixed-array extents and one scalar element envelope per non-escaping
-fixed-array root, and tracks the supported private prefix-storage facts.
-Sparse live-slot bookkeeping is now ordinary source code: the retired private
-storage initialized-set lattice and `StorageState` discharge proof do not apply
-to it. General raw lifetime calls and unsupported source state checks remain
-conservative barriers; no automatic sparse-state optimization is claimed.
+fixed-array root. Sparse and prefix bookkeeping are ordinary source code:
+the private initialized-set and prefix capacity/length/content lattices are
+retired. General raw lifetime calls and unsupported source state checks remain
+conservative barriers; no automatic container-state optimization is claimed.
 It is a client of the shared deterministic monotone forward-dataflow solver;
 its typed lattice, join, and bounded widening remain safety-analysis policy.
 Unknown or opaque calls, raw/unsafe memory effects, escaping roots, aliasing
@@ -299,10 +298,6 @@ The admitted operations are deliberately narrow:
   chain: each nonterminal index is checked against its own sibling array
   place's extent, and an unresolved or unproven dimension anywhere leaves the
   site checked;
-- private prefix-storage reads whose storage origin and scalar index origin
-  exactly match an earlier successful logical-size check derived from that
-  same storage's length, with no intervening storage mutation, index write,
-  aliasing write, opaque call, or control-flow path lacking the check;
 - checked integer add, subtract, multiply, and unary negate whose complete
   operand intervals prove the result remains in the declared GTI domain; and
 - public logical-size checks whose integer intervals prove
@@ -315,26 +310,358 @@ The admitted operations are deliberately narrow:
 The whole-program `analyzeMirClosedCallSafetyChecks` layer adds one bounded
 contextual family. It starts from executable/module initialization roots and
 propagates exact scalar arguments and returns, mutable receiver/argument object
-fields, private prefix-storage capacity/length/content, and structurally
-admitted indexed-container element envelopes through concrete source-defined
-static calls and constructors. Indexed elements are admitted only when every
-relevant `operator[]` body is verified to return the exact receiver-owned
-prefix-storage element loan through one matching field path; public names never
-participate. A scalar fact returned by reference crosses the call boundary only
-when the returned loan identifies one exact prefix-read producer with the same
-source and access. Prefix length is always constrained to the storage invariant
-`0 <= length <= capacity`; contradictory abstract facts fail closed. Contexts
+fields and direct-index aggregate element envelopes through concrete
+source-defined static calls and constructors. Public container names never
+participate. The retired private prefix accessor/borrowed-return profile does
+not infer summaries for source-defined raw-address owners. Such calls remain
+conservative until their general effects, provenance and value facts are
+represented and independently replayable; native optimization is not GTI proof.
+Contexts
 join monotonically and use the same typed integer/object widening policy as the
 body-local client after four prior per-body context updates. The global
-32-round limit and per-body eight-update limit remain fail-closed budgets; a
-body exceeding either boundary contributes no contextual proof. Proofs are
-published only after convergence. A body may retain contextual proofs
+worklist schedules only a changed context or a caller of a changed summary,
+including each constructor's exact declaration-field initializer dependency.
+Every body has a 32-analysis limit and an eight-consumed-context-update limit;
+exceeding either rejects that body's contextual facts and invalidates its
+callers. These are fail-closed budgets over the finite body inventory, not an
+unbounded scan. A rejected body withdraws all its earlier contextual proofs;
+canonical replay cannot resurrect them. Rejection does not hide subsequent
+independent clients. Long ordinary source chains no longer exhaust 32 whole-program
+rounds merely to propagate already fixed facts. The reported iteration count
+is the maximum work performed for any one body. Proofs are published only
+after the dependency worklist is stable. A body may retain contextual proofs
 established before a conservative call barrier even when that barrier prevents
 the body from exporting a complete return or mutation summary. The barrier
-still clears mutable facts for every later instruction. Recursive SCCs, native
-or virtual calls, owning-argument transfers, synchronization, raw/unsafe
+still clears mutable facts for every later instruction. A permanently
+unsupported call is an opaque transfer with a normal continuation, rather
+than a pending summary that prevents discovery of subsequent clients. It
+supplies no callee result/postcondition facts. Only an admitted source summary
+not yet available postpones and retries its caller. Opaque synchronizing
+effects invalidate mutable memory even when the effect summary reports no
+direct write; they cannot establish a closed recurrence edge. Recursive SCCs, native
+or virtual calls, unsupported owning-argument transfers, synchronization, raw/unsafe
 memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
+
+A concrete source body containing raw/unsafe instructions can now receive its
+ordinary closed-call input context. Unhandled raw pointee/lifetime operations
+and unsupported unsafe calls remain opaque barriers: they clear mutable-memory
+facts and mark the path opaque before ordinary load/store transfer.
+This permits replayable proofs before an unsupported operation without
+declaring the body effect-closed. Earlier
+immutable SSA results and actual readonly scalar binding copies remain
+immutable; later referent/global reads receive no stale facts. This preservation
+does not apply to readonly reference carriers, projected fields, arrays or
+borrowed state. Exact initialization/replacement still invalidates its own
+destination. Foreign/open calls, unsupported owning transfers, synchronization and recursive
+families retain their separate admission boundaries. An unrelated source
+function proves a bounded scalar addition before writing through a raw pointer;
+arithmetic on the changed referent and in its caller remains checked.
+
+A bounded address-provenance transfer additionally handles a raw scalar load
+whose actual address is an exact MIR `AddressOf` of an existing integer local
+or ordinary owned field. It follows typed pointer value copies, assignment,
+inert preparation and CFG arguments; joins retain only the same place on
+every incoming edge. The pointee type must match exactly. The load consults
+the place's current integer fact, not the pointer's lifetime witness, and
+retains the actual raw load and unsafe obligation. This does not make the body
+effect-closed or justify speculative execution. Pointer replacement follows
+the replacement identity; overlapping mutation, raw writes, lifetime operations
+and unknown effects retire the existing-place relation. Distinct conditional
+addresses and pointer conversions remain outside this transfer. An exact
+nonnegative element displacement may preserve address identity, but a nonzero
+displacement cannot read the original place's scalar fact.
+In particular it is not an initialized
+prefix or allocation-freshness proof. These are prerequisites of transporting
+element facts for the source-defined storage client, not nominal exceptions
+for its public type.
+
+Selected source calls may return the exact address passed to one raw-pointer
+formal. The same address lattice distinguishes an existing pointee place from
+a symbolic entry-pointer value; the formal's own pointer-variable storage is
+never its pointee. Inert copies, parameter reassignment and nested relays
+preserve that identity only when every successful return agrees. Summaries
+export the formal ordinal, never a callee-local place ID. Applying the summary
+rebases evidence to the caller's actual typed operand and call instruction.
+
+The relay must have no opaque, global, unknown-memory or synchronizing effect.
+Authoritative `writesPlace` effects also describe callee-local pointer-variable
+assignment; a bounded typed-MIR check admits only plain assignment to an exact
+by-value raw-pointer formal, without raw access, reference projection, cleanup
+or user/runtime code. Other writes retain the barrier. An address escape from
+that exact no-pointee-write relay does not itself overwrite the pointee. This
+rule provides no initialized region, allocation freshness, field-address
+summary, pointer-arithmetic contract or lifetime permission; actual raw reads
+and the caller's unsafe obligations remain unchanged.
+
+Successful exact integer construction additionally establishes the value at
+one typed address: the root identity plus a constant nonnegative element offset.
+Only non-byte integer objects participate. This is neither a region extent nor
+coverage of intervening or neighbouring slots. Offset addition/subtraction is
+checked in the analysis; unsupported, negative or overflowing displacements
+yield no identity. The actual pointer operation and its unsafe obligations are
+unchanged. CFG joins intersect exact addresses and join their value envelopes.
+Each abstract state retains at most 1,024 such addresses; excess distinct
+addresses remain unproved. This bounds expansion through source call trees
+without treating missing entries as an initialized interval.
+Raw writes, unknown effects, synchronization, destruction and potentially
+aliasing checked writes invalidate constructed values. A subsequent vacant
+structural construction cannot overwrite a previously live non-byte object
+under the existing GTI non-overlap contract. It therefore preserves that
+object's value; it does not infer disjointness merely from different bases.
+
+Exact source summaries export constructed addresses rooted in raw-pointer
+formals or an ordinary pointer field of a receiver/checked-reference formal,
+relative to the receiver or formal ordinal, owned field path and element
+offset. Every successful exit must establish the fact. Failure edges retain
+the pre-operation state. A field postcondition applies only when the caller
+retains the actual prepared object's current field address; a callee field path
+cannot invent an entry value after replacement or unknown memory effects.
+An initializer exactly equal to a read-only by-value integer formal can retain
+that argument identity through neutral typed staging, including a verified
+concrete pack element. Applying the summary substitutes the caller's prepared
+argument; safe and overflowing calls to the same helper do not share a single
+invented constant. Mutable/replaced formals cannot use that equality. Evidence
+is rebased to the call rather than exporting body-local identities.
+
+Symbolic entry-pointer SSA values survive pointee invalidation as addresses
+only; read-only independent pointer bindings can retain those same values.
+Neither preserves initialized contents, liveness or dereference permission.
+Loads consult the exact surviving construction fact, keep their raw access,
+and remain opaque.
+
+Within a function, the same address lattice can name the entry value of a raw
+pointer field in an ordinary receiver or checked-reference parameter. Only an
+owned field path is transparent: nested owned records are supported, but stored
+references, unions, arrays, capability backing storage and raw dereferences are
+not. Constructor receivers are not seeded before initialization. Repeated exact
+paths load the same entry value even when the conservative alias matrix cannot
+classify two indirect places as MustAlias; different fields establish no
+pointee disjointness. A verified vacant construction cannot overwrite a live
+pointer field, so the relation survives that operation. Field replacement,
+unknown memory and potentially aliasing writes retire it; a later arbitrary
+load cannot recreate the entry relation. Exact scalar construction through the
+field can therefore justify subsequent scalar arithmetic, including an exact
+raw-parameter initialization helper, without removing the raw load or granting
+an unsafe operation new permission.
+
+This rule and its exact call postcondition do not initialize unknown pointer
+contents at entry. Successful vacant construction may additionally retain up
+to 64 exact non-byte owned fields already known live at construction time. A
+later write to that exact field cannot overlap the newly constructed object.
+This relation is captured once, not inferred from a field value learned after
+construction. Stored-reference/raw traversal, parent replacement and unknown
+writes do not use it. Joins intersect the relations. Call application captures
+only caller fields surviving complete input invalidation, before publishing
+callee postconditions; a field rebuilt by the callee therefore cannot become
+an invented disjointness proof. Callee-local field roots never enter a summary.
+Independent readonly pointer bindings retain their address across a checked
+referent write; exact replacement still retires the binding's value. Actual
+raw loads and unsafe obligations remain unchanged.
+
+The remaining source-owner work needs initialized-index coverage through
+repeated calls, record-pointee envelopes, constructor pointer-field transport
+and checked returned-element provenance. A lifetime witness is still never a
+pointee or an allocation identity. Different pointer fields never imply
+different allocations.
+
+Inert typed address arithmetic and pointer conversion neither read nor write a
+pointee, so they preserve unrelated memory facts. Apart from the exact typed
+offset rule above, they introduce no address, extent, lifetime or
+initialized-element proof. Empty full-expression lifecycle
+markers can inherit an expression's unsafe classification but do not execute
+its operation again; actual lifecycle events and raw accesses remain distinct.
+A selected unsafe source function is analyzed under the ordinary exact-call
+rules, including its actual raw barriers. Its declaration's caller obligations
+remain unchanged. Unrelated record and scalar regressions distinguish pure
+address computation and a pure unsafe declaration from a real raw write.
+Neutral SSA-value call staging no longer repeats its producer's unsafe
+classification. Unhandled raw loads, stores and unsafe calls still reach their
+own barriers before that stage. Unrelated ordinary records distinguish inert
+address relay from raw reads, raw writes and an unsafe callee's write. The
+source-prefix client's original exact bounds-and-read proof is recovered;
+raw-backed element envelopes are not implied by this preparation rule.
+
+Exact owner-witness reference formation reuses the verifier's raw-borrow
+query. It preserves memory facts because forming the checked loan does not
+modify memory; its lifetime/access assertion supplies neither an address
+identity nor a pointee value. The result receives no value/field/aggregate
+origin from its witness. Checked Borrow/ActivateBorrow/EndBorrow bookkeeping
+with no raw access or modifying effects likewise preserves memory, even when
+it retains its producer's unsafe source classification. The actual reference
+write still invalidates may-alias storage. No loan schedule is removed or
+reordered. Unrelated user-defined witnesses exercise read-only and mutable
+formation, mutation through the alias, and a different pointee under the same
+witness; forged arithmetic proofs for the latter two are rejected.
+
+The trusted scalar bounds detector has no memory transfer: its exact void
+call takes two staged `uint64_t` values, compares them and may raise its defined
+failure. Successful execution therefore preserves unrelated scalar/object
+facts and does not make a source body opaque. Its existing Invoke failure edge
+still uses the pre-instruction state. This is not a source-container length or
+initialized-element invariant; those require independently represented facts.
+An unrelated record regression distinguishes the pure detector from an
+unknown field, conflicting field writes and an unreached call context.
+The existing one-boolean defined-failure detectors likewise preserve unrelated
+facts: their input condition is source-computed, not a container invariant.
+On the successful Invoke edge, the same comparison refinement used by ordinary
+branches can consume that predicate. A bounded 32-stage walk follows only
+inert boolean value staging, identity and negation; arbitrary source calls or
+loaded boolean bindings do not become predicate contracts. The failed edge
+receives no successful-predicate refinement. Evidence retains the detector,
+comparison and staged identities for independent replay. Exact later writes
+invalidate the place's earlier bound. This does not invent a relation between
+unknown container fields or initialize a raw region.
+
+An exact builtin-integer result-only `Move` copies the source's scalar envelope
+into an independent SSA result while invalidating the source's place and
+derived origins. It changes no ownership events: source reads after movement
+remain invalid, and reinitialization establishes a new envelope. A uniquely
+identified, unprojected by-value integer formal has independent parameter
+storage; moving it may preserve typed non-byte owned-field facts on an implicit
+receiver. A reference's projected integer type is not that proof. Stored
+references, arrays, unions, capability carriers and unresolved paths receive
+no exemption. Moving a receiver field invalidates that field and overlapping
+paths, not safe siblings. Ordinary user records, nested relay methods and
+overflow after parameter/field reinitialization exercise this transfer without
+container names or changes to call-input admission.
+
+Exact integer-scalar final-address construction has a narrow transfer profile.
+Shared MIR effects retain its unknown-memory write and initialization, but do
+not invent a selected user constructor or synchronization. Construction still
+requires the unsafe caller to provide a vacant, nonconflicting complete extent;
+it cannot implicitly replace another live non-byte object. Consequently,
+existing live non-byte integer facts along exact ordinary owned-field paths
+may survive this operation. Byte fields, arrays/indexes, union overlap, stored
+reference traversal, compiler-capability backing carriers, unresolved roots
+and loaded-origin/element facts are discarded. No pointer validity, region
+extent or fresh allocation is inferred. The exact scalar construction rule
+above can independently publish the newly constructed object's value.
+
+That same profile admits exact generated copy/move construction of ordinary
+scalar-field records into vacant final storage. The shared MIR-effects query
+reuses the verifier's complete construction shape and the same recursive
+generated-record transport classifier used for prepared values. A selected
+source constructor, replacement, unsupported state or extra raw access cannot
+claim this profile. Only represented transfer-out events may accompany the
+construction; argument staging and actual cleanup retain their own effects.
+It preserves the same unrelated non-byte live-field facts, not a value envelope
+for the newly constructed region. Source wrappers can relay this profile;
+destroy/reconstruct still invalidates the old object's facts.
+
+The interpreter records whether a successful path contains only that supported
+opaque lifetime transfer or an unknown live-memory barrier. Reachable joins
+retain the stronger barrier. Exact source wrappers can forward the supported
+profile without losing unrelated live-field facts, but remain opaque and cannot
+establish recurrence invariance. Normal global, mutable-reference and receiver
+writes still invalidate their protected origins before proved postconditions
+are republished. Actual raw writes, unsupported reads, destruction, relocation,
+unsupported calls and synchronization retain full invalidation. Failed paths do not become
+successful-path postconditions. Unrelated public-wrapper, nested-object,
+byte/array and destroy/reconstruct controls exercise independent proof replay.
+This profile does not yet recover the outstanding raw-backed element-envelope
+or logical-bounds migration requirements.
+
+Ordinary class construction and owned class returns transport independently
+proved scalar field envelopes, including parameterized member initializers.
+The analysis tracks an implicit receiver when MIR contains `this.field` places
+without a whole-object `this` place. This analysis-only root never becomes a
+MIR or published proof identity. Exact receiver field writes invalidate
+overlapping paths; raw/unknown memory effects discard the state. Nested class
+facts are relative to the selected subobject, not its enclosing owner's field
+path. Constructor destination publication and return summaries retain those
+same facts after sanitizing them against the exact concrete type. These are
+ordinary class facts, not initialized raw-allocation or container invariants.
+
+Shared MIR effects classify exact generated copy/move of ordinary scalar-field
+records, recursively through owned record fields. The bounded profile excludes
+borrowed state, compiler backing capabilities, overlapping or inherited layouts,
+payload enums, arrays and any non-generated selected transfer. Raw pointer fields
+are transported as addresses only; they provide no pointee or alias facts.
+Generated movement does not execute a source destructor; actual cleanup remains
+a separate operation. Cleanup of a recursively scalar record with no source
+destructor has exact storage/lifecycle effects, while real destructors and
+unsupported cleanup keep their existing effects and barriers. The optimizer
+uses these shared classifications, not a parallel type or library-name rule.
+
+Admitted prepared by-value inputs carry independent field snapshots, without
+retaining an alias back to the copied/moved source. A later argument's mutation
+therefore cannot alter an earlier prepared copy. Movement invalidates its source;
+the result may transport the old value but never makes the source available
+again. Exact by-value parameter storage is independent of the receiver's owned
+fields, including nested fields without a materialized whole-object receiver.
+Only those typed non-byte owned-field facts survive parameter-local structural
+transfer/cleanup; stored references do not gain this exemption. Callee by-value
+parameter mutations are never republished as caller postconditions. Only checked
+reference parameters use that outward path. Ordinary nested records, argument
+ordering, a mutating copy and an actual user-destructor control exercise these
+rules with independent proof replay. This supplies no raw initialized-element
+coverage or returned raw-backed element envelope.
+
+Exact readonly source members may also return a still-current ordinary owned
+integer field. The interpreter records its typed receiver-relative path only
+when every successful return identifies the same field. Nested readonly
+forwarding preserves that identity. Inert SSA identity/value staging and block
+arguments transport it; joins retain only identical origins. Comparison with
+an exact integer refines both the independent SSA value and its current field,
+so a getter-based loop can establish its exit field bound. A proved nonwriting
+getter also preserves a caller's narrower field interval rather than replacing
+it with the callee's joined calling-context interval.
+Refinement updates every existing exact owned-subobject representation of that
+field, as well as represented scalar places. A nested receiver summary cannot
+overwrite a loop-exit refinement with its older, wider interval when the
+enclosing object is extracted. This rule also applies to unrelated nested
+records; it does not infer aliasing through a stored reference or raw pointer.
+
+Field identity is not numerical equality or a persistent borrow. Overlapping
+writes, ancestor replacement, movement, raw/unknown memory and lifetime
+barriers retire the relation without changing the earlier scalar value. Exact
+disjoint owned-field writes retain it and can recover that field's correlated
+interval after conservative whole-root invalidation. Stored references, arrays,
+unions, byte fields and capability backing paths are excluded from this bounded
+profile. A scalar copied into a local binding does not retain receiver identity;
+mutable getters and by-value object inputs do not export this return contract.
+Implicit receiver roots remain analysis-only and never appear in proof records.
+
+Successful ordinary member summaries additionally retain bounded entry-relative
+integer-field updates: one exact owned receiver field equals its own entry
+value plus a proved constant offset. The relation is derived from typed loads,
+same-domain add/subtract, inert SSA staging, exact field assignment and nested
+closed calls, never by subtracting interval endpoints. It remains useful when
+different invocations have different starting values. Four calls that each
+increment a counter once therefore preserve four increments rather than using
+one joined absolute postcondition at every call. The source prefix owner's
+repeated append length is a client of this general rule.
+
+Only the existing non-byte ordinary owned-field profile participates. Entry
+identity does not require a known numerical value; traversal is bounded to
+1,024 visited type/field nodes and depth 32, with excess paths omitted. Offsets
+must fit checked signed 64-bit arithmetic, while applying an update still uses
+the field's actual checked integer domain. Every successful exit and CFG join
+must agree on field, domain and offset. Conditional/differing updates, arbitrary
+replacement, writes through unproved paths, movement and unknown/raw/lifetime
+barriers retire the relation. Distinct field IDs are not disjointness evidence
+for stored references. The existing independently proved vacant-construction
+and by-value parameter-storage rules can preserve eligible owned fields.
+
+At an exact call the update transforms that caller's current field facts, with
+evidence rebased to the call rather than exporting callee-local MIR identities.
+Nested wrappers compose only exact same-field updates. Existing absolute
+postconditions can retain an independently proved widening envelope; exact
+constructor-initializer values carry a stable entry envelope, unlike arbitrary
+loop-produced singleton values. Closed non-writing, non-synchronizing and
+non-escaping calls do not erase caller memory merely because their numerical
+postcondition is absent. Opaque calls retain their barriers. No instruction,
+failure edge or cleanup schedule is removed by these summary rules: even a
+net-zero update cannot erase an overflowing intermediate operation. Independent
+canonical replay derives the relation again; O0 remains transformation-free.
+
+CFG argument transfer snapshots every incoming fact before publishing any
+destination block parameter. This includes integer intervals, loaded/field
+origins, entry-relative updates and actual addresses. A backedge may swap
+parameters; sequential publication would lose an old input and could produce
+an unsound safety proof. Only the argument facts are copied, not the whole
+abstract memory state.
 
 Context discovery is also bounded by complete summaries: an earlier
 source-allocation or raw object-lifetime call can prevent completion of a
@@ -356,8 +683,16 @@ once from the actual origins; a `may-alias` relation is not transitive.
 A verified reference's pointer representation is not an additional unknown
 origin: its loan supplies the protected sources. A reference to a borrowed-state
 object still retains both the physical object and its external owner dependency.
-Calls with place writes also invalidate represented global-symbol facts,
-because current effect summaries do not enumerate written globals. Recurrence
+Calls with place writes also invalidate represented global-symbol facts.
+Interpreted direct global writes and transfers carry a successful-path global
+write barrier through ordinary call summaries and constructor declaration-field
+initializers, including writes through checked local aliases/reborrows. The
+barrier clears object/field correlations and possible referent facts even when
+the written global is absent from the caller's place table. Independent scalar
+local/parameter storage and earlier SSA values survive; actual raw/unknown
+effects still use full invalidation. This private transfer flag is not an exact
+written-global set: current MIR effect summaries do not enumerate that set.
+Recurrence
 proofs likewise treat possible global writes and synchronization as barriers.
 The existing closed-body admission remains authoritative: supported private
 storage and numeric-conversion effects are interpreted by that analysis, not

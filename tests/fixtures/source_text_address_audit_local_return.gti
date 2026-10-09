@@ -1,0 +1,16 @@
+#include <std/memory>
+unsafe c_string relay_native(const char* address, char& witness) {
+  unsafe { return std::assume_c_string(address, witness); }
+}
+int main() {
+  char witness = 'w';
+  const char* address = local_address();
+  unsafe {
+    c_string native = relay_native(address, witness);
+    return native == nullptr ? 1 : 0;
+  }
+}
+const char* local_address() {
+  char local[2] = {'a', '\0'};
+  return &local[0];
+}

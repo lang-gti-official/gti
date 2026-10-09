@@ -14,11 +14,9 @@ INCOMING_CLEANUP_CHECK = (
 )
 
 
-def cleanup_scope(block: str) -> str:
-    ordinal = re.escape(block.removeprefix("__gti_mir_bb_"))
+def cleanup_scope(_block: str) -> str:
     return (
-        r"::gti_internal::backend::mir_failure_cleanup_scope_v1 "
-        r"__gti_mir_cleanup_context_" + ordinal + r"\(__gti_mir_failure_record, "
+        r"__gti_mir_cleanup_context\.activate\(__gti_mir_failure_record, "
         r"&::gti_internal::backend::__gti_failure_artifact_descriptor_v1\);\s*"
     )
 
@@ -170,8 +168,9 @@ def main() -> int:
                         re.escape(guarded.group(3)) + r": \{\s*"
                         + cleanup_scope(guarded.group(3)) +
                         r"// GTI MIR failure-record \d+ cleanup\s*"
+                        r"std::memset\(&__gti_mir_cleanup_failure_record, 0, sizeof\(__gti_mir_cleanup_failure_record\)\);\s*"
                         r"__gti_mir_drop_success_\d+ = " + re.escape(slot)
-                        + r"\.destroy_with_failure\("
+                        + r"\.(?:destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\("
                     )
                     rollback = rollback_pattern.search(body)
                     if rollback is None:
@@ -187,7 +186,7 @@ def main() -> int:
                 destructions = re.findall(
                     r"(?<![\w.])"
                     + re.escape(slot)
-                    + r"\.destroy(?:_with_failure)?\(",
+                    + r"\.(?:destroy|destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\(",
                     body,
                 )
                 if len(destructions) != expected_drops:

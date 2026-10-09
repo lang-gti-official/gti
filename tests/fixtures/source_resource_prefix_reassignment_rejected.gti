@@ -1,0 +1,15 @@
+#include <std/resource_vector>
+#include <std/resource>
+
+int main() {
+  std::process_resource first{};
+  std::process_resource second{};
+  unsafe {
+    auto first_binding = std::bind_resource(first);
+    auto second_binding = std::bind_resource(second);
+    mut std::resource_vector<int, std::process_resource> left{first_binding};
+    mut std::resource_vector<int, std::process_resource> right{second_binding};
+    left = std::move(right);
+    return left.empty() ? 0 : 1;
+  }
+}

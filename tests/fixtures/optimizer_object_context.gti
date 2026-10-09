@@ -1,0 +1,112 @@
+class Gauge {
+public:
+  mut int value;
+  mut int spare = 9;
+  Gauge(int input) : value(input) {}
+  int read() { return this.value + 1; }
+  int after_address() {
+    unsafe {
+      const int* first = &this.value;
+      const int* end = first + 1;
+      const int* again = end - 1;
+      auto difference = again - first;
+      if (difference != 0) return 2;
+    }
+    return this.value + 1;
+  }
+  int bump() mut {
+    this.value += 1;
+    return this.spare + 1;
+  }
+};
+
+Gauge make_gauge() { return Gauge(7); }
+
+int from_constructor() {
+  Gauge object{7};
+  return object.read();
+}
+
+int from_result() {
+  Gauge object = make_gauge();
+  return object.read();
+}
+
+int through_reference(Gauge& object) { return object.read(); }
+
+class Leaf {
+public:
+  mut int value;
+  Leaf(int input) : value(input) {}
+  int read() { return this.value + 1; }
+};
+
+class Nested {
+public:
+  Leaf inner;
+  Nested(int input) : inner(Leaf(input)) {}
+  int read() { return this.inner.read(); }
+};
+
+class Hazard {
+public:
+  mut int value;
+  Hazard(int input) : value(input) {}
+  int read() { return this.value + 1; }
+  int changed() mut {
+    this.value = 2147483647;
+    return this.value + 1;
+  }
+  int raw_changed() mut {
+    unsafe { int* address = &this.value; *address = 2147483647; }
+    return this.value + 1;
+  }
+};
+
+int unknown(Hazard& object) { return object.value + 1; }
+
+void make_max(mut int& value) { value = 2147483647; }
+
+class Aliased {
+public:
+  mut int value;
+  Aliased(int input) : value(input) {}
+  int before() { return this.value + 1; }
+  int changed() mut {
+    make_max(this.value);
+    return this.value + 1;
+  }
+};
+
+class RawConstructed {
+public:
+  mut int value;
+  RawConstructed(int input) : value(input) {
+    unsafe { int* address = &this.value; *address = 2147483647; }
+  }
+  int read() { return this.value + 1; }
+};
+
+int alias_case() {
+  mut Aliased aliased{7};
+  if (aliased.before() != 8) return 5;
+  return aliased.changed();
+}
+
+int raw_constructor_case() {
+  RawConstructed raw{7};
+  return raw.read();
+}
+
+int main() {
+  mut Hazard danger{2147483647};
+  if (from_constructor() != 8) return danger.changed();
+  if (from_result() != 8) return danger.raw_changed();
+  Nested nested{7};
+  if (nested.read() != 8) return raw_constructor_case();
+  mut Gauge object{7};
+  if (through_reference(object) != 8) return 6;
+  if (object.after_address() != 8) return 7;
+  if (object.bump() != 10) return alias_case();
+  return danger.read();
+}
