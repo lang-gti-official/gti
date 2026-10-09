@@ -627,6 +627,10 @@ The effective set is immutable in every
 `ProjectBuildPlan`, participates in its model identity, and is passed through
 the shared frontend request. Metadata schema 14 reports that effective `defines`
 array beside each target/profile output plan.
+Editor profile selection uses these same facts: `gti_lsp` consumes the named
+profile selected by `settings.gti.profile`/initialization options, or the normal
+driver default when none is selected. Defines, execution model, raw-pointer
+audit and warning policy change together without invoking a build.
 
 `gti build --all` builds every declared executable and test target of the
 selected package for one profile. Each target is delegated to a child

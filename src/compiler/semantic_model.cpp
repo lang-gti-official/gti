@@ -1023,12 +1023,12 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
   bool specialized = false;
   for (const SemanticModel *model = this; model != nullptr && !specialized;
        model = model->base) {
-    specialized = std::any_of(
-        model->exactClassSpecializations.begin(),
-        model->exactClassSpecializations.end(),
-        [&](const ExactClassSpecializationRecord &candidate) {
-          return candidate.primary == primary;
-        });
+    specialized =
+        std::any_of(model->exactClassSpecializations.begin(),
+                    model->exactClassSpecializations.end(),
+                    [&](const ExactClassSpecializationRecord &candidate) {
+                      return candidate.primary == primary;
+                    });
   }
   if (!specialized) {
     return type;

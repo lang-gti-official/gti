@@ -572,10 +572,10 @@ verifyMirOptimizationCoherence(const MirProgram &source,
   // Parameter receivers are replayed against closed-world facts derived
   // independently from the same folded canonical snapshot the optimizer saw.
   std::optional<MirClosedWorldFacts> replayClosedWorld;
-  if (std::any_of(
-          records.begin(), records.end(), [](const MirTransformRecord &record) {
-            return record.kind == MirTransformKind::DevirtualizeCall;
-          })) {
+  if (std::any_of(records.begin(), records.end(),
+                  [](const MirTransformRecord &record) {
+                    return record.kind == MirTransformKind::DevirtualizeCall;
+                  })) {
     replayClosedWorld = analyzeMirClosedWorldFacts(candidate);
   }
   for (std::size_t index = 0; index < records.size(); ++index) {

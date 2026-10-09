@@ -9,6 +9,45 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.395.1 — Faster checked arithmetic and lambda owning arguments
+
+- Checked `+`, `-` and `*` on integers, compound assignments, the `expected`-
+  returning `std::checked_add`/`checked_sub`/`checked_mul` and the
+  `std::saturating_*` functions detect overflow with the native compiler's
+  overflow builtins under GCC and Clang. They now compile to the processor's
+  overflow flags instead of limit comparisons, and checked multiplication no
+  longer divides. Results, failure codes and messages are unchanged. Other
+  native compilers keep the portable checks. Loops that check every element
+  run 28-52% faster on the runtime probes, and a direct scalar loop now beats
+  C++ that performs the same checks.
+
+### Fixes
+
+- Fix generated C++ that failed to compile with "use of undeclared
+  identifier" when a function returns the result of a call that produces an
+  enum with an owning payload, such as `return invoke(holder::one(r), 1);`
+  for a lambda or `return transfer(holder::one(r), 1);` for a function. The
+  callee now constructs the result directly in the caller's storage.
+- Fix an internal compiler error when such a returned call takes a moved
+  parameter, as in `return invoke(std::move(value), 1);`.
+- Fix an internal compiler error when a lambda takes an owning class argument
+  by value followed by an argument that can fail, such as
+  `take(std::move(token), divide(1))`. If the later argument fails, the
+  prepared argument is destroyed exactly once.
+
+## 0.395.0 — Editor profiles and inactive-code highlighting
+
+- Select a project build profile in the editor with `settings.gti.profile` or
+  initialization options. Neovim provides `:GTIProfile release`,
+  `:GTIProfile dev` and `:GTIProfile!` to restore the default without restarting
+  the server. Defines, diagnostics, completion, execution and warning policies
+  follow the same driver-owned profile; dirty buffers and generation checks
+  remain authoritative.
+- Inactive compiler-directive branches now have a default grey Neovim style
+  that takes precedence over regular semantic colors, including punctuation.
+  Colorscheme changes restore the default without overwriting custom styling;
+  switching profiles removes obsolete grey overlays.
+
 ## 0.394.2 — Lambda base-reference arguments
 
 - Fix an internal compiler error when a lambda is called with a derived class

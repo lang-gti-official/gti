@@ -1244,6 +1244,16 @@ the existing fused-closure representation without a native type row, but only
 when its exact initialization and complete use chain satisfy that proof.
 Neither change reconstructs a call or its evaluation order from source syntax.
 
+An exact typed lambda invocation stages a by-value class argument through the
+same ordered `CallInput` plan as a function call. When a later argument can
+fail, a MIR failure edge drops that argument's prepared-parameter obligation.
+The argument then occupies its prepared lifetime slot from the stage onward,
+exactly as for a source function call: the invocation moves from the slot and
+retires it, and the failure edge destroys the still-engaged slot. The proof
+binds the lambda's exact parameter type in place of the function target.
+Without that failure cleanup, the invocation keeps the direct by-value
+spelling and adds no prepared slot or extra move.
+
 A cleanup-free class argument staged by one `Move` or one failure-free copy
 `Load` whose single record is one call operand in the same block declares as a
 sequenced `auto` local at its producing instruction, and the consuming
@@ -1724,6 +1734,17 @@ stages named and fresh arguments through the same ordered `CallInput` proof
 as a function call. The paired success edge arms that slot;
 failure leaves it empty and retains MIR's cleanup order. Representation-only
 moved-from shells are destroyed immediately after their verified transfer.
+A call result returned unchanged instead constructs directly in the calling
+body's own result storage. It shares the class direct-return placement proof:
+the success edge arms the result obligation and the return path transfers it
+out exactly once. The callee must also satisfy the call-result slot proof's
+exact source-function or captureless-lambda boundary. The value-rooted place
+names that storage and declares no slot. When a fallible drop, such as a
+moved-from parameter's, precedes the return, MIR's unpublished-result
+reparent keeps the obligation, and its rollback destroys the caller storage.
+An active payload-enum return must be published by a fresh `PayloadConstruct`,
+a verified `Move`, or that direct call. Any other return fails admission
+rather than assigning into uninitialized caller storage.
 Constructor arguments use the same proof, including fresh unit variants.
 A fresh cleanup-free class construction that is one alternative field fuses
 into the variant braces only when it is adjacent to its `PayloadConstruct`.
@@ -2628,6 +2649,23 @@ failure summary. In particular, the incoming-secondary-failure check remains
 at failure producers in propagation-only helpers: they may be called from an
 ancestor's destructor while that ancestor owns the primary record. Ordinary
 user accessors and forwarding functions use the same rule as library helpers.
+
+Integer overflow detection has one representation shared by every checked
+family. The `mir_checked_add/subtract/multiply_v1` failure helpers and the
+terminating `add`/`subtract`/`multiply` helpers use it. So do the
+`expected`-returning `checked_*` intrinsics and the `saturating_*` intrinsics.
+The preamble's `integer_add_overflows`, `integer_subtract_overflows` and
+`integer_multiply_overflows` are exact predicates over operands already
+converted to the result type. Under GCC and Clang they lower to
+`__builtin_*_overflow`, which the native compiler maps to the target's
+overflow flags. Other compilers, or a build defining
+`GTI_PORTABLE_OVERFLOW_CHECKS`, use the portable limit comparisons, which
+compute the same predicate. Each caller stores its result only on success, so
+an overflowing operation publishes nothing and reports the same code and
+detail. `checked_integer_overflow_runtime` compares both paths at O0 and O3
+against exact arithmetic. MIR operations, safety discharges and failure
+metadata are unchanged; this is a backend spelling of the same checked
+operation.
 
 Unique-owner borrowing uses the failure ABI. At the intrinsic instruction the
 backend tests the represented owner for emptiness and selects only the exact
