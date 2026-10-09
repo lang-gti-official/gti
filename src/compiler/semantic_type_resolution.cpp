@@ -3386,9 +3386,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     }
     validateType(type.arguments.front());
     const SemanticType interface = typeOf(type.arguments.front());
-    const ClassInfo *base = interface.kind == SemanticType::Class
-                                ? classInfo(interface)
-                                : nullptr;
+    const ClassInfo *base =
+        interface.kind == SemanticType::Class ? classInfo(interface) : nullptr;
     if (interface != SemanticType::Unknown &&
         interface.kind != SemanticType::TypeParameter &&
         (base == nullptr || !base->polymorphic)) {

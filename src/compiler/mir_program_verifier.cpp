@@ -9141,9 +9141,9 @@ exactPolymorphicStorageIntrinsicContract(const MirProgram &program,
       !((stage->kind == MirInstructionKind::Load &&
          stage->operands.front().kind == MirOperandKind::Copy) ||
         (stage->kind == MirInstructionKind::CallInput &&
-         stage->operands.front().kind ==
-             (mutates ? MirOperandKind::BorrowWrite
-                      : MirOperandKind::BorrowRead)))) {
+         stage->operands.front().kind == (mutates
+                                              ? MirOperandKind::BorrowWrite
+                                              : MirOperandKind::BorrowRead)))) {
     return false;
   }
   const SemanticType &interfaceType = storageClass->type.arguments.front();
@@ -9217,9 +9217,8 @@ exactPolymorphicStorageIntrinsicContract(const MirProgram &program,
         model->moveConstructor != SpecialMemberStatus::Generated ||
         mirTypeRelocationKind(program, model->type) ==
             RelocationKind::Unavailable ||
-        !derivesInterface(derivesInterface, *model, 0) ||
-        producer == nullptr || !producer->result ||
-        *producer->result != payload.value)
+        !derivesInterface(derivesInterface, *model, 0) || producer == nullptr ||
+        !producer->result || *producer->result != payload.value)
       return false;
     // An inert payload owns no drop obligation; only a prepared argument
     // slot may hand its exact obligation to the slot.
@@ -10833,12 +10832,12 @@ verifyMirProgramContracts(const MirProgram &program) {
             instruction.intrinsic == IntrinsicKind::OptionalStorageReadMut ||
             instruction.intrinsic == IntrinsicKind::OptionalStorageReset;
         const bool polymorphicStorageIntrinsic =
-            instruction.intrinsic == IntrinsicKind::PolymorphicStorageHasValue ||
+            instruction.intrinsic ==
+                IntrinsicKind::PolymorphicStorageHasValue ||
             instruction.intrinsic ==
                 IntrinsicKind::PolymorphicStorageConstruct ||
             instruction.intrinsic == IntrinsicKind::PolymorphicStorageRead ||
-            instruction.intrinsic ==
-                IntrinsicKind::PolymorphicStorageReadMut ||
+            instruction.intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
             instruction.intrinsic == IntrinsicKind::PolymorphicStorageReset;
         if (polymorphicStorageIntrinsic &&
             !exactPolymorphicStorageIntrinsicContract(program, body,
