@@ -3432,14 +3432,14 @@ private:
   // pending until the running analysis finishes, so rapid edits to one file
   // cannot occupy the whole pool with results that will be discarded.
   [[nodiscard]] std::optional<AnalysisRequest> takeNextAnalysisLocked() {
-    const auto take = [this](std::unordered_map<std::string,
-                                                AnalysisRequest>::iterator
-                                 pending) {
-      AnalysisRequest request = std::move(pending->second);
-      pendingAnalyses.erase(pending);
-      activeAnalysisUris.insert(request.uri);
-      return request;
-    };
+    const auto take =
+        [this](std::unordered_map<std::string, AnalysisRequest>::iterator
+                   pending) {
+          AnalysisRequest request = std::move(pending->second);
+          pendingAnalyses.erase(pending);
+          activeAnalysisUris.insert(request.uri);
+          return request;
+        };
     // A queued hover, definition, or similar request waits for its
     // document's analysis. Run that analysis before dependants queued
     // ahead of it; the order entry it leaves behind is skipped later.
@@ -3714,8 +3714,8 @@ private:
   // Destroying a frontend graph is slow, so it happens on the reclamation
   // worker rather than on the protocol thread or under `stateMutex`. A
   // request still holding the result keeps it alive until it finishes.
-  void retireFrontendLocked(
-      std::shared_ptr<const lang::FrontendResult> frontend) {
+  void
+  retireFrontendLocked(std::shared_ptr<const lang::FrontendResult> frontend) {
     retiredFrontends.push_back(std::move(frontend));
     reclamationCondition.notify_one();
   }
@@ -3949,7 +3949,8 @@ private:
         {"maximumEstimatedBytes",
          static_cast<std::int64_t>(cacheStats.limits.maximumEstimatedBytes)}};
     if (retainedFrontends) {
-      record["retainedFrontends"] = static_cast<std::int64_t>(*retainedFrontends);
+      record["retainedFrontends"] =
+          static_cast<std::int64_t>(*retainedFrontends);
     }
     const std::string encoded =
         llvm::formatv("{0}", JsonValue(std::move(record))).str();
@@ -4023,7 +4024,8 @@ private:
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
-  std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>
+  std::unordered_map<std::string,
+                     std::unordered_map<std::string, std::uint64_t>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
   // Advances only when an open document's own text or overlay presence
