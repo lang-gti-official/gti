@@ -976,13 +976,15 @@ This revises the earlier two-region resource-vector policy; public sparse
 The vector supports `size`, `capacity`, `empty`, indexed
 read-only/mutable access, `front`, `back`, read-only range iteration, `pop_back`,
 `clear` and `release`. `try_reserve`, `try_push_back` and `try_emplace_back`
-report allocation errors; their plain counterparts panic on allocation failure.
-Under the accepted
+report allocation errors. Under the
 [Rust allocation-failure model](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09),
-the plain counterparts will abort on exhaustion instead. The `try_` operations
-are unchanged.
-An insertion argument is consumed even when growth fails, but existing elements
-remain unchanged. Growable elements must be movable, structurally relocatable
+their plain counterparts report `GTI-R0011` and abort on exhaustion without
+cleanup. Size overflow and malformed requests instead retain defined-failure
+cleanup. The `try_` operations are unchanged: an insertion argument is consumed
+even when growth fails, but existing elements remain unchanged. For plain
+insertion, abort occurs before destroying the prepared argument; emplacement
+does not execute the element constructor until growth succeeds.
+Growable elements must be movable, structurally relocatable
 and layout-queryable; use fixed-address storage for immovable types.
 
 Each owner retains a shared checked provider borrow through its cleanup, even

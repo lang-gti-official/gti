@@ -909,9 +909,9 @@ and explicit construction use the same pending-result destination. Failure
 cleanup calls a fallible result's exact status cleanup recipe before native
 teardown; an infallible result uses native teardown directly. A wrapped
 `expected` value cleans its payload before tearing down the envelope.
-Private prefix-storage handles keep their initialized result in an SSA carrier
-until the successful Return; rollback drains that carrier on the explicit MIR
-failure edge. This does not admit arbitrary executable work or reinitialization
+Source-defined buffer/sequence results use the ordinary class-result lifetime
+and field-cleanup schedule; there is no private prefix-storage result carrier.
+This does not admit arbitrary executable work or reinitialization
 between a class result's construction and Return.
 
 When the result is the class payload of an `expected` return, cleanup may
@@ -1003,8 +1003,10 @@ MIR, never as a backend analysis result. When all local overflow outcomes for a
 checked add, subtract, multiply, or negate are discharged, the C++ backend may
 emit the direct arithmetic representation. When all local outcomes for an
 admitted fixed-array read are discharged, it may emit a direct indexed read.
-An admitted prefix-storage read may select its backend-private unchecked
-helper only when its exact bounds outcome is discharged. A fully discharged
+Source container checks use the general scalar bounds detector: its exact
+outcome must be discharged before the backend can omit that detector. Raw
+element access remains a separate explicitly unsafe MIR operation, not a
+private checked/unchecked container-helper selection. A fully discharged
 `Invoke` follows its verified success edge; any retained local or callee failure
 keeps the checked representation and failure transfer.
 

@@ -5070,7 +5070,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
   It covers migration candidates M01, M02 and M04 in the
-  [standard-library ledger](../architecture/standard-library-and-runtime.md#b-source-policy-candidates-still-using-private-machinery).
+  [standard-library ledger](../architecture/standard-library-and-runtime.md#b-source-policy-migrations-and-remaining-prerequisites).
   M03, string's terminator, follows it.
 - **Outcome:** `std::vector` and `std::string` use Rust's `RawVec`/`Vec`
   layering in ordinary GTI, and the private `prefix_storage` capability is
