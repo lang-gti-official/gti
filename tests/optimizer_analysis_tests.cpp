@@ -1,3 +1,4 @@
+#include "../src/compiler/optimization/evidence_set.h"
 #include "gti/frontend.h"
 #include "gti/mir_dominance.h"
 #include "gti/optimization/alias.h"
@@ -31,6 +32,52 @@ void expect(bool condition, std::string_view message) {
   if (!condition) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
+  }
+}
+
+void testCanonicalEvidenceSets() {
+  using lang::optimization_detail::insertEvidenceId;
+  using lang::optimization_detail::mergeEvidenceIds;
+  using Id = std::uint64_t;
+  // Include sparse, wide IDs: these are identities, not dense bit positions.
+  const std::vector<Id> universe{
+      1, 2, 17, 999, Id{1} << 40, std::numeric_limits<Id>::max()};
+  const auto members = [&](unsigned mask) {
+    std::vector<Id> ids;
+    for (std::size_t index = 0; index < universe.size(); ++index) {
+      if ((mask & (1U << index)) != 0) {
+        ids.push_back(universe[index]);
+      }
+    }
+    return ids;
+  };
+  for (unsigned left = 0; left < 64; ++left) {
+    for (unsigned right = 0; right < 64; ++right) {
+      auto actual = members(left);
+      const auto incoming = members(right);
+      const auto *data = actual.data();
+      const auto capacity = actual.capacity();
+      mergeEvidenceIds(actual, incoming);
+      expect(actual == members(left | right),
+             "evidence union retains every ID exactly once in canonical order");
+      expect(incoming == members(right), "union preserves its source");
+      if ((left | right) == left) {
+        expect(actual.data() == data && actual.capacity() == capacity,
+               "subset joins must retain the existing allocation");
+      }
+      mergeEvidenceIds(actual, actual);
+      expect(actual == members(left | right), "self union is idempotent");
+    }
+    auto actual = members(left);
+    insertEvidenceId(actual, Id{0});
+    expect(actual == members(left), "zero does not become proof evidence");
+    for (auto it = universe.rbegin(); it != universe.rend(); ++it) {
+      insertEvidenceId(actual, *it);
+      const auto *data = actual.data();
+      insertEvidenceId(actual, *it);
+      expect(actual.data() == data, "duplicate insertion does not allocate");
+    }
+    expect(actual == universe, "reverse insertion preserves canonical order");
   }
 }
 
@@ -1066,6 +1113,7 @@ int32_t main() { return selected(true) == 1 ? 0 : 1; }
 
 int main() {
   testForwardDataflowScheduling();
+  testCanonicalEvidenceSets();
   testNaturalLoopAndInduction();
   testLoopForestAndIrreducibleControl();
   testPlaceRelations();

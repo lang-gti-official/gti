@@ -1,4 +1,5 @@
 #include "gti/optimization/safety.h"
+#include "evidence_set.h"
 #include "gti/optimization/coverage.h"
 
 #include "../mir_verification_queries.h"
@@ -322,50 +323,26 @@ void appendUnique(std::vector<T> &target, const std::vector<T> &source) {
 }
 
 void add(Evidence &evidence, MirBlockId block) {
-  if (block != 0) {
-    evidence.blocks.push_back(block);
-    std::sort(evidence.blocks.begin(), evidence.blocks.end());
-    evidence.blocks.erase(
-        std::unique(evidence.blocks.begin(), evidence.blocks.end()),
-        evidence.blocks.end());
-  }
+  optimization_detail::insertEvidenceId(evidence.blocks, block);
 }
 
 void addInstruction(Evidence &evidence, MirInstructionId instruction) {
-  if (instruction != 0) {
-    evidence.instructions.push_back(instruction);
-    std::sort(evidence.instructions.begin(), evidence.instructions.end());
-    evidence.instructions.erase(
-        std::unique(evidence.instructions.begin(), evidence.instructions.end()),
-        evidence.instructions.end());
-  }
+  optimization_detail::insertEvidenceId(evidence.instructions, instruction);
 }
 
 void addValue(Evidence &evidence, MirValueId value) {
-  if (value != 0) {
-    evidence.values.push_back(value);
-    std::sort(evidence.values.begin(), evidence.values.end());
-    evidence.values.erase(
-        std::unique(evidence.values.begin(), evidence.values.end()),
-        evidence.values.end());
-  }
+  optimization_detail::insertEvidenceId(evidence.values, value);
 }
 
 void addPlace(Evidence &evidence, MirPlaceId place) {
-  if (place != 0) {
-    evidence.places.push_back(place);
-    std::sort(evidence.places.begin(), evidence.places.end());
-    evidence.places.erase(
-        std::unique(evidence.places.begin(), evidence.places.end()),
-        evidence.places.end());
-  }
+  optimization_detail::insertEvidenceId(evidence.places, place);
 }
 
 [[nodiscard]] Evidence merged(Evidence left, const Evidence &right) {
-  appendUnique(left.blocks, right.blocks);
-  appendUnique(left.instructions, right.instructions);
-  appendUnique(left.values, right.values);
-  appendUnique(left.places, right.places);
+  optimization_detail::mergeEvidenceIds(left.blocks, right.blocks);
+  optimization_detail::mergeEvidenceIds(left.instructions, right.instructions);
+  optimization_detail::mergeEvidenceIds(left.values, right.values);
+  optimization_detail::mergeEvidenceIds(left.places, right.places);
   return left;
 }
 

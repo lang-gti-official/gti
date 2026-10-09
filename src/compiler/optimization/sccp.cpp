@@ -1,4 +1,5 @@
 #include "gti/optimization/sccp.h"
+#include "evidence_set.h"
 #include "gti/mir_editor.h"
 
 #include "gti/mir_effects.h"
@@ -13,31 +14,17 @@ namespace {
 
 struct State {
   std::vector<MirSccpValueFact> values;
-
-  friend bool operator==(const State &, const State &) = default;
 };
 
 template <typename T> void appendUnique(std::vector<T> &target, T value) {
-  if (value == 0) {
-    return;
-  }
-  target.push_back(value);
-  std::sort(target.begin(), target.end());
-  target.erase(std::unique(target.begin(), target.end()), target.end());
-}
-
-template <typename T>
-void appendUnique(std::vector<T> &target, const std::vector<T> &source) {
-  target.insert(target.end(), source.begin(), source.end());
-  std::sort(target.begin(), target.end());
-  target.erase(std::unique(target.begin(), target.end()), target.end());
+  optimization_detail::insertEvidenceId(target, value);
 }
 
 [[nodiscard]] MirSccpEvidence merged(MirSccpEvidence left,
                                      const MirSccpEvidence &right) {
-  appendUnique(left.blocks, right.blocks);
-  appendUnique(left.instructions, right.instructions);
-  appendUnique(left.values, right.values);
+  optimization_detail::mergeEvidenceIds(left.blocks, right.blocks);
+  optimization_detail::mergeEvidenceIds(left.instructions, right.instructions);
+  optimization_detail::mergeEvidenceIds(left.values, right.values);
   return left;
 }
 
@@ -279,11 +266,22 @@ outgoing(const MirBody &body, const MirBlock &block, State state) {
   if (target.values.size() != incoming.values.size()) {
     return false;
   }
-  const State before = target;
+  bool changed = false;
   for (std::size_t index = 0; index < target.values.size(); ++index) {
-    target.values[index] = meet(target.values[index], incoming.values[index]);
+    auto &current = target.values[index];
+    const auto &next = incoming.values[index];
+    // The meet is idempotent, including its canonical evidence. Avoid copying
+    // every type and evidence vector just to rediscover an unchanged fact.
+    if (current == next) {
+      continue;
+    }
+    MirSccpValueFact joined = meet(current, next);
+    if (current != joined) {
+      current = std::move(joined);
+      changed = true;
+    }
   }
-  return target != before;
+  return changed;
 }
 
 } // namespace
