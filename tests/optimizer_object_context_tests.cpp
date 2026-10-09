@@ -214,6 +214,135 @@ int main() {
       }
     }
   }
+  const auto ownedPath =
+      sourcePath.parent_path() / "optimizer_owned_value_transfer.gti";
+  const std::ifstream ownedFile(ownedPath);
+  const std::string ownedSource{
+      std::istreambuf_iterator<char>(ownedFile.rdbuf()), {}};
+  const auto ownedLibrary =
+      sourcePath.parent_path().parent_path().parent_path() / "stdlib";
+  const auto owned = lang::Frontend().analyze(
+      ownedPath, ownedSource, {ownedLibrary / "prelude.gti", ownedPath},
+      {{std::filesystem::weakly_canonical(ownedPath).string(), ownedSource}},
+      {ownedLibrary});
+  expect(owned.canGenerateCode(), "ordinary owned value transfers must lower");
+  if (!owned.canGenerateCode())
+    for (const auto &diagnostic : owned.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  if (owned.canGenerateCode()) {
+    std::size_t transfers = 0;
+    std::size_t drops = 0;
+    std::size_t sourceDrops = 0;
+    for (const auto address : lang::enumerateMirBodyAddresses(owned.mir))
+      for (const auto &block : lang::findMirBody(owned.mir, address)->blocks)
+        for (const auto &instruction : block.instructions) {
+          const bool transfer =
+              lang::isMirStructuralValueTransfer(owned.mir, instruction);
+          const bool drop =
+              lang::isMirStructuralValueDrop(owned.mir, instruction);
+          if (instruction.kind == lang::MirInstructionKind::Drop &&
+              instruction.info.type.kind == lang::SemanticType::Class)
+            for (const auto &owner : owned.mir.classInstances())
+              if (owner.type == instruction.info.type && owner.destructor) {
+                ++sourceDrops;
+                expect(
+                    !drop &&
+                        lang::effects(owned.mir, instruction).invokesUserCode,
+                    "actual user cleanup retains its selected effects");
+              }
+          if (!transfer && !drop)
+            continue;
+          transfers += transfer;
+          drops += drop;
+          const auto effects = lang::effects(owned.mir, instruction);
+          expect(
+              !effects.readsUnknownMemory && !effects.writesUnknownMemory &&
+                  !effects.invokesUserCode && !effects.invokesRuntime &&
+                  !effects.maySynchronize && !effects.removableWhenUnused,
+              "generated record transport/cleanup has precise shared effects "
+              "without erasing lifecycle observability");
+          auto malformed = instruction;
+          malformed.rawMemoryAccess = true;
+          expect(!lang::isMirStructuralValueTransfer(owned.mir, malformed) &&
+                     !lang::isMirStructuralValueDrop(owned.mir, malformed),
+                 "a raw operation cannot claim structural record effects");
+          malformed = instruction;
+          malformed.lifecycle.push_back(
+              {.kind = lang::MirLifecycleEventKind::Replace});
+          expect(!lang::isMirStructuralValueTransfer(owned.mir, malformed) &&
+                     !lang::isMirStructuralValueDrop(owned.mir, malformed),
+                 "replacement cannot claim construction-only effects");
+        }
+    expect(transfers > 0 && drops > 0 && sourceDrops > 0,
+           "the fixture must exercise both shared structural effect profiles");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = owned.hir, .mir = owned.mir, .level = level});
+      expect(optimized.valid(), "owned value facts must independently replay");
+      if (level == lang::OptimizationLevel::O0)
+        expect(optimized.report.transformations.empty(),
+               "owned transport cannot introduce O0 transformations");
+      for (const auto &function : owned.hir.functionInstances()) {
+        if (!function.source)
+          continue;
+        const auto name = function.source->name().lexeme;
+        const bool positive = name == "copied" ||
+                              name == "original_after_copy" ||
+                              name == "prepared_copy" || name == "consumed" ||
+                              name == "custom_cleanup";
+        if (!positive && name != "original_after_sanitize")
+          continue;
+        std::size_t proofs = 0;
+        const auto *body = optimized.mir.findFunctionInstance(function.id);
+        if (body)
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              proofs += std::count_if(
+                  instruction.safetyDischarges.begin(),
+                  instruction.safetyDischarges.end(), [](const auto &proof) {
+                    return proof.family ==
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                  });
+        expect(proofs ==
+                   (positive && level != lang::OptimizationLevel::O0 ? 1 : 0),
+               std::string("independent owned field transfer: ") +
+                   std::string(name));
+      }
+    }
+    std::size_t negatives = 0;
+    for (const auto &function : owned.hir.functionInstances()) {
+      if (!function.source ||
+          function.source->name().lexeme != "original_after_sanitize")
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      const auto *body = lang::findMirBody(owned.mir, address);
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto forged = owned.mir;
+              lang::MirEditor editor(forged, "forged-copy-postcondition");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "callee copy mutation cannot prove caller storage safe");
+              ++negatives;
+            }
+    }
+    expect(negatives == 1, "copy independence needs a negative replay oracle");
+  }
   const auto movePath = sourcePath.parent_path() / "optimizer_scalar_move.gti";
   const std::ifstream moveFile(movePath);
   const std::string moveSource{std::istreambuf_iterator<char>(moveFile.rdbuf()),

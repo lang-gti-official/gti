@@ -111,6 +111,22 @@ if __name__ == "__main__":
         path.write_text(paths_source.replace("return nested_reconstruct();", "return 0;"))
         paths["scalar_paths_construction"] = path
         cases["scalar_paths_construction"] = [((), (0, "", ""))]
+        owned = fixture.parent / "optimizer_owned_value_transfer.gti"
+        owned_source = owned.read_text()
+        owned_lines = owned_source.splitlines()
+        negative = owned_lines.index("int original_after_sanitize() {")
+        owned_line = next(index for index, text in enumerate(owned_lines, 1)
+                          if index > negative and
+                          text.strip() == "return packet.part.value + 1;")
+        paths["owned_value_original_unchanged"] = owned
+        cases["owned_value_original_unchanged"] = [((), (70, "",
+            f"{owned.name}:{owned_line}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        path = pathlib.Path(temporary) / "owned_value_success.gti"
+        path.write_text(owned_source.replace("return original_after_sanitize();",
+                                             "return 0;"))
+        paths["owned_value_success"] = path
+        cases["owned_value_success"] = [((), (0, "", ""))]
         movement = fixture.parent / "optimizer_scalar_move.gti"
         move_source = movement.read_text()
         sites = [index for index, text in enumerate(move_source.splitlines(), 1)

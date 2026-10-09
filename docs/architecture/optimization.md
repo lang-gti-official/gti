@@ -311,7 +311,7 @@ supplies no callee result/postcondition facts. Only an admitted source summary
 not yet available postpones and retries its caller. Opaque synchronizing
 effects invalidate mutable memory even when the effect summary reports no
 direct write; they cannot establish a closed recurrence edge. Recursive SCCs, native
-or virtual calls, owning-argument transfers, synchronization, raw/unsafe
+or virtual calls, unsupported owning-argument transfers, synchronization, raw/unsafe
 memory, unsupported cleanup, open call families, and conflicting facts remain
 conservative.
 
@@ -325,7 +325,7 @@ immutable SSA results and actual readonly scalar binding copies remain
 immutable; later referent/global reads receive no stale facts. This preservation
 does not apply to readonly reference carriers, projected fields, arrays or
 borrowed state. Exact initialization/replacement still invalidates its own
-destination. Foreign/open calls, owning transfers, synchronization and recursive
+destination. Foreign/open calls, unsupported owning transfers, synchronization and recursive
 families retain their separate admission boundaries. An unrelated source
 function proves a bounded scalar addition before writing through a raw pointer;
 arithmetic on the changed referent and in its caller remains checked.
@@ -412,6 +412,31 @@ facts are relative to the selected subobject, not its enclosing owner's field
 path. Constructor destination publication and return summaries retain those
 same facts after sanitizing them against the exact concrete type. These are
 ordinary class facts, not initialized raw-allocation or container invariants.
+
+Shared MIR effects classify exact generated copy/move of ordinary scalar-field
+records, recursively through owned record fields. The bounded profile excludes
+borrowed state, compiler backing capabilities, overlapping or inherited layouts,
+payload enums, arrays and any non-generated selected transfer. Raw pointer fields
+are transported as addresses only; they provide no pointee or alias facts.
+Generated movement does not execute a source destructor; actual cleanup remains
+a separate operation. Cleanup of a recursively scalar record with no source
+destructor has exact storage/lifecycle effects, while real destructors and
+unsupported cleanup keep their existing effects and barriers. The optimizer
+uses these shared classifications, not a parallel type or library-name rule.
+
+Admitted prepared by-value inputs carry independent field snapshots, without
+retaining an alias back to the copied/moved source. A later argument's mutation
+therefore cannot alter an earlier prepared copy. Movement invalidates its source;
+the result may transport the old value but never makes the source available
+again. Exact by-value parameter storage is independent of the receiver's owned
+fields, including nested fields without a materialized whole-object receiver.
+Only those typed non-byte owned-field facts survive parameter-local structural
+transfer/cleanup; stored references do not gain this exemption. Callee by-value
+parameter mutations are never republished as caller postconditions. Only checked
+reference parameters use that outward path. Ordinary nested records, argument
+ordering, a mutating copy and an actual user-destructor control exercise these
+rules with independent proof replay. This supplies no raw initialized-element
+coverage or returned raw-backed element envelope.
 
 Exact readonly source members may also return a still-current ordinary owned
 integer field. The interpreter records its typed receiver-relative path only

@@ -720,10 +720,115 @@ bool isMirScalarFinalAddressConstruction(const MirInstruction &instruction) {
 }
 
 namespace {
+enum class StructuralValueOperation { Copy, Move, Drop };
+
+bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
+                            StructuralValueOperation operation) {
+  std::unordered_set<HirClassInstanceId> visiting;
+  const auto structural = [&](const auto &self,
+                              const SemanticType &type) -> bool {
+    if (constantIntegerDomain(type) || type.kind == SemanticType::Float ||
+        type.kind == SemanticType::Double || type.kind == SemanticType::Bool ||
+        type.kind == SemanticType::Char || type.kind == SemanticType::NullPtr ||
+        type.kind == SemanticType::RawPointer ||
+        (type.kind == SemanticType::Enum && program.findIntegralEnum(type)))
+      return true;
+    if (type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    if (!owner || owner->traits.containsBorrowedState ||
+        owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+        owner->unionLayout || owner->abstract || owner->polymorphic ||
+        !owner->bases.empty() || !owner->structuralBases.empty() ||
+        !visiting.insert(owner->id).second)
+      return false;
+    const SpecialMemberStatus member =
+        operation == StructuralValueOperation::Copy   ? owner->copyConstructor
+        : operation == StructuralValueOperation::Move ? owner->moveConstructor
+                                                      : owner->destructorStatus;
+    const bool fields =
+        member == SpecialMemberStatus::Generated &&
+        (operation != StructuralValueOperation::Drop || !owner->destructor) &&
+        std::all_of(owner->declaredFields.begin(), owner->declaredFields.end(),
+                    [&](const auto &field) {
+                      return field.field && field.symbol &&
+                             self(self, field.type);
+                    });
+    visiting.erase(owner->id);
+    return fields;
+  };
+  return type.kind == SemanticType::Class && structural(structural, type);
+}
+} // namespace
+
+bool isMirStructuralValueTransfer(const MirProgram &program,
+                                  const MirInstruction &instruction) {
+  const bool copy = instruction.kind == MirInstructionKind::CallInput &&
+                    instruction.callInputKind == HirCallInputKind::CopyValue;
+  const bool move = instruction.kind == MirInstructionKind::Move ||
+                    (instruction.kind == MirInstructionKind::CallInput &&
+                     instruction.callInputKind == HirCallInputKind::MoveValue);
+  if ((!copy && !move) || instruction.tombstone || !instruction.result ||
+      instruction.operands.size() != 1 || instruction.receiver ||
+      instruction.operation != MirOperation::None ||
+      (instruction.intrinsic != IntrinsicKind::None &&
+       !(instruction.kind == MirInstructionKind::Move &&
+         instruction.intrinsic == IntrinsicKind::Move)) ||
+      instruction.rawMemoryAccess ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.hostedStartupOperation ||
+      instruction.info.type != instruction.operands.front().type ||
+      instruction.info.type.kind != SemanticType::Class ||
+      instruction.info.traits.containsBorrowedState ||
+      std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [](const MirLifecycleEvent &event) {
+                    return event.kind != MirLifecycleEventKind::Initialize &&
+                           event.kind != MirLifecycleEventKind::Move &&
+                           event.kind != MirLifecycleEventKind::Reparent &&
+                           event.kind != MirLifecycleEventKind::TransferOut;
+                  }) ||
+      (instruction.kind == MirInstructionKind::Move &&
+       (instruction.destination ||
+        instruction.operands.front().kind != MirOperandKind::Move)))
+    return false;
+  return structuralScalarRecord(program, instruction.info.type,
+                                copy ? StructuralValueOperation::Copy
+                                     : StructuralValueOperation::Move);
+}
+
+bool isMirStructuralValueDrop(const MirProgram &program,
+                              const MirInstruction &instruction) {
+  return !instruction.tombstone &&
+         instruction.kind == MirInstructionKind::Drop &&
+         instruction.destination && !instruction.result &&
+         instruction.operands.empty() && !instruction.receiver &&
+         !instruction.rawMemoryAccess && !instruction.hostedStartupOperation &&
+         instruction.operation == MirOperation::None &&
+         instruction.intrinsic == IntrinsicKind::None &&
+         instruction.unsafeOperation == UnsafeOperationKind::None &&
+         instruction.synchronization.kind ==
+             SynchronizationOperationKind::None &&
+         std::all_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                     [](const MirLifecycleEvent &event) {
+                       return event.kind == MirLifecycleEventKind::Drop;
+                     }) &&
+         structuralScalarRecord(program, instruction.info.type,
+                                StructuralValueOperation::Drop);
+}
+
+namespace {
 
 [[nodiscard]] MirEffectTraits
 finishInstructionEffects(const MirInstruction &instruction,
-                         MirEffectTraits result) {
+                         MirEffectTraits result,
+                         bool structuralValueTransfer = false) {
   if (instruction.tombstone) {
     return harmless();
   }
@@ -786,13 +891,14 @@ finishInstructionEffects(const MirInstruction &instruction,
   if (instruction.kind == MirInstructionKind::CallInput &&
       (instruction.callInputKind == HirCallInputKind::CopyValue ||
        instruction.callInputKind == HirCallInputKind::MoveValue)) {
-    result = merge(result, unknownEffects());
+    if (!structuralValueTransfer)
+      result = merge(result, unknownEffects());
     result.copiesValue |=
         instruction.callInputKind == HirCallInputKind::CopyValue;
     result.movesValue |=
         instruction.callInputKind == HirCallInputKind::MoveValue;
     result.initializesValue = true;
-    result.maySynchronize = true;
+    result.maySynchronize |= !structuralValueTransfer;
   }
   if (!instruction.lifecycle.empty()) {
     result = merge(result, effects(MirInstructionKind::Lifecycle));
@@ -1682,8 +1788,12 @@ MirEffectTraits effects(const MirInstruction &instruction) {
 
 MirEffectTraits effects(const MirProgram &program,
                         const MirInstruction &instruction) {
+  if (isMirStructuralValueDrop(program, instruction))
+    return finishInstructionEffects(instruction,
+                                    {.writesPlace = true, .dropsValue = true});
   if (!isInvocation(instruction)) {
-    return effects(instruction);
+    return finishInstructionEffects(
+        instruction, {}, isMirStructuralValueTransfer(program, instruction));
   }
   const MirBody *body = nullptr;
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
@@ -1916,11 +2026,18 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
             node.callees.push_back(*targetNode);
           }
         } else {
-          const MirEffectTraits instructionEffects =
-              cleanupEffects(effects(instruction), targets);
+          const MirEffectTraits instructionEffects = cleanupEffects(
+              finishInstructionEffects(
+                  instruction,
+                  isMirStructuralValueDrop(program, instruction)
+                      ? MirEffectTraits{.writesPlace = true, .dropsValue = true}
+                      : MirEffectTraits{},
+                  isMirStructuralValueTransfer(program, instruction)),
+              targets);
           node.local.traits = merge(node.local.traits, instructionEffects);
           if (isInvocation(instruction) &&
               (targets.boundary || targets.addresses.empty()) &&
+              !isMirStructuralValueDrop(program, instruction) &&
               instruction.intrinsic == IntrinsicKind::None &&
               instruction.synchronization.kind ==
                   SynchronizationOperationKind::None) {

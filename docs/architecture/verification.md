@@ -498,6 +498,20 @@ O0 remains transformation-free and O2/O3 evidence independently replays.
 This does not close migration acceptance: a fresh run still reports the
 original six optimizer safety and three native optimization-evidence failures.
 
+Generated ordinary record transport adds nested by-value construction, copying,
+movement, prepared-argument ordering and a real source-destructor control.
+Shared effects reject raw/replacement mutations of the supported instruction
+shape. A callee that changes its private copy cannot alter caller postconditions;
+the overflow control rejects a forged discharge through canonical replay.
+The expanded object matrix passes all 352 executions (44 fixtures/eight modes,
+six workers, 112.97 seconds), including no-elide and ASan/UBSan. The optimized
+compiler aggregate passes in 46.01 seconds. The existing six optimizer safety
+and three native-evidence requirements still fail and remain unchanged; this
+checkpoint does not establish full source-prefix migration acceptance.
+The six freshly linked focused optimizer gates pass in 2.38 seconds; source
+prefix-owner, resource-prefix, terminated-string and raw-context runtime gates
+pass together in 101.90 seconds. Formatting and diff checks pass.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
