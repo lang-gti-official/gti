@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Empty invocation and allocation failure obey ordinary owning-wrapper policy."""
+"""Empty invocation and allocation failure obey ordinary owning-wrapper policy.
+
+Small repeatable targets live inline, so cloning or replacing them succeeds
+even while every allocation fails.
+"""
 
 from pathlib import Path
 import sys
@@ -23,12 +27,13 @@ def main():
                            if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
     allocation = (f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
                   "allocation_failure in unique_owner\n")
+    # An empty repeatable wrapper reaches its boxed owner through get().
     empty = lambda site: (f"<std/memory>:{site}: runtime error[GTI-R0008]: "
-                          "empty_owner_access in member_access\n")
-    cases = [(70, "9\n", empty(read[1])),
-             (70, "9\n", empty(mutable[1])),
-             (70, "9\n", empty(read[1])),
-             (70, "9\n", empty(mutable[1])),
+                          "empty_owner_access in dereference\n")
+    cases = [(70, "9\n", empty(read[0])),
+             (70, "9\n", empty(mutable[0])),
+             (70, "9\n", empty(read[0])),
+             (70, "9\n", empty(mutable[0])),
              (70, "8\n9\n", allocation),
              (70, "9\n", allocation),
              (70, "8\n7\n9\n", allocation),
@@ -38,7 +43,9 @@ def main():
              (70, "9\n", f"<std/memory>:{mutable[0]}: runtime error[GTI-R0008]: "
                            "empty_owner_access in dereference\n"),
              (70, "8\n9\n", allocation),
-             (70, "9\n", allocation)]
+             (70, "9\n", allocation),
+             (42, "9\n", ""),
+             (42, "9\n", "")]
     modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
              for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),

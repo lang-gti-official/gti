@@ -70,6 +70,7 @@ enum class StructuralConstraintKind : std::uint8_t {
   EnumUnderlying,
   ObjectLayout,
   IndependentObject,
+  InlinePolymorphicPayload,
 };
 
 using GenericConstraintSet = std::uint32_t;
@@ -132,7 +133,7 @@ inline constexpr std::array<CompilerConstraintRecord, 19> compilerConstraints{{
     {"integral_enum", GenericConstraintKind::IntegralEnum},
 }};
 
-inline constexpr std::array<CompilerStructuralConstraintRecord, 31>
+inline constexpr std::array<CompilerStructuralConstraintRecord, 32>
     compilerStructuralConstraints{{
         {"input_iterator", StructuralConstraintKind::InputIterator, 1},
         {"sentinel_for", StructuralConstraintKind::SentinelFor, 2},
@@ -169,6 +170,8 @@ inline constexpr std::array<CompilerStructuralConstraintRecord, 31>
         {"enum_underlying", StructuralConstraintKind::EnumUnderlying, 2},
         {"object_layout", StructuralConstraintKind::ObjectLayout, 1},
         {"independent_object", StructuralConstraintKind::IndependentObject, 1},
+        {"inline_polymorphic_payload",
+         StructuralConstraintKind::InlinePolymorphicPayload, 2},
     }};
 
 static_assert(compilerConstraints.size() + 2 ==

@@ -1,0 +1,214 @@
+#include <std/format>
+#include <std/functional>
+#include <std/memory>
+#include <std/polymorphic>
+#include <std/string>
+#include <std/vector>
+
+extern "C" {
+void inline_polymorphic_count_begin();
+uint64_t inline_polymorphic_allocations();
+uint64_t inline_polymorphic_live();
+void inline_polymorphic_fail_next();
+}
+
+interface meter {
+  int read();
+  void bump(int amount) mut;
+};
+
+// Scalar state only: an inline payload.
+class gauge : public meter {
+  mut int value;
+public:
+  gauge(int value) : value(value) {}
+  int read() override { return this.value; }
+  void bump(int amount) mut override { this.value = this.value + amount; }
+};
+
+// Its destructor runs source code, so it is boxed.
+class tracked : public meter {
+  int value;
+public:
+  tracked(int value) : value(value) {}
+  ~tracked() { std::println(std::format("~tracked {}", this.value)); }
+  int read() override { return this.value; }
+  void bump(int amount) mut override {}
+};
+
+// Inert, but larger than the 32-byte slot: boxed.
+class wide : public meter {
+  int64_t a;
+  int64_t b;
+  int64_t c;
+  int64_t d;
+public:
+  wide(int64_t seed) : a(seed), b(seed), c(seed), d(seed) {}
+  int read() override { return int(this.a + this.b + this.c + this.d); }
+  void bump(int amount) mut override {}
+};
+
+using slot = std::inline_polymorphic<meter, 32, 8>;
+
+void report(std::string_view label, slot& value) {
+  if (!value.has_value()) {
+    std::println(std::format("{} empty", label));
+    return;
+  }
+  std::println(std::format("{} {} {}", label, value.is_inline() ? "inline" : "boxed",
+                           value.get().read()));
+}
+
+void allocations(std::string_view label, uint64_t before) {
+  std::println(std::format("{} allocations {}", label, inline_polymorphic_allocations() - before));
+}
+
+uint64_t counted() {
+  return inline_polymorphic_allocations();
+}
+
+int divide(int value, int by) { return value / by; }
+
+// Retained mutable state moves with an inline callback.
+struct step_counter {
+  mut int value = 0;
+  int operator()() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+
+void owners() {
+  mut slot value{};
+  report("empty", value);
+  mut uint64_t start = counted();
+  value.replace(gauge(3));
+  allocations("inline replace", start);
+  report("inline", value);
+  value.get().bump(2);
+  report("bumped", value);
+
+  start = counted();
+  slot moved = std::move(value);
+  allocations("move", start);
+  report("moved", moved);
+
+  mut slot other{wide(int64_t(9))};
+  report("other", other);
+  start = counted();
+  other = std::move(moved);
+  allocations("move assign", start);
+  report("assigned", other);
+  {
+    // Assignment destroys the replaced boxed object exactly once.
+    mut slot doomed{tracked(9)};
+    slot incoming{gauge(1)};
+    doomed = std::move(incoming);
+    report("doomed", doomed);
+  }
+
+  start = counted();
+  other.replace(tracked(7));
+  allocations("boxed replace", start);
+  report("replaced", other);
+  other.replace(gauge(11));
+  report("back inline", other);
+  start = counted();
+  other.replace(wide(int64_t(2)));
+  allocations("wide replace", start);
+  report("wide", other);
+  other.reset();
+  report("reset", other);
+
+  // Growth relocates every inline payload into the new buffer.
+  mut std::vector<slot> many{};
+  for (mut int index = 0; index < 24; index++) {
+    mut slot item{};
+    if (index % 3 == 0) {
+      item.replace(wide(int64_t(index)));
+    } else {
+      item.replace(gauge(index));
+    }
+    many.push_back(std::move(item));
+  }
+  mut int total = 0;
+  mut int inline_count = 0;
+  for (mut std::size_t index = 0; index < many.size(); index++) {
+    total = total + many[index].get().read();
+    if (many[index].is_inline()) {
+      inline_count++;
+    }
+  }
+  std::println(std::format("vector {} {} {}", many.size(), inline_count, total));
+}
+
+void callbacks() {
+  int offset = 4;
+  mut uint64_t start = counted();
+  std::function<int(int)> small{[offset](int value) -> int { return value + offset; }};
+  allocations("function small", start);
+  start = counted();
+  auto copy = small.clone();
+  allocations("function clone", start);
+  start = counted();
+  std::function<int(int)> moved = std::move(copy);
+  allocations("function move", start);
+  std::println(std::format("function calls {} {}", small(1), moved(2)));
+
+  int64_t a = 1;
+  int64_t b = 2;
+  int64_t c = 3;
+  int64_t d = 4;
+  start = counted();
+  std::function<int(int)> large{
+      [a, b, c, d](int value) -> int { return value + int(a + b + c + d); }};
+  allocations("function large", start);
+  std::println(std::format("function large {}", large(0)));
+
+  mut std::function<int() mut> counter{step_counter()};
+  [[discard]] counter();
+  mut std::function<int() mut> moved_counter = std::move(counter);
+  std::println(std::format("counter {}", moved_counter()));
+
+  auto owned = std::make_unique<int>(5);
+  start = counted();
+  std::move_only_function<int()> boxed{
+      [owned = std::move(owned)]() -> int { return *owned; }};
+  allocations("move-only owning", start);
+  std::println(std::format("move-only {}", boxed()));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  inline_polymorphic_count_begin();
+  if (argc == 1) {
+    owners();
+    callbacks();
+    std::println(std::format("live {}", inline_polymorphic_live()));
+    return 0;
+  }
+  if (argc == 2) {
+    // A failed boxed allocation leaves the current object in place.
+    mut slot value{tracked(1)};
+    inline_polymorphic_fail_next();
+    value.replace(tracked(2));
+    return 1;
+  }
+  if (argc == 3) {
+    // A payload that fails before publication never reaches the slot.
+    mut slot value{tracked(5)};
+    value.replace(gauge(divide(1, argc - 3)));
+    return 1;
+  }
+  if (argc == 4) {
+    // Failure inside an inline payload's method unwinds its owners.
+    slot boxed{tracked(6)};
+    mut slot value{gauge(2147483647)};
+    value.get().bump(1);
+    return 1;
+  }
+  // Failure inside an inline callback destroys each owner exactly once.
+  slot boxed{tracked(8)};
+  int zero = argc - 5;
+  std::function<int(int)> callback{[zero](int value) -> int { return value / zero; }};
+  return callback(1);
+}

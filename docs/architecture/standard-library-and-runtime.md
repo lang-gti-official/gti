@@ -667,6 +667,41 @@ special-member assignment body that conditionally destroys or constructs the
 private slot. Applications replace a value through `reset()` or `emplace()`.
 No public `std::optional` name is recognized by semantics or a backend.
 
+`std::inline_polymorphic<Interface, Bytes, Align>` is ordinary source-defined
+policy over the trusted `gti_internal::polymorphic_storage<Interface, Bytes,
+Align>` capability from `<std/polymorphic>`, plus an ordinary
+`std::unique_ptr<Interface>` for boxed payloads. Semantics admits a payload
+model into the slot only when the compiler-bound structural constraint
+`inline_polymorphic_payload` holds: a concrete class publicly derived from the
+polymorphic interface, failure-free relocation, no active cleanup (no source
+destructor and no owning field), no checked borrowed state, and no concurrency
+capability beyond the interface's. Those facts make every slot operation
+failure-free and cleanup-inert, so the slot needs no failure-aware cleanup
+recipe; it is movable and move-assignable while optional's slot is not. The
+library chooses inline placement with an `if constexpr` over that concept and
+a runtime `std::layout_of` comparison, which the native compiler folds.
+
+MIR verification re-proves each of the five operations: the exact capability
+class and staged storage place, the interface result and owner-tied loan for
+reads, no failure edge, and for construction one completed payload of a
+concrete, cleanup-inert, relocatable class whose recorded base chain reaches
+the interface. Violated private preconditions (an engaged construction or a
+payload larger than the native slot) trap rather than produce defined failure,
+because application code cannot name the capability.
+
+The C++ representation stores the payload bytes, a pointer to one constant
+per-model operations table, and a cached interface pointer. Moving or
+move-assigning the slot calls the table's relocation, which move-constructs the
+payload at the destination with its generated move and destroys the moved-from
+source (the same failure-free relocation `relocate_at` uses), then recomputes
+the interface pointer from the destination. A polymorphic payload is never
+copied as bytes, which keeps signed vtable pointers valid. The cache is never
+copied from the source. Closure-bearing instances of one generic function
+share a C++ template body. When instances differ only through a closure
+nested in a class argument, such as a model whose inline eligibility depends on
+its captures, the emission planner adds a nested closure-identity selector so
+each verified body stays distinct.
+
 The same identity boundary applies to generic constraints. The prelude binds
 private unary and structural concept declarations to compiler facts, and
 compiler-trusted standard-library units compose them into public source

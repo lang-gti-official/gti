@@ -2137,6 +2137,13 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::PrefixStorageTryCString:
         case IntrinsicKind::OptionalStorageHasValue:
         case IntrinsicKind::OptionalStorageReset:
+        // Polymorphic storage preconditions are private library invariants;
+        // a violation traps rather than producing a defined failure.
+        case IntrinsicKind::PolymorphicStorageHasValue:
+        case IntrinsicKind::PolymorphicStorageConstruct:
+        case IntrinsicKind::PolymorphicStorageRead:
+        case IntrinsicKind::PolymorphicStorageReadMut:
+        case IntrinsicKind::PolymorphicStorageReset:
         case IntrinsicKind::ObjectDestroy:
         case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::StringViewSize:
@@ -2900,6 +2907,16 @@ auto SemanticVisitor::Impl::isOptionalLibraryUnit(SourceUnitId sourceUnit) const
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
          unit->standardLibraryName == "std/optional";
+}
+
+auto SemanticVisitor::Impl::isPolymorphicLibraryUnit(
+    SourceUnitId sourceUnit) const -> bool {
+  if (sourceGraph == nullptr) {
+    return false;
+  }
+  const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+  return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
+         unit->standardLibraryName == "std/polymorphic";
 }
 
 auto SemanticVisitor::Impl::isSourceLocationLibraryUnit(
@@ -8953,6 +8970,8 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   case IntrinsicKind::PrefixStorageReadMut:
   case IntrinsicKind::OptionalStorageRead:
   case IntrinsicKind::OptionalStorageReadMut:
+  case IntrinsicKind::PolymorphicStorageRead:
+  case IntrinsicKind::PolymorphicStorageReadMut:
   case IntrinsicKind::MutexGuardRead:
   case IntrinsicKind::MutexGuardReadMut:
     return;

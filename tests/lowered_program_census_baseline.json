@@ -136,7 +136,7 @@
       }
     },
     "100-owned-error-pipelines.gti": {
-      "declarations": 880,
+      "declarations": 906,
       "bodies": 153,
       "generated_items": 40,
       "generated_kinds": {
@@ -151,7 +151,7 @@
       }
     },
     "101-owned-algorithm-results.gti": {
-      "declarations": 818,
+      "declarations": 844,
       "bodies": 98,
       "generated_items": 63,
       "generated_kinds": {
@@ -166,7 +166,7 @@
       }
     },
     "102-constexpr-frame-budget.gti": {
-      "declarations": 564,
+      "declarations": 590,
       "bodies": 38,
       "generated_items": 14,
       "generated_kinds": {
@@ -181,7 +181,7 @@
       }
     },
     "103-resource-exchange.gti": {
-      "declarations": 691,
+      "declarations": 717,
       "bodies": 55,
       "generated_items": 24,
       "generated_kinds": {
@@ -196,7 +196,7 @@
       }
     },
     "104-move-only-ordering.gti": {
-      "declarations": 878,
+      "declarations": 904,
       "bodies": 88,
       "generated_items": 53,
       "generated_kinds": {
@@ -226,7 +226,7 @@
       }
     },
     "106-custom-formatters.gti": {
-      "declarations": 762,
+      "declarations": 788,
       "bodies": 108,
       "generated_items": 36,
       "generated_kinds": {
@@ -241,7 +241,7 @@
       }
     },
     "107-composable-io.gti": {
-      "declarations": 826,
+      "declarations": 852,
       "bodies": 123,
       "generated_items": 63,
       "generated_kinds": {
@@ -301,7 +301,7 @@
       }
     },
     "110-integral-enums.gti": {
-      "declarations": 742,
+      "declarations": 768,
       "bodies": 96,
       "generated_items": 39,
       "generated_kinds": {
@@ -361,7 +361,7 @@
       }
     },
     "114-owning-storage-view.gti": {
-      "declarations": 694,
+      "declarations": 720,
       "bodies": 101,
       "generated_items": 53,
       "generated_kinds": {
@@ -466,7 +466,7 @@
       }
     },
     "120-immovable-storage.gti": {
-      "declarations": 686,
+      "declarations": 712,
       "bodies": 96,
       "generated_items": 54,
       "generated_kinds": {
@@ -481,7 +481,7 @@
       }
     },
     "121-programmable-allocators.gti": {
-      "declarations": 858,
+      "declarations": 884,
       "bodies": 202,
       "generated_items": 118,
       "generated_kinds": {
@@ -541,7 +541,7 @@
       }
     },
     "125-manual-object-lifetimes.gti": {
-      "declarations": 733,
+      "declarations": 759,
       "bodies": 93,
       "generated_items": 48,
       "generated_kinds": {
@@ -571,7 +571,7 @@
       }
     },
     "127-operator-and-value-transport.gti": {
-      "declarations": 768,
+      "declarations": 794,
       "bodies": 75,
       "generated_items": 39,
       "generated_kinds": {
@@ -586,7 +586,7 @@
       }
     },
     "128-inline-object-pool.gti": {
-      "declarations": 748,
+      "declarations": 774,
       "bodies": 92,
       "generated_items": 49,
       "generated_kinds": {
@@ -601,7 +601,7 @@
       }
     },
     "129-generic-payload-enums.gti": {
-      "declarations": 761,
+      "declarations": 787,
       "bodies": 66,
       "generated_items": 41,
       "generated_kinds": {
@@ -631,7 +631,7 @@
       }
     },
     "130-fresh-result-initialization.gti": {
-      "declarations": 674,
+      "declarations": 700,
       "bodies": 49,
       "generated_items": 22,
       "generated_kinds": {
@@ -646,7 +646,7 @@
       }
     },
     "131-inferred-references.gti": {
-      "declarations": 875,
+      "declarations": 901,
       "bodies": 158,
       "generated_items": 46,
       "generated_kinds": {
@@ -676,7 +676,7 @@
       }
     },
     "134-standard-library-modules.gti": {
-      "declarations": 846,
+      "declarations": 872,
       "bodies": 118,
       "generated_items": 48,
       "generated_kinds": {
@@ -688,6 +688,36 @@
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
         "concrete_instance_adapter": 21
+      }
+    },
+    "135-inline-polymorphic-values.gti": {
+      "declarations": 884,
+      "bodies": 151,
+      "generated_items": 64,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 15,
+        "callable_adapter": 10,
+        "lifecycle_cleanup": 1,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 37
+      }
+    },
+    "136-inline-closure-cells.gti": {
+      "declarations": 749,
+      "bodies": 94,
+      "generated_items": 53,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 10,
+        "callable_adapter": 10,
+        "lifecycle_cleanup": 1,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 31
       }
     },
     "14-operators.gti": {
@@ -781,7 +811,7 @@
       }
     },
     "20-strings.gti": {
-      "declarations": 671,
+      "declarations": 697,
       "bodies": 49,
       "generated_items": 22,
       "generated_kinds": {
@@ -961,7 +991,7 @@
       }
     },
     "32-structured-bindings.gti": {
-      "declarations": 695,
+      "declarations": 721,
       "bodies": 54,
       "generated_items": 23,
       "generated_kinds": {
@@ -1081,7 +1111,7 @@
       }
     },
     "40-loan-flow-edges.gti": {
-      "declarations": 669,
+      "declarations": 695,
       "bodies": 51,
       "generated_items": 24,
       "generated_kinds": {
@@ -1126,7 +1156,7 @@
       }
     },
     "43-program-arguments.gti": {
-      "declarations": 754,
+      "declarations": 780,
       "bodies": 54,
       "generated_items": 33,
       "generated_kinds": {
@@ -1141,7 +1171,7 @@
       }
     },
     "44-bounded-requires.gti": {
-      "declarations": 704,
+      "declarations": 730,
       "bodies": 50,
       "generated_items": 36,
       "generated_kinds": {
@@ -1171,7 +1201,7 @@
       }
     },
     "46-defined-integer-arithmetic.gti": {
-      "declarations": 551,
+      "declarations": 577,
       "bodies": 35,
       "generated_items": 14,
       "generated_kinds": {
@@ -1261,7 +1291,7 @@
       }
     },
     "52-stateful-callables.gti": {
-      "declarations": 765,
+      "declarations": 791,
       "bodies": 58,
       "generated_items": 38,
       "generated_kinds": {
@@ -1351,7 +1381,7 @@
       }
     },
     "58-formatted-output.gti": {
-      "declarations": 760,
+      "declarations": 786,
       "bodies": 106,
       "generated_items": 36,
       "generated_kinds": {
@@ -1426,7 +1456,7 @@
       }
     },
     "63-random-engine.gti": {
-      "declarations": 558,
+      "declarations": 584,
       "bodies": 40,
       "generated_items": 16,
       "generated_kinds": {
@@ -1486,7 +1516,7 @@
       }
     },
     "67-forward-iterators.gti": {
-      "declarations": 733,
+      "declarations": 759,
       "bodies": 48,
       "generated_items": 34,
       "generated_kinds": {
@@ -1531,7 +1561,7 @@
       }
     },
     "70-qualified-specializations.gti": {
-      "declarations": 486,
+      "declarations": 512,
       "bodies": 35,
       "generated_items": 15,
       "generated_kinds": {
@@ -1561,7 +1591,7 @@
       }
     },
     "72-filesystem-paths.gti": {
-      "declarations": 795,
+      "declarations": 821,
       "bodies": 70,
       "generated_items": 27,
       "generated_kinds": {
@@ -1576,7 +1606,7 @@
       }
     },
     "73-constructor-local-generics.gti": {
-      "declarations": 675,
+      "declarations": 701,
       "bodies": 60,
       "generated_items": 29,
       "generated_kinds": {
@@ -1636,7 +1666,7 @@
       }
     },
     "77-callable-concepts.gti": {
-      "declarations": 739,
+      "declarations": 765,
       "bodies": 49,
       "generated_items": 35,
       "generated_kinds": {
@@ -1681,7 +1711,7 @@
       }
     },
     "80-function-items.gti": {
-      "declarations": 739,
+      "declarations": 765,
       "bodies": 51,
       "generated_items": 34,
       "generated_kinds": {
@@ -1696,7 +1726,7 @@
       }
     },
     "83-complete-ranges.gti": {
-      "declarations": 746,
+      "declarations": 772,
       "bodies": 71,
       "generated_items": 45,
       "generated_kinds": {
@@ -1741,9 +1771,9 @@
       }
     },
     "86-owning-callbacks.gti": {
-      "declarations": 494,
-      "bodies": 213,
-      "generated_items": 108,
+      "declarations": 521,
+      "bodies": 251,
+      "generated_items": 137,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -1752,11 +1782,11 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 93
+        "concrete_instance_adapter": 122
       }
     },
     "87-associative-containers.gti": {
-      "declarations": 955,
+      "declarations": 981,
       "bodies": 193,
       "generated_items": 119,
       "generated_kinds": {
@@ -1771,7 +1801,7 @@
       }
     },
     "88-consuming-builders.gti": {
-      "declarations": 680,
+      "declarations": 706,
       "bodies": 57,
       "generated_items": 22,
       "generated_kinds": {
@@ -1786,7 +1816,7 @@
       }
     },
     "89-library-workflow.gti": {
-      "declarations": 1349,
+      "declarations": 1375,
       "bodies": 422,
       "generated_items": 241,
       "generated_kinds": {
@@ -1801,7 +1831,7 @@
       }
     },
     "90-generic-algorithms.gti": {
-      "declarations": 1019,
+      "declarations": 1045,
       "bodies": 206,
       "generated_items": 151,
       "generated_kinds": {
@@ -1816,7 +1846,7 @@
       }
     },
     "91-json-documents.gti": {
-      "declarations": 902,
+      "declarations": 928,
       "bodies": 180,
       "generated_items": 44,
       "generated_kinds": {
@@ -1831,7 +1861,7 @@
       }
     },
     "92-json-codecs.gti": {
-      "declarations": 914,
+      "declarations": 940,
       "bodies": 205,
       "generated_items": 55,
       "generated_kinds": {
@@ -1846,7 +1876,7 @@
       }
     },
     "93-http-json-client.gti": {
-      "declarations": 1048,
+      "declarations": 1074,
       "bodies": 289,
       "generated_items": 54,
       "generated_kinds": {
@@ -1861,7 +1891,7 @@
       }
     },
     "94-binary-text-encoding.gti": {
-      "declarations": 687,
+      "declarations": 713,
       "bodies": 59,
       "generated_items": 22,
       "generated_kinds": {
@@ -1876,7 +1906,7 @@
       }
     },
     "95-explicit-cloning.gti": {
-      "declarations": 769,
+      "declarations": 795,
       "bodies": 75,
       "generated_items": 40,
       "generated_kinds": {
@@ -1921,7 +1951,7 @@
       }
     },
     "98-shared-ownership.gti": {
-      "declarations": 672,
+      "declarations": 698,
       "bodies": 58,
       "generated_items": 28,
       "generated_kinds": {
@@ -1936,7 +1966,7 @@
       }
     },
     "99-borrowed-expected.gti": {
-      "declarations": 690,
+      "declarations": 716,
       "bodies": 66,
       "generated_items": 22,
       "generated_kinds": {
@@ -1952,8 +1982,8 @@
     }
   },
   "totals": {
-    "declarations": 49597,
-    "bodies": 6784,
-    "generated_items": 2860
+    "declarations": 52427,
+    "bodies": 7067,
+    "generated_items": 3006
   }
 }
