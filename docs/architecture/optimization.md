@@ -390,9 +390,28 @@ assignment; a bounded typed-MIR check admits only plain assignment to an exact
 by-value raw-pointer formal, without raw access, reference projection, cleanup
 or user/runtime code. Other writes retain the barrier. An address escape from
 that exact no-pointee-write relay does not itself overwrite the pointee. This
-rule provides no initialized region, allocation freshness, field-address
-summary, pointer-arithmetic contract or lifetime permission; actual raw reads
+rule provides no initialized region, allocation freshness,
+pointer-arithmetic contract or lifetime permission; actual raw reads
 and the caller's unsafe obligations remain unchanged.
+
+Wrapping add/subtract/multiply carry an ordinary integer envelope only when
+checked evaluation of the complete input envelope proves that no wrap can
+occur. Proven add/subtract also reuse the existing entry-relative field rule,
+so bounded modular counter updates do not lose their receiver relation. A
+potential wrap yields no ordinary-arithmetic fact; it does not introduce a
+failure edge or change the modular operation. Canonical replay rederives the
+same condition, and actual-wrap negatives reject forged downstream overflow
+discharges.
+
+The same returned-input descriptor also transports an ordinary owned pointer
+field of a receiver or checked-reference parameter. All successful exits must
+return that exact entry address. Return transport and construction postconditions
+share caller substitution: the caller must already retain the prepared input's
+current typed field-address fact. No field identity is invented after mutation
+or an opaque call. Distinct or ambiguous fields, pointee writes, synchronization
+and unsupported effects retain checks. This bounded prerequisite does not yet
+create field facts absent from the caller's represented places, export an
+initialized interval, or associate a lifetime witness with its pointee.
 
 Successful exact integer construction additionally establishes the value at
 one typed address: the root identity plus a constant nonnegative element offset.
@@ -444,6 +463,16 @@ load cannot recreate the entry relation. Exact scalar construction through the
 field can therefore justify subsequent scalar arithmetic, including an exact
 raw-parameter initialization helper, without removing the raw load or granting
 an unsafe operation new permission.
+
+Current field addresses are keyed by typed owned paths independently of the
+body's materialized place table. A getter-only wrapper can therefore relay a
+nested field without directly loading that field itself. Function entry walks
+ordinary receiver/checked-reference records with a 1,024-node, 32-level budget;
+only raw-pointer leaves receive address identities. Exact assignment updates
+the stored address, joins retain equal addresses, and overlapping writes or
+unknown effects invalidate the map. Constructor receivers, stored-reference
+traversal and raw pointee contents are not seeded. This is address transport,
+not initialized-region coverage or proof that an incoming pointer is valid.
 
 This rule and its exact call postcondition do not initialize unknown pointer
 contents at entry. Successful vacant construction may additionally retain up
