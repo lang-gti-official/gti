@@ -548,6 +548,15 @@ differing return addresses, lifetime replacement and checked writes retain the
 normal failure checks. Exact non-writing source address relays may return a
 borrow without treating that return escape as a write to the witness.
 
+Exact address summaries also carry a constant element offset or one symbolic
+index from a read-only integer formal/owned entry field. Return and construction
+summaries share caller substitution, including reordered arguments. Equal
+calling intervals do not equate different parameters, and one indexed
+construction does not cover holes or its entire observed interval. Preparing
+an already evaluated pointer value is an inert argument transfer, even when
+its source expression was unsafe; the real producer and all its obligations
+remain in MIR. General contiguous initialization coverage remains separate.
+
 This rule and its exact call postcondition do not initialize unknown pointer
 contents at entry. Successful vacant construction may additionally retain up
 to 64 exact non-byte owned fields already known live at construction time. A

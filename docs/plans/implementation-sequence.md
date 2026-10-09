@@ -5290,6 +5290,14 @@ same behavior, invalid-input, replay and performance guarantees.
   This covers exact scalar addresses only, not indexed initialized regions or
   record-field envelopes. Differing/ambiguous pointers, native writes, checked
   mutation and lifetime replacement remain negative controls.
+  Exact return/construction displacement substitution now also names one slot
+  selected by a read-only integer formal, including reordered helper arguments
+  and checked-reference returns. Different parameters with identical observed
+  ranges and unconstructed holes retain checks and reject forged proofs.
+  Pointer argument staging no longer repeats the already evaluated producer's
+  unsafe effect. This establishes indexed address equality, not coverage of an
+  initialized prefix; constructor/result ownership transport and that coverage
+  remain required for the container acceptance gates.
   The migration safety suite retains the same ten failures reproduced with the
   exact prerequisite checkpoint, including missing indexed-element envelopes;
   those acceptance assertions are unchanged.
