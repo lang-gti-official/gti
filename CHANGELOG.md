@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.395.4 — Fewer allocations in std::format
+
+- `std::format`, `try_format`, `print` and `println` with a pattern now
+  allocate once for a typical short result, instead of about once per
+  argument and per append. Integers are written straight into the output
+  without temporary strings, padding no longer builds intermediate text, and
+  the output grows geometrically. Formatted text and errors are unchanged.
+  Formatting two integers runs about twice as fast, a string-keyed map
+  workload that formats its keys 44% faster, and a pattern `println` loop 27%
+  faster.
+
 ## 0.395.2 — Owning arguments before conditional arguments
 
 - Fix an internal compiler error when a method or lambda call passes an

@@ -1,5 +1,49 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## Allocation-lean formatting (2026-10-09)
+
+Status: implemented as a stdlib-only change (`<std/format>`), with targeted
+validation. The full suite is deferred to reconciliation.
+
+The allocation screen ran against idiomatic C++ on the same machine as the
+entries below, and it avoided files in Codex's in-flight source-ownership and
+allocation branches. Single runs, after a warm-up:
+
+| Workload | GTI | C++ | Disposition |
+| --- | ---: | ---: | --- |
+| `unordered_map<int64,int64>` insert/lookup/erase | 0.16 s | 0.15 s | At parity; no change. |
+| `map<int64,int64>` same operations | 1.24 s | 0.50 s | Tree descent dominates, not `malloc`. Each step loads a slot pointer, then the node. Inline nodes need generic relocation of `K`/`V`, which the S-ALLOC-09 raw-buffer layering provides, so this is deferred to that work. |
+| `std::function` construct+call ×2M | 0.14 s | <0.01 s | C++ stores small lambdas inline. Callback small-buffer storage is a separate slice. |
+| `std::format("{}:{}")` ×1M | 0.24 s | 0.05 s | Selected: about five allocations per call. |
+| string-keyed map (format-built keys) | 0.10 s | 0.03 s | Mostly the same formatting cost. |
+| `deque`/`list` churn | 0.04/0.07 s | <0.01/0.04 s | Small absolute cost; `deque`'s per-element owners also wait on raw buffers. |
+
+Aligned versus unaligned `operator new` costs the same here (about 24 ns per
+pair), and `posix_memalign(16)` is about 15% slower than `new`. The allocator
+entry is therefore not the bottleneck; allocation *count* is.
+
+Interleaved comparison of the baseline (main `99e29cd9`) and candidate
+compilers, which differ only in the standard library: 3 warmups, 15 seeded
+rounds, `-O3`, matching outputs.
+
+| Program | Baseline median ms | Candidate median ms | Ratio | Binary bytes |
+| --- | ---: | ---: | ---: | --- |
+| `format("{}:{}", i, i*3)` ×1M | 241.38 | 117.92 | 0.489 | 220000 -> 223968 |
+| string-keyed `unordered_map` | 96.41 | 53.83 | 0.558 | 281248 -> 301664 |
+| `println("{}:{:>6}\|{:#x}")` ×400k | 329.59 | 239.32 | 0.726 | 210488 -> 214944 |
+| `interface` probe (control) | 120.43 | 120.82 | 1.003 | unchanged |
+| `soa` probe (control) | 314.77 | 314.10 | 0.998 | unchanged |
+
+The remaining `format` gap to C++ is the single result allocation, which C++
+avoids with its short-string buffer, plus per-byte appends. A short-string
+representation belongs to the S-ALLOC-09 string layering.
+
+While building the output matrix, about 1,100 formatting calls in a single
+`main` took more than 18 CPU-minutes to compile. The same calls split across
+113 functions took 16 s. That superlinear per-body compile cost is filed
+separately.
+
+
 ## RT-AUDIT-01: runtime optimization screen (2026-10-08)
 
 Status: historical audit evidence for the frozen compiler identified below.
