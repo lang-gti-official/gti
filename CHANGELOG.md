@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.394.3 — Faster checked integer arithmetic
+
+- Checked `+`, `-` and `*` on integers, compound assignments, the `expected`-
+  returning `std::checked_add`/`checked_sub`/`checked_mul` and the
+  `std::saturating_*` functions detect overflow with the native compiler's
+  overflow builtins under GCC and Clang. They now compile to the processor's
+  overflow flags instead of limit comparisons, and checked multiplication no
+  longer divides. Results, failure codes and messages are unchanged. Other
+  native compilers keep the portable checks. Loops that check every element
+  run 28-52% faster on the runtime probes, and a direct scalar loop now beats
+  C++ that performs the same checks.
+
 ## 0.394.2 — Lambda base-reference arguments
 
 - Fix an internal compiler error when a lambda is called with a derived class

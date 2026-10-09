@@ -2483,6 +2483,23 @@ Cleanup scopes, activation, record construction and ordinary source functions
 receive no blanket cold, inline or exception annotation. MIR, replay evidence,
 failure identity and cleanup order are unchanged.
 
+Integer overflow detection has one representation shared by every checked
+family. The `mir_checked_add/subtract/multiply_v1` failure helpers and the
+terminating `add`/`subtract`/`multiply` helpers use it. So do the
+`expected`-returning `checked_*` intrinsics and the `saturating_*` intrinsics.
+The preamble's `integer_add_overflows`, `integer_subtract_overflows` and
+`integer_multiply_overflows` are exact predicates over operands already
+converted to the result type. Under GCC and Clang they lower to
+`__builtin_*_overflow`, which the native compiler maps to the target's
+overflow flags. Other compilers, or a build defining
+`GTI_PORTABLE_OVERFLOW_CHECKS`, use the portable limit comparisons, which
+compute the same predicate. Each caller stores its result only on success, so
+an overflowing operation publishes nothing and reports the same code and
+detail. `checked_integer_overflow_runtime` compares both paths at O0 and O3
+against exact arithmetic. MIR operations, safety discharges and failure
+metadata are unchanged; this is a backend spelling of the same checked
+operation.
+
 Unique-owner borrowing uses the failure ABI. At the intrinsic instruction the
 backend tests the represented owner for emptiness and selects only the exact
 code/detail carried by MIR. Its `Invoke` routes failure through cleanup; the
