@@ -1,0 +1,47 @@
+// A borrowed call receiver stays valid while a later argument evaluates a
+// conditional and can fail, after an owning class argument for the same call
+// was already prepared. The receiver is a local lambda or a method object, and
+// the owning argument is freshly constructed or moved from another local.
+#include <std/string>
+#include <std/vector>
+
+class Token {
+  int32_t identity;
+public:
+  Token(int32_t identity) : identity(identity) {}
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.identity); }
+  int32_t read() { return this.identity; }
+};
+
+class Taker {
+  int32_t base;
+public:
+  Taker(int32_t base) : base(base) {}
+  int32_t take(Token token, int32_t divisor) {
+    return token.read() + divisor + this.base;
+  }
+};
+
+int32_t divide(int32_t divisor) { return 12 / divisor; }
+
+// The argument count selects the call whose later argument fails: 2 through 5
+// select the four calls in order.
+int main(int argc, std::vector<std::string> argv) {
+  auto take = [](Token token, int32_t divisor) -> int32_t {
+    return token.read() + divisor;
+  };
+  Taker taker{100};
+  Token first{1};
+  Token second{2};
+  int32_t fresh_lambda = take(Token(5), divide(argc == 2 ? 0 : 1));
+  std::println(fresh_lambda);
+  int32_t moved_lambda = take(std::move(first), divide(argc == 3 ? 0 : 1));
+  std::println(moved_lambda);
+  int32_t fresh_method = taker.take(Token(6), divide(argc == 4 ? 0 : 1));
+  std::println(fresh_method);
+  int32_t moved_method =
+      taker.take(std::move(second), divide(argc == 5 ? 0 : 1));
+  std::println(moved_method);
+  return 0;
+}

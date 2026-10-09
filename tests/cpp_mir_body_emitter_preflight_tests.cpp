@@ -2118,6 +2118,104 @@ void testLambdaOwningTransportAdmission() {
                  "drifts must fail admission");
 }
 
+// A borrowed receiver stays representation-erased across a conditional
+// fallible argument after an owning class argument for the same call was
+// prepared: freshly constructed by a constructor that cannot fail, or moved
+// from another local. Lambda and method receivers share the proof.
+void testConditionalOwningArgumentReceiverAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/conditional_owning_argument_receivers.gti";
+  std::ifstream input(path);
+  expect(input.good(), "the conditional owning argument fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "the conditional owning argument fixture must pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the conditional owning argument fixture needs a complete backend "
+         "representation");
+  const lang::MirFunctionInstance *entry = nullptr;
+  for (const lang::MirFunctionInstance &candidate :
+       frontend.mir.functionInstances()) {
+    if (candidate.entryKind != lang::ProgramEntryKind::None)
+      entry = &candidate;
+  }
+  expect(entry != nullptr, "the fixture must retain its entry body");
+  if (entry == nullptr)
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  expect(lang::CppMirBodyEmitter(frontend.mir, map)
+             .supportsFailureBodyText(address),
+         "fresh and moved owning arguments before a conditional fallible "
+         "argument should keep lambda and method receivers admissible");
+
+  // Each owning argument is prepared before its call's receiver is consumed:
+  // two fresh constructions and two moves of other locals.
+  std::vector<lang::MirInstructionId> freshProducers;
+  std::vector<lang::MirInstructionId> movedStages;
+  for (const lang::MirBlock &block : entry->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::CallInput ||
+          instruction.callInputKind != lang::HirCallInputKind::MoveValue ||
+          !instruction.destination || !instruction.preparedParameterDrop ||
+          instruction.info.type.kind != lang::SemanticType::Class ||
+          instruction.operands.size() != 1)
+        continue;
+      const lang::MirValue *source =
+          entry->body.findValue(instruction.operands.front().value);
+      const lang::MirInstruction *producer =
+          source == nullptr
+              ? nullptr
+              : findPreflightInstruction(entry->body, source->definition);
+      if (producer != nullptr &&
+          producer->kind == lang::MirInstructionKind::Construct &&
+          !producer->successResultDrop && producer->lifecycle.size() == 1)
+        freshProducers.push_back(producer->id);
+      if (producer != nullptr &&
+          producer->kind == lang::MirInstructionKind::Move)
+        movedStages.push_back(instruction.id);
+    }
+  }
+  expect(freshProducers.size() == 2 && movedStages.size() == 2,
+         "the fixture should prepare two fresh and two moved owning "
+         "arguments");
+
+  const auto forge = [&](const auto &mutation) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    for (lang::MirFunctionInstance &function : functions) {
+      if (function.id != entry->id)
+        continue;
+      mutation(function.body);
+      expect(lang::rebuildMirValueUses(function.body),
+             "the forged conditional owning argument body should retain a "
+             "rebuildable use index");
+    }
+    return !lang::CppMirBodyEmitter(forged, map)
+                .supportsFailureBodyText(address);
+  };
+  for (const lang::MirInstructionId id : freshProducers) {
+    expect(forge([&](lang::MirBody &body) {
+             findPreflightInstruction(body, id)->lifecycle.front().conditional =
+                 true;
+           }),
+           "a fresh owning argument without an exact unconditional "
+           "activation must fail admission");
+  }
+  for (const lang::MirInstructionId id : movedStages) {
+    expect(forge([&](lang::MirBody &body) {
+             ++findPreflightInstruction(body, id)->callSite;
+           }),
+           "a moved owning argument staged for a different call must fail "
+           "admission");
+  }
+}
+
 void testProgramPlanValidationIsOperationScoped() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-operation-scoped-validation.gti", R"(
@@ -5676,6 +5774,8 @@ constexpr NamedTest kTests[] = {
     {"testOwningPayloadEnumTransportAdmissionFailsClosed",
      testOwningPayloadEnumTransportAdmissionFailsClosed},
     {"testLambdaOwningTransportAdmission", testLambdaOwningTransportAdmission},
+    {"testConditionalOwningArgumentReceiverAdmission",
+     testConditionalOwningArgumentReceiverAdmission},
     {"testFreshClassPayloadOperandStaging",
      testFreshClassPayloadOperandStaging},
     {"testDischargedCompoundOperatorVocabulary",

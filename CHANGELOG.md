@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.395.2 — Owning arguments before conditional arguments
+
+- Fix an internal compiler error when a method or lambda call passes an
+  owning class argument by value, freshly constructed or moved from a local,
+  followed by an argument that contains a conditional and can fail, such as
+  `take(std::move(token), divide(argc == 2 ? 0 : 1))`. If the later argument
+  fails, the prepared argument is destroyed exactly once.
+
 ## 0.395.1 — Faster checked arithmetic and lambda owning arguments
 
 - Checked `+`, `-` and `*` on integers, compound assignments, the `expected`-
