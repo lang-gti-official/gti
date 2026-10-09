@@ -18,6 +18,7 @@ class NativePolicyTest(unittest.TestCase):
                     gti=pathlib.Path("/selected/gti"), cxx="/selected/compiler with spaces",
                     std="c++20", level="3", runs=1, probes=["expected"],
                     output=pathlib.Path(root), runtime_include=pathlib.Path("/runtime/include"),
+                    vendor_include=pathlib.Path("/vendor/include"),
                     runtime_library=pathlib.Path("/runtime/library.a"))
                 commands = []
 
@@ -41,6 +42,9 @@ class NativePolicyTest(unittest.TestCase):
                     self.assertIn("-O3", native)
                     for flag in screen.STRICT:
                         self.assertIn(flag, native)
+                    if mode is screen.attribute:
+                        self.assertIn(str(arguments.runtime_include), native)
+                        self.assertIn(str(arguments.vendor_include), native)
 
 
 if __name__ == "__main__":
