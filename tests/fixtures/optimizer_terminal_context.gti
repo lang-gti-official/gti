@@ -28,8 +28,20 @@ int bad_surviving_value(int value, bool stop) {
   return value + 1;
 }
 
+int choose_exact(int value) {
+  if (value != 0) return 2147483647;
+  return 7;
+}
+int choose_equal(int value) {
+  if (value == 0) return 7;
+  return 2147483647;
+}
+int after_exact_branch() { return choose_exact(0) + 1; }
+int after_equal_branch() { return choose_equal(0) + 1; }
+
 int main() {
   if (false) return bad_surviving_value(2147483647, false);
+  if (after_exact_branch() != 8 || after_equal_branch() != 8) return 3;
   if (after_terminal_branch(7, false) != 8) return 1;
   TerminalRecord record{7, false};
   return record.after_terminal_constructor() == 8 ? 0 : 2;

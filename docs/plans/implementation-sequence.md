@@ -5306,6 +5306,13 @@ same behavior, invalid-input, replay and performance guarantees.
   Those assertions are unchanged. Independent function/constructor terminal
   alternatives, retained overflow, forged-proof rejection and 28 C++20/23
   O0/O2/O3/sanitized native cleanup/failure observations cover this prerequisite.
+  Exact singleton integer comparisons now also exclude impossible equality and
+  inequality alternatives. The expanded terminal/comparison matrix passes 42
+  native cases; 48 native object mutation/alias cases retain their failures.
+  The object fixture's negative dispatch now uses an opaque native selector,
+  rather than relying on provably false positive-check comparisons to appear
+  reachable. All negative proof assertions remain, and the seven plus four
+  container acceptance failures are unchanged.
   Wrapping integer updates now retain ordinary value/entry-relative facts only
   under a proved non-wrapping input envelope. An unrelated four-step bounded
   counter recovers its exact final value; real modular-wrap negatives retain

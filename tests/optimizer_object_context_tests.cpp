@@ -36,13 +36,27 @@ int checkTerminalContexts() {
   const auto analysis = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
   expect(analysis.converged,
          "terminal contexts converge without return summaries");
+  const auto o0 =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O0});
+  const auto o2 =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O2});
+  const auto o3 =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O3});
   std::size_t observed = 0;
   for (const auto &instance : frontend.hir.functionInstances()) {
     if (!instance.source)
       continue;
     const auto name = instance.source->name().lexeme;
-    const bool positive =
-        name == "after_terminal_branch" || name == "after_terminal_constructor";
+    const bool positive = name == "after_terminal_branch" ||
+                          name == "after_terminal_constructor" ||
+                          name == "after_exact_branch" ||
+                          name == "after_equal_branch";
     const bool negative = name == "bad_surviving_value";
     const bool terminal = name == "stop_inner" || name == "stop_outer";
     if (!positive && !negative && !terminal)
@@ -56,11 +70,11 @@ int checkTerminalContexts() {
     if (terminal)
       expect(context && !context->returnInterval,
              "terminal calls publish no fabricated successful return value");
-    for (const auto level :
-         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
-          lang::OptimizationLevel::O3}) {
-      const auto optimized = lang::OptimizationPipeline().run(
-          {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    for (const auto [level, candidate] :
+         {std::pair{lang::OptimizationLevel::O0, &o0},
+          std::pair{lang::OptimizationLevel::O2, &o2},
+          std::pair{lang::OptimizationLevel::O3, &o3}}) {
+      const auto &optimized = *candidate;
       expect(optimized.valid(), "terminal branch facts independently replay");
       if (level == lang::OptimizationLevel::O0)
         expect(optimized.report.transformations.empty(),
@@ -103,7 +117,7 @@ int checkTerminalContexts() {
       expect(rejected == 1, "surviving overflow exercises canonical rejection");
     }
   }
-  expect(observed == 5, "terminal context census");
+  expect(observed == 7, "terminal context census");
   return failures;
 }
 
