@@ -1,0 +1,20 @@
+#include <std/string>
+int main() {
+  std::string_view alphabet = "abcdefghijklmnopqrstuvwxyz";
+  mut uint64_t checksum = 0;
+  for (mut int32_t round = 0; round < 400; round++) {
+    mut std::string text{};
+    for (mut int32_t i = 0; i < 50000; i++) {
+      text.push_back(alphabet[std::size_t((i * 7 + round) % 26)]);
+    }
+    mut std::size_t position = text.find('q');
+    while (position != std::string::npos) {
+      checksum += uint64_t(position);
+      position = text.find('q', position + std::size_t(1));
+    }
+    checksum += uint64_t(text.size());
+  }
+  std::print("checksum ");
+  std::println(std::to_string(checksum));
+  return 0;
+}
