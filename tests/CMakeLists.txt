@@ -2574,6 +2574,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(owning_function_runtime PROPERTIES TIMEOUT 900)
   add_test(
+    NAME conditional_owning_argument_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_owning_argument_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(conditional_owning_argument_runtime PROPERTIES
+                       TIMEOUT 600)
+  add_test(
     NAME consuming_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_receiver_runtime_test.py"
