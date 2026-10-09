@@ -79,6 +79,8 @@ namespace {
     return "arithmetic-range";
   case MirTransformProofKind::ExactReceiver:
     return "exact-receiver";
+  case MirTransformProofKind::ExactParameterReceiver:
+    return "exact-parameter-receiver";
   case MirTransformProofKind::Count:
     break;
   }
@@ -191,7 +193,9 @@ void writeRequiredAnalyses(std::ostream &output,
          << (analyses.scalarPromotion ? "true" : "false")
          << ",\"safetyChecks\":" << (analyses.safetyChecks ? "true" : "false")
          << ",\"sparseConstants\":"
-         << (analyses.sparseConstants ? "true" : "false") << '}';
+         << (analyses.sparseConstants ? "true" : "false")
+         << ",\"closedWorld\":" << (analyses.closedWorld ? "true" : "false")
+         << '}';
 }
 
 void writeSafetyDischarge(std::ostream &output,
