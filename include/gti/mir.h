@@ -99,6 +99,9 @@ enum class MirTransformProofKind {
   BoundsRange,
   ArithmeticRange,
   ExactReceiver,
+  // The receiver is a caller-provided reference parameter whose referent
+  // class is exact on every visible call of a closed function.
+  ExactParameterReceiver,
   Count,
 };
 
@@ -149,6 +152,8 @@ struct MirTransformRequiredAnalyses {
   bool scalarPromotion = false;
   bool safetyChecks = false;
   bool sparseConstants = false;
+  // Whole-program closed-world call-site facts (optimization/closed_world).
+  bool closedWorld = false;
 
   friend bool operator==(const MirTransformRequiredAnalyses &,
                          const MirTransformRequiredAnalyses &) = default;
@@ -786,6 +791,15 @@ struct MirBody;
 [[nodiscard]] bool isMirNativeIndirectCall(const MirProgram &program,
                                            const MirBody &body,
                                            const MirInstruction &instruction);
+// Shared verifier/backend admission of a static member call that presents an
+// interface-typed receiver at its target's owner: `dispatchOwner` names that
+// owner, which directly implements the receiver's interface. Semantics never
+// selects such a member; only the exact-parameter receiver refinement creates
+// it, and optimization coherence replays that refinement's closed-world proof.
+[[nodiscard]] bool
+isMirExactReceiverPresentation(const MirProgram &program,
+                               const MirInstruction &instruction,
+                               const SemanticType &receiverType);
 [[nodiscard]] bool
 isMirFailureOutcomeDischarged(const MirInstruction &instruction,
                               std::size_t origin,
