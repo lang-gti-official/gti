@@ -1,0 +1,13 @@
+#include <std/string>
+int32_t step(int32_t x, int32_t k) {
+  return (x * 3 + k) % 1000003;
+}
+int main() {
+  mut int32_t acc = 1;
+  for (mut int32_t i = 0; i < 200000000; i++) {
+    acc = step(acc, i % 7);
+  }
+  std::print("checksum ");
+  std::println(std::to_string(acc));
+  return 0;
+}

@@ -1,0 +1,17 @@
+#include <std/string>
+#include <std/vector>
+int main() {
+  mut std::vector<int64_t> wide{};
+  for (mut int64_t i = 0; i < 4096; i++) { wide.push_back((i * 2654435761) % 2000000000); }
+  mut int64_t acc = 0;
+  for (mut int32_t round = 0; round < 50000; round++) {
+    for (int64_t& value : wide) {
+      int32_t narrow = int32_t(value);
+      uint8_t low = uint8_t(narrow & 255);
+      acc += int64_t(narrow / 1024) + int64_t(low);
+    }
+  }
+  std::print("checksum ");
+  std::println(std::to_string(acc));
+  return 0;
+}
