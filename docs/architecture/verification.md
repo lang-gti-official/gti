@@ -2367,7 +2367,7 @@ prepared closure slot is constructed once, passed by move, and retired after
 its call rather than requiring an obsolete fused-literal spelling.
 
 The reviewed census refresh adds the two move-construction concept declarations
-to all 87 examples and 17 declarations to `84-optional-values.gti`
+to all 87 examples and 17 declarations to `084-optional-values.gti`
 through optional cloning and its utility include: 24,081 declarations, with
 7,717 bodies and 1,856 generated items unchanged. Both independent executable
 corpus checks passed before this refresh; this is not a combined completion claim.

@@ -322,7 +322,7 @@ and built the `gti` target from an empty object tree:
   30.28 seconds to 18.36 seconds, a 39 percent wall-time reduction;
 - the Release executable changed from 6,430,528 bytes to 6,429,520 bytes, so
   the migration introduced no binary-size growth;
-- ten alternating `examples/56-sum-types.gti` frontend traces measured 2.155 ms
+- ten alternating `examples/056-sum-types.gti` frontend traces measured 2.155 ms
   before and 2.084 ms after at the median across source loading, parsing,
   semantics, HIR lowering, and MIR lowering. Emitted C++ was byte-identical.
 

@@ -750,7 +750,7 @@ the owner. A mutable method may create a call-local or retained child reborrow;
 that child must end before the carrier dependency can end. Dependency
 propagation follows the selected argument and is verified before backend
 entry; it is not inferred from an emitted C++ reference field. See
-[`41-owner-dependencies.gti`](../../examples/41-owner-dependencies.gti) for a
+[`041-owner-dependencies.gti`](../../examples/041-owner-dependencies.gti) for a
 runnable shared factory/generic relay and an exclusive write view.
 
 A single-path shared carrier may retain a read-only child of an exclusive
@@ -994,7 +994,7 @@ read-only overload; later owned intermediates may select consuming `/`.
 If no consuming overload matches, ordinary receiver-qualified fallback remains
 available. Other arguments keep their existing copy/explicit-move rules.
 Receiver selection adds no implicit conversions or argument ranking.
-The [consuming builder example](../../examples/88-consuming-builders.gti)
+The [consuming builder example](../../examples/088-consuming-builders.gti)
 demonstrates preserving a named root while reusing owned path intermediates.
 
 The receiver may

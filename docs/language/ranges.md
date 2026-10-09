@@ -207,7 +207,7 @@ for (mut auto& value : mutable_range) {
 }
 ```
 
-See [`examples/65-mutable-ranges.gti`](../../examples/65-mutable-ranges.gti)
+See [`examples/065-mutable-ranges.gti`](../../examples/065-mutable-ranges.gti)
 for fixed-array and `std::vector` mutation in one runnable program.
 
 The element child ends before `continue`, increment, `break`, `return`, normal
@@ -268,7 +268,7 @@ callable. `<std/algorithm>` uses these facts for generic whole-range `all_of`,
 `mutable_range_of`. The same source implementations accept application-defined
 nominal ranges, standard-library ranges, and fixed arrays. No algorithm or
 public range name is compiler-known. See
-[`examples/83-complete-ranges.gti`](../../examples/83-complete-ranges.gti).
+[`examples/083-complete-ranges.gti`](../../examples/083-complete-ranges.gti).
 
 The bounded concepts intentionally expose no iterator associated-type syntax,
 direct symbolic `begin()`/`begin_mut()`/`end()` extraction, range adaptor,

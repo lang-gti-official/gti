@@ -53,8 +53,8 @@ TRACE_PHASE_PATTERN = re.compile(
     r"mir-lowering|optimization|backend)"
 )
 PUBLIC_EXAMPLE_EXECUTION_PROFILES = {
-    "66-managed-threads.gti": "concurrent",
-    "76-scalar-atomics.gti": "concurrent",
+    "066-managed-threads.gti": "concurrent",
+    "076-scalar-atomics.gti": "concurrent",
 }
 
 
