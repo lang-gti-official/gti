@@ -1,12 +1,28 @@
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <new>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 
 // Counts the two no-throw allocation seams GTI owners use, tracks which of
 // those blocks are still live, and can fail the next one. No real resource
 // exhaustion is needed for these oracles.
 namespace {
+// Abort deliberately does not flush streams. Make cleanup markers observable
+// before any program I/O, so an empty capture proves cleanup did not execute.
+struct ConfigureFaultProcess {
+  ConfigureFaultProcess() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+#ifndef _WIN32
+    const rlimit limit{0, 0};
+    setrlimit(RLIMIT_CORE, &limit);
+#endif
+  }
+} configureFaultProcess;
+
 bool counting = false;
 bool failNext = false;
 std::uint64_t allocations = 0;

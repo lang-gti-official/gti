@@ -5,14 +5,15 @@ The fixture uses an application interface and std::function. It counts the
 no-throw allocations GTI owners use, so the oracle proves that small payloads
 avoid allocation, that boxed fallback still allocates exactly once, and that
 no block outlives its owner. Failure phases check that each owned object is
-destroyed exactly once and that a failed boxed replacement keeps the current
-object until unwinding.
+destroyed exactly once. Exhausting the boxed replacement's infallible
+allocation reports GTI-R0011 and aborts without running cleanup.
 """
 
 from pathlib import Path
 import sys
 import tempfile
 
+from allocation_abort_runtime_test import ABORT_STATUS
 from unique_class_allocation_runtime_test import run
 
 
@@ -67,7 +68,7 @@ def main():
         f"{source.name}:{line_of(source, text)}: runtime error[{failure}\n")
     cases = [
         (0, SUCCESS, ""),
-        (70, "~tracked 2\n~tracked 1\n",
+        (ABORT_STATUS, "",
          f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
          "allocation_failure in unique_owner\n"),
         (70, "~tracked 5\n",

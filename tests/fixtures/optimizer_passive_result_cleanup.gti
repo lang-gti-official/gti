@@ -1,0 +1,51 @@
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Stamp { public: int number = 0; };
+
+class Destructive {
+  mut int* target = nullptr;
+public:
+  Destructive(mut int* target) : target(target) {}
+  ~Destructive() { unsafe { opaque_pointer_effect(this.target); } }
+};
+
+class Counter {
+  mut int count = 7;
+public:
+  expected<void, int> publish() mut { this.count = 7; return; }
+  int after_local_result() mut {
+    {
+      auto status = this.publish();
+      if (!status) return 0;
+    }
+    return this.count + 1;
+  }
+  expected<Stamp, int> publish_value() mut {
+    this.count = 7;
+    return Stamp();
+  }
+  int after_record_result() mut {
+    {
+      auto status = this.publish_value();
+      if (!status) return 0;
+    }
+    return this.count + 1;
+  }
+  expected<Destructive, int> destructive() mut {
+    return Destructive(&this.count);
+  }
+  int bad_active_result() mut {
+    {
+      auto status = this.destructive();
+      if (!status) return 0;
+    }
+    return this.count + 1;
+  }
+};
+
+int main() {
+  mut Counter counter{};
+  if (false) return counter.bad_active_result();
+  return counter.after_local_result() == 8 &&
+         counter.after_record_result() == 8 ? 0 : 1;
+}

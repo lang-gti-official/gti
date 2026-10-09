@@ -40,6 +40,10 @@ replaceAll(std::string_view text, std::string_view marker,
   if (!rendered) {
     return {};
   }
+  // Append unchanged slices rather than repeatedly shifting the remaining
+  // body. Large verified cleanup templates can contain tens of thousands of
+  // indentation markers. Preserve the original two-pass substitution order,
+  // including indentation markers introduced by the family label.
   const std::string prefix(indentation * 2, ' ');
   if (std::optional<std::string> indented = replaceAll(
           *rendered, cppMirBodyEmissionIndentationPlaceholder, prefix)) {

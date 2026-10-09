@@ -2,6 +2,18 @@
   "schema_version": 1,
   "tests": [
     {
+      "name": "testPropagationOnlyFailureContext",
+      "suite": "preflight"
+    },
+    {
+      "name": "testBoundedSecondaryFailureRecordStorage",
+      "suite": "preflight"
+    },
+    {
+      "name": "testTypedCleanupAdapterInterning",
+      "suite": "preflight"
+    },
+    {
       "name": "testCheckedReferenceClassAssignment",
       "suite": "lifecycle"
     },
@@ -130,11 +142,23 @@
       "suite": "preflight"
     },
     {
+      "name": "testPlainExpectedPayloadConstruction",
+      "suite": "preflight"
+    },
+    {
+      "name": "testExpectedReferenceHasOnlyLoanStorage",
+      "suite": "preflight"
+    },
+    {
+      "name": "testExpectedFieldHasOnlyPayloadStorage",
+      "suite": "preflight"
+    },
+    {
       "name": "testConcreteClassStaticStorage",
       "suite": "preflight"
     },
     {
-      "name": "testDischargedStorageReadAnalysis",
+      "name": "testDischargedArrayReadAnalysis",
       "suite": "preflight"
     },
     {
@@ -154,7 +178,7 @@
       "suite": "preflight"
     },
     {
-      "name": "testPrefixStorageCStringAdmissionFailsClosed",
+      "name": "testSourceStringCStringAdmissionFailsClosed",
       "suite": "preflight"
     },
     {
@@ -527,6 +551,10 @@
     },
     {
       "name": "testPassiveBorrowedConstructedFieldPrefix",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testNestedConstructorArgumentPublication",
       "suite": "lifecycle"
     },
     {

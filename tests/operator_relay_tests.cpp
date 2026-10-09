@@ -11,7 +11,8 @@ std::string readFixture(std::string_view name) {
   return {(std::istreambuf_iterator<char>(stream)), {}};
 }
 
-void checkBackend(const lang::FrontendResult &frontend) {
+void checkBackend(const lang::FrontendResult &frontend,
+                  std::string_view fixture) {
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
                      lang::OptimizationLevel::O3}) {
     auto optimized =
@@ -33,9 +34,15 @@ void checkBackend(const lang::FrontendResult &frontend) {
       for (const auto &function : optimized.mir.functionInstances()) {
         const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
                                            .owner = function.id};
-        expect(emitter.analyze(address).ready() &&
-                   (emitter.supportsBodyText(address) ||
-                    emitter.supportsFailureBodyText(address)),
+        const bool admitted = emitter.analyze(address).ready() &&
+                              (emitter.supportsBodyText(address) ||
+                               emitter.supportsFailureBodyText(address));
+        if (!admitted)
+          std::cerr << "Backend rejection: " << fixture << ", function "
+                    << function.id << ", declaration " << function.declaration
+                    << ", level " << static_cast<int>(level) << ", standard "
+                    << static_cast<int>(standard) << '\n';
+        expect(admitted,
                "both production standard modes admit each exact function "
                "schedule");
       }
@@ -45,6 +52,7 @@ void checkBackend(const lang::FrontendResult &frontend) {
 
 void checkAllocationMutations(const lang::FrontendResult &frontend) {
   std::size_t count = 0;
+  std::size_t sameBlockBorrowAllocations = 0;
   bool copy = false, move = false;
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &block : function.body.blocks)
@@ -57,7 +65,22 @@ void checkAllocationMutations(const lang::FrontendResult &frontend) {
         expect(instruction.objectAllocation != 0 &&
                    instruction.definedFailure.empty(),
                "generated construction follows a distinct checked allocation");
-        for (int mutation = 0; mutation != 7; ++mutation) {
+        for (const auto &operand : instruction.operands) {
+          if (operand.kind != lang::MirOperandKind::Value)
+            continue;
+          const auto *value = function.body.findValue(operand.value);
+          if (value != nullptr &&
+              std::any_of(block.instructions.begin(), block.instructions.end(),
+                          [&](const auto &candidate) {
+                            return candidate.id == value->definition &&
+                                   candidate.kind ==
+                                       lang::MirInstructionKind::CallInput &&
+                                   candidate.callInputKind ==
+                                       lang::HirCallInputKind::ReadBorrow;
+                          }))
+            ++sameBlockBorrowAllocations;
+        }
+        for (int mutation = 0; mutation != 8; ++mutation) {
           auto malformed = frontend.mir;
           auto *body = &const_cast<lang::MirFunctionInstance *>(
                             malformed.findFunctionInstance(function.id))
@@ -87,13 +110,21 @@ void checkAllocationMutations(const lang::FrontendResult &frontend) {
                            instruction.objectAllocation;
               });
           } else if (mutation == 5) {
+            std::size_t changedAllocations = 0;
             for (auto &candidate : body->blocks)
-              if (candidate.terminator.kind ==
-                      lang::MirTerminatorKind::Invoke &&
-                  candidate.terminator.target == block.id)
-                candidate.terminator = {.kind = lang::MirTerminatorKind::Goto,
-                                        .target = block.id};
-          } else {
+              for (auto &operation : candidate.instructions)
+                if (operation.kind ==
+                        lang::MirInstructionKind::AllocateObject &&
+                    operation.objectAllocation ==
+                        instruction.objectAllocation) {
+                  // R0011 is an immediate abort, not an Invoke predecessor.
+                  // Erasing its detector contract must still fail closed.
+                  operation.definedFailure.localOrigins.clear();
+                  ++changedAllocations;
+                }
+            expect(changedAllocations == 1,
+                   "allocation mutation must change its exact abort detector");
+          } else if (mutation == 6) {
             auto owner = std::find_if(
                 malformed.classInstances().begin(),
                 malformed.classInstances().end(), [&](const auto &candidate) {
@@ -105,6 +136,21 @@ void checkAllocationMutations(const lang::FrontendResult &frontend) {
               changedOwner.copyConstructor = lang::SpecialMemberStatus::Deleted;
             else
               changedOwner.moveConstructor = lang::SpecialMemberStatus::Deleted;
+          } else {
+            const auto *input =
+                body->findValue(instruction.operands.front().value);
+            expect(input != nullptr,
+                   "generated allocation has a prepared input to corrupt");
+            std::size_t changedInputs = 0;
+            for (auto &candidate : body->blocks)
+              for (auto &operation : candidate.instructions)
+                if (input != nullptr && operation.id == input->definition &&
+                    operation.kind == lang::MirInstructionKind::CallInput) {
+                  operation.callSite = 0;
+                  ++changedInputs;
+                }
+            expect(changedInputs == 1,
+                   "allocation mutation detaches one exact prepared input");
           }
           lang::rebuildMirReachability(*body);
           (void)lang::rebuildMirValueUses(*body);
@@ -115,7 +161,9 @@ void checkAllocationMutations(const lang::FrontendResult &frontend) {
       }
   expect(count >= 4 && copy && move,
          "unrelated passive/owning types exercise generated copy and move");
-  std::cout << "Generated allocation: " << count << " operations, " << count * 7
+  expect(sameBlockBorrowAllocations != 0,
+         "abort-only allocation consumes a borrow staged in the same block");
+  std::cout << "Generated allocation: " << count << " operations, " << count * 8
             << " rejected mutations\n";
 }
 
@@ -326,13 +374,18 @@ int main() {
                                  readFixture("existing_value_allocation"));
   auto views = analyzeWithStandardLibrary(
       "returned_view_observers.gti", readFixture("returned_view_observers"));
-  for (const auto *frontend : {&range, &text, &allocation, &views}) {
+  for (const auto &[fixture, frontend] :
+       std::vector<std::pair<std::string_view, const lang::FrontendResult *>>{
+           {"range_field_access", &range},
+           {"indexed_view_relay", &text},
+           {"existing_value_allocation", &allocation},
+           {"returned_view_observers", &views}}) {
     expect(frontend->canGenerateCode() &&
                lang::verifyMirProgram(frontend->mir).valid(),
            "positive fixture completes all compiler phases");
     if (!frontend->canGenerateCode())
       return 1;
-    checkBackend(*frontend);
+    checkBackend(*frontend, fixture);
   }
   checkFieldMutations(range);
   checkAllocationMutations(allocation);

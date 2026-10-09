@@ -1,0 +1,104 @@
+#include <std/memory>
+
+class Witness { public: int unrelated = 2147483647; };
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+unsafe int& borrow_scalar(int* pointer, Witness& owner) {
+  unsafe { return std::assume_ref(pointer, owner); }
+}
+
+unsafe int constructed_borrow(int* pointer, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    int& value = std::assume_ref(pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int returned_borrow(int* pointer, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    int& value = borrow_scalar(pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int constructed_mut_borrow(int* pointer, mut Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    mut int& value = std::assume_mut(pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int& choose_borrow(int* pointer, int* other, bool choice, Witness& owner) {
+  unsafe {
+    if (choice) return borrow_scalar(pointer, owner);
+    return borrow_scalar(other, owner);
+  }
+}
+
+unsafe int bad_borrow_ambiguous(int* pointer, int* other, bool choice, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    int& value = choose_borrow(pointer, other, choice, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_borrow_lifetime(int* pointer, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    std::destroy_at(pointer);
+    std::construct_at(pointer, 2147483647);
+    int& value = borrow_scalar(pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_borrow_different(int* pointer, int* other, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    int& value = borrow_scalar(other, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_borrow_opaque(int* pointer, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    opaque_pointer_effect(pointer);
+    int& value = borrow_scalar(pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_borrow_write(int* pointer, mut Witness& owner) {
+  unsafe {
+    std::construct_at(pointer, 7);
+    mut int& value = std::assume_mut(pointer, owner);
+    value = 2147483647;
+    return value + 1;
+  }
+}
+
+int main() {
+  mut Witness owner{};
+  mut int other = 2147483647;
+  mut std::uninitialized<int> storage{};
+  unsafe {
+    if (false) return bad_borrow_ambiguous(storage.data(), &other, false, owner);
+    if (false) return bad_borrow_ambiguous(storage.data(), &other, true, owner);
+    if (false) return bad_borrow_lifetime(storage.data(), owner);
+    if (false) return bad_borrow_different(storage.data(), &other, owner);
+    if (false) return bad_borrow_opaque(storage.data(), owner);
+    if (false) return bad_borrow_write(storage.data(), owner);
+    if (constructed_borrow(storage.data(), owner) != 8) return 1;
+    std::destroy_at(storage.data());
+    if (returned_borrow(storage.data(), owner) != 8) return 2;
+    std::destroy_at(storage.data());
+    if (constructed_mut_borrow(storage.data(), owner) != 8) return 3;
+    std::destroy_at(storage.data());
+  }
+  return 0;
+}

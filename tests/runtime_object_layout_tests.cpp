@@ -96,10 +96,10 @@ int main() {
                   instruction.operands.empty(),
               "queries are pure target-dependent values without object inputs");
         }
-  expect(sizes == 5 && alignments == 5,
+  expect(sizes == 9 && alignments == 9,
          "each concrete query retains two typed operations");
   const auto serialized = lang::MirPrinter().print(frontend.mir);
-  expect(serialized.starts_with("mir-v96 ") &&
+  expect(serialized.starts_with("mir-v97 ") &&
              serialized.find("object-layout-type=") != std::string::npos,
          "serialization retains query identity");
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
@@ -188,9 +188,26 @@ int main() {
                "interface Abstract { int read(); };\n"
                "int main() { auto x = std::layout_of<Abstract>(); return 0; }",
            "GTI-S2029", "interface source query");
-  rejected(prefix + "int main() { auto x = std::layout_of<expected<int, "
-                    "int>>(); return 0; }",
-           "GTI-S2029", "bounded direct result-carrier query");
+  const auto resultLayouts = analyze(
+      prefix + "int main() { auto x = std::layout_of<expected<int, int>>(); "
+               "auto y = std::layout_of<expected<void, int>>(); "
+               "auto z = std::layout_of<c_string>(); return 0; }");
+  if (!resultLayouts.canGenerateCode())
+    for (const auto &item : resultLayouts.diagnostics)
+      std::cerr << item.code << ": " << item.message << '\n';
+  expect(resultLayouts.canGenerateCode(),
+         "complete result and text carriers have queryable object layouts");
+  if (resultLayouts.canGenerateCode())
+    expect(!gti_test::emitCppText(resultLayouts).empty(),
+           "result and text layouts emit through verified MIR");
+  forged(
+      frontend.mir,
+      [](auto &i) {
+        i.objectLayoutType = lang::SemanticType(
+            lang::SemanticType::Expected,
+            {lang::SemanticType::Int32, lang::SemanticType::Void});
+      },
+      "incomplete result error representation rejected");
   rejected(prefix + "struct Ordinary { int value; };\n"
                     "constexpr uint64_t bytes = sizeof(Ordinary); int main() { "
                     "return 0; }",

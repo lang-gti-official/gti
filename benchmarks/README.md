@@ -223,6 +223,13 @@ The alternating multiplier keeps the arithmetic bounded while still making
 the element-wise multiply and reduction checks observable. No variant relies
 on signed overflow, wrapping, disabled checks, or unchecked invalid storage.
 
+Separate `FULL_STATE` builds print the final size, every element, final sum and
+digest, so migration comparisons do not rely on a digest alone. GTI's separate
+`ALLOCATION_COUNTS` mode links the existing allocation-observer fixture and
+reports request count/bytes; its observer checks the matching region release
+when the vector leaves scope. Neither mode belongs in runtime timing samples;
+the default workload remains unchanged.
+
 ## `managed-thread-parallelism`
 
 This schema-2 workload compares four deterministic, row-interleaved
@@ -256,6 +263,9 @@ safe-state and result-validation contract.
 The runtime-optimizer campaign uses several independently attributable
 workloads rather than one aggregate score:
 
+- [`string-growth-search`](workloads/string-growth-search/README.md) covers
+  repeated string growth, character search and complete-state comparison for
+  the raw-buffer migration;
 - [`checked-scalar-chain`](workloads/checked-scalar-chain/README.md) is the
   scalar checked-arithmetic control;
 - [`fixed-array-loop-proof`](workloads/fixed-array-loop-proof/README.md) is the

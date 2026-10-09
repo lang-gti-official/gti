@@ -1,0 +1,15 @@
+#include <std/resource_vector>
+#include <std/resource>
+
+int main() {
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> placed{resource};
+    placed.push_back(11);
+    placed.reserve(std::size_t(32));
+    placed.get_unchecked_mut(std::size_t(0)) = 13;
+    if (placed.get_unchecked(std::size_t(0)) != 13) { return 1; }
+  }
+  return 0;
+}

@@ -512,24 +512,30 @@ void testClosedCallNearMisses() {
     if (body == nullptr || mirBody == nullptr) {
       return false;
     }
-    return std::none_of(
-        body->safety.proofs.begin(), body->safety.proofs.end(),
-        [&](const lang::MirSafetyProof &proof) {
-          for (const lang::MirBlock &block : mirBody->blocks) {
-            const auto instruction = std::find_if(
-                block.instructions.begin(), block.instructions.end(),
-                [&](const lang::MirInstruction &candidate) {
-                  return candidate.id == proof.instruction;
-                });
-            if (instruction != block.instructions.end()) {
-              return proof.discharge.family ==
-                         lang::MirSafetyCheckFamily::ArithmeticOverflow &&
-                     instruction->operation ==
-                         lang::MirOperation::MultiplyAssign;
-            }
-          }
+    bool foundMultiplication = false;
+    for (const lang::MirBlock &block : mirBody->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        // Checked-reference assignment can lower to a Multiply followed by
+        // Assign rather than a single MultiplyAssign. A missing operation
+        // must not make this negative pass vacuously.
+        if (instruction.tombstone ||
+            (instruction.operation != lang::MirOperation::Multiply &&
+             instruction.operation != lang::MirOperation::MultiplyAssign)) {
+          continue;
+        }
+        foundMultiplication = true;
+        if (std::any_of(
+                body->safety.proofs.begin(), body->safety.proofs.end(),
+                [&](const lang::MirSafetyProof &proof) {
+                  return proof.instruction == instruction.id &&
+                         proof.discharge.family ==
+                             lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                })) {
           return false;
-        });
+        }
+      }
+    }
+    return foundMultiplication;
   };
 
   const lang::MirClosedCallBodyAnalysis *conflicting =
@@ -553,11 +559,10 @@ void testClosedCallNearMisses() {
 
 void testClosedCallAfterSourceAllocation(
     const std::string &compiler, const std::filesystem::path &directory) {
-  // The positive fixture exercises the existing prefix-storage proof before
-  // source allocation. A required incomplete closed-call summary can prevent
-  // discovery of later contexts, even for an independent vector workload.
-  // Keep this program-order boundary explicit rather than claiming that source
-  // storage retains the removed private sparse-state analysis.
+  // Earlier incomplete summaries prevented discovery of this independent
+  // workload after source allocation. That was an implementation limitation,
+  // not an observable rule: recover the same two proofs in either order.
+  // Actual sparse-slot checks and runtime-failing near misses remain controls.
   constexpr std::string_view vectorCheck =
       "  if (closed_vector_success() != -4) { return 8; }\n";
   constexpr std::string_view storageCheck =
@@ -591,6 +596,13 @@ void testClosedCallAfterSourceAllocation(
   if (scale == nullptr) {
     return;
   }
+  const lang::MirClosedCallSafetyAnalysis contexts =
+      lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
+  const auto *context =
+      contexts.find({.kind = lang::MirBodyKind::Function, .owner = scale->id});
+  expect(contexts.converged && context != nullptr && context->reached,
+         "independent source-allocation continuation must discover a "
+         "converged vector scale context");
 
   RunResult baseline;
   for (const lang::OptimizationLevel level :
@@ -602,30 +614,40 @@ void testClosedCallAfterSourceAllocation(
                                                : "allocator-first-o3";
     const EmittedProgram program =
         emitProgram(frontend, level, directory, label);
-    expect(
+    const auto arithmetic =
         functionDischarges(frontend, program.optimized, "closed_vector_scale",
-                           lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
-        "an undiscovered post-allocation context must not authorize vector "
-        "arithmetic discharges");
+                           lang::MirSafetyCheckFamily::ArithmeticOverflow);
+    expect(arithmetic == (level == lang::OptimizationLevel::O0 ? 0U : 2U),
+           label +
+               " must retain O0 checks and recover both independent "
+               "vector arithmetic proofs at O2/O3, found " +
+               std::to_string(arithmetic));
     if (level != lang::OptimizationLevel::O0) {
-      bool retainedRemark = false;
-      for (const lang::OptimizationPassReport &pass :
-           program.optimized.report.passes) {
-        retainedRemark |= std::any_of(
-            pass.remarks.begin(), pass.remarks.end(),
-            [&](const lang::OptimizationRemark &remark) {
-              return remark.kind == lang::OptimizationRemarkKind::Missed &&
-                     remark.body.kind == lang::MirBodyKind::Function &&
-                     remark.body.owner == scale->id &&
-                     remark.pass == "discharge-arithmetic-overflow-checks" &&
-                     remark.message ==
-                         "check retained: canonical MIR facts do not prove "
-                         "arithmetic-overflow safety";
-            });
+      bool incrementProved = false;
+      bool multiplicationProved = false;
+      const auto *optimizedScale =
+          program.optimized.mir.findFunctionInstance(scale->id);
+      if (optimizedScale) {
+        for (const auto &block : optimizedScale->body.blocks) {
+          for (const auto &instruction : block.instructions) {
+            const bool proved = std::any_of(
+                instruction.safetyDischarges.begin(),
+                instruction.safetyDischarges.end(), [](const auto &discharge) {
+                  return discharge.family ==
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                });
+            incrementProved |=
+                proved && instruction.operation == lang::MirOperation::Add;
+            multiplicationProved |=
+                proved &&
+                (instruction.operation == lang::MirOperation::Multiply ||
+                 instruction.operation == lang::MirOperation::MultiplyAssign);
+          }
+        }
       }
-      expect(retainedRemark,
-             "the conservative context boundary must report its retained "
-             "arithmetic check");
+      expect(incrementProved && multiplicationProved,
+             label + " must prove the guarded increment and initialized "
+                     "element multiplication, not two unrelated operations");
     }
     const std::filesystem::path binary =
         build(compiler, program.artifact, directory, label);
@@ -638,8 +660,8 @@ void testClosedCallAfterSourceAllocation(
       expect(actual.built && actual.exitStatus == baseline.exitStatus &&
                  actual.stdoutText == baseline.stdoutText &&
                  actual.stderrText == baseline.stderrText,
-             "allocator-first O2/O3 must preserve O0 behavior despite the "
-             "conservative closed-call context boundary");
+             "allocator-first O2/O3 must preserve O0 behavior and exact "
+             "cleanup across the independent source-allocation call");
     }
   }
 }
@@ -779,16 +801,16 @@ int main(int argc, char **argv) {
       "::gti_internal::backend::mir_checked_remainder_v1";
   constexpr std::string_view nonzeroRemainderCall =
       "::gti_internal::backend::mir_nonzero_remainder_v1";
-  constexpr std::string_view checkedPrefixStorageCall =
-      " = ::gti_internal::backend::mir_prefix_read_v1(";
-  constexpr std::string_view uncheckedPrefixStorageCall =
-      "&::gti_internal::backend::prefix_storage_read_unchecked(";
-  constexpr std::string_view checkedPrefixStorageMutCall =
-      " = ::gti_internal::backend::mir_prefix_read_mut_v1(";
-  constexpr std::string_view uncheckedPrefixStorageMutCall =
-      "&::gti_internal::backend::prefix_storage_read_mut_unchecked(";
   constexpr std::string_view publicPrefixBoundsCall =
       "::gti_internal::backend::mir_checked_index_bounds_v1(";
+  for (const auto &program : programs)
+    for (const auto retired :
+         {"::gti_internal::backend::mir_prefix_read_v1(",
+          "::gti_internal::backend::mir_prefix_read_mut_v1(",
+          "::gti_internal::backend::prefix_storage_read_unchecked(",
+          "::gti_internal::backend::prefix_storage_read_mut_unchecked("})
+      expect(program.cpp.find(retired) == std::string::npos,
+             "source prefix access must not revive a retired native helper");
   // Compound assignments now stage their read, arithmetic and write as
   // separate MIR operations. Observe the checked scalar multiply and its
   // discharged expression, not the retired fused compound-assignment spelling.
@@ -822,14 +844,8 @@ int main(int argc, char **argv) {
                  occurrences(o0.cpp, checkedRemainderCall) &&
              occurrences(o0.cpp, nonzeroRemainderCall) == 0 &&
              occurrences(o2.cpp, nonzeroRemainderCall) > 0 &&
-             (occurrences(o2.cpp, checkedPrefixStorageCall) <
-                  occurrences(o0.cpp, checkedPrefixStorageCall) ||
-              occurrences(o2.cpp, checkedPrefixStorageMutCall) <
-                  occurrences(o0.cpp, checkedPrefixStorageMutCall)) &&
-             occurrences(o0.cpp, uncheckedPrefixStorageCall) == 0 &&
-             occurrences(o0.cpp, uncheckedPrefixStorageMutCall) == 0 &&
-             (occurrences(o2.cpp, uncheckedPrefixStorageCall) > 0 ||
-              occurrences(o2.cpp, uncheckedPrefixStorageMutCall) > 0) &&
+             occurrences(o2.cpp, publicPrefixBoundsCall) <
+                 occurrences(o0.cpp, publicPrefixBoundsCall) &&
              occurrences(o2.cpp, publicPrefixBoundsCall) > 0 &&
              occurrences(o2.cpp, checkedArrayCall) ==
                  occurrences(o3.cpp, checkedArrayCall) &&
@@ -841,14 +857,6 @@ int main(int argc, char **argv) {
                  occurrences(o3.cpp, checkedRemainderCall) &&
              occurrences(o2.cpp, nonzeroRemainderCall) ==
                  occurrences(o3.cpp, nonzeroRemainderCall) &&
-             occurrences(o2.cpp, checkedPrefixStorageCall) ==
-                 occurrences(o3.cpp, checkedPrefixStorageCall) &&
-             occurrences(o2.cpp, uncheckedPrefixStorageCall) ==
-                 occurrences(o3.cpp, uncheckedPrefixStorageCall) &&
-             occurrences(o2.cpp, checkedPrefixStorageMutCall) ==
-                 occurrences(o3.cpp, checkedPrefixStorageMutCall) &&
-             occurrences(o2.cpp, uncheckedPrefixStorageMutCall) ==
-                 occurrences(o3.cpp, uncheckedPrefixStorageMutCall) &&
              occurrences(o2.cpp, publicPrefixBoundsCall) ==
                  occurrences(o3.cpp, publicPrefixBoundsCall),
          "native -O0 source should expose removed safe calls while preserving "

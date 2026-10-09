@@ -1,0 +1,69 @@
+#include <std/string>
+#include <std/vector>
+
+int before_raw(mut int& destination, int input) {
+  int result = input + 1;
+  unsafe {
+    mut int* address = &destination;
+    *address = 2147483647;
+  }
+  return result;
+}
+
+int after_raw(mut int& destination) {
+  unsafe {
+    mut int* address = &destination;
+    *address = 2147483647;
+  }
+  return destination + 1;
+}
+
+int stable_after_raw(mut int& destination, int input) {
+  int copy = input;
+  unsafe {
+    mut int* address = &destination;
+    *address = 2147483647;
+  }
+  return input + copy;
+}
+
+unsafe int declared_step(int input) { return input + 1; }
+unsafe int declared_raw_step(mut int& destination, int input) {
+  unsafe {
+    mut int* address = &destination;
+    *address = 2147483647;
+  }
+  return input + 1;
+}
+int through_declared(mut int& destination, int input) {
+  unsafe {
+    if (declared_step(input) != 8) return 2;
+    return declared_raw_step(destination, input);
+  }
+}
+
+class Token {
+public:
+  int value;
+  Token(int value) : value(value) {}
+};
+int consume(Token token) { return token.value + 1; }
+int after_owning_argument(int input) {
+  Token token{7};
+  [[discard]] consume(token);
+  return input + 1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int destination = 4;
+  int result = before_raw(destination, 7);
+  if (stable_after_raw(destination, 7) != 14) { return 2; }
+  if (after_owning_argument(7) != 8) { return 3; }
+  if (through_declared(destination, 7) != 8) { return 4; }
+  std::println(result);
+  std::println(destination);
+  if (argc > 1) {
+    [[discard]] after_raw(destination);
+  }
+  return result == 8 && destination == 2147483647 ? 0 : 1;
+}

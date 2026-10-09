@@ -1,3 +1,5 @@
+#include <std/memory>
+
 namespace std {
 namespace detail {
 class span_sentinel {
@@ -11,19 +13,21 @@ public:
   }
 };
 
-class span_iterator<T> {
-  gti_internal::prefix_storage<T>& data;
+class span_iterator<std::storage_element T> {
+  std::detail::prefix_owner<T>& data;
   mut size_t current_position;
   size_t final_position;
 
 public:
-  span_iterator(gti_internal::prefix_storage<T>& source, size_t position, size_t end)
-      : data(source), current_position(position), final_position(end) {}
+  span_iterator(std::detail::prefix_owner<T>& source, size_t position, size_t end)
+      : data(source), current_position(position), final_position(end) {
+    if (position > end) { gti_internal::index_bounds_check(position, end); }
+    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
+  }
 
   T& operator*() {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
-    return gti_internal::prefix_storage_read(this.data,
-                                              this.current_position);
+    unsafe { return this.data.read_unchecked(this.current_position); }
   }
 
   void operator++() mut {
@@ -40,21 +44,24 @@ public:
   }
 };
 
-class mutable_span_iterator<T> {
-  mut gti_internal::prefix_storage<T>& data;
+class mutable_span_iterator<std::storage_element T> {
+  mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
   size_t final_position;
 public:
-  mutable_span_iterator(mut gti_internal::prefix_storage<T>& source,
+  mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
                         size_t begin, size_t end)
-      : data(source), current_position(begin), final_position(end) {}
+      : data(source), current_position(begin), final_position(end) {
+    if (begin > end) { gti_internal::index_bounds_check(begin, end); }
+    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
+  }
   T& operator*() {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
-    return gti_internal::prefix_storage_read(this.data, this.current_position);
+    unsafe { return this.data.read_unchecked(this.current_position); }
   }
   mut T& operator*() mut {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
-    return gti_internal::prefix_storage_read_mut(this.data, this.current_position);
+    unsafe { return this.data.read_mut_unchecked(this.current_position); }
   }
   void operator++() mut {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
@@ -67,8 +74,8 @@ public:
 }
 
 /// A checked read-only view over one source-defined contiguous owner.
-class span<T> {
-  gti_internal::prefix_storage<T>& data;
+class span<std::storage_element T> {
+  std::detail::prefix_owner<T>& data;
   size_t first_position;
   size_t element_count;
 
@@ -86,11 +93,14 @@ public:
   using const_iterator = detail::span_iterator<T>;
   using sentinel = detail::span_sentinel;
 
-  // The parameter type is a compiler-private storage capability, so this
-  // constructor is available to the standard library but not application
-  // lookup. Public owners expose checked as_span() factories instead.
-  span(gti_internal::prefix_storage<T>& source, size_t offset, size_t count)
-      : data(source), first_position(offset), element_count(count) {}
+  // The source owner, not a raw address, retains the checked dependency.
+  // Public containers provide as_span() factories over this same contract.
+  span(std::detail::prefix_owner<T>& source, size_t offset, size_t count)
+      : data(source), first_position(offset), element_count(count) {
+    if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
+    size_t remaining = source.length() - offset;
+    if (count > remaining) { gti_internal::index_bounds_check(count, remaining); }
+  }
 
   /// Returns the number of elements in this view.
   size_t size() {
@@ -116,8 +126,15 @@ public:
 
   T& at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
-    return gti_internal::prefix_storage_read(
-        this.data, this.first_position + index);
+    unsafe { return this.get_unchecked(index); }
+  }
+
+  /// The caller proves index < size(); the view's owner loan is retained.
+  unsafe T& get_unchecked(size_t index) {
+    unsafe {
+      return this.data.read_unchecked(
+          gti_internal::integer_wrapping_add(this.first_position, index));
+    }
   }
 
   T& operator[](size_t index) {
@@ -152,8 +169,8 @@ public:
 
 /// An exclusive, move-only view of initialized contiguous elements.
 /// Reborrowing a subspan suspends access through its parent until the child ends.
-class mutable_span<T> {
-  mut gti_internal::prefix_storage<T>& data;
+class mutable_span<std::storage_element T> {
+  mut std::detail::prefix_owner<T>& data;
   size_t first_position;
   size_t element_count;
 
@@ -171,20 +188,37 @@ public:
   using const_iterator = detail::span_iterator<T>;
   using sentinel = detail::span_sentinel;
 
-  mutable_span(mut gti_internal::prefix_storage<T>& source,
+  mutable_span(mut std::detail::prefix_owner<T>& source,
                size_t offset, size_t count)
-      : data(source), first_position(offset), element_count(count) {}
+      : data(source), first_position(offset), element_count(count) {
+    if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
+    size_t remaining = source.length() - offset;
+    if (count > remaining) { gti_internal::index_bounds_check(count, remaining); }
+  }
 
   size_t size() { return this.element_count; }
   bool empty() { return this.element_count == 0; }
 
   T& at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
-    return gti_internal::prefix_storage_read(this.data, this.first_position + index);
+    unsafe { return this.get_unchecked(index); }
   }
   mut T& at(size_t index) mut {
     gti_internal::index_bounds_check(index, this.element_count);
-    return gti_internal::prefix_storage_read_mut(this.data, this.first_position + index);
+    unsafe { return this.get_unchecked_mut(index); }
+  }
+  /// The caller proves index < size(); the view's owner loan is retained.
+  unsafe T& get_unchecked(size_t index) {
+    unsafe {
+      return this.data.read_unchecked(
+          gti_internal::integer_wrapping_add(this.first_position, index));
+    }
+  }
+  unsafe mut T& get_unchecked_mut(size_t index) mut {
+    unsafe {
+      return this.data.read_mut_unchecked(
+          gti_internal::integer_wrapping_add(this.first_position, index));
+    }
   }
   T& operator[](size_t index) { return this.at(index); }
   mut T& operator[](size_t index) mut { return this.at(index); }

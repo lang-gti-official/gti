@@ -1,0 +1,65 @@
+// Unrelated application carriers exercise nested argument composition and
+// preserve two independent, deliberately reordered origin field paths.
+class Read<T> {
+  T& value;
+public:
+  Read(T& value) : value(value) {}
+  T& get() { return this.value; }
+};
+
+class Pair<T> {
+  Read<T> first;
+  Read<T> second;
+public:
+  Pair(Read<T> first, Read<T> second) : first(first), second(second) {}
+  T& left() { return this.first.get(); }
+  T& right() { return this.second.get(); }
+};
+
+class Context<T> {
+  Pair<T> pair;
+public:
+  Context(T& left, T& right) : pair(Pair<T>(Read<T>(right), Read<T>(left))) {}
+  T& left() { return this.pair.left(); }
+  T& right() { return this.pair.right(); }
+};
+
+class Write {
+  mut int& value;
+public:
+  Write(mut int& value) : value(value) {}
+  void set(int value) mut { this.value = value; }
+};
+
+class WritePair {
+  mut Write first;
+  mut Write second;
+public:
+  WritePair(Write first, Write second)
+      : first(std::move(first)), second(std::move(second)) {}
+  void set(int left, int right) mut {
+    this.first.set(left);
+    this.second.set(right);
+  }
+};
+
+class Writer {
+  mut WritePair pair;
+public:
+  Writer(mut int& left, mut int& right) : pair(WritePair(Write(right), Write(left))) {}
+  void set(int left, int right) mut { this.pair.set(left, right); }
+};
+
+int main() {
+  mut int left = 3;
+  mut int right = 7;
+  {
+    Context<int> nested{left, right};
+    if (nested.left() != 7 || nested.right() != 3) { return 1; }
+  }
+  {
+    mut Writer writer{left, right};
+    writer.set(11, 13);
+  }
+  return left == 13 && right == 11 ? 0 : 2;
+}

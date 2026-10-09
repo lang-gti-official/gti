@@ -12,7 +12,7 @@ if(Python3_Interpreter_FOUND)
     associative_constructor_runtime associative_hash_contracts associative_map
     associative_ownership_runtime borrow_origin_runtime borrowing_composition charconv_runtime
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
-    conditional_capability_runtime
+    conditional_capability_runtime conditional_owning_argument_runtime
     constructed_callback_argument_runtime constructor_argument_staging_runtime
     constructor_field_publication_runtime constructor_null_native_runtime constructor_passive_field_rollback_runtime
     consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
@@ -29,7 +29,8 @@ if(Python3_Interpreter_FOUND)
     generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
-    lambda_pack_invocation_runtime nested_borrow_fields nested_guarded_expected_runtime
+    lambda_base_reference_runtime lambda_owning_transport_runtime lambda_pack_invocation_runtime
+    nested_borrow_fields nested_guarded_expected_runtime
     native_c_scalar_runtime nested_raw_pointer_runtime
     nested_nominal_result_runtime operator_place_composition_runtime owned_expected_error_runtime
     object_construction_runtime object_relocation_runtime
@@ -43,6 +44,10 @@ if(Python3_Interpreter_FOUND)
     retained_owner_member_pack_runtime shared_accessor_range_runtime
     shared_ownership_runtime shared_ownership_threads
     source_storage_drain_runtime
+    source_prefix_owner_runtime source_resource_prefix_runtime
+    source_text_address_runtime source_prefix_string_runtime
+    many_fallible_scope_guards_runtime
+    optimizer_raw_context_runtime optimizer_object_context_runtime
     inherited_cleanup_context_runtime
     cleanup_context_scope_runtime
     storage_final_address_runtime string_operations_runtime string_ordering_runtime

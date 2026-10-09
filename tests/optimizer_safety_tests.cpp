@@ -129,29 +129,6 @@ std::size_t functionOperationDischarges(const lang::FrontendResult &frontend,
   return count;
 }
 
-std::size_t operatorDischarges(const lang::OptimizedProgram &optimized,
-                               lang::OverloadedOperator operation,
-                               lang::MirSafetyCheckFamily family) {
-  std::size_t count = 0;
-  for (const lang::MirFunctionInstance &function :
-       optimized.mir.functionInstances()) {
-    if (function.overloadedOperator != operation) {
-      continue;
-    }
-    for (const lang::MirBlock &block : function.body.blocks) {
-      for (const lang::MirInstruction &instruction : block.instructions) {
-        count += static_cast<std::size_t>(
-            std::count_if(instruction.safetyDischarges.begin(),
-                          instruction.safetyDischarges.end(),
-                          [family](const lang::MirSafetyDischarge &discharge) {
-                            return discharge.family == family;
-                          }));
-      }
-    }
-  }
-  return count;
-}
-
 void testClosedCallMutableInputInvalidation() {
   const std::string source = R"(
 mut int32_t shared = 0;
@@ -312,7 +289,7 @@ int32_t main() {
   expect(
       closed.converged,
       "closed-call mutable-input analysis must converge within its budget: " +
-          std::to_string(closed.iterations) + " rounds");
+          std::to_string(closed.iterations) + " maximum per-body analyses");
   for (const std::string_view name :
        {"direct", "forwarded", "projected", "carrier", "carrier_shell",
         "local_reference", "global", "global_loop", "unrelated", "readonly",
@@ -1064,114 +1041,153 @@ int32_t main() {
          "bounds discharge");
 }
 
-void testPrefixStorageBoundsRelation() {
+// Source owners put the second check in an ordinary reference-returning
+// accessor rather than an intrinsic in the caller. Count its exact selected
+// borrowing call chain, without recognizing a container or member spelling.
+std::size_t borrowingCallDischarges(const lang::OptimizedProgram &optimized,
+                                    lang::HirFunctionInstanceId root,
+                                    lang::MirSafetyCheckFamily family) {
+  std::vector<lang::HirFunctionInstanceId> pending{root};
+  std::vector<lang::HirFunctionInstanceId> visited;
+  std::size_t count = 0;
+  while (!pending.empty()) {
+    const auto id = pending.back();
+    pending.pop_back();
+    if (std::find(visited.begin(), visited.end(), id) != visited.end())
+      continue;
+    visited.push_back(id);
+    const auto *function = optimized.mir.findFunctionInstance(id);
+    if (function == nullptr)
+      continue;
+    for (const auto &block : function->body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        count += std::count_if(
+            instruction.safetyDischarges.begin(),
+            instruction.safetyDischarges.end(),
+            [&](const auto &proof) { return proof.family == family; });
+        const auto *callee = instruction.functionTarget
+                                 ? optimized.mir.findFunctionInstance(
+                                       *instruction.functionTarget)
+                                 : nullptr;
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            callee != nullptr &&
+            callee->returnType.kind == lang::SemanticType::Reference)
+          pending.push_back(callee->id);
+      }
+    }
+  }
+  return count;
+}
+
+void testSourcePrefixBoundsRelation() {
   const std::string source = R"(
+#include <std/memory>
 extern "C" {
   void analysis_barrier();
 }
 
 int32_t exact_checked_read(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(index, live);
-  return gti_internal::prefix_storage_read(values, index);
+  return values.read(index);
 }
 
 int32_t different_index(uint64_t checked, uint64_t accessed) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(checked, live);
-  return gti_internal::prefix_storage_read(values, accessed);
+  return values.read(accessed);
 }
 
 int32_t different_storage(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> checked =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  mut gti_internal::prefix_storage<int32_t> accessed =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(checked, int32_t(7));
-  gti_internal::prefix_storage_append(accessed, int32_t(8));
-  uint64_t live = gti_internal::prefix_storage_length(checked);
+  mut std::detail::prefix_owner<int32_t> checked =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  mut std::detail::prefix_owner<int32_t> accessed =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  checked.append_value(int32_t(7));
+  accessed.append_value(int32_t(8));
+  uint64_t live = checked.length();
   gti_internal::index_bounds_check(index, live);
-  return gti_internal::prefix_storage_read(accessed, index);
+  return accessed.read(index);
 }
 
 int32_t append_after_check(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(index, live);
-  gti_internal::prefix_storage_append(values, int32_t(8));
-  return gti_internal::prefix_storage_read(values, index);
+  values.append_value(int32_t(8));
+  return values.read(index);
 }
 
 int32_t pop_after_check(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  gti_internal::prefix_storage_append(values, int32_t(8));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  values.append_value(int32_t(8));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(index, live);
-  gti_internal::prefix_storage_pop(values);
-  return gti_internal::prefix_storage_read(values, index);
+  values.pop();
+  return values.read(index);
 }
 
 int32_t insert_after_check(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(index, live);
-  gti_internal::prefix_storage_insert(values, uint64_t(0), int32_t(8));
-  return gti_internal::prefix_storage_read(values, index);
+  values.insert(uint64_t(0), int32_t(8));
+  return values.read(index);
 }
 
 int32_t erase_after_check(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  gti_internal::prefix_storage_append(values, int32_t(8));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  values.append_value(int32_t(8));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(index, live);
-  gti_internal::prefix_storage_erase(values, uint64_t(0));
-  return gti_internal::prefix_storage_read(values, index);
+  values.erase(uint64_t(0));
+  return values.read(index);
 }
 
 int32_t relocate_after_check(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> source =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  mut gti_internal::prefix_storage<int32_t> destination =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(source, int32_t(7));
-  uint64_t live = gti_internal::prefix_storage_length(source);
+  mut std::detail::prefix_owner<int32_t> source =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  mut std::detail::prefix_owner<int32_t> destination =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  source.append_value(int32_t(7));
+  uint64_t live = source.length();
   gti_internal::index_bounds_check(index, live);
-  gti_internal::prefix_storage_relocate(source, destination);
-  return gti_internal::prefix_storage_read(source, index);
+  source.relocate_to(destination);
+  return source.read(index);
 }
 
 int32_t opaque_call_after_check(uint64_t index) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(index, live);
   analysis_barrier();
-  return gti_internal::prefix_storage_read(values, index);
+  return values.read(index);
 }
 
 int32_t index_write_after_check(mut uint64_t index, uint64_t replacement) {
-  mut gti_internal::prefix_storage<int32_t> values =
-      gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4));
-  gti_internal::prefix_storage_append(values, int32_t(7));
-  uint64_t live = gti_internal::prefix_storage_length(values);
+  mut std::detail::prefix_owner<int32_t> values =
+      std::detail::prefix_owner<int32_t>(uint64_t(4));
+  values.append_value(int32_t(7));
+  uint64_t live = values.length();
   gti_internal::index_bounds_check(index, live);
   index = replacement;
-  return gti_internal::prefix_storage_read(values, index);
+  return values.read(index);
 }
 
 int32_t main() {
@@ -1179,9 +1195,9 @@ int32_t main() {
 }
 )";
   const lang::FrontendResult frontend =
-      analyzeTrusted("optimizer-prefix-bounds.gti", source);
+      analyzeTrusted("optimizer-source-prefix-bounds.gti", source);
   expect(frontend.canGenerateCode(),
-         "prefix-storage bounds relation fixture should pass the frontend");
+         "source-prefix bounds relation fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -1198,53 +1214,60 @@ int32_t main() {
   const lang::OptimizedProgram o3 = optimize(lang::OptimizationLevel::O3);
   const auto bounds = [&](const lang::OptimizedProgram &optimized,
                           std::string_view name) {
-    return functionDischarges(frontend, optimized, name,
-                              lang::MirSafetyCheckFamily::Bounds);
+    const auto *function = findFunction(frontend, name);
+    return function == nullptr
+               ? 0
+               : borrowingCallDischarges(optimized, function->id,
+                                         lang::MirSafetyCheckFamily::Bounds);
   };
   expect(o2.valid() && o3.valid() && bounds(o2, "exact_checked_read") == 2 &&
              bounds(o3, "exact_checked_read") == 2,
          "an exact closed-call index range should discharge the public "
-         "logical-size check and its matching private prefix read at O2 and "
+         "logical-size check and its matching source prefix read at O2 and "
          "O3");
   for (const std::string_view name :
        {"different_index", "different_storage", "append_after_check",
         "pop_after_check", "insert_after_check", "erase_after_check",
         "relocate_after_check", "opaque_call_after_check",
         "index_write_after_check"}) {
-    expect(bounds(o2, name) == 0 && bounds(o3, name) == 0,
+    expect(functionDischarges(frontend, o2, name,
+                              lang::MirSafetyCheckFamily::Bounds) == 0 &&
+               functionDischarges(frontend, o3, name,
+                                  lang::MirSafetyCheckFamily::Bounds) == 0,
            std::string(name) +
-               " must retain the private prefix read bounds check");
+               " must retain the source prefix read bounds check");
   }
 }
 
 void testClosedIndexedElementEnvelope() {
   const std::string source = R"(
+#include <std/memory>
 class CheckedBuffer {
-  mut gti_internal::prefix_storage<int32_t> data;
+  mut std::detail::prefix_owner<int32_t> data;
 
 public:
   CheckedBuffer()
-      : data(gti_internal::allocate_prefix_storage<int32_t>(uint64_t(4))) {
-    gti_internal::prefix_storage_append(this.data, int32_t(1));
-    gti_internal::prefix_storage_append(this.data, int32_t(2));
-    gti_internal::prefix_storage_append(this.data, int32_t(3));
-    gti_internal::prefix_storage_append(this.data, int32_t(4));
+      : data(std::detail::prefix_owner<int32_t>(uint64_t(4))) {
+    this.data.append_value(int32_t(1));
+    this.data.append_value(int32_t(2));
+    this.data.append_value(int32_t(3));
+    this.data.append_value(int32_t(4));
   }
 
   uint64_t size() {
-    return gti_internal::prefix_storage_length(this.data);
+    return this.data.length();
   }
 
   int32_t& operator[](uint64_t index) {
-    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    uint64_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   mut int32_t& operator[](uint64_t index) mut {
-    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    uint64_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 };
 
@@ -1314,6 +1337,7 @@ int32_t main() {
 
 void testClosedIndexedRecordFieldEnvelope() {
   const std::string source = R"(
+#include <std/memory>
 extern "C" {
   void analysis_barrier();
 }
@@ -1326,29 +1350,29 @@ struct CheckedRecord {
 };
 
 class CheckedRecordBuffer {
-  mut gti_internal::prefix_storage<CheckedRecord> data;
+  mut std::detail::prefix_owner<CheckedRecord> data;
 
 public:
   CheckedRecordBuffer()
-      : data(gti_internal::allocate_prefix_storage<CheckedRecord>(uint64_t(2))) {
-    gti_internal::prefix_storage_append(this.data, CheckedRecord());
-    gti_internal::prefix_storage_append(this.data, CheckedRecord());
+      : data(std::detail::prefix_owner<CheckedRecord>(uint64_t(2))) {
+    this.data.append_value(CheckedRecord());
+    this.data.append_value(CheckedRecord());
   }
 
   uint64_t size() {
-    return gti_internal::prefix_storage_length(this.data);
+    return this.data.length();
   }
 
   CheckedRecord& operator[](uint64_t index) {
-    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    uint64_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read(this.data, index);
+    return this.data.read(index);
   }
 
   mut CheckedRecord& operator[](uint64_t index) mut {
-    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    uint64_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 };
 
@@ -1435,18 +1459,21 @@ int32_t main() {
         lang::OptimizationPipeline().run({.hir = crossingFrontend.hir,
                                           .mir = crossingFrontend.mir,
                                           .level = level});
+    // The constructor's envelope does not survive the opaque cleanup, so
+    // the first client keeps both checks. Its own exact write then proves a
+    // fresh element-zero postcondition, which later clients may consume.
     expect(crossing.valid() &&
                functionDischarges(
                    crossingFrontend, crossing, "increment_narrow",
                    lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0 &&
                functionDischarges(
                    crossingFrontend, crossing, "repeat_narrow",
-                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 1 &&
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 5 &&
                functionDischarges(
                    crossingFrontend, crossing, "increment_then_barrier",
-                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
-           "opaque cleanup must erase the earlier caller record envelope, "
-           "while the independent loop counter remains provable");
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow) == 2,
+           "opaque cleanup must erase the earlier caller record envelope; "
+           "only facts written after the barrier may prove later clients");
     expect(lang::verifyMirOptimizationCoherence(crossingFrontend.mir,
                                                 crossing.mir,
                                                 crossing.report.transformations)
@@ -1523,8 +1550,136 @@ int32_t main() {
          "envelopes before arithmetic mutation");
 }
 
+void testSourceRecordSequenceEnvelopes() {
+  // An unrelated record sequence built by the public vector size
+  // constructor. Each element runs the record's own source constructor in
+  // final storage; a write to one field leaves its sibling field envelope
+  // intact; a caller-local loop index reads one element of the initialized
+  // region without naming an exact cell.
+  const std::string source = R"(
+#include <std/vector>
+extern "C" {
+  void analysis_barrier();
+}
+
+struct particle {
+  particle() {}
+
+  mut int32_t speed = 3;
+  mut int32_t heat = 0;
+};
+
+struct noisy_particle {
+  noisy_particle() { analysis_barrier(); }
+
+  mut int32_t speed = 3;
+  mut int32_t heat = 0;
+};
+
+int32_t settle(mut std::vector<particle>& values) {
+  for (mut int32_t tick = 0; tick < 1000; tick++) {
+    for (mut std::size_t index = 0; index < values.size(); index++) {
+      mut particle& item = values[index];
+      item.heat = (item.heat * 3 + item.speed) % 101 - 50;
+    }
+  }
+  return values[std::size_t(0)].heat;
+}
+
+int32_t settle_with_barrier(mut std::vector<particle>& values) {
+  for (mut int32_t tick = 0; tick < 1000; tick++) {
+    for (mut std::size_t index = 0; index < values.size(); index++) {
+      mut particle& item = values[index];
+      analysis_barrier();
+      item.heat = (item.heat * 3 + item.speed) % 101 - 50;
+    }
+  }
+  return values[std::size_t(0)].heat;
+}
+
+int32_t settle_noisy() {
+  mut std::vector<noisy_particle> values =
+      std::vector<noisy_particle>(std::size_t(16));
+  for (mut int32_t tick = 0; tick < 1000; tick++) {
+    for (mut std::size_t index = 0; index < values.size(); index++) {
+      mut noisy_particle& item = values[index];
+      item.heat = (item.heat * 3 + item.speed) % 101 - 50;
+    }
+  }
+  return values[std::size_t(0)].heat;
+}
+
+int32_t sum_speeds(std::vector<particle>& values) {
+  mut int32_t total = 0;
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    total += values[index].speed;
+  }
+  return total;
+}
+
+int32_t sum_past_end(std::vector<particle>& values) {
+  mut int32_t total = 0;
+  for (mut std::size_t index = 0; index <= values.size(); index++) {
+    total += values[index].speed;
+  }
+  return total;
+}
+
+int32_t main() {
+  mut std::vector<particle> values = std::vector<particle>(std::size_t(16));
+  int32_t speeds = sum_speeds(values);
+  int32_t settled = settle(values);
+  int32_t barrier = settle_with_barrier(values);
+  return settled + barrier + speeds + settle_noisy() + sum_past_end(values);
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-record-sequence.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the record sequence fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const lang::OptimizedProgram optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    const auto overflow = [&](std::string_view name) {
+      return functionDischarges(frontend, optimized, name,
+                                lang::MirSafetyCheckFamily::ArithmeticOverflow);
+    };
+    const std::string counts =
+        " settle=" + std::to_string(overflow("settle")) +
+        " sum_speeds=" + std::to_string(overflow("sum_speeds")) +
+        " barrier=" + std::to_string(overflow("settle_with_barrier")) +
+        " noisy=" + std::to_string(overflow("settle_noisy")) +
+        " past_end=" + std::to_string(overflow("sum_past_end"));
+    expect(optimized.valid() && overflow("settle") == 5 &&
+               overflow("sum_speeds") == 2,
+           "constructor-built record envelopes must prove both counters and "
+           "every field operation:" +
+               counts);
+    expect(overflow("settle_with_barrier") == 1 &&
+               overflow("settle_noisy") == 2,
+           "an opaque call before the write, or an opaque element "
+           "constructor, must retain the field checks:" +
+               counts);
+    expect(overflow("sum_past_end") == 0,
+           "an index reaching the initialized length must not read the "
+           "element envelope:" +
+               counts);
+    expect(lang::verifyMirOptimizationCoherence(
+               frontend.mir, optimized.mir, optimized.report.transformations)
+               .valid(),
+           "record sequence proofs must independently replay");
+  }
+}
+
 void testGuardedClosedCallContextWidening() {
   const std::string source = R"(
+#include <std/memory>
 struct ContextEntity {
   ContextEntity() {}
 
@@ -1535,25 +1690,25 @@ struct ContextEntity {
 };
 
 class ContextBuffer {
-  mut gti_internal::prefix_storage<ContextEntity> data;
+  mut std::detail::prefix_owner<ContextEntity> data;
 
 public:
   ContextBuffer()
-      : data(gti_internal::allocate_prefix_storage<ContextEntity>(uint64_t(4))) {
-    gti_internal::prefix_storage_append(this.data, ContextEntity());
-    gti_internal::prefix_storage_append(this.data, ContextEntity());
-    gti_internal::prefix_storage_append(this.data, ContextEntity());
-    gti_internal::prefix_storage_append(this.data, ContextEntity());
+      : data(std::detail::prefix_owner<ContextEntity>(uint64_t(4))) {
+    this.data.append_value(ContextEntity());
+    this.data.append_value(ContextEntity());
+    this.data.append_value(ContextEntity());
+    this.data.append_value(ContextEntity());
   }
 
   uint64_t size() {
-    return gti_internal::prefix_storage_length(this.data);
+    return this.data.length();
   }
 
   mut ContextEntity& operator[](uint64_t index) mut {
-    uint64_t live = gti_internal::prefix_storage_length(this.data);
+    uint64_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return gti_internal::prefix_storage_read_mut(this.data, index);
+    return this.data.read_mut(index);
   }
 };
 
@@ -1614,8 +1769,12 @@ int32_t main() {
   const lang::OptimizedProgram o2 = optimize(lang::OptimizationLevel::O2);
   const lang::OptimizedProgram o3 = optimize(lang::OptimizationLevel::O3);
   const auto bounds = [&](const lang::OptimizedProgram &optimized) {
-    return operatorDischarges(optimized, lang::OverloadedOperator::Subscript,
-                              lang::MirSafetyCheckFamily::Bounds);
+    std::size_t count = 0;
+    for (const auto &function : optimized.mir.functionInstances())
+      if (function.overloadedOperator == lang::OverloadedOperator::Subscript)
+        count += borrowingCallDischarges(optimized, function.id,
+                                         lang::MirSafetyCheckFamily::Bounds);
+    return count;
   };
 
   expect(o2.valid() && o3.valid() && bounds(o2) == 2 && bounds(o3) == 2,
@@ -1778,10 +1937,11 @@ int main() {
   testClosedCallMutableInputInvalidation();
   testSynchronizingCallInvalidation();
   testOpaqueRuntimeCallInvalidation();
-  testPrefixStorageBoundsRelation();
+  testSourcePrefixBoundsRelation();
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();
+  testSourceRecordSequenceEnvelopes();
   testChainedFixedArrayDimensionBounds();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";

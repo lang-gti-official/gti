@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from allocation_abort_runtime_test import ABORT_STATUS
 
 
 def main():
@@ -49,7 +50,7 @@ def main():
                      (["derived", "failure"], (70, "10\n20\n1\n9\n",
                       f"{source.name}:{derived_site}: runtime error[GTI-R0002]: "
                       "division_by_zero in integer_division\n")),
-                     (["allocation", "before", "base"], (70, "9\n",
+                     (["allocation", "before", "base"], (ABORT_STATUS, "",
                       f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n"))]
             for arguments, expected in cases:

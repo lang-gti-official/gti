@@ -400,6 +400,14 @@ select a bulk relocation. It is independent of assignability, transfer/share,
 and the MIR defined-failure proof: an empty-destination transfer does not prove
 that replacing a live destination can skip cleanup.
 
+During generic body checking, dependent fields retain relocation guarantees
+from their type parameter's declaration and active `requires` clause. The
+ordinary aggregate query composes those facts through fields and payload
+alternatives; it does not grant unconstrained parameters relocation or upgrade
+structural relocation to bitwise relocation. Disjunctions retain only guarantees
+common to every branch. Concrete reanalysis and MIR verification still derive
+the final traits from actual substituted types.
+
 Lifecycle, cleanup, and transfer/share queries distinguish an exact type cycle
 from growth of a generic substitution. A closed non-generic declaration breaks
 that substitution dependency: `Wrapper<Envelope>` containing an `Envelope`

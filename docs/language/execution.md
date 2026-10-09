@@ -1251,8 +1251,9 @@ suppress the hosted report, or change
 the exit status. It may be called on any attached thread and concurrently for
 independent embedded invocations; it shall return normally, shall not re-enter
 GTI, and shall not unwind through the boundary. It receives no runtime
-allocation service and must tolerate `GTI-R0011` without assuming allocation
-will succeed. If the runtime detects observer return-state corruption, re-entry,
+allocation service and must not assume allocation will succeed. Infallible
+exhaustion bypasses the observer and aborts at the detector. If the runtime
+detects observer return-state corruption, re-entry,
 or an escaping native exception, it writes one best-effort standard report of
 the original record and immediately terminates with status 70 without observer
 re-entry; it does not replace the original record with `GTI-R0014`. An observer
@@ -1328,12 +1329,22 @@ should have a recoverable sibling when callers need control.
 
 Consequently wrong-state `expected.value()` and `expected.error()` access uses
 `GTI-R0009`; it never inherits native `bad_expected_access`, assertion, or
-undefined behavior. `make_unique` and private storage map exhaustion to
-`GTI-R0011`, while recoverable allocation factories return `expected`. This is
-the current behavior. Under the accepted
+undefined behavior. Infallible allocation is the terminal exception: under the
 [Rust allocation-failure model](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09),
-infallible exhaustion will instead write the `GTI-R0011` report and abort
-without cleanup. Process allocations will no longer be observable effects.
+`make_unique`, `make_shared` and plain container growth report exhaustion as
+`GTI-R0011` and immediately abort without cleanup, observer notification,
+managed-thread handoff or embedding containment. Exhaustion during cleanup
+also aborts; it is not a `GTI-R0014` secondary failure. Size-computation overflow
+remains a cleanup-preserving defined failure. Recoverable allocation factories
+and `try_` growth operations retain their explicit `expected` results.
+
+Process allocations are not observable effects: a semantics-preserving
+optimization may omit an allocation/release pair or use automatic storage.
+An omitted fallible process allocation succeeds. This permission does not
+apply to calls into application memory resources, which retain their ordinary
+observable effects. The current implementation and acceptance status is tracked
+in S-ALLOC-08/S-ALLOC-09; this permission is not a guarantee that every eligible
+allocation is optimized away.
 
 Compile-time diagnostics, compiler resource exhaustion, IEEE-754 nontrapping
 results, explicit `expected` errors, native error/sentinel values,
@@ -1389,6 +1400,9 @@ adapter invokes the runtime terminal primitive only after cleanup, produces the
 exact report, exits 70, and immediately exits 70 if a native exception crosses
 the generated boundary without forging a GTI record. Program initialization
 executes through the verified `Module/0` schedule inside that containment.
+Allocation-only exhaustion instead aborts at its MIR detector before cleanup
+or publication. Mixed-outcome operations retain cleanup edges for their other
+failures, not for exhaustion.
 
 Managed-task handoff and cleanup double-failure envelopes use this same
 contract. General embedding and arbitrary foreign-thread callback containment

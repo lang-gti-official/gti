@@ -478,10 +478,9 @@ struct MirDropType {
   // destructor, if present, then children in reverse field order, then base
   // order. A closure destroys active captures in reverse capture order.
   // A unique owner of an aggregate has
-  // one unprojected pointee child, followed by allocation release. Storage and
-  // prefix storage have one unprojected element child: apply it in reverse
-  // index order to initialized slots/the live prefix, end each element's
-  // representation lifetime, then release the allocation. A first
+  // one unprojected pointee child, followed by allocation release. Source
+  // containers use ordinary destructor bodies to schedule element lifetime
+  // ends through the general object-lifetime operations. A first
   // failure drains remaining children; a second failure terminates immediately
   // with both records. Entering during failure returns on the first new
   // failure.
@@ -557,10 +556,6 @@ enum class MirInstructionKind {
   // enclosing representation stays live but disarmed/empty, including on
   // failure. RHS ownership is untouched until the success-path Assign.
   CleanupBeforeAssign,
-  // Checks prefix capacity or a sparse slot's bounds/liveness before an
-  // in-place constructor receives prepared parameters. Its exact paired
-  // construction is the sole success continuation.
-  StorageConstructPreflight,
   Count,
 };
 
@@ -723,9 +718,10 @@ struct MirInstruction {
   std::optional<SourceLocationLiteral> sourceLocation;
   SynchronizationOperation synchronization;
   DefinedFailureOperation definedFailure;
-  // Exact contained element cleanup for explicit sparse-slot destruction and
-  // prefix pop/erase. The operation retires the slot before executing this
-  // recipe; a destructor failure propagates its original record through Invoke.
+  // Exact contained element cleanup for general object destruction and
+  // explicit optional-slot destruction. The operation retires the slot before
+  // executing this recipe; a destructor failure propagates its original record
+  // through Invoke.
   std::optional<MirDropType> elementCleanup;
   std::optional<MirDropType> replacementCleanup;
   // Symmetric exact instruction pair: CleanupBeforeAssign <-> Assign.
@@ -742,9 +738,6 @@ struct MirInstruction {
   // Body-local ObjectAllocation obligation consumed by unique construction,
   // or established by AllocateObject. It is not a source-visible owner value.
   MirDropObligationId objectAllocation = 0;
-  // Exact non-consuming slot check preceding parameter transfer into an
-  // ordinary storage constructor. Zero for all other instructions.
-  MirInstructionId storagePreflight = 0;
   std::optional<MirBodyAddress> bodyTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
@@ -810,12 +803,7 @@ allMirLocalFailuresDischarged(const MirInstruction &instruction);
 [[nodiscard]] MirInstruction
 makeMirInstructionTombstone(const MirInstruction &instruction);
 
-// Exact CFG pairing only; program verification additionally checks the selected
-// constructor signature and body-local verification checks staged ownership.
 struct MirBody;
-[[nodiscard]] const MirInstruction *
-mirStorageConstructForPreflight(const MirBody &body,
-                                MirInstructionId preflight);
 
 struct MirScalarPromotionRewrite {
   MirPlaceId place = 0;

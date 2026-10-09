@@ -54,8 +54,7 @@ public:
   ~Item() { alive--; destroyed += this.id; }
 };
 
-int failed_growth(std::resource_ref<CountingResource<engine::Arena>> resource,
-                  bool metadata_failure) {
+int failed_growth(std::resource_ref<CountingResource<engine::Arena>> resource) {
   mut std::resource_vector<Item, CountingResource<engine::Arena>> items{resource};
   if (!items.try_reserve(std::size_t(1))) { return 1; }
   if (!items.try_emplace_back(7)) { return 2; }
@@ -63,22 +62,40 @@ int failed_growth(std::resource_ref<CountingResource<engine::Arena>> resource,
   if (growth || growth.error() != std::alloc_errc::resource_exhausted) { return 3; }
   if (items.size() != std::size_t(1) || items.capacity() != std::size_t(1) ||
       items.get(std::size_t(0)).value() != 7 || alive != 1 || destroyed != 0) { return 4; }
-  // Budget two rejects the candidate object region; budget three obtains it
-  // but rejects metadata. The latter must return only the candidate region,
-  // leaving both original regions and their live element untouched.
-  uint64_t expected_allocations = metadata_failure ? uint64_t(3) : uint64_t(2);
-  uint64_t expected_releases = metadata_failure ? uint64_t(1) : uint64_t(0);
-  if (resource.get().allocations() != expected_allocations ||
-      resource.get().attempts() != expected_allocations + uint64_t(1) ||
-      resource.get().releases() != expected_releases) { return 5; }
+  // The source-defined vector prefix has one region and no metadata request.
+  // Budget one rejects growth without returning the still-live original.
+  if (resource.get().allocations() != uint64_t(1) ||
+      resource.get().attempts() != uint64_t(2) ||
+      resource.get().releases() != uint64_t(0)) { return 5; }
   // A failed push consumes its argument without publishing it; the existing
   // element, capacity and region are unchanged.
   auto pushed = items.try_push_back(Item(9));
   if (pushed || pushed.error() != std::alloc_errc::resource_exhausted ||
       items.size() != std::size_t(1) || items.capacity() != std::size_t(1) ||
       items.get(std::size_t(0)).value() != 7 || alive != 1 || destroyed != 9 ||
-      resource.get().releases() != expected_releases ||
-      resource.get().attempts() != expected_allocations + uint64_t(2)) { return 6; }
+      resource.get().releases() != uint64_t(0) ||
+      resource.get().attempts() != uint64_t(3)) { return 6; }
+  return 0;
+}
+
+int failed_sparse_growth(std::resource_ref<CountingResource<engine::Arena>> resource,
+                         bool metadata_failure) {
+  mut std::resource_storage<Item, CountingResource<engine::Arena>> slots{resource};
+  if (!slots.try_allocate(std::size_t(1))) { return 40; }
+  slots.emplace(std::size_t(0), 7);
+  auto growth = slots.try_reserve_prefix(std::size_t(8), std::size_t(1));
+  if (growth || growth.error() != std::alloc_errc::resource_exhausted) { return 41; }
+  if (slots.capacity() != std::size_t(1) || slots.get(std::size_t(0)).value() != 7 ||
+      alive != 1 || destroyed != 0) { return 42; }
+  // Sparse storage retains its two-region contract. Budget two rejects the
+  // candidate objects; budget three obtains them but rejects their metadata.
+  // In the latter case only the candidate region is returned, never either
+  // original region or the already-live Item.
+  uint64_t expected_allocations = metadata_failure ? uint64_t(3) : uint64_t(2);
+  uint64_t expected_releases = metadata_failure ? uint64_t(1) : uint64_t(0);
+  if (resource.get().allocations() != expected_allocations ||
+      resource.get().attempts() != expected_allocations + uint64_t(1) ||
+      resource.get().releases() != expected_releases) { return 43; }
   return 0;
 }
 
@@ -117,18 +134,31 @@ int growth_and_release(std::resource_ref<engine::Arena> resource) {
 
 int main() {
   mut engine::Arena arena{std::size_t(32768), std::size_t(4096)};
+  {
+    CountingResource<engine::Arena> counted{arena, uint64_t(1)};
+    unsafe {
+      auto resource = std::bind_resource(counted);
+      int status = failed_growth(resource);
+      if (status != 0) { return status; }
+      int invalid = invalid_requests(resource);
+      if (invalid != 0) { return invalid; }
+    }
+    if (alive != 0 || destroyed != 16 || counted.releases() != uint64_t(1) ||
+        counted.allocations() != uint64_t(1)) { return 30; }
+  }
+  arena.reset();
   for (mut uint64_t budget = 2; budget <= uint64_t(3); budget++) {
     alive = 0;
     destroyed = 0;
     CountingResource<engine::Arena> counted{arena, budget};
     unsafe {
       auto resource = std::bind_resource(counted);
-      int status = failed_growth(resource, budget == uint64_t(3));
+      int status = failed_sparse_growth(resource, budget == uint64_t(3));
       if (status != 0) { return status; }
       int invalid = invalid_requests(resource);
       if (invalid != 0) { return invalid; }
     }
-    if (alive != 0 || destroyed != 16 || counted.releases() != budget ||
+    if (alive != 0 || destroyed != 7 || counted.releases() != budget ||
         counted.allocations() != budget) { return 30; }
   }
   arena.reset();

@@ -41,7 +41,6 @@ enum class CppMirTypeRepresentationKind {
   Lambda,
   UniqueOwner,
   SharedPointer,
-  Storage,
   Expected,
   Unexpected,
   Meta,
@@ -492,6 +491,11 @@ struct CppMirConstructedFieldInitializerArgument {
   std::optional<std::size_t> parameter;
   std::optional<Literal> literal;
   bool moved = false;
+  // A verified, genuinely non-failing ordinary constructor argument. The
+  // recursive rows retain selected targets and operand order, not source text.
+  std::optional<HirConstructorInstanceId> constructor;
+  std::vector<CppMirConstructedFieldInitializerArgument> arguments;
+  bool failureStatus = false;
 };
 struct CppMirBaseParameterInitializerBinding {
   std::size_t initializer = 0;
@@ -580,6 +584,8 @@ struct CppMirConstructedFieldInitializerBinding {
   MirValueId constructedValue = 0;
   MirInstructionId constructInstruction = 0;
   std::vector<MirInstructionId> argumentInstructions;
+  std::vector<MirValueId> argumentValues;
+  MirBlockId constructBlock = 0;
   MirInstructionId initializeInstruction = 0;
   MirInstructionId boundaryInstruction = 0;
   MirPlaceId slotPlace = 0;

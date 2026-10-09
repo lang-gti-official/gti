@@ -14,11 +14,9 @@ INCOMING_CLEANUP_CHECK = (
 )
 
 
-def cleanup_scope(block: str) -> str:
-    ordinal = re.escape(block.removeprefix("__gti_mir_bb_"))
+def cleanup_scope(_block: str) -> str:
     return (
-        r"::gti_internal::backend::mir_failure_cleanup_scope_v1 "
-        r"__gti_mir_cleanup_context_" + ordinal + r"\(__gti_mir_failure_record, "
+        r"__gti_mir_cleanup_context\.activate\(__gti_mir_failure_record, "
         r"&::gti_internal::backend::__gti_failure_artifact_descriptor_v1\);\s*"
     )
 
@@ -192,18 +190,21 @@ def main() -> int:
         )
         failure_pattern = re.compile(
             re.escape(vector_schedule.group("failure")) + r": \{\s*"
-            + cleanup_scope(vector_schedule.group("failure")) +
-            r"// GTI MIR failure-record \d+ cleanup\s*"
+            + r"// GTI MIR failure-record \d+ cleanup\s*"
             r"// GTI MIR propagate failure-record \d+ after cleanup\s*return;"
         )
         failure = failure_pattern.search(vector_body)
-        if success is None or failure is None or " = std::move(" in vector_body:
+        # This constructor has no local cleanup on its failure edge. An
+        # inherited failure still needs the incoming guard above, but a local
+        # cleanup context would add cost without protecting any operation.
+        if (success is None or failure is None or " = std::move(" in vector_body or
+                "__gti_mir_cleanup_context" in vector_body):
             sys.stderr.write("vector field must publish only on success, without a second move\n")
             return 1
         missing_guard = re.sub(INCOMING_CLEANUP_CHECK, "", vector_schedule.group(0), count=1)
-        missing_scope = re.sub(cleanup_scope(vector_schedule.group("failure")), "", failure.group(0), count=1)
+        missing_propagation = re.sub(r"// GTI MIR propagate failure-record \d+ after cleanup", "", failure.group(0), count=1)
         if (vector_schedule_pattern.search(missing_guard) is not None or
-                failure_pattern.search(missing_scope) is not None):
+                failure_pattern.search(missing_propagation) is not None):
             sys.stderr.write("field publication proof accepts missing inherited-cleanup protection\n")
             return 1
 
@@ -267,6 +268,7 @@ def main() -> int:
             + cleanup_scope(cleanup.group("failure")) +
             r"// GTI MIR failure-record \d+ cleanup\s*"
             r"// GTI MIR end-borrow loan " + cleanup.group("loan") + r"\s*"
+            r"std::memset\(&__gti_mir_cleanup_failure_record, 0, sizeof\(__gti_mir_cleanup_failure_record\)\);\s*"
             r"__gti_mir_drop_success_\d+ = "
             + re.escape(replacement.group("slot"))
             + r"\.destroy_with_failure\(",

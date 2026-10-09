@@ -56,6 +56,14 @@ loan equality with an unrelated primary analysis is not a provenance proof.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
+Exact enum identities named only by concrete function or constructor type
+arguments are retained in complete lowering as well as the reachable prefix.
+The identity walk finds nested enums without requesting unrelated class layouts
+or executable bodies merely because their types occur as generic arguments.
+An enum's actual payloads still discover the layouts they require. This keeps
+the concrete catalog closed even for a constraint-only generic call whose
+signature and body never create a value of its type argument.
+
 ### Reachable executable prefix
 
 Concrete analysis must cover every declaration, because instance reanalysis

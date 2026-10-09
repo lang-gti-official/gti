@@ -1,0 +1,47 @@
+#include <std/string>
+#include <std/vector>
+
+mut int constructed = 0;
+
+class Ticket {
+  int first;
+  int second;
+  int cleanup_divisor;
+public:
+  Ticket(int first, int second, int cleanup_divisor) :
+      first(first), second(second), cleanup_divisor(cleanup_divisor) {
+    constructed = first;
+  }
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() {
+    std::println(this.first);
+    std::println(this.second);
+    int checked = 1 / this.cleanup_divisor; // cleanup failure
+  }
+};
+
+class Caller {
+public:
+  Caller() {}
+  ~Caller() { std::println(99); }
+};
+
+int argument(int value, int divisor) {
+  std::println(value);
+  int checked = 1 / divisor; // argument failure
+  return value;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  expected<Ticket, int> first =
+      Ticket(argument(1, 1), argument(2, argc == 2 ? 0 : 1), 1);
+  if (constructed != 1) { return 1; }
+  expected<Ticket, int> second =
+      Ticket(argument(3, 1), argument(4, 1), argc == 4 ? 0 : 1);
+  if (constructed != 3) { return 2; }
+  std::println("published");
+  int checked = 1 / (argc >= 3 ? 0 : 1); // primary failure
+  return 0;
+}

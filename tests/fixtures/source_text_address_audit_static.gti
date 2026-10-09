@@ -1,0 +1,18 @@
+#include <std/memory>
+char static_bytes[2] = {'a', '\0'};
+unsafe std::string_view relayed_text(const char* address, char& witness) {
+  unsafe { return std::assume_string_view(address, uint64_t(1), witness); }
+}
+unsafe c_string relayed_native(const char* address, char& witness) {
+  unsafe { return std::assume_c_string(address, witness); }
+}
+int main() {
+  char witness = 'w';
+  unsafe {
+    auto text = relayed_text(&static_bytes[0], witness);
+    c_string native = relayed_native(&static_bytes[0], witness);
+    auto empty = std::assume_string_view(nullptr, uint64_t(0), witness);
+    c_string nullable = relayed_native(nullptr, witness);
+    return text[0] == 'a' && native != nullptr && empty.empty() && nullable == nullptr ? 0 : 1;
+  }
+}

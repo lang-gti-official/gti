@@ -11,7 +11,9 @@ namespace lang::mir_detail {
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);
 
-// The generated same-type copy/move family has no source constructor target.
+// Trivial generated default and same-type copy/move construction have no
+// source constructor target. The program verifier checks the class's exact
+// special-member policy, including the absence of a required default schedule.
 // Allocation and staged input ownership still have distinct MIR identities.
 [[nodiscard]] bool
 generatedUniqueConstruction(const MirInstruction &instruction);
@@ -37,6 +39,11 @@ generatedUniqueConstruction(const MirInstruction &instruction);
 // access authority come from the explicit witness in operand one.
 [[nodiscard]] const MirLoan *
 rawBorrowResultLoan(const MirBody &body, const MirInstruction &instruction);
+// Unsafe raw text assertions retain a checked witness without assigning
+// ownership or validity to the address itself. The exact ordered input
+// stages and resulting loan source are shared by verification and emission.
+[[nodiscard]] const MirLoan *
+textAddressResultLoan(const MirBody &body, const MirInstruction &instruction);
 
 // A distinct loan-rooted address retains either descendant provenance or a
 // parallel read-only loan over the identical source/dependencies. Check typed

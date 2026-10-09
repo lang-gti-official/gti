@@ -15,16 +15,44 @@ void testOwningAggregateArgumentStaging() {
   std::size_t checked = 0;
   std::size_t retiredReturnTemporaries = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
-    if (function.returnType.kind == lang::SemanticType::Expected) {
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    if (hir && hir->source && hir->source->name().lexeme == "forward" &&
+        function.returnType.kind == lang::SemanticType::Expected) {
       const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                          function.id};
       const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
       if (emitter.supportsFailureBodyText(address)) {
         const auto text = emitter.emitFailureBodyText(address, "test", 0);
-        if (text.emitted() &&
-            text.text.find(".destroy(); // GTI MIR returned temporary "
-                           "transfer-out") != std::string::npos)
+        for (const auto &drop : function.body.dropObligations) {
+          if (drop.kind != lang::MirDropObligationKind::ReturnResult ||
+              drop.dropType.type != function.returnType.arguments.front())
+            continue;
+          // A potentially failing source destructor keeps the payload pending
+          // across earlier cleanup, then take() retires its exact source slot.
+          // It no longer uses the old passive-temporary destroy comment.
+          const auto publication =
+              "construct_representation_at(__gti_mir_out_result, __gti_mir_p_" +
+              std::to_string(drop.place) + ".take());";
+          expect(
+              text.emitted() &&
+                  text.text.find(publication) != std::string::npos,
+              "successful return transfers and retires its exact pending slot");
+          auto forged = frontend.mir;
+          auto *body = lang::findMirBody(forged, address);
+          std::size_t erased = 0;
+          for (auto &block : body->blocks)
+            for (auto &instruction : block.instructions)
+              erased +=
+                  std::erase_if(instruction.lifecycle, [&](const auto &event) {
+                    return event.kind ==
+                               lang::MirLifecycleEventKind::TransferOut &&
+                           event.source == drop.id;
+                  });
+          expect(
+              erased == 1 && !lang::verifyMirProgram(forged).valid(),
+              "pending success publication cannot lose its exact TransferOut");
           ++retiredReturnTemporaries;
+        }
       }
     }
     if (function.entryKind == lang::ProgramEntryKind::None)

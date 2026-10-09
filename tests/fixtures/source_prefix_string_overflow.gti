@@ -1,0 +1,11 @@
+#include <std/string>
+class Cleanup {
+public:
+  ~Cleanup() { std::println(55); }
+};
+int main() {
+  Cleanup cleanup{};
+  mut std::string text{};
+  text.reserve(uint64_t(18446744073709551615));
+  return 1;
+}

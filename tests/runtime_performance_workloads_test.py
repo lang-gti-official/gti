@@ -34,6 +34,9 @@ EXPECTED_RECORDS = {
     "scalar-fp-update": (
         "GTI-BENCH-1 digest:00000000034ee502 work-units:60000000"
     ),
+    "string-growth-search": (
+        "GTI-BENCH-1 digest:000000047b6961d6 work-units:20000000"
+    ),
 }
 
 

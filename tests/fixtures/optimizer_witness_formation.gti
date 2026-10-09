@@ -1,0 +1,51 @@
+class Witness {
+public:
+  mut int value = 7;
+  int other = 2147483647;
+
+  [[borrowed_from(this)]]
+  int& read() {
+    unsafe { return *(&this.value); }
+  }
+
+  [[borrowed_from(this)]]
+  mut int& write() mut {
+    unsafe { return *(&this.value); }
+  }
+
+  [[borrowed_from(this)]]
+  int& read_other() {
+    unsafe { return *(&this.other); }
+  }
+};
+
+int formed(mut Witness& witness) {
+  {
+    int& first = witness.read();
+    if (first != 7) return 0;
+  }
+  {
+    mut int& second = witness.write();
+    if (second != 7) return 0;
+  }
+  return witness.value + 1;
+}
+
+int changed(mut Witness& witness) {
+  {
+    mut int& alias = witness.write();
+    alias = 2147483647;
+  }
+  return witness.value + 1;
+}
+
+int other_value(Witness& witness) {
+  return witness.read_other() + 1;
+}
+
+int main() {
+  mut Witness witness{};
+  if (formed(witness) != 8) return 1;
+  int changed_result = changed(witness);
+  return changed_result + other_value(witness);
+}

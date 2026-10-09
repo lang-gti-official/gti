@@ -1,7 +1,7 @@
 #include <std/vector>
 #include <std/string>
 T largest<std::totally_ordered T>(std::vector<T>& values, T fallback)
-  requires std::copyable<T> {
+  requires std::copyable<T> && std::vector_element<T> {
   if (values.size() == std::size_t(0)) { return std::move(fallback); }
   mut T best = values[std::size_t(0)];
   for (mut std::size_t i = std::size_t(1); i < values.size(); i++) {

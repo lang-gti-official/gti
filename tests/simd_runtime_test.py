@@ -142,6 +142,7 @@ int main() {
                 command = [native, "-std=c++20", "-O3", "-fno-fast-math", "-ffp-contract=off",
                            "-D__gti_strict_ieee754=1", *flags,
                            "-I", str(repository / "runtime/include"),
+                           "-I", str(repository / "vendor/expected_lite/include"),
                            "-S", str(cpp), "-o", str(assembly)]
                 if scalar:
                     command += ["-DGTI_SIMD_SCALAR_REFERENCE=1"]

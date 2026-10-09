@@ -921,9 +921,7 @@ private:
       result.requiresActiveCleanup = !result.aggregate.empty();
       return result;
     }
-    if ((type.kind == SemanticType::UniqueOwner ||
-         type.kind == SemanticType::PrefixStorage) &&
-        type.arguments.size() == 1) {
+    if (type.kind == SemanticType::UniqueOwner && type.arguments.size() == 1) {
       const auto &value = type.arguments.front();
       if ((value.kind >= SemanticType::Int8 &&
            value.kind <= SemanticType::Char) ||
@@ -939,14 +937,6 @@ private:
                           return item.type == value && item.payload;
                         }))) {
         return MirDropType{.type = type, .requiresActiveCleanup = true};
-      }
-      if (type.kind == SemanticType::PrefixStorage) {
-        auto element = uniqueCleanupType(value, visiting);
-        if (!element)
-          return std::nullopt;
-        return MirDropType{.type = type,
-                           .aggregate = {*element},
-                           .requiresActiveCleanup = true};
       }
       if (value.kind != SemanticType::Class)
         return std::nullopt;
@@ -1391,13 +1381,16 @@ private:
          .dropType = {.type = call.info.type, .requiresActiveCleanup = true}});
     DefinedFailureOperation failure = call.definedFailure;
     failure.propagation = FailurePropagationKind::None;
-    (void)appendInstruction({.kind = MirInstructionKind::AllocateObject,
-                             .hirValue = call.id,
-                             .successResultDrop = id,
-                             .destination = place,
-                             .definedFailure = std::move(failure),
-                             .objectAllocation = id,
-                             .info = call.info});
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::AllocateObject,
+         .hirValue = call.id,
+         .destination = place,
+         .definedFailure = std::move(failure),
+         .objectAllocation = id,
+         .info = call.info,
+         .lifecycle = {
+             {.kind = MirLifecycleEventKind::Initialize, .target = id}}});
+    registerTemporary(id);
     return id;
   }
 
@@ -2037,6 +2030,54 @@ private:
           {.kind = MirInstructionKind::EndBorrow, .loan = failedLoan->id});
       failureEndedLoans.push_back(failedLoan->id);
     }
+    // A fresh constructor argument has already transferred its owning slot to
+    // the callee before this Invoke. On failure the callee has drained that
+    // parameter, so its caller-local dependency must end before any external
+    // parent is retired. It has no remaining temporary drop to trigger the
+    // ordinary lifecycle endpoint. Borrowed/copied arguments do not transfer
+    // this capability and must retain their existing cleanup schedule.
+    std::vector<MirLoanId> consumedConstructedLoans;
+    if (failedProducer &&
+        failedProducer->kind == MirInstructionKind::Construct) {
+      for (const auto &operand : failedProducer->operands) {
+        const auto *stage =
+            operand.kind == MirOperandKind::Value
+                ? mir_detail::definitionFor(output, operand.value)
+                : nullptr;
+        if (!stage || stage->kind != MirInstructionKind::CallInput ||
+            stage->callSite != failedProducer->callSite ||
+            stage->callInputRole != MirCallInputRole::Argument ||
+            stage->callInputKind != HirCallInputKind::MoveValue ||
+            !stage->preparedParameterDrop || stage->operands.size() != 1 ||
+            stage->operands.front().kind != MirOperandKind::Value ||
+            !std::any_of(
+                failedProducer->lifecycle.begin(),
+                failedProducer->lifecycle.end(), [&](const auto &event) {
+                  return event.kind == MirLifecycleEventKind::TransferOut &&
+                         event.source == *stage->preparedParameterDrop;
+                }))
+          continue;
+        const auto *argument =
+            mir_detail::definitionFor(output, stage->operands.front().value);
+        const auto *dependency = argument && argument->loan
+                                     ? output.findLoan(*argument->loan)
+                                     : nullptr;
+        if (argument && argument->kind == MirInstructionKind::Construct &&
+            dependency && dependency->kind == MirLoanKind::Stored &&
+            dependency->lifecycleBound && !dependency->entry &&
+            !dependency->escapes &&
+            dependency->producedBy == argument->hirValue &&
+            loanIsActive(scopes, dependency->id))
+          consumedConstructedLoans.push_back(dependency->id);
+      }
+    }
+    for (const auto loan : childFirstMirLoans(consumedConstructedLoans)) {
+      if (!containsLoan(failureEndedLoans, loan)) {
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = loan});
+        failureEndedLoans.push_back(loan);
+      }
+    }
     // Return-expression evaluation may already have formed its exported loan
     // when a later local destructor fails. No reference is published on that
     // edge, so retire a non-owning return capability before draining locals.
@@ -2330,9 +2371,36 @@ private:
     }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
+        const bool neutralValueStage =
+            instruction.kind == MirInstructionKind::CallInput &&
+            instruction.callInputKind == HirCallInputKind::Value &&
+            instruction.result && !instruction.destination &&
+            !instruction.receiver && !instruction.loan &&
+            instruction.intrinsic == IntrinsicKind::None &&
+            instruction.operation == MirOperation::None &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Value &&
+            instruction.operands.front().value != 0 &&
+            instruction.operands.front().place == 0 &&
+            instruction.operands.front().loan == 0 &&
+            instruction.operands.front().type == instruction.info.type &&
+            instruction.lifecycle.empty() && !instruction.functionTarget &&
+            !instruction.constructorTarget && !instruction.bodyTarget &&
+            !instruction.nativeCallbackAdapter &&
+            !instruction.threadTaskAdapter &&
+            !instruction.preparedParameterDrop &&
+            !instruction.retainedOwnerPlace && !instruction.successResultDrop &&
+            !instruction.successResultDestination &&
+            instruction.synchronization.kind ==
+                SynchronizationOperationKind::None;
         // Object lifetime manipulation is one explicit call, not an assertion
         // by its surrounding full-expression/lifecycle bookkeeping markers.
+        // A neutral Value stage likewise forwards an already computed SSA
+        // value. The source Load/Compute/Call retains its unsafe operation;
+        // preparation must not claim to execute that operation a second time.
+        // Explicit stage annotations and all owning/borrowing stages remain.
         if (source->unsafeOperation != UnsafeOperationKind::None &&
+            !neutralValueStage &&
             (source->unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
              instruction.kind == MirInstructionKind::Call)) {
           instruction.unsafeOperation = source->unsafeOperation;
@@ -4613,9 +4681,11 @@ private:
     const auto *source = receiver ? findValue(*receiver) : nullptr;
     const auto *retained =
         receiver ? output.findLoan(loanForValue(*receiver)) : nullptr;
-    if (retained != nullptr && retained->kind == MirLoanKind::Local &&
-        (retained->storedDependency == 0 ||
-         (receiver && isRangeIteratorValue(*receiver))))
+    if (retained != nullptr && ((retained->kind == MirLoanKind::Local &&
+                                 retained->storedDependency == 0) ||
+                                ((retained->kind == MirLoanKind::Local ||
+                                  retained->kind == MirLoanKind::CallResult) &&
+                                 receiver && isRangeIteratorValue(*receiver))))
       return false; // An opaque range cursor carries its checked range loan.
     return source != nullptr && source->info.traits.containsBorrowedState;
   }
@@ -5185,8 +5255,7 @@ private:
                                 ? FailurePropagationKind::VirtualCall
                                 : FailurePropagationKind::DirectCall;
     }
-    if ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
-         value.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
+    if (value.intrinsic == IntrinsicKind::ObjectConstruct &&
         failure.propagation == FailurePropagationKind::Constructor &&
         value.constructorTarget) {
       // Semantics selected this constructor protocol from its exact signature.
@@ -5404,12 +5473,7 @@ private:
         const auto enclosingFailure = beginPreparedArgumentFailure(
             argument.value, argument.kind, argument.parameterType);
         MirOperand sourceArgument =
-            value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
-                    argument.parameterIndex == 0 &&
-                    argument.kind == HirCallInputKind::MutableBorrow &&
-                    argument.parameterType.kind == SemanticType::PrefixStorage
-                ? receiverOperand(argument.value, AccessMode::Mutable)
-            : argument.kind == HirCallInputKind::ReadTemporaryBorrow
+            argument.kind == HirCallInputKind::ReadTemporaryBorrow
                 ? temporaryBorrowOperand(argument.value, AccessMode::ReadOnly,
                                          argument.parameterType)
             : argument.kind == HirCallInputKind::CopyValue
@@ -5532,11 +5596,8 @@ private:
           const bool mutableStorageInput =
               index == 0 && input->info.category == ValueCategory::Place &&
               input->info.type == parameter &&
-              (value.intrinsic == IntrinsicKind::PrefixStorageAppend ||
-               value.intrinsic == IntrinsicKind::PrefixStorageInsert ||
-               value.intrinsic == IntrinsicKind::OptionalStorageConstruct) &&
-              (parameter.kind == SemanticType::PrefixStorage ||
-               parameter.kind == SemanticType::Class);
+              value.intrinsic == IntrinsicKind::OptionalStorageConstruct &&
+              parameter.kind == SemanticType::Class;
           const std::optional<HirCallInputKind> kind =
               mutableStorageInput
                   ? std::optional<
@@ -6051,8 +6112,6 @@ private:
       }
     }
     if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
-         value.intrinsic == IntrinsicKind::PrefixStoragePop ||
-         value.intrinsic == IntrinsicKind::PrefixStorageErase ||
          value.intrinsic == IntrinsicKind::OptionalStorageReset) &&
         !call.operands.empty()) {
       const SemanticType &parameter = call.operands.front().type;
@@ -6099,47 +6158,6 @@ private:
                                         value.constructorTarget)
                                   : FailurePropagationKind::None;
     }
-    if (value.intrinsic == IntrinsicKind::PrefixStorageAppend &&
-        value.definedFailure.propagation ==
-            FailurePropagationKind::Constructor &&
-        value.constructorTarget &&
-        value.constructorKind == ConstructorKind::Ordinary) {
-      const std::size_t preflightOperands = 1;
-      if (call.operands.size() < preflightOperands || call.callSite == 0) {
-        valid = false;
-        return;
-      }
-      DefinedFailureOperation preflightFailure;
-      for (auto &origin : call.definedFailure.localOrigins) {
-        DefinedFailureOrigin check = origin;
-        const auto isPreflightOutcome = [](DefinedFailureOutcome outcome) {
-          return outcome == DefinedFailureOutcome{
-                                DefinedFailureCode::InvalidStorageState,
-                                DefinedFailureDetail::RelocationCapacity};
-        };
-        std::erase_if(check.outcomes, [&](DefinedFailureOutcome outcome) {
-          return !isPreflightOutcome(outcome);
-        });
-        if (!check.outcomes.empty())
-          preflightFailure.localOrigins.push_back(std::move(check));
-        std::erase_if(origin.outcomes, isPreflightOutcome);
-      }
-      std::erase_if(call.definedFailure.localOrigins,
-                    [](const DefinedFailureOrigin &origin) {
-                      return origin.outcomes.empty();
-                    });
-      // No parameter has transferred yet. Failure here drains every prepared
-      // owner; only the success edge reaches the constructor handoff below.
-      call.storagePreflight = appendInstruction(
-          {.kind = MirInstructionKind::StorageConstructPreflight,
-           .hirValue = value.id,
-           .callSite = call.callSite,
-           .operands = {call.operands.begin(),
-                        call.operands.begin() + preflightOperands},
-           .definedFailure = std::move(preflightFailure),
-           .info = {.type = SemanticType::Void}},
-          false);
-    }
     if (!value.callPlan && !expandsPack) {
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         const SemanticType parameter =
@@ -6175,7 +6193,7 @@ private:
     // later CallInput reparents it or full-expression cleanup drops it.
     const bool successEdgeResult =
         resultDrop != 0 && routeFailureEdgesHere() &&
-        !call.definedFailure.empty() && !call.destination &&
+        call.definedFailure.mayUnwind() && !call.destination &&
         (!call.loan || transferableBorrowedResult ||
          borrowedTemporaryTransfers.contains(value.id)) &&
         !value.ownership;

@@ -1,0 +1,189 @@
+#include <std/memory>
+extern "C" {
+  void opaque_pointer_effect(int* pointer);
+  void* malloc(uint64_t bytes);
+  void free(void* address);
+}
+
+class ZeroSequence {
+  mut int* pointer = nullptr;
+  mut uint64_t live = 0;
+public:
+  ZeroSequence(int* pointer) : pointer(pointer) {}
+  uint64_t size() { return this.live; }
+  unsafe void append_default() mut {
+    unsafe { std::construct_at(this.pointer + this.live); }
+    this.live += uint64_t(1);
+  }
+  unsafe int& at(uint64_t index) {
+    unsafe { return std::assume_ref(this.pointer + index, this); }
+  }
+  unsafe mut int& at(uint64_t index) mut {
+    unsafe { return std::assume_mut(this.pointer + index, this); }
+  }
+  unsafe void clobber() mut {
+    unsafe { opaque_pointer_effect(this.pointer); }
+  }
+};
+
+unsafe int default_sequence(ZeroSequence& sequence) {
+  unsafe {
+    int& value = sequence.at(uint64_t(4095));
+    return value + 1;
+  }
+}
+
+unsafe void initialize_zero(int* pointer) {
+  unsafe { std::construct_at(pointer); }
+}
+
+unsafe int default_scalar(int* pointer) {
+  unsafe {
+    std::construct_at(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe int default_forwarded(int* pointer) {
+  unsafe {
+    initialize_zero(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe uint64_t default_unsigned(uint64_t* pointer) {
+  unsafe {
+    std::construct_at(pointer);
+    return *pointer + uint64_t(1);
+  }
+}
+
+unsafe int default_packed<Args...>(int* pointer, Args... unused) {
+  unsafe {
+    std::construct_at(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_default_explicit(int* pointer) {
+  unsafe {
+    std::construct_at(pointer, 2147483647);
+    return *pointer + 1;
+  }
+}
+
+unsafe int modified_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 7;
+    int& value = sequence.at(uint64_t(17));
+    return value + 1;
+  }
+}
+
+unsafe int bad_modified_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 2147483647;
+    int& value = sequence.at(uint64_t(4095));
+    return value + 1;
+  }
+}
+
+unsafe int bad_modified_native(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 7;
+    sequence.clobber();
+    int& value = sequence.at(uint64_t(0));
+    return value + 1;
+  }
+}
+
+unsafe int compound_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    mut int& value = sequence.at(uint64_t(4095));
+    value += 7;
+    return value;
+  }
+}
+
+unsafe int bad_compound_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 2147483647;
+    mut int& value = sequence.at(uint64_t(4095));
+    value += 1;
+    return value;
+  }
+}
+
+unsafe int bad_compound_native(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.clobber();
+    mut int& value = sequence.at(uint64_t(0));
+    value += 1;
+    return value;
+  }
+}
+
+unsafe int bad_default_native(int* pointer) {
+  unsafe {
+    initialize_zero(pointer);
+    opaque_pointer_effect(pointer);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_default_other(int* pointer, int* other) {
+  unsafe {
+    std::construct_at(pointer, 2147483647);
+    initialize_zero(other);
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_default_lifetime(int* pointer) {
+  unsafe {
+    initialize_zero(pointer);
+    std::destroy_at(pointer);
+    std::construct_at(pointer, 2147483647);
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  mut std::uninitialized<int> first{};
+  mut std::uninitialized<int> second{};
+  mut std::uninitialized<uint64_t> wide{};
+  unsafe {
+    if (false) return bad_default_explicit(first.data());
+    if (false) return bad_default_native(first.data());
+    if (false) return bad_default_other(first.data(), second.data());
+    if (false) return bad_default_lifetime(first.data());
+    int direct = default_scalar(first.data());
+    std::destroy_at(first.data());
+    int packed = default_packed(first.data(), true, uint64_t(17));
+    int forwarded = default_forwarded(second.data());
+    uint64_t unsigned_value = default_unsigned(wide.data());
+    std::destroy_at(wide.data());
+    std::destroy_at(second.data());
+    std::destroy_at(first.data());
+    void* bytes = malloc(uint64_t(16384));
+    if (bytes == nullptr) return 1;
+    int* pointer = std::typed_address<int>(bytes);
+    mut ZeroSequence sequence{pointer};
+    while (sequence.size() < uint64_t(4096)) {
+      sequence.append_default();
+    }
+    int last = default_sequence(sequence);
+    if (false) return bad_modified_prefix(sequence);
+    if (false) return bad_modified_native(sequence);
+    if (false) return bad_compound_prefix(sequence);
+    if (false) return bad_compound_native(sequence);
+    int modified = modified_prefix(sequence);
+    int compound = compound_prefix(sequence);
+    bool stored = *(pointer + uint64_t(4095)) == 14;
+    for (mut uint64_t index = 0; index < uint64_t(4096); index++) {
+      std::destroy_at(pointer + index);
+    }
+    free(bytes);
+    return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 && modified == 1 && compound == 14 && stored ? 0 : 1;
+  }
+}

@@ -1,0 +1,41 @@
+#include <std/memory>
+
+extern "C" {
+  void allocation_probe_begin();
+  void allocation_probe_end();
+  int32_t allocation_probe_input();
+  int32_t allocation_probe_observe(const int32_t* value);
+  uint64_t allocation_probe_attempts();
+  uint64_t allocation_probe_releases();
+  void allocation_probe_report();
+}
+
+int32_t ephemeral(int32_t value) {
+  auto owner = std::make_unique<int32_t>(value);
+  return *owner;
+}
+
+int32_t escaping(int32_t value) {
+  auto owner = std::make_unique<int32_t>(value);
+  unsafe { return allocation_probe_observe(&*owner); }
+}
+
+int main() {
+  unsafe {
+    int32_t input = allocation_probe_input();
+    allocation_probe_begin();
+    int32_t result = ephemeral(input);
+    allocation_probe_end();
+    if (result != input || allocation_probe_attempts() != allocation_probe_releases()) {
+      return 1;
+    }
+    allocation_probe_report();
+    allocation_probe_begin();
+    int32_t observed = escaping(input);
+    allocation_probe_end();
+    if (observed != input || allocation_probe_attempts() != uint64_t(1) ||
+        allocation_probe_releases() != uint64_t(1)) { return 2; }
+    allocation_probe_report();
+  }
+  return 0;
+}
