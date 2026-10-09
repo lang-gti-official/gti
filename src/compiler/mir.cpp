@@ -22,6 +22,32 @@
 
 namespace lang {
 
+bool isMirExactReceiverPresentation(const MirProgram &program,
+                                    const MirInstruction &instruction,
+                                    const SemanticType &receiverType) {
+  const MirFunctionInstance *target =
+      instruction.kind == MirInstructionKind::Call &&
+              instruction.dispatch == CallDispatch::Static &&
+              instruction.receiver && instruction.functionTarget
+          ? program.findFunctionInstance(*instruction.functionTarget)
+          : nullptr;
+  const MirClassInstance *owner =
+      target != nullptr && target->owner && !target->staticMember
+          ? program.findClassInstance(*target->owner)
+          : nullptr;
+  if (owner == nullptr || instruction.dispatchOwner != owner->type ||
+      receiverType == owner->type) {
+    return false;
+  }
+  return std::any_of(owner->bases.begin(), owner->bases.end(),
+                     [&](const HirBaseInstance &base) {
+                       const MirClassInstance *instance =
+                           program.findClassInstance(base.instance);
+                       return base.type == receiverType && instance != nullptr &&
+                              instance->kind == ClassKind::Interface;
+                     });
+}
+
 bool isMirNativeIndirectCall(const MirProgram &program, const MirBody &body,
                              const MirInstruction &instruction) {
   if (!instruction.nativeCalleeType ||
@@ -400,14 +426,16 @@ bool mirTransformRecordLess(const MirTransformRecord &left,
                   left.requiredAnalyses.dominance,
                   left.requiredAnalyses.scalarPromotion,
                   left.requiredAnalyses.safetyChecks,
-                  left.requiredAnalyses.sparseConstants) <
+                  left.requiredAnalyses.sparseConstants,
+                  left.requiredAnalyses.closedWorld) <
          std::tie(right.requiredAnalyses.valueUses,
                   right.requiredAnalyses.effects,
                   right.requiredAnalyses.reachability,
                   right.requiredAnalyses.dominance,
                   right.requiredAnalyses.scalarPromotion,
                   right.requiredAnalyses.safetyChecks,
-                  right.requiredAnalyses.sparseConstants);
+                  right.requiredAnalyses.sparseConstants,
+                  right.requiredAnalyses.closedWorld);
 }
 
 bool hasMirSafetyDischarge(const MirInstruction &instruction,
@@ -4997,6 +5025,26 @@ namespace {
   if (definition->kind == MirInstructionKind::CallInput &&
       definition->callInputKind == HirCallInputKind::MoveValue) {
     return consumedCallableReceiver(body, definition->operands.front(),
+                                    MirValueUseKind::InstructionOperand,
+                                    definition->id, 0, depth + 1);
+  }
+  // A cleanup-free moved environment has no full-expression obligation to
+  // retain, so its receiver stage is an ordinary value alias rather than a
+  // MoveValue. The stage transfers nothing; its source must still be the
+  // exact ownership Move that consumed the closure.
+  if (definition->kind == MirInstructionKind::CallInput &&
+      definition->callInputRole == MirCallInputRole::Receiver &&
+      definition->callInputKind == HirCallInputKind::Value &&
+      definition->info.type.kind == SemanticType::Lambda &&
+      definition->operands.front().kind == MirOperandKind::Value &&
+      definition->operands.front().type == definition->info.type &&
+      !definition->preparedParameterDrop && !definition->destination &&
+      definition->lifecycle.empty()) {
+    const MirInstruction *move =
+        linearValueDefinition(body, definition->operands.front().value);
+    return expectedUseKind == MirValueUseKind::InstructionReceiver &&
+           move != nullptr && move->kind == MirInstructionKind::Move &&
+           consumedCallableReceiver(body, definition->operands.front(),
                                     MirValueUseKind::InstructionOperand,
                                     definition->id, 0, depth + 1);
   }

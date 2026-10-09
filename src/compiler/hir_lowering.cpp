@@ -335,6 +335,19 @@ private:
     const SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
+    // An existing instance discovered its arguments when it was created, and
+    // admission is monotone, so revisiting them can only propagate a first
+    // instantiation site. Re-walking them on every hit made each lookup of a
+    // nested generic proportional to its whole argument tree.
+    if (resolvedType.kind == SemanticType::Class && resolvedType.classId != 0) {
+      if (const std::optional<std::size_t> existing = instanceIndex.findClass(
+              resolvedType.classId, resolvedType.arguments,
+              resolvedType.valueArguments);
+          existing &&
+          (!site || output.program.classes[*existing - 1].instantiationSite)) {
+        return *existing;
+      }
+    }
     for (const SemanticType &argument : resolvedType.arguments) {
       (void)enqueueClass(argument, site);
     }
@@ -3718,10 +3731,15 @@ private:
     } else if (!temporaryReceiver && receiverMode != CallReceiverMode::Value) {
       return std::nullopt;
     } else if (!temporaryReceiver && input->kind == HirValueKind::Move &&
-               input->info.type.kind == SemanticType::Lambda) {
+               input->info.type.kind == SemanticType::Lambda &&
+               input->info.traits.drop == DropKind::Lexical &&
+               instanceProvider->requiresActiveCleanupFor(input->info.type)) {
       // Moving an environment and invoking it are distinct operations. Even a
       // read-only invocation must stage the explicitly moved owner as such;
       // its full-expression obligation, not the call, retains capture cleanup.
+      // A cleanup-free environment has no such obligation, so it keeps its
+      // ordinary value stage, as in MIR's pack schedule; the preceding Move
+      // still records source consumption.
       kind = HirCallInputKind::MoveValue;
     }
 
@@ -5806,6 +5824,10 @@ private:
                             {}, resolved->returnType, resolved->parameterTypes);
       }
     }
+    // A function target is this instance's exact selection. A generic
+    // callable call inherits its deferred record from the primary analysis,
+    // but once the instance selects operator() or a function item, that
+    // signature's argument conversions are planned like any ordinary call.
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && kind == HirValueKind::Call &&
         value.intrinsic == IntrinsicKind::None && !value.constructorTarget &&
@@ -5813,8 +5835,6 @@ private:
         (model.findOperator(*call) == nullptr ||
          model.findOperator(*call)->kind == OverloadedOperator::Call) &&
         model.findLambdaCall(*call) == nullptr &&
-        (model.findDeferredCallableCall(*call) == nullptr ||
-         model.findOperator(*call) != nullptr) &&
         value.parameterTypes.size() >= call->arguments().size() &&
         value.parameterTypes.size() <= value.operands.size()) {
       const std::size_t argumentCount = value.parameterTypes.size();
@@ -5913,17 +5933,31 @@ private:
         lifecycleValid = false;
       }
     }
-    if (value.lambdaTarget && value.receiver && !value.callPlan) {
+    // A fixed-arity lambda invocation is an ordinary ordered call. Its closure
+    // is the explicit receiver, and the lambda's selected signature plans
+    // each argument, so a derived class object for a base-reference
+    // parameter is the same staged borrow as in a direct function call. A
+    // closure place is read-borrowed, an explicitly moved environment with
+    // capture cleanup is a MoveValue stage, and a retained field is consumed
+    // exactly once. A final pack expansion keeps MIR's shared pack schedule.
+    if (value.lambdaTarget && value.receiver && !value.callPlan &&
+        value.operands.size() == value.parameterTypes.size() + 1) {
       const HirValue *receiver = body.findValue(*value.receiver);
-      if (receiver != nullptr && receiver->retainedReceiverProjection &&
-          value.operands.size() == value.parameterTypes.size() + 1) {
-        const std::vector<HirValueId> arguments(value.operands.begin() + 1,
-                                                value.operands.end());
+      const std::vector<HirValueId> arguments(value.operands.begin() + 1,
+                                              value.operands.end());
+      const bool expandsPack =
+          std::any_of(arguments.begin(), arguments.end(), [&](HirValueId id) {
+            const HirValue *argument = body.findValue(id);
+            return argument && argument->kind == HirValueKind::PackExpansion;
+          });
+      if (receiver != nullptr && !expandsPack) {
         const auto planned = orderedArguments(arguments, value.parameterTypes,
                                               body, arguments.size());
-        const auto receiverPlan =
-            orderedReceiver(*value.receiver, ReceiverMutability::ReadOnly,
-                            CallReceiverMode::Consuming, body);
+        const auto receiverPlan = orderedReceiver(
+            *value.receiver, ReceiverMutability::ReadOnly,
+            receiver->retainedReceiverProjection ? CallReceiverMode::Consuming
+                                                 : CallReceiverMode::Value,
+            body);
         if (planned && receiverPlan) {
           value.callPlan =
               HirCallPlan{.receiver = receiverPlan, .arguments = *planned};

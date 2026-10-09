@@ -722,6 +722,15 @@ add_test(NAME optimizer_devirtualization_runtime
                  "${PROJECT_SOURCE_DIR}/tests/fixtures/optimizer_exact_receiver.gti"
                  "${CMAKE_CXX_COMPILER}")
 set_tests_properties(optimizer_devirtualization_runtime PROPERTIES TIMEOUT 180)
+add_test(NAME optimizer_devirtualization_parameter_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_devirtualization_runtime_test.py"
+                 "$<TARGET_FILE:gti>"
+                 "${PROJECT_SOURCE_DIR}/tests/fixtures/optimizer_exact_parameter_receiver.gti"
+                 "${CMAKE_CXX_COMPILER}"
+                 "exact-parameter-receiver")
+set_tests_properties(optimizer_devirtualization_parameter_runtime
+                     PROPERTIES TIMEOUT 180)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT MSVC)
   add_test(NAME optimizer_coverage_growth
            COMMAND "${Python3_EXECUTABLE}"
@@ -2605,6 +2614,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(lambda_pack_invocation_runtime PROPERTIES TIMEOUT 1200)
+  add_test(
+    NAME lambda_base_reference_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/lambda_base_reference_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(lambda_base_reference_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME owning_function_runtime
     COMMAND "${Python3_EXECUTABLE}"
