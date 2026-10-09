@@ -454,6 +454,23 @@ Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
 `nvim-lspconfig` are not required. `:GTIInfo` reports the active plugin,
 toolchain, LSP, and parser versions.
 
+The editor normally analyses the project's `dev` profile. Use `:GTIProfile release`
+or `:GTIProfile dev` to switch without rebuilding or restarting the server;
+`:GTIProfile!` restores the project default. This updates profile defines,
+diagnostics, completion and inactive-code highlighting together. The choice is
+independent of the last `gti build` invocation. For a persistent selection:
+
+```lua
+vim.lsp.config("gti_lsp", {
+  settings = { gti = { profile = "release" } },
+})
+```
+
+Other clients can use the same `gti.profile` setting or
+`initializationOptions = { profile = "release" }`. Inactive directive branches
+use a grey comment-style default; themes can override
+`@lsp.mod.inactiveCode.gti`.
+
 Use the complete `https://` URL for Gitea, and write `version = "*"` without
 a backslash. The selected tag must have a matching toolchain archive under
 Gitea Releases; syncing Git tags does not create or copy release binaries.
