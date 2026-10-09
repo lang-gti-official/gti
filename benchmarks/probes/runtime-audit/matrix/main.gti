@@ -1,0 +1,31 @@
+#include <std/string>
+#include <std/vector>
+void multiply(std::vector<double>& a, std::vector<double>& b,
+              mut std::vector<double>& c, std::size_t n) {
+  for (mut std::size_t i = 0; i < n; i++) {
+    for (mut std::size_t k = 0; k < n; k++) {
+      double scale = a[i * n + k];
+      for (mut std::size_t j = 0; j < n; j++) {
+        c[i * n + j] += scale * b[k * n + j];
+      }
+    }
+  }
+}
+int main() {
+  std::size_t n = std::size_t(320);
+  mut std::vector<double> a = std::vector<double>(n * n);
+  mut std::vector<double> b = std::vector<double>(n * n);
+  mut std::vector<double> c = std::vector<double>(n * n);
+  for (mut std::size_t index = 0; index < n * n; index++) {
+    a[index] = double(index % std::size_t(17)) * 0.25d;
+    b[index] = double(index % std::size_t(13)) * 0.5d;
+  }
+  for (mut int32_t repeat = 0; repeat < 3; repeat++) {
+    multiply(a, b, c, n);
+  }
+  mut double total = 0.0d;
+  for (double& value : c) { total += value; }
+  std::print("checksum ");
+  std::println(std::to_string(int64_t(total)));
+  return 0;
+}
