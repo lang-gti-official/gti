@@ -528,6 +528,24 @@ gates also pass together in 102.63 seconds. The final strengthened witness unit
 check confirms that both negative cases have reached call contexts, rather
 than succeeding only because they are uncalled. Formatting and diff checks pass.
 
+The entry-relative receiver checkpoint proves repeated increments/decrements,
+nested receiver forwarding and exact length four after four source-owner
+appends. Reset, different-field assignment, checked aliases, raw writes and a
+reached/closed conditional callee cannot retain a stale delta. A net-zero
+update still reports its intermediate overflow. Six forged discharges are
+rejected by independent replay; O0 remains transformation-free. The optimized
+compiler passes all eight focused compiler/optimizer/source-contract gates,
+including all 188 compiler cases (46.46 seconds for the aggregate). The expanded
+57-fixture/eight-mode object matrix passes all 456 executions (six workers,
+137.83 seconds), including C++20/C++23, no-elide and ASan/UBSan. The pinned
+508-file format check passes. A freshly linked acceptance run still fails six
+original `optimizer_safety` assertions and three
+`optimizer_safety_native_evidence` assertions (20.49 seconds). Raw initialized
+region/element provenance and the full migration/release gates remain required;
+this checkpoint is not migration acceptance.
+The same optimized compiler also passes the source-owner, resource-prefix,
+terminated-string and raw-context runtime gates together in 51.87 seconds.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
