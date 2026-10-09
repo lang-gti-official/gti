@@ -1,6 +1,7 @@
 #include "gti/optimization/safety.h"
 #include "gti/optimization/coverage.h"
 
+#include "../mir_verification_queries.h"
 #include "gti/checked_integer.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
@@ -71,9 +72,9 @@ struct ObjectFact {
 };
 
 // These are transfer-rule barriers, not replacement MIR effects. A vacant
-// scalar construction remains opaque, but has a narrower supported transfer
+// structural construction remains opaque, but has a narrower supported transfer
 // than an unhandled operation which might write an already live object.
-enum class LiveMemoryBarrier { None, VacantScalarConstruction, Unknown };
+enum class LiveMemoryBarrier { None, VacantStructuralConstruction, Unknown };
 
 [[nodiscard]] bool mergeObject(ObjectFact &target, const ObjectFact &incoming,
                                bool widen);
@@ -1824,16 +1825,16 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 LiveMemoryBarrier liveMemoryBarrier,
                                 AbstractState &state) {
   const auto summary = exactMirInvocationSummary(program, body, instruction);
-  const bool scalarConstructionOnly =
+  const bool structuralConstructionOnly =
       opaqueEffects &&
-      liveMemoryBarrier == LiveMemoryBarrier::VacantScalarConstruction;
+      liveMemoryBarrier == LiveMemoryBarrier::VacantStructuralConstruction;
   if (!summary || (opaqueEffects && (summary->traits.maySynchronize ||
                                      (summary->traits.writesUnknownMemory &&
-                                      !scalarConstructionOnly)))) {
+                                      !structuralConstructionOnly)))) {
     killUnknownMemory(body, state);
     return;
   }
-  if (scalarConstructionOnly)
+  if (structuralConstructionOnly)
     preserveLiveScalarFactsForConstruction(&program, address, body, state);
   const auto *function = target.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(target.owner)
@@ -1881,11 +1882,11 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
     invalidate(*instruction.receiver);
   for (std::size_t index = 0; index < parameters->size(); ++index) {
     // Returning/forwarding a raw address does not overwrite another already
-    // live object. Only the fully interpreted vacant-scalar profile may use
+    // live object. Only the fully interpreted vacant structural profile may use
     // that contract; actual raw writes, destruction, or an unknown call mark
     // the successful path Unknown instead. Checked references and ordinary
     // receiver/global writes still invalidate their exact protected inputs.
-    if (scalarConstructionOnly &&
+    if (structuralConstructionOnly &&
         (*parameters)[index].kind == SemanticType::RawPointer)
       continue;
     const bool escapes = index >= summary->argumentsEscape.size() ||
@@ -2147,6 +2148,39 @@ void killGlobalAliases(const MirBody &body, AbstractState &state) {
          instruction.intrinsic == IntrinsicKind::None;
 }
 
+[[nodiscard]] bool ownerWitnessFormation(const MirBody &body,
+                                         const MirInstruction &instruction) {
+  // The verified loan asserts lifetime/access, not address identity or the
+  // pointee's value. Forming it does not modify its witness or other memory.
+  // Actual reads/writes through the loan still use normal alias invalidation.
+  const auto effect = effects(instruction);
+  return mir_detail::rawBorrowResultLoan(body, instruction) &&
+         !instruction.rawMemoryAccess && !effect.writesPlace &&
+         !effect.writesUnknownMemory && !effect.invokesUserCode &&
+         !effect.invokesRuntime && !effect.maySynchronize;
+}
+
+[[nodiscard]] bool nonMutatingLoanBoundary(const MirBody &body,
+                                           const MirInstruction &instruction) {
+  if ((instruction.kind != MirInstructionKind::Borrow &&
+       instruction.kind != MirInstructionKind::ActivateBorrow &&
+       instruction.kind != MirInstructionKind::EndBorrow) ||
+      !instruction.loan || !body.findLoan(*instruction.loan) ||
+      instruction.result || instruction.destination || instruction.receiver ||
+      instruction.rawMemoryAccess || !instruction.lifecycle.empty() ||
+      instruction.operation != MirOperation::None ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.bodyTarget || instruction.nativeCallbackAdapter ||
+      instruction.threadTaskAdapter || instruction.hostedStartupOperation ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None)
+    return false;
+  const auto effect = effects(instruction);
+  return !effect.writesPlace && !effect.writesUnknownMemory &&
+         !effect.invokesUserCode && !effect.invokesRuntime &&
+         !effect.maySynchronize;
+}
+
 [[nodiscard]] const SemanticType *
 implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
   if (!program)
@@ -2280,7 +2314,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
                                             const MirBody &body,
                                             AbstractState &state) {
   // The sealed operation requires vacant, nonconflicting final storage. Its
-  // scalar form invokes no constructor/user code, so it cannot overwrite an
+  // structural form invokes no constructor/user code, so it cannot overwrite an
   // already live non-byte scalar place in a valid program. Byte/array storage
   // may provide an object's backing representation and is not preserved.
   std::erase_if(state.integerPlaces, [&](const auto &entry) {
@@ -2302,7 +2336,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
   state.objectValues.clear();
   state.hasOpaqueEffects = true;
   state.liveMemoryBarrier = std::max(
-      state.liveMemoryBarrier, LiveMemoryBarrier::VacantScalarConstruction);
+      state.liveMemoryBarrier, LiveMemoryBarrier::VacantStructuralConstruction);
 }
 
 [[nodiscard]] bool independentValueParameter(const MirProgram *program,
@@ -2423,9 +2457,13 @@ void applyInstruction(const MirBody &body,
   // The empty full-expression marker can inherit the source expression's
   // unsafe classification. It does not repeat that expression's operation;
   // its actual Load/Call/Compute instruction already carries the effects.
-  if (inertLifecycleMarker(instruction))
+  // The same holds for checked loan bookkeeping without raw access: keep its
+  // observable schedule, but do not repeat the producer's memory operation.
+  if (inertLifecycleMarker(instruction) ||
+      nonMutatingLoanBoundary(body, instruction))
     return;
-  if (isMirScalarFinalAddressConstruction(instruction)) {
+  if (program ? isMirStructuralFinalAddressConstruction(*program, instruction)
+              : isMirScalarFinalAddressConstruction(instruction)) {
     preserveLiveScalarFactsForConstruction(program, address, body, state);
     return;
   }
@@ -2437,6 +2475,15 @@ void applyInstruction(const MirBody &body,
     state.arrayValues.erase(*instruction.result);
     state.objectValues.erase(*instruction.result);
     state.fieldOrigins.erase(*instruction.result);
+    return;
+  }
+  if (ownerWitnessFormation(body, instruction)) {
+    state.integers.erase(*instruction.result);
+    state.arrayValues.erase(*instruction.result);
+    state.objectValues.erase(*instruction.result);
+    state.loadedOrigins.erase(*instruction.result);
+    state.fieldOrigins.erase(*instruction.result);
+    state.aggregateOrigins.erase(*instruction.result);
     return;
   }
   if (instruction.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall &&
@@ -3334,7 +3381,9 @@ mayMutateTrackedPlace(const MirBody &body,
                       const MirInstruction &instruction, MirPlaceId tracked,
                       ClosedCallRound *closedCalls) {
   const MirEffectTraits effect = effects(instruction);
-  if (inertLifecycleMarker(instruction))
+  if (inertLifecycleMarker(instruction) ||
+      nonMutatingLoanBoundary(body, instruction) ||
+      ownerWitnessFormation(body, instruction))
     return false;
   if ((instruction.rawMemoryAccess ||
        instruction.unsafeOperation != UnsafeOperationKind::None) &&
@@ -4354,7 +4403,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
         }
         if (initializers->second.hasOpaqueEffects) {
           if (initializers->second.liveMemoryBarrier ==
-              LiveMemoryBarrier::VacantScalarConstruction)
+              LiveMemoryBarrier::VacantStructuralConstruction)
             preserveLiveScalarFactsForConstruction(&program, address, *body,
                                                    entry);
           else

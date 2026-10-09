@@ -35,6 +35,12 @@ inline constexpr std::size_t atomicMemoryOrderCount =
 // unsafe vacancy/extent/alignment contract; this is not a validity proof.
 [[nodiscard]] bool
 isMirScalarFinalAddressConstruction(const MirInstruction &instruction);
+// The same vacant-storage transfer for an exact generated scalar-record
+// copy/move. Uses the verifier's construction shape and the structural
+// transport classification below; no source constructor or replacement.
+[[nodiscard]] bool
+isMirStructuralFinalAddressConstruction(const MirProgram &program,
+                                        const MirInstruction &instruction);
 // Exact generated copy/move of ordinary scalar-field records. This proves
 // transport, not cleanup, replacement, raw-pointee validity or alias freedom.
 // Unsupported capabilities, borrowed state and open/overlapping layouts fail

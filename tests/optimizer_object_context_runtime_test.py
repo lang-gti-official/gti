@@ -85,19 +85,20 @@ if __name__ == "__main__":
                      "integer_overflow in addition\n")
             paths[name] = path
             cases[name] = [((), (70, "", error))]
-        construction = fixture.parent / "optimizer_scalar_construction.gti"
-        construction_source = construction.read_text()
-        sites = [index for index, text in enumerate(construction_source.splitlines(), 1)
-                 if "return record.value + 1;" in text]
-        assert len(sites) == 2
-        paths["scalar_reconstruction"] = construction
-        cases["scalar_reconstruction"] = [((), (70, "",
-            f"{construction.name}:{sites[1]}: runtime error[GTI-R0001]: "
-            "integer_overflow in addition\n"))]
-        path = pathlib.Path(temporary) / "scalar_construction.gti"
-        path.write_text(construction_source.replace("return reconstruct(record);", "return 0;"))
-        paths["scalar_construction"] = path
-        cases["scalar_construction"] = [((), (0, "", ""))]
+        for construction_kind in ("scalar", "record"):
+            construction = fixture.parent / f"optimizer_{construction_kind}_construction.gti"
+            construction_source = construction.read_text()
+            sites = [index for index, text in enumerate(construction_source.splitlines(), 1)
+                     if "return record.value + 1;" in text]
+            assert len(sites) == (2 if construction_kind == "scalar" else 1)
+            paths[f"{construction_kind}_reconstruction"] = construction
+            cases[f"{construction_kind}_reconstruction"] = [((), (70, "",
+                f"{construction.name}:{sites[-1]}: runtime error[GTI-R0001]: "
+                "integer_overflow in addition\n"))]
+            path = pathlib.Path(temporary) / f"{construction_kind}_construction.gti"
+            path.write_text(construction_source.replace("return reconstruct(record);", "return 0;"))
+            paths[f"{construction_kind}_construction"] = path
+            cases[f"{construction_kind}_construction"] = [((), (0, "", ""))]
         construction_paths = fixture.parent / "optimizer_scalar_construction_paths.gti"
         paths_source = construction_paths.read_text()
         sites = [index for index, text in enumerate(paths_source.splitlines(), 1)
@@ -111,6 +112,33 @@ if __name__ == "__main__":
         path.write_text(paths_source.replace("return nested_reconstruct();", "return 0;"))
         paths["scalar_paths_construction"] = path
         cases["scalar_paths_construction"] = [((), (0, "", ""))]
+        witness = fixture.parent / "optimizer_witness_formation.gti"
+        witness_source = witness.read_text()
+        witness_changed_line = next(index for index, text in
+                                    enumerate(witness_source.splitlines(), 1)
+                                    if text == "int changed(mut Witness& witness) {")
+        witness_failure_line = next(index for index, text in
+                                    enumerate(witness_source.splitlines(), 1)
+                                    if index > witness_changed_line and
+                                    text.strip() == "return witness.value + 1;")
+        witness_other_line = next(index for index, text in
+                                  enumerate(witness_source.splitlines(), 1)
+                                  if text.strip() == "return witness.read_other() + 1;")
+        paths["witness_changed"] = witness
+        cases["witness_changed"] = [((), (70, "",
+            f"{witness.name}:{witness_failure_line}: runtime error[GTI-R0001]: "
+            "integer_overflow in addition\n"))]
+        witness_tail = "  int changed_result = changed(witness);\n  return changed_result + other_value(witness);"
+        assert witness_source.count(witness_tail) == 1
+        for name, replacement, failure_line in (
+                ("witness_success", "  return 0;", None),
+                ("witness_other", "  return other_value(witness);", witness_other_line)):
+            path = pathlib.Path(temporary) / f"{name}.gti"
+            path.write_text(witness_source.replace(witness_tail, replacement))
+            paths[name] = path
+            error = (f"{path.name}:{failure_line}: runtime error[GTI-R0001]: "
+                     "integer_overflow in addition\n") if failure_line else ""
+            cases[name] = [((), (70 if failure_line else 0, "", error))]
         owned = fixture.parent / "optimizer_owned_value_transfer.gti"
         owned_source = owned.read_text()
         owned_lines = owned_source.splitlines()

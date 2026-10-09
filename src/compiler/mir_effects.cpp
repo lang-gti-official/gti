@@ -767,6 +767,26 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
 }
 } // namespace
 
+bool isMirStructuralFinalAddressConstruction(
+    const MirProgram &program, const MirInstruction &instruction) {
+  if (isMirScalarFinalAddressConstruction(instruction))
+    return true;
+  if (instruction.constructorTarget || instruction.operands.size() != 2 ||
+      (instruction.constructorKind != ConstructorKind::Copy &&
+       instruction.constructorKind != ConstructorKind::Move) ||
+      !mir_detail::objectConstruct(program, instruction) ||
+      std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [](const MirLifecycleEvent &event) {
+                    return event.kind != MirLifecycleEventKind::TransferOut;
+                  }))
+    return false;
+  return structuralScalarRecord(program, instruction.operands.back().type,
+                                instruction.constructorKind ==
+                                        ConstructorKind::Copy
+                                    ? StructuralValueOperation::Copy
+                                    : StructuralValueOperation::Move);
+}
+
 bool isMirStructuralValueTransfer(const MirProgram &program,
                                   const MirInstruction &instruction) {
   const bool copy = instruction.kind == MirInstructionKind::CallInput &&
@@ -825,16 +845,16 @@ bool isMirStructuralValueDrop(const MirProgram &program,
 
 namespace {
 
-[[nodiscard]] MirEffectTraits
-finishInstructionEffects(const MirInstruction &instruction,
-                         MirEffectTraits result,
-                         bool structuralValueTransfer = false) {
+[[nodiscard]] MirEffectTraits finishInstructionEffects(
+    const MirInstruction &instruction, MirEffectTraits result,
+    bool structuralValueTransfer = false, bool structuralConstruction = false) {
   if (instruction.tombstone) {
     return harmless();
   }
   if (instruction.kind == MirInstructionKind::Call &&
       instruction.intrinsic != IntrinsicKind::None) {
-    result = isMirScalarFinalAddressConstruction(instruction)
+    result = (structuralConstruction ||
+              isMirScalarFinalAddressConstruction(instruction))
                  ? MirEffectTraits{.writesUnknownMemory = true,
                                    .initializesValue = true}
                  : effects(instruction.intrinsic);
@@ -1788,6 +1808,8 @@ MirEffectTraits effects(const MirInstruction &instruction) {
 
 MirEffectTraits effects(const MirProgram &program,
                         const MirInstruction &instruction) {
+  if (isMirStructuralFinalAddressConstruction(program, instruction))
+    return finishInstructionEffects(instruction, {}, false, true);
   if (isMirStructuralValueDrop(program, instruction))
     return finishInstructionEffects(instruction,
                                     {.writesPlace = true, .dropsValue = true});
@@ -2032,7 +2054,9 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
                   isMirStructuralValueDrop(program, instruction)
                       ? MirEffectTraits{.writesPlace = true, .dropsValue = true}
                       : MirEffectTraits{},
-                  isMirStructuralValueTransfer(program, instruction)),
+                  isMirStructuralValueTransfer(program, instruction),
+                  isMirStructuralFinalAddressConstruction(program,
+                                                          instruction)),
               targets);
           node.local.traits = merge(node.local.traits, instructionEffects);
           if (isInvocation(instruction) &&

@@ -512,6 +512,22 @@ The six freshly linked focused optimizer gates pass in 2.38 seconds; source
 prefix-owner, resource-prefix, terminated-string and raw-context runtime gates
 pass together in 101.90 seconds. Formatting and diff checks pass.
 
+The next handover checkpoint preserves memory across verified owner-witness
+formation and non-mutating loan bookkeeping, without deriving pointee values
+from lifetime witnesses. Generated scalar-record final-address construction
+reuses the verifier's shape and shared structural effects. New unrelated
+record/witness positives and alias-write, different-pointee and reconstruction
+negatives pass independent O2/O3 replay, while O0 remains unchanged. The expanded
+49-fixture/eight-mode object matrix passes all 392 native cases in 123.49 seconds
+(six workers), including no-elide and ASan/UBSan. Eight freshly linked optimizer,
+source-prefix contract and compiler aggregate gates pass together in 46.66
+seconds. This still does not establish migration acceptance: the six original
+optimizer and three native-evidence assertions remain failing, unweakened.
+The source-owner, resource-prefix, terminated-string and raw-context native
+gates also pass together in 102.63 seconds. The final strengthened witness unit
+check confirms that both negative cases have reached call contexts, rather
+than succeeding only because they are uncalled. Formatting and diff checks pass.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
