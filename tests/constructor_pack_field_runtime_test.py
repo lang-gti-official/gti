@@ -24,7 +24,7 @@ def main():
         # Deque's generated destruction drains its physical owner directory
         # in reverse slot order, rather than calling logical pop_back().
         (strong, "14\n13\n4\n3\n6\n5\n16\n15\n18\n17\n8\n7\n2\n1\n9\n"),
-        (repository / "examples/89-library-workflow.gti", "finished: build\nfinished: test\n"),
+        (repository / "examples/089-library-workflow.gti", "finished: build\nfinished: test\n"),
     ]
     with tempfile.TemporaryDirectory(prefix="gti-constructor-pack-") as temporary:
         scratch = Path(temporary)

@@ -1300,7 +1300,7 @@ It found a broad MIR proof near miss but not an accepted runtime optimization:
   current topological-order requirement rejects every cyclic CFG. O-MIR-06's
   affine induction tests therefore exercise constructed MIR rather than a
   source-produced optimization client;
-- `examples/12-fixed-arrays.gti` already discharges the canonical short loop,
+- `examples/012-fixed-arrays.gti` already discharges the canonical short loop,
   so widening O-MIR-08 around that case would be a no-op;
 - `vector-checked-loop` retains four dynamic vector bounds checks that require
   interprocedural/inlining facts rather than fixed-array induction;

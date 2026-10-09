@@ -14,7 +14,7 @@ def main() -> int:
         root / "coverage/reproducers/a23-recursive-value-generic-layout.gti",
         root / "fixtures/nominal_field_defaults.gti",
         root / "fixtures/finite_generic_fields.gti",
-        root.parent / "examples/23-direct-initialization.gti",
+        root.parent / "examples/023-direct-initialization.gti",
     ]
     failures = [root / "fixtures/nominal_field_default_failure.gti",
                 root / "fixtures/nominal_field_explicit_failure.gti"]

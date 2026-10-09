@@ -272,7 +272,7 @@ for these controls.
 GTI-only compile time (`-O3 --emit-cpp`, 7 interleaved samples after one
 warmup) shows no measurable change. Ratios are 0.980-0.996 on `interface.gti`,
 `examples/128-inline-object-pool.gti`, `examples/121-programmable-allocators.gti`
-and the `game-update-stage` workload. A first `examples/86-owning-callbacks.gti`
+and the `game-update-stage` workload. A first `examples/086-owning-callbacks.gti`
 sample read 1.044; a dedicated rerun read 0.996. That example has 7 virtual-call
 candidates, none refined: its receivers are allocated `std::function` models
 reached through owning pointers. They are the next client for this fact
@@ -443,7 +443,7 @@ Status: bounded compiler improvement, not a compile-time plateau. The outcome
 is a faster optimized edit/build loop for ordinary library consumers, with no
 new language rule or runtime representation. Integration uses PR #181.
 
-CPU sampling of `examples/93-http-json-client.gti` identifies safety-dataflow
+CPU sampling of `examples/093-http-json-client.gti` identifies safety-dataflow
 proof construction and SCCP state copying in both optimization and its
 independent coherence replay. SCCP now detects changes per fact instead of
 copying the whole destination state; internal canonical evidence sets use
@@ -547,7 +547,7 @@ Status: bounded compiler improvement; paired emission measurements and complete
 selected regression validation passed. Integration uses the agent-workflow PR
 lifecycle.
 
-The client is the edit/build loop for `examples/93-http-json-client.gti`, a
+The client is the edit/build loop for `examples/093-http-json-client.gti`, a
 real source-defined HTTP/JSON consumer rather than a padded synthetic program.
 The investigation measures GTI compiling GTI, not the host build of GTI itself.
 Both measured executables are Release/Ninja, AppleClang 21 with LLVM 22.1.8 on

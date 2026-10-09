@@ -1552,8 +1552,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
             &memberFailure, std::span(requirement.arguments).subspan(2),
             requirement.syntax->memberRequirement->receiver()
                 .referenceMutability.has_value(),
-            requirement.syntax->memberRequirement->unsafeKeyword()
-                .has_value())) {
+            requirement.syntax->memberRequirement->unsafeKeyword().has_value(),
+            requirement.trustedMemberAccess)) {
       return std::nullopt;
     }
     return ConstraintFailure{.parameter = member,
@@ -4722,7 +4722,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     const SemanticType &receiver, std::string_view member,
     const SemanticType &result, SemanticMemberRequirementFailure *failure,
     std::span<const SemanticType> parameters, bool mutableReceiver,
-    bool requiresUnsafe) const -> bool {
+    bool requiresUnsafe, bool trustedMemberAccess) const -> bool {
   const auto reject = [&](MemberRequirementFailureKind kind,
                           const CallableCandidate *candidate = nullptr) {
     if (failure != nullptr) {
@@ -4817,8 +4817,12 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
                         rejectedConstraints)
                : reject(MemberRequirementFailureKind::Shape, rejectedShape);
   }
-  if (selected->access != AccessModifier::Public || selected->compilerPrivate)
+  if (selected->access != AccessModifier::Public)
     return reject(MemberRequirementFailureKind::Inaccessible, selected);
+  // Admission follows a call written at the requirement: trusted source may
+  // select a compiler-private member, application source and concepts never.
+  if (selected->compilerPrivate && !trustedMemberAccess)
+    return reject(MemberRequirementFailureKind::CompilerPrivate, selected);
   if (selected->returnType != result)
     return reject(MemberRequirementFailureKind::Result, selected);
   if (selected->record().requiresUnsafe && !requiresUnsafe)

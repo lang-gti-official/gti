@@ -124,7 +124,9 @@ The root carries exact semantic owner/function/constructor type/value
 substitutions; ordinary instance
 discovery and semantic reanalysis validate concrete generic bodies and callees.
 The staged closure admits passive structural class catalogs with ordinary exact
-field substitution. Discovered constexpr methods and constructors must likewise
+field substitution. Its instance provider forwards semantic concrete enum
+descriptions, so generic enum rows in the closure carry the same substituted
+alternatives as whole-program lowering. Discovered constexpr methods and constructors must likewise
 belong to the semantic completed-definition inventories. Constructor rows retain
 semantic constexpr eligibility explicitly; a generated native constructor does
 not establish it. The constant executor currently admits read-only methods and
@@ -174,6 +176,12 @@ only in that metadata retains a forward identity rather than an executable
 class instance. An enum's actual alternative fields still discover the class
 layouts their representation requires. Semantic alias validation is unchanged;
 validating a type is not authority to instantiate its construction or cleanup.
+A function or constructor instance's type arguments follow the same rule when
+they name a type only as instance identity, such as `tag<Metadata<int>>()`:
+complete lowering and staged constant closures register their exact enum rows
+without class layouts, because declarations seed only non-generic enums and a
+constant closure seeds no declarations. A reachable prefix additionally seeds
+the concrete classes that an instance's type arguments and signature name.
 
 Class instances retain an ordered type-alias catalog pairing the primary
 semantic `TypeAliasId` with the exact owner-substituted type. Semantic instance

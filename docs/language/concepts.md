@@ -234,6 +234,16 @@ borrowed state. The method body remains subject to ordinary analysis when used;
 signature satisfaction alone does not prove that every body instantiation is
 valid.
 
+Accessibility follows a call written where the requirement is spelled. A
+compiler-private member, meaning any member of a `gti_internal` type or a
+public member whose signature names one, satisfies a direct query or a trailing
+`requires requires` leaf only in compiler-trusted source, which could call it
+there. Trusted source can therefore probe a private helper type whose method is
+constrained directly by a raw `@compiler_constraint` capability. A named concept
+is a public predicate. Its member requirements never admit a compiler-private
+member, even when trusted source declares or applies the concept, and the
+failure reports that the member is compiler-private rather than nonpublic.
+
 Each query admits one checked reference receiver and one nongeneric member.
 An immutable `T&` receiver requires a read-only method; `mut T&` requires a
 mutable method. Additional typed parameters describe the exact method signature,

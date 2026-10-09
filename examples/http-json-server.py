@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback-only demo for 93-http-json-client.gti; no third-party packages."""
+"""Loopback-only demo for 093-http-json-client.gti; no third-party packages."""
 
 import argparse
 import json

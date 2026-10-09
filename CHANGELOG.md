@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.396.1 — Enum type arguments in compile-time branches
+
+- Fix constant evaluation of a generic `constexpr` function whose enum type
+  argument appears only as a type argument, such as a `requires` probe in
+  `if constexpr`. `static_assert(width<small>() == 8)` for an
+  `enum class small` failed with `GTI-S2057` ("The if constexpr branch was not
+  resolved by semantic analysis"); it now selects the branch like the runtime
+  call does. Generic enum arguments such as `tag<Message<int>>()` are covered
+  too.
+
 ## 0.396.0 — Small std::function targets stay inline
 
 - `std::function` and `std::move_only_function` with read-only or `mut`
@@ -430,8 +440,8 @@ that predate 0.360.0.
 - Returning an exact move-only local or by-value parameter can use
   `return name;`. This does not introduce implicit movement at ordinary calls.
 
-Try [owning callbacks](examples/86-owning-callbacks.gti) and
-[consuming builders](examples/88-consuming-builders.gti).
+Try [owning callbacks](examples/086-owning-callbacks.gti) and
+[consuming builders](examples/088-consuming-builders.gti).
 
 ### Collections, search, and iteration
 
@@ -448,8 +458,8 @@ Try [owning callbacks](examples/86-owning-callbacks.gti) and
   than C++ iterator-invalidation rules; complete C++ container API parity is not
   implied.
 
-Try [associative containers](examples/87-associative-containers.gti) and
-[generic algorithms](examples/90-generic-algorithms.gti). The
+Try [associative containers](examples/087-associative-containers.gti) and
+[generic algorithms](examples/090-generic-algorithms.gti). The
 [standard-library contract](docs/language/standard-library.md) records individual
 container and algorithm boundaries.
 
@@ -470,7 +480,7 @@ container and algorithm boundaries.
 
 See [construction syntax](docs/language/static-semantics.md),
 [borrow rules](docs/language/ownership-and-lifetimes.md), and the
-[shared-ownership example](examples/98-shared-ownership.gti).
+[shared-ownership example](examples/098-shared-ownership.gti).
 
 ### Explicit cloning and generic contracts
 
@@ -486,8 +496,8 @@ See [construction syntax](docs/language/static-semantics.md),
   reducing repetitive casts. Bounded `constexpr` constructors, read-only methods,
   and fixed-array tables support more compile-time configuration and assertions.
 
-Try [explicit cloning and member requirements](examples/95-explicit-cloning.gti)
-and [constexpr tables](examples/97-constexpr-tables.gti). General C++
+Try [explicit cloning and member requirements](examples/095-explicit-cloning.gti)
+and [constexpr tables](examples/097-constexpr-tables.gti). General C++
 requires-expressions and user-defined copy/move constructor bodies are not added;
 see [concepts](docs/language/concepts.md).
 
@@ -496,9 +506,9 @@ see [concepts](docs/language/concepts.md).
 - Recoverable filesystem operations, strict Base64/hex codecs, owned JSON
   documents and application codecs, and buffered HTTP/HTTPS provide building
   blocks for command-line tools and services.
-- New practical examples demonstrate [JSON](examples/91-json-documents.gti),
-  [HTTP plus JSON](examples/93-http-json-client.gti),
-  [error mapping](examples/96-error-mapping.gti), and the ownership APIs above.
+- New practical examples demonstrate [JSON](examples/091-json-documents.gti),
+  [HTTP plus JSON](examples/093-http-json-client.gti),
+  [error mapping](examples/096-error-mapping.gti), and the ownership APIs above.
 - Optional packages cover GLFW, GLAD, SQLite3, cimgui, zlib, libpng, Assimp,
   libgit2, and CLI11. They use pinned native sources and reviewed C-compatible
   boundaries. The source-defined `spdlog` package provides synchronous logging.

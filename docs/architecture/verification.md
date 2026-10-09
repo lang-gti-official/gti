@@ -3170,7 +3170,7 @@ prepared closure slot is constructed once, passed by move, and retired after
 its call rather than requiring an obsolete fused-literal spelling.
 
 The reviewed census refresh adds the two move-construction concept declarations
-to all 87 examples and 17 declarations to `84-optional-values.gti`
+to all 87 examples and 17 declarations to `084-optional-values.gti`
 through optional cloning and its utility include: 24,081 declarations, with
 7,717 bodies and 1,856 generated items unchanged. Both independent executable
 corpus checks passed before this refresh; this is not a combined completion claim.
@@ -3264,6 +3264,11 @@ self-referential requirements fail closed and reference results are not owned
 results. Formatter round trips preserve the query. `member_requirement_lsp`
 checks compiler-owned hover, receiver definition, malformed-source recovery,
 shared diagnostic codes, and formatting/reanalysis.
+`testCompilerPrivateMemberRequirements` proves that trusted source selects a
+`gti_internal` probe's member through direct queries, a `requires requires`
+clause, and an if-constexpr instance branch, including a member constrained by
+a raw `@compiler_constraint` concept. A named concept still rejects that member
+with a compiler-private reason.
 
 `generic_clone_runtime` verifies independent string/vector/nested-vector
 duplication, scalar fallback, custom read-member precedence, shared-owner

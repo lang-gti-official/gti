@@ -1187,7 +1187,7 @@
     {
       "id": "thread",
       "mode": "run",
-      "source": "examples/66-managed-threads.gti",
+      "source": "examples/066-managed-threads.gti",
       "execution_profile": "concurrent",
       "optimizations": ["O0", "O3"],
       "expected": {
@@ -1442,7 +1442,7 @@
       ],
       "case_ids": ["atomic", "atomic-fetch", "atomic-orders"],
       "required_instantiations": ["bool", "every fixed-width signed and unsigned integer", "move construction", "every legal explicit load/store/exchange order", "all nine legal strong-CAS success/failure order pairs", "all five integer fetch families under every read-modify-write order", "narrow fixed-width fetch conversion", "checked fetch_add overflow before publication"],
-      "evidence": ["docs/language/concurrency.md", "examples/76-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_fetch.gti", "tests/fixtures/atomic_fetch_overflow.gti", "tests/fixtures/atomic_orders.gti", "tests/fixtures/atomic_scalar.gti"]
+      "evidence": ["docs/language/concurrency.md", "examples/076-scalar-atomics.gti", "stdlib/std/atomic.gti", "tests/atomic_tests.cpp", "tests/atomic_runtime_test.py", "tests/atomic_tsan_test.py", "tests/fixtures/atomic_fetch.gti", "tests/fixtures/atomic_fetch_overflow.gti", "tests/fixtures/atomic_orders.gti", "tests/fixtures/atomic_scalar.gti"]
     },
     {
       "id": "build.executable",
@@ -2832,7 +2832,7 @@
       "operations": ["std::thread::join", "std::thread::joinable", "std::thread::start", "std::thread_result::join", "std::thread_result::joinable", "std::thread_result::start"],
       "case_ids": ["thread"],
       "required_instantiations": ["noncapturing lambda", "owned move-capture lambda", "once-callable class", "typed named task", "typed closure", "owned result cleanup"],
-      "evidence": ["examples/66-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
+      "evidence": ["examples/066-managed-threads.gti", "stdlib/std/thread.gti", "tests/managed_thread_runtime_test.py", "tests/managed_thread_tests.cpp", "tests/runtime_thread_tests.cpp"]
     },
     {
       "id": "unordered_map.executable",

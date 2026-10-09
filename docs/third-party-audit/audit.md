@@ -795,7 +795,7 @@ Measured waste per analysis:
 | Program | HIR + MIR + verify | Share of analysis |
 | --- | ---: | ---: |
 | 25,600-line straight-line program | 286 ms | 27% |
-| `examples/38-vector-emplace.gti` | 8.7 ms | **70%** |
+| `examples/038-vector-emplace.gti` | 8.7 ms | **70%** |
 
 The generic-heavy example is worse because of §4.1, and it is the realistic
 shape of GTI code.
