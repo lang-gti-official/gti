@@ -150,7 +150,7 @@ requires copyable `E`; a fresh or explicitly moved carrier moves the error.
 The referent is always borrowed. `.expect` still requires a fresh receiver or
 `std::move(result)`, consumes only the carrier, and panics on error. Neither
 operation extends the owner's lifetime. See the runnable
-[borrowed expected example](../../examples/99-borrowed-expected.gti).
+[borrowed expected example](../../examples/099-borrowed-expected.gti).
 
 Native C++ reference payloads are not used. Both C++20 and C++23 represent the
 success state with a private pointer-backed carrier while GTI MIR remains the

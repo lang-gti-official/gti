@@ -31,7 +31,7 @@ def main():
         (checked, "10\n20\n10\n"),
         (effectful, "9\n1\n2\n30\n40\n50\n150\n140\n130\n109\n"),
         (repository / "tests/fixtures/generated_abstract_base.gti", ""),
-        (repository / "examples/05-objects.gti", "objects use explicit construction\n"),
+        (repository / "examples/005-objects.gti", "objects use explicit construction\n"),
     ]
     failures = [
         (1, "1\n5\n11\n", "GTI-R0002", 27),

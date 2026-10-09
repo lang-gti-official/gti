@@ -11,7 +11,7 @@ if __name__ == "__main__":
     paths = {
         "function_item_pack_contracts": root / "fixtures/function_item_pack_contracts.gti",
         "dependent_clause": root / "coverage/reproducers/a19-trailing-clause-dependent-compound.gti",
-        "source_concepts_example": root.parent / "examples/33-source-concepts.gti",
-        "function_items_example": root.parent / "examples/80-function-items.gti",
+        "source_concepts_example": root.parent / "examples/033-source-concepts.gti",
+        "function_items_example": root.parent / "examples/080-function-items.gti",
     }
     main(names=tuple(paths), fixture_paths=paths)

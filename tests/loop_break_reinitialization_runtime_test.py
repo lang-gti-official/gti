@@ -20,7 +20,7 @@ def main():
     sources = [
         (repository / "tests/coverage/reproducers/a31-move-on-break-path-then-reinit.gti", ""),
         (repository / "tests/fixtures/loop_break_reinitialization.gti", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n"),
-        (repository / "examples/27-copy-move-policies.gti", "defaulted lifecycle and copy/move policies worked\n"),
+        (repository / "examples/027-copy-move-policies.gti", "defaulted lifecycle and copy/move policies worked\n"),
     ]
     with tempfile.TemporaryDirectory(prefix="gti-loop-break-") as temporary:
         scratch = Path(temporary)

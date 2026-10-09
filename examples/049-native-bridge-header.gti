@@ -20,7 +20,7 @@ extern "C" {
 }
 
 // Generate the checked bridge with:
-//   gti examples/49-native-bridge-header.gti --emit-native-header \
+//   gti examples/049-native-bridge-header.gti --emit-native-header \
 //       -o /tmp/renderer_native.h
 // The same header can be included by a C17 source or a C++20/C++23 shim.
 int main() {
