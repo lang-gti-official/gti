@@ -14,7 +14,7 @@ if __name__ == "__main__":
         "unique_member": root / "coverage/reproducers/a36-unique-ptr-member-init-nullptr.gti",
         "native_strlen": root / "coverage/reproducers/a37-libc-strlen-prototype-conflict.gti",
         "native_qsort": root / "coverage/reproducers/a37-libc-qsort-link-name-conflict.gti",
-        "nullable_example": root.parent / "examples/13-ownership.gti",
+        "nullable_example": root.parent / "examples/013-ownership.gti",
         "native_identity": root / "fixtures/native_declaration_identity.gti",
     }
     with tempfile.TemporaryDirectory(prefix="gti-native-identity-") as temporary:

@@ -295,7 +295,7 @@ namespaces and nest inside another namespace. Every component denotes an
 ordinary namespace, not a namespace alias. Alias declarations retain a single
 declared name (`namespace short_name = outer::inner;`). An exported shorthand
 namespace exports its nested declarations under the ordinary module rules.
-[The namespaces example](../../examples/06-namespaces.gti) demonstrates the
+[The namespaces example](../../examples/006-namespaces.gti) demonstrates the
 shorthand, qualification, and alias spelling. Namespace- and class-scoped
 `using Name = Type;` aliases are declaration-order independent within their
 direct declaring scope after cycle validation. Every class-like body (`class`,

@@ -1667,14 +1667,14 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/determinism_test.py"
             "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/examples/07-generics.gti"
+            "${PROJECT_SOURCE_DIR}/examples/007-generics.gti"
   )
   add_test(NAME mir_field_determinism
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/determinism_test.py"
       "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/tests/coverage/reproducers/a13-mir-field-symbol-order.gti" --mir-runs 30)
   add_test(NAME mir_associative_determinism
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/determinism_test.py"
-      "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/examples/87-associative-containers.gti" --mir-runs 6)
+      "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/examples/087-associative-containers.gti" --mir-runs 6)
   set_tests_properties(mir_field_determinism mir_associative_determinism PROPERTIES TIMEOUT 180)
   add_test(
     NAME compiler_debug_tooling
@@ -1836,7 +1836,7 @@ if(Python3_Interpreter_FOUND)
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
               "$<TARGET_FILE:gti>"
-              "${PROJECT_SOURCE_DIR}/examples/46-defined-integer-arithmetic.gti"
+              "${PROJECT_SOURCE_DIR}/examples/046-defined-integer-arithmetic.gti"
               --shard ${shard}/4
     )
   endforeach()
@@ -1852,7 +1852,7 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/binary64_runtime_test.py"
             "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/examples/47-binary64.gti"
+            "${PROJECT_SOURCE_DIR}/examples/047-binary64.gti"
   )
   add_test(
     NAME numeric_boundaries_runtime
@@ -1950,7 +1950,7 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/sum_types_runtime_test.py"
             "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/examples/56-sum-types.gti"
+            "${PROJECT_SOURCE_DIR}/examples/056-sum-types.gti"
   )
   add_test(
     NAME issues_122_124_field_initializers_runtime

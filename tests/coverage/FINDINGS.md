@@ -393,7 +393,7 @@ The visibility result depends on unrelated declarations elsewhere in the file:
 | A generic class declared (even unused) | OK |
 | A generic function declared (even unused) | GTI-S2024 |
 
-`examples/68-static-assertions.gti` passes only because it happens to declare
+`examples/068-static-assertions.gti` passes only because it happens to declare
 a class. Anyone writing a header of `constexpr` limits and assertions — with
 no class in it — hits this immediately.
 
@@ -979,7 +979,7 @@ error: use of undeclared identifier '__gti_mir_v_2'
 The front end accepts the program and emits C++ that does not compile. The
 body declares `v_4`, `v_5`, `v_7` — there is no `v_2`. It needs all three of an
 assignment (not an initialization), a payload with a destructor, and a
-construction expression on the right; `examples/78-owning-payload-enums.gti`
+construction expression on the right; `examples/078-owning-payload-enums.gti`
 only ever assigns from a named value, which is the gap.
 
 Worth separating from the ICEs: the verified-MIR contract is supposed to
@@ -1026,7 +1026,7 @@ And separately, a class-scoped alias on a *generic* class cannot be named from
 outside the class at all — `Box<int32_t>::value_type` is a parse error in a
 `using`, in a variable declaration, and in a parameter list. The alias works
 inside the class body, which is all
-`examples/79-class-scoped-type-aliases.gti` exercises.
+`examples/079-class-scoped-type-aliases.gti` exercises.
 
 ## S08 — Compile time is exponential in method-chain length
 
@@ -1066,7 +1066,7 @@ run. From `payload_enum_matrix.py`, the destructor-free class payload fails all
 ten operations tried, while tag-only, `int32_t` and two-field payloads all pass
 every one.
 
-`examples/78-owning-payload-enums.gti` is the only shipped file with a class
+`examples/078-owning-payload-enums.gti` is the only shipped file with a class
 payload and its class has a destructor, so the cleanup-free path has no
 coverage. A plain data-carrying class is the simpler case and the more likely
 thing to write first.
@@ -1285,7 +1285,7 @@ worth capturing for whoever writes the language reference.
   intent is that these records come from a native factory, which the GTI-S2064
   message states — but the messages you actually hit first do not, and one of
   them (GTI-S2038, "place the braces directly") points at a form that then
-  fails for a different reason. `examples/48-native-c-records.gti` only queries
+  fails for a different reason. `examples/048-native-c-records.gti` only queries
   layout, so it never meets this.
 - Payload enums cannot carry a type needing cleanup, such as `std::string`
   (GTI-S2067); variant-aware drop state is not implemented.

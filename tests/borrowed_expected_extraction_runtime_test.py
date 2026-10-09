@@ -14,7 +14,7 @@ def main():
     parser.add_argument("--quick", action="store_true")
     arguments = parser.parse_args()
     fixture = pathlib.Path(__file__).parent / "fixtures/borrowed_expected_extraction.gti"
-    example = pathlib.Path(__file__).parent.parent / "examples/99-borrowed-expected.gti"
+    example = pathlib.Path(__file__).parent.parent / "examples/099-borrowed-expected.gti"
     lines = fixture.read_text().splitlines()
 
     def site(fragment):

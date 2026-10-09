@@ -194,8 +194,8 @@
     }
   },
   "frontend_trace": {
-    "source": "examples/01-basics.gti",
-    "command": "gti examples/01-basics.gti -O0 --std c++23 --emit-cpp --time-trace trace.json -o output.cpp",
+    "source": "examples/001-basics.gti",
+    "command": "gti examples/001-basics.gti -O0 --std c++23 --emit-cpp --time-trace trace.json -o output.cpp",
     "wall_seconds": 0.617634,
     "trace_sha256": "0792cc1bc6ecdc332cc620d317fa5b0e546a0c972202f62acdaffb0feebe34e9",
     "phase_microseconds": {
