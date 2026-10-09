@@ -101,6 +101,13 @@ LSP `macro` classification. Other unresolved identifiers in inactive branches
 receive lexical variable classification only, so an inactive branch can fade
 without being semantically analysed or fabricating hover/definition results.
 Clients that do not consume semantic-token modifiers remain unaffected.
+Inactive punctuation also receives an operator token carrying `inactiveCode`;
+active punctuation remains syntax-owned. The Neovim plugin supplies a
+language-specific default `@lsp.mod.inactiveCode.gti` link to `Comment` and
+reinstates that default after colorscheme changes without replacing explicit
+theme/user styling. Its `LspTokenUpdate` overlay uses the server's modifier at
+semantic-token priority + 3, above ordinary type/modifier colors. The native
+semantic-token engine removes those overlays when a new result arrives.
 The Neovim integration links GTI's language-specific macro token to the
 client's generic `@lsp.type.macro` group, matching other LSP languages and
 leaving the selected colorscheme in control of its color.
@@ -525,15 +532,40 @@ set. Code generation remains disabled.
 
 Before analysis and completion, the LSP asks the driver for immutable
 `ProjectFacts` for the package containing the entry document. The facts select
-the nearest workspace member/package, the default profile's analysis
+the nearest workspace member/package, the selected profile's analysis
 configuration, and the exact `PackageSourceRoot` closure used by `gti check`.
-The configuration includes package and default-profile defines. Driver facts
+The profile defaults to the driver's normal default (normally `dev`). Clients
+may select a named project profile with `initializationOptions.profile` or
+`workspace/didChangeConfiguration` settings `{ "gti": { "profile": "release" } }`.
+A null/omitted `profile` in a GTI settings object restores the project default;
+notifications without a `gti` object leave the choice unchanged. Selection is
+per server instance, not a build invocation or a process-global environment
+variable. Neovim sends its configured `settings.gti.profile` after startup;
+`:GTIProfile <name>` changes it for servers attached to the current buffer,
+`:GTIProfile!` resets it, and `:GTIProfile`/`:GTIInfo` report the requested choice.
+
+The configuration includes package and selected-profile defines. Driver facts
 infer target defines for a unique matching entry root, or any document in a
 single-target package. Shared files and ambiguous entry roots in multi-target
 packages receive no target defines: unrelated target sets are never combined.
 Inactive consumer target/profile flag names remain known for typo diagnostics,
 and both active and declared sets enter the frontend cache context. Watching a
 manifest refreshes these facts for diagnostics and completion together.
+Profile changes also advance every open document's analysis generation,
+invalidate token caches and queued semantic requests, and capture the exact
+profile into each analysis/completion request. In-flight old-profile results
+cannot publish under the new generation. Dirty source overlays remain
+authoritative, and compatible frontend-cache rows retain the ordinary bounded
+configuration/content identity rules.
+
+Invalid setting types or non-portable profile names produce a
+`window/showMessage` error and preserve the previous choice. An undeclared
+profile produces the driver's existing `GTI-B1202` meaning at the entry
+document's first source position, with available-profile guidance. That
+generation has only lexical/empty query recovery, not fabricated default-profile
+semantics or inactive spans. Selecting a valid/default profile clears it.
+Standalone documents retain their prior analysis defaults; named project
+profiles do not invent a manifest for them.
 Package angle includes therefore use only declared direct aliases, including
 already-materialized checksum-verified Git dependencies. Resolution runs no
 process, performs no fetch or build, and creates no project state. Registry
@@ -544,7 +576,7 @@ manifest preserves standalone analysis; a malformed, unlocked, unmaterialized,
 or checksum-mismatched project publishes the driver's structured diagnostics
 and never invents a partial package graph.
 
-The default profile also supplies warning-group and dependency-warning policy.
+The selected profile also supplies warning-group and dependency-warning policy.
 It also supplies `raw-pointer-audit = "off"|"warn"|"strict"`. A process option
 `gti_lsp --raw-pointer-audit=off|warn|strict` explicitly overrides that profile;
 without either selection standalone documents use `off`. Duplicate, missing,
@@ -580,12 +612,12 @@ definition, and semantic tokens, while generation checks prevent an analysis
 captured before that edit from publishing. The protocol adapter does not parse
 TOML, reconstruct workspace membership, or resolve dependency aliases itself.
 
-The selected project configuration seeds package, default-profile and resolved
-target flags, uses the default profile's execution model, and derives runtime capabilities from the installed
+The selected project configuration seeds package, selected-profile and resolved
+target flags, uses that profile's execution model, and derives runtime capabilities from the installed
 hosted runtime profile. A startup
 `--execution-profile single-threaded|concurrent` option overrides the manifest
 profile and also configures standalone documents. Omission selects the
-driver-selected default profile when present and otherwise remains
+selected project profile when present and otherwise remains
 single-threaded.
 
 This keeps standalone and concurrent-project diagnostics and the public
@@ -758,10 +790,10 @@ function-local names: identities visible outside the entry document's
   They are the largest remaining repeated-edit cost; no semantic checkpoint or
   durable symbol identity is implemented.
 - Project analysis follows the package containing the opened document and the
-  driver's default profile on the host platform. Unique entry roots and
+  driver's default or explicitly selected profile on the host platform. Unique entry roots and
   single-target packages infer their target defines; shared/ambiguous sources
   in multi-target packages receive only package/profile flags. The protocol has no explicit
-  workspace-package, target, non-default-profile, or cross-target selection
+  workspace-package, target, or cross-target selection
   request yet; adding one requires a client-facing configuration contract,
   not another manifest parser.
 - Crash containment is in-process. It keeps the worker and shared state
