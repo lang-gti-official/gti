@@ -128,6 +128,9 @@ all compiler/runtime support.
 | S19 | Resource unsafe-binding wrapper | Signature contract, one-time binding API and retained provider reference. | Compiler enforces declared borrow lifetime; caller proves actual raw-region validity. |
 | S20 | Raw-to-checked reference wrapper | `assume_ref`/`assume_mut` body and owner-witness API. | General `borrowed_from` checking and unsafe dereference; caller proves initialization/alignment/aliasing. |
 | S21 | Synchronization policy above primitives | Public order tags and source algorithms such as the once-initialization CAS state machine. | Atomic synchronization semantics and native thread services. |
+| S22 (was M01) | Prefix allocation, length and live-prefix bookkeeping | Source `raw_buffer<T, Lease>` owns a lease, element pointer and capacity; `prefix_slots<T, Lease>` adds the sole live count, with no per-slot metadata. | General typed construction, destruction and relocation; process and resource byte providers. |
+| S23 (was M02) | Prefix append, pop, insertion, erasure and reserve | Source prefix-owner policy with one check per safe operation and bulk byte relocation of bitwise-relocatable elements. | Final-address emplacement, construction rollback and exactly-once cleanup through general object operations. |
+| S24 (was M04) | Views and iterators over prefix storage | Span, vector and string wrappers borrow source prefix owners; `unsafe` unchecked accessors on vector, string, span and fixed array. | General carrier and checked-loan contracts; raw text conversion through an exact checked owner witness. |
 
 Evidence: [memory](../../stdlib/std/memory.gti),
 [resource](../../stdlib/std/resource.gti),
@@ -146,19 +149,15 @@ does not claim a new test run.
 
 ### B. Source-Policy Migrations And Remaining Prerequisites
 
-These entries distinguish migration work from complete acceptance. The source
-prefix cutover is implemented on its task branch, but S-ALLOC-09's revised
-raw-buffer/checking contract and retirement/admission campaign are not complete.
-Other rows remain candidates, not implicitly approved or completed migrations.
+These entries distinguish migration work from complete acceptance. S-ALLOC-09
+completed the former M01, M02 and M04 rows, now S22–S24 above. The remaining
+rows are candidates, not implicitly approved or completed migrations.
 "Prerequisite" means a fact that must be established before retiring a path,
 not permission to weaken existing safety or reject previously supported users.
 
 | ID | Operation to move | Current owner | Prerequisite/acceptance boundary |
 | --- | --- | --- | --- |
-| M01 | Prefix allocation, length and live-prefix bookkeeping | Source `raw_buffer<T, Lease>` owns a lease, element pointer and capacity; `prefix_slots<T, Lease>` adds the sole live count. Private native/prelude/IR/representation/optimizer family removed. | S-ALLOC-09 final admission, corpus and measured performance acceptance. No sparse metadata, allocation rollback and exactly-once cleanup. |
-| M02 | Prefix append, pop, insertion, erasure and reserve | Source prefix-owner policy using general object construction/destruction/relocation. | Preserve final-address emplacement, failure-free relocation bounds, ordered arguments, mutation exclusion and all existing element shapes. Complete campaign evidence remains required; first/secondary failure fixtures already exercise source drains. |
 | M03 | Character trailing-NUL policy | Source terminated-prefix owner and embedded-NUL scan. | Empty static sentinel and hidden initialized terminator; checked views retain actual owner. Primitive text/C-string carrier conversion remains an identity-bound general compiler bridge, not a private string-storage engine. |
-| M04 | Views and iterators over migrated storage | Span/vector/string wrappers borrow ordinary source prefix owners through general carrier contracts. | Full corpus/installed-consumer evidence remains required. Raw text conversion uses an exact checked owner witness; primitive text representation itself is not claimed source-defined. |
 | M05 | Non-polymorphic unique allocation and release | `allocate_unique_owner`, private `unique_owner<T>` and generated allocation support. | Source lease/engagement state, constructor rollback, exactly-once final drop, safe borrow anchoring, movement and replacement. A sparse storage field is not automatically API/performance-equivalent. |
 | M06 | Polymorphic unique-owner conversion and destruction | Private unique upcast and dynamic cleanup bindings. | Retain original allocation/release authority while changing the view; execute the actual dynamic object's cleanup. Ordinary base-pointer destruction is not a substitute. |
 | M07 | Optional engagement, access and reset | Private `optional_storage<T>`. | Source inline storage plus engagement state, inactive-access failures and checked loans. Public `uninitialized<T>` is fixed-address for non-bitwise-relocatable payloads; preserving movable owning optional needs a general carrier/lifecycle solution. A flag alone is insufficient. |
@@ -166,22 +165,20 @@ not permission to weaken existing safety or reject previously supported users.
 | M09 | Expected active-alternative storage and ordinary helpers | Built-in expected type/operations. | General sum/inline-carrier, generic API and borrow contracts must preserve owned, void and checked-reference results. Source allocation alone does not retire the built-in path; `?` control flow and loan verification remain language semantics. |
 | M10 | Container guard predicates and formatting of failures | Source computes many predicates but calls private `require_*`/bounds helpers. | Source can own predicates/message policy. Preserve stable failure categories, location, cleanup and optimizer proof identity through a general failure interface; replacing everything with generic panic is not equivalent. |
 
-M01, M02 and M04 now have an accepted target representation:
+S22–S24 use the representation accepted in
+[ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
+and completed by
+[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string):
 - a source-defined raw buffer;
 - an initialized-prefix length with no per-slot metadata;
 - one check per safe operation;
 - `unsafe` unchecked accessors.
 
-This follows Rust's `RawVec`/`Vec` layering, and is recorded in
-[ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
-and planned as
-[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-The revised layering and unchecked APIs are implemented on the task branch.
-General nested resource-constructor MIR publication, complete corpus gates and
-the 13 staged SDK consumers pass at frozen `f8c9193c`. The original optimizer
-proof requirements and vector/game-update performance parity remain incomplete;
-final reconciled-head full-suite acceptance is still required. These rows do
-not claim the migration is accepted.
+This follows Rust's `RawVec`/`Vec` layering. The private `prefix_storage`
+native, prelude, IR, representation and optimizer family is removed. The
+checked vector loop, game update and string workloads match or beat the
+private path with smaller binaries; the measurements are in the
+[verification record](verification.md).
 
 Evidence: [vector](../../stdlib/std/vector.gti),
 [string](../../stdlib/std/string.gti),
