@@ -139,7 +139,7 @@ or implicit `switch` fallthrough.
 ## Build and try it
 
 Requirements are CMake 3.20 or newer, Ninja, a suitable C++ compiler, and LLVM
-18 through 22 **built with RTTI enabled** (distribution packages such as
+18 or newer, matching libclang, and **RTTI enabled** (distribution packages such as
 Debian `llvm-*-dev` and Homebrew `llvm@*` are; upstream LLVM defaults to off).
 CMake uses a compatible system LLVM by default and reports an RTTI mismatch
 at configure time. `-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the
@@ -475,10 +475,16 @@ python3 scripts/install_neovim_local.py --replace-config --replace-bin
 
 Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
 (including libclang), and the Xcode command-line tools. It discovers Homebrew
-LLVM 18–22 (skipping unsupported newer versions and checking retained Homebrew
-versions) or accepts `--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
+LLVM 18 or newer (also checking retained Homebrew versions) or accepts
+`--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
 automatically. Builds use all detected CPUs at normal priority by default
 (`--jobs N` to limit parallelism).
+
+After a Homebrew upgrade, rerun the script to reconfigure and rebuild against
+the selected LLVM and matching Clang package. An existing build keeps its
+generator; moving Homebrew aliases are resolved again rather than retaining
+stale dependency paths. New LLVM majors are not rejected by an arbitrary
+ceiling, but must still satisfy GTI's API, RTTI, and link-surface requirements.
 
 The script builds compiler/LSP/parser, stages the complete `gti_toolchain`
 component, verifies a checksummed local archive with the Neovim plugin smoke
