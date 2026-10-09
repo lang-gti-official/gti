@@ -793,6 +793,19 @@ combined release or whole-GTI-compilation performance acceptance. The large
 not implemented. Final combined corpus/inventory, installed-consumer and
 production JSON cost evidence belong to the integration run.
 
+The same optimized production compiler subsequently builds and runs the actual
+JSON surface fixture in a quiet slot: 150.58 seconds full direct compilation,
+8,784,904,192-byte maximum resident observation and no swap. Its 34,647,329-byte
+generated C++ has 35 adapters for all 22,957 original cleanup calls, with seven
+adapters in the entry body. All 350 body identities, 68,831 block labels,
+32,115 drop-status declarations and the entry's 63,001 blocks are retained.
+Full output SHA-256 is
+`a21424b8ac1e0765ee3e7b62b1648a94b59c37cf1524af01967d2631324825e8`, matching
+the unshared control, with empty stderr. Raw production artifacts are retained
+with the proxy evidence. This single observation proves the production path
+and inventory; without a matched full-compilation baseline it is not an
+overall GTI compile-time speedup measurement.
+
 ## Source prefix ownership (candidate; acceptance still open)
 
 The source-prefix task's Release/AppleClang/LLVM 22.1.8 snapshot on macOS arm64
