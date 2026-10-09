@@ -170,9 +170,24 @@ cannot raise a defined failure or invoke a user-defined move hook. Unlike
 ordinary move construction, the raw source is retired rather than left as an
 object whose moved-from lifetime the caller must subsequently end.
 
+`unsafe void std::relocate_range_at<T>(T* destination, T* source, size_t count)`
+provides the contiguous bulk operation for `bitwise_relocatable<T>`. The caller
+must establish that all `count` source elements are live, all destination slots
+are vacant, both regions are correctly aligned and writable, the regions do
+not overlap, and `count * sizeof(T)` is representable and fits both regions.
+All source lifetimes end without GTI destruction; the destination becomes the
+sole live range. Zero count accesses neither region and permits null pointers.
+There is no allocation, runtime validity check, user hook, or per-slot metadata.
+The compiler verifies structural eligibility; owning types that require
+structural relocation use the element-wise `relocate_at` operation instead.
+The C++ backend implements the verified bitwise operation with a bulk byte copy
+and ends the retired trivial native shells, rather than inventing eligibility
+from C++ traits.
+
 [`125-manual-object-lifetimes.gti`](../../examples/125-manual-object-lifetimes.gti)
 demonstrates a source-defined fixed-address owner, checked access to an
-immovable payload, slot reuse and explicit owning relocation.
+immovable payload, slot reuse, explicit owning relocation and bitwise bulk
+relocation between disjoint carriers.
 
 ## Optional raw-pointer audit
 

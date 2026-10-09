@@ -1,9 +1,9 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "042d7467598dda35f05134f711dec16ea3dd1363d0839f0375e9f35c449a6b07",
+    "stdlib/prelude.gti": "a33aa3f09d625f30f05d937483d0db075649a2037e45e990ae628ce07f28e448",
     "stdlib/std/algorithm.gti": "086493320ed1a6f40cc2ea35f0497f5bb1e42f96ca0356aadd8341635e683e26",
-    "stdlib/std/array.gti": "5de4c3f94a2c653393fa23b6054372260d2375f142360b48b5948808213f8b05",
+    "stdlib/std/array.gti": "19d4eee0136cd3a66c4a088057d7467de9eac847a4c526104471c43edeb70846",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "925dbda69d2eacd4d70525cae5261c46174660e4245eb5a2489e45a7e5af5809",
@@ -24,9 +24,9 @@
     "stdlib/std/json.gti": "b54226945bf9be04ba527264601234078911dd0dfdde70780ad2f44c048c3fa7",
     "stdlib/std/list.gti": "af8267642b50d09da74eab812a5f51bf56919153623a80dd78b4f4bbdd52693c",
     "stdlib/std/map.gti": "24c860882d65a76914308ac562762073574cbc7ccb1bc0b0ca61ba4eeaaa52c2",
-    "stdlib/std/memory.gti": "a815dfbc5b717eff8e5c84ae77168dae95ee62470d9c1410c203000eae190e5a",
+    "stdlib/std/memory.gti": "98f04fad7e7f7e23155616398771afac2fb59600a262ca732dc03c2f2bbe799d",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "0fefb4f008233f4492baaa2a2d67cb4355c4887b07937040fb9a2b99ac133623",
+    "stdlib/std/numeric.gti": "2e46a458b803e0777a3ec2047d6df922e429ec4b0930ab082f7a5513ac07a1e9",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
     "stdlib/std/paired_span.gti": "93b4fc364bb597f846a5c245d10bf3af93810b78b31c70fe5b7c7b8b7e11f78e",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
@@ -34,18 +34,18 @@
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/resource.gti": "09e91e255c8a6ada7527e2858fe11cdd879041e5f199d82b869d5f0ec31e16c4",
-    "stdlib/std/resource_vector.gti": "730b85569e5169c8c654bd4543432706432ad124a335d0c49596156efce79a97",
+    "stdlib/std/resource_vector.gti": "ded0a8f8f3eb38540cd4ac9f6cd255947a72ed9bc6e78aa825813f2009f9ac6b",
     "stdlib/std/set.gti": "1bf289005e99766d2aaddf5e2488a91a10c509d6ab015f8c824c8cb7b121f407",
     "stdlib/std/simd.gti": "ec60e8807ec3d4cf617a03d4f593231e54b298c2b399b260aa19acfddcdbe720",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
-    "stdlib/std/span.gti": "8977824a67c670c982ff082f0b6f1297b4b17885c6b8b5bc6e24e3a855c3c1ce",
-    "stdlib/std/string.gti": "6274d329b692f69fba908f6b90cd15db2267ad5476d6ec9be4dc03604d36d247",
+    "stdlib/std/span.gti": "496e5ac58405e439e78cdcd1c69ce83f6d1c655722e23b17b4982bf0e2b7df7a",
+    "stdlib/std/string.gti": "2c0a123dcb6723d44a7309b081a59b26fb70fea99f2465d1d90d1e00d20ceae4",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "fd284db99a49ce10538568d589254921fbdda810860ffd4719efb4fc477b6fd6",
     "stdlib/std/unordered_set.gti": "af95482466d952b670a69fdecad5ab905935cc4c1ee082c19f37e97741e2e84c",
     "stdlib/std/utility.gti": "142fb40869c5b2f4d0a431035ae7af5128c99426e9adb2abb2f9fa9d4b3b382d",
-    "stdlib/std/vector.gti": "e7e92aac2ae75af33fa220fa69060b7ca51f3f54b927a2e514d3d2522de88007"
+    "stdlib/std/vector.gti": "9a3ee85933fc78c681b9ea4a3ac67bb1985a4b209c37aec08d6ae9288c0c0049"
   },
   "cases": [
     {
@@ -1014,6 +1014,20 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "sequence-unchecked",
+      "mode": "run",
+      "source": "tests/fixtures/sequence_unchecked_access.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "sequence-unchecked-resource",
+      "mode": "run",
+      "source": "tests/fixtures/sequence_unchecked_resource.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "shared-ptr",
       "mode": "run",
       "source": "tests/fixtures/shared_ownership.gti",
@@ -1375,12 +1389,14 @@
         "std::array::end",
         "std::array::fill",
         "std::array::front",
+        "std::array::get_unchecked",
+        "std::array::get_unchecked_mut",
         "std::array::iterator",
         "std::array::operator[]",
         "std::array::sentinel",
         "std::array::size"
       ],
-      "case_ids": ["array", "algorithm-search", "algorithm-mutation", "algorithm-user-types", "constexpr-operators", "constexpr-readonly-references", "container-member-aliases"],
+      "case_ids": ["array", "algorithm-search", "algorithm-mutation", "algorithm-user-types", "constexpr-operators", "constexpr-readonly-references", "container-member-aliases", "sequence-unchecked"],
       "required_instantiations": ["std::array<int32_t, 0>", "std::array<int32_t, 3>"],
       "evidence": ["tests/fixtures/stdlib_surface_array.gti", "tests/fixtures/algorithm_search.gti", "tests/fixtures/algorithm_mutation.gti", "tests/fixtures/algorithm_user_types.gti", "stdlib/std/array.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
     },
@@ -2217,9 +2233,9 @@
       "id": "memory.manual-lifetimes",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
-      "operations": ["std::construct_at", "std::destroy_at", "std::relocate_at", "std::uninitialized", "std::uninitialized::data"],
+      "operations": ["std::construct_at", "std::destroy_at", "std::relocate_at", "std::relocate_range_at", "std::uninitialized", "std::uninitialized::data"],
       "case_ids": ["manual-object-lifetimes", "manual-object-pool"],
-      "required_instantiations": ["unrelated immovable Sensor", "owning std::string", "fixed-address inline owner with checked read-only and exclusive access"],
+      "required_instantiations": ["unrelated immovable Sensor", "owning std::string", "fixed-address inline owner with checked read-only and exclusive access", "unrelated passive Packet and move-only bitwise Ticket range"],
       "evidence": ["examples/125-manual-object-lifetimes.gti", "examples/128-inline-object-pool.gti", "tests/uninitialized_carrier_tests.cpp", "tests/uninitialized_carrier_runtime_test.py", "tests/object_lifetime_tests.cpp", "tests/object_construction_runtime_test.py", "tests/object_relocation_runtime_test.py", "docs/language/raw-pointers.md"]
     },
     {
@@ -2298,6 +2314,8 @@
         "std::mutable_span::end",
         "std::mutable_span::first",
         "std::mutable_span::front",
+        "std::mutable_span::get_unchecked",
+        "std::mutable_span::get_unchecked_mut",
         "std::mutable_span::iterator",
         "std::mutable_span::last",
         "std::mutable_span::operator[]",
@@ -2307,7 +2325,7 @@
         "std::string::as_mutable_span",
         "std::vector::as_mutable_span"
       ],
-      "case_ids": ["mutable-span", "mutable-span-owned", "composable-io", "container-member-aliases"],
+      "case_ids": ["mutable-span", "mutable-span-owned", "composable-io", "container-member-aliases", "sequence-unchecked"],
       "required_instantiations": ["int", "char", "uint8_t", "owning application element", "shared child copies", "exclusive subviews", "mutable iterators"],
       "evidence": ["tests/composable_io_runtime_test.py", "tests/carrier_shell_reference_tests.cpp", "docs/language/ranges.md", "tests/fixtures/stdlib_surface_container_aliases.gti"]
     },
@@ -2537,6 +2555,8 @@
         "std::resource_vector::front",
         "std::resource_vector::get",
         "std::resource_vector::get_mut",
+        "std::resource_vector::get_unchecked",
+        "std::resource_vector::get_unchecked_mut",
         "std::resource_vector::operator[]",
         "std::resource_vector::pop_back",
         "std::resource_vector::push_back",
@@ -2550,7 +2570,7 @@
         "std::resource_vector::try_reserve",
         "std::resource_vector_element"
       ],
-      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-container-usage", "resource-vector-constructor-rollback", "container-member-aliases"],
+      "case_ids": ["resource-allocator-example", "resource-programmable", "resource-container-usage", "resource-vector-constructor-rollback", "container-member-aliases", "sequence-unchecked-resource"],
       "required_instantiations": ["int and std::string", "owning Item with an observable destructor", "application-defined arena and allocation-budget provider", "growth, iteration, mutable element access, owner movement and recoverable growth failure"],
       "evidence": ["examples/121-programmable-allocators.gti", "tests/fixtures/programmable_allocators.gti", "tests/programmable_allocators_runtime_test.py", "tests/resource_protocol_tests.cpp", "docs/language/raw-pointers.md", "tests/fixtures/resource_container_usage.gti", "tests/fixtures/resource_vector_constructor_rollback.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
     },
@@ -2688,13 +2708,14 @@
         "std::span::end",
         "std::span::first",
         "std::span::front",
+        "std::span::get_unchecked",
         "std::span::last",
         "std::span::operator[]",
         "std::span::sentinel",
         "std::span::size",
         "std::span::subspan"
       ],
-      "case_ids": ["span", "container-member-aliases"],
+      "case_ids": ["span", "container-member-aliases", "sequence-unchecked"],
       "required_instantiations": ["std::span<int32_t>", "std::span<char>"],
       "evidence": ["tests/fixtures/span_owner_dependent.gti", "stdlib/std/span.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
     },
@@ -2702,8 +2723,8 @@
       "id": "string.executable",
       "source": "stdlib/std/string.gti",
       "status": "executable",
-      "operations": ["std::hash<std::string>", "std::string::append", "std::string::as_span", "std::string::at", "std::string::back", "std::string::begin", "std::string::c_string", "std::string::capacity", "std::string::clear", "std::string::clone", "std::string::const_iterator", "std::string::empty", "std::string::end", "std::string::front", "std::string::operator comparisons", "std::string::operator[]", "std::string::pop_back", "std::string::push_back", "std::string::reserve", "std::string::resize", "std::string::sentinel", "std::string::shrink_to_fit", "std::string::size", "std::string::string(size_t,size_t,string&)", "std::string::try_c_string", "std::string::view", "std::to_string", "std::to_string(float)"],
-      "case_ids": ["span", "string", "string-c-string", "string-index-range", "string-ordering", "associative-hashes", "container-member-aliases"],
+      "operations": ["std::hash<std::string>", "std::string::append", "std::string::as_span", "std::string::at", "std::string::back", "std::string::begin", "std::string::c_string", "std::string::capacity", "std::string::clear", "std::string::clone", "std::string::const_iterator", "std::string::empty", "std::string::end", "std::string::front", "std::string::get_unchecked", "std::string::get_unchecked_mut", "std::string::operator comparisons", "std::string::operator[]", "std::string::pop_back", "std::string::push_back", "std::string::reserve", "std::string::resize", "std::string::sentinel", "std::string::shrink_to_fit", "std::string::size", "std::string::string(size_t,size_t,string&)", "std::string::try_c_string", "std::string::view", "std::to_string", "std::to_string(float)"],
+      "case_ids": ["span", "string", "string-c-string", "string-index-range", "string-ordering", "associative-hashes", "container-member-aliases", "sequence-unchecked"],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)"
@@ -2955,6 +2976,8 @@
         "std::vector::end",
         "std::vector::erase",
         "std::vector::front",
+        "std::vector::get_unchecked",
+        "std::vector::get_unchecked_mut",
         "std::vector::insert",
         "std::vector::iterator",
         "std::vector::operator[]",
@@ -2968,7 +2991,7 @@
         "std::vector::vector",
         "std::vector_element<T>"
       ],
-      "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition", "container-member-aliases", "source-prefix-complete-elements"],
+      "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition", "container-member-aliases", "source-prefix-complete-elements", "sequence-unchecked"],
       "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record", "construction-only Message", "std::vector<std::optional<std::string>>", "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking"],
       "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "tests/fixtures/vector_construction_only.gti", "tests/fixtures/vector_construction_only_failure.gti", "tests/vector_construction_only_runtime_test.py", "stdlib/std/vector.gti", "tests/fixtures/stdlib_surface_container_aliases.gti", "tests/fixtures/source_prefix_complete_elements.gti", "tests/source_prefix_owner_runtime_test.py"]
     },

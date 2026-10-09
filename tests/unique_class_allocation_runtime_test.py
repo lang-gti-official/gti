@@ -50,6 +50,8 @@ def main():
             assert "mir_object_allocation_v1<::__gti_program::Value>" in generated
             assert ".allocate();" in generated and ".release());" in generated
             assert "::backend::make_unique<::__gti_program::Value>" not in generated
+            assert "mir_object_allocation_v1<::__gti_program::Implicit>" in generated
+            assert "::backend::make_unique<::__gti_program::Implicit>" not in generated
             # Constructor parameters outlive completed fields on failure.
             # The enclosing Value destructor runs only after success.
             cases = [([], (0, "2\n6\n5\n4\n3\n1\n", "")),
@@ -65,7 +67,11 @@ def main():
                        "division_by_zero in integer_division\n")),
                      (["secondary", "allocation", "failure"], (ABORT_STATUS, "cleanup\n",
                       f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
-                      "allocation_failure in unique_owner\n"))]
+                       "allocation_failure in unique_owner\n")),
+                     (["implicit"] * 5, (ABORT_STATUS, "",
+                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+                      "allocation_failure in unique_owner\n")),
+                     (["implicit"] * 6, (0, "88\n77\n", ""))]
             for arguments, expected in cases:
                 result = run([str(binary), *arguments])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (

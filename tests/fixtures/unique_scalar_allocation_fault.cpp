@@ -27,7 +27,8 @@ extern "C" void gti_test_fail_scalar_allocation(std::int32_t enabled) {
 
 // The fault tests require a real allocation, not an optimizable owner. This
 // external observation makes its address escape without modifying the value.
-extern "C" std::int32_t gti_test_observe_scalar_allocation(const std::int32_t *value) {
+extern "C" std::int32_t
+gti_test_observe_scalar_allocation(const std::int32_t *value) {
   return *value;
 }
 
