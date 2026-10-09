@@ -1,5 +1,34 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## Inline std::function targets (2026-10-09)
+
+Status: implemented through the general `<std/polymorphic>` owner, with
+targeted validation. The full suite is deferred to reconciliation.
+
+The allocation screen below found `std::function` construct+call 14x slower
+than C++, because every target was boxed. The four repeatable wrappers now
+keep a cleanup-inert, relocatable target of at most 24 capture bytes inline.
+Same compiler, original versus new standard library: 3 warmups, 15
+interleaved rounds, `-O3`, matching outputs, Apple M2 Max.
+
+| Program | Before median ms | After median ms | Ratio | Binary bytes |
+| --- | ---: | ---: | ---: | --- |
+| construct + call small lambda ×5M | 359.68 | 135.61 | 0.377 | 171448 -> 175928 |
+| `clone()` + call small target ×5M | 357.58 | 147.47 | 0.412 | 173904 -> 178304 |
+| vector of 100k functions, fill + call ×20 | 213.87 | 158.08 | 0.739 | 176960 -> 198016 |
+| construct once, call ×200M | 352.20 | 376.79 | 1.070 | 171776 -> 175680 |
+| string-capturing target (boxed control) ×2M | 266.29 | 266.86 | 1.002 | 175056 -> 177680 |
+
+Allocation counts from the lifecycle oracle: constructing, cloning and moving a
+small-lambda `function` performs 0 allocations (previously 1 each); a target
+with four `int64_t` captures and a `unique_ptr` capture each still perform 1.
+`std::function<int(int)>`, `function<int(int) mut>` and
+`move_only_function<int(int)>` grow from 8 to 56 bytes; the `&&` forms stay 8
+bytes and boxed. Invocation is about 7% slower in a hot loop because each call
+first branches on inline versus boxed storage. Programs that include
+`<std/functional>` parse 26 more declarations; bodies change only where the
+wrappers are used.
+
 ## Allocation-lean formatting (2026-10-09)
 
 Status: implemented as a stdlib-only change (`<std/format>`), with targeted

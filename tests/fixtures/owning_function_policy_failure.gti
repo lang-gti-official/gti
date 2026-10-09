@@ -40,7 +40,13 @@ int main(int argc, std::vector<std::string> argv) {
     return callback();
   }
   if (argc == 6) {
-    std::function<int(int)> callback{identity};
+    // Four retained words exceed the inline slot, so the clone allocates.
+    int64_t a = 1;
+    int64_t b = 2;
+    int64_t c = 3;
+    int64_t d = 4;
+    std::function<int(int)> callback{
+        [a, b, c, d](int value) -> int { return value + int(a + b + c + d); }};
     unsafe { gti_test_fail_scalar_allocation(1); }
     auto copy = callback.clone();
     return copy(1);
@@ -65,6 +71,21 @@ int main(int argc, std::vector<std::string> argv) {
     unsafe { gti_test_fail_scalar_allocation(1); }
     auto copy = callback.clone();
     return std::move(copy)(1);
+  }
+  if (argc == 13) {
+    // A small target is cloned inline: no allocation can fail.
+    std::function<int(int)> callback{identity};
+    unsafe { gti_test_fail_scalar_allocation(1); }
+    auto copy = callback.clone();
+    return copy(41) + 1;
+  }
+  if (argc == 14) {
+    // Replacing with a small target needs no allocation either.
+    int offset = 40;
+    mut std::move_only_function<int() mut> callback{};
+    unsafe { gti_test_fail_scalar_allocation(1); }
+    callback.replace([offset]() -> int { return offset + 2; });
+    return callback();
   }
   Resource original{7};
   mut std::move_only_function<int()> callback{

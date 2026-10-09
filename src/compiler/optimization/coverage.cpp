@@ -189,6 +189,11 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::OptionalStorageRead:
   case IntrinsicKind::OptionalStorageReadMut:
   case IntrinsicKind::OptionalStorageReset:
+  case IntrinsicKind::PolymorphicStorageHasValue:
+  case IntrinsicKind::PolymorphicStorageConstruct:
+  case IntrinsicKind::PolymorphicStorageRead:
+  case IntrinsicKind::PolymorphicStorageReadMut:
+  case IntrinsicKind::PolymorphicStorageReset:
   case IntrinsicKind::StringViewSize:
   case IntrinsicKind::StringViewEmpty:
   case IntrinsicKind::ExpectedValue:

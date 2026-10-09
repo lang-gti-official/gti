@@ -15,6 +15,14 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
   // source declarations.
   static constexpr std::string_view helperNames[] = {
       "Args",
+      "Interface",
+      "Model",
+      "Bytes",
+      "Align",
+      "Payload",
+      "operations",
+      "payload",
+      "object",
       "Allowed",
       "Argument",
       "Arguments",
@@ -57,6 +65,9 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "simd_binary",
       "vector_size",
       "mir_lambda_identity_v",
+      "mir_nested_lambda_identity",
+      "mir_nested_lambda_identity_v",
+      "Template",
       "mir_cleanup_emergency_abandonment",
       "mir_failure_cleanup_context_v1",
       "mir_failure_cleanup_scope_v1",
@@ -219,6 +230,18 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "optional_storage_read_mut_unchecked",
       "optional_storage_read_unchecked",
       "optional_storage_reset",
+      "polymorphic_storage",
+      "polymorphic_storage_operations",
+      "polymorphic_storage_operations_for",
+      "polymorphic_storage_construct",
+      "polymorphic_storage_has_value",
+      "polymorphic_storage_read",
+      "polymorphic_storage_read_mut",
+      "polymorphic_storage_reset",
+      "operations_",
+      "interface_",
+      "relocate",
+      "interface",
       "other",
       "outside",
       "overflow",
@@ -814,6 +837,32 @@ inline constexpr std::uint64_t mir_lambda_identity_v = [] {
   else
     return std::uint64_t{0};
 }();
+
+// The first closure identity among a type's type-only template arguments, in
+// order. It selects the verified body of a callable instance whose closure is
+// nested in a class argument rather than being the argument itself.
+template <typename T>
+struct mir_nested_lambda_identity {
+  static constexpr std::uint64_t value = mir_lambda_identity_v<T>;
+};
+template <typename T>
+struct mir_nested_lambda_identity<T &> : mir_nested_lambda_identity<T> {};
+template <typename T>
+struct mir_nested_lambda_identity<const T> : mir_nested_lambda_identity<T> {};
+template <template <typename...> class Template, typename... Arguments>
+struct mir_nested_lambda_identity<Template<Arguments...>> {
+  static constexpr std::uint64_t value = [] {
+    std::uint64_t result = mir_lambda_identity_v<Template<Arguments...>>;
+    ((result = result != 0
+                   ? result
+                   : mir_nested_lambda_identity<Arguments>::value),
+     ...);
+    return result;
+  }();
+};
+template <typename T>
+inline constexpr std::uint64_t mir_nested_lambda_identity_v =
+    mir_nested_lambda_identity<T>::value;
 
 // Defined with the failure-ABI helpers below. Capability representations may
 // accept it by reference here so a transformed constructor can create an
@@ -1800,6 +1849,154 @@ template <typename T>
 inline void optional_storage_reset(optional_storage<T> &value) {
   value.reset();
 }
+
+)";
+  if (features.polymorphicStorage) {
+    output << R"(
+// Per-payload operations of the declaration-bound <std/polymorphic> slot.
+// One constant table exists per payload type, so the slot stores only its
+// address. Semantics admits payloads with failure-free generated relocation
+// and inert cleanup only: none of these operations runs GTI source code.
+template <typename Interface>
+struct polymorphic_storage_operations {
+  // Moves the live payload into vacant storage, then ends the source.
+  void (*relocate)(void *destination, void *source);
+  void (*destroy)(void *object);
+  // Recovers the interface from the payload's current address.
+  Interface *(*interface)(void *object);
+};
+
+template <typename Interface, typename Model>
+inline constexpr polymorphic_storage_operations<Interface>
+    polymorphic_storage_operations_for{
+        [](void *destination, void *source) {
+          mir_object_relocate_v1(static_cast<Model *>(destination),
+                                 std::launder(static_cast<Model *>(source)));
+        },
+        [](void *object) {
+          std::destroy_at(std::launder(static_cast<Model *>(object)));
+        },
+        [](void *object) -> Interface * {
+          return std::launder(static_cast<Model *>(object));
+        }};
+
+// Inline zero-or-one polymorphic storage. Moving relocates the payload
+// through its own move constructor, never copies a polymorphic object's
+// bytes, and recomputes the cached interface from the destination address.
+// The cache only avoids an indirect call per read; it is never moved.
+template <typename Interface, std::size_t Bytes, std::size_t Align>
+class polymorphic_storage {
+public:
+  polymorphic_storage() = default;
+  polymorphic_storage(const polymorphic_storage &) = delete;
+  polymorphic_storage &operator=(const polymorphic_storage &) = delete;
+  polymorphic_storage(polymorphic_storage &&other) noexcept { take(other); }
+  polymorphic_storage &operator=(polymorphic_storage &&other) noexcept {
+    if (this != &other) {
+      reset();
+      take(other);
+    }
+    return *this;
+  }
+  ~polymorphic_storage() {
+    if (!mir_cleanup_emergency_abandonment()) reset();
+  }
+
+  [[nodiscard]] bool has_value() const noexcept {
+    return interface_ != nullptr;
+  }
+
+  template <typename Model> void construct(Model &&value) {
+    using Payload = std::remove_cvref_t<Model>;
+    // Every concrete payload instantiates this; the library selects the slot
+    // only for a payload whose native layout fits, so the other arm is a
+    // private-invariant trap rather than invalid native code.
+    if constexpr (sizeof(Payload) <= Bytes && alignof(Payload) <= Align) {
+      if (operations_ != nullptr) {
+        storage_error("constructed an engaged polymorphic storage slot");
+      }
+      construct_representation_at(reinterpret_cast<Payload *>(bytes_),
+                                  std::forward<Model>(value));
+      operations_ = &polymorphic_storage_operations_for<Interface, Payload>;
+      interface_ = operations_->interface(bytes_);
+    } else {
+      storage_error("polymorphic storage payload exceeds its inline footprint");
+    }
+  }
+
+  [[nodiscard]] const Interface &read() const {
+    if (interface_ == nullptr) {
+      empty_owner_error();
+    }
+    return *interface_;
+  }
+
+  [[nodiscard]] Interface &read_mut() {
+    if (interface_ == nullptr) {
+      empty_owner_error();
+    }
+    return *interface_;
+  }
+
+  void reset() noexcept {
+    if (operations_ != nullptr) {
+      const auto *operations = operations_;
+      operations_ = nullptr;
+      interface_ = nullptr;
+      operations->destroy(bytes_);
+    }
+  }
+
+private:
+  void take(polymorphic_storage &other) noexcept {
+    if (other.operations_ != nullptr) {
+      other.operations_->relocate(bytes_, other.bytes_);
+      operations_ = other.operations_;
+      interface_ = operations_->interface(bytes_);
+      other.operations_ = nullptr;
+      other.interface_ = nullptr;
+    }
+  }
+
+  const polymorphic_storage_operations<Interface> *operations_ = nullptr;
+  Interface *interface_ = nullptr;
+  alignas(Align) std::byte bytes_[Bytes];
+};
+
+template <typename Interface, std::size_t Bytes, std::size_t Align>
+inline bool polymorphic_storage_has_value(
+    const polymorphic_storage<Interface, Bytes, Align> &value) {
+  return value.has_value();
+}
+
+template <typename Interface, std::size_t Bytes, std::size_t Align,
+          typename Model>
+inline void
+polymorphic_storage_construct(polymorphic_storage<Interface, Bytes, Align> &value,
+                              Model &&payload) {
+  value.construct(std::forward<Model>(payload));
+}
+
+template <typename Interface, std::size_t Bytes, std::size_t Align>
+inline const Interface &polymorphic_storage_read(
+    const polymorphic_storage<Interface, Bytes, Align> &value) {
+  return value.read();
+}
+
+template <typename Interface, std::size_t Bytes, std::size_t Align>
+inline Interface &
+polymorphic_storage_read_mut(polymorphic_storage<Interface, Bytes, Align> &value) {
+  return value.read_mut();
+}
+
+template <typename Interface, std::size_t Bytes, std::size_t Align>
+inline void
+polymorphic_storage_reset(polymorphic_storage<Interface, Bytes, Align> &value) {
+  value.reset();
+}
+)";
+  }
+  output << R"(
 
 template <typename T>
 inline T &owner_access(std::unique_ptr<T> &owner) {

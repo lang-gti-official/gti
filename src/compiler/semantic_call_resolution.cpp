@@ -2734,6 +2734,21 @@ auto SemanticVisitor::Impl::containsLambdaType(const SemanticType &type)
                      containsLambdaType);
 }
 
+// A raw pointer transports an address, not the closure object it may name.
+// It holds no capture and invokes nothing; reaching the object again is an
+// explicit unsafe obligation (`assume_ref`/`assume_mut`) whose checked borrow
+// is tied to an owner. So it creates no callable argument boundary, while a
+// reference to a closure-bearing object still does.
+auto SemanticVisitor::Impl::containsClosureObjectType(const SemanticType &type)
+    -> bool {
+  if (type.kind == SemanticType::Lambda) {
+    return true;
+  }
+  return type.kind != SemanticType::RawPointer &&
+         std::any_of(type.arguments.begin(), type.arguments.end(),
+                     containsClosureObjectType);
+}
+
 auto SemanticVisitor::Impl::containsExactType(const SemanticType &type,
                                               const SemanticType &candidate)
     -> bool {
@@ -3753,7 +3768,8 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
                                  : nullptr;
     const CallableParameterContract *targetContract =
         callableParameterContract(candidate.id, index);
-    const bool lexicalClosure = containsLambdaType(argumentTypes[index]);
+    const bool lexicalClosure =
+        containsClosureObjectType(argumentTypes[index]);
     const bool ordinaryValueContract = sourceContract != nullptr &&
                                        sourceContract->ownedTransport &&
                                        sourceContract->ownedTransport->kind ==
@@ -5334,6 +5350,9 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
     return arguments.size() == 1 &&
            runtimeObjectLayoutType(arguments.front()) &&
            !typeTraits(arguments.front()).containsBorrowedState;
+  case StructuralConstraintKind::InlinePolymorphicPayload:
+    return arguments.size() == 2 &&
+           inlinePolymorphicPayload(arguments[0], arguments[1]);
   case StructuralConstraintKind::ReadCallable:
     return unaryCallable(CallableInvocationCapability::Read);
   case StructuralConstraintKind::MutCallable:
@@ -5583,6 +5602,7 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
     case StructuralConstraintKind::EnumUnderlying:
     case StructuralConstraintKind::ObjectLayout:
     case StructuralConstraintKind::IndependentObject:
+    case StructuralConstraintKind::InlinePolymorphicPayload:
       // Enum representation classification grants no numeric operators.
       break;
 

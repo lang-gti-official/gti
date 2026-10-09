@@ -1,0 +1,84 @@
+#include <std/format>
+#include <std/memory>
+#include <std/string>
+
+// An application-defined cell keeps one closure in erased inline bytes using
+// the general object-lifetime helpers. A raw address of the closure-bearing
+// holder carries no callable ownership; each unsafe block states alignment,
+// liveness and aliasing obligations, and checked references borrow the cell.
+class holder<Callable> {
+  Callable callable;
+public:
+  holder(Callable callable) : callable(std::move(callable)) {}
+  int call(int value) { return this.callable(value); }
+};
+
+struct cell_bytes {
+  mut uint64_t words[4] = {0, 0, 0, 0};
+};
+
+class closure_cell {
+  mut std::uninitialized<cell_bytes> bytes{};
+public:
+  closure_cell() {}
+  void* address() mut { return std::erase_address(this.bytes.data()); }
+};
+
+bool fits<T>() requires std::layout_queryable<T> {
+  std::layout need = std::layout_of<T>();
+  std::layout have = std::layout_of<cell_bytes>();
+  return need.bytes <= have.bytes && need.alignment <= have.alignment;
+}
+
+// Moving the cell copies its bytes, which is a valid move of the closure only
+// because the closure is bitwise relocatable.
+int moved_cell<std::bitwise_relocatable Callable>(Callable callable) {
+  if (!fits<holder<Callable>>()) {
+    return -1;
+  }
+  mut closure_cell cell{};
+  mut int first = 0;
+  unsafe {
+    holder<Callable>* target = std::typed_address<holder<Callable>>(cell.address());
+    std::construct_at(target, std::move(callable));
+    first = std::assume_ref(target, cell).call(1);
+  }
+  mut closure_cell moved = std::move(cell);
+  mut int second = 0;
+  unsafe {
+    holder<Callable>* target = std::typed_address<holder<Callable>>(moved.address());
+    second = std::assume_ref(target, moved).call(2);
+    std::destroy_at(target);
+  }
+  return first * 100 + second;
+}
+
+struct relocation_probe<T> {
+  bool matches() requires std::bitwise_relocatable<T> { return true; }
+};
+
+bool bitwise<T>() {
+  if constexpr (requires(relocation_probe<T>& probe) { { probe.matches() } -> bool; }) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+void describe<Callable>(std::string_view label, Callable callable) {
+  std::println(std::format("{} bitwise {} holder {} bytes {}", label,
+                           bitwise<Callable>(), bitwise<holder<Callable>>(),
+                           std::layout_of<holder<Callable>>().bytes));
+}
+
+int main() {
+  int offset = 40;
+  int64_t scale = 3;
+  describe("scalar", [offset](int value) -> int { return value + offset; });
+  describe("pair", [offset, scale](int value) -> int { return value + offset + int(scale); });
+  std::string label = std::string("abc");
+  describe("text", [label = std::move(label)](int value) -> int { return value + int(label.size()); });
+  std::println(moved_cell([offset](int value) -> int { return value + offset; }));
+  std::println(moved_cell([offset, scale](int value) -> int { return value * int(scale) + offset; }));
+  return 0;
+}

@@ -103,7 +103,10 @@ auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
     std::span<const SemanticType> captureTypes) const -> SemanticTypeTraits {
   SemanticTypeTraits result;
   result.drop = DropKind::Trivial;
-  result.relocation = RelocationKind::Structural;
+  // An environment is an aggregate of its captures with no self-reference,
+  // base, or source destructor, so it relocates exactly as its weakest
+  // capture does: bitwise only when every capture is bitwise.
+  result.relocation = RelocationKind::Bitwise;
   for (const SemanticType &captureType : captureTypes) {
     const SemanticTypeTraits capture = typeTraits(captureType);
     if (capture.ownership == OwnershipKind::Shared) {
@@ -117,6 +120,9 @@ auto SemanticVisitor::Impl::lambdaTraitsForCaptures(
     if (capture.relocation == RelocationKind::Unavailable ||
         capture.containsBorrowedState)
       result.relocation = RelocationKind::Unavailable;
+    else if (capture.relocation == RelocationKind::Structural &&
+             result.relocation == RelocationKind::Bitwise)
+      result.relocation = RelocationKind::Structural;
     result.transferCapable = result.transferCapable && capture.transferCapable;
     result.shareCapable = result.shareCapable && capture.shareCapable;
   }
@@ -138,8 +144,11 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
       return type.arguments.size() == 1 &&
              requiresActiveCleanup(type.arguments.front(), query);
     }
-    if (owner != nullptr && owner->compilerCapability ==
-                                CompilerCapabilityTypeKind::MutexLockToken) {
+    if (owner != nullptr &&
+        (owner->compilerCapability ==
+             CompilerCapabilityTypeKind::MutexLockToken ||
+         owner->compilerCapability ==
+             CompilerCapabilityTypeKind::PolymorphicStorage)) {
       return false;
     }
   }
@@ -743,6 +752,28 @@ auto SemanticVisitor::Impl::typeTraits(
                               .relocation = relocatable
                                                 ? RelocationKind::Structural
                                                 : RelocationKind::Unavailable};
+  }
+  if (owner.compilerCapability ==
+      CompilerCapabilityTypeKind::PolymorphicStorage) {
+    // Every admitted payload has failure-free relocation and inert cleanup,
+    // so replacing or moving the slot runs no source code. Erasure keeps the
+    // interface's concurrency policy, exactly like a unique owner of it.
+    const SemanticTypeTraits erased =
+        type.arguments.size() == 1
+            ? semanticTraits(type.arguments.front())
+            : SemanticTypeTraits{.transferCapable = false,
+                                 .shareCapable = false};
+    visiting.pop_back();
+    return SemanticTypeTraits{.ownership = OwnershipKind::Value,
+                              .drop = DropKind::Lexical,
+                              .copyable = false,
+                              .movable = true,
+                              .copyAssignable = false,
+                              .moveAssignable = true,
+                              .containsBorrowedState = false,
+                              .transferCapable = erased.transferCapable,
+                              .shareCapable = erased.shareCapable,
+                              .relocation = RelocationKind::Structural};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
     visiting.pop_back();
@@ -2060,6 +2091,27 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     if (name == "optional_storage_reset") {
       return IntrinsicKind::OptionalStorageReset;
+    }
+    return IntrinsicKind::None;
+  }
+  if (isPolymorphicLibraryUnit(sourceUnit)) {
+    if (scope.front() != "gti_internal") {
+      return IntrinsicKind::None;
+    }
+    if (name == "polymorphic_storage_has_value") {
+      return IntrinsicKind::PolymorphicStorageHasValue;
+    }
+    if (name == "polymorphic_storage_construct") {
+      return IntrinsicKind::PolymorphicStorageConstruct;
+    }
+    if (name == "polymorphic_storage_read") {
+      return IntrinsicKind::PolymorphicStorageRead;
+    }
+    if (name == "polymorphic_storage_read_mut") {
+      return IntrinsicKind::PolymorphicStorageReadMut;
+    }
+    if (name == "polymorphic_storage_reset") {
+      return IntrinsicKind::PolymorphicStorageReset;
     }
     return IntrinsicKind::None;
   }
@@ -7284,6 +7336,15 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::PolymorphicStorageHasValue ||
+      intrinsic == IntrinsicKind::PolymorphicStorageConstruct ||
+      intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+      intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
+      intrinsic == IntrinsicKind::PolymorphicStorageReset) {
+    analyzePolymorphicStorageIntrinsicCall(expr, intrinsic);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::Move) {
     analyzeMoveCall(expr, &declaration);
     return;
@@ -8388,6 +8449,145 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
                                              : currentType,
                        .parameterTypes = std::move(argumentTypes),
                        .typeArguments = {elementType},
+                       .intrinsic = intrinsic,
+                       .borrowOrigin = borrows ? BorrowOriginKind::Argument
+                                               : BorrowOriginKind::None,
+                       .borrowArgument = 0,
+                       .borrowAccess = borrowAccess});
+}
+
+// One inline polymorphic payload: a complete concrete class with a public
+// polymorphic base Interface whose generated relocation is failure-free and
+// whose cleanup is inert. Destroying, replacing, or relocating such a payload
+// therefore runs no source code and cannot fail, so the owning slot needs no
+// failure-aware cleanup schedule. It retains no checked borrow, and erasing it
+// to Interface must not grant a concurrency capability the payload lacks.
+auto SemanticVisitor::Impl::inlinePolymorphicPayload(
+    const SemanticType &model, const SemanticType &interface) const -> bool {
+  const ClassInfo *payload =
+      model.kind == SemanticType::Class ? classInfo(model) : nullptr;
+  const ClassInfo *base =
+      interface.kind == SemanticType::Class ? classInfo(interface) : nullptr;
+  if (payload == nullptr || base == nullptr || payload->abstract ||
+      payload->kind == ClassKind::Interface ||
+      payload->kind == ClassKind::Union || payload->cAbiRecord ||
+      payload->cOpaqueHandle ||
+      payload->compilerCapability != CompilerCapabilityTypeKind::None ||
+      !base->polymorphic || !isPublicBaseConversion(model, interface))
+    return false;
+  const SemanticTypeTraits traits = typeTraits(model);
+  const SemanticTypeTraits erased = typeTraits(interface);
+  return traits.movable && traits.relocation != RelocationKind::Unavailable &&
+         !traits.containsBorrowedState && !requiresActiveCleanupFor(model) &&
+         (traits.transferCapable || !erased.transferCapable) &&
+         (traits.shareCapable || !erased.shareCapable);
+}
+
+auto SemanticVisitor::Impl::analyzePolymorphicStorageIntrinsicCall(
+    const Call &expr, IntrinsicKind intrinsic) -> void {
+  std::vector<SemanticType> argumentTypes;
+  argumentTypes.reserve(expr.arguments().size());
+  for (const ExprPtr &argument : expr.arguments()) {
+    argumentTypes.emplace_back(analyze(argument));
+  }
+  for (const TypeRef &argument : expr.typeArguments()) {
+    validateType(argument);
+  }
+  if (!expr.typeArguments().empty()) {
+    report(expr.paren(),
+           "Polymorphic storage operations infer their interface and payload "
+           "types from their arguments and do not take explicit type "
+           "arguments.",
+           "GTI-S2019");
+  }
+
+  const bool constructing =
+      intrinsic == IntrinsicKind::PolymorphicStorageConstruct;
+  if ((constructing && argumentTypes.size() != 2) ||
+      (!constructing && argumentTypes.size() != 1)) {
+    report(expr.paren(),
+           constructing
+               ? "polymorphic_storage_construct expects mutable polymorphic "
+                 "storage and one completed payload value."
+               : "This polymorphic storage operation expects exactly one "
+                 "storage argument.",
+           "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  const SemanticType storageType = argumentTypes.front();
+  const ClassInfo *storageInfo = classInfo(storageType);
+  if (storageType.kind != SemanticType::Class || storageInfo == nullptr ||
+      storageInfo->compilerCapability !=
+          CompilerCapabilityTypeKind::PolymorphicStorage ||
+      storageType.arguments.size() != 1 ||
+      storageType.valueArguments.size() != 2) {
+    if (storageType != SemanticType::Unknown) {
+      report(expressionToken(expr.arguments().front()),
+             "Polymorphic storage operations require the exact trusted "
+             "gti_internal::polymorphic_storage<Interface, Bytes, Align> "
+             "capability.",
+             "GTI-S2019");
+    }
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  const SemanticType interfaceType = storageType.arguments.front();
+  if (constructing ||
+      intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
+      intrinsic == IntrinsicKind::PolymorphicStorageReset) {
+    requireMutableStorage(expr.arguments().front(),
+                          "polymorphic storage operation");
+  }
+
+  SemanticType modelType = SemanticType::Unknown;
+  if (constructing) {
+    modelType = argumentTypes[1];
+    if (modelType != SemanticType::Unknown &&
+        !containsOpenTypeParameter(modelType) &&
+        !containsOpenTypeParameter(interfaceType) &&
+        !inlinePolymorphicPayload(modelType, interfaceType)) {
+      report(expressionToken(expr.arguments()[1]),
+             "Inline polymorphic storage requires one completed payload of a "
+             "concrete class publicly derived from polymorphic '" +
+                 typeSpelling(interfaceType) +
+                 "', with failure-free relocation, inert cleanup, no checked "
+                 "borrowed state, and no concurrency capability beyond its "
+                 "own; '" +
+                 typeSpelling(modelType) + "' does not qualify.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = SemanticType::Void;
+  } else if (intrinsic == IntrinsicKind::PolymorphicStorageHasValue) {
+    currentType = SemanticType::Bool;
+  } else if (intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+             intrinsic == IntrinsicKind::PolymorphicStorageReadMut) {
+    currentType = interfaceType;
+  } else {
+    currentType = SemanticType::Void;
+  }
+
+  const bool borrows = intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+                       intrinsic == IntrinsicKind::PolymorphicStorageReadMut;
+  const AccessMode borrowAccess =
+      intrinsic == IntrinsicKind::PolymorphicStorageReadMut
+          ? AccessMode::Mutable
+          : AccessMode::ReadOnly;
+  std::vector<SemanticType> typeArguments{interfaceType};
+  if (constructing) {
+    typeArguments.push_back(modelType);
+  }
+  semanticModel.record(
+      expr,
+      ResolvedCallInfo{.returnType = borrows ? SemanticType::referenceTo(
+                                                   interfaceType, borrowAccess)
+                                             : currentType,
+                       .parameterTypes = std::move(argumentTypes),
+                       .typeArguments = std::move(typeArguments),
                        .intrinsic = intrinsic,
                        .borrowOrigin = borrows ? BorrowOriginKind::Argument
                                                : BorrowOriginKind::None,

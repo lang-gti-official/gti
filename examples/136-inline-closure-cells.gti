@@ -1,0 +1,64 @@
+#include <std/format>
+#include <std/memory>
+
+namespace application {
+// Wraps a closure so the cell can construct, call and destroy it in place.
+class holder<Callable> {
+  Callable callable;
+public:
+  holder(Callable callable) : callable(std::move(callable)) {}
+  int call(int value) { return this.callable(value); }
+};
+
+struct cell_bytes {
+  mut uint64_t words[3] = {0, 0, 0};
+};
+
+// One erased inline cell. It knows nothing about closures: callers choose the
+// holder type and keep the unsafe address, liveness and aliasing obligations.
+class cell {
+  mut std::uninitialized<cell_bytes> bytes{};
+public:
+  cell() {}
+  void* address() mut { return std::erase_address(this.bytes.data()); }
+};
+
+bool fits<T>() requires std::layout_queryable<T> {
+  std::layout need = std::layout_of<T>();
+  std::layout have = std::layout_of<cell_bytes>();
+  return need.bytes <= have.bytes && need.alignment <= have.alignment;
+}
+
+// The compiler derives bitwise relocatability from the captures, so moving the
+// cell's bytes is a valid move of the closure it holds.
+int call_twice<std::bitwise_relocatable Callable>(Callable callable) {
+  if (!fits<holder<Callable>>()) {
+    return -1;
+  }
+  mut cell first{};
+  mut int before = 0;
+  unsafe {
+    holder<Callable>* target = std::typed_address<holder<Callable>>(first.address());
+    std::construct_at(target, std::move(callable));
+    before = std::assume_ref(target, first).call(1);
+  }
+  mut cell moved = std::move(first);
+  mut int after = 0;
+  unsafe {
+    holder<Callable>* target = std::typed_address<holder<Callable>>(moved.address());
+    after = std::assume_ref(target, moved).call(2);
+    std::destroy_at(target);
+  }
+  return before * 1000 + after;
+}
+}
+
+int main() {
+  int offset = 7;
+  int64_t scale = 5;
+  std::println(application::call_twice([offset](int value) -> int { return value + offset; }));
+  std::println(application::call_twice([offset, scale](int value) -> int {
+    return value * int(scale) + offset;
+  }));
+  return 0;
+}

@@ -1853,6 +1853,10 @@ private:
   void analyzeSharedOwnerIntrinsicCall(const Call &expr,
                                        const CallableCandidate &declaration);
 
+  void analyzePolymorphicStorageIntrinsicCall(const Call &expr,
+                                              IntrinsicKind intrinsic);
+  [[nodiscard]] bool inlinePolymorphicPayload(const SemanticType &model,
+                                              const SemanticType &interface) const;
   void analyzeOptionalStorageIntrinsicCall(const Call &expr,
                                            IntrinsicKind intrinsic);
 
@@ -2068,6 +2072,8 @@ private:
       ConstraintFailure *constraintFailure = nullptr);
 
   [[nodiscard]] static bool containsLambdaType(const SemanticType &type);
+
+  [[nodiscard]] static bool containsClosureObjectType(const SemanticType &type);
 
   [[nodiscard]] static bool containsExactType(const SemanticType &type,
                                               const SemanticType &candidate);
@@ -3430,6 +3436,7 @@ private:
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] bool isPolymorphicLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool isSourceLocationLibraryUnit(SourceUnitId sourceUnit) const;
 

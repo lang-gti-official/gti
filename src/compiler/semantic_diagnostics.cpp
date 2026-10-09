@@ -436,6 +436,13 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           "concrete array, or complete non-abstract class, struct or passive "
           "union. Copying and moving are not required.");
       break;
+    case StructuralConstraintKind::InlinePolymorphicPayload:
+      diagnostic.hints.emplace_back(
+          "The payload must be a concrete class publicly derived from the "
+          "polymorphic interface, with failure-free relocation, no source "
+          "destructor or owning cleanup, no checked borrowed state, and no "
+          "concurrency capability the interface would add.");
+      break;
     case StructuralConstraintKind::IndependentObject:
       diagnostic.hints.emplace_back(
           "The element must be a complete object type without checked borrowed "

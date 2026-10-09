@@ -1,0 +1,121 @@
+#include <std/memory>
+
+// Owning polymorphic values with inline storage for small eligible payloads.
+
+namespace gti_internal {
+@compiler_constraint("inline_polymorphic_payload") concept inline_polymorphic_payload_capability<Model, Interface>;
+
+/// Compiler-bound inline slot for at most one object whose dynamic type
+/// implements `Interface`, within `Bytes` and `Align`. Application code cannot
+/// name this type or its operations; `std::inline_polymorphic` owns every
+/// transition. Moving the slot relocates its payload through that payload's
+/// generated move and then ends the source lifetime, so the dynamic type moves
+/// with its bytes and the interface is recovered from the new address.
+class polymorphic_storage<Interface, uint64_t Bytes, uint64_t Align> {
+public:
+  polymorphic_storage() {}
+  polymorphic_storage(polymorphic_storage<Interface, Bytes, Align>& other) = delete;
+  polymorphic_storage(polymorphic_storage<Interface, Bytes, Align>&& other) = default;
+  ~polymorphic_storage() = default;
+};
+
+bool polymorphic_storage_has_value<Interface, uint64_t Bytes, uint64_t Align>(
+    gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
+void polymorphic_storage_construct<Interface, Model, uint64_t Bytes, uint64_t Align>(
+    mut gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage, Model value);
+Interface& polymorphic_storage_read<Interface, uint64_t Bytes, uint64_t Align>(
+    gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
+mut Interface& polymorphic_storage_read_mut<Interface, uint64_t Bytes, uint64_t Align>(
+    mut gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
+void polymorphic_storage_reset<Interface, uint64_t Bytes, uint64_t Align>(
+    mut gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
+}
+
+namespace std {
+/// `Model` may live inline in an `inline_polymorphic<Interface, ...>`: it is a
+/// concrete class publicly derived from polymorphic `Interface`, its generated
+/// relocation cannot fail, its cleanup runs no source code, it retains no
+/// checked borrow, and erasing it grants no concurrency capability it lacks.
+concept inline_polymorphic_payload<Model, Interface> =
+    gti_internal::inline_polymorphic_payload_capability<Model, Interface>;
+
+namespace detail {
+struct inline_payload_probe<Model, Interface> {
+  bool matches() requires std::inline_polymorphic_payload<Model, Interface> { return true; }
+};
+}
+
+/// Owns at most one object whose dynamic type implements `Interface`.
+///
+/// An `inline_polymorphic_payload` that fits `Bytes` and `Align` lives inside
+/// the owner and needs no allocation. Any other payload is boxed on the heap.
+/// Moving the owner moves an inline payload with it; the moved-from owner is
+/// unavailable, exactly as for any other GTI move. References returned by
+/// `get()` borrow the owner, so they cannot observe a move.
+class inline_polymorphic<Interface, uint64_t Bytes, uint64_t Align> {
+  mut gti_internal::polymorphic_storage<Interface, Bytes, Align> slot =
+      gti_internal::polymorphic_storage<Interface, Bytes, Align>();
+  mut std::unique_ptr<Interface> boxed = nullptr;
+
+public:
+  /// Constructs an empty owner.
+  inline_polymorphic() {}
+
+  /// Owns `value`, inline when eligible and small enough.
+  inline_polymorphic<Model>(Model value) {
+    this.replace(std::move(value));
+  }
+
+  /// Returns whether an object is owned.
+  bool has_value() {
+    return this.is_inline() || this.boxed != nullptr;
+  }
+
+  /// Returns whether the owned object lives inline.
+  bool is_inline() {
+    return gti_internal::polymorphic_storage_has_value(this.slot);
+  }
+
+  /// Returns the owned object. Accessing an empty owner is the checked
+  /// empty-owner failure.
+  Interface& get() {
+    if (this.is_inline()) {
+      return gti_internal::polymorphic_storage_read(this.slot);
+    }
+    return *this.boxed;
+  }
+
+  /// Returns the owned object for exclusive access.
+  mut Interface& get() mut {
+    if (this.is_inline()) {
+      return gti_internal::polymorphic_storage_read_mut(this.slot);
+    }
+    return *this.boxed;
+  }
+
+  /// Destroys the owned object, if any, and becomes empty.
+  void reset() mut {
+    gti_internal::polymorphic_storage_reset(this.slot);
+    this.boxed.reset();
+  }
+
+  /// Owns `value` in place of the current object. An inline replacement
+  /// cannot fail once selected; a boxed replacement is allocated before the
+  /// current object is destroyed, so allocation failure leaves it in place.
+  void replace<Model>(Model value) mut {
+    if constexpr (requires(std::detail::inline_payload_probe<Model, Interface>& probe) {
+                    { probe.matches() } -> bool;
+                  }) {
+      std::layout model = std::layout_of<Model>();
+      if (model.bytes <= Bytes && model.alignment <= Align) {
+        this.reset();
+        gti_internal::polymorphic_storage_construct(this.slot, std::move(value));
+        return;
+      }
+    }
+    std::unique_ptr<Model> boxed = std::make_unique<Model>(std::move(value));
+    gti_internal::polymorphic_storage_reset(this.slot);
+    this.boxed = std::upcast_unique<Interface, Model>(std::move(boxed));
+  }
+};
+}

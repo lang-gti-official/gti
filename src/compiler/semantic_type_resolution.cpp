@@ -3374,6 +3374,53 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "GTI-S2019");
     }
   }
+  if (compilerCapability == CompilerCapabilityTypeKind::PolymorphicStorage) {
+    if (type.arguments.size() != 3 ||
+        type.arguments.front().genericArgumentSyntax ==
+            GenericArgumentSyntax::Value) {
+      report(type.name.last(),
+             "Compiler-private polymorphic storage requires one interface "
+             "type, an inline byte capacity, and an inline alignment.",
+             "GTI-S2019");
+      return;
+    }
+    validateType(type.arguments.front());
+    const SemanticType interface = typeOf(type.arguments.front());
+    const ClassInfo *base = interface.kind == SemanticType::Class
+                                ? classInfo(interface)
+                                : nullptr;
+    if (interface != SemanticType::Unknown &&
+        interface.kind != SemanticType::TypeParameter &&
+        (base == nullptr || !base->polymorphic)) {
+      report(type.arguments.front().name.last(),
+             "Polymorphic storage requires a polymorphic class or interface, "
+             "not '" +
+                 typeSpelling(interface) + "'.",
+             "GTI-S2019");
+    }
+    const SemanticType storage = typeOf(type);
+    if (storage.valueArguments.size() == 2) {
+      const CompileTimeValue &bytes = storage.valueArguments[0];
+      const CompileTimeValue &alignment = storage.valueArguments[1];
+      if ((bytes.kind == CompileTimeValue::UInt64 &&
+           (bytes.value == 0 || bytes.value > 4096)) ||
+          (alignment.kind == CompileTimeValue::UInt64 &&
+           (alignment.value == 0 || alignment.value > 4096 ||
+            (alignment.value & (alignment.value - 1)) != 0))) {
+        report(type.name.last(),
+               "Polymorphic storage requires an inline capacity from 1 to "
+               "4096 bytes and a power-of-two alignment no greater than "
+               "4096.",
+               "GTI-S2019");
+      }
+    }
+    if (!type.arrayExtents.empty()) {
+      report(type.name.last(),
+             "Fixed arrays of compiler-private storage are not supported.",
+             "GTI-S2019");
+    }
+    // Ordinary nominal argument validation below checks the value kinds.
+  }
   if (compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
     if (type.arguments.size() != 1 ||
         type.arguments.front().genericArgumentSyntax ==

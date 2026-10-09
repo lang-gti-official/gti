@@ -199,6 +199,19 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .dropsValue = true,
                     .invokesUserCode = true},
+    // PolymorphicStorageHasValue: a pure read of inline engagement state.
+    MirEffectTraits{
+        .readsPlace = true, .removableWhenUnused = true, .reorderable = true},
+    // PolymorphicStorageConstruct: publishes one completed payload whose
+    // cleanup is inert. A payload outside the native footprint traps.
+    MirEffectTraits{
+        .writesPlace = true, .mayTrap = true, .initializesValue = true},
+    // PolymorphicStorageRead
+    MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
+    // PolymorphicStorageReadMut
+    MirEffectTraits{.readsPlace = true, .mayTrap = true, .startsLoan = true},
+    // PolymorphicStorageReset: ends an inert payload lifetime.
+    MirEffectTraits{.writesPlace = true, .dropsValue = true},
     // StringViewSize: a pure read of the view's stored length.
     MirEffectTraits{},
     // StringViewEmpty
@@ -507,6 +520,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "optional-storage-read",
     "optional-storage-read-mut",
     "optional-storage-reset",
+    "polymorphic-storage-has-value",
+    "polymorphic-storage-construct",
+    "polymorphic-storage-read",
+    "polymorphic-storage-read-mut",
+    "polymorphic-storage-reset",
     "string-view-size",
     "string-view-empty",
     "expected-value",
@@ -1632,7 +1650,11 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
           candidate.kind == SemanticType::Lambda
               ? candidate.lambdaCaptureTypes()
               : std::span<const SemanticType>{candidate.arguments};
-      auto result = RelocationKind::Structural;
+      // A closure environment is a plain aggregate of its captures; an
+      // expected keeps its engagement state and stays structural.
+      auto result = candidate.kind == SemanticType::Lambda
+                        ? RelocationKind::Bitwise
+                        : RelocationKind::Structural;
       for (const auto &part : parts) {
         if (candidate.kind == SemanticType::Expected &&
             &part == &candidate.arguments.front() && part == SemanticType::Void)
@@ -1671,7 +1693,11 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
         owner->compilerCapability == CompilerCapabilityTypeKind::CString) {
       result = RelocationKind::Bitwise;
     } else if (owner->compilerCapability ==
-               CompilerCapabilityTypeKind::SharedOwner) {
+                   CompilerCapabilityTypeKind::SharedOwner ||
+               owner->compilerCapability ==
+                   CompilerCapabilityTypeKind::PolymorphicStorage) {
+      // Polymorphic storage relocates its payload through the payload's
+      // generated move; it is never a byte copy of a polymorphic object.
       result = RelocationKind::Structural;
     } else if (owner->compilerCapability ==
                CompilerCapabilityTypeKind::OptionalStorage) {
@@ -1778,10 +1804,14 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
         classes.erase(owner->id);
         return safe;
       }
-      const bool safe = owner->compilerCapability ==
-                            CompilerCapabilityTypeKind::OptionalStorage &&
-                        candidate.arguments.size() == 1 &&
-                        self(self, candidate.arguments.front());
+      // Every admitted polymorphic payload has failure-free relocation.
+      const bool safe =
+          owner->compilerCapability ==
+              CompilerCapabilityTypeKind::PolymorphicStorage ||
+          (owner->compilerCapability ==
+               CompilerCapabilityTypeKind::OptionalStorage &&
+           candidate.arguments.size() == 1 &&
+           self(self, candidate.arguments.front()));
       classes.erase(owner->id);
       return safe;
     }
