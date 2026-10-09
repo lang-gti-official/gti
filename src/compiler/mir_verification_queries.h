@@ -11,7 +11,9 @@ namespace lang::mir_detail {
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);
 
-// The generated same-type copy/move family has no source constructor target.
+// Trivial generated default and same-type copy/move construction have no
+// source constructor target. The program verifier checks the class's exact
+// special-member policy, including the absence of a required default schedule.
 // Allocation and staged input ownership still have distinct MIR identities.
 [[nodiscard]] bool
 generatedUniqueConstruction(const MirInstruction &instruction);

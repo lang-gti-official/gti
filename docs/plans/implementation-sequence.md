@@ -5029,8 +5029,12 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
 
 - **State/role:** implementation in progress on the source-prefix task branch;
   not integrated or accepted. The allocation-free runtime abort entry point
-  has focused subprocess coverage; compiler detector wiring, failure-edge
-  removal, allocation elision and the complete acceptance matrix remain open.
+  has focused subprocess coverage. Scalar/class/shared detector wiring and
+  terminal allocation edges have focused native evidence, including implicit
+  default classes; scalar process-owner elision has an O0/O3 counting oracle.
+  Remaining family/fallible/overflow controls, complete acceptance and measured
+  source-container performance remain open; the owner-loop probe still trails
+  its C++ comparisons despite allocation removal.
   The contract is
   [ADR 022's Rust allocation-failure revision](../decisions/022-safe-typed-allocation.md#revision-rust-allocation-failure-model-2026-10-09)
   and [ADR 007's exhaustion revision](../decisions/007-defined-runtime-failure.md#allocation-exhaustion-revision-2026-10-09).

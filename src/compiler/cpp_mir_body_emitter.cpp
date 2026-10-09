@@ -38579,18 +38579,8 @@ private:
         }
         return;
       }
-      output << "__gti_mir_v_" << *instruction.result
-             << " = ::gti_internal::backend::make_unique<"
-             << typeSpelling(instruction.info.type.arguments.front()) << ">(";
-      (void)emitCallOperands(nullptr, false, false);
-      output << ");\n";
-      // Implicit/default construction uses the contained allocation helper,
-      // but its successful owner needs the same exact complete-object cleanup
-      // binding as a separately staged allocation, before any publication.
-      emitPolymorphicAllocationBinding(instruction.info.type.arguments.front(),
-                                       "__gti_mir_v_" +
-                                           std::to_string(*instruction.result));
-      return;
+      throw std::logic_error(
+          "verified MIR class allocation lost its explicit storage protocol");
     }
     if (instruction.kind == MirInstructionKind::Call &&
         instruction.intrinsic ==

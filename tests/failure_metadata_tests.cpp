@@ -2521,6 +2521,66 @@ int main() {
   }
 }
 
+void testImplicitUniqueAllocationContracts() {
+  const auto frontend = lang::Frontend().analyze(
+      "/tmp/gti-implicit-allocation/main.gti", R"(
+#include <std/memory>
+class Empty { public: ~Empty() {} };
+int main() { auto owner = std::make_unique<Empty>(); return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "implicit unique allocation needs an explicit verified storage stage");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  std::size_t constructions = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.intrinsic != lang::IntrinsicKind::AllocateUniqueOwner)
+          continue;
+        ++constructions;
+        expect(instruction.objectAllocation != 0 &&
+                   !instruction.constructorTarget &&
+                   instruction.definedFailure.empty(),
+               "implicit constructor follows allocation without a second "
+               "exhaustion detector");
+        for (int mutation = 0; mutation < 4; ++mutation) {
+          auto forged = frontend.mir;
+          auto *body = functionBody(forged, function.id);
+          auto &instructions = body->blocks[block.id - 1].instructions;
+          auto &changed = *std::find_if(
+              instructions.begin(), instructions.end(),
+              [&](const auto &value) { return value.id == instruction.id; });
+          if (mutation == 0) {
+            changed.objectAllocation = 0;
+          } else if (mutation == 1) {
+            changed.parameterTypes.push_back(lang::SemanticType::Int32);
+          } else {
+            auto &owners = const_cast<std::vector<lang::MirClassInstance> &>(
+                forged.classInstances());
+            auto &owner = *std::find_if(
+                owners.begin(), owners.end(), [&](const auto &candidate) {
+                  return candidate.type ==
+                         instruction.info.type.arguments.front();
+                });
+            if (mutation == 2)
+              owner.defaultConstructor = lang::SpecialMemberStatus::Deleted;
+            else
+              owner.generatedDefaultRequiresSchedule = true;
+          }
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "implicit allocation cannot forge storage, inputs or bypass "
+                 "the required generated constructor schedule");
+        }
+      }
+    }
+  }
+  expect(constructions == 1, "implicit unique construction must be exercised");
+}
+
 void testClassUniqueAllocationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-class-allocation/main.gti", R"(
@@ -3654,6 +3714,7 @@ int main(int argc, char **argv) {
   testCheckedIntegerOperationVerifierContracts();
   testUniqueOwnerBorrowFailureEdges();
   testScalarUniqueAllocationContracts();
+  testImplicitUniqueAllocationContracts();
   testClassUniqueAllocationContracts();
   testBaseInitializationContracts();
   testConstructorPreparedParameterTransfers();

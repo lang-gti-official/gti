@@ -702,8 +702,13 @@ are permitted; an overlap involving an exclusive dependency is rejected.
 Repeated shared origins retain distinct field identities rather than being
 collapsed into one fabricated field. A direct reference must
 bind from one exact reference parameter with the same access mode. A nested
-carrier field must initialize directly from one exact carrier parameter,
-using an explicit move for an exclusive dependency. Neither form supports
+carrier field initializes from one exact carrier parameter, or an explicit
+tree of nominal constructor calls whose arguments terminate in exact enclosing
+parameters. Each dependency keeps its original parameter, nested field path and
+access mode even when constructors reorder arguments. Factories, default
+arguments, argument packs and arbitrary expressions do not acquire a guessed
+constructor-origin summary. An exclusive dependency uses explicit movement
+when transporting an existing carrier. Neither form supports
 copy or move assignment because assignment would reseat an established
 dependency.
 
@@ -1816,8 +1821,9 @@ capabilities through public signatures. This does not prevent ordinary
 application owners from using the public lifetime and checked-reference APIs.
 
 For containers whose live objects always form `[0, length)`, ordinary
-`prefix_slots<T>` source policy keeps one authoritative live count and no
-per-slot bitmap. It publishes a count increment only after final-address
+`prefix_slots<T, Lease>` source policy adds one authoritative live count to a
+raw buffer containing its resource lease, pointer and capacity. There is no
+per-slot bitmap or metadata allocation. It publishes a count increment only after final-address
 construction, retires an element before potentially failing destruction, and
 uses source drain guards to preserve first/secondary failure cleanup. A process
 or resource lease releases bytes after the live prefix has been drained. Sparse
@@ -1850,7 +1856,14 @@ The initial surface provides default and size construction, `size`, `capacity`,
 constructor value-initializes each
 element and therefore succeeds only when the concrete element type is default
 initializable. Unlike C++, both `at` and `operator[]` retain GTI's checked
-storage failure rather than exposing an unchecked indexing path.
+storage failure. The separate `unsafe get_unchecked(index)` and
+`unsafe get_unchecked_mut(index)` APIs omit the index check; their caller must
+prove `index < size()`. Their references retain the same checked owner loans,
+so unsafe indexing does not permit mutation, growth or movement through a live
+element borrow. `string`, `array`, `span` and `mutable_span` provide the
+corresponding read-only accessor, and mutable owners/views provide the
+exclusive accessor. A string's hidden NUL is outside the allowed index range;
+an empty sequence or zero-length fixed array has no valid unchecked index.
 
 `emplace_back(arguments...)` forwards one final by-value pack through source
 prefix policy to `std::construct_at`, which executes the selected constructor
