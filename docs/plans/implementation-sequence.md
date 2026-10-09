@@ -5173,6 +5173,17 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   successful initialized-index construction coverage before exporting element
   facts, without equating a witness with an
   allocation or assuming an indexed write initializes its complete interval.
+  Exact successful construction postconditions now cross selected source calls
+  through a receiver/checked-reference owned pointer field, as well as a raw
+  pointer formal. Caller substitution requires the actual tracked field address;
+  conditional construction, alias mutation and lifetime replacement remain
+  conservative. Vacant construction also records bounded exact fields already
+  live at construction time, allowing disjoint metadata writes without
+  retroactively treating later field facts as a non-alias proof. Constructor
+  pointer transport, repeated-call initialized-index coverage, record-pointee
+  envelopes and checked returned-element provenance remain required. These
+  general prerequisites do not by themselves close the original six safety
+  and three native-evidence acceptance requirements.
   The successful scalar-construction prerequisite now records a value at one
   exact typed address and constant element offset. Source calls relay successful
   postconditions by pointer-formal ordinal; exact read-only value formals,

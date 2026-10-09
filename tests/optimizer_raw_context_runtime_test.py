@@ -84,11 +84,16 @@ if __name__ == "__main__":
         cases["pointer_fields"] = [((), (0, "", ""))]
         field_dispatches = {
             "bad_field_value": "if (false) return addresses.bad_field_value();",
-            "bad_field_hole": "if (false) {",
+            "bad_field_hole": "if (false) {\n      std::destroy_at(&pair[0]);",
             "bad_field_alias": "if (false) return aliasing.bad_field_alias();",
             "bad_field_redirect": "if (false) return addresses.bad_field_redirect();",
             "bad_field_old_address": "if (false) return addresses.bad_field_old_address();",
             "bad_field_replacement": "if (false) return addresses.bad_field_replacement();",
+            "bad_member_value": "if (false) return addresses.bad_member_value();",
+            "bad_member_conditional": "if (false) {\n      AddressPair existing",
+            "bad_member_alias": "if (false) return aliasing.bad_member_alias();",
+            "bad_reconstructed_metadata": "if (false) return bad_reconstructed_metadata(metadata, &metadata.count);",
+            "bad_metadata_alias": "if (false) return bad_metadata_alias(metadata, &metadata.count, &metadata.count);",
         }
         for function, dispatch in field_dispatches.items():
             name = f"pointer_fields_{function}"
