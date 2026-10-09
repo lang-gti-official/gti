@@ -557,7 +557,8 @@ int main() {
              text.find("using __gti_mir_closure_type_") != std::string::npos &&
              text.find("was constructed at its Closure step") !=
                  std::string::npos &&
-             text.find("aliases the materialized closure slot") !=
+             // The invocation's prepared receiver borrows that slot.
+             text.find("aliases the caller-owned receiver lifetime") !=
                  std::string::npos &&
              text.find("joins the fused chain") == std::string::npos &&
              text.find("rejoins the fused closure chain") ==
