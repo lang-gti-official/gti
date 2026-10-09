@@ -22,6 +22,9 @@ struct Envelope<T> {
   T object;
 };
 
+enum class Code { unavailable, ready };
+enum class Cargo { owned(Owner value), empty };
+
 std::layout requested_layout<T>() requires std::layout_queryable<T> {
   return std::layout_of<T>();
 }
@@ -32,6 +35,10 @@ int main() {
   std::layout pinned = requested_layout<Pinned>();
   std::layout owner = requested_layout<Owner>();
   std::layout envelope = requested_layout<Envelope<Owner>>();
+  std::layout cargo = requested_layout<Cargo>();
+  std::layout result = requested_layout<expected<Owner, Code>>();
+  std::layout empty_result = requested_layout<expected<void, Code>>();
+  std::layout text = requested_layout<std::string_view>();
   if (scalar.bytes != sizeof(int32_t) || scalar.alignment != alignof(int32_t) ||
       array.bytes != sizeof(uint64_t[3]) ||
       array.alignment != alignof(uint64_t[3])) {
@@ -42,6 +49,12 @@ int main() {
       pinned.bytes % pinned.alignment != uint64_t(0) ||
       owner.bytes % owner.alignment != uint64_t(0) || cleanups != 0) {
     return 2;
+  }
+  if (cargo.bytes == uint64_t(0) || result.bytes < owner.bytes ||
+      empty_result.bytes == uint64_t(0) || text.bytes == uint64_t(0) ||
+      cargo.bytes % cargo.alignment != uint64_t(0) ||
+      result.bytes % result.alignment != uint64_t(0) || cleanups != 0) {
+    return 3;
   }
   // A custom resource can consume bytes/alignment. The descriptor itself
   // does not allocate, initialize an object, or assert pointer validity.

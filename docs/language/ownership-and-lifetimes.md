@@ -702,8 +702,13 @@ are permitted; an overlap involving an exclusive dependency is rejected.
 Repeated shared origins retain distinct field identities rather than being
 collapsed into one fabricated field. A direct reference must
 bind from one exact reference parameter with the same access mode. A nested
-carrier field must initialize directly from one exact carrier parameter,
-using an explicit move for an exclusive dependency. Neither form supports
+carrier field initializes from one exact carrier parameter, or an explicit
+tree of nominal constructor calls whose arguments terminate in exact enclosing
+parameters. Each dependency keeps its original parameter, nested field path and
+access mode even when constructors reorder arguments. Factories, default
+arguments, argument packs and arbitrary expressions do not acquire a guessed
+constructor-origin summary. An exclusive dependency uses explicit movement
+when transporting an existing carrier. Neither form supports
 copy or move assignment because assignment would reseat an established
 dependency.
 
@@ -878,19 +883,14 @@ after the frontend-selected aggregate endpoint, or after cleanup for a
 cleanup-bound carrier. These are GTI lifetime rules;
 the emitted C++ reference field is only a backend representation.
 
-A trusted prelude or imported standard-library unit may use the same contract
-to retain one read-only checked prefix-storage reference,
-`gti_internal::prefix_storage<T>&`. A
-compiler-generated mutable range iterator may instead carry one exact writable
-checked-storage dependency from `begin_mut()` until range cleanup. These
-exceptions apply only to the carrier field and its exact binding constructor
-parameter. They allow an ordinary source-defined iterator to traverse checked
-storage without exposing an address or making the compiler recognize a
-container name. The writable carrier is noncopyable: duplicating its shell
-would duplicate an exclusive capability. Ordinary source may now define the
-general mixed-origin carrier over public stable storage, but cannot name the
-private checked-storage or unique-owner capabilities. The private capabilities
-retain their separately checked storage and lifecycle contracts.
+Vector, string and span iterators retain checked references to ordinary
+source-defined owners through the same stored-reference contract available to
+application classes. A mutable range iterator carries one exact writable owner
+dependency from `begin_mut()` until range cleanup. Its shell is noncopyable:
+duplicating it would duplicate an exclusive capability. No special permission
+to reference a private prefix-storage type is needed. Applications still cannot
+name compiler-private unique-owner or primitive text capabilities directly;
+their separately checked lifecycle/representation contracts are unaffected.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
@@ -1130,8 +1130,18 @@ unavailable and the final owner cleans the environment exactly once.
 
 This is not lambda-result inference or type erasure. A transported lambda must
 be movable and its capture state cannot contain a reference, tracked borrow, or
-raw pointer. The examples above describe the original exact-transport minimum,
-not a restriction to one-field owners: ordinary direct by-value generic
+unreviewed raw pointer. A class's effective `unsafe_transfer` assertion is an
+explicit unsafe boundary for its internal raw representation, including when
+that class is nested inside another owned capture. Its author must guarantee
+that movement preserves the represented ownership and pointer validity through
+final cleanup; this is not inferred from a destructor or a library name.
+A false conditional assertion, `unsafe_share` alone, or a tracked borrowed
+field cannot provide that permission. Direct raw-pointer captures remain
+rejected. This revises the original blanket recursive raw-field rejection so
+source-defined owning types retain the same transport as private owners.
+Example 55 demonstrates a source-defined string capture; unrelated reviewed
+owners have the same rule. The examples above describe the original
+exact-transport minimum, not a restriction to one-field owners: ordinary direct by-value generic
 parameters, concrete field storage, final value packs, and explicit interface
 erasure also support source-defined owning callback wrappers. Each concrete
 body must retain its exact callable identity, ownership, and cleanup schedule.
@@ -1810,22 +1820,26 @@ cannot name the private `gti_internal` namespace or recover private
 capabilities through public signatures. This does not prevent ordinary
 application owners from using the public lifetime and checked-reference APIs.
 
-The separate `gti_internal::prefix_storage<T>` capability remains declared by
-the prelude for containers whose live elements always form `[0, length)`.
-Its allocate, append, pop, read, complete-prefix relocate, insert and erase
-operations preserve that invariant. It does not represent arbitrary live-slot
-patterns. This move-only capability rejects borrowed-state elements and exposes
-no raw address or independent deallocation. Public size, growth and invalidation
-policy remain ordinary source-defined class state. Its retained capability is
-not an alternative sparse implementation.
+For containers whose live objects always form `[0, length)`, ordinary
+`prefix_slots<T, Lease>` source policy adds one authoritative live count to a
+raw buffer containing its resource lease, pointer and capacity. There is no
+per-slot bitmap or metadata allocation. It publishes a count increment only after final-address
+construction, retires an element before potentially failing destruction, and
+uses source drain guards to preserve first/secondary failure cleanup. A process
+or resource lease releases bytes after the live prefix has been drained. Sparse
+storage remains a distinct policy for arbitrary initialized-slot patterns.
+The private prefix-storage type, operations, construction-preflight instruction
+and optimizer model are retired. Remaining regression migration and full
+admission/performance acceptance are tracked by S-ALLOC-09.
 
 ## Source-Defined Vector
 
 `std::vector<T>`, imported with `#include <std/vector>`, is now an ordinary GTI
-class over `gti_internal::prefix_storage<T>`. Its element type satisfies
-`std::move_constructible`, not assignment-bearing `std::movable`: growth,
-insertion and erasure move-construct into verified empty slots rather than
-assigning over live elements. Construction-only owners such as an owning
+class over the source-defined process-backed prefix owner. Its element type
+satisfies `std::storage_element` and failure-free `std::relocatable`, not
+assignment-bearing `std::movable`: growth, insertion and erasure transfer
+objects into vacant slots rather than assigning over live elements.
+Construction-only owners such as an owning
 record containing an optional string may therefore be vector elements and may
 be cloned when their explicit clone contract permits it. Borrowed-state and
 deleted-move elements remain rejected. The storage field makes the vector
@@ -1842,11 +1856,18 @@ The initial surface provides default and size construction, `size`, `capacity`,
 constructor value-initializes each
 element and therefore succeeds only when the concrete element type is default
 initializable. Unlike C++, both `at` and `operator[]` retain GTI's checked
-storage failure rather than exposing an unchecked indexing path.
+storage failure. The separate `unsafe get_unchecked(index)` and
+`unsafe get_unchecked_mut(index)` APIs omit the index check; their caller must
+prove `index < size()`. Their references retain the same checked owner loans,
+so unsafe indexing does not permit mutation, growth or movement through a live
+element borrow. `string`, `array`, `span` and `mutable_span` provide the
+corresponding read-only accessor, and mutable owners/views provide the
+exclusive accessor. A string's hidden NUL is outside the allowed index range;
+an empty sequence or zero-length fixed array has no valid unchecked index.
 
-`emplace_back(arguments...)` forwards one final by-value pack to
-`prefix_storage_append`, which selects the element's exact constructor and builds
-the element in its final slot. It returns a writable receiver-tied reference to
+`emplace_back(arguments...)` forwards one final by-value pack through source
+prefix policy to `std::construct_at`, which executes the selected constructor
+in its final slot. It returns a writable receiver-tied reference to
 that element. The reference prevents reserve, push, clear, movement, or another
 mutable vector operation until its loan ends. This API avoids an intermediate
 element value but deliberately does not promise C++ forwarding-reference
@@ -1862,7 +1883,8 @@ its hidden loop owner. Reserve, push, clear, movement, and every other
 overlapping owner operation are rejected while the mutable range is active.
 This is conservative whole-owner invalidation exclusion, not a
 container-specific invalidation trait. Iterator categories, iterator-position
-insertion/erasure, and mutable or multi-owner spans remain future work.
+insertion/erasure remain future work. Read-only and mutable single-owner spans
+share the same prefix owner and retain checked owner dependencies.
 `std::vector` itself always uses the process allocator; programmable placement
 is provided by the separate `resource_vector` described under
 [programmable resource leases](#programmable-resource-leases). The bounded read-only single-owner span is described below.
@@ -1880,7 +1902,11 @@ the call's owner dependency stays live for the whole expression, including a
 temporary owner such as `std::string("tmp").view().size()`.
 
 `std::string`, imported with `#include <std/string>`, is an ordinary nominal GTI
-class over `gti_internal::prefix_storage<char>`. It supports construction and
+class over the source-defined terminated-prefix owner. Its shared character
+prefix includes one initialized trailing NUL, excluded from logical size and
+capacity. Zero-capacity empty strings use an immutable static terminator without
+allocation; clearing a reserved string retains its region and terminator.
+It supports construction and
 append from a string view, capacity management, checked read-only and mutable
 indexing, clear, comparison, explicit `clone()`, and read-only structural
 iteration. Its source-defined iterator retains a checked read-only storage
@@ -1928,3 +1954,10 @@ embedded NUL is present. A retained result prevents mutation, movement, or
 destruction of the source string and cannot escape a local owner. A `c_string`
 received from native code has no inferred GTI owner, and hidden retention by a
 native callee remains part of that API's external contract.
+
+Both accessors use the general unsafe owner-witness bridge from
+`<std/memory>` inside their safe, source-defined policy. The raw address carries
+no checked lifetime by itself: the nominated string owner supplies the mandatory
+read-only dependency. The compiler verifies that dependency and the exact staged
+address inputs, but neither stores the prefix length nor scans for embedded NUL
+bytes. These rules apply equally to unrelated user-defined character owners.

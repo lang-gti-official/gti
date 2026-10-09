@@ -1150,7 +1150,6 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         case MirInstructionKind::AllocateObject:
         case MirInstructionKind::InitializeBase:
         case MirInstructionKind::CleanupBeforeAssign:
-        case MirInstructionKind::StorageConstructPreflight:
         case MirInstructionKind::Count:
           valid = false;
           break;
@@ -1754,7 +1753,6 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
       case MirInstructionKind::AllocateObject:
       case MirInstructionKind::InitializeBase:
       case MirInstructionKind::CleanupBeforeAssign:
-      case MirInstructionKind::StorageConstructPreflight:
       case MirInstructionKind::Count:
         return false;
       }
@@ -1826,8 +1824,7 @@ bool MirOwnedFailureClosure::proveSingleFieldTransferConstructor(
   const MirClassFieldInfo &field = owner.declaredFields.front();
   const bool intrinsicTransferField =
       field.type.kind == SemanticType::UniqueOwner ||
-      field.type.kind == SemanticType::SharedPointer ||
-      field.type.kind == SemanticType::PrefixStorage;
+      field.type.kind == SemanticType::SharedPointer;
   const MirConstructorInitializer &initializer =
       constructor.initializers.front();
   if (!intrinsicTransferField || field.dropKind != DropKind::Lexical ||
@@ -2257,7 +2254,6 @@ bool mirTypeMoveIsDefinedFailureFree(const MirProgram &program,
       return true;
     case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
-    case SemanticType::PrefixStorage:
       // These compiler capabilities move only their control/storage handle;
       // they do not move or destroy the represented element.
       return candidate.arguments.size() == 1;

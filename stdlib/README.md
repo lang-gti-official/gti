@@ -245,7 +245,8 @@ mutable parent/element loans without pointer decay. See
 lifetime boundary.
 
 `std::string` is implemented in `std/string.gti` over
-`gti_internal::prefix_storage<char>` and imported with `#include <std/string>`. It is a
+an ordinary source-defined terminated prefix owner, imported with
+`#include <std/string>`. It is a
 move-only owner: construction and append accept `std::string_view`, mutable
 indexing requires a mutable receiver, and allocating duplication is explicit
 through `clone()` or `std::string(begin, end, other)`. The indexed constructor
@@ -313,9 +314,10 @@ embedded zeroes and arbitrary byte values. They are representations, not
 encryption, authentication, or Unicode transforms.
 
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
-class over `gti_internal::prefix_storage<T>` and imported with
-`#include <std/vector>`. `T` must satisfy `std::move_constructible`; element
-assignment is not required. The vector itself is move-only. The first working
+class over a source-defined prefix owner and imported with
+`#include <std/vector>`. `T` must satisfy `std::vector_element<T>`: storage-eligible
+with generated relocation; element assignment is not required. The vector itself
+is move-only. The first working
 surface includes default and size construction,
 construction from one contextual `T[N]` value,
 size/capacity observation, reserve, clear, push/pop, indexed insert/erase,
@@ -452,7 +454,7 @@ deliberately unavailable; replace a value through `reset` or `emplace` until
 GTI can express a source-defined conditional special-member assignment body.
 
 Intrinsic behavior is restricted to exact compiler-trusted declaration
-identities. Shared prefix-storage, text, and core constraints remain
+identities. Shared text and core constraints remain
 prelude-owned. Unique-owner, uninitialized-storage and object-lifetime identities
 belong to `<std/memory>`; managed-thread and defined-integer identities belong to the
 exact installed `<std/thread>` and `<std/numeric>` units. Atomic, iterator, and

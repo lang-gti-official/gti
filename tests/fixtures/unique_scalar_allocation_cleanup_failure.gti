@@ -1,12 +1,16 @@
 #include <std/memory>
 
-extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+extern "C" {
+  void gti_test_fail_scalar_allocation(int32_t enabled);
+  int32_t gti_test_observe_scalar_allocation(const int32_t* value);
+}
 
 class failing_cleanup {
 public:
   ~failing_cleanup() {
     std::println("cleanup");
     auto owner = std::make_unique<int32_t>(7);
+    unsafe { [[discard]] gti_test_observe_scalar_allocation(&*owner); }
   }
 };
 

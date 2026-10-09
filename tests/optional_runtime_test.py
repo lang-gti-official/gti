@@ -34,7 +34,8 @@ def expect_rejected(
 
 def validate_representation(generated: str, mode: str) -> bool:
     begin = generated.find("template <typename T>\nclass optional_storage {")
-    end = generated.find("// Prefix-initialized storage", begin)
+    # Bound the optional class itself, not an unrelated retired prefix helper.
+    end = generated.find("\n};", begin)
     if begin < 0 or end < 0:
         sys.stderr.write(f"{mode}: missing optional storage representation\n")
         return False

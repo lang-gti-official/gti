@@ -59,7 +59,7 @@ obtain metadata releases the object region before returning an error.
 | Allocation family | Current owner and rationale |
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
-| Prefix storage used by strings/vectors and related clients | `cpp_support_preamble.cpp` still pairs aligned native new/delete with prefix bookkeeping. Migrating this distinct representation and its character terminator policy is separate work; S-ALLOC-07 does not claim all containers use the source provider. |
+| Prefix storage used by strings/vectors and related clients | Source prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. The native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are removed on the S-ALLOC-09 task branch; revised raw-buffer layering, full regression migration and campaign acceptance remain in progress. |
 | Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Shared ownership additionally uses its native control block. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
 | Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
 | Compiler and tool memory | C++ containers in compiler, driver, LSP and tooling are host implementation state, outside GTI-program allocation policy. |
@@ -72,7 +72,8 @@ provide a deterministic test seam for exhaustion, rollback and matching release.
 
 ## Operation Ownership Ledger
 
-Evidence snapshot: 2026-10-08, reviewed against `14caa023`. This ledger
+Initial evidence snapshot: 2026-10-08, reviewed against `14caa023`; prefix rows
+now include the in-progress S-ALLOC-09 branch cutover. This ledger
 classifies current ownership and remaining boundaries; it does not approve or
 schedule migrations. The [implementation sequence](../plans/implementation-sequence.md)
 remains the sole work queue. Source and owning tests take precedence when an
@@ -143,18 +144,21 @@ and [object-lifetime tests](../../tests/object_lifetime_tests.cpp).
 These links identify existing acceptance evidence; this documentation ledger
 does not claim a new test run.
 
-### B. Source-Policy Candidates Still Using Private Machinery
+### B. Source-Policy Migrations And Remaining Prerequisites
 
-These are architectural candidates, **not approved or completed migrations**.
+These entries distinguish migration work from complete acceptance. The source
+prefix cutover is implemented on its task branch, but S-ALLOC-09's revised
+raw-buffer/checking contract and retirement/admission campaign are not complete.
+Other rows remain candidates, not implicitly approved or completed migrations.
 "Prerequisite" means a fact that must be established before retiring a path,
 not permission to weaken existing safety or reject previously supported users.
 
 | ID | Operation to move | Current owner | Prerequisite/acceptance boundary |
 | --- | --- | --- | --- |
-| M01 | Prefix allocation, length and live-prefix bookkeeping | Private `prefix_storage<T>` and its backend support. | Source owner over general lifetime operations; single authoritative length, allocation rollback and exactly-once cleanup. Avoid adding sparse per-slot metadata to a prefix solely for convenience. |
-| M02 | Prefix append, pop, insertion, erasure and reserve | Private prefix operation family, called by vector/string. | Preserve final-address emplacement, failure-free relocation bounds, ordered arguments, mutation exclusion and all existing element shapes. Construction/destruction failures must preserve the original failure and valid state. |
-| M03 | Character trailing-NUL policy | Private character-prefix representation and C-string operations. | Source reserves/maintains the hidden terminator, handles empty strings and embedded NULs; safe exported views retain the actual owner dependency. Native ABI/text-carrier bridging remains separate. |
-| M04 | Views and iterators over migrated storage | Span/vector/string wrappers currently borrow private prefix storage; text view is a private capability. | General owner/range contracts for safe read/mutable access, slices and invalidation. Do not replace checked references with untracked raw pointers. Source-defined text-view migration is separate proposed work, not implied by allocation completion. |
+| M01 | Prefix allocation, length and live-prefix bookkeeping | Source `raw_buffer<T, Lease>` owns a lease, element pointer and capacity; `prefix_slots<T, Lease>` adds the sole live count. Private native/prelude/IR/representation/optimizer family removed. | S-ALLOC-09 final admission, corpus and measured performance acceptance. No sparse metadata, allocation rollback and exactly-once cleanup. |
+| M02 | Prefix append, pop, insertion, erasure and reserve | Source prefix-owner policy using general object construction/destruction/relocation. | Preserve final-address emplacement, failure-free relocation bounds, ordered arguments, mutation exclusion and all existing element shapes. Complete campaign evidence remains required; first/secondary failure fixtures already exercise source drains. |
+| M03 | Character trailing-NUL policy | Source terminated-prefix owner and embedded-NUL scan. | Empty static sentinel and hidden initialized terminator; checked views retain actual owner. Primitive text/C-string carrier conversion remains an identity-bound general compiler bridge, not a private string-storage engine. |
+| M04 | Views and iterators over migrated storage | Span/vector/string wrappers borrow ordinary source prefix owners through general carrier contracts. | Full corpus/installed-consumer evidence remains required. Raw text conversion uses an exact checked owner witness; primitive text representation itself is not claimed source-defined. |
 | M05 | Non-polymorphic unique allocation and release | `allocate_unique_owner`, private `unique_owner<T>` and generated allocation support. | Source lease/engagement state, constructor rollback, exactly-once final drop, safe borrow anchoring, movement and replacement. A sparse storage field is not automatically API/performance-equivalent. |
 | M06 | Polymorphic unique-owner conversion and destruction | Private unique upcast and dynamic cleanup bindings. | Retain original allocation/release authority while changing the view; execute the actual dynamic object's cleanup. Ordinary base-pointer destruction is not a substitute. |
 | M07 | Optional engagement, access and reset | Private `optional_storage<T>`. | Source inline storage plus engagement state, inactive-access failures and checked loans. Public `uninitialized<T>` is fixed-address for non-bitwise-relocatable payloads; preserving movable owning optional needs a general carrier/lifecycle solution. A flag alone is insufficient. |
@@ -172,7 +176,10 @@ This follows Rust's `RawVec`/`Vec` layering, and is recorded in
 [ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
 and planned as
 [`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-They remain unimplemented. The rows above still describe today's owners.
+The revised layering and unchecked APIs are implemented on the task branch.
+General nested resource-constructor MIR publication and combined functional,
+corpus and performance acceptance remain incomplete; these rows do not claim
+the migration is accepted.
 
 Evidence: [vector](../../stdlib/std/vector.gti),
 [string](../../stdlib/std/string.gti),
@@ -439,7 +446,7 @@ quoted application file, an override-only path beneath that root, or a source
 spelling cannot mint that role.
 
 Semantic analysis grants intrinsic behavior by exact trusted declaration
-identity. The shared private `prefix_storage<T>`, `text_view`, and `c_string`
+identity. The shared private `text_view` and `c_string`
 type declarations receive compiler-capability identities only when the exact
 trusted prelude declarations are selected. Module-specific capabilities bind
 to one exact installed standard-library unit: `unique_owner<T>`, `shared_owner<T>`,
@@ -482,6 +489,16 @@ a secondary failure records the emergency and stops further capture/result
 cleanup without destroying still-active native shells. This also applies when
 cleanup itself has already produced an emergency before returning to the adapter.
 
+The source `raw_buffer<T, Lease>` owns one byte-region lease, element pointer
+and capacity, with no knowledge of initialized objects. `prefix_slots<T, Lease>`
+contains that buffer and one live count. Its destructor drains the count before
+ordinary field cleanup releases the buffer's lease. Process and checked resource
+owners share this policy; resource growth exchanges allocation descriptors only
+between leases retaining the same provider binding. No bitmap or second region
+is acquired. Allocation-result cleanup finishes before publishing pointer and
+capacity, and an empty reservation makes no provider call. Descriptor copies
+remain passive and never gain release authority.
+
 Capabilities expose only irreducible representation invariants. Public logical
 size, growth, allocation policy, and container behavior belong in ordinary GTI
 wrappers. Sparse-storage capacity, live-slot state, traversal and validation
@@ -493,17 +510,16 @@ manual-lifetime operations; checked access uses the existing owner-witness
 bridge. Retiring a live byte precedes potentially failing element destruction,
 and a source drain guard resumes reverse traversal after the first failure.
 
-Allocated character `prefix_storage<char>` reserves one additional
-representation-private slot and maintains NUL at the logical length. A
+Source-defined `terminated_prefix_owner` reserves one additional
+initialized slot and maintains NUL at the logical length. A
 zero-capacity empty string uses an immutable process-lifetime NUL sentinel
 instead. The hidden slot is not included in the public length or capacity and
-does not change generic prefix-storage semantics for other element types. The
-trusted
-`prefix_storage_c_string` and `prefix_storage_try_c_string` intrinsics reach the
-backend only through verified MIR: both attach the storage dependency, while
-the checked helper scans the logical prefix and returns null on an embedded
-terminator. Public `std::string` methods remain ordinary source wrappers over
-those narrow capabilities.
+does not change generic prefix policy for other element types. Source
+`std::string` methods scan for embedded terminators where required. General
+raw text/C-string bridges establish primitive carriers through verified MIR
+and retain the exact supplied owner-witness loan, including static/null
+addresses. Raw validity remains the unsafe caller's obligation; no string or
+prefix type name grants compiler authority.
 
 Numeric input in `<std/charconv>` keeps integer grammar, radix selection,
 overflow checking, consumed-byte offsets, and output publication in ordinary
@@ -593,8 +609,8 @@ constants may still need a narrow host boundary. The independent libc-region
 example uses ordinary `malloc(c_size_t)` and `free`.
 
 Sparse object regions and live metadata now use this source-owned provider
-policy, including default typed factories. Other generated-program allocations
-remain in prefix storage (vectors/strings), unique-owner
+policy, including default typed factories. Prefix owners now use the same source
+provider. Other generated-program allocations remain in unique-owner
 construction and shared-owner/control-block representations in the generated
 support code. These retain their current allocation families until their own
 source/lifecycle migration is validated. Native HTTP/filesystem/thread handles
@@ -615,8 +631,8 @@ owner-witness operations available to unrelated source-defined owners.
 
 The unique-owner upcast capability consumes one private owner after semantics
 has proved an exact public derived-to-base relationship and polymorphic
-destruction. Sparse shifts are source loops over checked slot state and general
-typed relocation; prefix insert/erase retain their own capability protocol.
+destruction. Sparse and prefix shifts are source loops over their respective
+live-state policies and the same general typed relocation operations.
 Public `std::upcast_unique`, `vector::insert`, and
 `vector::erase` remain ordinary GTI policy; neither public name is recognized
 by the compiler or backend.
@@ -1084,6 +1100,15 @@ artifact descriptor and the site's exact allowed `(code, detail)` set. The
 all-zero identity with site zero is the sole descriptor-free runtime sentinel
 and resolves to `"<runtime>":0@0..0`.
 
+The S-ALLOC-08 branch adds `gti_rt_failure_abort_allocation_v2` as the runtime
+primitive for infallible exhaustion. It reports a validated allocation record
+without allocating, then calls native abort directly: no observer, managed-task
+handoff, stream flush or terminal-arbitration wait. A malformed native record
+falls back to a descriptor-free allocation report. This primitive must be
+called at the detector, before cleanup; adding it alone does not change the
+compiler's existing allocation failure edges. Compiler wiring and complete
+source-family acceptance remain in progress under S-ALLOC-08.
+
 Only `panic` / `explicit_panic` (`GTI-R0017`, detail 37) admits a message.
 Generated code prepares its exact record header, then calls
 `gti_rt_failure_capture_panic_v2` before starting language cleanup. Capture
@@ -1195,26 +1220,30 @@ applications cannot forge its identity or choose an arbitrary category/detail.
 This keeps public `vector`/`string` origins in source/library policy without
 asking a backend to inspect names or call stacks.
 
-`std::vector` derives its live size directly from its private
-`prefix_storage<T>` capability. It has no mirrored element count: construction,
-append, insertion, erasure, pop, clear, resize, relocation, movement, iteration,
-and indexed access therefore observe one length authority. Capacity remains a
-separate wrapper policy value. Public accessors perform the identity-bound
-logical vector check; optimized MIR may discharge only the immediately related
-private prefix recheck under the exact proof described in
-[`optimization.md`](optimization.md).
+`std::vector` derives live size and capacity directly from its source prefix
+owner, without mirrored counts. Public accessors perform the identity-bound
+logical bounds check and then use unsafe source access that adds no second
+bounds guard. Capacity-established construction and mutation similarly use
+unchecked internal operations. Independently callable checked detail-owner
+methods retain their own boundary checks. Span constructors validate their
+extent once; span element access checks its logical extent and uses the same
+unchecked backing access. Unsafe `get_unchecked` and `get_unchecked_mut`
+accessors preserve ordinary checked owner loans while requiring the caller to
+prove the index. Fixed-array unchecked access forms an element pointer under
+the concrete nonempty-extent branch; empty arrays have no valid unchecked index.
+No former private prefix-length optimizer relation proves arbitrary source
+calls, and this source cutover does not itself establish optimization parity.
 
 Sparse and prefix relocation consume semantic `RelocationKind` facts verified
-against concrete MIR type tables. Bitwise-eligible passive elements select a
-bulk candidate after the same complete capacity/liveness preflight. The C++
-support helper additionally requires a trivially copyable, trivially
-move-constructible and trivially destructible representation, permitting
-C++20 implicit lifetime creation by `memcpy`. All other representations retain
-generated elementwise transfer. These native traits only restrict lowering;
-they never decide a GTI concept. Source lifetimes end, destination lifetimes
-become live, and string terminators are repaired using the existing prefix
-policy. Resource owners are never byte-copied. Public `storage.relocate_to`
-is an ordinary GTI wrapper over the same verified private operation.
+against concrete MIR type tables. Raw-buffer growth selects general
+`relocate_range_at` for structurally bitwise-relocatable elements, transferring
+the entire live prefix in one nonoverlapping byte copy. Other eligible elements
+retain a source traversal over general `relocate_at`; insertion and erasure
+also use exact per-element relocation. Native representation traits may restrict
+lowering but never decide a GTI concept. Source lifetimes end, destination
+lifetimes become live, and string relocation includes its hidden terminator.
+Resource lease authority is transferred separately, never duplicated by the
+element byte copy.
 
 Utility `swap` and `exchange` are ordinary constrained GTI wrappers over
 private restoring-transfer declarations in the prelude. Declaration identity,
@@ -1225,8 +1254,9 @@ resource. Existing MIR call-input staging and result slots own preparation,
 publication, and cleanup on both ordinary and failure exits.
 
 `array::swap` uses whole-array structural transfer. Array/vector
-`swap_elements` perform public bounds checks then invoke the sealed checked
-indexed transfer; its own preflight remains mandatory. Reverse and heapsort
+`swap_elements` perform public bounds checks. Arrays use the retained fixed-array
+indexed transfer; vectors use three general relocations through source-selected
+uninitialized storage. Reverse and heapsort
 are ordinary GTI over these APIs, with read-only comparison scopes ending
 before each mutation. No public container or algorithm name grants compiler
 authority, and neither the library nor backend adds a copy/clone pivot.

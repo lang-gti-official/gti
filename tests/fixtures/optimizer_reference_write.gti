@@ -1,0 +1,21 @@
+class Leaf {
+public:
+  mut int value;
+  Leaf(int value) : value(value) {}
+  int read() { return this.value + 1; }
+};
+void make_max(mut int& value) { value = 2147483647; }
+class Observer {
+  mut Leaf& object;
+public:
+  Observer(mut Leaf& object) : object(object) {}
+  int modify() mut {
+    make_max(this.object.value);
+    return this.object.read();
+  }
+};
+int main() {
+  mut Leaf values{7};
+  mut Observer observer{values};
+  return observer.modify();
+}

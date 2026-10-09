@@ -1,0 +1,45 @@
+#include <std/memory>
+
+extern "C" {
+  int32_t source_bridge_byte(c_string text, uint64_t index);
+  uint64_t source_bridge_length(c_string text);
+}
+
+// Unrelated inline owner: no string, vector or private storage capability.
+class TextOwner {
+  mut char bytes[4] = {'a', 'b', 'c', '\0'};
+public:
+  TextOwner() {}
+  const char* address() { return &this.bytes[0]; }
+  void set(char value) mut { this.bytes[0] = value; }
+  std::string_view view() {
+    unsafe { return std::assume_string_view(this.address(), uint64_t(3), this); }
+  }
+  std::string_view empty_view() {
+    unsafe { return std::assume_string_view(nullptr, uint64_t(0), this); }
+  }
+  c_string native() {
+    unsafe { return std::assume_c_string(this.address(), this); }
+  }
+};
+
+std::string_view relay(std::string_view text) { return text; }
+c_string relay(c_string text) { return text; }
+
+int main() {
+  mut TextOwner owner{};
+  {
+    std::string_view text = relay(owner.view());
+    c_string native = relay(owner.native());
+    if (text.size() != uint64_t(3) || text[0] != 'a' || text[2] != 'c' ||
+        native == nullptr || source_bridge_length(native) != uint64_t(3) ||
+        source_bridge_byte(native, uint64_t(3)) != 0) { return 1; }
+  }
+  owner.set('x');
+  {
+    std::string_view text = owner.view();
+    if (text[0] != 'x') { return 2; }
+  }
+  std::string_view empty = owner.empty_view();
+  return empty.empty() && empty.size() == uint64_t(0) ? 0 : 3;
+}

@@ -1,0 +1,24 @@
+class Leaf {
+public:
+  mut int value;
+  Leaf(int value) : value(value) {}
+  int read() { return this.value + 1; }
+  void make_max() mut { this.value = 2147483647; }
+};
+class Container {
+public:
+  mut Leaf first;
+  mut Leaf second;
+  Container(int first, int second) : first(Leaf(first)), second(Leaf(second)) {}
+  int change() mut {
+    if (this.second.read() != 10) return 3;
+    this.first.make_max();
+    if (this.second.read() != 10) return 4;
+    return this.first.read();
+  }
+};
+Container make_container() { return Container(7, 9); }
+int main() {
+  mut Container values = make_container();
+  return values.change();
+}

@@ -93,7 +93,7 @@ is a teaching helper, not a production server.
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `37-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
-| `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
+| `38-vector-emplace.gti` | move-aware dynamic storage, checked and unsafe unchecked access, read-only iteration, and in-place construction |
 | `39-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `41-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
@@ -110,7 +110,7 @@ is a teaching helper, not a production server.
 | `52-stateful-callables.gti` | reusable stateful call operators in source-defined algorithms |
 | `53-consuming-callables.gti` | one-shot `operator() &&` objects and path-checked generic consumption |
 | `54-owned-move-captures.gti` | explicit ownership transfer into an immutable closure environment and closure movement |
-| `55-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport with exactly-once cleanup |
+| `55-owned-callable-transport.gti` | exact generic lambda return and one-field owner transport, including source-defined string captures and exactly-once cleanup |
 | `56-sum-types.gti` | passive native unions alongside closed payload enums with exhaustive matching |
 | `57-contextual-array-arguments.gti` | generic brace arguments as exact fixed-array values, including `std::vector<int>({1, 2, 3})` |
 | `58-formatted-output.gti` | sequential integral `{}` formatting with owned results and recoverable pattern errors |
@@ -173,7 +173,7 @@ is a teaching helper, not a production server.
 | `116-optional-raw-audit.gti` | programmer-owned unsafe validity versus mandatory checked loans, with optional conservative raw-pointer auditing |
 | `117-unsafe-member-contracts.gti` | unsafe instance/static methods and exact structural requirements preserving caller obligations through generic forwarding |
 | `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |
-| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable and nested ordinary types without constructing an object |
+| `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable, nested, payload-enum, result and text types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
 | `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
@@ -512,6 +512,14 @@ generation-checked handle: after erasure and reuse it names the replacement.
 layer owners behind `std::vector<std::unique_ptr<Layer>>::const_iterator` and
 `::sentinel`. It uses ordinary range traversal and deterministic object cleanup,
 without naming private implementation iterator types.
+
+## Raw text views with source-owned lifetime witnesses
+
+[`133-raw-text-owner-views.gti`](133-raw-text-owner-views.gti) derives counted
+text and zero-terminated views from an unrelated inline byte owner. The unsafe
+bridge retains the owner relationship through an ordinary source helper; the
+resulting checked borrow prevents mutation, movement or escape past that owner.
+Address validity, extent and termination remain the caller's unsafe obligations.
 
 ## Complete projects
 

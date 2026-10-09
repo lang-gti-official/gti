@@ -1,0 +1,50 @@
+#include <std/memory>
+#include <std/string>
+#include <std/functional>
+
+// The pointer aliases this owner's heap allocation, never a caller's storage.
+// Moving transfers that allocation without changing its address; cleanup of
+// the final owner releases it. The assertion covers that unsafe obligation.
+[[unsafe_transfer]] class NativeOwner {
+  std::unique_ptr<int> allocation;
+  mut const int* address = nullptr;
+  int identity;
+public:
+  NativeOwner(int value, int identity)
+      : allocation(std::make_unique<int>(value)), identity(identity) {
+    this.address = &*this.allocation;
+  }
+  NativeOwner(NativeOwner&) = delete;
+  NativeOwner(NativeOwner&&) = default;
+  int read() { unsafe { return *this.address; } }
+  ~NativeOwner() { std::println(this.identity); }
+};
+
+class Holder<T> {
+  T callback;
+public:
+  Holder(T callback) : callback(std::move(callback)) {}
+  int run() { return this.callback(); }
+};
+
+Holder<T> retain<T>(T callback) {
+  return Holder<T>(std::move(callback));
+}
+
+int exercise() {
+  NativeOwner first{40, 7};
+  std::string text{"owned"};
+  auto callback = [first = std::move(first), text = std::move(text)]() -> int {
+    return first.read() + int(text.size());
+  };
+  auto holder = retain(std::move(callback));
+  NativeOwner second{20, 8};
+  std::string suffix{"text"};
+  std::move_only_function<int()> erased{
+      [second = std::move(second), suffix = std::move(suffix)]() -> int {
+        return second.read() + int(suffix.size());
+      }};
+  return holder.run() + erased();
+}
+
+int main() { return exercise() == 69 ? 0 : 1; }

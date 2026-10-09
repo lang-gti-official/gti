@@ -48,8 +48,9 @@ int use_arena(std::resource_ref<engine::Arena> resource) {
   names.emplace_back("two");
   names.emplace_back("three");
   names.reserve(std::size_t(16));
-  // Each owner retains separate object and live-slot metadata regions.
-  if (resource.get().live_allocations() != std::size_t(4)) { return 1; }
+  // Sparse slots retain separate object and live-slot metadata regions. The
+  // initialized-prefix vector needs just its single object region.
+  if (resource.get().live_allocations() != std::size_t(3)) { return 1; }
   if (!objects.get(std::size_t(1)).stable()) { return 2; }
 
   auto moved = std::move(objects);

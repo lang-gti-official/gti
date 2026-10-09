@@ -390,9 +390,31 @@ int main() {
   expect(indexed.canGenerateCode(), "move-only indexed algorithms analyze");
   if (indexed.canGenerateCode()) {
     unsigned indexedSeen = 0;
+    unsigned sourceSwaps = 0;
     for (const auto &function : indexed.mir.functionInstances()) {
+      const auto *hir = indexed.hir.findFunctionInstance(function.id);
+      const auto &owners = indexed.hir.classInstances();
+      const auto owner = std::find_if(
+          owners.begin(), owners.end(), [&](const auto &candidate) {
+            return function.owner && candidate.id == *function.owner;
+          });
+      const bool sourceSwap = hir && hir->source &&
+                              hir->source->name().lexeme == "swap_elements" &&
+                              owner != owners.end() && owner->source &&
+                              owner->source->name().lexeme == "prefix_slots";
+      unsigned bounds = 0, relocations = 0;
       for (const auto &block : function.body.blocks) {
         for (const auto &instruction : block.instructions) {
+          if (sourceSwap) {
+            bounds += instruction.intrinsic ==
+                      lang::IntrinsicKind::StorageBoundsCheck;
+            const auto *callee = instruction.functionTarget
+                                     ? indexed.hir.findFunctionInstance(
+                                           *instruction.functionTarget)
+                                     : nullptr;
+            relocations += callee && callee->source &&
+                           callee->source->name().lexeme == "relocate_at";
+          }
           if (instruction.intrinsic !=
               lang::IntrinsicKind::RestoringIndexedSwap)
             continue;
@@ -429,9 +451,18 @@ int main() {
           }
         }
       }
+      if (sourceSwap) {
+        ++sourceSwaps;
+        expect(bounds == 2 && relocations == 3,
+               "source indexed swap retains both bounds checks and all three "
+               "vacant-slot relocations: " +
+                   std::to_string(bounds) + "/" + std::to_string(relocations));
+      }
     }
-    expect(indexedSeen >= 4, "indexed transfers instantiate across arrays and "
-                             "vectors of unrelated resources and strings");
+    expect(indexedSeen == 3 && sourceSwaps == 2,
+           "array transfers retain three typed intrinsics, while resource and "
+           "string vectors swap through source relocation: " +
+               std::to_string(indexedSeen) + "/" + std::to_string(sourceSwaps));
     const auto indexedCpp = gti_test::emitCppText(indexed);
     expect(indexedCpp.find("mir_restoring_indexed_swap_v1(") !=
                    std::string::npos &&

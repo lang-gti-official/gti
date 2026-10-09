@@ -22,6 +22,15 @@ revise remain the shipped contract.
 
 ## Context
 
+Source-prefix revision (2026-10-08): the owner approved one region per
+`resource_vector` capacity reservation. Its live objects are a prefix tracked
+by one source length, so a separate live-slot bitmap and metadata allocation
+are unnecessary. This changes observable vector provider request/release
+counts, not raw provider obligations, checked loans, relocation, failure
+atomicity or element-before-region cleanup. Public sparse `resource_storage`
+and `storage` still require their two regions. Do not retain a useless metadata
+allocation solely to imitate the former vector implementation.
+
 GTI needs allocator-controlled storage for arenas, pools, containers, and
 game-engine workloads. Fixed arrays cannot represent spare or partially
 initialized capacity, while `std::unique_ptr<T>` represents one initialized
@@ -583,11 +592,11 @@ Consequences:
 
 ## Revision: initialized-prefix sequences over a raw buffer (2026-10-09)
 
-Status: accepted target representation; not scheduled. The work item is
+Status: accepted target representation; implementation and acceptance in progress. The work item is
 [`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-`std::vector` and `std::string` currently store elements in the private
-`gti_internal::prefix_storage<T>` capability. At some point they will instead
-adopt the layering Rust uses for `RawVec` and `Vec`, in ordinary GTI:
+`std::vector` and `std::string` are migrating from the private
+`gti_internal::prefix_storage<T>` capability to the layering Rust uses for
+`RawVec` and `Vec`, in ordinary GTI:
 
 - **A source-defined raw buffer.** It owns one region from a memory resource,
   the process resource by default: an element pointer and a capacity, with

@@ -900,13 +900,11 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     validateOwningPayloadEnumByValueBoundary(
         parameterType, parameter.type.name.last(), "constructor parameter",
         directOwningPayloadTransport);
-    const bool defaultLibraryStorageBorrow =
-        isDefaultLibraryStorageBorrowParameter(owner, parameterType);
     validateReferencePlacement(parameter.type, true, "constructor parameter",
                                constructorInfo != nullptr &&
                                    constructorInfo->kind ==
                                        ConstructorKind::Move,
-                               defaultLibraryStorageBorrow, false, true);
+                               false, true);
     const bool trustedGuardSpecialMember =
         isDefaultLibraryMutexGuardCarrier(owner) &&
         constructorInfo != nullptr &&
@@ -1969,7 +1967,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     allowPackTypeReference = enclosingParameterPackTypeReference;
     if (!intrinsicDeclaration) {
       validateReferencePlacement(parameter.type, true, "function parameter",
-                                 false, false, false, true);
+                                 false, false, true);
     }
     const SemanticType declaredType = typeOf(parameter);
     const SemanticType parameterType =
@@ -3125,15 +3123,10 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       currentClass && functionDepth == 0 && !stmt.isStatic();
   const ClassInfo *fieldOwner =
       instanceField ? &classInfo(*currentClass) : nullptr;
-  const bool defaultLibraryStorageBorrow =
-      fieldOwner != nullptr && fieldOwner->storedReference &&
-      fieldOwner->storedReference->field == &stmt &&
-      isDefaultLibraryStorageBorrowCarrier(*fieldOwner);
   validateReferencePlacement(
       stmt.type(), localReference || instanceField,
       localReference ? "local binding"
-                     : (instanceField ? "instance field" : "storage"),
-      false, defaultLibraryStorageBorrow);
+                     : (instanceField ? "instance field" : "storage"));
   const SemanticType declaredType =
       typeOf(stmt.type(),
              stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
@@ -3242,18 +3235,6 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Compiler-private unique owners can only be local bindings, "
            "function values, or class fields.",
            "GTI-S2018");
-  } else if (declaredType.kind == SemanticType::PrefixStorage &&
-             globalStorage) {
-    report(stmt.name(),
-           "Compiler-private storage can only be used as a local binding or "
-           "class field.",
-           "GTI-S2019");
-  } else if (declaredType.kind == SemanticType::PrefixStorage &&
-             functionDepth > 0 && !initializer) {
-    report(stmt.name(),
-           "Compiler-private storage bindings require an allocation "
-           "initializer.",
-           "GTI-S2019");
   } else if (declaredType.kind == SemanticType::UniqueOwner && !initializer) {
     report(stmt.name(),
            "Compiler-private unique owner bindings require an initializer.",

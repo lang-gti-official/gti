@@ -1,0 +1,14 @@
+#include <std/memory>
+class Owner {
+  char data[2] = {'a', '\0'};
+public:
+  Owner() {}
+  const char* address() { return &this.data[0]; }
+};
+std::string_view dangling() {
+  Owner owner{};
+  unsafe {
+    return std::assume_string_view(owner.address(), uint64_t(1), owner);
+  }
+}
+int main() { return 0; }

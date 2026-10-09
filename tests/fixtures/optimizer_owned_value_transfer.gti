@@ -1,0 +1,72 @@
+#include <std/memory>
+
+struct Part {
+  mut int value;
+};
+struct Packet {
+  mut Part part;
+};
+
+mut int cleanup_value = 0;
+class Release {
+public:
+  int value = 7;
+  Release() {}
+  Release(Release&) = delete;
+  Release(Release&&) = default;
+  ~Release() { cleanup_value = 2147483647; }
+};
+int custom_cleanup(Release value) { return value.value + 1; }
+
+int copied(Packet packet) { return packet.part.value + 1; }
+int poison_copy(mut Packet packet) {
+  packet.part.value = 2147483647;
+  return 0;
+}
+int sanitize_copy(mut Packet packet) {
+  packet.part.value = 7;
+  return 0;
+}
+int original_after_copy() {
+  Packet packet = {.part = {.value = 7}};
+  [[discard]] poison_copy(packet);
+  return packet.part.value + 1;
+}
+int original_after_sanitize() {
+  mut Packet packet = {.part = {.value = 7}};
+  packet.part.value = 2147483647;
+  [[discard]] sanitize_copy(packet);
+  return packet.part.value + 1;
+}
+int mutate(mut Packet& packet) {
+  packet.part.value = 2147483647;
+  return 0;
+}
+int prepared_copy(Packet packet, int ignored) {
+  return packet.part.value + 1;
+}
+int argument_order() {
+  mut Packet packet = {.part = {.value = 7}};
+  return prepared_copy(packet, mutate(packet));
+}
+int moved() {
+  Packet packet = {.part = {.value = 7}};
+  Packet next = std::move(packet);
+  return copied(next);
+}
+int consumed(Packet packet) { return packet.part.value + 1; }
+int move_argument() {
+  Packet packet = {.part = {.value = 7}};
+  return consumed(std::move(packet));
+}
+int main() {
+  Packet packet = {.part = {.value = 7}};
+  if (copied(packet) != 8) return 1;
+  if (original_after_copy() != 8) return 2;
+  if (argument_order() != 8) return 3;
+  if (moved() != 8) return 4;
+  if (move_argument() != 8) return 5;
+  if (custom_cleanup(Release()) != 8) return 6;
+  if (cleanup_value != 2147483647) return 7;
+  return original_after_sanitize();
+}

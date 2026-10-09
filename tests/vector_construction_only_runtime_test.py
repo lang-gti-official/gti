@@ -105,12 +105,12 @@ public:
   Immovable(Immovable&& other) = delete;
 };
 int main() { std::vector<Immovable> values{}; return 0; }
-""", "std::move_constructible"),
+""", "std::relocatable"),
         ("borrowed-element", """
 #include <std/vector>
 struct View { int& value; View(int& source) : value(source) {} };
 int main() { std::vector<View> values{}; return 0; }
-""", "borrowed state"),
+""", "stored borrows"),
         ("live-borrow", owner + """
 int main() {
   mut std::vector<Envelope> values{};

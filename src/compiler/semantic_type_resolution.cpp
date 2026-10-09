@@ -1021,9 +1021,6 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
         " would copy a move-only value; use std::move(owner) to ";
     if (typeTraits(parameter).ownership == OwnershipKind::Unique) {
       copyDescription = " would copy a unique owner; use std::move(owner) to ";
-    } else if (parameter.kind == SemanticType::PrefixStorage) {
-      copyDescription = " would copy compiler-private storage; use "
-                        "std::move(owner) to ";
     }
     report(expressionToken(expression),
            argumentLabel + std::to_string(index + 1) + copyDescription +
@@ -1180,7 +1177,7 @@ auto SemanticVisitor::Impl::resolveNominalArguments(
       allowPackTypeReference = enclosingAllowPack;
       if (typeOf(argument).kind == SemanticType::Reference) {
         validateReferencePlacement(argument, true, "generic type argument",
-                                   false, false, true);
+                                   false, true);
       }
       if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value) {
         report(argument.name.last(),
@@ -1270,7 +1267,7 @@ auto SemanticVisitor::Impl::resolveNominalArguments(
     const SemanticType type = typeOf(argument);
     if (type.kind == SemanticType::Reference) {
       validateReferencePlacement(argument, true, "generic type argument", false,
-                                 false, true);
+                                 true);
     }
     if (const auto failure = firstConstraintFailure({parameter}, {type})) {
       reportConstraintFailure(argument.name.last(), *failure);
@@ -3169,8 +3166,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                "GTI-S2093");
       } else {
         validateReferencePlacement(component, true,
-                                   "function signature component", false, false,
-                                   true);
+                                   "function signature component", false, true);
       }
     }
     return;
@@ -3354,41 +3350,6 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "Shared ownership currently requires a class, struct, or scalar "
              "object type without borrowed state.",
              "GTI-S2018");
-    }
-    return;
-  }
-  if (compilerCapability == CompilerCapabilityTypeKind::PrefixStorage) {
-    const std::string name = "gti_internal::prefix_storage";
-    if (type.arguments.size() != 1) {
-      report(type.name.last(), name + "<T> requires exactly one element type.",
-             "GTI-S2019");
-    } else {
-      if (type.arguments.front().genericArgumentSyntax ==
-          GenericArgumentSyntax::Value) {
-        report(type.arguments.front().name.last(),
-               name + " requires a type argument.", "GTI-S2026");
-        return;
-      }
-      validateType(type.arguments.front());
-      const SemanticType elementType = typeOf(type.arguments.front());
-      if (!isStorageElementType(elementType)) {
-        report(type.arguments.front().name.last(),
-               "Compiler-private storage requires a concrete value element "
-               "type.",
-               "GTI-S2019");
-      } else if (elementType.kind != SemanticType::TypeParameter &&
-                 typeTraits(elementType).containsBorrowedState) {
-        report(type.arguments.front().name.last(),
-               "Compiler-private storage cannot contain a value that "
-               "retains borrowed state until general owner dependencies "
-               "are available.",
-               "GTI-S2019");
-      }
-    }
-    if (!type.arrayExtents.empty()) {
-      report(type.name.last(),
-             "Fixed arrays of compiler-private storage are not supported.",
-             "GTI-S2019");
     }
     return;
   }
@@ -3756,7 +3717,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     const SemanticType argumentType = typeOf(argument);
     if (argumentType.kind == SemanticType::Reference) {
       validateReferencePlacement(argument, true, "generic type argument", false,
-                                 false, true);
+                                 true);
     }
     if (!(resolvingGenericTypeDefault &&
           containsOpenTypeParameter(argumentType))) {
@@ -3871,8 +3832,8 @@ auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
 
 auto SemanticVisitor::Impl::validateReferencePlacement(
     const TypeRef &type, bool allowTopLevel, std::string_view context,
-    bool allowRvalueReference, bool allowDefaultLibraryStorageReference,
-    bool typeMetadata, bool genericFunctionParameter) -> void {
+    bool allowRvalueReference, bool typeMetadata, bool genericFunctionParameter)
+    -> void {
   const SemanticType resolved = typeOf(type);
   if (resolved.kind == SemanticType::FunctionSignature) {
     report(type.name.last(),
@@ -3919,9 +3880,8 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
       resolved.arguments.size() == 1 &&
       resolved.arguments.front() == *genericReferent;
   if (!substitutedArrayParameter)
-    validateReferenceReferent(
-        resolved, type.reference ? *type.reference : type.name.last(),
-        allowDefaultLibraryStorageReference);
+    validateReferenceReferent(resolved, type.reference ? *type.reference
+                                                       : type.name.last());
   const auto nominalKind = baseTypeOf(type, currentNamespace).kind;
   if (nominalKind != SemanticType::Class && nominalKind != SemanticType::Enum) {
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
@@ -3933,7 +3893,7 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
             argument.arguments.empty();
         if (permittedFallibleBorrow) {
           validateReferenceReferent(resolved.arguments.front(),
-                                    *argument.reference, false);
+                                    *argument.reference);
           continue;
         }
         report(argument.reference ? *argument.reference : argument.name.last(),
@@ -3944,9 +3904,9 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
   }
 }
 
-auto SemanticVisitor::Impl::validateReferenceReferent(
-    const SemanticType &type, const Token &site,
-    bool allowDefaultLibraryStorageReference) -> void {
+auto SemanticVisitor::Impl::validateReferenceReferent(const SemanticType &type,
+                                                      const Token &site)
+    -> void {
   if (type.kind != SemanticType::Reference || type.arguments.size() != 1) {
     return;
   }
@@ -3967,16 +3927,10 @@ auto SemanticVisitor::Impl::validateReferenceReferent(
   if (referencedType.kind == SemanticType::Reference) {
     report(site, "References cannot refer to another reference.", "GTI-S2017");
   }
-  const bool permittedStorageBorrow =
-      allowDefaultLibraryStorageReference &&
-      referencedType.kind == SemanticType::PrefixStorage;
-  if (isDirectOwnerType(referencedType) && !permittedStorageBorrow) {
-    const bool unique = referencedType.kind == SemanticType::UniqueOwner;
+  if (isDirectOwnerType(referencedType)) {
     report(site,
-           unique ? "References to compiler-private unique owners are not "
-                    "supported; borrow the owned value instead."
-                  : "References to compiler-private storage are not supported; "
-                    "use storage operations instead.",
+           "References to compiler-private unique owners are not "
+           "supported; borrow the owned value instead.",
            "GTI-S2018");
   }
 }

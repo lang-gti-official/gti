@@ -43,6 +43,10 @@ if(Python3_Interpreter_FOUND)
     retained_owner_member_pack_runtime shared_accessor_range_runtime
     shared_ownership_runtime shared_ownership_threads
     source_storage_drain_runtime
+    source_prefix_owner_runtime source_resource_prefix_runtime
+    source_text_address_runtime source_prefix_string_runtime
+    many_fallible_scope_guards_runtime
+    optimizer_raw_context_runtime optimizer_object_context_runtime
     inherited_cleanup_context_runtime
     cleanup_context_scope_runtime
     storage_final_address_runtime string_operations_runtime string_ordering_runtime

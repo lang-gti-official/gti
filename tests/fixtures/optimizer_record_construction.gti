@@ -1,0 +1,35 @@
+#include <std/memory>
+
+struct Payload {
+  int stamp = 42;
+  Payload() {}
+};
+class Record {
+public:
+  mut int value;
+  Record(int value) : value(value) {}
+
+  unsafe int construct_other(Payload* vacant, Payload prepared) mut {
+    unsafe { std::detail::construct_value_at(vacant, std::move(prepared)); }
+    return this.value + 1;
+  }
+};
+
+unsafe int reconstruct(mut Record& record) {
+  unsafe {
+    int* address = &record.value;
+    std::destroy_at(address);
+    std::construct_at(address, 2147483647);
+  }
+  return record.value + 1;
+}
+
+int main() {
+  mut std::uninitialized<Payload> vacant{};
+  mut Record record{7};
+  unsafe {
+    if (record.construct_other(vacant.data(), Payload()) != 8) return 1;
+    std::destroy_at(vacant.data());
+    return reconstruct(record);
+  }
+}

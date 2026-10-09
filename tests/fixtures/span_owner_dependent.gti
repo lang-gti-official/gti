@@ -1,12 +1,13 @@
 #include <std/vector>
 #include <std/string>
 #include <std/span>
+#include <std/memory>
 
-std::span<T> relay_span<T>(std::span<T> view) {
+std::span<T> relay_span<T>(std::span<T> view) requires std::storage_element<T> {
   return std::move(view);
 }
 
-std::span<T> move_span<T>(std::span<T> view) {
+std::span<T> move_span<T>(std::span<T> view) requires std::storage_element<T> {
   return std::move(view);
 }
 

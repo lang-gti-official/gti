@@ -1,0 +1,20 @@
+class Leaf {
+public:
+  mut int value;
+  Leaf(int value) : value(value) {}
+  int read() { return this.value + 1; }
+};
+class Container {
+public:
+  mut Leaf first;
+  mut Leaf second;
+  Container(int first, int second) : first(Leaf(first)), second(Leaf(second)) {}
+  int change() mut {
+    unsafe { int* address = &this.first.value; *address = 2147483647; }
+    return this.first.read();
+  }
+};
+int main() {
+  mut Container values{7, 9};
+  return values.change();
+}

@@ -1,0 +1,114 @@
+#include <std/memory>
+
+unsafe void seed0(int* address) {
+  unsafe { std::construct_at(address, 7); }
+}
+
+unsafe void seed1(int* address) {
+  unsafe {
+    seed0(address);
+    seed0(address + 1);
+  }
+}
+
+unsafe void seed2(int* address) {
+  unsafe {
+    seed1(address);
+    seed1(address + 2);
+  }
+}
+
+unsafe void seed3(int* address) {
+  unsafe {
+    seed2(address);
+    seed2(address + 4);
+  }
+}
+
+unsafe void seed4(int* address) {
+  unsafe {
+    seed3(address);
+    seed3(address + 8);
+  }
+}
+
+unsafe void seed5(int* address) {
+  unsafe {
+    seed4(address);
+    seed4(address + 16);
+  }
+}
+
+unsafe void seed6(int* address) {
+  unsafe {
+    seed5(address);
+    seed5(address + 32);
+  }
+}
+
+unsafe void seed7(int* address) {
+  unsafe {
+    seed6(address);
+    seed6(address + 64);
+  }
+}
+
+unsafe void seed8(int* address) {
+  unsafe {
+    seed7(address);
+    seed7(address + 128);
+  }
+}
+
+unsafe void seed9(int* address) {
+  unsafe {
+    seed8(address);
+    seed8(address + 256);
+  }
+}
+
+unsafe void seed10(int* address) {
+  unsafe {
+    seed9(address);
+    seed9(address + 512);
+  }
+}
+
+unsafe void seed11(int* address) {
+  unsafe {
+    seed10(address);
+    seed10(address + 1024);
+  }
+}
+
+unsafe int within_budget(int* address) {
+  unsafe {
+    seed10(address);
+    int* pointer = address + 1023;
+    return *pointer + 1;
+  }
+}
+
+unsafe int bad_budget_limited(int* address) {
+  unsafe {
+    seed11(address);
+    int* pointer = address + 2047;
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  mut int small[1024] = {};
+  mut int large[2048] = {};
+  unsafe {
+    for (mut std::size_t index = 0; index < 1024; index++) {
+      std::destroy_at(&small[index]);
+    }
+    for (mut std::size_t index = 0; index < 2048; index++) {
+      std::destroy_at(&large[index]);
+    }
+    if (within_budget(&small[0]) != 8) return 1;
+    if (bad_budget_limited(&large[0]) != 8) return 2;
+  }
+  return 0;
+}
