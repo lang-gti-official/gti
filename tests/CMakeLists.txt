@@ -2162,6 +2162,16 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
+    NAME cpp_program_linkage
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/cpp_program_linkage_test.py"
+            "$<TARGET_FILE:gti>"
+            "${CMAKE_CXX_COMPILER}"
+            "${PROJECT_SOURCE_DIR}"
+            "$<TARGET_FILE:gti_runtime>"
+  )
+  set_tests_properties(cpp_program_linkage PROPERTIES TIMEOUT 120)
+  add_test(
     NAME mir_backend_scalar_cfg_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/mir_backend_scalar_cfg_runtime_test.py"

@@ -2638,6 +2638,17 @@ does not call the legacy terminal `owner_access` helper, and a missing failure
 edge or plain-body representation is rejected rather than bypassing caller
 cleanup. No public smart-pointer name is recognized.
 
+Ordinary generated GTI functions, classes and program storage live in
+`__gti_program` inside an anonymous C++ namespace. Their translation-unit-local
+linkage reflects that they are implementation details of one complete lowered
+program, not native exported APIs. This allows the native compiler to discard
+unused source helpers and avoids collisions between independent generated
+program identities. It does not remove MIR bodies, checks, initialization,
+cleanup or observable resource calls. Hosted entry adapters and explicit native
+ABI boundaries remain outside that ordinary-program identity contract; public
+opaque native declarations retain their original scope. No public library name
+or optimization level controls linkage.
+
 C-linkage declarations use the deterministic private C++ spelling
 `__gti_c_fn_<FunctionId>`, independently of the semantic external symbol.
 The declaration writer retains the exact native signature and binds that
