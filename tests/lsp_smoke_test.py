@@ -602,18 +602,20 @@ def test_dependency_chain_reanalysis_count(executable, root):
     trace_path = root / "chain-trace.jsonl"
     trace_path.unlink(missing_ok=True)
 
-    def analyses():
+    def analysis_records():
         if not trace_path.exists():
             return []
-        records = [
-            json.loads(line)
-            for line in trace_path.read_text(encoding="utf-8").splitlines()
-        ]
         return [
-            pathlib.Path(record["uri"]).name
-            for record in records
+            record
+            for record in (
+                json.loads(line)
+                for line in trace_path.read_text(encoding="utf-8").splitlines()
+            )
             if record["kind"] == "analysis"
         ]
+
+    def analyses():
+        return [pathlib.Path(record["uri"]).name for record in analysis_records()]
 
     # One worker makes the request-first ordering below observable; the pool
     # test covers concurrent workers.
@@ -691,6 +693,14 @@ def test_dependency_chain_reanalysis_count(executable, root):
         reanalyzed = analyses()[len(paths):]
         assert sorted(reanalyzed) == sorted(path.name for path in paths), reanalyzed
         assert reanalyzed.index(paths[-1].name) <= 1, reanalyzed
+        # The edit made every snapshot stale, so none keeps its whole-program
+        # result while the single worker re-analyses them one at a time; each
+        # finished analysis sees only the results already republished.
+        retained = [
+            record["retainedFrontends"]
+            for record in analysis_records()[len(paths):]
+        ]
+        assert retained == list(range(len(paths))), retained
     finally:
         if not closed:
             session.close()

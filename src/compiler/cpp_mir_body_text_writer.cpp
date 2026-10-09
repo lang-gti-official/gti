@@ -1,39 +1,55 @@
 #include "cpp_mir_body_text_writer.h"
 
+#include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 
 namespace lang {
 namespace {
 
+// Replaces every non-overlapping occurrence of `marker`, left to right, while
+// copying `text` once. Replacing in place would move the remaining text at
+// every occurrence, which is quadratic in a long body. Returns nothing when
+// `marker` does not occur.
+[[nodiscard]] std::optional<std::string>
+replaceAll(std::string_view text, std::string_view marker,
+           std::string_view replacement) {
+  std::size_t at = text.find(marker);
+  if (at == std::string_view::npos) {
+    return std::nullopt;
+  }
+  std::string rendered;
+  rendered.reserve(text.size());
+  std::size_t copied = 0;
+  while (at != std::string_view::npos) {
+    rendered.append(text.substr(copied, at - copied));
+    rendered.append(replacement);
+    copied = at + marker.size();
+    at = text.find(marker, copied);
+  }
+  rendered.append(text.substr(copied));
+  return rendered;
+}
+
 [[nodiscard]] std::string renderTemplate(std::string_view text,
                                          std::string_view familyLabel,
                                          std::size_t indentation) {
-  if (text.find(cppMirBodyEmissionFamilyPlaceholder) ==
-      std::string_view::npos) {
+  std::optional<std::string> rendered =
+      replaceAll(text, cppMirBodyEmissionFamilyPlaceholder, familyLabel);
+  if (!rendered) {
     return {};
   }
   // Append unchanged slices rather than repeatedly shifting the remaining
   // body. Large verified cleanup templates can contain tens of thousands of
   // indentation markers. Preserve the original two-pass substitution order,
   // including indentation markers introduced by the family label.
-  const auto replaceAll = [](std::string_view source, std::string_view marker,
-                             std::string_view replacement) {
-    std::string result;
-    result.reserve(source.size());
-    std::size_t cursor = 0;
-    for (auto at = source.find(marker, cursor); at != std::string_view::npos;
-         at = source.find(marker, cursor)) {
-      result.append(source.substr(cursor, at - cursor));
-      result.append(replacement);
-      cursor = at + marker.size();
-    }
-    result.append(source.substr(cursor));
-    return result;
-  };
-  const std::string rendered =
-      replaceAll(text, cppMirBodyEmissionFamilyPlaceholder, familyLabel);
   const std::string prefix(indentation * 2, ' ');
-  return replaceAll(rendered, cppMirBodyEmissionIndentationPlaceholder, prefix);
+  if (std::optional<std::string> indented = replaceAll(
+          *rendered, cppMirBodyEmissionIndentationPlaceholder, prefix)) {
+    return std::move(*indented);
+  }
+  return std::move(*rendered);
 }
 
 } // namespace

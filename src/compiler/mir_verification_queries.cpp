@@ -913,30 +913,68 @@ fusedSignedMinimumLiteral(const MirBody &body, const MirInstruction &negation) {
 
 [[nodiscard]] const MirInstruction *
 fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier) {
+  const auto ownsCarrier = [&](const MirInstruction &candidate) {
+    const MirInstruction *literal = fusedSignedMinimumLiteral(body, candidate);
+    if (literal == nullptr) {
+      return false;
+    }
+    const MirValue *operand = body.findValue(candidate.operands.front().value);
+    while (operand != nullptr) {
+      const MirInstruction *producer = definitionFor(body, operand->id);
+      if (producer == nullptr) {
+        return false;
+      }
+      if (producer == &carrier) {
+        return true;
+      }
+      if (producer == literal ||
+          producer->operation != MirOperation::Identity ||
+          producer->operands.size() != 1 ||
+          producer->operands.front().kind != MirOperandKind::Value) {
+        return false;
+      }
+      operand = body.findValue(producer->operands.front().value);
+    }
+    return false;
+  };
+  // Every link of a fused chain has exactly one use, at operand zero of the
+  // next link, so at most one negation can own a carrier: the first
+  // non-Identity reached by following those uses forward. Confirm it with the
+  // negation's own chain. Searching every negation instead would make each
+  // query cost the whole body.
+  const MirInstruction *current = &carrier;
+  for (std::size_t depth = 0; depth <= body.values.size(); ++depth) {
+    if (!current->result) {
+      return nullptr;
+    }
+    const std::vector<MirValueUse> &uses = body.usesOf(*current->result);
+    if (uses.size() != 1 ||
+        uses.front().kind != MirValueUseKind::InstructionOperand ||
+        uses.front().operandIndex != 0) {
+      return nullptr;
+    }
+    const MirBlock *block = body.findBlock(uses.front().block);
+    const auto consumer =
+        block == nullptr
+            ? std::vector<MirInstruction>::const_iterator{}
+            : std::find_if(block->instructions.begin(),
+                           block->instructions.end(),
+                           [&](const MirInstruction &instruction) {
+                             return instruction.id == uses.front().instruction;
+                           });
+    if (block == nullptr || consumer == block->instructions.end()) {
+      break;
+    }
+    if (consumer->operation != MirOperation::Identity) {
+      return ownsCarrier(*consumer) ? &*consumer : nullptr;
+    }
+    current = &*consumer;
+  }
+  // The use index did not locate a consumer; search every negation.
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &candidate : block.instructions) {
-      const MirInstruction *literal =
-          fusedSignedMinimumLiteral(body, candidate);
-      if (literal == nullptr) {
-        continue;
-      }
-      const MirValue *operand =
-          body.findValue(candidate.operands.front().value);
-      while (operand != nullptr) {
-        const MirInstruction *producer = definitionFor(body, operand->id);
-        if (producer == nullptr) {
-          break;
-        }
-        if (producer == &carrier) {
-          return &candidate;
-        }
-        if (producer == literal ||
-            producer->operation != MirOperation::Identity ||
-            producer->operands.size() != 1 ||
-            producer->operands.front().kind != MirOperandKind::Value) {
-          break;
-        }
-        operand = body.findValue(producer->operands.front().value);
+      if (ownsCarrier(candidate)) {
+        return &candidate;
       }
     }
   }

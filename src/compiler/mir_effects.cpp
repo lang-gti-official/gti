@@ -1833,8 +1833,12 @@ MirEffectTraits effects(const MirInstruction &instruction) {
   return finishInstructionEffects(instruction, {});
 }
 
-MirEffectTraits effects(const MirProgram &program,
-                        const MirInstruction &instruction) {
+namespace {
+// The body-aware query is only a lookup shortcut. Both public overloads must
+// retain the same program-owned structural lifecycle classification.
+std::optional<MirEffectTraits>
+structuralInstructionEffects(const MirProgram &program,
+                             const MirInstruction &instruction) {
   if (isMirStructuralFinalAddressConstruction(program, instruction))
     return finishInstructionEffects(instruction, {}, false, true);
   if (isMirStructuralValueDrop(program, instruction))
@@ -1844,6 +1848,15 @@ MirEffectTraits effects(const MirProgram &program,
     return finishInstructionEffects(
         instruction, {}, isMirStructuralValueTransfer(program, instruction));
   }
+  return std::nullopt;
+}
+} // namespace
+
+MirEffectTraits effects(const MirProgram &program,
+                        const MirInstruction &instruction) {
+  if (const auto structural =
+          structuralInstructionEffects(program, instruction))
+    return *structural;
   const MirBody *body = nullptr;
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *candidate = findMirBody(program, address);
@@ -1867,7 +1880,15 @@ MirEffectTraits effects(const MirProgram &program,
   if (body == nullptr) {
     return effects(instruction);
   }
-  const ExactTargets targets = exactTargets(program, *body, instruction);
+  return effects(program, *body, instruction);
+}
+
+MirEffectTraits effects(const MirProgram &program, const MirBody &body,
+                        const MirInstruction &instruction) {
+  if (const auto structural =
+          structuralInstructionEffects(program, instruction))
+    return *structural;
+  const ExactTargets targets = exactTargets(program, body, instruction);
   if (targets.boundary || targets.addresses.empty()) {
     return cleanupEffects(effects(instruction), targets);
   }

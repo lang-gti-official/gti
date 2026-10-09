@@ -31,7 +31,7 @@ private:
 
 // Storage for a derived per-body analysis while a scope is open on the program
 // that owns `body`; null otherwise. `kind` distinguishes analyses. The stored
-// index must depend only on the immutable body.
+// index must depend only on the immutable body and the program that owns it.
 [[nodiscard]] std::shared_ptr<void> *
 cppScopedBodyAnalysis(const MirBody &body, std::string_view kind);
 

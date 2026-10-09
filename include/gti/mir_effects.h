@@ -56,6 +56,11 @@ isMirStructuralValueTransfer(const MirProgram &program,
 [[nodiscard]] MirEffectTraits effects(const MirInstruction &instruction);
 [[nodiscard]] MirEffectTraits effects(const MirProgram &program,
                                       const MirInstruction &instruction);
+// The same effects for an instruction of `body`, a body of `program`, without
+// searching the program for the body that contains it.
+[[nodiscard]] MirEffectTraits effects(const MirProgram &program,
+                                      const MirBody &body,
+                                      const MirInstruction &instruction);
 
 [[nodiscard]] std::optional<MirEffectSummary>
 exactMirInvocationSummary(const MirProgram &program, const MirBody &body,

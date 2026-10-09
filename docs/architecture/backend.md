@@ -616,6 +616,26 @@ cannot be selected by the existing whole-program subscript proof. These
 filters do not memoize admission, discharge a safety check, or change the
 complete proof for any potentially applicable candidate.
 
+Admission and text planning must also cost time proportional to a body's
+length, not its square. Verified MIR is immutable for the duration of one
+`CppMirBodyEmitter` operation, so each public operation opens a body lookup
+scope. Within it, each body is indexed once, on first use: instructions by
+id, dominance, the instructions and terminators that name each place or drop
+obligation, Invoke terminators by paired instruction, instructions by result
+or receiver value, value-rooted places and drop obligations, and, for a
+recognizer that publishes values into places, the values grouped by the place
+each one targets. Recognizer queries consult those indexes instead of
+rescanning the body for every value, place or instruction they examine. An
+index is derived only from the body it describes and narrows candidates
+without deciding admission: every candidate still passes the complete
+original proof, and each answer equals the scan it replaces. A recognizer
+reentered while its own index is still being built scans instead, and code
+outside a scope keeps scanning. A single `main` of about 1,100 formatting
+statements, which previously needed more than 18 CPU-minutes, now plans in
+about the time the same statements take when split into small functions;
+`single_body_compile_scaling` guards that growth by comparing the compiler's
+CPU time for one repeated statement block at two body lengths.
+
 Each body plan owns its readiness and issues, canonical plain and failure text
 templates, the deduced-callable variants where target family spelling differs,
 boundary-declaration decision, initializer schedule and field spellings, and
