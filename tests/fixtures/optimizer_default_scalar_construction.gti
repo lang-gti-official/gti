@@ -52,6 +52,13 @@ unsafe uint64_t default_unsigned(uint64_t* pointer) {
   }
 }
 
+unsafe int default_packed<Args...>(int* pointer, Args... unused) {
+  unsafe {
+    std::construct_at(pointer);
+    return *pointer + 1;
+  }
+}
+
 unsafe int bad_default_explicit(int* pointer) {
   unsafe {
     std::construct_at(pointer, 2147483647);
@@ -94,6 +101,8 @@ int main() {
     if (false) return bad_default_other(first.data(), second.data());
     if (false) return bad_default_lifetime(first.data());
     int direct = default_scalar(first.data());
+    std::destroy_at(first.data());
+    int packed = default_packed(first.data(), true, uint64_t(17));
     int forwarded = default_forwarded(second.data());
     uint64_t unsigned_value = default_unsigned(wide.data());
     std::destroy_at(wide.data());
@@ -111,6 +120,6 @@ int main() {
       std::destroy_at(pointer + index);
     }
     free(bytes);
-    return direct == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 ? 0 : 1;
+    return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 ? 0 : 1;
   }
 }

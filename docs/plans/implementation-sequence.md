@@ -5081,7 +5081,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   append/endpoint requirements and forged-proof/native negatives. The handoff's
   six focused suites and 490 native cases pass; combined-head revalidation is
   still required. Region-preserving writes, record-region transport through
-  construction/cleanup, default scalar construction postconditions and general
+  construction/cleanup and general
   loop-index/endpoint relations remain the named prerequisites of the six
   source-container proof requirements and final vector/game performance parity.
   The contract is

@@ -319,6 +319,20 @@ and 17,513/17,513 general-emission comparisons across the same 131 examples
 (`/private/tmp/gti-combined-emitter-corpus-805e3e73.log`).
 Committed baselines are not yet promoted while combined acceptance is open.
 
+Zero-argument scalar construction now exports its exact zero postcondition.
+Focused validation also exposed a signature-mapping gap: source pack bindings
+were compared directly with flattened invocation types, losing even preceding
+pointer parameters for empty packs. The optimizer now expands verified concrete
+pack bindings before exact ordinal/type matching. Direct and forwarded scalar
+construction, a two-element heterogeneous pack, and an unrelated 4,096-element
+default-initialized sequence all receive replayable arithmetic proofs; O0
+remains unchanged. The six optimizer foundation/raw/intrinsic/object/analysis/
+conformance suites pass on the optimized Mac mini build. The new native matrix
+passes all 35 C++20/C++23 O0/O2/O3 and ASan/UBSan observations, including explicit
+overflow, native mutation, different storage and lifetime replacement negatives.
+The original six source-container safety requirements still fail; this bounded
+postcondition is a completed prerequisite, not container performance acceptance.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both

@@ -6564,19 +6564,37 @@ bool mergeObserved(ObservedFact<T> &target, const ObservedFact<T> &incoming,
 
 [[nodiscard]] std::vector<HirBindingId>
 parameterBindings(const MirProgram &program, MirBodyAddress address) {
+  const std::vector<HirBindingId> *declared = nullptr;
   if (address.kind == MirBodyKind::Function) {
     const MirFunctionInstance *function =
         program.findFunctionInstance(address.owner);
-    return function == nullptr ? std::vector<HirBindingId>{}
-                               : function->parameterBindings;
-  }
-  if (address.kind == MirBodyKind::Constructor) {
+    if (function)
+      declared = &function->parameterBindings;
+  } else if (address.kind == MirBodyKind::Constructor) {
     const MirConstructorInstance *constructor =
         program.findConstructorInstance(address.owner);
-    return constructor == nullptr ? std::vector<HirBindingId>{}
-                                  : constructor->parameterBindings;
+    if (constructor)
+      declared = &constructor->parameterBindings;
   }
-  return {};
+  const auto *body = findMirBody(program, address);
+  if (!declared || !body)
+    return {};
+  // MIR preserves one source binding for a concrete pack, while invocation
+  // types and operands are flattened. Translate that binding through its
+  // verified pack shape, including an empty pack, before matching ordinals.
+  // parameterOrdinal still requires exact per-element projected types.
+  std::vector<HirBindingId> result;
+  for (const auto binding : *declared) {
+    const auto *place = body->findPlace(rootForBinding(*body, binding));
+    if (place && place->type.kind == SemanticType::TypePack) {
+      if (!place->type.concretePack)
+        return {};
+      result.insert(result.end(), place->type.arguments.size(), binding);
+    } else {
+      result.push_back(binding);
+    }
+  }
+  return result;
 }
 
 [[nodiscard]] std::vector<SemanticType>
