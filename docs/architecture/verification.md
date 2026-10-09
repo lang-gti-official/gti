@@ -35,10 +35,33 @@ native modes, including sanitizer checks, preserving an ancestor's first
 failure and immediate secondary-failure termination without redundant local
 cleanup scopes. The string matrix passes all 24 cases plus four loan negatives;
 size overflow prints its cleanup witness before contained termination, unlike
-provider exhaustion. The unfiltered combined suite is still in progress.
+provider exhaustion. The first unfiltered 585-test run completed with 554
+passes and 31 failures in 2829.57 seconds. Its compiler was frozen at
+`723b7aa1` while later source/test checkpoints were reconciled, so this run is
+a diagnostic inventory, not exact-head acceptance. Failures include the known
+nested-resource prerequisite and optimizer proof gaps, stale representation
+expectations, missing example census rows, and local network/debugger sandbox
+permissions. Final validation must rebuild and run the reconciled revision.
 Resource-prefix fixtures retain the known nested-constructor loan prerequisite;
 neither this evidence nor the representation-only improvement claims that the
 source-container performance or full migration acceptance is complete.
+
+Direct process-backed vector exhaustion has a separate fault-injection fixture:
+reserve, prepared-value push, emplacement and sized construction abort without
+running a caller or element destructor. Emplacement does not begin the element
+constructor before failed growth. Size overflow still reports its source-owned
+panic and runs cleanup; successful growth destroys the element exactly once
+and releases the region. All six observations pass in each of the eight native
+modes, including no-elide and ASan/UBSan, using the isolated optimized backend
+probe described below. Mandatory unchecked-access/loan negatives pass in both
+Off/Warn advisory modes, and MIR still selects bulk relocation structurally.
+
+The SIMD native-assembly probe now includes the same expected-lite headers as
+ordinary C++20 compilation. Its complete C++20/C++23 O0/O1/O3, scalar-reference,
+sanitizer, macro-isolation and bounds matrix passes; native assembly has eleven
+SIMD instructions and the scalar reference has none. The c115/c116 storage
+failure corpus cases also pass with reviewed source-line changes only: exact
+categories, status 70 and cleanup order are unchanged in all seven cases.
 
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
