@@ -1,0 +1,80 @@
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Ticket {
+public:
+  mut int count = 0;
+  expected<void, int> publish(bool accepted) mut {
+    if (!accepted) {
+      this.count = 2147483647;
+      return unexpected(1);
+    }
+    this.count = 7;
+    return;
+  }
+  expected<void, int> deny(bool accepted) mut {
+    if (accepted) { this.count = 2147483647; return; }
+    this.count = 7;
+    return unexpected(1);
+  }
+};
+
+expected<void, int> relay(mut Ticket& ticket, bool accepted) {
+  return ticket.publish(accepted);
+}
+
+int accepted_ticket(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int denied_ticket(mut Ticket& ticket) {
+  auto status = ticket.deny(false);
+  if (status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_failed_ticket(mut Ticket& ticket) {
+  auto status = relay(ticket, false);
+  if (status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_reassigned_ticket(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  ticket.count = 2147483647;
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_later_call(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  [[discard]] relay(ticket, false);
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_native_call(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  unsafe { opaque_pointer_effect(&ticket.count); }
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_cached_tag(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  bool accepted = status.has_value();
+  ticket.count = 2147483647;
+  if (!accepted) return 0;
+  return ticket.count + 1;
+}
+
+int main() {
+  mut Ticket ticket{};
+  if (false) return bad_failed_ticket(ticket);
+  if (false) return bad_reassigned_ticket(ticket);
+  if (false) return bad_later_call(ticket);
+  if (false) return bad_native_call(ticket);
+  if (false) return bad_cached_tag(ticket);
+  return accepted_ticket(ticket) == 8 && denied_ticket(ticket) == 8 ? 0 : 1;
+}

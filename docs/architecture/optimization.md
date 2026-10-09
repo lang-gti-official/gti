@@ -778,6 +778,29 @@ failure edge or cleanup schedule is removed by these summary rules: even a
 net-zero update cannot erase an overflowing intermediate operation. Independent
 canonical replay derives the relation again; O0 remains transformation-free.
 
+Fallible source-call summaries may partition ordinary owned scalar-field
+postconditions by the returned result alternative. The first structural
+observer profile is MIR's two-alternative `expected` result: a successful
+payload/void return and an `unexpected` return are distinct exits. Forwarding
+an already summarized result retains its alternatives; an unknown result joins
+both possibilities. No public library identity supplies these facts. Checked
+reference arguments and receivers map exact owned paths to the caller's
+canonical field roots, including a reference-taking forwarding helper.
+
+A fresh independent local result shell and its loads can retain that guarded
+relation. `ExpectedHasValue` on the still-current result publishes only the
+selected alternative's fields, with call/branch evidence. At joins, unknown
+results lose the relation; common alternatives join their field envelopes.
+This is bounded to 64 result identities and 64 fields per alternative, with
+excess facts omitted. Writes (including exact indexed writes), moves, drops,
+structural construction and unknown/native/synchronizing effects retire the
+pending memory correlation conservatively. An earlier status value cannot
+restore a field after mutation. This profile does not transport payload values,
+allocation freshness, initialized-region coverage, or other sum representations.
+The unrelated `Ticket` regression covers success/error forwarding and stale
+results after direct, source-call and native mutations. Forged safety metadata
+is independently rejected; O0 operations and failure scheduling are unchanged.
+
 CFG argument transfer snapshots every incoming fact before publishing any
 destination block parameter. This includes integer intervals, loaded/field
 origins, entry-relative updates and actual addresses. A backedge may swap
