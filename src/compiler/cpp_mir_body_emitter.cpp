@@ -8955,6 +8955,29 @@ stagedTemporarySourceFor(const MirBody &body, const MirInstruction &stage) {
   return {};
 }
 
+// A failure edge drops this prepared argument's obligation, so a later
+// argument can fail after the argument was prepared.
+[[nodiscard]] bool preparedArgumentFailureCleanup(const MirBody &body,
+                                                  const MirInstruction &stage) {
+  if (!stage.preparedParameterDrop) {
+    return false;
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &member : block.instructions) {
+      if (member.kind == MirInstructionKind::Drop &&
+          std::any_of(member.lifecycle.begin(), member.lifecycle.end(),
+                      [&](const MirLifecycleEvent &event) {
+                        return event.kind == MirLifecycleEventKind::Drop &&
+                               event.source == *stage.preparedParameterDrop &&
+                               event.failureCleanup;
+                      })) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Prepared constructor and closure-pack parameters occupy real storage before
 // invocation (and allocation). MIR hands off these staged objects, never a
 // deferred copy or second move from the original source.
@@ -9099,9 +9122,20 @@ materializedConstructorArgumentStage(const MirBody &body, MirValueId id) {
   // later argument can fail. Its failure-edge Drop must destroy that prepared
   // value, not defer construction until the eventual call. Source calls share
   // the closure call's existing slot argument and post-call retirement ABI.
+  // An exact typed lambda invocation stages a class argument through the
+  // same ordered call plan. Without failure cleanup its by-value spelling
+  // stays the direct copy-stage form; with it, the same slot proof applies.
+  const bool lambdaCall =
+      consumer && callableValueInvocation(*consumer) &&
+      consumer->lambdaTarget && !consumer->constructorTarget &&
+      !consumer->bodyTarget && stage->info.type.kind == SemanticType::Class &&
+      stage->callInputIndex < consumer->parameterTypes.size() &&
+      consumer->parameterTypes[stage->callInputIndex] == stage->info.type &&
+      preparedArgumentFailureCleanup(body, *stage);
   const bool sourceCall =
       consumer && consumer->kind == MirInstructionKind::Call &&
-      consumer->functionTarget && consumer->intrinsic == IntrinsicKind::None &&
+      (consumer->functionTarget || lambdaCall) &&
+      consumer->intrinsic == IntrinsicKind::None &&
       (stage->info.type.kind == SemanticType::Lambda ||
        (stage->info.type.kind == SemanticType::Class &&
         (stage->callInputKind == HirCallInputKind::MoveValue ||
@@ -18943,13 +18977,14 @@ passiveResultReturnBlock(const MirBody &body, const MirValue &value,
              : nullptr;
 }
 
-// A transformed class or Expected<Class, E> call returned unchanged by its
-// caller can write directly into that caller's placement result. The
-// successful Invoke edge must initialize the call result's drop identity and
-// the return block must transfer that exact identity out. Fallible cleanup
-// retains an explicit unpublished-result obligation until the final Return;
-// otherwise only failure-free cleanup may follow transfer. The MIR value and
-// value-root place name caller storage, not a second C++ object.
+// A transformed class, Expected<Class, E>, or owning payload-enum call
+// returned unchanged by its caller can write directly into that caller's
+// placement result. The successful Invoke edge must initialize the call
+// result's drop identity and the return block must transfer that exact
+// identity out. Fallible cleanup retains an explicit unpublished-result
+// obligation until the final Return; otherwise only failure-free cleanup may
+// follow transfer. The MIR value and value-root place name caller storage, not
+// a second C++ object.
 [[nodiscard]] const MirInstruction *
 placementDirectReturnCall(const MirProgram &program,
                           const CppMirBodyEmissionMap &representations,
@@ -18983,11 +19018,15 @@ placementDirectReturnCall(const MirProgram &program,
       target->linkage == LanguageLinkage::Gti &&
       (call->definedFailure.propagation == FailurePropagationKind::DirectCall ||
        virtualTarget);
+  const bool owningPayloadEnum =
+      value != nullptr && cppMirOwningPayloadEnumPlacementResult(
+                              program, representations, value->info.type);
   const bool placementType =
       value != nullptr &&
       (expectedClassPlacementResultType(program, representations,
                                         value->info.type) ||
        cppMirOwningArrayPlacementResult(program, value->info.type) ||
+       owningPayloadEnum ||
        (value->info.type.kind == SemanticType::Class &&
         std::any_of(representations.types().begin(),
                     representations.types().end(),
@@ -19014,7 +19053,10 @@ placementDirectReturnCall(const MirProgram &program,
     // A cleanup-free result has no lifetime obligation to transfer. Its
     // caller storage can still receive the exact result directly, provided
     // that only inert boundary/loan records precede the unique return.
-    return passiveResultReturnBlock(body, *value, *call) ? call : nullptr;
+    // An owning payload enum always carries one.
+    return !owningPayloadEnum && passiveResultReturnBlock(body, *value, *call)
+               ? call
+               : nullptr;
   }
   if (drop->kind != MirDropObligationKind::Value ||
       call->successResultDrop != drop->id)
@@ -19023,6 +19065,13 @@ placementDirectReturnCall(const MirProgram &program,
   if (root == nullptr || root->root != MirPlaceRootKind::Value ||
       root->value != valueId || !root->projections.empty() ||
       root->type != value->info.type) {
+    return nullptr;
+  }
+  // An owning payload enum keeps its ordinary call-result transport boundary:
+  // the same exact source function or captureless lambda that may construct
+  // the result in a caller slot may construct it in this body's caller.
+  if (owningPayloadEnum &&
+      payloadEnumCallResultSlot(program, body, valueId) != root) {
     return nullptr;
   }
   const MirBlock *callBlock = nullptr;
@@ -37857,13 +37906,16 @@ private:
         const bool owningPayloadEnumPlacement =
             cppMirOwningPayloadEnumPlacementResult(program, representations,
                                                    instruction.info.type);
+        // A directly returned result constructs in this body's caller; its
+        // value-rooted slot is only the transferred drop identity.
         const MirPlace *owningPayloadEnumDestination =
-            instruction.result && owningPayloadEnumPlacement
+            instruction.result && owningPayloadEnumPlacement &&
+                    !directPlacementReturn
                 ? payloadEnumCallResultSlot(program, facts.body,
                                             *instruction.result)
                 : nullptr;
         if (instruction.result && owningPayloadEnumPlacement &&
-            owningPayloadEnumDestination == nullptr) {
+            !directPlacementReturn && owningPayloadEnumDestination == nullptr) {
           throw std::logic_error(
               "verified MIR callable payload-enum result lost its slot");
         }
@@ -37953,7 +38005,10 @@ private:
                  << canonicalSlotPlaceId(facts.body, *temporaryResult)
                  << ".mark_constructed();\n";
         }
-        if (owningPayloadEnumPlacement) {
+        if (owningPayloadEnumPlacement && directPlacementReturn) {
+          writeIndent();
+          output << "// caller owns the directly published placement result\n";
+        } else if (owningPayloadEnumPlacement) {
           writeIndent();
           output << "if (__gti_mir_call_success_" << instruction.id << ") {\n";
           ++indentation;
@@ -39390,8 +39445,15 @@ private:
       const bool owningPayloadEnumPlacement =
           cppMirOwningPayloadEnumPlacementResult(program, representations,
                                                  callee.returnType);
+      // A directly returned result constructs in this body's caller; its
+      // value-rooted slot is only the transferred drop identity.
+      const bool owningPayloadEnumDirectReturn =
+          instruction.result && owningPayloadEnumPlacement &&
+          placementDirectReturnCall(program, representations, facts.body,
+                                    *instruction.result) == &instruction;
       const MirPlace *owningPayloadEnumDestination =
-          instruction.result && owningPayloadEnumPlacement
+          instruction.result && owningPayloadEnumPlacement &&
+                  !owningPayloadEnumDirectReturn
               ? owningPayloadEnumValueSlot(program, facts.body,
                                            *instruction.result)
               : nullptr;
@@ -39414,11 +39476,12 @@ private:
                     program, representations, facts.body, *instruction.result)
               : ValueRootedPlacementCallResultSlot{};
       const bool placementDirectReturn =
-          instruction.result &&
-          (callee.returnType.kind == SemanticType::Class ||
-           expectedClassPlacement || owningArrayPlacement) &&
-          placementDirectReturnCall(program, representations, facts.body,
-                                    *instruction.result) == &instruction;
+          owningPayloadEnumDirectReturn ||
+          (instruction.result &&
+           (callee.returnType.kind == SemanticType::Class ||
+            expectedClassPlacement || owningArrayPlacement) &&
+           placementDirectReturnCall(program, representations, facts.body,
+                                     *instruction.result) == &instruction);
       const bool aggregateInputSlot =
           instruction.result && callee.returnType.kind == SemanticType::Class &&
           fixedArrayAggregateInputSlot(program, facts.body,
@@ -49797,8 +49860,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !(drop->dropType.classInstance || drop->dropType.lambdaInstance ||
                 (drop->dropType.fixedArray &&
                  drop->dropType.type == body.returnType &&
-                 cppMirOwningArrayPlacementResult(program_,
-                                                  body.returnType))) ||
+                 cppMirOwningArrayPlacementResult(program_, body.returnType)) ||
+                (drop->dropType.type == body.returnType &&
+                 cppMirOwningPayloadEnumPlacementResult(
+                     program_, representations_, body.returnType))) ||
               (placementDirectReturnCall(program_, representations_, body,
                                          place->value) == nullptr &&
                returnMoveDefinition(body, place->value) == nullptr &&
@@ -53491,6 +53556,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // This value has no C++ local: only the exact verified
         // PayloadConstruct -> TransferOut -> Return schedule may publish it
         // through the transformed callable's result pointer.
+        return false;
+      }
+      if (failureForm && activePayloadEnumReturn && !directFreshPayloadReturn &&
+          returnMoveDefinition(body, block.terminator.value->value) ==
+              nullptr &&
+          placementDirectReturnCall(program_, representations_, body,
+                                    block.terminator.value->value) == nullptr) {
+        // The caller passes uninitialized storage. Only a verified Move or
+        // a call constructing directly in that storage may publish another
+        // active value; assignment would overwrite a nonexistent object.
         return false;
       }
       if (block.terminator.returnLoan && *block.terminator.returnLoan != 0) {

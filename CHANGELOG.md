@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.395.1 — Owning enum results and class arguments through lambdas
+
+- Fix generated C++ that failed to compile with "use of undeclared
+  identifier" when a function returns the result of a call that produces an
+  enum with an owning payload, such as `return invoke(holder::one(r), 1);`
+  for a lambda or `return transfer(holder::one(r), 1);` for a function. The
+  callee now constructs the result directly in the caller's storage.
+- Fix an internal compiler error when such a returned call takes a moved
+  parameter, as in `return invoke(std::move(value), 1);`.
+- Fix an internal compiler error when a lambda takes an owning class argument
+  by value followed by an argument that can fail, such as
+  `take(std::move(token), divide(1))`. If the later argument fails, the
+  prepared argument is destroyed exactly once.
 ## 0.395.0 — Editor profiles and inactive-code highlighting
 
 - Select a project build profile in the editor with `settings.gti.profile` or

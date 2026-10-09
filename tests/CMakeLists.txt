@@ -2553,6 +2553,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(lambda_base_reference_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME lambda_owning_transport_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/lambda_owning_transport_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(lambda_owning_transport_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME owning_function_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/owning_function_runtime_test.py"
