@@ -36,6 +36,26 @@ static_assert(nested<1>() == 11 && nested<5>() == 22);
 static_assert(sum<4>() == 10);
 static_assert(width_class<int>() == 4 && width_class<double>() == 8);
 
+struct underlying_probe<E, U> {
+  bool matches() requires std::enum_underlying<E, U> { return true; }
+};
+enum class narrow_tag : uint8_t { low, high };
+enum class wide_tag : uint16_t { low, high };
+constexpr int tag_width<E>() {
+  if constexpr (requires(underlying_probe<E, uint8_t>& probe) {
+                  { probe.matches() } -> bool;
+                }) {
+    return 8;
+  } else if constexpr (requires(underlying_probe<E, uint16_t>& probe) {
+                         { probe.matches() } -> bool;
+                       }) {
+    return 16;
+  }
+  return 0;
+}
+static_assert(tag_width<narrow_tag>() == 8 && tag_width<wide_tag>() == 16 &&
+              tag_width<int>() == 0);
+
 struct Shape<uint64_t N> {
   int value;
   constexpr Shape(int value) : value(value) {
@@ -78,6 +98,10 @@ int main() {
   if (first.size() != 3 || second.size() != 12) { return 2; }
   if (nested<1>() != 11 || nested<5>() != 22 || sum<4>() != 10) { return 4; }
   if (width_class<int>() != 4 || width_class<double>() != 8) { return 5; }
+  if (tag_width<narrow_tag>() != 8 || tag_width<wide_tag>() != 16 ||
+      tag_width<int>() != 0) {
+    return 7;
+  }
   mut Holder<0> holder = Holder<0>();
   if (holder.restore() != 3) { return 6; }
   return restore<0>() == 3 && restore<4>() == 6 ? 0 : 3;
