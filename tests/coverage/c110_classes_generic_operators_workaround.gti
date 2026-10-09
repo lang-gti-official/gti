@@ -35,7 +35,7 @@ public:
   int32_t count() { return this.n; }
 };
 
-V sum_all<V>(std::vector<V>& items, V zero) requires std::addable<V> && std::copyable<V> {
+V sum_all<V>(std::vector<V>& items, V zero) requires std::addable<V> && std::copyable<V> && std::vector_element<V> {
   mut V acc = zero;
   for (mut std::size_t i = 0; i < items.size(); i++) {
     acc = acc + items[i];

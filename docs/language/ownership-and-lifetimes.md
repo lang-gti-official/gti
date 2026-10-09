@@ -1125,8 +1125,18 @@ unavailable and the final owner cleans the environment exactly once.
 
 This is not lambda-result inference or type erasure. A transported lambda must
 be movable and its capture state cannot contain a reference, tracked borrow, or
-raw pointer. The examples above describe the original exact-transport minimum,
-not a restriction to one-field owners: ordinary direct by-value generic
+unreviewed raw pointer. A class's effective `unsafe_transfer` assertion is an
+explicit unsafe boundary for its internal raw representation, including when
+that class is nested inside another owned capture. Its author must guarantee
+that movement preserves the represented ownership and pointer validity through
+final cleanup; this is not inferred from a destructor or a library name.
+A false conditional assertion, `unsafe_share` alone, or a tracked borrowed
+field cannot provide that permission. Direct raw-pointer captures remain
+rejected. This revises the original blanket recursive raw-field rejection so
+source-defined owning types retain the same transport as private owners.
+Example 55 demonstrates a source-defined string capture; unrelated reviewed
+owners have the same rule. The examples above describe the original
+exact-transport minimum, not a restriction to one-field owners: ordinary direct by-value generic
 parameters, concrete field storage, final value packs, and explicit interface
 erasure also support source-defined owning callback wrappers. Each concrete
 body must retain its exact callable identity, ownership, and cleanup schedule.

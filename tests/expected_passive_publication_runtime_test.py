@@ -25,7 +25,8 @@ if __name__ == "__main__":
                        f"{plain.name}:{primary_line}; secondary [GTI-R0002]\n")
     main(names=("expected_passive_publication", "expected_passive_publication_failure",
                 "expected_generated_passive_construction", "expected_constructor_fields",
-                "expected_plain_payload_construction", "expected_reference_no_phantom"),
+                "expected_plain_payload_construction", "expected_reference_no_phantom",
+                "expected_field_no_phantom"),
          cases={"expected_passive_publication_failure": [
              (arguments, (70, "caller cleaned\n",
                           f"expected_passive_publication_failure.gti:{line}: "

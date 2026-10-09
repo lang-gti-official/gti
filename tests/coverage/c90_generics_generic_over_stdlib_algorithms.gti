@@ -25,23 +25,23 @@ public:
 // Range algorithms need the caller to restate the range relation for the
 // dependent std::vector<T>; the element facts alone are not enough.
 std::ptrdiff_t count_matching<std::movable T, Predicate>(std::vector<T>& values, mut Predicate keep)
-  requires std::predicate<Predicate, T> &&
+  requires std::vector_element<T> && std::predicate<Predicate, T> &&
            std::range_predicate<Predicate, std::vector<T>> {
   return std::count_if(values, std::move(keep));
 }
 
 void sort_by<std::relocatable T, Compare>(mut std::vector<T>& values, mut Compare compare)
-  requires std::comparator<Compare, T> {
+  requires std::vector_element<T> && std::comparator<Compare, T> {
   std::sort(values, std::move(compare));
 }
 
 bool has_value<std::movable T>(std::vector<T>& values, T& wanted)
-  requires std::equality_comparable<T> && std::range_of<std::vector<T>, T> {
+  requires std::vector_element<T> && std::equality_comparable<T> && std::range_of<std::vector<T>, T> {
   return std::contains(values, wanted);
 }
 
 T newest<T>(std::vector<T>& values, T fallback)
-  requires std::totally_ordered<T> && std::copyable<T> {
+  requires std::vector_element<T> && std::totally_ordered<T> && std::copyable<T> {
   auto last = values.end();
   auto best = std::max_element(values.begin(), last);
   if (best != last) { return *best; }

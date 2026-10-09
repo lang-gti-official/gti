@@ -684,6 +684,30 @@ The complete aggregate native matrix passes 96 successes, 42 bounds failures,
 (124.59 seconds). This includes the previously failing structured-bindings
 example, both C++ standards and O0/O1/O3, without copy elision.
 
+The next corpus repair preserves numeric generic storage facts, rejects forged
+call-result loan kinds, and admits owned callback captures whose raw
+implementation state is covered by a valid unsafe transfer assertion. Direct
+raw captures, references, tracked views, sharing-only assertions and false
+conditional assertions remain rejected. The owning-callable, conditional
+capability and managed-thread native gates pass. Examples 33 and 55 pass all
+eight native modes each, including no elision and ASan/UBSan.
+
+All 20 previously failing language-corpus cases pass in the targeted retry;
+the subsequent complete language coverage gate passes in 139.03 seconds.
+Generic fixtures now state their actual element constraints; resource fixtures
+retain exact cleanup, descriptor and allocation-count assertions under the
+approved one-region prefix policy. A nested JSON codec exposed a real backend
+defect: field projections from an Expected payload spuriously declared separate
+native objects. Declaration planning now shares the checked payload-view rule
+with operand emission. The unrelated two-level owning-field fixture has no
+extra default construction or destruction in all eight native modes; missing
+field identities and mismatched types still reject admission. The complete
+seven-fixture Expected publication matrix and preflight/census gates pass.
+The six original optimizer safety and three native proof requirements remain
+open, as do final full-suite, current inventories, installed consumers and
+performance acceptance. The 0.394.3 candidate remains an unfinished migration,
+not a release-ready toolchain.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs

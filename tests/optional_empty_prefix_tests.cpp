@@ -189,6 +189,14 @@ void checkFieldReplacement() {
   const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t assignments = 0;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto &owners = frontend.hir.classInstances();
+    const auto owner =
+        std::find_if(owners.begin(), owners.end(), [&](const auto &candidate) {
+          return candidate.id == constructor.owner;
+        });
+    if (owner == owners.end() || !owner->source ||
+        owner->source->name().lexeme != "Holder")
+      continue;
     for (const auto &block : constructor.body.blocks) {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Assign ||

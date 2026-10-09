@@ -1067,11 +1067,15 @@ describe this case as general callable storage or escape.
 
 `GTI-S2046` also owns failure at the bounded owned-callable boundary. It points
 at the argument when the caller omits `std::move`, the concrete callable is not
-movable, its stored state contains a reference, tracked borrow, or raw pointer,
-or the selected generic result/field does not preserve its exact type. Relate
+movable, its stored state contains a reference, tracked borrow, or unreviewed
+raw pointer, or the selected generic result/field does not preserve its exact type. Relate
 the diagnostic to the generic parameter declaration. These are source contract
 errors; forged return, field, constructor, or move evidence is instead rejected
 by MIR verification as compiler corruption.
+An effective class-level unsafe transfer assertion covers that class's raw
+implementation state, but never a tracked borrow. Hints distinguish this
+audited owner boundary from directly capturing a raw address and never propose
+adding an unsafe assertion as an automatic fix.
 
 The same owned-entry checks apply to a nominal generic carrier containing a
 closure, not only a direct type parameter. A reference or bodyless parameter

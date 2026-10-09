@@ -209,6 +209,45 @@ int main() {
     expect(!gti_test::emitCppText(dependentResult).empty(),
            "concrete dependent relocation remains verified through MIR");
   for (const std::string constraint :
+       {"std::numeric", "std::signed_numeric", "std::integral",
+        "std::signed_integral", "std::unsigned_integral",
+        "std::floating_point"}) {
+    const auto numeric = analyzeWithStandardLibrary(
+        "numeric-storage.gti",
+        "#include <std/memory>\n#include <std/vector>\n"
+        "struct Parcel<T> { T item; }; "
+        "void require_bits<std::bitwise_relocatable T>() {} "
+        "void require_storage<T>() requires std::storage_element<T> {} "
+        "void check<" +
+            constraint +
+            " T>() { "
+            "require_bits<Parcel<T>>(); require_storage<T>(); "
+            "mut std::vector<T> values{}; values.push_back(T(3)); "
+            "} int main() { check<" +
+            (constraint == "std::floating_point"      ? "double"
+             : constraint == "std::unsigned_integral" ? "uint32_t"
+                                                      : "int32_t") +
+            ">(); return 0; }");
+    expect(
+        numeric.canGenerateCode(),
+        "numeric contracts retain scalar relocation and storage guarantees: " +
+            constraint);
+    if (numeric.canGenerateCode())
+      expect(
+          !gti_test::emitCppText(numeric).empty(),
+          "numeric vector and unrelated record uses reach verified emission");
+  }
+  for (const std::string requirement :
+       {"std::copyable<T>", "std::relocatable<T>",
+        "std::numeric<T> || std::copyable<T>"}) {
+    requireRejected("#include <std/memory>\n"
+                    "void need<T>() requires std::storage_element<T> {} "
+                    "void check<T>() requires " +
+                        requirement +
+                        " { need<T>(); } int main() { return 0; }",
+                    "storage_element");
+  }
+  for (const std::string constraint :
        {"std::move_constructible<T>",
         "std::relocatable<T> || std::move_constructible<T>"}) {
     requireRejected("struct Parcel<T> { T item; }; "
