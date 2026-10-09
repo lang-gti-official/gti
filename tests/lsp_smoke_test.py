@@ -101,12 +101,13 @@ def discover_standard_library_root(executable):
 
 
 class LspSession:
-    def __init__(self, executable, arguments=None):
+    def __init__(self, executable, arguments=None, environment=None):
         self.process = subprocess.Popen(
             [executable, *(arguments or [])],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=environment,
         )
         self.buffer = b""
 
@@ -582,6 +583,111 @@ def test_unsaved_dependency_reanalysis(executable, root):
         )
     finally:
         session.close()
+
+
+def test_dependency_chain_reanalysis_count(executable, root):
+    # Each file includes the one before it, so every later file depends on
+    # every earlier one. Re-analysing an unchanged dependant must not make the
+    # dependants above it discard their results and analyse again.
+    paths = [root / f"chain-{index}.gti" for index in range(5)]
+    sources = ["int chain_0() { return 0; }\n"]
+    for index in range(1, len(paths)):
+        sources.append(
+            f'#include "chain-{index - 1}.gti"\n'
+            f"int chain_{index}() {{ return chain_{index - 1}() + 1; }}\n"
+        )
+    for path, source in zip(paths, sources):
+        path.write_text(source, encoding="utf-8")
+    uris = [path.resolve().as_uri() for path in paths]
+    trace_path = root / "chain-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+
+    def analyses():
+        if not trace_path.exists():
+            return []
+        records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+        ]
+        return [
+            pathlib.Path(record["uri"]).name
+            for record in records
+            if record["kind"] == "analysis"
+        ]
+
+    session = LspSession(
+        executable,
+        environment=dict(os.environ, GTI_LSP_FRONTEND_TRACE=str(trace_path)),
+    )
+    closed = False
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        # Opening from the base upward never invalidates an open dependant.
+        for uri, source in zip(uris, sources):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "gti",
+                            "version": 1,
+                            "text": source,
+                        }
+                    },
+                }
+            )
+            opened = session.receive_until(
+                lambda message, uri=uri: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+            )
+            assert not has_error_diagnostics(opened["params"])
+        assert len(analyses()) == len(paths), analyses()
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uris[0], "version": 2},
+                    "contentChanges": [{"text": sources[0] + "// edited\n"}],
+                },
+            }
+        )
+        # A request waiting on the top document runs its analysis before the
+        # dependants queued ahead of it.
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uris[-1]},
+                    "position": {"line": 1, "character": 5},
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 2)
+        # Shutdown drains every pending analysis, including retries.
+        session.close()
+        closed = True
+        reanalyzed = analyses()[len(paths):]
+        assert sorted(reanalyzed) == sorted(path.name for path in paths), reanalyzed
+        assert reanalyzed.index(paths[-1].name) <= 1, reanalyzed
+    finally:
+        if not closed:
+            session.close()
 
 
 def test_duplicate_dependency_diagnostics_keep_include_context(executable, root):
@@ -9873,7 +9979,7 @@ def main():
         raise SystemExit(
             "usage: lsp_smoke_test.py /path/to/gti_lsp "
             "[allocator-policy|atomic|mutex|constexpr-aggregate|"
-            "expected-payload-range|constraint-provenance|function-contracts|io|mutable-stored|owner-dependent-views]"
+            "expected-payload-range|constraint-provenance|function-contracts|io|mutable-stored|owner-dependent-views|dependency-chain]"
         )
 
     if len(sys.argv) == 3:
@@ -9925,6 +10031,12 @@ def main():
             with tempfile.TemporaryDirectory(prefix="gti-lsp-contracts-") as root:
                 test_function_contract_diagnostics(sys.argv[1], pathlib.Path(root))
             print("GTI function contract LSP test passed")
+        elif sys.argv[2] == "dependency-chain":
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-chain-") as root:
+                test_dependency_chain_reanalysis_count(
+                    sys.argv[1], pathlib.Path(root)
+                )
+            print("GTI dependency chain reanalysis LSP test passed")
         elif sys.argv[2] == "io":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-io-") as root:
                 test_io_tooling_boundary(sys.argv[1], pathlib.Path(root))
@@ -10900,6 +11012,7 @@ def main():
     assert by_id[4]["result"] is None
 
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
+    test_dependency_chain_reanalysis_count(sys.argv[1], root)
     test_duplicate_dependency_diagnostics_keep_include_context(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)

@@ -70,6 +70,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testConditionalOwningArgumentReceiverAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testFreshClassPayloadOperandStaging",
       "suite": "preflight"
     },
