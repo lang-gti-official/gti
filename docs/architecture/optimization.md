@@ -464,6 +464,16 @@ field can therefore justify subsequent scalar arithmetic, including an exact
 raw-parameter initialization helper, without removing the raw load or granting
 an unsafe operation new permission.
 
+Current field addresses are keyed by typed owned paths independently of the
+body's materialized place table. A getter-only wrapper can therefore relay a
+nested field without directly loading that field itself. Function entry walks
+ordinary receiver/checked-reference records with a 1,024-node, 32-level budget;
+only raw-pointer leaves receive address identities. Exact assignment updates
+the stored address, joins retain equal addresses, and overlapping writes or
+unknown effects invalidate the map. Constructor receivers, stored-reference
+traversal and raw pointee contents are not seeded. This is address transport,
+not initialized-region coverage or proof that an incoming pointer is valid.
+
 This rule and its exact call postcondition do not initialize unknown pointer
 contents at entry. Successful vacant construction may additionally retain up
 to 64 exact non-byte owned fields already known live at construction time. A

@@ -19,6 +19,8 @@ def main():
         "bad_ambiguous_field": "owner.bad_ambiguous_field(false)",
         "bad_mutating_field": "owner.bad_mutating_field()",
         "bad_opaque_field": "owner.bad_opaque_field()",
+        "bad_reassigned_nested": "relay.bad_reassigned_nested()",
+        "bad_opaque_nested": "relay.bad_opaque_nested()",
     }
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O2", "O3")]
