@@ -5283,6 +5283,13 @@ same behavior, invalid-input, replay and performance guarantees.
   exact addresses at joins and retires overlapping/unknown writes. Constructor
   entry and raw pointee contents remain unproved. Unrelated nested controls and
   pointer-replacement/native-mutation negatives accompany this transport.
+  Checked scalar-reference transport now retains the actual pointer operand
+  of verified reference formation through exact source returns and local
+  carriers, independently of the lifetime witness. Loan endings and unproved
+  writes retire the identity; each read requires a current pointee value fact.
+  This covers exact scalar addresses only, not indexed initialized regions or
+  record-field envelopes. Differing/ambiguous pointers, native writes, checked
+  mutation and lifetime replacement remain negative controls.
   The migration safety suite retains the same ten failures reproduced with the
   exact prerequisite checkpoint, including missing indexed-element envelopes;
   those acceptance assertions are unchanged.

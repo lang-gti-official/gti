@@ -474,6 +474,18 @@ unknown effects invalidate the map. Constructor receivers, stored-reference
 traversal and raw pointee contents are not seeded. This is address transport,
 not initialized-region coverage or proof that an incoming pointer is valid.
 
+The same typed address may flow into a verified raw-to-checked reference
+formation and its exact source-return relays. The analysis records the actual
+pointer operand against the produced loan; it never uses that loan's lifetime
+witness as a pointee. Explicit loan transfers and local reference carriers
+preserve this identity, while loan endings and unproved writes retire it.
+Scalar loads consult the still-current construction/value fact at that address,
+not a value cached when the reference was formed. Read-only pointer qualification
+preserves identical pointee types; erasure/retyping does not. Unknown effects,
+differing return addresses, lifetime replacement and checked writes retain the
+normal failure checks. Exact non-writing source address relays may return a
+borrow without treating that return escape as a write to the witness.
+
 This rule and its exact call postcondition do not initialize unknown pointer
 contents at entry. Successful vacant construction may additionally retain up
 to 64 exact non-byte owned fields already known live at construction time. A
