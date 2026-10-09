@@ -5114,12 +5114,19 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   not raw initialized-element coverage. The six original optimizer and three
   native-evidence requirements remain open; these corrections are prerequisites,
   not migration acceptance.
-  A plain-counter reduction also reproduces lost precision after four ordinary
-  increment-method calls: subtracting four from the observed unsigned count
-  retains its check despite the exact call sequence. The next call-summary
-  prerequisite must preserve a proved entry-relative field update across
-  repeated calls, with alias/mutation and conditional-update negatives; context
-  joining alone must not invent an arbitrary number of successful updates.
+  The plain-counter reduction is now repaired by a bounded, typed entry-relative
+  receiver-field summary. Repeated increments/decrements and nested forwarding
+  apply a proved delta to the current caller's field, rather than substituting
+  the joined absolute postcondition of all invocations. Only identical deltas
+  on every successful exit survive; aliases, raw mutation, reset, assignment
+  from another field and conditional updates retain their checks. Net-zero
+  updates do not discharge an intermediate overflow. The same general rule
+  recovers exact length four after four source-owner appends. Constructor
+  singleton entry envelopes and closed non-writing observer calls preserve
+  their independently established facts; arbitrary loop-produced singleton
+  values are not treated as invariants. The expanded 456-case native matrix
+  and eight focused compiler/optimizer gates pass, but the original six safety
+  and three native-evidence requirements still fail without weakened tests.
   This is separate from the required raw-region initialization/element-value
   provenance, which still needs coverage, actual address identity, and
   conservative invalidation rather than a witness-to-pointee equivalence.

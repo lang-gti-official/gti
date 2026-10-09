@@ -486,6 +486,39 @@ profile. A scalar copied into a local binding does not retain receiver identity;
 mutable getters and by-value object inputs do not export this return contract.
 Implicit receiver roots remain analysis-only and never appear in proof records.
 
+Successful ordinary member summaries additionally retain bounded entry-relative
+integer-field updates: one exact owned receiver field equals its own entry
+value plus a proved constant offset. The relation is derived from typed loads,
+same-domain add/subtract, inert SSA staging, exact field assignment and nested
+closed calls, never by subtracting interval endpoints. It remains useful when
+different invocations have different starting values. Four calls that each
+increment a counter once therefore preserve four increments rather than using
+one joined absolute postcondition at every call. The source prefix owner's
+repeated append length is a client of this general rule.
+
+Only the existing non-byte ordinary owned-field profile participates. Entry
+identity does not require a known numerical value; traversal is bounded to
+1,024 visited type/field nodes and depth 32, with excess paths omitted. Offsets
+must fit checked signed 64-bit arithmetic, while applying an update still uses
+the field's actual checked integer domain. Every successful exit and CFG join
+must agree on field, domain and offset. Conditional/differing updates, arbitrary
+replacement, writes through unproved paths, movement and unknown/raw/lifetime
+barriers retire the relation. Distinct field IDs are not disjointness evidence
+for stored references. The existing independently proved vacant-construction
+and by-value parameter-storage rules can preserve eligible owned fields.
+
+At an exact call the update transforms that caller's current field facts, with
+evidence rebased to the call rather than exporting callee-local MIR identities.
+Nested wrappers compose only exact same-field updates. Existing absolute
+postconditions can retain an independently proved widening envelope; exact
+constructor-initializer values carry a stable entry envelope, unlike arbitrary
+loop-produced singleton values. Closed non-writing, non-synchronizing and
+non-escaping calls do not erase caller memory merely because their numerical
+postcondition is absent. Opaque calls retain their barriers. No instruction,
+failure edge or cleanup schedule is removed by these summary rules: even a
+net-zero update cannot erase an overflowing intermediate operation. Independent
+canonical replay derives the relation again; O0 remains transformation-free.
+
 Context discovery is also bounded by complete summaries: an earlier
 source-allocation or raw object-lifetime call can prevent completion of a
 required closed-call summary, leaving later call contexts on that path

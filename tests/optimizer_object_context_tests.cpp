@@ -882,7 +882,8 @@ int main() {
       if (!function.source)
         continue;
       const auto name = function.source->name().lexeme;
-      if (name != "initial_length" && name != "reserved_capacity")
+      if (name != "initial_length" && name != "reserved_capacity" &&
+          name != "appended_length")
         continue;
       ++observations;
       const auto *fact = analysis.find(
@@ -896,8 +897,9 @@ int main() {
              "ordinary source fields publish after temporary allocation-result "
              "cleanup without inferring fresh or initialized raw memory");
     }
-    expect(observations == 2,
-           "both source capacity and empty length postconditions are observed");
+    expect(
+        observations == 3,
+        "source capacity, empty and repeatedly appended lengths are observed");
     for (const auto level :
          {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
           lang::OptimizationLevel::O3})
@@ -1038,6 +1040,135 @@ int main() {
               rejected = true;
             }
     expect(rejected, "budget rejection exercises canonical proof rejection");
+  }
+  const auto updatesPath =
+      sourcePath.parent_path() / "optimizer_receiver_updates.gti";
+  const std::ifstream updatesFile(updatesPath);
+  const std::string updatesSource{
+      std::istreambuf_iterator<char>(updatesFile.rdbuf()), {}};
+  const auto updates = lang::Frontend().analyze(
+      updatesPath, updatesSource, {library / "prelude.gti", updatesPath},
+      {{std::filesystem::weakly_canonical(updatesPath).string(),
+        updatesSource}},
+      {library});
+  expect(updates.canGenerateCode(),
+         "entry-relative receiver updates must lower");
+  if (updates.canGenerateCode()) {
+    const auto contexts = lang::analyzeMirClosedCallSafetyChecks(updates.mir);
+    expect(contexts.converged, "entry-relative receiver updates must converge");
+    std::size_t conditionalBodies = 0;
+    for (const auto &function : updates.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == "conditional") {
+        const auto *context = contexts.find(
+            {.kind = lang::MirBodyKind::Function, .owner = function.id});
+        expect(context && context->reached && context->closed,
+               "the conditional update must exercise an admitted joined body");
+        ++conditionalBodies;
+      }
+    expect(conditionalBodies == 1,
+           "one admitted conditional-update control is required");
+    std::size_t observations = 0;
+    std::size_t negatives = 0;
+    for (const auto &function : updates.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto name = function.source->name().lexeme;
+      if (!name.starts_with("observe_") && !name.starts_with("bad_"))
+        continue;
+      const auto *context = contexts.find(
+          {.kind = lang::MirBodyKind::Function, .owner = function.id});
+      expect(context && context->reached,
+             "receiver update controls must have reached contexts: " +
+                 std::string(name));
+      if (name.starts_with("observe_")) {
+        ++observations;
+        expect(
+            context && context->returnInterval &&
+                context->returnInterval->lower == lang::CheckedIntegerValue{} &&
+                context->returnInterval->upper == lang::CheckedIntegerValue{},
+            "exact repeated/nested/decremented field result: " +
+                std::string(name));
+      } else
+        ++negatives;
+    }
+    expect(observations == 3 && negatives == 6,
+           "the complete receiver update inventory is checked");
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = updates.hir, .mir = updates.mir, .level = level});
+      expect(optimized.valid(),
+             "entry-relative field evidence independently replays");
+      if (level == lang::OptimizationLevel::O0)
+        expect(optimized.report.transformations.empty(),
+               "receiver updates do not transform O0");
+      for (const auto &record : optimized.report.transformations)
+        expect(std::find(record.relatedPlaces.begin(),
+                         record.relatedPlaces.end(),
+                         0) == record.relatedPlaces.end(),
+               "receiver updates publish no implicit MIR root");
+      for (const auto &function : updates.hir.functionInstances()) {
+        if (!function.source)
+          continue;
+        const auto name = function.source->name().lexeme;
+        const bool positive = name.starts_with("observe_");
+        if (!positive && !name.starts_with("bad_") && name != "up")
+          continue;
+        std::size_t proved = 0;
+        const auto *body = optimized.mir.findFunctionInstance(function.id);
+        for (const auto &block : body->body.blocks)
+          for (const auto &instruction : block.instructions)
+            proved += std::count_if(
+                instruction.safetyDischarges.begin(),
+                instruction.safetyDischarges.end(), [](const auto &proof) {
+                  return proof.family ==
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                });
+        expect(proved ==
+                   (positive && level != lang::OptimizationLevel::O0 ? 1 : 0),
+               "receiver updates preserve negative checks: " +
+                   std::string(name));
+      }
+    }
+    std::size_t rejected = 0;
+    for (const auto &function : updates.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto name = function.source->name().lexeme;
+      if (!name.starts_with("bad_") && name != "up")
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      const auto *body = lang::findMirBody(updates.mir, address);
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto &outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto forged = updates.mir;
+              lang::MirEditor editor(forged, "forged-receiver-update");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "canonical replay rejects a stale/conditional receiver "
+                     "update");
+              ++rejected;
+            }
+    }
+    expect(rejected == 6, "all five mutation/branch negatives and first "
+                          "failure reject forged proofs");
+  } else {
+    for (const auto &diagnostic : updates.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
   return failures == 0 ? 0 : 1;
 }

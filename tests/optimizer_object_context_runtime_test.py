@@ -212,6 +212,43 @@ if __name__ == "__main__":
                                               "return 0;"))
         paths["nested_getter_success"] = path
         cases["nested_getter_success"] = [((), (0, "", ""))]
+        paths["source_prefix_fields"] = fixture.parent / "optimizer_source_prefix_fields.gti"
+        cases["source_prefix_fields"] = [((), (0, "", ""))]
+        updates = fixture.parent / "optimizer_receiver_updates.gti"
+        updates_source = updates.read_text()
+        updates_lines = updates_source.splitlines()
+        updates_dispatch = [text for text in updates_lines
+                            if text.strip().startswith(("if (true) return int(",
+                                                        "if (false) return int("))]
+        assert len(updates_dispatch) == 5
+        clean_updates = updates_source
+        for dispatch in updates_dispatch:
+            clean_updates = clean_updates.replace(dispatch, "")
+        updates_marker = "return int(bad_first_failure());"
+        assert clean_updates.count(updates_marker) == 1
+        for function in (None, "bad_conditional", "bad_reset", "bad_other",
+                         "bad_alias", "bad_raw", "bad_first_failure"):
+            name = f"receiver_{function or 'success'}"
+            path = pathlib.Path(temporary) / f"{name}.gti"
+            replacement = f"return int({function}());" if function else "return 0;"
+            path.write_text(clean_updates.replace(updates_marker, replacement))
+            paths[name] = path
+            error = ""
+            if function:
+                if function == "bad_first_failure":
+                    line = next(index for index, text in enumerate(updates_lines, 1)
+                                if "void up() mut" in text)
+                    operation = "addition"
+                else:
+                    start = next(index for index, text in enumerate(updates_lines, 1)
+                                 if text.startswith(f"uint64_t {function}("))
+                    line = next(index for index, text in enumerate(updates_lines, 1)
+                                if index > start and
+                                "return value.size() - uint64_t(2);" in text)
+                    operation = "subtraction"
+                error = (f"{path.name}:{line}: runtime error[GTI-R0001]: "
+                         f"integer_overflow in {operation}\n")
+            cases[name] = [((), (70 if function else 0, "", error))]
         getters = fixture.parent / "optimizer_getter_fields.gti"
         getter_source = getters.read_text()
         getter_lines = getter_source.splitlines()

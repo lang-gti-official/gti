@@ -54,6 +54,19 @@ struct FieldOrigin {
   friend bool operator==(const FieldOrigin &, const FieldOrigin &) = default;
 };
 
+// Equality with one owned receiver field at entry, not an interval inferred
+// from matching endpoints. Offsets are bounded checked signed-64 values;
+// arithmetic in the actual field still obeys its own checked integer domain.
+struct EntryRelativeField {
+  FieldPath field;
+  CheckedIntegerDomain domain;
+  CheckedIntegerValue offset;
+  Evidence evidence;
+  friend bool operator==(const EntryRelativeField &,
+                         const EntryRelativeField &) = default;
+};
+using EntryRelativeFields = std::map<FieldPath, EntryRelativeField>;
+
 [[nodiscard]] std::optional<FieldPath> fieldPath(const MirBody &body,
                                                  MirPlaceId rootId,
                                                  MirPlaceId placeId,
@@ -95,6 +108,8 @@ struct AbstractState {
   // Correlation with still-current owned storage, not an immutable value fact.
   // An implicit receiver root is analysis-only and never a MIR identity.
   std::map<MirValueId, FieldOrigin> fieldOrigins;
+  EntryRelativeFields entryRelativeFields;
+  std::map<MirValueId, EntryRelativeField> entryRelativeValues;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
   std::map<MirPlaceId, IntegerFieldFacts> aggregateElementIntegers;
   // Key zero is an analysis-only implicit This root. It carries ordinary
@@ -137,6 +152,7 @@ struct ClosedCallSummary {
   ObservedFact<IntegerFact> result;
   ObservedFact<FieldPath> receiverResultField;
   ObservedFact<ObjectFact> receiver;
+  EntryRelativeFields receiverUpdates;
   std::vector<ObservedFact<ObjectFact>> argumentObjects;
   ObservedFact<ObjectFact> constructed;
 
@@ -597,6 +613,97 @@ integerForOperand(const MirBody &body, const AbstractState &state,
 
 [[nodiscard]] bool singleton(const IntegerFact &fact) {
   return fact.lower == fact.upper;
+}
+
+[[nodiscard]] std::optional<EntryRelativeField>
+shiftEntryRelative(EntryRelativeField value, CheckedIntegerValue offset) {
+  const auto result =
+      evaluateCheckedIntegerBinary(CheckedIntegerOperation::Add, value.offset,
+                                   offset, {.width = 64, .signedValue = true});
+  if (!result || !std::holds_alternative<CheckedIntegerValue>(*result))
+    return std::nullopt;
+  value.offset = std::get<CheckedIntegerValue>(*result);
+  return value;
+}
+
+[[nodiscard]] std::optional<IntegerFact>
+applyEntryRelative(const IntegerFact &value, const EntryRelativeField &update) {
+  if (value.domain != update.domain)
+    return std::nullopt;
+  auto offset = normalizeCheckedInteger(update.offset);
+  auto operation = CheckedIntegerOperation::Add;
+  if (!checkedIntegerFits(offset, value.domain)) {
+    if (!offset.negative)
+      return std::nullopt;
+    offset.negative = false;
+    if (!checkedIntegerFits(offset, value.domain))
+      return std::nullopt;
+    operation = CheckedIntegerOperation::Subtract;
+  }
+  return binaryFact(operation, value,
+                    {.domain = value.domain, .lower = offset, .upper = offset});
+}
+
+[[nodiscard]] std::optional<EntryRelativeField>
+entryRelativeValue(const AbstractState &state, const MirOperand &operand) {
+  if (operand.kind != MirOperandKind::Value)
+    return std::nullopt;
+  const auto found = state.entryRelativeValues.find(operand.value);
+  return found != state.entryRelativeValues.end() &&
+                 constantIntegerDomain(operand.type) == found->second.domain
+             ? std::optional{found->second}
+             : std::nullopt;
+}
+
+template <typename Key>
+void joinEntryRelative(std::map<Key, EntryRelativeField> &target,
+                       const std::map<Key, EntryRelativeField> &incoming) {
+  for (auto entry = target.begin(); entry != target.end();) {
+    const auto found = incoming.find(entry->first);
+    if (found == incoming.end() || entry->second.field != found->second.field ||
+        entry->second.domain != found->second.domain ||
+        entry->second.offset != found->second.offset) {
+      entry = target.erase(entry);
+    } else {
+      entry->second.evidence =
+          merged(entry->second.evidence, found->second.evidence);
+      ++entry;
+    }
+  }
+}
+
+[[nodiscard]] std::optional<EntryRelativeField>
+computeEntryRelative(const MirBody &body, const AbstractState &state,
+                     const MirInstruction &instruction) {
+  if (!instruction.result)
+    return std::nullopt;
+  const auto domain = constantIntegerDomain(instruction.info.type);
+  if (instruction.operation == MirOperation::Identity &&
+      instruction.operands.size() == 1) {
+    auto value = entryRelativeValue(state, instruction.operands.front());
+    return value && domain == value->domain ? value : std::nullopt;
+  }
+  if ((instruction.operation != MirOperation::Add &&
+       instruction.operation != MirOperation::Subtract) ||
+      instruction.operands.size() != 2)
+    return std::nullopt;
+  auto value = entryRelativeValue(state, instruction.operands[0]);
+  auto constant = integerForOperand(body, state, instruction.operands[1]);
+  if (!value && instruction.operation == MirOperation::Add) {
+    value = entryRelativeValue(state, instruction.operands[1]);
+    constant = integerForOperand(body, state, instruction.operands[0]);
+  }
+  if (!value || !constant || !singleton(*constant) || domain != value->domain ||
+      constant->domain != value->domain)
+    return std::nullopt;
+  auto offset = constant->lower;
+  if (instruction.operation == MirOperation::Subtract)
+    offset.negative = !offset.negative;
+  if (!checkedIntegerFits(normalizeCheckedInteger(offset),
+                          {.width = 64, .signedValue = true}))
+    return std::nullopt;
+  value->evidence = merged(value->evidence, constant->evidence);
+  return shiftEntryRelative(*value, offset);
 }
 
 void stabilize(IntegerFact &fact) {
@@ -1482,6 +1589,8 @@ void invalidatePlaceRoot(const MirBody &body,
     state.objects.clear();
     state.loadedOrigins.clear();
     state.fieldOrigins.clear();
+    state.entryRelativeFields.clear();
+    state.entryRelativeValues.clear();
     state.aggregateOrigins.clear();
     state.objectValues.clear();
     return;
@@ -1489,6 +1598,34 @@ void invalidatePlaceRoot(const MirBody &body,
   const auto overlaps = [&](MirPlaceId place) {
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
+  // The relation belongs to an owned This path. Without such an exact path,
+  // an aliasing write may change any receiver field. Do not turn different
+  // place IDs into a disjointness claim.
+  const auto receiverPath = fieldPath(body, 0, destination, true);
+  const bool knownOwnedPath =
+      receiverPath &&
+      std::all_of(written->projections.begin(), written->projections.end(),
+                  [](const auto &projection) {
+                    return projection.kind == MirProjectionKind::Field;
+                  }) &&
+      (receiverPath->empty() ||
+       std::any_of(state.entryRelativeFields.begin(),
+                   state.entryRelativeFields.end(), [&](const auto &entry) {
+                     return receiverPath->size() <= entry.first.size() &&
+                            std::equal(receiverPath->begin(),
+                                       receiverPath->end(),
+                                       entry.first.begin());
+                   }));
+  const auto overlapsEntry = [&](const auto &entry) {
+    if (!knownOwnedPath)
+      return true;
+    const auto prefix =
+        std::min(receiverPath->size(), entry.second.field.size());
+    return std::equal(receiverPath->begin(), receiverPath->begin() + prefix,
+                      entry.second.field.begin());
+  };
+  std::erase_if(state.entryRelativeFields, overlapsEntry);
+  std::erase_if(state.entryRelativeValues, overlapsEntry);
   std::erase_if(state.fieldOrigins, [&](const auto &entry) {
     const auto &origin = entry.second;
     if (origin.root != 0 && !overlaps(origin.root))
@@ -1958,6 +2095,53 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   std::optional<IntegerFact> currentResultField;
   const auto invocation =
       exactMirInvocationSummary(closedCalls->program, body, instruction);
+  // A missing numerical postcondition is not a write. Closed, non-writing,
+  // non-escaping source calls retain caller memory even if analysis of local
+  // result preparation no longer contains the borrowed input's object fact.
+  const bool preservesMemory =
+      !summary.hasOpaqueEffects && !summary.mayWriteGlobals && invocation &&
+      !invocation->traits.writesPlace &&
+      !invocation->traits.writesUnknownMemory &&
+      !invocation->traits.maySynchronize && !invocation->receiverEscapes &&
+      std::none_of(invocation->argumentsEscape.begin(),
+                   invocation->argumentsEscape.end(),
+                   [](bool escapes) { return escapes; });
+  std::vector<std::pair<FieldOrigin, IntegerFact>> updatedFields;
+  EntryRelativeFields composedUpdates;
+  if (!summary.mayWriteGlobals && invocation &&
+      !invocation->traits.maySynchronize &&
+      summary.liveMemoryBarrier != LiveMemoryBarrier::Unknown) {
+    for (const auto &[path, update] : summary.receiverUpdates) {
+      const auto origin =
+          receiverFieldOrigin(closedCalls->program, address, body, aliases,
+                              state, instruction, path);
+      if (!origin)
+        continue;
+      if (const auto object =
+              extractObjectFact(body, aliases, origin->root, state))
+        if (const auto field = object->integers.find(origin->path);
+            field != object->integers.end())
+          if (auto fact = applyEntryRelative(field->second, update)) {
+            // Callee instruction/place identities are body-local. The call is
+            // the replay boundary; retain caller input evidence and this call.
+            add(fact->evidence, block.id);
+            addInstruction(fact->evidence, instruction.id);
+            updatedFields.emplace_back(*origin, std::move(*fact));
+          }
+      const auto *root = body.findPlace(origin->root);
+      if (origin->root && (!root || root->root != MirPlaceRootKind::This ||
+                           !root->projections.empty()))
+        continue;
+      if (const auto old = state.entryRelativeFields.find(origin->path);
+          old != state.entryRelativeFields.end() &&
+          old->second.domain == update.domain)
+        if (auto composed = shiftEntryRelative(old->second, update.offset)) {
+          add(composed->evidence, block.id);
+          addInstruction(composed->evidence, instruction.id);
+          composedUpdates.emplace(origin->path, std::move(*composed));
+        }
+    }
+  }
   if (resultField && !summary.mayWriteGlobals && invocation &&
       !invocation->traits.writesPlace &&
       !invocation->traits.writesUnknownMemory &&
@@ -2036,7 +2220,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       else
         applyObjectToOperand(body, aliases, *instruction.receiver, object,
                              state);
-    } else {
+    } else if (!preservesMemory) {
       invalidateObjectOperand(body, aliases, *instruction.receiver, state);
     }
   }
@@ -2054,11 +2238,41 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       else
         applyObjectToOperand(body, aliases, instruction.operands[index], object,
                              state);
-    } else {
+    } else if (!preservesMemory) {
       invalidateObjectOperand(body, aliases, instruction.operands[index],
                               state);
     }
   }
+  // Joined absolute postconditions describe every invocation. A proved
+  // entry-relative update instead transforms this particular caller's state.
+  // Publish it last so older nested summaries cannot widen it away.
+  for (auto &[origin, fact] : updatedFields) {
+    // A callee's absolute postcondition can impose an invariant envelope
+    // (for example a guarded increment never exceeds four). Retain that
+    // independently proved bound when it contains this caller's translated
+    // interval; otherwise normal context discovery must widen the callee.
+    if (const auto object =
+            extractObjectFact(body, aliases, origin.root, state))
+      if (const auto current = object->integers.find(origin.path);
+          current != object->integers.end() &&
+          current->second.domain == fact.domain &&
+          current->second.wideningEnvelope) {
+        const auto bounds = *current->second.wideningEnvelope;
+        if (compare(bounds.first, fact.lower) <= 0 &&
+            compare(bounds.second, fact.upper) >= 0) {
+          auto envelope = fact.wideningEnvelope.value_or(bounds);
+          if (compare(bounds.first, envelope.first) > 0)
+            envelope.first = bounds.first;
+          if (compare(bounds.second, envelope.second) < 0)
+            envelope.second = bounds.second;
+          fact.wideningEnvelope = envelope;
+          fact.evidence = merged(fact.evidence, current->second.evidence);
+        }
+      }
+    publishFieldFact(body, state, origin, fact);
+  }
+  for (auto &[path, update] : composedUpdates)
+    state.entryRelativeFields.insert_or_assign(path, std::move(update));
   if (instruction.result && resultField) {
     state.fieldOrigins.insert_or_assign(*instruction.result, *resultField);
     if (currentResultField) {
@@ -2069,6 +2283,17 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
           *currentResultField, block.id, instruction.id, *instruction.result);
       publishFieldFact(body, state, *resultField, *currentResultField);
     }
+    const auto *root = body.findPlace(resultField->root);
+    if (!resultField->root || (root && root->root == MirPlaceRootKind::This &&
+                               root->projections.empty()))
+      if (const auto relative =
+              state.entryRelativeFields.find(resultField->path);
+          relative != state.entryRelativeFields.end()) {
+        auto value = relative->second;
+        addInstruction(value.evidence, instruction.id);
+        addValue(value.evidence, *instruction.result);
+        state.entryRelativeValues[*instruction.result] = std::move(value);
+      }
   } else if (instruction.result)
     state.fieldOrigins.erase(*instruction.result);
   return true;
@@ -2088,6 +2313,8 @@ void killUnknownMemory(const MirBody &body, AbstractState &state) {
   state.objects.clear();
   state.loadedOrigins.clear();
   state.fieldOrigins.clear();
+  state.entryRelativeFields.clear();
+  state.entryRelativeValues.clear();
   state.aggregateOrigins.clear();
   state.objectValues.clear();
 }
@@ -2287,7 +2514,7 @@ implicitReceiverType(const MirProgram *program, MirBodyAddress address) {
     const MirProgram &program, MirBodyAddress address, const MirBody &body,
     const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
     const MirInstruction &instruction, const FieldPath &path) {
-  if (!instruction.receiver || !instruction.result)
+  if (!instruction.receiver)
     return std::nullopt;
   const MirPlaceId receiver =
       objectOriginForOperand(body, aliases, state, *instruction.receiver);
@@ -2332,6 +2559,10 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
   state.aggregateElementIntegers.clear();
   state.loadedOrigins.clear();
   state.fieldOrigins.clear();
+  std::erase_if(state.entryRelativeFields, [&](const auto &entry) {
+    return !liveScalarPath(program, address, body, 0, entry.first);
+  });
+  state.entryRelativeValues.clear();
   state.aggregateOrigins.clear();
   state.objectValues.clear();
   state.hasOpaqueEffects = true;
@@ -2380,7 +2611,12 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
   const auto *place = body.findPlace(source);
   std::map<MirPlaceId, ObjectFact> receivers;
   std::map<MirPlaceId, IntegerFact> fields;
+  EntryRelativeFields updates;
   if (place && independentValueParameter(program, address, *place)) {
+    updates = state.entryRelativeFields;
+    std::erase_if(updates, [&](const auto &entry) {
+      return !liveScalarPath(program, address, body, 0, entry.first);
+    });
     for (const auto &[root, object] : state.objects) {
       const auto *storage = body.findPlace(root);
       if (root && (!storage || storage->root != MirPlaceRootKind::This))
@@ -2404,6 +2640,7 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
     state.objects.insert_or_assign(root, std::move(object));
   for (auto &[root, fact] : fields)
     state.integerPlaces.insert_or_assign(root, std::move(fact));
+  state.entryRelativeFields.insert(updates.begin(), updates.end());
 }
 
 [[nodiscard]] bool scalarResultMove(const MirInstruction &instruction,
@@ -2437,6 +2674,8 @@ void applyInstruction(const MirBody &body,
   }
   const MirProgram *program =
       closedCalls == nullptr ? nullptr : &closedCalls->program;
+  if (instruction.result)
+    state.entryRelativeValues.erase(*instruction.result);
   const auto unknownEffectBarrier = [&] {
     killUnknownMemory(body, state);
     state.hasOpaqueEffects = true;
@@ -2573,6 +2812,12 @@ void applyInstruction(const MirBody &body,
             computeIntegerFact(body, state, instruction)) {
       state.integers[*instruction.result] = *fact;
     }
+    if (auto relative = computeEntryRelative(body, state, instruction)) {
+      add(relative->evidence, block.id);
+      addInstruction(relative->evidence, instruction.id);
+      addValue(relative->evidence, *instruction.result);
+      state.entryRelativeValues[*instruction.result] = std::move(*relative);
+    }
     if (const std::optional<IntegerFact> elements =
             aggregateArrayFact(body, state, instruction)) {
       state.arrayValues[*instruction.result] = *elements;
@@ -2606,6 +2851,13 @@ void applyInstruction(const MirBody &body,
       instruction.operands.size() == 1) {
     state.fieldOrigins.erase(*instruction.result);
     const MirOperand &source = instruction.operands.front();
+    if (source.kind == MirOperandKind::Value &&
+        source.type == instruction.info.type)
+      if (auto relative = entryRelativeValue(state, source)) {
+        addInstruction(relative->evidence, instruction.id);
+        addValue(relative->evidence, *instruction.result);
+        state.entryRelativeValues[*instruction.result] = std::move(*relative);
+      }
     if (const std::optional<IntegerFact> fact =
             integerForOperand(body, state, source)) {
       state.integers[*instruction.result] = rebased(
@@ -2640,6 +2892,18 @@ void applyInstruction(const MirBody &body,
     const MirOperand &source = instruction.operands.front();
     if (source.place != 0) {
       const MirPlaceId sourcePlace = canonicalPlace(aliases, source.place);
+      if (const auto path = fieldPath(body, 0, sourcePlace))
+        if (const auto found = state.entryRelativeFields.find(*path);
+            found != state.entryRelativeFields.end() &&
+            constantIntegerDomain(instruction.info.type) ==
+                found->second.domain) {
+          auto relative = found->second;
+          add(relative.evidence, block.id);
+          addInstruction(relative.evidence, instruction.id);
+          addValue(relative.evidence, *instruction.result);
+          addPlace(relative.evidence, sourcePlace);
+          state.entryRelativeValues[*instruction.result] = std::move(relative);
+        }
       const FixedArrayProjection projected =
           fixedArrayProjection(body, source.place);
       const MirPlaceId arrayPlace =
@@ -2747,6 +3011,31 @@ void applyInstruction(const MirBody &body,
             ? integerForPlace(body, state,
                               canonicalPlace(aliases, source.place))
             : integerForOperand(body, state, source);
+    const auto receiverPath = fieldPath(body, 0, destination);
+    auto relative = entryRelativeValue(state, source);
+    if (compoundCheckedOperation(instruction.operation)) {
+      relative.reset();
+      if (receiverPath && fact && singleton(*fact) &&
+          (instruction.operation == MirOperation::AddAssign ||
+           instruction.operation == MirOperation::SubtractAssign)) {
+        if (const auto found = state.entryRelativeFields.find(*receiverPath);
+            found != state.entryRelativeFields.end() &&
+            fact->domain == found->second.domain) {
+          auto offset = fact->lower;
+          if (instruction.operation == MirOperation::SubtractAssign)
+            offset.negative = !offset.negative;
+          if (checkedIntegerFits(normalizeCheckedInteger(offset),
+                                 {.width = 64, .signedValue = true})) {
+            relative = shiftEntryRelative(found->second, offset);
+            if (relative)
+              relative->evidence = merged(relative->evidence, fact->evidence);
+          }
+        }
+      }
+    } else if (instruction.operation != MirOperation::None &&
+               instruction.operation != MirOperation::Assign) {
+      relative.reset();
+    }
     if (compoundCheckedOperation(instruction.operation)) {
       fact = compoundIntegerFact(body, program, aliases, state, instruction);
     }
@@ -2758,8 +3047,24 @@ void applyInstruction(const MirBody &body,
         (!indexed || (!previousAggregateElements && !previousAggregateField))) {
       invalidatePlaceRoot(body, aliases, state, destination);
     }
+    if (receiverPath && relative && *receiverPath == relative->field &&
+        body.findPlace(destination) &&
+        constantIntegerDomain(body.findPlace(destination)->type) ==
+            relative->domain) {
+      add(relative->evidence, block.id);
+      addInstruction(relative->evidence, instruction.id);
+      addPlace(relative->evidence, destination);
+      state.entryRelativeFields[*receiverPath] = std::move(*relative);
+    }
     if (fact && projected.arrayPlace == 0) {
       IntegerFact stored = *fact;
+      // A constructor initializer executes once before the body. Its exact
+      // entry value can join a later callee's invariant envelope without
+      // treating arbitrary loop-produced singleton values as invariants.
+      if (address.kind == MirBodyKind::Constructor &&
+          instruction.constructorInitializer && receiverPath &&
+          singleton(stored))
+        stabilize(stored);
       add(stored.evidence, block.id);
       addInstruction(stored.evidence, instruction.id);
       addPlace(stored.evidence, destination);
@@ -3061,6 +3366,8 @@ void joinAggregateElementIntegers(
   joinAggregateElementIntegers(target.aggregateElementIntegers,
                                incoming.aggregateElementIntegers, widen);
   joinObjectFacts(target.objects, incoming.objects, widen);
+  joinEntryRelative(target.entryRelativeFields, incoming.entryRelativeFields);
+  joinEntryRelative(target.entryRelativeValues, incoming.entryRelativeValues);
   for (auto iterator = target.loadedOrigins.begin();
        iterator != target.loadedOrigins.end();) {
     const auto found = incoming.loadedOrigins.find(iterator->first);
@@ -3132,6 +3439,12 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
       state.fieldOrigins[parameter] = fieldOrigin->second;
     else
       state.fieldOrigins.erase(parameter);
+    if (auto relative = entryRelativeValue(state, argument)) {
+      addValue(relative->evidence, parameter);
+      state.entryRelativeValues[parameter] = std::move(*relative);
+    } else {
+      state.entryRelativeValues.erase(parameter);
+    }
   }
 }
 
@@ -4286,6 +4599,42 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
     stabilize(object);
     seedObjectFact(body, aliases, root, object, entry);
   }
+  // Identity with an entry field does not require a known numerical envelope.
+  // Seed from the same typed owned-path profile even when one calling context
+  // has an unknown/overflowing value. No raw pointee or stored reference is
+  // traversed, and large/deep records conservatively omit excess paths.
+  if (address.kind == MirBodyKind::Function) {
+    std::size_t remaining = 1024;
+    const auto seed = [&](const auto &self, const SemanticType &type,
+                          FieldPath path) -> void {
+      if (!remaining || path.size() > 32)
+        return;
+      --remaining;
+      if (const auto domain = constantIntegerDomain(type)) {
+        if (!path.empty() && liveScalarPath(&program, address, body, 0, path))
+          entry.entryRelativeFields.emplace(
+              path, EntryRelativeField{
+                        .field = path, .domain = *domain, .offset = {}});
+        return;
+      }
+      if (type.kind != SemanticType::Class)
+        return;
+      const auto record = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == type; });
+      if (record == program.classInstances().end() ||
+          record->kind == ClassKind::Union ||
+          record->compilerCapability != CompilerCapabilityTypeKind::None)
+        return;
+      for (const auto &field : record->declaredFields) {
+        auto nested = path;
+        nested.push_back(field.symbol);
+        self(self, field.type, std::move(nested));
+      }
+    };
+    if (const auto *type = implicitReceiverType(&program, address))
+      seed(seed, *type, {});
+  }
   return entry;
 }
 
@@ -4499,6 +4848,12 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   const auto *function = address.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(address.owner)
                              : nullptr;
+  if (function && function->owner) {
+    result.summary.receiverUpdates = exits.front().entryRelativeFields;
+    for (std::size_t index = 1; index < exits.size(); ++index)
+      joinEntryRelative(result.summary.receiverUpdates,
+                        exits[index].entryRelativeFields);
+  }
   if (function && function->owner &&
       !receiverAllowsMutation(function->receiverMutability) &&
       !result.summary.hasOpaqueEffects && !returnFields.empty() &&
