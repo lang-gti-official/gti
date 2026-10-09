@@ -1,0 +1,203 @@
+#include <std/memory>
+
+int copied_address() {
+  mut int value = 7;
+  unsafe {
+    int* first = &value;
+    int* second = first;
+    return *second + 1;
+  }
+}
+
+int replaced_address() {
+  mut int first = 7;
+  mut int second = 9;
+  unsafe {
+    mut int* pointer = &first;
+    int before = *pointer;
+    pointer = &second;
+    int after = *pointer;
+    return before + after;
+  }
+}
+
+class Meter {
+  mut int value = 7;
+public:
+  Meter() {}
+  int read_address() {
+    unsafe {
+      const int* pointer = &this.value;
+      return *pointer + 1;
+    }
+  }
+};
+
+int joined_same(bool choose) {
+  mut int value = 7;
+  unsafe {
+    mut int* pointer = &value;
+    if (choose) { pointer = &value; }
+    return *pointer + 1;
+  }
+}
+
+int bad_replaced() {
+  mut int first = 7;
+  mut int second = 2147483647;
+  unsafe {
+    mut int* pointer = &first;
+    pointer = &second;
+    return *pointer + 1;
+  }
+}
+
+int bad_joined(bool choose) {
+  mut int first = 7;
+  mut int second = 2147483647;
+  unsafe {
+    mut int* pointer = &first;
+    if (choose) { pointer = &second; }
+    return *pointer + 1;
+  }
+}
+
+int bad_alias() {
+  mut int value = 7;
+  unsafe {
+    int* pointer = &value;
+    mut int& alias = value;
+    alias = 2147483647;
+    return *pointer + 1;
+  }
+}
+
+int bad_raw_write() {
+  mut int value = 7;
+  unsafe {
+    int* pointer = &value;
+    *pointer = 2147483647;
+    return *pointer + 1;
+  }
+}
+
+struct PointerHolder {
+  mut int* address = nullptr;
+};
+
+int bad_pointer_alias() {
+  mut int first = 7;
+  mut int second = 2147483647;
+  mut PointerHolder owner{};
+  unsafe {
+    owner.address = &first;
+    mut PointerHolder& alias = owner;
+    alias.address = &second;
+    int* pointer = owner.address;
+    return *pointer + 1;
+  }
+}
+
+int bad_lifetime() {
+  mut int value = 7;
+  unsafe {
+    int* pointer = &value;
+    std::destroy_at(pointer);
+    std::construct_at(pointer, 2147483647);
+    return *pointer + 1;
+  }
+}
+
+unsafe int* return_address(int* address) { return address; }
+unsafe int* relay_address(int* address) {
+  unsafe { return return_address(address); }
+}
+unsafe int* redirected_address(mut int* address, int* other) {
+  address = other;
+  return address;
+}
+unsafe int* choose_address(bool choose, int* first, int* second) {
+  if (choose) return first;
+  return second;
+}
+unsafe int* overwrite_address(int* address) {
+  unsafe { *address = 2147483647; }
+  return address;
+}
+unsafe int* alias_write_address(int* address, mut int& alias) {
+  alias = 2147483647;
+  return address;
+}
+
+int returned_address() {
+  mut int value = 7;
+  unsafe {
+    int* pointer = return_address(&value);
+    return *pointer + 1;
+  }
+}
+int relayed_address() {
+  mut int value = 7;
+  unsafe {
+    int* pointer = relay_address(&value);
+    return *pointer + 1;
+  }
+}
+int redirected_result() {
+  mut int first = 2147483647;
+  mut int second = 7;
+  unsafe {
+    int* pointer = redirected_address(&first, &second);
+    return *pointer + 1;
+  }
+}
+int bad_return_write() {
+  mut int value = 7;
+  unsafe {
+    int* pointer = overwrite_address(&value);
+    return *pointer + 1;
+  }
+}
+int bad_return_choice(bool choose) {
+  mut int first = 7;
+  mut int second = 2147483647;
+  unsafe {
+    int* pointer = choose_address(choose, &second, &first);
+    return *pointer + 1;
+  }
+}
+int bad_return_redirect() {
+  mut int first = 7;
+  mut int second = 2147483647;
+  unsafe {
+    int* pointer = redirected_address(&first, &second);
+    return *pointer + 1;
+  }
+}
+int bad_return_alias() {
+  mut int value = 7;
+  unsafe {
+    int* pointer = alias_write_address(&value, value);
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  Meter meter{};
+  if (copied_address() != 8 || replaced_address() != 16 ||
+      meter.read_address() != 8 || joined_same(true) != 8) return 1;
+  if (returned_address() != 8 || relayed_address() != 8 ||
+      redirected_result() != 8) return 2;
+  if (bad_return_choice(false) != 8) return 3;
+  if (false) return bad_replaced();
+  if (false) return bad_joined(true);
+  if (false) return bad_alias();
+  if (false) return bad_raw_write();
+  if (false) return bad_pointer_alias();
+  if (false) return bad_lifetime();
+  if (false) return bad_return_write();
+  if (false) return bad_return_choice(true);
+  if (false) return bad_return_redirect();
+  if (false) return bad_return_alias();
+  return 0;
+}

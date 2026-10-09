@@ -194,7 +194,7 @@ void fill<Range, std::copyable T>(mut Range& values, T& value)
 void transform<std::movable T, Operation>(std::vector<T>& source,
                                            mut std::vector<T>& destination,
                                            mut Operation operation)
-  requires std::operation<Operation, T, T> {
+  requires std::vector_element<T> && std::operation<Operation, T, T> {
   for (mut size_t index = size_t(0); index < source.size(); index++) {
     T produced = operation(source[index]);
     destination[index] = std::move(produced);
@@ -203,7 +203,8 @@ void transform<std::movable T, Operation>(std::vector<T>& source,
 
 // In-place families retain one exclusive container borrow. Checked restoring
 // transfers permute initialized elements without copying or leaving a hole.
-void reverse<std::relocatable T>(mut std::vector<T>& values) {
+void reverse<std::relocatable T>(mut std::vector<T>& values)
+  requires std::vector_element<T> {
   if (values.size() < std::size_t(2)) {
     return;
   }
@@ -221,13 +222,13 @@ namespace detail {
 // element access even though the sorting caller owns an exclusive reborrow.
 bool sort_less_at<std::relocatable T>(std::vector<T>& values,
                                     size_t left, size_t right)
-  requires std::totally_ordered<T> {
+  requires std::vector_element<T> && std::totally_ordered<T> {
   return values[left] < values[right];
 }
 }
 
 void sort<std::relocatable T>(mut std::vector<T>& values)
-  requires std::totally_ordered<T> {
+  requires std::vector_element<T> && std::totally_ordered<T> {
   mut size_t end = values.size();
   mut size_t start = end / size_t(2);
   while (end > size_t(1)) {
@@ -260,7 +261,7 @@ void sort<std::relocatable T>(mut std::vector<T>& values)
 // sort overload promises stability. Compare must define a strict weak order.
 void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                     mut Compare compare)
-  requires std::comparator<Compare, T> {
+  requires std::vector_element<T> && std::comparator<Compare, T> {
   mut size_t end = values.size();
   mut size_t start = end / size_t(2);
   while (end > size_t(1)) {

@@ -3800,8 +3800,8 @@ def test_compiler_private_tooling_boundary(executable, root):
         "  int allocator_completion_probe = std::al;\n"
         "  int arena_completion_probe = std::ar;\n"
         "  int pool_completion_probe = std::po;\n"
-        "  int direct_probe = gti_internal::allocate_prefix_storage;\n"
-        "  int alias_probe = hidden::allocate_prefix_storage;\n"
+        "  int direct_probe = gti_internal::text_view_from_address;\n"
+        "  int alias_probe = hidden::text_view_from_address;\n"
         "  int private_completion_probe = gti_internal::sto;\n"
         "  return moved;\n"
         "}\n"
@@ -3881,8 +3881,8 @@ def test_compiler_private_tooling_boundary(executable, root):
         )
         for offset, private_name in (
             (alias_target, "gti_internal"),
-            (direct_root, "gti_internal::allocate_prefix_storage"),
-            (alias_use, "hidden::allocate_prefix_storage"),
+            (direct_root, "gti_internal::text_view_from_address"),
+            (alias_use, "hidden::text_view_from_address"),
             (private_completion_root, "gti_internal::sto"),
         ):
             position = lsp_position(source, offset)
@@ -3894,8 +3894,8 @@ def test_compiler_private_tooling_boundary(executable, root):
                 "application source."
             ), diagnostic
 
-        direct_leaf = source.index("allocate_prefix_storage", direct_root)
-        alias_leaf = source.index("allocate_prefix_storage", direct_leaf + 1)
+        direct_leaf = source.index("text_view_from_address", direct_root)
+        alias_leaf = source.index("text_view_from_address", direct_leaf + 1)
 
         def semantic_request(request_id, method, offset, request_uri=uri,
                              request_source=source):
@@ -4034,7 +4034,7 @@ def test_compiler_private_tooling_boundary(executable, root):
         assert public_move_token["modifiers"] & 8
 
         stdlib_path = (
-            discover_standard_library_root(executable) / "std" / "vector.gti"
+            discover_standard_library_root(executable) / "std" / "memory.gti"
         )
         if stdlib_path.is_file():
             stdlib_source = stdlib_path.read_text(encoding="utf-8")
@@ -4063,7 +4063,7 @@ def test_compiler_private_tooling_boundary(executable, root):
                 diagnostic.get("code") == "GTI-S2058"
                 for diagnostic in stdlib_publication["diagnostics"]
             )
-            private_call = stdlib_source.index("storage_read")
+            private_call = stdlib_source.index("text_view_from_address(address")
             trusted_hover = semantic_request(
                 17,
                 "textDocument/hover",
@@ -4071,7 +4071,7 @@ def test_compiler_private_tooling_boundary(executable, root):
                 stdlib_uri,
                 stdlib_source,
             )
-            assert "gti_internal::prefix_storage_read" in trusted_hover[
+            assert "gti_internal::text_view_from_address" in trusted_hover[
                 "contents"
             ]["value"]
             trusted_definition = semantic_request(
@@ -4082,7 +4082,11 @@ def test_compiler_private_tooling_boundary(executable, root):
                 stdlib_source,
             )
             assert trusted_definition is not None
-            assert trusted_definition["uri"] != stdlib_uri
+            assert trusted_definition["uri"] == stdlib_uri
+            private_declaration = stdlib_source.index("text_view_from_address<Owner>")
+            assert trusted_definition["range"]["start"]["line"] == (
+                lsp_position(stdlib_source, private_declaration)["line"]
+            )
     finally:
         session.close()
 

@@ -1,4 +1,5 @@
 #include "gti/mir_effects.h"
+#include "gti/checked_integer.h"
 #include "gti/mir_verifier.h"
 #include "mir_verification_queries.h"
 
@@ -85,9 +86,6 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .dropsValue = true,
                     .invokesUserCode = true}, // CleanupBeforeAssign.
-    MirEffectTraits{.readsPlace = true,
-                    .mayTrap = true,
-                    .dependsOnLoan = true}, // StorageConstructPreflight.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -184,67 +182,6 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     // StorageBoundsCheck: a pure comparison over two staged scalars whose
     // only effect is the defined-failure trap on an out-of-bounds index.
     MirEffectTraits{.mayTrap = true},
-    // AllocatePrefixStorage
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .allocates = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .initializesValue = true},
-    // PrefixStorageAppend
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .initializesValue = true,
-                    .invokesUserCode = true},
-    // PrefixStoragePop
-    MirEffectTraits{.writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .dropsValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageRead
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .startsLoan = true},
-    // PrefixStorageReadMut
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .startsLoan = true},
-    // PrefixStorageLength
-    MirEffectTraits{.readsUnknownMemory = true, .invokesRuntime = true},
-    // PrefixStorageRelocate
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageInsert
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .initializesValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageErase
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .invokesRuntime = true,
-                    .mayTrap = true,
-                    .movesValue = true,
-                    .dropsValue = true,
-                    .invokesUserCode = true},
-    // PrefixStorageTextView: a read-only owner-dependent view over the live
-    // character prefix.
-    MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
-    // PrefixStorageCString: a read-only owner-dependent NUL-terminated view.
-    MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
-    // PrefixStorageTryCString: validates the logical prefix before producing
-    // the same owner-dependent view, or a null value.
-    MirEffectTraits{.readsUnknownMemory = true, .startsLoan = true},
     // OptionalStorageHasValue: a pure read of inline engagement state.
     MirEffectTraits{
         .readsPlace = true, .removableWhenUnused = true, .reorderable = true},
@@ -318,17 +255,15 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .invokesRuntime = true,
                     .mayTrap = true},          // Panic
     MirEffectTraits{.initializesValue = true}, // SharedOwnerEmpty
-    // Promotion consumes the unique owner. Allocation rollback may execute
-    // the pointee's source cleanup through the explicit failure channel.
+    // Promotion consumes the unique owner. Exhaustion aborts before cleanup;
+    // successful publication does not execute the pointee's source body.
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .allocates = true,
                     .invokesRuntime = true,
                     .mayTrap = true,
                     .movesValue = true,
-                    .initializesValue = true,
-                    .dropsValue = true,
-                    .invokesUserCode = true}, // SharedOwnerFromUnique
+                    .initializesValue = true}, // SharedOwnerFromUnique
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .invokesRuntime = true,
@@ -400,11 +335,20 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .writesUnknownMemory = true,
                     .movesValue = true,
                     .initializesValue = true}, // ObjectRelocate
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectRelocateRange
     MirEffectTraits{.mayTrap = true},          // RequireVacantStorage
     MirEffectTraits{.mayTrap = true},          // RequireLiveStorage
     MirEffectTraits{.mayTrap = true},          // RequireRelocationCapacity
     MirEffectTraits{.mayTrap = true},          // RequireRelocationSource
     MirEffectTraits{.mayTrap = true},          // RequireRelocationDestination
+    MirEffectTraits{.startsLoan = true,
+                    .dependsOnLoan = true}, // TextViewFromAddress
+    MirEffectTraits{.startsLoan = true,
+                    .dependsOnLoan = true}, // CStringFromAddress
+    MirEffectTraits{.mayTrap = true},       // RequireAllocation
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -477,7 +421,6 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "allocate-object",
     "initialize-base",
     "cleanup-before-assign",
-    "storage-construct-preflight",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -559,18 +502,6 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "integer-checked-subtract",
     "integer-checked-multiply",
     "storage-bounds-check",
-    "allocate-prefix-storage",
-    "prefix-storage-append",
-    "prefix-storage-pop",
-    "prefix-storage-read",
-    "prefix-storage-read-mut",
-    "prefix-storage-length",
-    "prefix-storage-relocate",
-    "prefix-storage-insert",
-    "prefix-storage-erase",
-    "prefix-storage-text-view",
-    "prefix-storage-c-string",
-    "prefix-storage-try-c-string",
     "optional-storage-has-value",
     "optional-storage-construct",
     "optional-storage-read",
@@ -633,11 +564,15 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "object-destroy",
     "object-construct",
     "object-relocate",
+    "object-relocate-range",
     "require-vacant-storage",
     "require-live-storage",
     "require-relocation-capacity",
     "require-relocation-source",
     "require-relocation-destination",
+    "text-view-from-address",
+    "c-string-from-address",
+    "require-allocation",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -762,17 +697,170 @@ MirEffectTraits effects(SynchronizationOperationKind kind) {
   return enumEffects(kind, synchronizationEffects);
 }
 
+bool isMirScalarFinalAddressConstruction(const MirInstruction &instruction) {
+  if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      instruction.constructorTarget || instruction.elementCleanup ||
+      instruction.receiver || instruction.nativeCallbackAdapter ||
+      instruction.threadTaskAdapter || instruction.result ||
+      instruction.info.type != SemanticType::Void ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.rawMemoryAccess || !instruction.lifecycle.empty() ||
+      instruction.dispatch != CallDispatch::Static ||
+      instruction.constructorKind != ConstructorKind::Ordinary ||
+      instruction.operation != MirOperation::None ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.operands.empty() || instruction.operands.size() > 2)
+    return false;
+  const auto &address = instruction.operands.front().type;
+  if (address.kind != SemanticType::RawPointer ||
+      address.arguments.size() != 1 ||
+      address.pointerAccess != AccessMode::Mutable ||
+      !constantIntegerDomain(address.arguments.front()))
+    return false;
+  return instruction.operands.size() == 1 ||
+         instruction.operands.back().type == address.arguments.front();
+}
+
+namespace {
+enum class StructuralValueOperation { Copy, Move, Drop };
+
+bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
+                            StructuralValueOperation operation) {
+  std::unordered_set<HirClassInstanceId> visiting;
+  const auto structural = [&](const auto &self,
+                              const SemanticType &type) -> bool {
+    if (constantIntegerDomain(type) || type.kind == SemanticType::Float ||
+        type.kind == SemanticType::Double || type.kind == SemanticType::Bool ||
+        type.kind == SemanticType::Char || type.kind == SemanticType::NullPtr ||
+        type.kind == SemanticType::RawPointer ||
+        (type.kind == SemanticType::Enum && program.findIntegralEnum(type)))
+      return true;
+    if (type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    if (!owner || owner->traits.containsBorrowedState ||
+        owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+        owner->unionLayout || owner->abstract || owner->polymorphic ||
+        !owner->bases.empty() || !owner->structuralBases.empty() ||
+        !visiting.insert(owner->id).second)
+      return false;
+    const SpecialMemberStatus member =
+        operation == StructuralValueOperation::Copy   ? owner->copyConstructor
+        : operation == StructuralValueOperation::Move ? owner->moveConstructor
+                                                      : owner->destructorStatus;
+    const bool fields =
+        member == SpecialMemberStatus::Generated &&
+        (operation != StructuralValueOperation::Drop || !owner->destructor) &&
+        std::all_of(owner->declaredFields.begin(), owner->declaredFields.end(),
+                    [&](const auto &field) {
+                      return field.field && field.symbol &&
+                             self(self, field.type);
+                    });
+    visiting.erase(owner->id);
+    return fields;
+  };
+  return type.kind == SemanticType::Class && structural(structural, type);
+}
+} // namespace
+
+bool isMirStructuralFinalAddressConstruction(
+    const MirProgram &program, const MirInstruction &instruction) {
+  if (isMirScalarFinalAddressConstruction(instruction))
+    return true;
+  if (instruction.constructorTarget || instruction.operands.size() != 2 ||
+      (instruction.constructorKind != ConstructorKind::Copy &&
+       instruction.constructorKind != ConstructorKind::Move) ||
+      !mir_detail::objectConstruct(program, instruction) ||
+      std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [](const MirLifecycleEvent &event) {
+                    return event.kind != MirLifecycleEventKind::TransferOut;
+                  }))
+    return false;
+  return structuralScalarRecord(program, instruction.operands.back().type,
+                                instruction.constructorKind ==
+                                        ConstructorKind::Copy
+                                    ? StructuralValueOperation::Copy
+                                    : StructuralValueOperation::Move);
+}
+
+bool isMirStructuralValueTransfer(const MirProgram &program,
+                                  const MirInstruction &instruction) {
+  const bool copy = instruction.kind == MirInstructionKind::CallInput &&
+                    instruction.callInputKind == HirCallInputKind::CopyValue;
+  const bool move = instruction.kind == MirInstructionKind::Move ||
+                    (instruction.kind == MirInstructionKind::CallInput &&
+                     instruction.callInputKind == HirCallInputKind::MoveValue);
+  if ((!copy && !move) || instruction.tombstone || !instruction.result ||
+      instruction.operands.size() != 1 || instruction.receiver ||
+      instruction.operation != MirOperation::None ||
+      (instruction.intrinsic != IntrinsicKind::None &&
+       !(instruction.kind == MirInstructionKind::Move &&
+         instruction.intrinsic == IntrinsicKind::Move)) ||
+      instruction.rawMemoryAccess ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.hostedStartupOperation ||
+      instruction.info.type != instruction.operands.front().type ||
+      instruction.info.type.kind != SemanticType::Class ||
+      instruction.info.traits.containsBorrowedState ||
+      std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [](const MirLifecycleEvent &event) {
+                    return event.kind != MirLifecycleEventKind::Initialize &&
+                           event.kind != MirLifecycleEventKind::Move &&
+                           event.kind != MirLifecycleEventKind::Reparent &&
+                           event.kind != MirLifecycleEventKind::TransferOut;
+                  }) ||
+      (instruction.kind == MirInstructionKind::Move &&
+       (instruction.destination ||
+        instruction.operands.front().kind != MirOperandKind::Move)))
+    return false;
+  return structuralScalarRecord(program, instruction.info.type,
+                                copy ? StructuralValueOperation::Copy
+                                     : StructuralValueOperation::Move);
+}
+
+bool isMirStructuralValueDrop(const MirProgram &program,
+                              const MirInstruction &instruction) {
+  return !instruction.tombstone &&
+         instruction.kind == MirInstructionKind::Drop &&
+         instruction.destination && !instruction.result &&
+         instruction.operands.empty() && !instruction.receiver &&
+         !instruction.rawMemoryAccess && !instruction.hostedStartupOperation &&
+         instruction.operation == MirOperation::None &&
+         instruction.intrinsic == IntrinsicKind::None &&
+         instruction.unsafeOperation == UnsafeOperationKind::None &&
+         instruction.synchronization.kind ==
+             SynchronizationOperationKind::None &&
+         std::all_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                     [](const MirLifecycleEvent &event) {
+                       return event.kind == MirLifecycleEventKind::Drop;
+                     }) &&
+         structuralScalarRecord(program, instruction.info.type,
+                                StructuralValueOperation::Drop);
+}
+
 namespace {
 
-[[nodiscard]] MirEffectTraits
-finishInstructionEffects(const MirInstruction &instruction,
-                         MirEffectTraits result) {
+[[nodiscard]] MirEffectTraits finishInstructionEffects(
+    const MirInstruction &instruction, MirEffectTraits result,
+    bool structuralValueTransfer = false, bool structuralConstruction = false) {
   if (instruction.tombstone) {
     return harmless();
   }
   if (instruction.kind == MirInstructionKind::Call &&
       instruction.intrinsic != IntrinsicKind::None) {
-    result = effects(instruction.intrinsic);
+    result = (structuralConstruction ||
+              isMirScalarFinalAddressConstruction(instruction))
+                 ? MirEffectTraits{.writesUnknownMemory = true,
+                                   .initializesValue = true}
+                 : effects(instruction.intrinsic);
   } else if (instruction.kind == MirInstructionKind::Call &&
              instruction.synchronization.kind !=
                  SynchronizationOperationKind::None) {
@@ -826,13 +914,14 @@ finishInstructionEffects(const MirInstruction &instruction,
   if (instruction.kind == MirInstructionKind::CallInput &&
       (instruction.callInputKind == HirCallInputKind::CopyValue ||
        instruction.callInputKind == HirCallInputKind::MoveValue)) {
-    result = merge(result, unknownEffects());
+    if (!structuralValueTransfer)
+      result = merge(result, unknownEffects());
     result.copiesValue |=
         instruction.callInputKind == HirCallInputKind::CopyValue;
     result.movesValue |=
         instruction.callInputKind == HirCallInputKind::MoveValue;
     result.initializesValue = true;
-    result.maySynchronize = true;
+    result.maySynchronize |= !structuralValueTransfer;
   }
   if (!instruction.lifecycle.empty()) {
     result = merge(result, effects(MirInstructionKind::Lifecycle));
@@ -1015,11 +1104,8 @@ struct ExactTargets {
            .owner = static_cast<std::size_t>(destructor)});
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
-             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
-              instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) &&
-             instruction.constructorTarget &&
-             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
-              instruction.storagePreflight != 0)) {
+             instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+             instruction.constructorTarget) {
     // The sealed slot operation also executes the exact source constructor;
     // retain its memory, synchronization and escape effects in the shared
     // interprocedural analysis rather than treating it as only a helper.
@@ -1361,8 +1447,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       result.requiresActiveCleanup = !result.aggregate.empty();
       return result;
     }
-    if ((selected.kind == SemanticType::UniqueOwner ||
-         selected.kind == SemanticType::PrefixStorage) &&
+    if (selected.kind == SemanticType::UniqueOwner &&
         selected.arguments.size() == 1) {
       const auto &value = selected.arguments.front();
       if ((value.kind >= SemanticType::Int8 &&
@@ -1375,14 +1460,6 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
           (value.kind == SemanticType::Enum &&
            program.findPayloadEnum(value) == nullptr)) {
         return MirDropType{.type = selected, .requiresActiveCleanup = true};
-      }
-      if (selected.kind == SemanticType::PrefixStorage) {
-        auto element = self(self, value);
-        if (!element)
-          return std::nullopt;
-        return MirDropType{.type = selected,
-                           .aggregate = {*element},
-                           .requiresActiveCleanup = true};
       }
       const auto *pointee = classFor(selected.arguments.front());
       if (pointee == nullptr)
@@ -1734,8 +1811,14 @@ MirEffectTraits effects(const MirInstruction &instruction) {
 
 MirEffectTraits effects(const MirProgram &program,
                         const MirInstruction &instruction) {
+  if (isMirStructuralFinalAddressConstruction(program, instruction))
+    return finishInstructionEffects(instruction, {}, false, true);
+  if (isMirStructuralValueDrop(program, instruction))
+    return finishInstructionEffects(instruction,
+                                    {.writesPlace = true, .dropsValue = true});
   if (!isInvocation(instruction)) {
-    return effects(instruction);
+    return finishInstructionEffects(
+        instruction, {}, isMirStructuralValueTransfer(program, instruction));
   }
   const MirBody *body = nullptr;
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
@@ -1805,17 +1888,6 @@ exactMirInvocationSummary(const MirProgram &program, const MirBody &body,
   }
   if (result && targets.nativeCleanup)
     result->traits.invokesRuntime = true;
-  if (result && instruction.kind == MirInstructionKind::Call &&
-      instruction.intrinsic == IntrinsicKind::PrefixStorageAppend) {
-    // This invocation is the complete slot operation, not just its selected
-    // constructor. The constructor receiver denotes the new element, whereas
-    // the instruction argument denotes its backing storage. Retain the
-    // authoritative intrinsic effects and conservatively map any escape to
-    // that storage rather than exposing the constructor's receiver ABI.
-    result->traits = merge(result->traits, effects(instruction));
-    result->receiverEscapes = false;
-    result->argumentsEscape.assign(instruction.operands.size(), true);
-  }
   if (result)
     result->traits = cleanupEffects(result->traits, targets);
   return result;
@@ -1979,11 +2051,20 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
             node.callees.push_back(*targetNode);
           }
         } else {
-          const MirEffectTraits instructionEffects =
-              cleanupEffects(effects(instruction), targets);
+          const MirEffectTraits instructionEffects = cleanupEffects(
+              finishInstructionEffects(
+                  instruction,
+                  isMirStructuralValueDrop(program, instruction)
+                      ? MirEffectTraits{.writesPlace = true, .dropsValue = true}
+                      : MirEffectTraits{},
+                  isMirStructuralValueTransfer(program, instruction),
+                  isMirStructuralFinalAddressConstruction(program,
+                                                          instruction)),
+              targets);
           node.local.traits = merge(node.local.traits, instructionEffects);
           if (isInvocation(instruction) &&
               (targets.boundary || targets.addresses.empty()) &&
+              !isMirStructuralValueDrop(program, instruction) &&
               instruction.intrinsic == IntrinsicKind::None &&
               instruction.synchronization.kind ==
                   SynchronizationOperationKind::None) {

@@ -553,8 +553,8 @@ void testClosedCallNearMisses() {
 
 void testClosedCallAfterSourceAllocation(
     const std::string &compiler, const std::filesystem::path &directory) {
-  // The positive fixture exercises the existing prefix-storage proof before
-  // source allocation. A required incomplete closed-call summary can prevent
+  // The positive fixture exercises source prefix ownership before sparse
+  // allocation. A required incomplete closed-call summary can prevent
   // discovery of later contexts, even for an independent vector workload.
   // Keep this program-order boundary explicit rather than claiming that source
   // storage retains the removed private sparse-state analysis.
@@ -779,16 +779,16 @@ int main(int argc, char **argv) {
       "::gti_internal::backend::mir_checked_remainder_v1";
   constexpr std::string_view nonzeroRemainderCall =
       "::gti_internal::backend::mir_nonzero_remainder_v1";
-  constexpr std::string_view checkedPrefixStorageCall =
-      " = ::gti_internal::backend::mir_prefix_read_v1(";
-  constexpr std::string_view uncheckedPrefixStorageCall =
-      "&::gti_internal::backend::prefix_storage_read_unchecked(";
-  constexpr std::string_view checkedPrefixStorageMutCall =
-      " = ::gti_internal::backend::mir_prefix_read_mut_v1(";
-  constexpr std::string_view uncheckedPrefixStorageMutCall =
-      "&::gti_internal::backend::prefix_storage_read_mut_unchecked(";
   constexpr std::string_view publicPrefixBoundsCall =
       "::gti_internal::backend::mir_checked_index_bounds_v1(";
+  for (const auto &program : programs)
+    for (const auto retired :
+         {"::gti_internal::backend::mir_prefix_read_v1(",
+          "::gti_internal::backend::mir_prefix_read_mut_v1(",
+          "::gti_internal::backend::prefix_storage_read_unchecked(",
+          "::gti_internal::backend::prefix_storage_read_mut_unchecked("})
+      expect(program.cpp.find(retired) == std::string::npos,
+             "source prefix access must not revive a retired native helper");
   // Compound assignments now stage their read, arithmetic and write as
   // separate MIR operations. Observe the checked scalar multiply and its
   // discharged expression, not the retired fused compound-assignment spelling.
@@ -822,14 +822,8 @@ int main(int argc, char **argv) {
                  occurrences(o0.cpp, checkedRemainderCall) &&
              occurrences(o0.cpp, nonzeroRemainderCall) == 0 &&
              occurrences(o2.cpp, nonzeroRemainderCall) > 0 &&
-             (occurrences(o2.cpp, checkedPrefixStorageCall) <
-                  occurrences(o0.cpp, checkedPrefixStorageCall) ||
-              occurrences(o2.cpp, checkedPrefixStorageMutCall) <
-                  occurrences(o0.cpp, checkedPrefixStorageMutCall)) &&
-             occurrences(o0.cpp, uncheckedPrefixStorageCall) == 0 &&
-             occurrences(o0.cpp, uncheckedPrefixStorageMutCall) == 0 &&
-             (occurrences(o2.cpp, uncheckedPrefixStorageCall) > 0 ||
-              occurrences(o2.cpp, uncheckedPrefixStorageMutCall) > 0) &&
+             occurrences(o2.cpp, publicPrefixBoundsCall) <
+                 occurrences(o0.cpp, publicPrefixBoundsCall) &&
              occurrences(o2.cpp, publicPrefixBoundsCall) > 0 &&
              occurrences(o2.cpp, checkedArrayCall) ==
                  occurrences(o3.cpp, checkedArrayCall) &&
@@ -841,14 +835,6 @@ int main(int argc, char **argv) {
                  occurrences(o3.cpp, checkedRemainderCall) &&
              occurrences(o2.cpp, nonzeroRemainderCall) ==
                  occurrences(o3.cpp, nonzeroRemainderCall) &&
-             occurrences(o2.cpp, checkedPrefixStorageCall) ==
-                 occurrences(o3.cpp, checkedPrefixStorageCall) &&
-             occurrences(o2.cpp, uncheckedPrefixStorageCall) ==
-                 occurrences(o3.cpp, uncheckedPrefixStorageCall) &&
-             occurrences(o2.cpp, checkedPrefixStorageMutCall) ==
-                 occurrences(o3.cpp, checkedPrefixStorageMutCall) &&
-             occurrences(o2.cpp, uncheckedPrefixStorageMutCall) ==
-                 occurrences(o3.cpp, uncheckedPrefixStorageMutCall) &&
              occurrences(o2.cpp, publicPrefixBoundsCall) ==
                  occurrences(o3.cpp, publicPrefixBoundsCall),
          "native -O0 source should expose removed safe calls while preserving "

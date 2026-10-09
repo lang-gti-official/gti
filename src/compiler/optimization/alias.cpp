@@ -133,7 +133,6 @@ overlappingFields(const MirProgram &program, SymbolId left, SymbolId right) {
   case SemanticType::RawPointer:
   case SemanticType::UniqueOwner:
   case SemanticType::SharedPointer:
-  case SemanticType::PrefixStorage:
   case SemanticType::Class:
     return true;
   default:

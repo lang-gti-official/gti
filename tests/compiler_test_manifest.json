@@ -470,6 +470,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testSourceOwnedExpectedRangeOrigins",
+      "suite": "ownership"
+    },
+    {
       "name": "testMutableRangeLoans",
       "suite": "ownership"
     },

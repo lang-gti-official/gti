@@ -1,0 +1,31 @@
+#include <std/memory>
+
+class Record {
+public:
+  mut int value;
+  Record(int value) : value(value) {}
+};
+
+unsafe int construct_other(mut Record& record, int* vacant) {
+  unsafe { std::construct_at(vacant, 42); }
+  return record.value + 1;
+}
+
+unsafe int reconstruct(mut Record& record) {
+  unsafe {
+    int* address = &record.value;
+    std::destroy_at(address);
+    std::construct_at(address, 2147483647);
+  }
+  return record.value + 1;
+}
+
+int main() {
+  mut std::uninitialized<int> vacant{};
+  mut Record record{7};
+  unsafe {
+    if (construct_other(record, vacant.data()) != 8) return 1;
+    std::destroy_at(vacant.data());
+    return reconstruct(record);
+  }
+}

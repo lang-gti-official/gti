@@ -153,8 +153,6 @@ representationKind(const lang::SemanticType &type) {
     return lang::CppMirTypeRepresentationKind::UniqueOwner;
   case lang::SemanticType::SharedPointer:
     return lang::CppMirTypeRepresentationKind::SharedPointer;
-  case lang::SemanticType::PrefixStorage:
-    return lang::CppMirTypeRepresentationKind::Storage;
   case lang::SemanticType::Expected:
     return lang::CppMirTypeRepresentationKind::Expected;
   case lang::SemanticType::Unexpected:

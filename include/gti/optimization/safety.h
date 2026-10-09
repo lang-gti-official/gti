@@ -67,6 +67,7 @@ struct MirClosedCallBodyAnalysis {
 
 struct MirClosedCallSafetyAnalysis {
   bool converged = false;
+  // Maximum worklist analyses of any one body, not whole-program scans.
   std::size_t iterations = 0;
   std::vector<MirClosedCallBodyAnalysis> bodies;
 
@@ -76,11 +77,26 @@ struct MirClosedCallSafetyAnalysis {
 
 // Computes one bounded, non-recursive contextual summary over exact static
 // GTI calls and constructors. Unsupported, open, native, virtual, recursive,
-// owning-argument, or synchronization-capable edges fail closed. Body-local
+// unsupported owning-argument, or synchronization-capable edges fail closed.
+// Generated ordinary scalar-record transport snapshots independent field
+// values; only checked reference parameters publish caller postconditions.
+// Body-local
 // facts remain available even when no contextual summary is admitted. Once
 // the whole analysis converges, contextual proofs established before a
 // conservative call barrier remain usable even when that barrier prevents the
 // enclosing body from exporting a complete summary.
+// Actual raw pointee/lifetime operations and unsupported unsafe calls are
+// per-instruction opaque barriers, not a reason to discard earlier proofs.
+// Inert address computations/markers preserve unrelated facts without proving
+// pointee invariants. Verified owner-witness formation and non-mutating checked
+// loan boundaries likewise preserve memory, not the pointee's value or address.
+// Selected unsafe source functions use actual body effects;
+// a successful path with a raw barrier cannot export effect closure.
+// Exact vacant integer-scalar/generated scalar-record construction preserves
+// unrelated active non-byte owned-field facts through source wrappers. It stays
+// opaque; byte/array/union/stored-reference/backing paths and actual unknown
+// live-memory effects remain conservative. This supplies no raw-region/element
+// invariant.
 [[nodiscard]] MirClosedCallSafetyAnalysis
 analyzeMirClosedCallSafetyChecks(const MirProgram &program);
 

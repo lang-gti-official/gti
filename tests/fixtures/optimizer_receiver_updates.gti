@@ -1,0 +1,92 @@
+#include <std/memory>
+
+class Tally {
+  mut uint64_t count = uint64_t(0);
+  mut uint64_t spare = uint64_t(0);
+  bool enabled = false;
+public:
+  Tally() {}
+  uint64_t size() { return this.count; }
+  void up() mut { this.count++; }
+  void down() mut { this.count -= uint64_t(1); }
+  void twice() mut { this.up(); this.up(); }
+  void cancel() mut { this.up(); this.down(); }
+  void conditional() mut {
+    if (this.enabled) { this.count++; }
+  }
+  void reset() mut { this.count = uint64_t(0); }
+  void to_max() mut { this.count = uint64_t(18446744073709551615); }
+  void from_other() mut { this.count = this.spare; }
+  void alias_reset() mut {
+    mut uint64_t& alias = this.count;
+    alias = uint64_t(0);
+  }
+  void raw_reset() mut {
+    unsafe { *(&this.count) = uint64_t(0); }
+  }
+};
+
+class NestedTally {
+  mut Tally tally{};
+public:
+  NestedTally() {}
+  void twice() mut { this.tally.twice(); }
+  uint64_t size() { return this.tally.size(); }
+};
+
+uint64_t observe_four(Tally& value) { return value.size() - uint64_t(4); }
+uint64_t observe_two(Tally& value) { return value.size() - uint64_t(2); }
+uint64_t observe_nested(NestedTally& value) { return value.size() - uint64_t(4); }
+
+uint64_t bad_conditional() {
+  mut Tally value{};
+  value.conditional();
+  return value.size() - uint64_t(2);
+}
+uint64_t bad_reset() {
+  mut Tally value{};
+  value.twice();
+  value.reset();
+  return value.size() - uint64_t(2);
+}
+uint64_t bad_other() {
+  mut Tally value{};
+  value.twice();
+  value.from_other();
+  return value.size() - uint64_t(2);
+}
+uint64_t bad_alias() {
+  mut Tally value{};
+  value.twice();
+  value.alias_reset();
+  return value.size() - uint64_t(2);
+}
+uint64_t bad_raw() {
+  mut Tally value{};
+  value.twice();
+  value.raw_reset();
+  return value.size() - uint64_t(2);
+}
+uint64_t bad_first_failure() {
+  mut Tally value{};
+  value.to_max();
+  value.cancel();
+  return value.size();
+}
+
+int main() {
+  mut Tally value{};
+  value.up(); value.up(); value.up(); value.up();
+  if (observe_four(value) != uint64_t(0)) return 1;
+  value.down(); value.down();
+  if (observe_two(value) != uint64_t(0)) return 2;
+  mut NestedTally nested{};
+  nested.twice(); nested.twice();
+  if (observe_nested(nested) != uint64_t(0)) return 3;
+  if (true) return int(bad_conditional());
+  if (false) return int(bad_reset());
+  if (false) return int(bad_other());
+  if (false) return int(bad_alias());
+  if (false) return int(bad_raw());
+  return int(bad_first_failure());
+}

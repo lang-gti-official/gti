@@ -372,16 +372,22 @@ def main() -> int:
             )
             return 1
         executed = run([str(executable)])
-        # The generic vector owner's constructor and erase emit as explicit
-        # transformed specializations, so its storage detector reports the
-        # defined contract. The record cites the stdlib site, not a legacy
-        # storage abort, and successful construction engages the owner once.
+        # The source-defined vector checks its public logical bound before
+        # reaching the prefix owner. Pin that actual detector, not the retired
+        # private-storage implementation's failure spelling.
+        vector_source = source.parents[2] / "stdlib/std/vector.gti"
+        vector_lines = vector_source.read_text(encoding="utf8").splitlines()
+        erase_line = next(index for index, line in enumerate(vector_lines)
+                          if "void erase(size_t index) mut {" in line)
+        if "index_bounds_check(index, this.size())" not in vector_lines[erase_line + 1]:
+            raise AssertionError("vector erase lost its exact logical-bounds detector")
+        expected_failure = (
+            f"<std/vector>:{erase_line + 2}: runtime error[GTI-R0007]: "
+            "index_out_of_bounds in vector\n"
+        )
         if (
             executed.returncode != 70
-            or "GTI-R0007" not in executed.stderr
-            or "index_out_of_bounds" not in executed.stderr
-            or "private_storage" not in executed.stderr
-            or "vector" not in executed.stderr
+            or executed.stderr != expected_failure
             or executed.stdout != ""
         ):
             sys.stderr.write(

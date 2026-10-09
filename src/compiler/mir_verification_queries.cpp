@@ -522,8 +522,17 @@ bool completeObjectType(const MirProgram &program,
       return type.arguments.size() == 1 &&
              type.arguments.front().kind != SemanticType::TypeParameter &&
              type.arguments.front().kind != SemanticType::Unknown;
+    case SemanticType::StringView:
+    case SemanticType::CString:
+      return type == SemanticType(type.kind);
     case SemanticType::Enum:
-      return program.findIntegralEnum(type) != nullptr;
+      return program.findIntegralEnum(type) != nullptr ||
+             program.findPayloadEnum(type) != nullptr;
+    case SemanticType::Expected:
+      return type.arguments.size() == 2 &&
+             (type.arguments.front() == SemanticType::Void ||
+              self(self, type.arguments.front(), depth + 1)) &&
+             self(self, type.arguments.back(), depth + 1);
     case SemanticType::Array:
       return type.arguments.size() == 1 && type.arrayLength > 0 &&
              self(self, type.arguments.front(), depth + 1);
@@ -549,16 +558,18 @@ bool completeObjectType(const MirProgram &program,
 
 bool objectRelocate(const MirProgram &program,
                     const MirInstruction &instruction) {
+  const bool range =
+      instruction.intrinsic == IntrinsicKind::ObjectRelocateRange;
   if (instruction.kind != MirInstructionKind::Call ||
-      instruction.intrinsic != IntrinsicKind::ObjectRelocate ||
+      (!range && instruction.intrinsic != IntrinsicKind::ObjectRelocate) ||
       instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
       instruction.info.type != SemanticType::Void ||
       instruction.info.category != ValueCategory::Value ||
       instruction.info.access != AccessMode::ReadOnly ||
       instruction.info.traits != semanticTraits(SemanticType::Void) ||
       instruction.info.updateArithmeticType != SemanticType::Unknown ||
-      instruction.operands.size() != 2 ||
-      instruction.parameterTypes.size() != 2)
+      instruction.operands.size() != (range ? 3 : 2) ||
+      instruction.parameterTypes.size() != (range ? 3 : 2))
     return false;
   const auto &pointer = instruction.parameterTypes.front();
   if (pointer.kind != SemanticType::RawPointer ||
@@ -567,12 +578,19 @@ bool objectRelocate(const MirProgram &program,
       !completeObjectType(program, pointer.arguments.front()) ||
       !mirTypeRelocationIsDefinedFailureFree(program,
                                              pointer.arguments.front()) ||
+      (range && mirTypeRelocationKind(program, pointer.arguments.front()) !=
+                    RelocationKind::Bitwise) ||
       instruction.parameterTypes[1] != pointer ||
-      !std::all_of(instruction.operands.begin(), instruction.operands.end(),
+      !std::all_of(instruction.operands.begin(),
+                   instruction.operands.begin() + 2,
                    [&](const MirOperand &operand) {
                      return operand.kind == MirOperandKind::Value &&
                             operand.type == pointer;
                    }))
+    return false;
+  if (range && (instruction.parameterTypes[2] != SemanticType::UInt64 ||
+                instruction.operands[2].kind != MirOperandKind::Value ||
+                instruction.operands[2].type != SemanticType::UInt64))
     return false;
   const MirInstruction exact{.id = instruction.id,
                              .kind = MirInstructionKind::Call,
@@ -583,7 +601,7 @@ bool objectRelocate(const MirProgram &program,
                                  UnsafeOperationKind::ObjectLifetime,
                              .operands = instruction.operands,
                              .parameterTypes = instruction.parameterTypes,
-                             .intrinsic = IntrinsicKind::ObjectRelocate,
+                             .intrinsic = instruction.intrinsic,
                              .info = instruction.info};
   return instruction == exact;
 }
@@ -709,13 +727,30 @@ bool objectConstruct(const MirProgram &program,
           return false;
       }
     }
-  } else if (instruction.constructorTarget || !instruction.lifecycle.empty() ||
-             instruction.constructorKind != ConstructorKind::Ordinary ||
-             !instruction.definedFailure.empty() ||
-             instruction.parameterTypes.size() > 2 ||
-             (instruction.parameterTypes.size() == 2 &&
-              instruction.parameterTypes[1] != element)) {
-    return false;
+  } else {
+    const bool exactValue = instruction.parameterTypes.size() == 2 &&
+                            instruction.parameterTypes[1] == element;
+    const auto *payload = program.findPayloadEnum(element);
+    const bool payloadTransfer =
+        exactValue && payload != nullptr &&
+        !payload->traits.containsBorrowedState &&
+        ((instruction.constructorKind == ConstructorKind::Copy &&
+          payload->traits.copyable) ||
+         (instruction.constructorKind == ConstructorKind::Move &&
+          payload->traits.movable));
+    // Exact owned carrier parameters participate in the ordinary prepared
+    // argument handoff. The program's call-input/lifecycle proof verifies each
+    // transfer; omitting it would leak a live owning enum/result parameter.
+    const bool carrierHandoff =
+        exactValue && mirUniqueCleanupType(program, element).has_value();
+    if (instruction.constructorTarget ||
+        (!instruction.lifecycle.empty() && !carrierHandoff) ||
+        (instruction.constructorKind != ConstructorKind::Ordinary &&
+         !payloadTransfer) ||
+        !instruction.definedFailure.empty() ||
+        instruction.parameterTypes.size() > 2 ||
+        (instruction.parameterTypes.size() == 2 && !exactValue))
+      return false;
   }
   const MirInstruction exact{.id = instruction.id,
                              .kind = MirInstructionKind::Call,
@@ -1054,6 +1089,105 @@ const MirLoan *rawBorrowResultLoan(const MirBody &body,
       (witness.kind == MirOperandKind::Loan &&
        (!parent || loan->parent != witness.loan ||
         (mutableBorrow && parent->access != AccessMode::Mutable))))
+    return nullptr;
+  return loan;
+}
+
+const MirLoan *textAddressResultLoan(const MirBody &body,
+                                     const MirInstruction &instruction) {
+  const bool counted =
+      instruction.intrinsic == IntrinsicKind::TextViewFromAddress;
+  const std::size_t witness = counted ? 2 : 1;
+  if ((!counted &&
+       instruction.intrinsic != IntrinsicKind::CStringFromAddress) ||
+      instruction.kind != MirInstructionKind::Call || !instruction.result ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.receiver || instruction.destination ||
+      instruction.callableInvocation || instruction.callableBoundary ||
+      !instruction.callableArguments.empty() ||
+      instruction.dispatch != CallDispatch::Static ||
+      instruction.operation != MirOperation::None ||
+      instruction.operands.size() != witness + 1 ||
+      instruction.parameterTypes.size() != witness + 1 ||
+      instruction.unsafeOperation != UnsafeOperationKind::RawDereference ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.safetyDischarges.empty() || !instruction.lifecycle.empty() ||
+      !instruction.loan || instruction.callSite == 0 ||
+      instruction.borrowOrigin != BorrowOriginKind::Argument ||
+      instruction.borrowArgument != witness ||
+      instruction.borrowAccess != AccessMode::ReadOnly ||
+      !instruction.borrowArguments.empty() ||
+      !instruction.borrowFields.empty() || instruction.borrowPlace ||
+      instruction.info.type !=
+          (counted ? SemanticType::StringView : SemanticType::CString) ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly)
+    return nullptr;
+  // No representation, failure, synchronization, lifecycle or future metadata
+  // can acquire meaning merely by accompanying a valid carrier assertion.
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::RawDereference,
+                             .result = instruction.result,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .loan = instruction.loan,
+                             .borrowOrigin = BorrowOriginKind::Argument,
+                             .borrowArgument = witness,
+                             .borrowAccess = AccessMode::ReadOnly,
+                             .intrinsic = instruction.intrinsic,
+                             .info = instruction.info};
+  auto traits = semanticTraits(instruction.info.type);
+  traits.ownership = OwnershipKind::Borrowed;
+  traits.copyAssignable = false;
+  traits.moveAssignable = false;
+  traits.containsBorrowedState = true;
+  traits.transferCapable = false;
+  traits.shareCapable = false;
+  if (instruction != exact || instruction.info.traits != traits ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown)
+    return nullptr;
+  for (std::size_t index = 0; index <= witness; ++index) {
+    const auto &operand = instruction.operands[index];
+    const auto *stage = operand.kind == MirOperandKind::Value
+                            ? definitionFor(body, operand.value)
+                            : nullptr;
+    if (!stage || stage->kind != MirInstructionKind::CallInput ||
+        stage->result != operand.value ||
+        stage->callSite != instruction.callSite ||
+        stage->callInputRole != MirCallInputRole::Argument ||
+        stage->callInputIndex != index || stage->operands.size() != 1 ||
+        stage->callInputKind != (index == witness ? HirCallInputKind::ReadBorrow
+                                                  : HirCallInputKind::Value) ||
+        stage->info.type != instruction.parameterTypes[index] ||
+        operand.type != instruction.parameterTypes[index] || operand.place ||
+        operand.loan || operand.literal)
+      return nullptr;
+  }
+  if (instruction.parameterTypes.front() !=
+          SemanticType::rawPointerTo(SemanticType::Char,
+                                     AccessMode::ReadOnly) ||
+      (counted && instruction.parameterTypes[1] != SemanticType::UInt64))
+    return nullptr;
+  const auto &owner = instruction.parameterTypes[witness];
+  if (owner.kind != SemanticType::Reference || owner.arguments.size() != 1 ||
+      owner.referenceAccess != AccessMode::ReadOnly)
+    return nullptr;
+  const auto source =
+      borrowSourceForOperand(body, instruction.operands[witness]);
+  const auto *loan = body.findLoan(*instruction.loan);
+  if (!source || !loan || loan->source != *source ||
+      (loan->kind != MirLoanKind::CallResult &&
+       loan->kind != MirLoanKind::Stored) ||
+      loan->access != AccessMode::ReadOnly ||
+      loan->producedBy != instruction.hirValue || loan->entry ||
+      loan->escapes || loan->lifecycleBound)
     return nullptr;
   return loan;
 }

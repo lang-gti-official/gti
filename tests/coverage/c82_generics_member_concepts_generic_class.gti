@@ -7,7 +7,7 @@
 concept shaped<T> = requires(T& value) { { value.area() } -> int32_t; };
 concept named_shape<T> =
     shaped<T> && requires(T& value) { { value.sides() } -> int32_t; };
-concept stored_shape<T> = named_shape<T> && std::copyable<T>;
+concept stored_shape<T> = named_shape<T> && std::copyable<T> && std::vector_element<T>;
 
 struct Square {
   int32_t edge = 1;

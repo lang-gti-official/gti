@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Allocation failure drains the prepared existing value and caller, not abort."""
+"""Exhaustion aborts without dropping the prepared existing value or caller."""
 
 import pathlib
 import subprocess
 import sys
 import tempfile
 
+from allocation_abort_runtime_test import ABORT_STATUS
 
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
@@ -27,7 +28,7 @@ def main():
                 assert "::backend::make_unique<::__gti_program::Owner>" not in representation
                 for arguments, expected in (
                         ((), (0, "7\n7\n9\n", "")),
-                        (("oom",), (70, "7\n9\n",
+                        (("oom",), (ABORT_STATUS, "",
                          f"<std/memory>:{site}: runtime error[GTI-R0011]: "
                          "allocation_failure in unique_owner\n"))):
                     observed = subprocess.run([str(binary), *arguments],

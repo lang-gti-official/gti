@@ -1,5 +1,17 @@
 # Compiler Verification
 
+## Allocation-exhaustion abort foundation (candidate)
+
+`allocation_abort_runtime` tests the runtime-only S-ALLOC-08 terminal primitive
+in subprocesses: direct exhaustion, a managed worker, reentry from an active
+failure observer, a malformed native record, closed stderr and a broken pipe.
+It requires process abort, an exact best-effort GTI-R0011 report when writable,
+and no local destructor, exit handler, worker cleanup or join continuation.
+The fixture forbids C++ heap allocation while the terminal path runs. Existing
+failure-report, panic, ABI and containment tests remain separate controls.
+These tests do not claim source allocation uses the new path yet; compiler
+detector/cleanup-edge changes and the fallible/overflow matrices remain required.
+
 ## Issue-campaign audit and reconciliation gate
 
 PR #152 reconciles the previously separate issue-fix handoffs and independently
@@ -420,6 +432,334 @@ historical checkpoint, installed consumers and production gates were still
 outstanding; the completion evidence above now covers that integration. Native
 platform limitations remain explicit. The independent provider tests alone are
 not the evidence for the combined sparse-metadata and default-factory migration.
+
+## Source prefix ownership (candidate; acceptance still open)
+
+The source-prefix task's Release/AppleClang/LLVM 22.1.8 snapshot on macOS arm64
+passes the 13 focused compiler-pipeline, source-owner contract/runtime,
+resource-prefix runtime, terminated-string runtime, optimizer foundation,
+raw/intrinsic/object context, analyses/conformance and raw/object native gates.
+The aggregate compiler census now includes the implemented
+`testSourceOwnedExpectedRangeOrigins` regression; no case was removed. The
+combined native selection passed in 97.12 seconds apart from that initially
+missing census row; after registering it, the unchanged compiler aggregate
+passed in 41.27 seconds.
+
+The scalar-construction object matrix covers 15 fixtures across eight native
+modes (120 executions): unrelated and nested active fields, nonvacuous byte
+and fixed-array before/after controls, manual destroy/reconstruct overflow,
+raw mutation, retained references and bounded call chains. Shared effects
+tests distinguish exact integer construction from a selected constructor,
+cleanup, mismatched type or forged non-lifetime classification. O0 retains
+checks; O2/O3 proofs independently replay. Source/resource/string matrices use
+the same frozen optimized compiler and source library. Resource-vector retains
+the approved one-region policy, exact original provider/descriptors and the
+existing malformed/duplicate release and panic-cleanup assertions.
+
+This is not migration acceptance. `optimizer_safety` still reports seven
+unmet original source-owner bounds/element-envelope requirements, and
+`optimizer_safety_native_evidence` reports three corresponding proof/emission
+failures; their native behavior checks pass. Those expectations remain intact.
+Full native corpus, final combined inventories, installed consumers and measured
+performance remain required. No Linux/Windows native execution is claimed.
+
+The subsequent successful-predicate prerequisite passes the eight focused
+compiler/optimizer/source-contract gates in 41.93 seconds and the expanded
+18-fixture, eight-mode native matrix (144 executions) in 65.26 seconds.
+Direct and negated guards refine only their successful path; a later write
+still reports its exact integer overflow, and a false guard still reports
+`GTI-R0010` at its exact source. The detector controls live in a temporary
+trusted source module: application access to compiler-private names is not
+relaxed. Independent coherence replay and the 508-file formatting check pass.
+The seven original owner proof requirements remain open.
+
+The subsequent integer-move prerequisite passes the expanded 21-fixture,
+eight-mode object matrix (168 executions) in 101.30 seconds. Ordinary record
+and nested relay methods preserve independent parameter-result and owned-field
+envelopes; parameter/field reinitialization still reports exact overflow and a
+moved-source read remains `GTI-S2018`. Six focused optimizer/source-contract
+gates pass in 3.45 seconds. Source publication controls recover exact reserved
+capacity four and initial length zero after allocation-result cleanup; all
+O0/O2/O3 snapshots independently replay. The seven original bounds/element
+requirements still fail and have not been weakened.
+The same frozen compiler also passes source owner/resource/string runtime gates
+in 89.62 seconds and the aggregate compiler pipeline in 43.51 seconds.
+
+The following neutral-value-staging correction passes all eight focused
+compiler/optimizer/source-contract gates in 43.81 seconds, the expanded
+24-fixture/eight-mode matrix (192 native executions) in 114.77 seconds, and the
+source owner/resource/string plus raw-context runtime selection in 95.07 seconds.
+Actual pointer arithmetic, raw reads/writes and an unsafe callee's write retain
+their execution classifications; only exact operation-free SSA preparation
+stops repeating them. The original exact public-bounds/matching-read unit
+requirement now passes. `optimizer_safety` retains six unmet original
+requirements, and the freshly relinked `optimizer_safety_native_evidence`
+retains its three proof/emission failures (18.26 seconds). These are remaining
+acceptance failures, not changed zero-proof expectations. Formatting and diff
+checks pass; broad corpus, inventories, installed consumers and performance
+acceptance are still outstanding.
+
+Handover review adds a two-level ordinary-counter reduction alongside the
+public vector size constructor. Both originally lost their exact loop-exit
+field when an older nested summary overwrote its refined enclosing path.
+The correction passes all six focused optimizer foundation/analyses/raw/
+intrinsic/object/conformance gates and the expanded 42-fixture, eight-mode
+object matrix (336 cases, six workers, 105.34 seconds). The new nested-mutation
+case retains its exact overflow location and rejects a forged discharge;
+O0 remains transformation-free and O2/O3 evidence independently replays.
+This does not close migration acceptance: a fresh run still reports the
+original six optimizer safety and three native optimization-evidence failures.
+
+Generated ordinary record transport adds nested by-value construction, copying,
+movement, prepared-argument ordering and a real source-destructor control.
+Shared effects reject raw/replacement mutations of the supported instruction
+shape. A callee that changes its private copy cannot alter caller postconditions;
+the overflow control rejects a forged discharge through canonical replay.
+The expanded object matrix passes all 352 executions (44 fixtures/eight modes,
+six workers, 112.97 seconds), including no-elide and ASan/UBSan. The optimized
+compiler aggregate passes in 46.01 seconds. The existing six optimizer safety
+and three native-evidence requirements still fail and remain unchanged; this
+checkpoint does not establish full source-prefix migration acceptance.
+The six freshly linked focused optimizer gates pass in 2.38 seconds; source
+prefix-owner, resource-prefix, terminated-string and raw-context runtime gates
+pass together in 101.90 seconds. Formatting and diff checks pass.
+
+The next handover checkpoint preserves memory across verified owner-witness
+formation and non-mutating loan bookkeeping, without deriving pointee values
+from lifetime witnesses. Generated scalar-record final-address construction
+reuses the verifier's shape and shared structural effects. New unrelated
+record/witness positives and alias-write, different-pointee and reconstruction
+negatives pass independent O2/O3 replay, while O0 remains unchanged. The expanded
+49-fixture/eight-mode object matrix passes all 392 native cases in 123.49 seconds
+(six workers), including no-elide and ASan/UBSan. Eight freshly linked optimizer,
+source-prefix contract and compiler aggregate gates pass together in 46.66
+seconds. This still does not establish migration acceptance: the six original
+optimizer and three native-evidence assertions remain failing, unweakened.
+The source-owner, resource-prefix, terminated-string and raw-context native
+gates also pass together in 102.63 seconds. The final strengthened witness unit
+check confirms that both negative cases have reached call contexts, rather
+than succeeding only because they are uncalled. Formatting and diff checks pass.
+
+The entry-relative receiver checkpoint proves repeated increments/decrements,
+nested receiver forwarding and exact length four after four source-owner
+appends. Reset, different-field assignment, checked aliases, raw writes and a
+reached/closed conditional callee cannot retain a stale delta. A net-zero
+update still reports its intermediate overflow. Six forged discharges are
+rejected by independent replay; O0 remains transformation-free. The optimized
+compiler passes all eight focused compiler/optimizer/source-contract gates,
+including all 188 compiler cases (46.46 seconds for the aggregate). The expanded
+57-fixture/eight-mode object matrix passes all 456 executions (six workers,
+137.83 seconds), including C++20/C++23, no-elide and ASan/UBSan. The pinned
+508-file format check passes. A freshly linked acceptance run still fails six
+original `optimizer_safety` assertions and three
+`optimizer_safety_native_evidence` assertions (20.49 seconds). Raw initialized
+region/element provenance and the full migration/release gates remain required;
+this checkpoint is not migration acceptance.
+The same optimized compiler also passes the source-owner, resource-prefix,
+terminated-string and raw-context runtime gates together in 51.87 seconds.
+
+The actual scalar-address prerequisite preserves typed local/owned-field
+address identity separately from owner witnesses. Four positive controls cover
+copies, reassignment, member fields and equal-address CFG joins. Six reached
+negative controls retain their overflow after replacement, unequal-address
+joins, checked referent aliases, raw writes, pointer-field aliases and lifetime
+replacement. All six reject forged discharges. The raw loads remain present
+in O0/O2/O3 MIR; proof replay passes and O0 performs no transformations.
+The optimized eight-gate selection passes in 44.02 seconds, including 188
+compiler cases. The final strengthened raw-context unit passes in 0.61 seconds.
+The address/raw matrix passes 64 native cases across eight modes (six workers,
+18.39 seconds); the existing 456-case object matrix passes in 136.25 seconds.
+Both matrices include no-elide and ASan/UBSan. The fresh original acceptance
+run still reports six safety and three native-evidence failures (19.99 seconds).
+No initialized-region, returned-pointer or full migration acceptance is claimed.
+Source-owner, resource-prefix and terminated-string runtime gates also pass
+with this optimized implementation (93.36 seconds). Formatting and diff checks
+pass; the outer migration retains its existing 0.394.0 version advance.
+
+The following loop-edge regression exposed an unsound sequential block-argument
+transfer: swapping a safe and overflowing pointee could forget the latter.
+The analysis now snapshots all argument facts before publishing parameters.
+The unchanged-edge positive still proves its addition; the swapping backedge
+retains overflow. Both use the frontend's actual typed load and failure site.
+The optimized eight-gate selection passes (43.09 seconds), including all 188
+compiler cases; the 64-case/eight-mode raw-context matrix passes in 22.21
+seconds. This repairs a prerequisite correctness defect, not the remaining
+source-region coverage or whole-migration acceptance.
+
+The pointer-return prerequisite adds direct and nested source relays plus
+reassignment of a by-value pointer formal. The same source helper is called
+with both safe and overflowing pointees, so callee identity cannot substitute
+one caller's value into another. Raw and checked-reference writes, selection
+of different addresses and ordinary lifetime replacement remain negative
+controls. All ten address negatives reject forged overflow discharges;
+seven positives prove their addition at O2/O3 while retaining their raw loads,
+and O0 remains transformation-free. The eight focused gates pass in 44.86
+seconds (including 188 compiler cases). The expanded address/raw matrix passes
+96 native cases in 30.00 seconds, and the existing object/lifetime matrix
+passes 456 cases in 141.83 seconds; both cover all eight modes including
+no-elide and ASan/UBSan. The unmodified original acceptance gates still fail
+six safety and three native-evidence assertions (20.51 seconds). Region
+construction coverage, field/index address relations and full migration
+acceptance remain outstanding. Formatting and version-policy checks pass.
+The source-owner, resource-prefix and terminated-string runtime gates also
+pass on this implementation (92.61 seconds). No new syntax or public API is
+introduced by this optimizer prerequisite; the source-owner examples remain
+part of the outer migration's required final corpus gate.
+
+The scalar-initialization checkpoint adds exact constructed values, constant
+typed offsets and successful source-wrapper postconditions. Read-only formal
+and concrete-pack identity preserves each caller's actual value. Five new
+positives and ten reached overflow controls distinguish holes, conditional
+construction, raw aliases, callee writes, parameter changes and lifetime
+replacement. A separate call-tree control proves the 1,024th retained address
+and rejects a forged proof for an address beyond the retention budget. Raw
+loads remain executable and opaque; O0 remains transformation-free and O2/O3
+proofs independently replay. The existing exact `+0` raw-read expectation now
+requires its proved field addition while additionally asserting the retained
+raw operation and non-closed call context; write barriers are unchanged.
+The optimized eight-gate selection passes in 58.49 seconds, including all 188
+compiler cases. The expanded address/raw matrix passes all 192 cases across
+eight modes, including no-elide and ASan/UBSan (six workers, 58.98 seconds).
+The fresh original acceptance gates still report six safety and three native
+evidence failures (23.18 seconds); none of those requirements were weakened.
+Owned pointer-field origins, initialized index coverage, checked element-return
+provenance and the full migration/release gates remain outstanding.
+The same final compiler also passes the source-owner, resource-prefix and
+terminated-string runtime gates (88.54 seconds), plus all 456 object/lifetime
+native cases across eight modes (six workers, 136.89 seconds). Formatting and version-policy
+checks pass. This remains an internal checkpoint of the pending 0.394.0
+migration, not a separately completed feature or release.
+
+The following backend checkpoint repairs nonraising owning payload publication
+and removes phantom native objects for checked reference-call results. The
+optimized compiler aggregate, full preflight and lifecycle suites pass together
+in 52.11 seconds. The expanded source-owner matrix passes all 72 native cases
+(24.62 seconds), including `source_prefix_complete_elements`; the Expected
+publication matrix passes all 48 cases (15.80 seconds). Both use six workers
+and cover C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan. New controls
+observe argument ordering, exact primary/secondary cleanup, and absence of
+spurious default construction/destruction. Mutated payload activation,
+publication, call staging and detached loan producers reject admission.
+Resource-prefix, terminated-string, borrowed-Expected extraction/native and
+passive-publication gates also pass. The named-test census initially exposed
+two stale migration-era names and the two newly added tests; its reviewed
+inventory now passes. This is focused evidence for the pending 0.394.1
+candidate, not acceptance of the still-open optimizer, full corpus,
+installed-consumer and performance gates.
+
+The next integration audit repairs dependent relocation guarantees and enum
+identities used only as generic arguments. The optimized structural-relocation,
+qualified-member and contextual-collection unit gates pass, including weak and
+disjunctive constraints, borrowed fields, and forbidden bitwise upgrades. Native
+recursive-generic validation passes 16 cases across all eight modes, including
+disabled elision and ASan/UBSan, plus 19 source rejection controls (5.60 seconds).
+Existing source generic fixtures now name the vector's actual element contract.
+
+The migrated provider observer retains allocation-free swap assertions and adds
+exact allocation positive controls. Its seven-mode native matrix and borrow
+rejections pass. Composable I/O passes all 48 native cases after its source-site
+lookup stops depending on obsolete unconstrained declaration spelling. Resource
+vector rollback passes all eight modes with one exact provider release; sparse
+storage still expects two. The process-provider matrix passes all eight modes
+and Off/Warn parity after correcting its disabled failure-injection sentinel for
+pre-main argv allocations. Optional native tests pass after bounding their
+representation inspection by the optional class, not the removed prefix helper.
+
+The reviewed library surface inventory is 76 entries and 150 cases. Its first
+complete run passes 147 cases; two stale observer/rollback expectations are
+repaired. JSON O3 also exceeded the unchanged 300-second per-case limit in an
+isolated retry. Profiling identified repeated whole-body instruction/root-use
+queries during backend admission. Immutable representation-scoped indexes and
+exact defining-instruction lookup remove that repeated work. The unchanged
+JSON O0/O3 surface case now passes in 317.08 seconds combined; neither per-build
+timeout was increased. Scoped/unscoped byte-output parity covers nested and
+foreign snapshots, and copies remain outside the cache. The full 582-gate
+audit completes in 1548.68 seconds with 550 passes and 32 failures (including
+the stale tests corrected during that audit). It is not final acceptance:
+optimizer proofs, aggregate-projection emission,
+stale structural expectations, example inventories and sandbox-only network/
+debugger restrictions must be resolved or rerun appropriately. The object-context
+matrix's missing bounded-worker registration is repaired; all 96 shared-harness
+clients now pass scheduler inventory and mutation checks. None of this is final
+migration/release acceptance; the combined optimized full run, native corpus,
+installed consumers and measured performance remain required for 0.394.2.
+
+The owning-array correction reuses the failure-free vacant-destination
+relocation proof for generated transfers with guarded destructors. Positive
+admission precedes mutations of activation, ownership and reparenting; losing
+the destructor guard rejects admission. An unrelated application `Lease`
+checks two constructions and exactly-once reverse cleanup after decomposition.
+The optimized aggregate, nested-guarded-Expected, representation-snapshot,
+backend-preflight and backend-lifecycle suites pass together (45.80 seconds).
+The complete aggregate native matrix passes 96 successes, 42 bounds failures,
+60 ordered nested failures, eight sanitizer cases and ten semantic negatives
+(124.59 seconds). This includes the previously failing structured-bindings
+example, both C++ standards and O0/O1/O3, without copy elision.
+
+The next corpus repair preserves numeric generic storage facts, rejects forged
+call-result loan kinds, and admits owned callback captures whose raw
+implementation state is covered by a valid unsafe transfer assertion. Direct
+raw captures, references, tracked views, sharing-only assertions and false
+conditional assertions remain rejected. The owning-callable, conditional
+capability and managed-thread native gates pass. Examples 33 and 55 pass all
+eight native modes each, including no elision and ASan/UBSan.
+
+All 20 previously failing language-corpus cases pass in the targeted retry;
+the subsequent complete language coverage gate passes in 139.03 seconds.
+Generic fixtures now state their actual element constraints; resource fixtures
+retain exact cleanup, descriptor and allocation-count assertions under the
+approved one-region prefix policy. A nested JSON codec exposed a real backend
+defect: field projections from an Expected payload spuriously declared separate
+native objects. Declaration planning now shares the checked payload-view rule
+with operand emission. The unrelated two-level owning-field fixture has no
+extra default construction or destruction in all eight native modes; missing
+field identities and mismatched types still reject admission. The complete
+seven-fixture Expected publication matrix and preflight/census gates pass.
+The subsequent native corpus oracle builds and runs all 131 examples at both
+endpoints, retaining 10,614 reviewed emitted body identities. The temporary
+LoweredProgram inventory is 55,959 declarations, 10,617 bodies and 5,427 generated
+items; repository baselines remain pending combined-suite acceptance. The full
+stdlib surface passes all 151 cases in 519.71 seconds with unchanged timeouts,
+including numeric generic source storage. The first-family runtime observer
+now requires the exact public vector bounds site instead of a retired private
+storage detector, and passes in 5.04 seconds.
+
+Body-local entry pointer-field tracking passes six unrelated positives and six
+forged-proof rejection controls, including nested owned fields and checked
+reference parameters. The complete raw-address native matrix passes all 248
+cases in 72.25 seconds with six workers: C++20/C++23 O0/O1/O3, no-elide and
+ASan/UBSan preserve success and exact overflow failures. The full compiler
+aggregate and six focused optimizer gates pass together in 45.01 seconds.
+This does not supply interprocedural initialized-field coverage or a checked
+returned-element envelope. The six original optimizer safety and three native
+proof requirements remain open, as do final full-suite, repository inventories,
+installed consumers and performance acceptance. The 0.394.3 candidate remains
+an unfinished migration, not a release-ready toolchain.
+
+The following exact field-call and live-metadata checkpoint passes thirteen
+pointer-field/address positives and eleven forged-proof negatives. Member and
+nested checked-reference calls export only successful exact-address construction;
+mixed conditional exits, unsafe alias writes and destroy/reconstruct cases
+retain their failures. In particular, a scalar fact learned after construction
+cannot be promoted to a non-alias relation. The complete raw-address matrix
+passes all 288 executions with six workers in 84.42 seconds, including both
+C++ standards, O0/O1/O3, no-elide and ASan/UBSan. The full compiler aggregate
+passes in 45.80 seconds and all six focused optimizer gates pass. The same run
+still fails the original six `optimizer_safety` requirements; none were removed
+or weakened. A freshly relinked native-evidence gate retains its three original
+proof/emission failures (19.84 seconds), with native behavioral checks passing.
+Source-owner, resource-prefix, terminated-string and worker-inventory gates
+also pass together in 97.44 seconds; formatting checks all 508 first-party
+C/C++ files with the pinned formatter.
+This is additional general analysis evidence, not migration or performance
+acceptance.
+
+Separately, the preceding `fe0d0530` snapshot passes the full detached body
+emitter corpus for all 131 sources: all 26,548 bodies are ready and all 16,647
+applicable general emissions match. It uses the reviewed temporary current
+inventory rather than prematurely refreshing repository baselines. Final
+current-head corpus, full-suite, installed-consumer and measured-performance
+acceptance remain required.
 
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
@@ -3525,6 +3865,7 @@ upstream code.
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
 | `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
 | `failure_metadata` | deterministic artifact sites; independently derived checked-scalar operation/domain outcome sets; bounded scalar/cleanup-owning-call `Invoke`; exact local-detector and static direct-call argument edges after prepared owners; fixed-record failure parameters; success-edge result initialization; reverse cleanup; and record-preserving propagation |
+| `many_fallible_scope_guards_runtime` / `testBoundedSecondaryFailureRecordStorage` | An unrelated ordinary 48-guard function runs complete reverse cleanup, first-failure propagation, an intervening successful destructor and immediate secondary-failure termination with exact messages/sites at C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan. macOS native compilation rejects uninitialized/sometimes-uninitialized carrier warnings. Detached body emission proves one invocation-local secondary record and cleanup scope, exact primary-entry activation, one in-place reset per active-primary fallible Drop, producer-only Drop status definitions, no per-terminal emergency local, and unchanged exact terminal-edge count. |
 | `runtime_failure_boundary` | C++ ABI shape, allocation-free partial/`EINTR` writer, per-site outcome rejection, runtime-sentinel rules, and every boundary of the generated Unicode 15.1 allowlist |
 | `runtime_io_boundary` | version-one file mode/seek behavior, create/truncate/append/read reopening, embedded-zero preservation, bounded reads, empty-buffer rules, exact offsets, invalid descriptors/origins, embedded-NUL path rejection, deterministic cleanup, and file/stdout broken-pipe failure without `SIGPIPE` escape |
 | `runtime_process_boundary` | exact NUL-separated argument transport, including empty and space-containing arguments; ordinary exit versus signal termination; execution failure distinguished from exit 127; malformed input and null-output rejection; and compatibility behavior of the legacy build-process ABI |
@@ -3569,6 +3910,9 @@ upstream code.
 | `string_c_string_runtime` | non-null empty and populated `std::string::c_string()` views, hidden trailing NUL maintenance across reserve/append/pop/resize/shrink/clear, unchecked embedded-NUL prefix behavior, checked `try_c_string()` null rejection, verified-MIR helper identity, and execution at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; declaration tests own live-loan invalidation, local-owner escape, and ownerless native relay, while emitter preflight mutations reject forged result and storage identities |
 | `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; snapshot-bound body revisions and bounded analysis invalidation across CFG/effect/promotion/safety/alias/loop/SCCP caches; scalar promotion, local folding, SCCP, unreachable cleanup, and dead-computation removal; O0 identity; deterministic schema-v3 reports; malformed-proof and conservative near-miss rejection |
 | `optimizer_analyses` | Independent FIFO dataflow equivalence, canonical executable-edge identity, switch-default propagation, malformed/retracting-transfer rejection, and widening determinism; natural-loop forest, invariant, affine induction, relational-bound, and repeated-edge ambiguity facts; symmetric must/no/may-alias projection rules, conservative union/loan/value/raw relationships, alias-aware safety invalidation, and exact/unknown-call escape; SCCP merge propagation, deterministic replay, and forged-evidence rejection |
+| `optimizer_raw_context` / `optimizer_raw_context_runtime` | Ordinary source calls can prove scalar arithmetic before a raw write without exporting an effect-closed summary. Actual readonly scalar copies retain their value facts across that write; reference carriers and mutable referent/global facts do not. An unrelated by-value class call supplies no unsupported callee facts but preserves its caller's independent continuation. Conflicting inputs and unreached bodies retain checks. Canonical editor replay rejects a forged post-raw discharge and corrupted proof identities. Eight native modes retain exact success values and overflow origin after the raw write. |
+| `optimizer_intrinsic_context` | The exact pure scalar bounds detector preserves unrelated ordinary record-field facts and closed-call context. O0 remains unchanged; O2/O3 bounds and arithmetic proofs independently replay. Unreached inputs and overflowing field mutations remain checked. Fields now originate in an ordinary parameterized constructor without an extra caller assignment. |
+| `optimizer_object_context` / `optimizer_object_context_runtime` | Ordinary parameterized member initializers, implicit receiver fields, independent declaration defaults, owned class return values and exact nested class subobjects transport replayable scalar facts. Inert address arithmetic preserves unrelated fields without proving pointee invariants. O0 stays unchanged; O2/O3 proofs reject forged identities, unpublished implicit-root identities and stale facts after raw writes. Overflowing, changed, raw-mutated, alias-written, raw-constructor and unreached fields retain checks. Independent returned-container, sibling-field and stored-reference mutations retain their exact overflow. A 128-function analysis chain transports all 128 exact addition proofs within the per-body work budget. A 40-callee budget-rejection control withdraws its earlier contextual proof, rejects forged restoration and preserves a later independent client. Eight-mode native matrices independently observe successful ordinary object work, that budget control, a 48-function chain within direct mode's separate 64-depth discovery cap, and eight exact field-overflow origins. |
 | `optimizer_conformance` / `optimizer_coverage_growth` | Exhaustive compiler-owned MIR-family classification; real compile-failure probes for added instruction, operation, intrinsic, terminator, projection, body and failure members; malformed vocabulary rejected with optional verification disabled; unknown projections remain may-alias; independent local safety-cache invalidation; O0 identity, replay, user-record opaque-call barriers, and deterministic explanatory remarks |
 | `optimizer_safety` / `optimizer_safety_native_evidence` | Exact remainder and bit-mask transfer; finite single-write recurrence thresholds; branch-bounded loop-index envelopes; bounded scalar/object closed-call context widening with rejection beyond the update budget; scalar fixed-array-root envelopes; exact prefix-storage length/check/index relations; dynamic-bound, repeated-write, prefix mutation/relocation, call, lifecycle, and alias-write invalidation; read/write bounds and arithmetic-domain proof replay; signed-minimum remainder `-1`; exact O0/O2/O3 success, cleanup, failure category, source-origin, and public-vector-versus-private-storage detail parity; and native checked/unchecked helper retention evidence |
 | `lowered_program_contract` | deterministic independent construction; complete declaration, symbol, body, instance, and generated-family inventory; standalone contract-client printing; and missing, duplicate, stale, reordered, unrooted, cyclic, or forged-record rejection |

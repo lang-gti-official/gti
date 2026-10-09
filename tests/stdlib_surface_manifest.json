@@ -1,8 +1,8 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "6e2aa103ec9193cbd6492724885cce3b019c67baa4704a194f3ffdbe5d4b9f28",
-    "stdlib/std/algorithm.gti": "f989a6357efa6e9d4be6c0b99747794f6c93bc3a918e9890ea01d27df5328f19",
+    "stdlib/prelude.gti": "042d7467598dda35f05134f711dec16ea3dd1363d0839f0375e9f35c449a6b07",
+    "stdlib/std/algorithm.gti": "086493320ed1a6f40cc2ea35f0497f5bb1e42f96ca0356aadd8341635e683e26",
     "stdlib/std/array.gti": "5de4c3f94a2c653393fa23b6054372260d2375f142360b48b5948808213f8b05",
     "stdlib/std/atomic.gti": "44ef26b72acd9bd7e181578eb1562215feb461b1abc361be9a8bbf62ef8cd151",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
@@ -21,31 +21,31 @@
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "ca3b82df27c3d06bf64a06748a8c0666ccd0972dc1ec693727aec09201a3a1ee",
     "stdlib/std/iterator.gti": "c08502a5c686ad0df6ee193e5222741dcce8276269259a03f184365763484d50",
-    "stdlib/std/json.gti": "3de0a06f6b25109551714c74f21f62fe9421f97e520efd73a428178dc8af21f9",
+    "stdlib/std/json.gti": "b54226945bf9be04ba527264601234078911dd0dfdde70780ad2f44c048c3fa7",
     "stdlib/std/list.gti": "af8267642b50d09da74eab812a5f51bf56919153623a80dd78b4f4bbdd52693c",
     "stdlib/std/map.gti": "24c860882d65a76914308ac562762073574cbc7ccb1bc0b0ca61ba4eeaaa52c2",
-    "stdlib/std/memory.gti": "7f25d0e9f6da1c56cded5ff86bcc935919d15952df73b5691ed83a1effe14234",
+    "stdlib/std/memory.gti": "a815dfbc5b717eff8e5c84ae77168dae95ee62470d9c1410c203000eae190e5a",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "2fe329a8585d1eee0a1be02f42b9cb6d388c80e898a3f58d34e9de12989388fb",
+    "stdlib/std/numeric.gti": "0fefb4f008233f4492baaa2a2d67cb4355c4887b07937040fb9a2b99ac133623",
     "stdlib/std/optional.gti": "0e4556056be7121c4abd6ed1a416c259b7a210f9e46cbbec12620c084405fae9",
-    "stdlib/std/paired_span.gti": "3657f5994dd7880c8de9796e1c6c08bba5f507b492406eb685d529c1c6b0e3ae",
+    "stdlib/std/paired_span.gti": "93b4fc364bb597f846a5c245d10bf3af93810b78b31c70fe5b7c7b8b7e11f78e",
     "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
     "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
     "stdlib/std/queue.gti": "e7181505d8e12e151310ac46075b33cdc8095b4f727457c11603de1887e4c2ff",
     "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
     "stdlib/std/resource.gti": "09e91e255c8a6ada7527e2858fe11cdd879041e5f199d82b869d5f0ec31e16c4",
-    "stdlib/std/resource_vector.gti": "e09a526c24ab0f4e1a99f5f4c86d0a455628becbc672e7df4a082d7f8aa546ad",
+    "stdlib/std/resource_vector.gti": "730b85569e5169c8c654bd4543432706432ad124a335d0c49596156efce79a97",
     "stdlib/std/set.gti": "1bf289005e99766d2aaddf5e2488a91a10c509d6ab015f8c824c8cb7b121f407",
     "stdlib/std/simd.gti": "ec60e8807ec3d4cf617a03d4f593231e54b298c2b399b260aa19acfddcdbe720",
     "stdlib/std/source_location.gti": "744c1a254ad954db7bedf71652bc4d2f08eb0ed09df96fc61cdfb2a1822e43e1",
-    "stdlib/std/span.gti": "e50740f1f5df2f7ac857fe01625d59e3e241862ca717304604950d6ed2e8bce7",
-    "stdlib/std/string.gti": "af3b9077cb1c8b3370a3f0ce7d150250aa81bded15c390d181ddad10c375706c",
+    "stdlib/std/span.gti": "8977824a67c670c982ff082f0b6f1297b4b17885c6b8b5bc6e24e3a855c3c1ce",
+    "stdlib/std/string.gti": "6274d329b692f69fba908f6b90cd15db2267ad5476d6ec9be4dc03604d36d247",
     "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
     "stdlib/std/thread.gti": "f669fb9ac10fa42b2d4ffeb317028b1944213d8f02875c52d3628357a85c7391",
     "stdlib/std/unordered_map.gti": "fd284db99a49ce10538568d589254921fbdda810860ffd4719efb4fc477b6fd6",
     "stdlib/std/unordered_set.gti": "af95482466d952b670a69fdecad5ab905935cc4c1ee082c19f37e97741e2e84c",
     "stdlib/std/utility.gti": "142fb40869c5b2f4d0a431035ae7af5128c99426e9adb2abb2f9fa9d4b3b382d",
-    "stdlib/std/vector.gti": "281926cfc7b2ed8b4ce13a44c379ad47f0e3f67c835afa764df97e0767c421e7"
+    "stdlib/std/vector.gti": "e7e92aac2ae75af33fa220fa69060b7ca51f3f54b927a2e514d3d2522de88007"
   },
   "cases": [
     {
@@ -753,6 +753,13 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "numeric-source-storage",
+      "mode": "run",
+      "source": "examples/33-source-concepts.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
       "id": "optional",
       "mode": "run",
       "source": "tests/fixtures/optional_value.gti",
@@ -908,6 +915,21 @@
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
     {
+      "id": "raw-text-owner",
+      "mode": "run",
+      "source": "tests/fixtures/source_text_address_bridge.gti",
+      "native_sources": ["tests/fixtures/source_text_address_bridge.cpp"],
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "raw-text-owner-example",
+      "mode": "run",
+      "source": "examples/133-raw-text-owner-views.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "hello\nHello\n", "stderr": ""}
+    },
+    {
       "id": "resource-allocator-example",
       "mode": "run",
       "source": "examples/121-programmable-allocators.gti",
@@ -954,7 +976,7 @@
       "mode": "run",
       "source": "tests/fixtures/resource_vector_constructor_rollback.gti",
       "optimizations": ["O0", "O3"],
-      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n900\n901\n", "stderr": ""}
+      "expected": {"exit_code": 0, "stdout": "2\n102\n1\n101\n900\n901\n", "stderr": ""}
     },
     {
       "id": "restoring-exchange-example",
@@ -1016,6 +1038,13 @@
       "id": "source-location",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_source_location.gti",
+      "optimizations": ["O0", "O3"],
+      "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
+    },
+    {
+      "id": "source-prefix-complete-elements",
+      "mode": "run",
+      "source": "tests/fixtures/source_prefix_complete_elements.gti",
       "optimizations": ["O0", "O3"],
       "expected": {"exit_code": 0, "stdout": "", "stderr": ""}
     },
@@ -2219,6 +2248,15 @@
       "evidence": ["tests/fixtures/shared_ownership_upcast.gti", "tests/shared_ownership_runtime_test.py", "tests/shared_ownership_tests.cpp", "stdlib/std/memory.gti"]
     },
     {
+      "id": "memory.text-owner-views",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": ["std::assume_c_string<Owner>", "std::assume_string_view<Owner>"],
+      "case_ids": ["raw-text-owner", "raw-text-owner-example"],
+      "required_instantiations": ["unrelated inline TextOwner", "counted empty view retaining its owner", "native NUL-terminated view", "relay through ordinary source functions"],
+      "evidence": ["examples/133-raw-text-owner-views.gti", "tests/fixtures/source_text_address_bridge.gti", "tests/source_text_address_runtime_test.py", "tests/text_address_bridge_tests.cpp", "docs/language/raw-pointers.md"]
+    },
+    {
       "id": "memory.unique-ptr",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
@@ -2404,10 +2442,10 @@
       "id": "prelude.relocation",
       "source": "stdlib/prelude.gti",
       "status": "executable",
-      "operations": ["std::bitwise_relocatable", "std::relocatable"],
-      "case_ids": ["structural-relocation"],
-      "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class"],
-      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "stdlib/prelude.gti"]
+      "operations": ["std::bitwise_relocatable", "std::numeric", "std::relocatable"],
+      "case_ids": ["structural-relocation", "numeric-source-storage"],
+      "required_instantiations": ["deleted-copy passive class", "passive user class", "resource-owning user class", "numeric scalar in source vector"],
+      "evidence": ["tests/fixtures/structural_relocation.gti", "tests/structural_relocation_tests.cpp", "tests/structural_relocation_lsp_test.py", "examples/33-source-concepts.gti", "stdlib/prelude.gti"]
     },
     {
       "id": "process.executable",
@@ -2927,11 +2965,12 @@
         "std::vector::sentinel",
         "std::vector::shrink_to_fit",
         "std::vector::size",
-        "std::vector::vector"
+        "std::vector::vector",
+        "std::vector_element<T>"
       ],
-      "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition", "container-member-aliases"],
-      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record", "construction-only Message", "std::vector<std::optional<std::string>>"],
-      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "tests/fixtures/vector_construction_only.gti", "tests/fixtures/vector_construction_only_failure.gti", "tests/vector_construction_only_runtime_test.py", "stdlib/std/vector.gti", "tests/fixtures/stdlib_surface_container_aliases.gti"]
+      "case_ids": ["span", "vector", "utility-clone", "vector-construction-only", "optional-expected-composition", "container-member-aliases", "source-prefix-complete-elements"],
+      "required_instantiations": ["std::vector<int32_t>", "std::vector<int32_t>(int32_t[3])", "std::vector<std::string>", "nested vector<string>", "user-defined Record", "construction-only Message", "std::vector<std::optional<std::string>>", "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking"],
+      "evidence": ["tests/fixtures/span_owner_dependent.gti", "tests/fixtures/stdlib_surface_vector.gti", "tests/fixtures/generic_clone.gti", "tests/fixtures/vector_construction_only.gti", "tests/fixtures/vector_construction_only_failure.gti", "tests/vector_construction_only_runtime_test.py", "stdlib/std/vector.gti", "tests/fixtures/stdlib_surface_container_aliases.gti", "tests/fixtures/source_prefix_complete_elements.gti", "tests/source_prefix_owner_runtime_test.py"]
     },
     {
       "id": "vector.indexed-swap",

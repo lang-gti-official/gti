@@ -255,7 +255,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v96 ") &&
+      snapshot.starts_with("mir-v97 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -267,6 +267,75 @@ int main() {
   expect(validSnapshot,
          "MIR snapshots should expose deterministic artifact sites without "
          "absolute paths");
+}
+
+void testCleanupSpinePredecessorIndex() {
+  std::string source = R"gti(
+class ScopeGuard {
+  int divisor;
+public:
+  ScopeGuard(int divisor) : divisor(divisor) {}
+  ~ScopeGuard() { int checked = 1 / this.divisor; }
+};
+int main() {
+)gti";
+  for (int index = 0; index != 64; ++index)
+    source += "  ScopeGuard guard" + std::to_string(index) + "{1};\n";
+  source += "  return 0;\n}\n";
+  const auto frontend =
+      lang::Frontend().analyze("cleanup-spine-predecessors.gti", source);
+  expect(frontend.canGenerateCode(),
+         "many ordinary fallible guards must retain verified cleanup spines");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind == lang::ProgramEntryKind::NoArguments;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "cleanup spine fixture must have an entry body");
+  if (entry == frontend.mir.functionInstances().end())
+    return;
+  expect(entry->body.blocks.size() > 64,
+         "the fixture must cross separate normal/secondary cleanup blocks");
+  lang::MirBlockId markerBlock = 0;
+  for (const auto &block : entry->body.blocks) {
+    if (block.activeFailure != 0 ||
+        std::none_of(block.instructions.begin(), block.instructions.end(),
+                     [](const auto &instruction) {
+                       return instruction.cleanupBoundaryEnd != 0;
+                     }))
+      continue;
+    if (std::any_of(entry->body.blocks.begin(), entry->body.blocks.end(),
+                    [&](const auto &predecessor) {
+                      return predecessor.terminator.kind ==
+                                 lang::MirTerminatorKind::Invoke &&
+                             predecessor.terminator.target == block.id;
+                    })) {
+      markerBlock = block.id;
+      break;
+    }
+  }
+  expect(markerBlock != 0,
+         "a scope boundary must follow an exact fallible cleanup spine");
+  if (markerBlock == 0)
+    return;
+  auto malformed = entry->body;
+  malformed.blocks.push_back(
+      {.id = malformed.blocks.size() + 1,
+       .activeFailure = malformed.findBlock(markerBlock)->activeFailure,
+       .terminator = {.kind = lang::MirTerminatorKind::Goto,
+                      .target = markerBlock}});
+  lang::rebuildMirReachability(malformed);
+  (void)lang::rebuildMirValueUses(malformed);
+  const auto rejected = lang::verifyMirBody(malformed, entry->id);
+  expect(!rejected.valid() &&
+             hasVerificationError(rejected, "cleanup sequence"),
+         "even an unreachable second predecessor must not be cached as a "
+         "unique cleanup spine");
 }
 
 void testInvokeEdgesAndFailureCleanup() {
@@ -2330,10 +2399,15 @@ int main() {
           continue;
         }
         ++allocations;
-        expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
-                   block.terminator.invokeInstruction == instruction.id &&
-                   instruction.successResultDrop.has_value(),
-               "allocation must publish an owner only after its success edge");
+        expect(block.terminator.invokeInstruction != instruction.id &&
+                   !instruction.successResultDrop &&
+                   instruction.lifecycle.size() == 1 &&
+                   instruction.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Initialize &&
+                   instruction.definedFailure.mayAbortAllocation() &&
+                   !instruction.definedFailure.mayUnwind(),
+               "allocation must publish on completion without an exhaustion "
+               "cleanup edge");
         for (int mutation = 0; mutation < 6; ++mutation) {
           auto forged = frontend.mir;
           auto *body = functionBody(forged, function.id);
@@ -2345,8 +2419,7 @@ int main() {
                                         });
           switch (mutation) {
           case 0:
-            changedBlock.terminator = {.kind = lang::MirTerminatorKind::Goto,
-                                       .target = block.terminator.target};
+            changed.lifecycle.clear();
             break;
           case 1:
             changed.definedFailure.localOrigins.clear();
@@ -2475,20 +2548,34 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
         ++allocations;
         const auto *raw =
             function.body.findDropObligation(allocate.objectAllocation);
-        const auto &construction =
-            function.body.blocks[block.terminator.target - 1];
-        const auto &call = construction.instructions.front();
+        const auto &construction = block;
+        const auto callIterator = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &candidate) {
+              return candidate.kind == lang::MirInstructionKind::Call &&
+                     candidate.objectAllocation == allocate.objectAllocation;
+            });
+        expect(callIterator != block.instructions.end(),
+               "allocation must be followed by its exact construction");
+        if (callIterator == block.instructions.end())
+          continue;
+        const auto &call = *callIterator;
         expect(
             raw && raw->kind == lang::MirDropObligationKind::ObjectAllocation &&
-                !allocate.result && allocate.successResultDrop == raw->id &&
+                !allocate.result && !allocate.successResultDrop &&
+                allocate.lifecycle ==
+                    std::vector<lang::MirLifecycleEvent>{
+                        {.kind = lang::MirLifecycleEventKind::Initialize,
+                         .target = raw->id}} &&
+                !allocate.definedFailure.mayUnwind() &&
                 call.objectAllocation == raw->id &&
                 call.intrinsic == lang::IntrinsicKind::AllocateUniqueOwner &&
                 call.definedFailure.localOrigins.empty() &&
                 call.definedFailure.propagation ==
                     lang::FailurePropagationKind::Constructor &&
                 construction.terminator.kind == lang::MirTerminatorKind::Invoke,
-            "raw allocation and exact constructor require separate failure "
-            "edges");
+            "raw allocation aborts, while a failing constructor retains its "
+            "cleanup edge");
         for (int mutation = 0; mutation < 14; ++mutation) {
           auto forged = frontend.mir;
           auto *body = functionBody(forged, function.id);
@@ -2498,7 +2585,10 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
               allocationBlock.instructions.end(),
               [&](const auto &value) { return value.id == allocate.id; });
           auto &constructorBlock = body->blocks[construction.id - 1];
-          auto &constructor = constructorBlock.instructions.front();
+          auto &constructor = *std::find_if(
+              constructorBlock.instructions.begin(),
+              constructorBlock.instructions.end(),
+              [&](const auto &candidate) { return candidate.id == call.id; });
           auto &retirement = body->blocks[construction.terminator.target - 1]
                                  .instructions.front();
           switch (mutation) {
@@ -2511,7 +2601,7 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
                 .detail = lang::DefinedFailureDetail::PrivateStorage;
             break;
           case 2:
-            changed.successResultDrop.reset();
+            changed.lifecycle.clear();
             break;
           case 3:
             constructor.objectAllocation = 0;
@@ -2530,7 +2620,7 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
             retirement.lifecycle.front().conditional = true;
             break;
           case 8:
-            allocationBlock.terminator.target = construction.terminator.target;
+            allocationBlock.terminator.invokeInstruction = changed.id;
             break;
           case 9:
             body->places[*changed.destination - 1].initiallyAvailable = true;
@@ -2997,8 +3087,7 @@ void testRecursiveCleanupContracts() {
     std::vector<lang::HirDestructorInstanceId> expected;
     const auto walk = [&](const auto &self,
                           const lang::SemanticType &type) -> void {
-      if ((type.kind == lang::SemanticType::UniqueOwner ||
-           type.kind == lang::SemanticType::PrefixStorage) &&
+      if (type.kind == lang::SemanticType::UniqueOwner &&
           type.arguments.size() == 1) {
         self(self, type.arguments.front());
         return;
@@ -3122,13 +3211,9 @@ void testCollectionCleanupContracts() {
             !lang::mirDropMayRaiseDefinedFailure(frontend.mir,
                                                  *instruction.elementCleanup))
           continue;
-        const bool pop =
-            instruction.intrinsic == lang::IntrinsicKind::PrefixStoragePop;
         const bool destroy =
             instruction.intrinsic == lang::IntrinsicKind::ObjectDestroy;
-        const bool erase =
-            instruction.intrinsic == lang::IntrinsicKind::PrefixStorageErase;
-        if (erase && instruction.elementCleanup->classInstance &&
+        if (destroy && instruction.elementCleanup->classInstance &&
             !checkedRelocation &&
             frontend.mir
                 .findClassInstance(*instruction.elementCleanup->classInstance)
@@ -3151,19 +3236,18 @@ void testCollectionCleanupContracts() {
                 !lang::mirTypeRelocationIsDefinedFailureFree(forged, type),
                 "relocation cannot invent a generated move or lifecycle guard");
             expect(!lang::verifyMirProgram(forged).valid(),
-                   "erase with a forged relocation contract must fail "
+                   "source lifetime operations with a forged relocation "
+                   "contract must fail "
                    "verification");
           }
           checkedRelocation = true;
         }
-        if ((pop && checkedPop) || (destroy && checkedDestroy) ||
-            (erase && checkedErase))
+        if (destroy && checkedDestroy)
           continue;
-        expect(pop || destroy || erase,
+        expect(destroy || instruction.intrinsic ==
+                              lang::IntrinsicKind::OptionalStorageReset,
                "element recipe belongs only to explicit removal");
-        checkedPop |= pop;
         checkedDestroy |= destroy;
-        checkedErase |= erase;
         if (destroy) {
           const auto &pointer = instruction.operands.front().type;
           expect(pointer.kind == lang::SemanticType::RawPointer &&
@@ -3218,15 +3302,18 @@ void testCollectionCleanupContracts() {
     for (const auto &drop : body.dropObligations) {
       const auto inspect = [&](const auto &self, const lang::MirDropType &step,
                                std::vector<std::size_t> path) -> void {
-        const bool prefix = step.type.kind == lang::SemanticType::PrefixStorage;
+        const bool prefix = std::any_of(
+            frontend.hir.classInstances().begin(),
+            frontend.hir.classInstances().end(), [&](const auto &owner) {
+              return step.classInstance == owner.id && owner.source &&
+                     owner.source->name().lexeme == "prefix_slots";
+            });
         if (prefix && !checkedPrefix &&
             lang::mirDropMayRaiseDefinedFailure(frontend.mir, step)) {
-          expect(
-              step.aggregate.size() == 1 &&
-                  step.aggregate.front().type == step.type.arguments.front() &&
-                  !step.aggregate.front().uniqueOwnerBase &&
-                  step.aggregate.front().uniqueOwnerField == 0,
-              "a live-element loop must retain one exact unprojected recipe");
+          expect(step.type.kind == lang::SemanticType::Class &&
+                     step.destructor && step.aggregate.empty(),
+                 "source prefix policy has an ordinary destructor, not a "
+                 "hidden element recipe");
           checkedPrefix = true;
           for (int mutation = 0; mutation < 5; ++mutation) {
             auto forged = frontend.mir;
@@ -3236,18 +3323,18 @@ void testCollectionCleanupContracts() {
             for (const auto index : path)
               changed = &changed->aggregate[index];
             if (mutation == 0)
-              changed->aggregate.clear();
+              changed->destructor.reset();
             else if (mutation == 1)
-              changed->aggregate.push_back(changed->aggregate.front());
+              changed->classInstance.reset();
             else if (mutation == 2)
-              changed->aggregate.front().type = lang::SemanticType::Int32;
+              changed->type = lang::SemanticType::Int32;
             else if (mutation == 3)
-              changed->aggregate.front().uniqueOwnerField = 1;
+              changed->aggregate.push_back({.type = lang::SemanticType::Int32});
             else
-              changed->aggregate.front().requiresActiveCleanup = false;
+              changed->requiresActiveCleanup = false;
             expect(!lang::verifyMirProgram(forged).valid(),
-                   "missing, duplicated, mistyped, projected, or inactive "
-                   "collection element recipes must fail verification");
+                   "missing, mistyped, forged, or inactive source-owner "
+                   "cleanup must fail verification");
           }
         }
         for (std::size_t index = 0; index < step.aggregate.size(); ++index) {
@@ -3263,6 +3350,23 @@ void testCollectionCleanupContracts() {
       checkedObjectCleanup && checkedPrefix,
       "both source-defined sparse destruction and live-prefix cleanup require "
       "verifier coverage");
+  for (const auto &function : frontend.hir.functionInstances()) {
+    if (!function.source || !function.owner)
+      continue;
+    const auto owner = std::find_if(
+        frontend.hir.classInstances().begin(),
+        frontend.hir.classInstances().end(),
+        [&](const auto &candidate) { return candidate.id == function.owner; });
+    if (owner == frontend.hir.classInstances().end() || !owner->source ||
+        owner->source->name().lexeme != "prefix_slots")
+      continue;
+    const auto *mir = frontend.mir.findFunctionInstance(function.id);
+    if (!mir || !mir->effectSummary.traits.dropsValue ||
+        !mir->effectSummary.traits.invokesUserCode)
+      continue;
+    checkedPop |= function.source->name().lexeme == "pop";
+    checkedErase |= function.source->name().lexeme == "erase";
+  }
   expect(checkedDestroy && checkedPop && checkedErase && checkedRelocation,
          "slot destruction, prefix pop/erase and generated relocation require "
          "verifier coverage");
@@ -3527,9 +3631,20 @@ int main() { auto owner = std::make_unique<Derived>(); return owner->read(); }
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc == 3 && std::string_view(argv[1]) == "--test" &&
+      std::string_view(argv[2]) == "testCleanupSpinePredecessorIndex") {
+    testCleanupSpinePredecessorIndex();
+    return passed ? 0 : 1;
+  }
+  if (argc != 1) {
+    std::cerr << "usage: " << argv[0]
+              << " [--test testCleanupSpinePredecessorIndex]\n";
+    return 2;
+  }
   testCanonicalMetadataAndMirSites();
   testContainerContractChecks();
+  testCleanupSpinePredecessorIndex();
   testInvokeEdgesAndFailureCleanup();
   testEmptyDescriptorContract();
   testHostedProgramEntryMetadata();

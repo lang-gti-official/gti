@@ -1,0 +1,66 @@
+#include <std/memory>
+
+class Record {
+public:
+  mut int value;
+  Record(int value) : value(value) {}
+};
+
+class Layer {
+public:
+  mut Record nested;
+  Layer(int value) : nested(Record(value)) {}
+};
+
+class ByteRecord {
+public:
+  mut uint8_t small;
+  ByteRecord(uint8_t value) : small(value) {}
+};
+
+unsafe int nested_direct(int* vacant) {
+  mut Layer layer{7};
+  unsafe { std::construct_at(vacant, 42); }
+  return layer.nested.value + 1;
+}
+
+unsafe int nested_reconstruct() {
+  mut Layer layer{7};
+  int before = layer.nested.value + 1;
+  if (before != 8) return 1;
+  unsafe {
+    int* address = &layer.nested.value;
+    std::destroy_at(address);
+    std::construct_at(address, 2147483647);
+  }
+  return layer.nested.value + 1;
+}
+
+unsafe int byte_direct(int* vacant) {
+  mut ByteRecord record{uint8_t(7)};
+  record.small += uint8_t(1);
+  unsafe { std::construct_at(vacant, 42); }
+  record.small += uint8_t(1);
+  return int(record.small);
+}
+
+unsafe int array_direct(int* vacant) {
+  mut int values[2] = {7, 8};
+  int before = values[0] + 1;
+  if (before != 8) return 1;
+  unsafe { std::construct_at(vacant, 42); }
+  return values[0] + 1;
+}
+
+int main() {
+  mut std::uninitialized<int> vacant{};
+  unsafe {
+    if (nested_direct(vacant.data()) != 8) return 1;
+    std::destroy_at(vacant.data());
+    if (byte_direct(vacant.data()) != 9) return 2;
+    std::destroy_at(vacant.data());
+    if (array_direct(vacant.data()) != 8) return 3;
+    std::destroy_at(vacant.data());
+    return nested_reconstruct();
+  }
+}

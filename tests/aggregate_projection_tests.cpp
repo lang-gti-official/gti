@@ -7,7 +7,7 @@ int main() {
   std::size_t copies = 0, moves = 0, addresses = 0;
   for (const auto name :
        {"array_field_projections", "class_array_decomposition",
-        "owning_class_array_decomposition",
+        "owning_class_array_decomposition", "guarded_class_array_decomposition",
         "constructor_struct_field_address"}) {
     const auto path = root / "fixtures" / (std::string(name) + ".gti");
     std::ifstream input(path);
@@ -68,6 +68,36 @@ int main() {
           copies += copy;
           moves += move;
           addresses += address;
+          if (move) {
+            const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
+            const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                               function.id};
+            expect(function.mayRaiseDefinedFailure
+                       ? emitter.supportsFailureBodyText(address)
+                       : emitter.supportsBodyText(address),
+                   "the unmodified owning-array move must have an admitted "
+                   "fresh destination before testing forged transfers");
+            for (const auto &owner : frontend.mir.classInstances()) {
+              if (instruction.info.type.arguments.size() != 1 ||
+                  owner.type != instruction.info.type.arguments.front() ||
+                  !owner.requiresActiveDropState)
+                continue;
+              expect(!lang::mirTypeMoveIsDefinedFailureFree(frontend.mir,
+                                                            owner.type) &&
+                         lang::mirTypeRelocationIsDefinedFailureFree(
+                             frontend.mir, owner.type),
+                     "guarded cleanup needs the exact vacant-destination "
+                     "relocation proof, not passive move/assignment authority");
+              auto malformed = frontend.mir;
+              auto *changed = const_cast<lang::MirClassInstance *>(
+                  malformed.findClassInstance(owner.id));
+              changed->requiresActiveDropState = false;
+              expect(!lang::CppMirBodyEmitter(malformed, rows)
+                          .supportsFailureBodyText(address),
+                     "array publication cannot lose the moved-source "
+                     "destructor guard");
+            }
+          }
           if (address) {
             expect(function.body.loans.empty(),
                    "forming raw element addresses introduces no checked loans");
@@ -224,7 +254,7 @@ int main() {
                  std::to_string(rejected) + " rejected");
     }
   }
-  expect(copies == 2 && moves == 1 && addresses == 2,
+  expect(copies == 2 && moves == 2 && addresses == 2,
          "fixtures prove independent copying, owning movement and checked "
          "address formation");
   {

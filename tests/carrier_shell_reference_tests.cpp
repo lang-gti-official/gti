@@ -1340,15 +1340,18 @@ void checkSharedAccessorRange() {
     for (const auto &range : function.body.rangeIterations) {
       const auto *element = function.body.findLoan(range.elementLoan);
       const auto *parent = function.body.findLoan(range.rangeLoan);
-      if (!element || !parent || element->parent != parent->id ||
+      if (!element || !parent || element->storedDependency != parent->id ||
           parent->kind != lang::MirLoanKind::Stored)
         continue;
       expect(element->kind == lang::MirLoanKind::CallResult &&
                  element->access == lang::AccessMode::ReadOnly &&
+                 element->parent == 0 &&
+                 parent->access == lang::AccessMode::ReadOnly &&
                  !element->entry && !element->escapes &&
                  !element->carriers.empty(),
-             "shared range element keeps the address-producing call loan");
-      for (int mutation = 0; mutation < 3; ++mutation) {
+             "shared range element keeps its call loan and exact stored "
+             "owner dependency through the source-defined iterator");
+      for (int mutation = 0; mutation < 4; ++mutation) {
         auto invalid = frontend.mir;
         auto &body = const_cast<lang::MirFunctionInstance *>(
                          invalid.findFunctionInstance(function.id))
@@ -1358,6 +1361,8 @@ void checkSharedAccessorRange() {
           changed.kind = lang::MirLoanKind::Local;
         else if (mutation == 1)
           changed.access = lang::AccessMode::Mutable;
+        else if (mutation == 3)
+          changed.storedDependency = 0;
         else {
           // Ending the range immediately after dereference must not revoke
           // the authority still required by the live returned element.
@@ -1385,8 +1390,8 @@ void checkSharedAccessorRange() {
           expect(inserted, "range element has an exact call producer");
         }
         expect(!lang::verifyMirProgram(invalid).valid(),
-               "shared range rejects forged kind/access or early "
-               "parent retirement: " +
+               "shared range rejects forged kind/access, missing dependency "
+               "or early owner retirement: " +
                    std::to_string(mutation));
       }
       checked = true;
