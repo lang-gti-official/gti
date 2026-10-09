@@ -2640,6 +2640,18 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   ClosedCallContext discovered =
       contextForCall(body, aliases, instruction, state);
   closedCalls->discovered.emplace_back(*target, std::move(discovered));
+  // A verified terminal source call has no successful continuation to
+  // summarize. Still discover its body for checks before termination, but do
+  // not postpone the caller's other successful paths waiting for a return
+  // postcondition that cannot exist. Invoke failure edges retain their own
+  // conservative pre-instruction transfer.
+  if (target->kind == MirBodyKind::Function)
+    if (const auto *function =
+            closedCalls->program.findFunctionInstance(target->owner);
+        function && function->neverReturns && instruction.neverReturns) {
+      state.reachable = false;
+      return true;
+    }
   const auto found = closedCalls->summaries.find(*target);
   if (found == closedCalls->summaries.end() || !found->second.complete) {
     closedCalls->incompleteBodies.insert(address);
