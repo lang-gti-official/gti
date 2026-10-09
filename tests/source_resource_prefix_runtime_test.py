@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """One-region ownership preserves exact provider descriptors and failures."""
 
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,7 +24,7 @@ if __name__ == "__main__":
         sites = [index for index, text in enumerate(policy_lines, 1)
                  if text.endswith("// " + marker)]
         assert len(sites) == 1, marker
-        return (70, "", f'{policy.name}:{sites[0]}: runtime error[GTI-R0017]: '
+        return (70, "", f'<std/source_resource_prefix_policy>:{sites[0]}: runtime error[GTI-R0017]: '
                 f'panic: "{message}"\n')
     policy_cases = [((), (0, "", ""))]
     for argument, marker, message in (
@@ -33,17 +35,43 @@ if __name__ == "__main__":
             ("identity", "wrong-region", "wrong resource region identity"),
             ("duplicate", "duplicate-release", "duplicate resource release")):
         policy_cases.append(((argument,), rejected_release(marker, message)))
-    run_runtime_matrix(
-        names=("source_resource_prefix_policy", "source_resource_prefix_cleanup"),
-        cases={
-            "source_resource_prefix_policy": policy_cases,
-            "source_resource_prefix_cleanup": [
-                ((), (0, "2\n1\n900\n901\n", "")),
-                (("fail",), (70, "2\n1\n900\n901\n", failure)),
-                (("fail", "release"), (70, "2\n1\n900\n901\n", failure)),
-                (("success", "release"), (0, "2\n1\n900\n901\n", "")),
-            ],
-        })
+    # This library-internal contract also calls prefix_slots::try_allocate
+    # directly: public reserve intentionally skips rejected repeat allocation.
+    # Stage the test as a trusted stdlib unit without changing the production
+    # library or granting private-name access to application source.
+    previous_stdlib = os.environ.get("GTI_STDLIB_PATH")
+    library = pathlib.Path(previous_stdlib) if previous_stdlib else policy.parents[2] / "stdlib"
+    with tempfile.TemporaryDirectory(prefix="gti-prefix-policy-stdlib-") as temporary:
+        staged = pathlib.Path(temporary) / "stdlib"
+        shutil.copytree(library, staged)
+        policy_source = policy.read_text()
+        assert policy_source.count("int main(") == 1
+        (staged / "std" / policy.name).write_text(
+            policy_source.replace("int main(", "int prefix_policy_main(", 1))
+        entry = pathlib.Path(temporary) / "prefix_policy_test.gti"
+        entry.write_text("#include <std/source_resource_prefix_policy>\n"
+                         "#include <std/string>\n#include <std/vector>\n"
+                         "int main(int argc, std::vector<std::string> argv) {\n"
+                         "  return prefix_policy_main(argc, std::move(argv));\n}\n")
+        os.environ["GTI_STDLIB_PATH"] = str(staged)
+        try:
+            run_runtime_matrix(
+                names=("source_resource_prefix_policy", "source_resource_prefix_cleanup"),
+                fixture_paths={"source_resource_prefix_policy": entry},
+                cases={
+                    "source_resource_prefix_policy": policy_cases,
+                    "source_resource_prefix_cleanup": [
+                        ((), (0, "2\n1\n900\n901\n", "")),
+                        (("fail",), (70, "2\n1\n900\n901\n", failure)),
+                        (("fail", "release"), (70, "2\n1\n900\n901\n", failure)),
+                        (("success", "release"), (0, "2\n1\n900\n901\n", "")),
+                    ],
+                })
+        finally:
+            if previous_stdlib is None:
+                os.environ.pop("GTI_STDLIB_PATH", None)
+            else:
+                os.environ["GTI_STDLIB_PATH"] = previous_stdlib
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     fixtures = fixture.parent

@@ -570,10 +570,17 @@ public:
   uint64_t capacity() { return this.buffer.capacity(); }
   uint64_t length() { return this.live; }
   expected<void, std::alloc_errc> try_allocate(uint64_t count) mut {
-    return this.buffer.try_allocate(count);
+    return this.try_allocate(count, std::layout_of<T>().alignment);
   }
   expected<void, std::alloc_errc> try_allocate(uint64_t count, uint64_t minimum) mut {
-    return this.buffer.try_allocate(count, minimum);
+    {
+      auto allocated = this.buffer.try_allocate(count, minimum);
+      if (!allocated) { return unexpected(allocated.error()); }
+    }
+    // Publish the empty initialized prefix after allocation and temporary
+    // cleanup. Failed/rejected allocation leaves the existing prefix intact.
+    this.live = uint64_t(0);
+    return;
   }
   unsafe const T* address() { unsafe { return this.buffer.address(); } }
   unsafe T* address() mut { unsafe { return this.buffer.address(); } }

@@ -134,6 +134,48 @@ public:
   }
 };
 
+// Test the source slot policy directly: public reserve deliberately skips an
+// already sufficient allocation, so it cannot exercise allocation rejection.
+int initial_prefix_publication(std::resource_ref<RecordingResource> resource,
+                               bool explicit_alignment) {
+  mut gti_internal::prefix_slots<int, std::detail::resource_lease<RecordingResource>> values{
+      std::detail::resource_lease<RecordingResource>(resource)};
+  if (!values.try_allocate(uint64_t(0)) ||
+      !values.try_allocate(uint64_t(0), uint64_t(128)) ||
+      values.length() != uint64_t(0) || values.capacity() != uint64_t(0) ||
+      resource.get().attempts() != uint64_t(0)) { return 40; }
+  if (explicit_alignment) {
+    if (!values.try_allocate(uint64_t(2), uint64_t(128))) { return 41; }
+  } else {
+    if (!values.try_allocate(uint64_t(2))) { return 42; }
+  }
+  if (values.length() != uint64_t(0) || values.capacity() != uint64_t(2) ||
+      resource.get().acquisitions() != uint64_t(1)) { return 43; }
+  values.append(91);
+  auto rejected = values.try_allocate(uint64_t(4));
+  auto rejected_aligned = values.try_allocate(uint64_t(0), uint64_t(128));
+  if (rejected || rejected.error() != std::alloc_errc::invalid_state ||
+      rejected_aligned || rejected_aligned.error() != std::alloc_errc::invalid_state ||
+      values.length() != uint64_t(1) || values.capacity() != uint64_t(2) ||
+      values.read(uint64_t(0)) != 91 || resource.get().attempts() != uint64_t(1) ||
+      resource.get().releases() != uint64_t(0)) { return 44; }
+  return 0;
+}
+
+int failed_initial_allocation(std::resource_ref<RecordingResource> resource) {
+  mut gti_internal::prefix_slots<int, std::detail::resource_lease<RecordingResource>> values{
+      std::detail::resource_lease<RecordingResource>(resource)};
+  auto failed = values.try_allocate(uint64_t(2));
+  auto failed_aligned = values.try_allocate(uint64_t(2), uint64_t(128));
+  if (failed || failed.error() != std::alloc_errc::resource_exhausted ||
+      failed_aligned || failed_aligned.error() != std::alloc_errc::resource_exhausted ||
+      values.length() != uint64_t(0) || values.capacity() != uint64_t(0) ||
+      resource.get().attempts() != uint64_t(2) ||
+      resource.get().acquisitions() != uint64_t(0) ||
+      resource.get().releases() != uint64_t(0)) { return 45; }
+  return 0;
+}
+
 int failed_growth(std::resource_ref<RecordingResource> resource) {
   mut std::resource_vector<Item, RecordingResource> values{resource};
   if (!values.try_reserve(std::size_t(0)) || resource.get().attempts() != 0) { return 1; }
@@ -224,6 +266,33 @@ int reject_descriptor(std::string_view mode) {
 
 int main(int argc, std::vector<std::string> argv) {
   if (argc > 1) { return reject_descriptor(argv[std::size_t(1)].view()); }
+  {
+    RecordingResource resource{uint64_t(0), uint64_t(7)};
+    unsafe {
+      auto binding = std::bind_resource(resource);
+      int status = failed_initial_allocation(binding);
+      if (status != 0) { return status; }
+    }
+    if (resource.acquisitions() != uint64_t(0) || resource.releases() != uint64_t(0)) { return 46; }
+  }
+  {
+    RecordingResource resource{uint64_t(2), uint64_t(8)};
+    unsafe {
+      auto binding = std::bind_resource(resource);
+      int ordinary = initial_prefix_publication(binding, false);
+      if (ordinary != 0) { return ordinary; }
+    }
+    if (resource.acquisitions() != uint64_t(1) || resource.releases() != uint64_t(1)) { return 47; }
+  }
+  {
+    RecordingResource resource{uint64_t(2), uint64_t(9)};
+    unsafe {
+      auto binding = std::bind_resource(resource);
+      int aligned = initial_prefix_publication(binding, true);
+      if (aligned != 0) { return aligned; }
+    }
+    if (resource.acquisitions() != uint64_t(1) || resource.releases() != uint64_t(1)) { return 48; }
+  }
   {
     RecordingResource resource{uint64_t(1), uint64_t(1)};
     unsafe {
