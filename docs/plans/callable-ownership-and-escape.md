@@ -44,8 +44,12 @@ reset/replacement, explicit movement, and deterministic capture cleanup.
 `function` requires copy-constructible targets and has an explicit deep
 `clone()`; both wrapper values are move-only, and `move_only_function`
 additionally accepts move-only targets without cloning. Their models and
-erasure are ordinary GTI interfaces and unique owners, not public-name compiler
-exceptions or native `std::function` policy.
+erasure are ordinary GTI interfaces and owners, not public-name compiler
+exceptions or native `std::function` policy. The four repeatable wrappers erase
+into the general `std::inline_polymorphic` owner, which keeps small
+cleanup-inert relocatable models inline and boxes the rest; the consuming
+forms still erase into unique owners. Inline consuming invocation needs an
+owned-projection rule for the polymorphic slot, which is not implemented.
 The retained-field invocation slice now has normal-path and capture-destructor
 failure evidence: explicit MIR capture cleanup recipes drain remaining caller
 cleanup and preserve secondary-failure records. The backend emits a materialized
