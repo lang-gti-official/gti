@@ -153,7 +153,7 @@ def main():
     parser.add_argument("--runtime-library", type=pathlib.Path,
                         help="libgti_runtime.a from the same build (attribute only)")
     parser.add_argument("--vendor-include", type=pathlib.Path,
-                        default=REPOSITORY / "vendor" / "expected-lite" / "include",
+                        default=REPOSITORY / "vendor" / "expected_lite" / "include",
                         help="expected-lite include directory for C++20 attribution")
     parser.add_argument("--output", type=pathlib.Path, required=True,
                         help="new directory for builds and JSON results")
