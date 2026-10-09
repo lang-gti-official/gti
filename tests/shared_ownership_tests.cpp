@@ -368,9 +368,17 @@ int main() {
             instruction.intrinsic != lang::IntrinsicKind::SharedOwnerBorrow) {
           continue;
         }
-        require(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
-                    block.terminator.invokeInstruction == instruction.id,
-                "fallible shared operations must route through MIR Invoke");
+        const bool borrow =
+            instruction.intrinsic == lang::IntrinsicKind::SharedOwnerBorrow;
+        const bool invokes =
+            block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+            block.terminator.invokeInstruction == instruction.id;
+        require(invokes == borrow,
+                "empty shared borrowing must Invoke; promotion and retain "
+                "exhaustion must not gain cleanup edges");
+        require(instruction.definedFailure.mayUnwind() == borrow &&
+                    instruction.definedFailure.mayAbortAllocation() != borrow,
+                "shared operations retain exact contained/terminal outcomes");
         for (int mutation = 0; mutation != 5; ++mutation) {
           auto malformed = frontend.mir;
           auto *target = const_cast<lang::MirFunctionInstance *>(
@@ -388,7 +396,14 @@ int main() {
                 .outcomes.front()
                 .detail = lang::DefinedFailureDetail::None;
           } else if (mutation == 3) {
-            target->body.blocks[block.id - 1].terminator.invokeInstruction = 0;
+            if (borrow) {
+              target->body.blocks[block.id - 1].terminator.invokeInstruction =
+                  0;
+            } else {
+              // Terminal allocation still needs its exact source record;
+              // clearing a nonexistent Invoke would be a no-op mutation.
+              changed.localFailureSites.clear();
+            }
           } else if (mutation == 4) {
             changed.borrowArguments = {0, 1};
           } else if (instruction.intrinsic ==

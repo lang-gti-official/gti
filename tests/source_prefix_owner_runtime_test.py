@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as runtime_matrix
+from allocation_abort_runtime_test import ABORT_STATUS
 
 
 if __name__ == "__main__":
@@ -41,13 +42,23 @@ if __name__ == "__main__":
     payload_secondary = (f"{payload.name}:{payload_secondary_line}: runtime error[GTI-R0014]: "
                          "failure_during_cleanup; primary [GTI-R0002] at "
                          f"{payload.name}:{payload_primary_line}; secondary [GTI-R0002]\n")
+    memory_lines = (fixture.parents[2] / "stdlib/std/memory.gti").read_text().splitlines()
+    allocation_line = next(index for index, text in enumerate(memory_lines, 1)
+                           if "require_allocation(false)" in text)
+    overflow_line = next(index for index, text in enumerate(memory_lines, 1)
+                         if "if (!allocated) { gti_internal::fail_allocation" in text)
+    exhaustion = (f"<std/memory>:{allocation_line}: runtime error[GTI-R0011]: "
+                  "allocation_failure in private_storage\n")
+    overflow = (f"<std/memory>:{overflow_line}: runtime error[GTI-R0017]: "
+                'panic: "Allocation size overflow"\n')
     runtime_matrix(
         names=("source_prefix_owner", "source_prefix_vector", "source_prefix_expected_range",
                "source_prefix_complete_elements", "generic_payload_enum",
                "raw_text_owner_example",
                "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup",
                "source_prefix_payload_return_cleanup", "sequence_unchecked_access",
-               "sequence_unchecked_resource", "nested_carrier_arguments"),
+               "sequence_unchecked_resource", "nested_carrier_arguments",
+               "source_prefix_vector_exhaustion"),
         cases={
             "source_prefix_owner": [((), (0, "2\n1\n4\n3\n", ""))],
             "source_prefix_vector": [((), (0, "", ""))],
@@ -56,6 +67,16 @@ if __name__ == "__main__":
             "sequence_unchecked_access": [((), (0, "", ""))],
             "sequence_unchecked_resource": [((), (0, "", ""))],
             "nested_carrier_arguments": [((), (0, "", ""))],
+            "source_prefix_vector_exhaustion": [
+                ((), (ABORT_STATUS, "", exhaustion)),
+                (("push",), (ABORT_STATUS, "8\n", exhaustion)),
+                (("emplace", "item"), (ABORT_STATUS, "", exhaustion)),
+                (("sized", "vector", "construction"), (ABORT_STATUS, "", exhaustion)),
+                (("size", "overflow", "keeps", "cleanup"),
+                 (70, "99\nlive=0\n", overflow)),
+                (("successful", "emplacement", "releases", "one", "region"),
+                 (0, "12\n88\n99\nlive=0\n", "")),
+            ],
             "generic_payload_enum": [((), (0, "1\n4\n3\n2\n", ""))],
             "raw_text_owner_example": [((), (0, "hello\nHello\n", ""))],
             "source_prefix_drain_failure": [
@@ -79,7 +100,9 @@ if __name__ == "__main__":
         },
         fixture_paths={"raw_text_owner_example":
                        Path(__file__).resolve().parent.parent /
-                       "examples/133-raw-text-owner-views.gti"})
+                       "examples/133-raw-text-owner-views.gti"},
+        native_inputs_by_name={"source_prefix_vector_exhaustion":
+                              [str(fixture.with_name("stdlib_adoption_allocation_counts.cpp"))]})
 
     compiler = Path(sys.argv[1]).resolve()
     rejected = {

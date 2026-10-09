@@ -590,16 +590,31 @@ void testStandardLibraryImports() {
   std::size_t standardEdges = 0;
   for (const lang::SourceDependency &dependency :
        imported.sourceGraph.dependencyEdges()) {
-    if (dependency.kind == lang::SourceDependencyKind::StandardLibrary) {
+    if (dependency.kind == lang::SourceDependencyKind::StandardLibrary &&
+        dependency.source == importedEntryId && dependency.target == arrayId) {
       ++standardEdges;
     }
   }
-  expect(arrayId != 0 && loadedArray != nullptr &&
-             loadedArray->standardLibraryName == "std/array" &&
-             standardEdges == 2 &&
-             imported.sourceGraph.sourceUnits().size() == 3,
-         "standard imports should retain their logical name and load each "
-         "canonical unit once");
+  // Transitive source-defined library helpers may grow without changing the
+  // include identity rule. Check deduplication by canonical path, not by the
+  // historical total of entry, prelude and a self-contained array header.
+  std::set<std::filesystem::path> canonicalUnits;
+  for (const auto &unit : imported.sourceGraph.sourceUnits()) {
+    expect(canonicalUnits.insert(std::filesystem::weakly_canonical(unit.path))
+               .second,
+           "standard imports must not load a canonical source unit twice");
+  }
+  expect(
+      arrayId != 0 && loadedArray != nullptr &&
+          loadedArray->standardLibraryName == "std/array" &&
+          standardEdges == 2 &&
+          canonicalUnits.contains(std::filesystem::weakly_canonical(entry)) &&
+          canonicalUnits.contains(
+              std::filesystem::weakly_canonical(arrayUnit)) &&
+          canonicalUnits.contains(
+              std::filesystem::weakly_canonical(standardLibraryPrelude())),
+      "standard imports should retain their logical name and load each "
+      "canonical unit once");
   expect(imported.sourceGraph.isCompilerTrusted(arrayId) &&
              imported.sourceGraph.isCompilerTrusted(importedPreludeId) &&
              !imported.sourceGraph.isCompilerTrusted(importedEntryId) &&

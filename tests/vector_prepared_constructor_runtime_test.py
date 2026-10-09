@@ -18,10 +18,9 @@ def main():
     fixture = pathlib.Path(__file__).parent / "fixtures/vector_prepared_constructor_failure.gti"
     lines = fixture.read_text().splitlines()
     helper = fixture.parent / "prefix_constructor_test.gti"
-    helper_lines = helper.read_text().splitlines()
     memory_lines = (fixture.parents[2] / "stdlib/std/memory.gti").read_text().splitlines()
     capacity_line = next(index for index, text in enumerate(memory_lines, 1)
-                         if "require_relocation_capacity(this.live < this.slots)" in text)
+                         if "require_relocation_capacity(this.live < this.capacity())" in text)
     capacity_failure = (f"<std/memory>:{capacity_line}: "
                         "runtime error[GTI-R0010]: invalid_storage_state in relocation_capacity\n")
 

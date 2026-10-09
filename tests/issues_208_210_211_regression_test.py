@@ -190,18 +190,21 @@ def main() -> int:
         )
         failure_pattern = re.compile(
             re.escape(vector_schedule.group("failure")) + r": \{\s*"
-            + cleanup_scope(vector_schedule.group("failure")) +
-            r"// GTI MIR failure-record \d+ cleanup\s*"
+            + r"// GTI MIR failure-record \d+ cleanup\s*"
             r"// GTI MIR propagate failure-record \d+ after cleanup\s*return;"
         )
         failure = failure_pattern.search(vector_body)
-        if success is None or failure is None or " = std::move(" in vector_body:
+        # This constructor has no local cleanup on its failure edge. An
+        # inherited failure still needs the incoming guard above, but a local
+        # cleanup context would add cost without protecting any operation.
+        if (success is None or failure is None or " = std::move(" in vector_body or
+                "__gti_mir_cleanup_context" in vector_body):
             sys.stderr.write("vector field must publish only on success, without a second move\n")
             return 1
         missing_guard = re.sub(INCOMING_CLEANUP_CHECK, "", vector_schedule.group(0), count=1)
-        missing_scope = re.sub(cleanup_scope(vector_schedule.group("failure")), "", failure.group(0), count=1)
+        missing_propagation = re.sub(r"// GTI MIR propagate failure-record \d+ after cleanup", "", failure.group(0), count=1)
         if (vector_schedule_pattern.search(missing_guard) is not None or
-                failure_pattern.search(missing_scope) is not None):
+                failure_pattern.search(missing_propagation) is not None):
             sys.stderr.write("field publication proof accepts missing inherited-cleanup protection\n")
             return 1
 

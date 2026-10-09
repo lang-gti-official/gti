@@ -172,6 +172,9 @@ extern "C" void adoption_count_begin() {
   enabled = true;
 }
 extern "C" void adoption_count_end() { enabled = false; }
+extern "C" void adoption_trace(std::int32_t value) {
+  std::printf("%d\n", static_cast<int>(value));
+}
 extern "C" std::uint64_t adoption_allocations() { return allocations; }
 extern "C" std::uint64_t adoption_bytes() { return bytes; }
 extern "C" void adoption_fail_at(std::uint64_t allocation) {
