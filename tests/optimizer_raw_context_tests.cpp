@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimizer.h"
 
@@ -23,7 +24,8 @@ void expect(bool condition, std::string_view message) {
 void checkAddressFixture(std::string_view filename,
                          std::initializer_list<std::string_view> positiveNames,
                          std::size_t negativeCount, bool rawReads = true,
-                         bool requireOpaque = true) {
+                         bool requireOpaque = true,
+                         bool inspectResultDrops = false) {
   const lang::OptimizationPipeline pipeline;
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     ("fixtures/" + std::string(filename));
@@ -44,6 +46,47 @@ void checkAddressFixture(std::string_view filename,
   const auto addressContexts =
       lang::analyzeMirClosedCallSafetyChecks(addresses.mir);
   expect(addressContexts.converged, "typed address contexts must converge");
+  if (inspectResultDrops) {
+    std::size_t passive = 0, active = 0;
+    for (const auto address : lang::enumerateMirBodyAddresses(addresses.mir))
+      for (const auto &block :
+           lang::findMirBody(addresses.mir, address)->blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              instruction.info.type.kind != lang::SemanticType::Expected)
+            continue;
+          bool userDestructor = false;
+          for (const auto &part : instruction.info.type.arguments)
+            for (const auto &owner : addresses.mir.classInstances())
+              if (owner.type == part && owner.destructor)
+                userDestructor = true;
+          const bool structural =
+              lang::isMirStructuralValueDrop(addresses.mir, instruction);
+          const auto effect = lang::effects(addresses.mir, instruction);
+          if (userDestructor) {
+            ++active;
+            expect(!structural && effect.invokesUserCode,
+                   "result cleanup with a source destructor remains active");
+          } else {
+            ++passive;
+            expect(structural && !effect.invokesUserCode &&
+                       !effect.writesUnknownMemory && !effect.invokesRuntime &&
+                       !effect.removableWhenUnused && effect.dropsValue,
+                   "passive result cleanup has exact nonremovable effects");
+            auto malformed = instruction;
+            malformed.rawMemoryAccess = true;
+            expect(!lang::isMirStructuralValueDrop(addresses.mir, malformed),
+                   "raw cleanup cannot claim passive result effects");
+            malformed = instruction;
+            malformed.lifecycle.push_back(
+                {.kind = lang::MirLifecycleEventKind::Replace});
+            expect(!lang::isMirStructuralValueDrop(addresses.mir, malformed),
+                   "replacement cannot claim passive result cleanup");
+          }
+        }
+    expect(passive > 0 && active > 0,
+           "both result cleanup profiles are covered");
+  }
   for (const auto level :
        {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
         lang::OptimizationLevel::O3}) {
@@ -365,5 +408,8 @@ int main() {
                       false);
   checkAddressFixture("optimizer_result_postconditions.gti",
                       {"accepted_ticket", "denied_ticket"}, 5, false, false);
+  checkAddressFixture("optimizer_passive_result_cleanup.gti",
+                      {"after_local_result", "after_record_result"}, 1, false,
+                      false, true);
   return failures == 0 ? 0 : 1;
 }

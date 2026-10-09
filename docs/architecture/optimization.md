@@ -720,6 +720,23 @@ ordering, a mutating copy and an actual user-destructor control exercise these
 rules with independent proof replay. This supplies no raw initialized-element
 coverage or returned raw-backed element envelope.
 
+The same drop classification admits a structurally passive result shell:
+every `expected`/`unexpected` alternative is a scalar or an ordinary generated
+scalar-field record (with `void` allowed only as the success alternative).
+Nested result shells recurse with a 1,024-node budget. User destructors,
+borrowed payloads, owning capabilities and unsupported layouts still fail
+closed. This does not expand generated copy/move admission. Shared effects
+retain the drop's storage/lifecycle operation and never mark it removable.
+
+For such a passive drop, an unprojected, non-borrowing local binding with an
+exact owning initialization is independent of ordinary receiver-owned fields.
+The optimizer can retain those non-byte field values while retiring the local
+storage; it does not keep pending result correlations, pointer-region facts,
+or arbitrary aliases. Initially available inputs retain the separate exact
+by-value formal rule. The scoped `Counter` regression checks both void and
+record results, while a result carrying a custom destructor still performs its
+native mutation and reports the later arithmetic overflow.
+
 Exact readonly source members may also return a still-current ordinary owned
 integer field. The interpreter records its typed receiver-relative path only
 when every successful return identifies the same field. Nested readonly

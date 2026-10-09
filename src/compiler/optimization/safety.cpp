@@ -3447,12 +3447,40 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
 void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
                             const MirBody &body,
                             const MirPlaceAliasEscapeAnalysis &aliases,
-                            AbstractState &state, MirPlaceId source) {
+                            AbstractState &state, MirPlaceId source,
+                            bool passiveLocalDrop = false) {
   const auto *place = body.findPlace(source);
   std::map<MirPlaceId, ObjectFact> receivers;
   std::map<MirPlaceId, IntegerFact> fields;
   EntryRelativeFields updates;
-  if (place && independentValueParameter(program, address, *place)) {
+  // The existing formal profile requires the exact by-value signature. A
+  // passive drop may additionally retire independent local storage, witnessed
+  // by its unprojected owning initialization. Reference/payload projections,
+  // initially available inputs and synthesized field bindings do not qualify.
+  const bool independentLocal =
+      passiveLocalDrop && place &&
+      (address.kind == MirBodyKind::Function ||
+       address.kind == MirBodyKind::Constructor) &&
+      place->root == MirPlaceRootKind::Binding && place->binding &&
+      place->projections.empty() && !place->initiallyAvailable &&
+      !place->traits.containsBorrowedState &&
+      place->type.kind != SemanticType::Reference &&
+      rootForBinding(body, place->binding) == source &&
+      std::any_of(
+          body.blocks.begin(), body.blocks.end(), [&](const auto &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &initialization) {
+                  return !initialization.tombstone &&
+                         initialization.kind ==
+                             MirInstructionKind::Initialize &&
+                         initialization.destination == source &&
+                         initialization.operands.size() == 1 &&
+                         initialization.operands.front().type == place->type;
+                });
+          });
+  if (place && (independentLocal ||
+                independentValueParameter(program, address, *place))) {
     updates = state.entryRelativeFields;
     std::erase_if(updates, [&](const auto &entry) {
       return !liveScalarPath(program, address, body, 0, entry.first);
@@ -4275,7 +4303,7 @@ void applyInstruction(const MirBody &body,
   if (instruction.kind == MirInstructionKind::Drop && instruction.destination) {
     if (program && isMirStructuralValueDrop(*program, instruction)) {
       invalidateValueStorage(program, address, body, aliases, state,
-                             *instruction.destination);
+                             *instruction.destination, true);
       return;
     }
     const MirEffectTraits effect = effects(instruction);
