@@ -121,6 +121,80 @@ int many(int divisor) {
          "the many-guard body must be checked exactly once");
 }
 
+void testPropagationOnlyFailureContext() {
+  const auto frontend = analyze("propagation-only-context.gti", R"gti(
+int divide(int value) { return 12 / value; }
+int forward(int value) { return divide(value); }
+class Accessor {
+  int value;
+public:
+  Accessor(int value) : value(value) {}
+  int read() { return forward(this.value); }
+};
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  ~Resource() { int checked = forward(this.value); }
+};
+int guarded(int value) {
+  Resource resource{value};
+  return forward(value);
+}
+int main() { Accessor accessor{2}; return guarded(accessor.read()); }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "general accessor and resource must lower");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  std::size_t erased = 0;
+  std::size_t retained = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (!function.mayRaiseDefinedFailure)
+      continue;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const auto text = emitter.emitFailureBodyText(address, "context", 1);
+    expect(text.emitted(), "failure context must emit from verified MIR");
+    bool hasCleanup = false;
+    const lang::MirBlock *entry = nullptr;
+    for (const auto &block : function.body.blocks) {
+      if (block.activeFailure == 0)
+        continue;
+      if (block.failureParameter == block.activeFailure)
+        entry = &block;
+      for (const auto &instruction : block.instructions)
+        hasCleanup |= instruction.kind == lang::MirInstructionKind::Drop;
+    }
+    expect(entry != nullptr, "fixture must retain a primary failure entry");
+    const bool hasContext =
+        text.text.find("__gti_mir_cleanup_context") != std::string::npos;
+    expect(hasContext == hasCleanup,
+           "only executable cleanup requires a local primary context");
+    if (hasCleanup) {
+      ++retained;
+    } else {
+      ++erased;
+      expect(text.text.find("mir_check_incoming_cleanup_failure_v1(") !=
+                 std::string::npos,
+             "propagation-only functions still detect an ancestor's primary "
+             "failure when they fail inside cleanup");
+    }
+    if (entry != nullptr) {
+      auto forged = frontend.mir;
+      auto *body = lang::findMirBody(forged, address);
+      body->findBlock(entry->id)->activeFailure = 0;
+      expect(!lang::verifyMirProgram(forged).valid(),
+             "removing the active record must not conceal cleanup effects");
+    }
+  }
+  expect(erased >= 3 && retained >= 1,
+         "leaf, forwarding and user accessor elision plus resource retention "
+         "must all be exercised");
+}
+
 void testExhaustiveEnumClassification() {
   for (std::size_t value = 0;
        value <= static_cast<std::size_t>(lang::MirInstructionKind::Count);
@@ -5405,6 +5479,7 @@ int main() {
 }
 
 constexpr NamedTest kTests[] = {
+    {"testPropagationOnlyFailureContext", testPropagationOnlyFailureContext},
     {"testBoundedSecondaryFailureRecordStorage",
      testBoundedSecondaryFailureRecordStorage},
     {"testOwningPayloadEnumRepresentationAdmission",

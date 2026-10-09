@@ -2564,6 +2564,17 @@ Cleanup scopes, activation, record construction and ordinary source functions
 receive no blanket cold, inline or exception annotation. MIR, replay evidence,
 failure identity and cleanup order are unchanged.
 
+A transformed body omits its invocation-local cleanup scope when every verified
+active-failure region only propagates the record: inert loan ends and lifecycle
+boundary markers, then direct propagation or an argument-free continuation.
+Lifecycle transfers and every executable cleanup operation (including any
+Drop, call, native/resource release or unknown terminator) retain the scope.
+This is representation-only; it neither removes checks nor changes MIR or its
+failure summary. In particular, the incoming-secondary-failure check remains
+at failure producers in propagation-only helpers: they may be called from an
+ancestor's destructor while that ancestor owns the primary record. Ordinary
+user accessors and forwarding functions use the same rule as library helpers.
+
 Unique-owner borrowing uses the failure ABI. At the intrinsic instruction the
 backend tests the represented owner for emptiness and selects only the exact
 code/detail carried by MIR. Its `Invoke` routes failure through cleanup; the
