@@ -1340,9 +1340,10 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       bool valid = false;
       std::vector<StoredReferenceBinding> bindings;
     };
-    const auto argumentBindings =
-        [&](const auto &argumentSelf, const ExprPtr &expression,
-            const SemanticType &expected, std::size_t depth) -> ArgumentBindings {
+    const auto argumentBindings = [&](const auto &argumentSelf,
+                                      const ExprPtr &expression,
+                                      const SemanticType &expected,
+                                      std::size_t depth) -> ArgumentBindings {
       if (depth >= 64)
         return {};
       if (const auto parameter = parameterSource(expression, expected)) {
@@ -1396,8 +1397,9 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
         std::vector<ArgumentBindings> arguments;
         for (auto &parameter : nestedTypes) {
           parameter = substituteType(parameter, classSubstitution(expected));
-          auto argument = argumentSelf(argumentSelf,
-              call->arguments()[arguments.size()], parameter, depth + 1);
+          auto argument =
+              argumentSelf(argumentSelf, call->arguments()[arguments.size()],
+                           parameter, depth + 1);
           if (!argument.valid)
             break;
           arguments.push_back(std::move(argument));
@@ -1419,7 +1421,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
               argument.bindings.begin(), argument.bindings.end(),
               [&](const auto &binding) {
                 return binding.destination.fields == child.sourceFields &&
-                       binding.destination.reference == child.destination.reference;
+                       binding.destination.reference ==
+                           child.destination.reference;
               });
           if (origin == argument.bindings.end())
             return {};
@@ -1457,8 +1460,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
         while (const auto *group = exprAs<Grouping>(argument->get())) {
           argument = &group->expression();
         }
-        const auto bindings = argumentBindings(argumentBindings, *argument,
-                                                fieldType, 0);
+        const auto bindings =
+            argumentBindings(argumentBindings, *argument, fieldType, 0);
         if (!bindings.valid)
           return {};
         const auto origin = std::find_if(
