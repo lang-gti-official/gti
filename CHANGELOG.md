@@ -9,6 +9,22 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.394.0 — Interface calls through reference parameters dispatch statically
+
+- At `-O2` and `-O3`, a call through an interface reference parameter becomes
+  a direct, inlinable call when every call of the enclosing function in the
+  program passes the same concrete class. That covers a local object passed
+  directly, through other functions' reference parameters, or recursively.
+  The proof uses only the program's own calls: no implementation counting and
+  no library names. A function that something other than a visible call can invoke
+  keeps dynamic dispatch: a function item value, a C callback, a thread task,
+  an export, the entry point, or a virtual override. Evaluation order, the first runtime failure and cleanup are
+  unchanged. An interface-helper probe runs 31% faster, matching the
+  local-object form.
+- `--optimization-report` records the new `exact-parameter-receiver` proof
+  and a `closedWorld` required analysis. `--optimization-remarks` explain why
+  a parameter receiver stayed virtual.
+
 ## 0.393.0 — Standard-library modules and reachable compilation
 
 - Builds lower, optimize and natively compile only code reachable from the
