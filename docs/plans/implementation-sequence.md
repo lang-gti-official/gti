@@ -1584,15 +1584,6 @@ The subsequent explicit release authorization covers both completed rows.
 
 ### C-TIME-01: Bounded Compiler Latency Investigation
 
-Current follow-up: `C-TIME-04` reduces optimizer bookkeeping cost for optimized
-HTTP/JSON and other library-heavy builds. CPU sampling identifies repeated
-proof-vector allocation/sorting and SCCP whole-state copies. Preserve exact
-facts, evidence ordering, convergence and independent verification; validate
-paired clean emission/full-build times, byte-equivalent output and owning
-optimizer/runtime gates. This is an active bounded slice, not a claim that
-compile-time performance has reached its limit. Results belong in
-[`performance-tooling.md`](performance-tooling.md).
-
 **State:** bounded investigation and small improvement complete; general
 compile-time comparability remains an open target, not a claimed plateau.
 Nine focused gates and all 355 Release CTest gates pass on local arm64 macOS.
@@ -1639,6 +1630,31 @@ CTest gates and eleven isolated installed consumers pass; existing vector and
 game-update controls show no material regression. Final evidence and
 limitations live in the existing performance-tooling plan. General C++
 compile-time comparability remains an open target, not a claim of this slice.
+
+### C-TIME-04: Optimizer Proof And State Bookkeeping
+
+**State:** bounded implementation and paired performance acceptance complete;
+delivered through PR #181. General compiler-latency improvement remains open.
+
+The outcome is a faster optimized edit/build loop for the existing HTTP/JSON
+client, without changing its GTI program or native representation. CPU sampling
+identifies repeated proof-vector allocation/sorting and whole-state copies in
+SCCP joins. Internal evidence now uses ordered insertion and canonical set
+union; SCCP detects per-fact changes without copying the complete destination.
+Facts, complete proof identities, failure edges, convergence budgets and
+independent replay remain unchanged. This does not change language semantics,
+add a persistent cache or remove verification.
+
+Exhaustive evidence-set regressions and the owning optimizer/native checks
+pass. All 130 runnable examples produce byte-identical C++, optimized MIR,
+optimizer reports and diagnostics with the baseline and candidate. HTTP/JSON
+O2 emission takes 14.3% less time and full builds 10.6% less time in five paired
+measurements; O0 emission is unchanged. Controls and shared-host/platform
+limitations are recorded in
+[`performance-tooling.md`](performance-tooling.md#c-time-04-optimizer-proofstate-bookkeeping-2026-10-09).
+Further analysis-state and
+proof-construction costs remain opportunities for separately validated work;
+this slice does not establish a compile-time limit.
 
 ### Tea Constructor-Emission Follow-Up
 
