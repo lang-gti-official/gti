@@ -348,6 +348,30 @@ controls. Independent proof replay and O0 identity remain required and pass.
 The original six container requirements remain unmet. The runner retains the
 native evidence in `gti-combined-validation.rYUkTM/default-prefix-write-native.log`.
 
+The clean reconciled `f194f613` optimized all-target build passes. Its bounded
+combined run passes 20/21 suites, including LSP protocol, single-body compile
+scaling, all three emitter suites, representation snapshots, lowered-program
+contracts and the six focused optimizer suites. Only the six already tracked
+optimizer-safety assertions fail; this is not a full-suite acceptance result.
+
+The following structural-temporary work recovers the original guarded
+call-context bounds requirement, leaving five optimizer-safety failures.
+Fresh argument/result publication no longer invalidates unrelated initialized
+regions, while constructor effects are still applied first. Exact value-pack
+movement and passive cleanup preserve their separate owned receiver metadata.
+The six focused optimizer suites pass with independent proof replay and O0
+identity, including the final constructor-side-effect negative. The combined
+returned-address native matrix passes 581 observations (105 fixture/mode
+reports). The final record-transfer fixture separately passes all 35
+C++20/C++23 O0/O2/O3 and ASan/UBSan observations, including its added
+constructor-side-effect case. These are manual native-matrix results, not an
+unfiltered CTest result. The runner retains `record-prefix-full-native.log`
+and `record-prefix-constructor-native.log` under
+`/private/tmp/gti-combined-validation.rYUkTM`. The source-container native
+acceptance gate still reports five missing multiplication-proof assertions;
+the five optimizer-safety requirements and final container performance
+acceptance remain open. Temporary diagnostic instrumentation is removed.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both

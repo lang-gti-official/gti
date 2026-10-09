@@ -97,6 +97,32 @@ unsafe int bad_modified_native(mut ZeroSequence& sequence) {
   }
 }
 
+unsafe int compound_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    mut int& value = sequence.at(uint64_t(4095));
+    value += 7;
+    return value;
+  }
+}
+
+unsafe int bad_compound_prefix(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.at(uint64_t(4095)) = 2147483647;
+    mut int& value = sequence.at(uint64_t(4095));
+    value += 1;
+    return value;
+  }
+}
+
+unsafe int bad_compound_native(mut ZeroSequence& sequence) {
+  unsafe {
+    sequence.clobber();
+    mut int& value = sequence.at(uint64_t(0));
+    value += 1;
+    return value;
+  }
+}
+
 unsafe int bad_default_native(int* pointer) {
   unsafe {
     initialize_zero(pointer);
@@ -149,12 +175,15 @@ int main() {
     int last = default_sequence(sequence);
     if (false) return bad_modified_prefix(sequence);
     if (false) return bad_modified_native(sequence);
+    if (false) return bad_compound_prefix(sequence);
+    if (false) return bad_compound_native(sequence);
     int modified = modified_prefix(sequence);
-    bool stored = *(pointer + uint64_t(4095)) == 7;
+    int compound = compound_prefix(sequence);
+    bool stored = *(pointer + uint64_t(4095)) == 14;
     for (mut uint64_t index = 0; index < uint64_t(4096); index++) {
       std::destroy_at(pointer + index);
     }
     free(bytes);
-    return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 && modified == 1 && stored ? 0 : 1;
+    return direct == 1 && packed == 1 && forwarded == 1 && unsigned_value == uint64_t(1) && last == 1 && modified == 1 && compound == 14 && stored ? 0 : 1;
   }
 }

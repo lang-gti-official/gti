@@ -33,8 +33,9 @@ def run_fixture(compiler, filename, negatives, marker,
             start = next(i for i, line in enumerate(lines, 1)
                          if re.match(r"(?:unsafe\s+)?(?:int|uint64_t)\s+" +
                                      re.escape(name) + r"\(", line.strip()))
+            case_marker = marker[name] if isinstance(marker, dict) else marker
             site = next(i for i, line in enumerate(lines, 1)
-                        if i > start and marker in line)
+                        if i > start and case_marker in line)
             cases.append((source, (70, "", f"{source.name}:{site}: "
                                   "runtime error[GTI-R0001]: integer_overflow in addition\n")))
         for label, flags, extra in modes:
@@ -143,6 +144,18 @@ def main():
         "bad_default_lifetime": "bad_default_lifetime(first.data())",
         "bad_modified_prefix": "bad_modified_prefix(sequence)",
         "bad_modified_native": "bad_modified_native(sequence)",
+        "bad_compound_prefix": "bad_compound_prefix(sequence)",
+        "bad_compound_native": "bad_compound_native(sequence)",
+    }, {name: (" += 1;" if name.startswith("bad_compound_") else " + 1;")
+        for name in ("bad_default_explicit", "bad_default_native",
+                     "bad_default_other", "bad_default_lifetime",
+                     "bad_modified_prefix", "bad_modified_native",
+                     "bad_compound_prefix", "bad_compound_native")})
+    run_fixture(compiler, "optimizer_record_prefix.gti", {
+        "bad_record_prefix_broad": "bad_record_prefix_broad(sequence)",
+        "bad_record_prefix_store": "bad_record_prefix_store(sequence)",
+        "bad_record_prefix_native": "bad_record_prefix_native(sequence)",
+        "bad_record_prefix_constructor": "bad_record_prefix_constructor(sequence)",
     }, " + 1;")
 
 
