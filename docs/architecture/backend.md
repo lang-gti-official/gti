@@ -223,8 +223,11 @@ that member ([C++ union copy construction](https://eel.is/c++draft/class.copy.ct
 Qualification, erasure/restoration, native-field capture and assignment use
 reference-based byte transfer; equality reads address bits by byte copy.
 These operations remain inert after a pointee expires. Native pointer values
-are reconstructed only for verified unsafe access/arithmetic or an explicit
-foreign boundary. Optional provenance auditing does not make lifetime proof
+are evaluated only for verified unsafe access/arithmetic or an explicit
+foreign boundary, as a typed load of the live `T*` member. An integer round
+trip through the address bits would hide that pointer's provenance and type
+from native alias analysis; it kept a checked element loop over a source
+sequence from vectorizing. Optional provenance auditing does not make lifetime proof
 mandatory for unsafe code. Passing one runtime test is not the justification
 for representation-preserving transport.
 

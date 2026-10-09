@@ -697,7 +697,9 @@ Compound arithmetic uses the same exact-address/region query as a separate
 load and arithmetic operation, including its body-local parameter identity.
 Only a proved result envelope may update coverage. No disjointness is inferred
 from different pointer fields; unmatched prefixes, unknown results and
-unsupported mutations lose coverage.
+unsupported mutations lose coverage. Prefixes for an owned record field that
+neither contains nor lies within the written subobject describe other storage
+of every element and stay unchanged.
 Native effects and destructive replacement retain their ordinary barriers.
 
 Verified structural argument staging writes a fresh independent temporary,
@@ -719,11 +721,49 @@ which itself expands on a widening edge is discarded. This lets affine length
 updates converge without enumerating the trip count or enlarging analysis
 budgets, while preserving bounded constructor/getter-loop proofs.
 
-The remaining source-owner goals include general region-preserving element writes,
-record-region transport across local construction/cleanup, and general
-loop-index/endpoint relations. The
-five remaining source-container safety acceptance failures and end-to-end runtime
-performance comparison remain open; this prefix slice is not their completion.
+A returned element whose index is a caller-local value, such as a loop
+counter, has no exact symbolic address. The caller instead records an address
+region for that loan: the exact substituted base and the index's current
+interval. A region answers initialized-prefix envelope reads and
+region-preserving writes over its whole interval. It never names one exact
+cell, so it never publishes or consults constructed-scalar, field-address or
+retained-loan identities. Regions share the invalidation of exact borrowed
+addresses; at joins an exact index-free address becomes its one-displacement
+region, and region intervals join and widen like other integer facts.
+
+Closed-call transport recognizes three further general shapes:
+
+- **Constructor-result adoption.** A binding initialization that reparents a
+  constructor result's own drop obligation adopts that SSA object, so the
+  constructor's exit facts, including initialized prefixes, stay attached.
+- **Frame-local callees.** A complete summary whose typed-store profile has
+  no store width writes only the callee's own frame: independent locals,
+  local transfers and drops, and equally closed callees. Such a callee relays
+  its exact returned borrow and preserves caller memory, even though MIR
+  effects report its local writes. Invoking exact closed callees is not itself
+  a write to a tracked loop counter or accumulator; a by-value input carrying
+  borrowed state, such as a closure capturing a reference, keeps that barrier.
+- **Source construction in final storage.** Final-address construction that
+  runs an exact source constructor of an ordinary record applies that
+  constructor's closed summary. Its exit field facts become constructed cells
+  at the exact pointee, and vacant storage cannot overwrite a live object.
+  Constructor and field-initializer bodies count their own vacant receiver
+  initialization as no live-memory store. Shared MIR effects for such
+  construction take synchronization and unknown effects from the exact
+  constructor summary, not from the intrinsic's conservative table entry.
+
+Writing an independent local scalar keeps exact borrowed addresses and
+regions, because checked references never reseat. A checked write is typed by
+its physical destination, not by its canonical alias representative. The
+place alias analysis treats a local binding that is never borrowed,
+address-taken or escaping in the body as disjoint from every dereference, raw
+access and loan referent. Reducible bodies widen only at loop headers; values
+inside the loop are recomputed from the widened header state, and irreducible
+bodies keep widening at every block.
+
+Process allocation still reaches the opaque native allocator, so constructing
+a second sequence erases the first one's element facts. Modeling process
+allocation as fresh, non-observable memory remains a separate precision goal.
 A lifetime witness is still never a pointee or an allocation identity.
 Different pointer fields never imply different allocations.
 
