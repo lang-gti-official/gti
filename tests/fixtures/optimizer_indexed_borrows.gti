@@ -1,0 +1,67 @@
+#include <std/memory>
+
+class Witness { public: int unrelated = 2147483647; };
+
+unsafe void initialize_index(int* pointer, uint64_t index) {
+  unsafe { std::construct_at(pointer + index, 7); }
+}
+
+unsafe int& borrow_index(uint64_t index, int* pointer, Witness& owner) {
+  unsafe { return std::assume_ref(pointer + index, owner); }
+}
+
+unsafe int indexed_borrow(int* pointer, uint64_t index, Witness& owner) {
+  unsafe {
+    std::construct_at(pointer + index, 7);
+    int& value = borrow_index(index, pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int initialized_indexed_borrow(int* pointer, uint64_t index, Witness& owner) {
+  unsafe {
+    initialize_index(pointer, index);
+    int& value = borrow_index(index, pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_index_mismatch(int* pointer, uint64_t index, uint64_t other, Witness& owner) {
+  unsafe {
+    initialize_index(pointer, index);
+    int& value = borrow_index(other, pointer, owner);
+    return value + 1;
+  }
+}
+
+unsafe int bad_index_hole(int* pointer, Witness& owner) {
+  unsafe {
+    initialize_index(pointer, uint64_t(0));
+    int& value = borrow_index(uint64_t(1), pointer, owner);
+    return value + 1;
+  }
+}
+
+int main() {
+  Witness owner{};
+  mut int pair[2] = {0, 2147483647};
+  unsafe {
+    std::destroy_at(&pair[0]);
+    if (false) return bad_index_mismatch(&pair[0], uint64_t(0), uint64_t(1), owner);
+    if (false) return bad_index_mismatch(&pair[0], uint64_t(1), uint64_t(0), owner);
+    if (false) return bad_index_hole(&pair[0], owner);
+    std::destroy_at(&pair[1]);
+    if (indexed_borrow(&pair[0], uint64_t(0), owner) != 8) return 1;
+    std::destroy_at(&pair[0]);
+    if (indexed_borrow(&pair[0], uint64_t(1), owner) != 8) return 2;
+    std::destroy_at(&pair[1]);
+    if (initialized_indexed_borrow(&pair[0], uint64_t(0), owner) != 8) return 3;
+    std::destroy_at(&pair[0]);
+    if (initialized_indexed_borrow(&pair[0], uint64_t(1), owner) != 8) return 4;
+    std::destroy_at(&pair[1]);
+    // Leave ordinary scope cleanup with live scalar objects.
+    std::construct_at(&pair[0], 0);
+    std::construct_at(&pair[1], 0);
+  }
+  return 0;
+}

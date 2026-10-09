@@ -89,7 +89,9 @@ struct MirClosedCallSafetyAnalysis {
 // per-instruction opaque barriers, not a reason to discard earlier proofs.
 // Inert address computations/markers preserve unrelated facts without proving
 // pointee invariants. Verified owner-witness formation and non-mutating checked
-// loan boundaries likewise preserve memory, not the pointee's value or address.
+// loan boundaries preserve memory. Checked borrows may transport the actual
+// pointer operand's exact address; their witness never establishes its value,
+// address, or initialized coverage.
 // Selected unsafe source functions use actual body effects;
 // a successful path with a raw barrier cannot export effect closure.
 // Exact vacant integer-scalar/generated scalar-record construction preserves
