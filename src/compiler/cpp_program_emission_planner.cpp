@@ -4824,7 +4824,8 @@ public:
           mir.lambdaInstances().begin(), mir.lambdaInstances().end(),
           [&](const auto &value) { return value.type == type; });
       if (lambda == mir.lambdaInstances().end())
-        throw std::logic_error("callable selector lost its MIR lambda identity");
+        throw std::logic_error(
+            "callable selector lost its MIR lambda identity");
       return lambda->id;
     };
     // The first closure in a class argument's native template arguments, as
@@ -4874,18 +4875,18 @@ public:
         if (!row.bodyTypeOverlay || (!closure && !nested))
           continue;
         const std::string dimension =
-            (nested ? nestedPrefix : std::string(
-                                         "::gti_internal::backend::"
-                                         "mir_lambda_identity_v<")) +
+            (nested ? nestedPrefix
+                    : std::string("::gti_internal::backend::"
+                                  "mir_lambda_identity_v<")) +
             row.spelling + ">";
         if (std::find(closureDimensions.begin(), closureDimensions.end(),
                       dimension) == closureDimensions.end())
           closureDimensions.push_back(dimension);
         if (candidate->id != instance.id)
           continue;
-        identities.emplace_back(dimension,
-                                nested ? nestedIdentity(nestedIdentity, row.type)
-                                       : lambdaIdentity(row.type));
+        identities.emplace_back(
+            dimension, nested ? nestedIdentity(nestedIdentity, row.type)
+                              : lambdaIdentity(row.type));
       }
     }
     std::sort(closureDimensions.begin(), closureDimensions.end());
@@ -4975,8 +4976,8 @@ public:
 
   [[nodiscard]] std::string loweredCallableTemplateBody(
       const LoweredFunctionDeclaration &function,
-      const std::vector<const MirFunctionInstance *> &instances,
-      bool failure, bool nestedClosures = false) const {
+      const std::vector<const MirFunctionInstance *> &instances, bool failure,
+      bool nestedClosures = false) const {
     if (!generalEmissionMap) {
       throw std::logic_error(
           "lowered callable template emission has no representation rows");

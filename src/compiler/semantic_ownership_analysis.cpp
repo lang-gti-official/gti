@@ -8535,8 +8535,7 @@ auto SemanticVisitor::Impl::analyzePolymorphicStorageIntrinsicCall(
   }
 
   const SemanticType interfaceType = storageType.arguments.front();
-  if (constructing ||
-      intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
+  if (constructing || intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
       intrinsic == IntrinsicKind::PolymorphicStorageReset) {
     requireMutableStorage(expr.arguments().front(),
                           "polymorphic storage operation");

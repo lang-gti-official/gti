@@ -1855,8 +1855,9 @@ private:
 
   void analyzePolymorphicStorageIntrinsicCall(const Call &expr,
                                               IntrinsicKind intrinsic);
-  [[nodiscard]] bool inlinePolymorphicPayload(const SemanticType &model,
-                                              const SemanticType &interface) const;
+  [[nodiscard]] bool
+  inlinePolymorphicPayload(const SemanticType &model,
+                           const SemanticType &interface) const;
   void analyzeOptionalStorageIntrinsicCall(const Call &expr,
                                            IntrinsicKind intrinsic);
 
