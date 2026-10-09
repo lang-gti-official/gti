@@ -252,9 +252,11 @@ int main() {
       if (!instance.source)
         continue;
       const auto name = instance.source->name().lexeme;
-      const bool positive = name == "copied_address" ||
-                            name == "replaced_address" ||
-                            name == "read_address" || name == "joined_same";
+      const bool positive =
+          name == "copied_address" || name == "replaced_address" ||
+          name == "read_address" || name == "joined_same" ||
+          name == "returned_address" || name == "relayed_address" ||
+          name == "redirected_result";
       if (!positive && !name.starts_with("bad_"))
         continue;
       positive ? ++positives : ++negatives;
@@ -284,7 +286,7 @@ int main() {
                  (positive && level != lang::OptimizationLevel::O0 ? 1 : 0),
              "exact addresses prove positives but not stale/ambiguous values");
     }
-    expect(positives == 4 && negatives == 6, "complete scalar-address census");
+    expect(positives == 7 && negatives == 10, "complete scalar-address census");
   }
   std::size_t forgedAddresses = 0;
   for (const auto &instance : addresses.hir.functionInstances()) {
@@ -314,7 +316,7 @@ int main() {
             ++forgedAddresses;
           }
   }
-  expect(forgedAddresses == 6,
+  expect(forgedAddresses == 10,
          "every scalar-address negative rejects a forged discharge");
   return failures == 0 ? 0 : 1;
 }

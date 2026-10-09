@@ -340,11 +340,29 @@ retains the actual raw load and unsafe obligation. This does not make the body
 effect-closed or justify speculative execution. Pointer replacement follows
 the replacement identity; overlapping mutation, raw writes, lifetime operations
 and unknown effects retire the relation. Distinct conditional addresses,
-pointer arithmetic/conversion, raw regions and interprocedural pointer-return
-provenance remain outside this transfer. In particular it is not an initialized
+pointer arithmetic/conversion and raw regions remain outside this transfer.
+In particular it is not an initialized
 prefix or allocation-freshness proof. These are prerequisites of transporting
 element facts for the source-defined storage client, not nominal exceptions
 for its public type.
+
+Selected source calls may return the exact address passed to one raw-pointer
+formal. The same address lattice distinguishes an existing pointee place from
+a symbolic entry-pointer value; the formal's own pointer-variable storage is
+never its pointee. Inert copies, parameter reassignment and nested relays
+preserve that identity only when every successful return agrees. Summaries
+export the formal ordinal, never a callee-local place ID. Applying the summary
+rebases evidence to the caller's actual typed operand and call instruction.
+
+The relay must have no opaque, global, unknown-memory or synchronizing effect.
+Authoritative `writesPlace` effects also describe callee-local pointer-variable
+assignment; a bounded typed-MIR check admits only plain assignment to an exact
+by-value raw-pointer formal, without raw access, reference projection, cleanup
+or user/runtime code. Other writes retain the barrier. An address escape from
+that exact no-pointee-write relay does not itself overwrite the pointee. This
+rule provides no initialized region, allocation freshness, field-address
+summary, pointer-arithmetic contract or lifetime permission; actual raw reads
+and the caller's unsafe obligations remain unchanged.
 
 Inert typed address arithmetic and pointer conversion neither read nor write a
 pointee, so they preserve unrelated memory facts. They introduce no address,
