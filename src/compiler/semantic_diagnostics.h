@@ -25,6 +25,7 @@ enum class MemberRequirementFailureKind {
   Shape,
   Ambiguous,
   Inaccessible,
+  CompilerPrivate,
   Unsafe,
   Result,
   BorrowedResult,

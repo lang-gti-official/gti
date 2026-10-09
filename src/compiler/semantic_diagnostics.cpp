@@ -142,6 +142,11 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     case MemberRequirementFailureKind::Inaccessible:
       reason = "Member '" + leaf.memberName + "()' is not publicly accessible.";
       break;
+    case MemberRequirementFailureKind::CompilerPrivate:
+      reason = "Member '" + leaf.memberName +
+               "()' is compiler-private; only a direct requirement written in "
+               "compiler-trusted source can select it, never a named concept.";
+      break;
     case MemberRequirementFailureKind::Unsafe:
       reason = "Member '" + leaf.memberName + "()' requires unsafe access.";
       break;
