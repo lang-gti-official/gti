@@ -659,13 +659,41 @@ equal element types do not make different occurrences interchangeable. Passive
 cleanup of independent by-value parameter/local storage can retain already
 constructed cells at original entry addresses, not arbitrary observed local
 addresses or the retired object's own storage. General source-constructor
-argument-to-field equality and larger region coverage remain separate goals.
+argument-to-field equality remains a separate goal.
 
-The remaining source-owner work needs initialized-index coverage through
-repeated calls, record-region envelopes, constructor pointer-field transport
-and checked returned-element provenance. A lifetime witness is still never a
-pointee or an allocation identity. Different pointer fields never imply
-different allocations.
+Closed source append operations can also establish compact initialized-prefix
+coverage. The relation names the current owned pointer field, its current
+endpoint field, and an optional typed scalar subobject path. Every successful
+exit must construct at the old endpoint, advance it by exactly one without
+wrapping, and preserve the pointer field. The typed mutation profile must
+exclude writes at the payload's integer width; unsupported, native, destructive
+and synchronizing effects retain their barriers. This is neither a nominal
+container rule nor an allocation/capacity/freshness assertion.
+
+A zero endpoint supplies vacuous coverage, not readable elements. Loop joins
+intersect coverage and join value envelopes; missing nonempty-path coverage
+retires the relation. Its storage budget depends on field relationships, not
+element count. Exact-address reads, including readonly formal index intervals,
+require their entire interval to lie below the proved endpoint. Nonwriting
+closed calls, checked reference-carrier publication and independent scalar
+local/parameter writes preserve these relations; other mutations retire them.
+An unrelated 5,000-element sequence exercises first/last and varying-index
+reads, with forged-proof and native controls for gaps, conditional construction,
+different values, retargeting, native writes and destructive replacement.
+
+Guard predicates contribute independent widening thresholds rather than
+preserving an earlier contextual singleton as a loop invariant. A threshold
+which itself expands on a widening edge is discarded. This lets affine length
+updates converge without enumerating the trip count or enlarging analysis
+budgets, while preserving bounded constructor/getter-loop proofs.
+
+The remaining source-owner goals include region-preserving element writes,
+record-region transport across local construction/cleanup, default scalar
+construction postconditions, and general loop-index/endpoint relations. The
+six existing source-container safety acceptance failures and end-to-end runtime
+performance comparison remain open; this prefix slice is not their completion.
+A lifetime witness is still never a pointee or an allocation identity.
+Different pointer fields never imply different allocations.
 
 Inert typed address arithmetic and pointer conversion neither read nor write a
 pointee, so they preserve unrelated memory facts. Apart from the exact typed
