@@ -6965,7 +6965,8 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
       readMemberRequirementSatisfied(
           receiver.arguments.front(), expr.member().lexeme, result, nullptr,
           parameters, receiver.referenceAccess == AccessMode::Mutable,
-          expr.unsafeKeyword().has_value());
+          expr.unsafeKeyword().has_value(),
+          isCompilerTrustedRequester(expr.member()));
   semanticModel.recordConstant(expr, ConstantValue{satisfied});
 }
 

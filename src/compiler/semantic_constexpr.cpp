@@ -23,6 +23,10 @@ public:
   bool requiresActiveCleanupFor(const SemanticType &type) const override {
     return facts.requiresActiveCleanupFor(type);
   }
+  std::optional<EnumTypeInfo>
+  enumTypeFor(const SemanticType &type) const override {
+    return facts.enumTypeFor(type);
+  }
   SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId id, const std::vector<SemanticType> &ownerTypes,
       const std::vector<CompileTimeValue> &ownerValues,

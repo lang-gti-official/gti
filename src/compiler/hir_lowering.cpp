@@ -841,13 +841,12 @@ private:
     return concrete;
   }
 
-  // An alias or type-only generic argument needs an exact enum identity for
-  // declaration spelling, but is not itself a request for a concrete class
-  // layout or executable lifecycle.
-  // Walk its argument graph without using the representation-bearing class
-  // discovery path. An enum's actual alternative fields still discover their
-  // required class layouts through enqueueEnum.
-  bool seedTypeEnumIdentities(const SemanticType &type) {
+  // An alias or an identity-only type argument needs an exact enum identity,
+  // but is not itself a request for a concrete class layout or executable
+  // lifecycle. Walk its argument graph without using the representation-bearing
+  // class discovery path. An enum's actual alternative fields still discover
+  // their required class layouts through enqueueEnum.
+  bool seedEnumIdentities(const SemanticType &type) {
     bool concrete =
         type != SemanticType::Unknown &&
         type.kind != SemanticType::TypeParameter &&
@@ -856,7 +855,7 @@ private:
     for (const CompileTimeValue &value : type.valueArguments)
       concrete = concrete && value.kind != CompileTimeValue::Parameter;
     for (const SemanticType &argument : type.arguments) {
-      const bool argumentConcrete = seedTypeEnumIdentities(argument);
+      const bool argumentConcrete = seedEnumIdentities(argument);
       concrete = concrete && argumentConcrete;
     }
     if (concrete && type.kind == SemanticType::Enum)
@@ -981,6 +980,11 @@ private:
   // reachable prefix must also discover a class that an instance names only
   // in its type arguments or signature: no value of it may ever be
   // constructed, yet the instance's identity and signature spell it.
+  // Complete lowering and constant closures need no class layout for an
+  // identity-only type argument, but every enum it names still needs an exact
+  // catalog row: declarations seed only non-generic enums, and a constant
+  // closure seeds none. Signature types are discovered when the instance is
+  // enqueued.
   void seedInstanceSignatureClasses(std::vector<SemanticType> typeArguments,
                                     SemanticType returnType,
                                     std::vector<SemanticType> parameterTypes) {
@@ -988,10 +992,9 @@ private:
     // Even when no value/signature uses the enum, MIR must have its exact row.
     // Do not instantiate otherwise unused class layouts merely to find enums.
     for (const SemanticType &argument : typeArguments)
-      seedTypeEnumIdentities(argument);
-    if (!reachablePrefixRequested) {
+      (void)seedEnumIdentities(argument);
+    if (!reachablePrefixRequested)
       return;
-    }
     for (const SemanticType &argument : typeArguments) {
       seedConcreteDeclarationType(argument);
     }
@@ -1026,7 +1029,7 @@ private:
         seedRootDeclarations(externC->declarations(), roots, templateContext);
       } else if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
         if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
-          seedTypeEnumIdentities(info->type);
+          seedEnumIdentities(info->type);
       } else if (const auto *classDeclaration =
                      stmtAs<ClassDecl>(statement.get())) {
         const ClassTypeInfo *info = baseModel->findClassType(*classDeclaration);
@@ -1102,7 +1105,7 @@ private:
       }
       if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
         if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
-          seedTypeEnumIdentities(info->type);
+          seedEnumIdentities(info->type);
         continue;
       }
       if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
@@ -1630,7 +1633,7 @@ private:
       // Naming an alias is not a layout or construction use. Preserve its
       // exact type catalog without discovering executable class bodies;
       // actual fields/calls/signatures enqueue their concrete types below.
-      seedTypeEnumIdentities(alias->type);
+      seedEnumIdentities(alias->type);
     }
     output.program.classes[index].typeAliases = std::move(aliases);
     std::vector<HirClassField> fields;

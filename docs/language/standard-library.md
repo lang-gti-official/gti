@@ -731,7 +731,7 @@ The specialized spelling also works directly: `std::vector<int>::const_iterator`
 or, inside an appropriately constrained generic, `std::vector<T>::iterator`.
 This uses the general [member-type path](static-semantics.md) rules, preserving
 the owner's constraints and the alias's visibility and borrowed lifetime.
-[`83-complete-ranges.gti`](../../examples/83-complete-ranges.gti) shows the
+[`083-complete-ranges.gti`](../../examples/083-complete-ranges.gti) shows the
 named-alias pattern in a complete range;
 [`132-qualified-type-members.gti`](../../examples/132-qualified-type-members.gti)
 demonstrates direct specialized owners and an unrelated user-defined type.
@@ -777,7 +777,7 @@ cleanup, not native undefined behavior. The comparator, hash and equality
 policies must be read-callable with the exact required result (`bool` or
 `size_t`). Equality and hashing must agree; ordered comparison must define a
 strict weak ordering. Stateful policies may be passed to the constructors.
-See [`87-associative-containers.gti`](../../examples/87-associative-containers.gti)
+See [`087-associative-containers.gti`](../../examples/087-associative-containers.gti)
 for insertion-result movement and scoped mutable access.
 
 ### Sequential Storage

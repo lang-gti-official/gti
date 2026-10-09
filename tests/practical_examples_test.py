@@ -12,14 +12,14 @@ from http.server import ThreadingHTTPServer
 
 
 OUTPUTS = {
-    "91-json-documents.gti": 'tea\n42\ndocumentation\ngood first issue\n{"title":"Improve examples","open":true,"labels":["documentation","good first issue"]}\n',
-    "92-json-codecs.gti": 'alice\n{"id":7,"login":"alice"}\none\ntwo\n/0/login\n',
-    "93-http-json-client.gti": "https://example.com/api/users?name=Alice%20Smith\nUsage: http-json URL [post]\n",
-    "94-binary-text-encoding.gti": "QQBC\n410042\n",
-    "95-explicit-cloning.gti": "build\nbuild!\n",
-    "96-error-mapping.gti": "8\nconfiguration error handled\n",
-    "97-constexpr-tables.gti": "64\n768\n",
-    "98-shared-ownership.gti": "player.png\nasset released\n",
+    "091-json-documents.gti": 'tea\n42\ndocumentation\ngood first issue\n{"title":"Improve examples","open":true,"labels":["documentation","good first issue"]}\n',
+    "092-json-codecs.gti": 'alice\n{"id":7,"login":"alice"}\none\ntwo\n/0/login\n',
+    "093-http-json-client.gti": "https://example.com/api/users?name=Alice%20Smith\nUsage: http-json URL [post]\n",
+    "094-binary-text-encoding.gti": "QQBC\n410042\n",
+    "095-explicit-cloning.gti": "build\nbuild!\n",
+    "096-error-mapping.gti": "8\nconfiguration error handled\n",
+    "097-constexpr-tables.gti": "64\n768\n",
+    "098-shared-ownership.gti": "player.png\nasset released\n",
 }
 
 
@@ -43,7 +43,7 @@ def main():
                             timeout=240, env=environment)
                         assert built.returncode == 0, (name, standard, built.stdout, built.stderr)
                         cases = [([], 0, output)]
-                        if name == "93-http-json-client.gti":
+                        if name == "093-http-json-client.gti":
                             base = f"http://127.0.0.1:{server.server_port}"
                             cases += [
                                 ([base + "/user"], 0, "local demo\n"),

@@ -158,15 +158,15 @@ cd gti
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 
-./build/gti examples/01-basics.gti -o /tmp/gti-basics
+./build/gti examples/001-basics.gti -o /tmp/gti-basics
 /tmp/gti-basics
 
 # Emit declarations for a C or C++ native shim.
-./build/gti examples/49-native-bridge-header.gti \
+./build/gti examples/049-native-bridge-header.gti \
   --emit-native-header -o /tmp/gti_native.h
 
 # See the nominal opaque-handle wrapper boundary.
-./build/gti examples/50-opaque-native-handles.gti \
+./build/gti examples/050-opaque-native-handles.gti \
   -o /tmp/gti-opaque-handles
 ```
 

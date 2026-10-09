@@ -186,6 +186,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testCompilerPrivateMemberRequirements",
+      "suite": "declarations"
+    },
+    {
       "name": "testExactMemberSignatureConcepts",
       "suite": "declarations"
     },

@@ -1986,7 +1986,8 @@ private:
       const SemanticType &result,
       SemanticMemberRequirementFailure *failure = nullptr,
       std::span<const SemanticType> parameters = {},
-      bool mutableReceiver = false, bool requiresUnsafe = false) const;
+      bool mutableReceiver = false, bool requiresUnsafe = false,
+      bool trustedMemberAccess = false) const;
   void recordMemberRequirementReceiver(const MemberRequirement &query,
                                        const SemanticType &type);
   struct ActiveMemberRequirement {

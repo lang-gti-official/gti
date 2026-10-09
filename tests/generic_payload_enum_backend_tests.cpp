@@ -692,5 +692,31 @@ int main() { return 0; }
     for (const auto &diagnostic : aliases.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
+  // A generic call can name an enum instance only in its type arguments. No
+  // declaration seeds that instance, yet MIR verifies its exact catalog row.
+  for (const bool reachableOnly : {false, true}) {
+    const auto identity = lang::Frontend({.lowerReachableOnly = reachableOnly})
+                              .analyze("enum-type-argument-identity.gti", R"(
+struct Phantom<T> { T value; };
+enum Metadata<T> { absent, number(int32_t value) };
+int tag<T>() { return 7; }
+int main() { return tag<Metadata<Phantom<int32_t>>>() - 7; }
+)");
+    if (!identity.canGenerateCode())
+      for (const auto &diagnostic : identity.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    const auto &functions = identity.mir.functionInstances();
+    const auto tag = std::find_if(functions.begin(), functions.end(),
+                                  [](const auto &function) {
+                                    return function.typeArguments.size() == 1;
+                                  });
+    expect(identity.canGenerateCode() && tag != functions.end() &&
+               identity.mir.payloadEnums().size() == 1 &&
+               identity.mir.findPayloadEnum(tag->typeArguments.front()) ==
+                   &identity.mir.payloadEnums().front() &&
+               (reachableOnly || identity.mir.classInstances().empty()),
+           "an enum named only by a type argument publishes its exact row "
+           "without requesting a phantom class layout in complete lowering");
+  }
   return failures == 0 ? 0 : 1;
 }
