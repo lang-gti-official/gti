@@ -184,11 +184,81 @@ def test_profiles(executable, root):
         session.close()
 
 
+def test_selected_profile_policies(executable, root):
+    project = root / "profile-policies"
+    path = project / "main.gti"
+    write(project / "gti.toml", (
+        'manifest-version = 1\n[package]\nname = "policies"\nversion = "0.1.0"\n'
+        '[targets.policies]\nkind = "executable"\nroot = "main.gti"\n'
+        '[profiles.dev]\nexecution-profile = "single-threaded"\n'
+        'raw-pointer-audit = "off"\ndisabled-warnings = ["unused-mut"]\n'
+        '[profiles.release]\nexecution-profile = "concurrent"\nraw-pointer-audit = "warn"\n'
+    ))
+    source = (
+        '#include <std/thread>\n'
+        'int warning() { mut int value = 0; return value; }\n'
+        'int dangling() { mut const int* pointer = nullptr; '
+        '{ int value = 7; pointer = &value; } unsafe { return *pointer; } }\n'
+        'int main() {\n'
+        '  auto started = std::thread::start([]() -> void {});\n'
+        '  if (!started.has_value()) { return 1; }\n'
+        '  mut std::thread worker = std::move(started).value();\n'
+        '  auto joined = worker.join();\n'
+        '  if (!joined.has_value()) { return 2; }\n'
+        '  return warning();\n'
+        '}\n'
+    )
+    write(path, source)
+    session = LspSession(executable)
+    try:
+        initialize(session)
+        uri = open_document(session, path, source)
+        dev = diagnostics_for(session, uri, version=1)
+        codes = {d.get("code") for d in dev}
+        assert "GTI-S2084" in codes, dev
+        assert not codes.intersection({"GTI-S2096", "GTI-S2101"}), dev
+        session.send({
+            "jsonrpc": "2.0", "method": "workspace/didChangeConfiguration",
+            "params": {"settings": {"gti": {"profile": "release"}}},
+        })
+        release = diagnostics_for(session, uri, predicate=lambda items:
+            {"GTI-S2096", "GTI-S2101"}.issubset({d.get("code") for d in items}))
+        assert not any(d.get("severity") == 1 for d in release), release
+        assert all(d["severity"] == 2 for d in release if d.get("code") == "GTI-S2101")
+    finally:
+        session.close()
+
+    session = LspSession(executable, ["--execution-profile", "single-threaded",
+                                      "--raw-pointer-audit=off"])
+    try:
+        initialize(session, initialization_options={"profile": "release"})
+        uri = open_document(session, path, source)
+        diagnostics = diagnostics_for(session, uri, version=1)
+        codes = {d.get("code") for d in diagnostics}
+        assert "GTI-S2084" in codes, diagnostics
+        assert "GTI-S2101" not in codes, diagnostics
+    finally:
+        session.close()
+
+    # Audit override remains effective even with otherwise valid analysis.
+    session = LspSession(executable, ["--raw-pointer-audit=off"])
+    try:
+        initialize(session, initialization_options={"profile": "release"})
+        uri = open_document(session, path, source)
+        diagnostics = diagnostics_for(session, uri, version=1)
+        codes = {d.get("code") for d in diagnostics}
+        assert "GTI-S2096" in codes and "GTI-S2101" not in codes, diagnostics
+        assert not any(d.get("severity") == 1 for d in diagnostics), diagnostics
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_configuration_test.py /path/to/gti_lsp")
     with tempfile.TemporaryDirectory(prefix="gti-lsp-configuration-") as directory:
         test_profiles(sys.argv[1], pathlib.Path(directory))
+        test_selected_profile_policies(sys.argv[1], pathlib.Path(directory))
 
 
 if __name__ == "__main__":

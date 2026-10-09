@@ -441,7 +441,7 @@ thread support publishes `GTI-S2084`; an escaped protected loan or overlapping
 live guard publishes the ordinary ownership diagnostic `GTI-S2017`. Both
 retain their semantic related spans and hints. Typed-result diagnostics use the
 same compiler fact, including exact result matching and transfer denials. The
-LSP reads the default project profile as described below and exposes only the
+LSP reads the selected project profile as described below and exposes only the
 source-defined `std::thread`, `std::thread_result<Result>`, `std::atomic<T>`
 (including integer fetch operations), `std::mutex<T>`, and
 `std::mutex_guard<T>` declarations in hover/definition/completion. It filters
