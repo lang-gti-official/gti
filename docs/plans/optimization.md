@@ -1,5 +1,16 @@
 # GTI Optimization Architecture Proposal
 
+## Runtime Performance Policy Revision (2026-10-09)
+
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
+supersedes this plan's earlier benchmark-first entry restrictions. Runtime
+performance is required; architectural rationale and a defined cost model can
+justify general analyses, transforms and representation work without a measured
+regression, proxy or minimum predicted speedup. Historical measured-defer
+records remain evidence, not permission barriers to reopening the architecture.
+This revision does not claim the proposed facilities are implemented or waive
+their semantic proofs, independent verification and performance acceptance.
+
 ## PR #166 audit disposition (2026-10-09)
 
 The reviewed proposal is `1636c1df`, not an implementation authority. Its
@@ -20,20 +31,21 @@ all 570 CTest gates and staged consumers now pass; the proxy alone was not
 treated as completion evidence. See
 [performance-tooling.md](performance-tooling.md#rt-1-source-storage-failure-path-cost).
 
-The rest is useful future work, not implicitly implemented by this change:
+The rest is future work, not implicitly implemented by this change. The rows
+below retain their technical prerequisites under the revised admission policy:
 
 | Finding | Disposition, prerequisite and acceptance |
 | --- | --- |
-| RT-1 broader outlining/inline policy | Defer until a fresh client shows additional value after the one-helper slice. Keep managed-worker handoff exception-transparent; blanket `noexcept`, forced inlining and higher global thresholds are not accepted. |
-| RT-2 contextual narrowing | Prepare a bounded post-fixpoint refinement, re-establishing conservative coverage of **every** reachable call context. Current closed-call contexts widen but do not narrow; simply replacing widened inputs with attractive return ranges is not a proof. Require independent replay, conflicting callers/recursion/budget negatives, and a measured loop-carried client. |
-| RT-3 conversions/division/shifts | A promising next proof slice, beginning with exact integral conversion domains. Each failure outcome needs its own rule and replay: zero and signed-minimum/-1 for division, and all GTI shift preconditions, not merely a bounded shift count. Require boundary negatives and a material byte/text workload gain before broadening the family. |
+| RT-1 broader outlining/inline policy | Design from successful-path and failure-path representation costs; validate the resulting policy on representative clients. Keep managed-worker handoff exception-transparent; blanket `noexcept`, forced inlining and higher global thresholds are not justified by this revision. |
+| RT-2 contextual narrowing | Prepare a bounded post-fixpoint refinement, re-establishing conservative coverage of **every** reachable call context. Current closed-call contexts widen but do not narrow; simply replacing widened inputs with attractive return ranges is not a proof. Require independent replay, conflicting callers/recursion/budget negatives, and loop-carried performance validation at acceptance. |
+| RT-3 conversions/division/shifts | A general proof family, beginning with exact integral conversion domains. Each failure outcome needs its own rule and replay: zero and signed-minimum/-1 for division, and all GTI shift preconditions, not merely a bounded shift count. Require boundary negatives and representative byte/text performance validation; a prior measured gain is not required to broaden the family. |
 | RT-4 refreshed infallibility | Requires effect derivation on optimized MIR plus an independently replayed Invoke-to-Call edit, including CFG/identity repair. Native, recursive, synchronizing and cleanup boundaries remain conservative. No backend inference from apparently empty failure blocks. |
 | RT-5 relational index/length facts | Begin with a body-local relation whose origin, dominance and mutation/alias invalidation are proved. Crossing an accessor requires an admitted precondition/specialization or bounded inlining; a container's public name is not authority. Require opaque-call/mutation negatives and exact failure parity. |
-| RT-6 affine loop versioning | Requires a non-failing, side-effect-free preflight and an unchanged checked fallback. Hoisting may not change the first failure, partial stores, evaluation order or floating-point ordering. The fallback's presence alone does not prove the preflight safe. Measure a representative client first. |
+| RT-6 affine loop versioning | Requires a non-failing, side-effect-free preflight and an unchanged checked fallback. Hoisting may not change the first failure, partial stores, evaluation order or floating-point ordering. The fallback's presence alone does not prove the preflight safe. Validate representative clients and preflight costs as part of acceptance. |
 | RT-7 iterator counters/reductions | Prove length fits the **counter's** domain; allocation capacity alone does not prove a `ptrdiff_t` counter cannot overflow. Speculative reductions additionally require non-observable, exactly restorable state and ordered first-failure replay. Do not apply a wrapping accumulator to ordinary effectful loops. |
-| RT-8 slot/drop self-checks | Measured defer: no demonstrated value. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
-| RT-9 library algorithms/layout | Independent source-library clients, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Preserve those contracts and measure saved workload time/cache/allocation costs before replacing a layout. |
-| RT-10 bounded MIR inlining | Larger follow-up only after a remaining call-chain workload and proxy justify it. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual exclusions, cost limits and independent replay. Do not add general infrastructure merely to make a benchmark pass. |
+| RT-8 slot/drop self-checks | Earlier measurement found no demonstrated value; that is not an architecture admission gate. Before omitting an assertion, identify the exact verifier invariant and every representation caller that establishes it. Do not assume all backend checks are redundant or introduce an unchecked release mode. |
+| RT-9 library algorithms/layout | General source-library architecture, not nominal compiler shortcuts. Sort changes require comparator failure/order and worst-case tests; flat maps require explicit iterator/reference/address and allocation contracts. Design representations to match their invariants and validate workload time/cache/allocation costs before acceptance. |
+| RT-10 bounded MIR inlining | General optimization architecture may justify this work without a prior workload speedup or proxy. Needs source provenance, argument order, loan/drop/cleanup composition, recursive/native/virtual boundaries, cost limits and independent replay. Validate representative call chains and code-size/compile-time tradeoffs. |
 
 Closed-world executable lowering from #176 is already integrated; the old
 whole-stdlib code-size observations must be remeasured, not used as current
@@ -144,15 +156,15 @@ in
 plan does not own or duplicate that order.
 
 Operational ordering is maintained in
-[`implementation-sequence.md`](implementation-sequence.md). Infrastructure
-continues to land only with a real client: the current analysis cache exists
+[`implementation-sequence.md`](implementation-sequence.md). The current analysis cache exists
 for scalar promotion, folding, unreachable cleanup, and dead computation
 removal, SCCP, safety analysis, and alias-aware safety invalidation. Loop/range
-and alias facts remain available for later measured performance rows, but they
-do not dictate a pass. General loop transforms, MemorySSA, general/contextual
+and alias facts remain available for further performance work, but they do not
+dictate a pass. General loop transforms, MemorySSA, general/contextual
 devirtualization, an LLVM backend, and broad optimizer frameworks remain
-deferred until a measured bottleneck and the sole operational sequence require
-them.
+unimplemented. Their design and scheduling may follow architectural need under
+ADR 012 without waiting for a measured bottleneck; the operational sequence
+still owns task ordering and each facility retains its technical prerequisites.
 
 This proposal defines how GTI grows from typed-HIR compatibility folding into
 a maintainable optimizer without making AST shape, the C++ emitter, or a
@@ -598,7 +610,8 @@ The migration must avoid two permanent optimization authorities.
 Status: complete. Reusable verification/repair, deterministic printing,
 complete conservative effects, stable typed edits, source replay, the
 client-backed pass/analysis manager, and opt-in dumps/reports are implemented.
-General infrastructure still grows only with clients.
+General infrastructure may grow from architectural requirements under ADR 012;
+identify its production consumers and validation, not a prior speedup threshold.
 
 - Maintain deterministic MIR printing, public validation utilities, effect
   traits, and the bounded controlled editor. Add broader editor or analysis
@@ -616,8 +629,8 @@ implemented and cross-checked. New passes do not use shadow authority.
 
 - Preserve the implemented primitive identity cross-check until its body family
   consumes optimized MIR.
-- Port another compatibility fold only when a measured transform client or an
-  active migration phase requires it.
+- Port another compatibility fold when general optimization architecture or an
+  active migration phase requires it; validate its production consumer.
 - Treat disagreement as a compiler test failure, not as permission to choose
   whichever result the C++ emitter prefers.
 
@@ -952,8 +965,9 @@ Acceptance criteria:
 Resolve these before the pass families that depend on them:
 
 - memory versioning for transformations that must distinguish intervening
-  writes; add MemorySSA only after a measured client proves existing place and
-  effect facts insufficient;
+  writes; introduce MemorySSA when existing place and effect facts cannot
+  express the required general reasoning soundly and maintainably, without a
+  benchmark-first entry gate;
 - transform-specific loop legality, failure-order proof, and cost evidence;
 - general temporary lifetime and active-drop transitions in MIR;
 - backend-neutral object layout, data layout, virtual tables, and calling

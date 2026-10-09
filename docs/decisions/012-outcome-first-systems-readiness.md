@@ -47,9 +47,10 @@ test layers.
 Safety and architecture remain constraints on that work, not competing goals.
 Exact semantic authority, explicit ownership, deterministic cleanup, defined
 failure, phase boundaries, and rejection before backend entry remain accepted
-rules. Infrastructure-only work is justified when it fixes a correctness
-defect or is the nearest prerequisite of a named outcome. Proof machinery is
-not an outcome by itself.
+rules. Infrastructure-only work is also justified by the optimization
+architecture needed for efficient systems programs, without a pre-existing
+benchmark regression. Proof machinery must serve a specified correctness or
+execution-efficiency contract rather than be an outcome by itself.
 
 `1.0` is a soft, revisable readiness goal rather than a feature cutoff, scope
 freeze, or scheduling horizon. Work may move into or out of the path as real
@@ -95,6 +96,54 @@ Before 1.0, public GTI should be able to:
 
 These are acceptance workloads, not prescriptions for one monolithic demo or
 permission to hard-code their public names in the compiler.
+
+## Runtime Performance Requirement (2026-10-09)
+
+Runtime performance is a first-class requirement of GTI's systems-language
+goal, alongside correctness, safety and sound architecture. Feature design must
+account for successful-path work, allocation and metadata policy, representation
+size, dispatch, cleanup/failure costs and optimization across ordinary source
+abstractions. Moving policy into source is not complete architectural success
+if its execution cost is left unexamined.
+
+This revises the earlier benchmark-first admission policy. A measured slowdown,
+disposable proxy, minimum speedup or previously identified hot client is **not
+required to begin** optimization architecture work. Structural reasoning about
+redundant work, missing information, representation barriers or the needs of
+general systems programs is sufficient justification. Name the operation
+families, intended cost model, phase ownership, consumers and verification
+obligations. General analyses, inlining and representation refactors may be
+developed proactively; copying another compiler's subsystem without a design
+rationale is not the goal. This policy does not automatically schedule every
+proposed subsystem or expand a task beyond its authorized scope.
+
+Measurement remains necessary to validate performance claims and acceptance of
+changes affecting runtime execution. Use optimized, representative workloads,
+equivalent semantic contracts, exact toolchain identities and repeatable
+before/after comparisons where a baseline exists. Report runtime, allocations,
+code size and relevant compilation/memory tradeoffs separately. For new
+facilities without an old implementation, define an expected cost model and
+representative controls; lack of a historical baseline is not an admission bar.
+Foundational work may establish structural properties without claiming an
+immediate speedup, but its production path and applicable regression controls
+must be verified.
+
+A material runtime regression fails performance acceptance unless the owner
+explicitly accepts the documented tradeoff. A functional test pass, completed
+source-policy migration or filed follow-up issue is not a waiver. Historical
+acceptance records remain evidence of what shipped, not precedent for accepting
+new regressions. Timing noise is not a regression; select and explain meaningful
+workload-specific criteria rather than inventing a universal speedup threshold
+or imposing wall-time gates on shared CI workers.
+
+Preserve GTI's safe/unsafe responsibility boundary, deterministic observable
+behavior and verified phase authority. Do not obtain performance by silently
+weakening safe APIs, removing checks without proof or a valid unsafe contract,
+or recognizing individual public library names in the compiler. Prefer a
+representation appropriate to the API's invariant: an initialized-prefix
+sequence need not inherit arbitrary-slot occupancy bookkeeping merely to reuse
+an allocation abstraction. Any such migration must preserve failure cleanup,
+resource lifetimes and the actual supported element contracts.
 
 ## Consequences
 
