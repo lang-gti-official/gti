@@ -2645,16 +2645,57 @@ private:
     return false;
   }
 
-  void assignFullExpression(HirBody &body, HirValueId valueId,
+  // Lookups over one completed body's values while its full expressions are
+  // assigned. Scanning the body for each value made finalization quadratic in
+  // the body's length. Each lookup returns what the scan it replaces found.
+  struct FullExpressionLookup {
+    explicit FullExpressionLookup(const HirBody &body) {
+      for (std::size_t index = 0; index < body.values.size(); ++index) {
+        // The first value with an identity, as HirBody::findValue finds it.
+        positions.try_emplace(body.values[index].id, index);
+        // The last value with a source, as HirBody::valueForSource finds it.
+        if (body.values[index].source != nullptr) {
+          sourceValues[body.values[index].source] = index;
+        }
+      }
+      for (const HirDirectInitialization &alias : body.directInitializations) {
+        aliases[alias.source] = alias.value;
+      }
+    }
+
+    [[nodiscard]] HirValue *find(HirBody &body, HirValueId id) const {
+      const auto found = positions.find(id);
+      return found == positions.end() ? nullptr : &body.values[found->second];
+    }
+
+    [[nodiscard]] const HirValue *forSource(const HirBody &body,
+                                            const Expr &source) const {
+      if (const auto found = sourceValues.find(&source);
+          found != sourceValues.end()) {
+        return &body.values[found->second];
+      }
+      const auto alias = aliases.find(&source);
+      if (alias == aliases.end()) {
+        return nullptr;
+      }
+      const auto found = positions.find(alias->second);
+      return found == positions.end() ? nullptr : &body.values[found->second];
+    }
+
+    std::unordered_map<HirValueId, std::size_t> positions;
+    std::unordered_map<const Expr *, std::size_t> sourceValues;
+    std::unordered_map<const Expr *, HirValueId> aliases;
+  };
+
+  void assignFullExpression(HirBody &body, const FullExpressionLookup &lookup,
+                            HirValueId valueId,
                             HirFullExpressionId fullExpression,
                             std::unordered_set<HirValueId> &visited) {
     if (valueId == 0 || !visited.insert(valueId).second) {
       return;
     }
-    const auto found = std::find_if(
-        body.values.begin(), body.values.end(),
-        [valueId](const HirValue &value) { return value.id == valueId; });
-    if (found == body.values.end()) {
+    HirValue *const found = lookup.find(body, valueId);
+    if (found == nullptr) {
       return;
     }
     if (found->fullExpression != 0 && found->fullExpression != fullExpression) {
@@ -2663,20 +2704,22 @@ private:
     }
     found->fullExpression = fullExpression;
     for (const HirValueId operand : found->operands) {
-      assignFullExpression(body, operand, fullExpression, visited);
+      assignFullExpression(body, lookup, operand, fullExpression, visited);
     }
     for (const HirValueId input : found->conditionalInputs) {
-      assignFullExpression(body, input, fullExpression, visited);
+      assignFullExpression(body, lookup, input, fullExpression, visited);
     }
     for (const HirValueId input : found->sequencedInputs) {
-      assignFullExpression(body, input, fullExpression, visited);
+      assignFullExpression(body, lookup, input, fullExpression, visited);
     }
     if (found->receiver) {
-      assignFullExpression(body, *found->receiver, fullExpression, visited);
+      assignFullExpression(body, lookup, *found->receiver, fullExpression,
+                           visited);
     }
   }
 
-  void appendFullExpression(HirBody &body, std::vector<HirValueId> roots,
+  void appendFullExpression(HirBody &body, const FullExpressionLookup &lookup,
+                            std::vector<HirValueId> roots,
                             HirStatementId statement = 0,
                             std::size_t constructorInitializer = 0) {
     std::erase(roots, HirValueId{0});
@@ -2691,18 +2734,19 @@ private:
          .roots = roots});
     std::unordered_set<HirValueId> visited;
     for (const HirValueId root : roots) {
-      assignFullExpression(body, root, id, visited);
+      assignFullExpression(body, lookup, root, id, visited);
     }
   }
 
   [[nodiscard]] std::vector<HirValueId>
-  mapFullExpressionRoots(HirBody &body,
+  mapFullExpressionRoots(const HirBody &body,
+                         const FullExpressionLookup &lookup,
                          const SemanticFullExpression &expression) {
     std::vector<HirValueId> roots;
     roots.reserve(expression.roots.size());
     for (const Expr *source : expression.roots) {
       const HirValue *found =
-          source == nullptr ? nullptr : body.valueForSource(*source);
+          source == nullptr ? nullptr : lookup.forSource(body, *source);
       if (found == nullptr) {
         lifecycleValid = false;
         continue;
@@ -2800,13 +2844,14 @@ private:
           }
           return left.expression->order < right.expression->order;
         });
+    const FullExpressionLookup lookup(body);
     for (const PendingFullExpression &pending : pendingFullExpressions) {
       const std::vector<HirValueId> roots =
           pending.constructorInitializer != 0 &&
                   pending.constructorInitializer <= initializers.size()
               ? initializers[pending.constructorInitializer - 1].arguments
-              : mapFullExpressionRoots(body, *pending.expression);
-      appendFullExpression(body, roots, pending.statement,
+              : mapFullExpressionRoots(body, lookup, *pending.expression);
+      appendFullExpression(body, lookup, roots, pending.statement,
                            pending.constructorInitializer);
     }
 
