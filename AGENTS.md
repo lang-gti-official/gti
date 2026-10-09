@@ -135,12 +135,34 @@ that work. A commit that changes no user-visible behavior should leave
   user-facing program, API, or workflow it unlocks.
 - Prefer the smallest coherent vertical slice through the applicable compiler,
   library, tooling, documentation, and test layers. Infrastructure-only work
-  must fix a correctness issue or be the nearest prerequisite of a named
-  outcome.
+  may also establish the general optimization architecture needed for efficient
+  systems programs; a pre-existing benchmark regression is not a prerequisite.
 - Treat 1.0 as a soft, revisable goal meaning a full-featured language ready
   for systems programming, not as a horizon used to defer essential
   capabilities. Preserve GTI's accepted safety and phase-authority rules while
   pursuing that goal.
+
+## Runtime Performance Requirement
+
+- Runtime performance is a first-class design and delivery requirement, not
+  optional follow-up work after feature completion. Design language facilities,
+  IR, failure paths, library representations and allocation policy for efficient
+  successful execution from the outset.
+- Architectural reasoning about unnecessary work, abstraction boundaries and
+  missing general optimization support is sufficient to justify performance
+  work. Do not require a benchmark, proxy speedup or user-reported regression
+  before designing or implementing that support. Name the affected operation
+  families, expected cost model and correctness obligations instead.
+- Measurement validates results; it is not permission to begin. For changes
+  affecting generated execution, validate representative optimized workloads
+  and report runtime, allocation, code-size and relevant build/memory costs.
+  Do not claim speedups without evidence or parity between different contracts.
+- A material runtime regression fails performance acceptance unless the owner
+  explicitly accepts the documented tradeoff. Passing correctness tests or
+  opening a follow-up issue does not waive that requirement. Preserve safety,
+  unsafe obligations, defined failure and phase authority; performance does not
+  authorize unchecked safe APIs or nominal compiler exceptions.
+- Follow [ADR 012](docs/decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09).
 
 ## General Semantics Before Client Exceptions
 
