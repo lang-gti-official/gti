@@ -641,8 +641,28 @@ writes and differing successful exits cannot recover an obsolete cell value.
 Unrelated pointer-holder records exercise both direct and member-mediated
 construction, invalidation, repeated observation and forged-proof rejection.
 
+Exact generated construction of ordinary scalar-field records can publish
+separate integer facts at their typed subobject paths. A checked borrow of the
+record, including a subsequent field borrow, preserves the actual pointer plus
+that path; the witness does not supply the address. Nested ordinary owned fields
+are supported, but union overlap, capability backing, base-class traversal,
+stored references and array indexing do not enter this profile. A checked field
+write can retain disjoint sibling subobject facts at the same exact address.
+Unknown/native writes and destructive lifetime changes still retire them.
+
+These construction postconditions may describe exact equality to an owned
+integer field of a readonly by-value record formal. Caller substitution reads
+the actual prepared argument's field, not the joined interval of all calls to
+the helper. Concrete parameter-pack elements use their verified occurrence in
+the flattened signature, shared with ordinary scalar-formal identification;
+equal element types do not make different occurrences interchangeable. Passive
+cleanup of independent by-value parameter/local storage can retain already
+constructed cells at original entry addresses, not arbitrary observed local
+addresses or the retired object's own storage. General source-constructor
+argument-to-field equality and larger region coverage remain separate goals.
+
 The remaining source-owner work needs initialized-index coverage through
-repeated calls, record-pointee envelopes, constructor pointer-field transport
+repeated calls, record-region envelopes, constructor pointer-field transport
 and checked returned-element provenance. A lifetime witness is still never a
 pointee or an allocation identity. Different pointer fields never imply
 different allocations.
@@ -727,8 +747,9 @@ generated-record transport classifier used for prepared values. A selected
 source constructor, replacement, unsupported state or extra raw access cannot
 claim this profile. Only represented transfer-out events may accompany the
 construction; argument staging and actual cleanup retain their own effects.
-It preserves the same unrelated non-byte live-field facts, not a value envelope
-for the newly constructed region. Source wrappers can relay this profile;
+It preserves the same unrelated non-byte live-field facts. The exact-address
+subobject rule above can additionally publish supported constructed field values,
+but does not establish a larger initialized region. Source wrappers can relay this profile;
 destroy/reconstruct still invalidates the old object's facts.
 
 The closed typed-store profile can combine vacant structural construction with
