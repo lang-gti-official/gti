@@ -1,0 +1,35 @@
+#include <std/string>
+#include <std/vector>
+
+int leaf(int divisor) { return 12 / divisor; }
+int forward(int divisor) { return leaf(divisor); }
+
+class Accessor {
+  int divisor;
+public:
+  Accessor(int divisor) : divisor(divisor) {}
+  int read() { return forward(this.divisor); }
+};
+
+class Resource {
+  int id;
+  int divisor;
+public:
+  Resource(int id, int divisor) : id(id), divisor(divisor) {}
+  ~Resource() {
+    std::println(this.id);
+    Accessor accessor{this.divisor};
+    int checked = accessor.read();
+  }
+};
+
+int guarded(int mode) {
+  Resource first{1, 1};
+  Resource second{2, mode == 2 ? 0 : 1};
+  if (mode != 0) { return forward(0); }
+  return forward(1) - 12;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return guarded(argc - 1);
+}
