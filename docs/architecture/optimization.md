@@ -319,8 +319,8 @@ A concrete source body containing raw/unsafe instructions can now receive its
 ordinary closed-call input context. Unhandled raw pointee/lifetime operations
 and unsupported unsafe calls remain opaque barriers: they clear mutable-memory
 facts and mark the path opaque before ordinary load/store transfer.
-This permits replayable proofs before the operation without granting raw
-memory a scalar transfer rule or declaring the body effect-closed. Earlier
+This permits replayable proofs before an unsupported operation without
+declaring the body effect-closed. Earlier
 immutable SSA results and actual readonly scalar binding copies remain
 immutable; later referent/global reads receive no stale facts. This preservation
 does not apply to readonly reference carriers, projected fields, arrays or
@@ -329,6 +329,22 @@ destination. Foreign/open calls, unsupported owning transfers, synchronization a
 families retain their separate admission boundaries. An unrelated source
 function proves a bounded scalar addition before writing through a raw pointer;
 arithmetic on the changed referent and in its caller remains checked.
+
+A bounded address-provenance transfer additionally handles a raw scalar load
+whose actual address is an exact MIR `AddressOf` of an existing integer local
+or ordinary owned field. It follows typed pointer value copies, assignment,
+inert preparation and CFG arguments; joins retain only the same place on
+every incoming edge. The pointee type must match exactly. The load consults
+the place's current integer fact, not the pointer's lifetime witness, and
+retains the actual raw load and unsafe obligation. This does not make the body
+effect-closed or justify speculative execution. Pointer replacement follows
+the replacement identity; overlapping mutation, raw writes, lifetime operations
+and unknown effects retire the relation. Distinct conditional addresses,
+pointer arithmetic/conversion, raw regions and interprocedural pointer-return
+provenance remain outside this transfer. In particular it is not an initialized
+prefix or allocation-freshness proof. These are prerequisites of transporting
+element facts for the source-defined storage client, not nominal exceptions
+for its public type.
 
 Inert typed address arithmetic and pointer conversion neither read nor write a
 pointee, so they preserve unrelated memory facts. They introduce no address,
@@ -340,7 +356,7 @@ rules, including its actual raw barriers. Its declaration's caller obligations
 remain unchanged. Unrelated record and scalar regressions distinguish pure
 address computation and a pure unsafe declaration from a real raw write.
 Neutral SSA-value call staging no longer repeats its producer's unsafe
-classification. Actual raw loads, stores and unsafe calls still reach their
+classification. Unhandled raw loads, stores and unsafe calls still reach their
 own barriers before that stage. Unrelated ordinary records distinguish inert
 address relay from raw reads, raw writes and an unsafe callee's write. The
 source-prefix client's original exact bounds-and-read proof is recovered;
