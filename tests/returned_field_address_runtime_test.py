@@ -29,7 +29,7 @@ def run_fixture(compiler, filename, negatives, marker):
             source.write_text(original.replace(dispatch, f"if (true) return {call};"))
             lines = original.splitlines()
             start = next(i for i, line in enumerate(lines, 1)
-                         if line.strip().startswith(f"unsafe int {name}("))
+                         if line.strip().startswith((f"unsafe int {name}(", f"int {name}(")))
             site = next(i for i, line in enumerate(lines, 1)
                         if i > start and marker in line)
             cases.append((source, (70, "", f"{source.name}:{site}: "
@@ -69,6 +69,13 @@ def main():
         "bad_index_mismatch": "bad_index_mismatch(&pair[0], uint64_t(0), uint64_t(1), owner)",
         "bad_index_hole": "bad_index_hole(&pair[0], owner)",
     }, "return value + 1;")
+    run_fixture(compiler, "optimizer_result_postconditions.gti", {
+        "bad_failed_ticket": "bad_failed_ticket(ticket)",
+        "bad_reassigned_ticket": "bad_reassigned_ticket(ticket)",
+        "bad_later_call": "bad_later_call(ticket)",
+        "bad_native_call": "bad_native_call(ticket)",
+        "bad_cached_tag": "bad_cached_tag(ticket)",
+    }, "return ticket.count + 1;")
 
 
 if __name__ == "__main__":
