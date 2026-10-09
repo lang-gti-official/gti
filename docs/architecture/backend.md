@@ -2563,6 +2563,14 @@ that contract as runtime descriptors and transformed failure siblings where
 the native ABI requires them. It does not infer failure from emitted C++ or use
 C++ exceptions to reconstruct GTI semantics.
 
+The descriptor representation shares identical counted logical-source byte
+arrays and identical ordered outcome arrays within an artifact. The earliest
+canonical site supplies each array's deterministic name. Site IDs, locations,
+outcome order/counts, canonical descriptor bytes and artifact identity are
+unchanged; different source bytes or outcome shapes do not share storage.
+This is immutable-data interning, not failure-site elimination or new authority
+to remove a check. The same representation is used at O0 and optimized levels.
+
 The generated incoming-cleanup failure check is outlined with guarded
 `cold`/`noinline` native hints on GNU-compatible compilers. Its only production
 call sites are failure edges. Keeping its emergency-record construction and
