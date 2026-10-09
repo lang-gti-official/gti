@@ -38832,10 +38832,14 @@ private:
           target->receiverMutability == ReceiverMutability::Consuming;
     }
     const auto emitReceiverExpression = [&] {
+      // Virtual dispatch presents the receiver at its static owner; a static
+      // exact-parameter refinement presents it at the target's owner.
       const bool exactVirtualDispatch =
           receiverPlace != nullptr && target != nullptr &&
-          instruction.dispatch == CallDispatch::Virtual &&
-          instruction.dispatchOwner.kind == SemanticType::Class;
+          ((instruction.dispatch == CallDispatch::Virtual &&
+            instruction.dispatchOwner.kind == SemanticType::Class) ||
+           isMirExactReceiverPresentation(program, instruction,
+                                          receiverPlace->type));
       if (exactVirtualDispatch) {
         output << "static_cast<";
         if (target->receiverMutability == ReceiverMutability::ReadOnly) {
@@ -51084,13 +51088,20 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // contains that owner. C++ member lookup then performs the exact
           // base adjustment; an unrelated wrapper or implicit owner
           // dereference still fails closed.
+          // An exact-parameter refinement presents an interface-typed
+          // receiver at its target's owner; MIR verification and
+          // optimization coherence own that proof.
           const MirClassInstance *ownerInstance =
               program_.findClassInstance(*target->owner);
+          const bool exactPresentation = isMirExactReceiverPresentation(
+              program_, instruction, receiverPlace->type);
           if (ownerInstance == nullptr ||
               (instruction.dispatch == CallDispatch::Virtual &&
                !typeRow(instruction.dispatchOwner)) ||
-              !classTypeIsOrDerivesFrom(program_, receiverPlace->type,
-                                        ownerInstance->id)) {
+              (exactPresentation && !typeRow(instruction.dispatchOwner)) ||
+              (!exactPresentation &&
+               !classTypeIsOrDerivesFrom(program_, receiverPlace->type,
+                                         ownerInstance->id))) {
             {
               return false;
             }

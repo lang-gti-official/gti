@@ -1,0 +1,33 @@
+#include <std/string>
+interface shape {
+  double area();
+};
+class square : public shape {
+  double side;
+public:
+  square(double side) : side(side) {}
+  double area() override { return this.side * this.side; }
+};
+class circle : public shape {
+  double radius;
+public:
+  circle(double radius) : radius(radius) {}
+  double area() override { return 3.0d * this.radius * this.radius; }
+};
+double sum_areas(shape& item, int32_t count) {
+  mut double total = 0.0d;
+  for (mut int32_t i = 0; i < count; i++) { total += item.area(); }
+  return total;
+}
+int main() {
+  square s{1.5d};
+  circle c{0.5d};
+  mut double total = 0.0d;
+  for (mut int32_t round = 0; round < 100000; round++) {
+    total += sum_areas(s, 1000);
+    total += sum_areas(c, 1000);
+  }
+  std::print("checksum ");
+  std::println(std::to_string(int64_t(total)));
+  return 0;
+}

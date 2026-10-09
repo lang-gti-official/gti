@@ -447,7 +447,15 @@ the unused generic owner or its executable method bodies.
 Before a class type enters the worklist, lowering asks the semantic model for
 its exact-specialization identity recursively. A matching primary application
 therefore enqueues the specialization's distinct `ClassId`; a nonmatching
-application enqueues the primary plus its concrete arguments. HIR does not
+application enqueues the primary plus its concrete arguments. Resolution
+builds a complete canonical key only for a class whose primary has a recorded
+specialization. Reusing an existing class instance does not rediscover its
+arguments, which were discovered when the instance was created; discovery is
+monotone. Only a first instantiation site still propagates to them. Both rules
+keep a deeply nested generic, such as polymorphic recursion through `Box<T>`,
+proportional to its size rather than its depth squared. Before them, the
+`a06` reproducer took about 20 seconds to reach `GTI-S2105`; it now takes
+under one. HIR does not
 compare specialization syntax, rank candidates, or defer selection to C++.
 Each canonical generic class instance also retains the first source span that
 requested it. That span is diagnostic provenance for concrete semantic
@@ -671,8 +679,11 @@ receive a temporary stage with exact `Once` capability. Non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
 does not reconstruct their receiver. Lambdas, unresolved deferred callables,
 and unsupported construction remain outside the slice. A concretely selected
-`operator()` uses the same exact target even when its
-generic source call still has a deferred-callable base record. Its receiver is
+`operator()` or namespace function item uses the same exact target even when
+its generic source call still has a deferred-callable base record; the
+instance's selected signature, not that inherited record, plans each argument.
+A derived class object for a base-reference parameter is therefore the same
+ordered borrow input as in a direct call. A planned receiver is
 a read or mutable borrow for a place, a value for a reusable value receiver, or
 a `MoveValue` for an explicitly moved receiver. Ordinary consuming methods
 and value operators retain the same exact invocation capability. A fresh

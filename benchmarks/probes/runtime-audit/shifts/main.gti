@@ -1,0 +1,14 @@
+#include <std/string>
+int main() {
+  mut uint64_t state = uint64_t(88172645463325252);
+  mut uint64_t acc = 0;
+  for (mut int32_t i = 0; i < 400000000; i++) {
+    state ^= state << uint64_t(13);
+    state ^= state >> uint64_t(7);
+    state ^= state << uint64_t(17);
+    acc ^= state >> uint64_t(i & 31);
+  }
+  std::print("checksum ");
+  std::println(std::to_string(acc));
+  return 0;
+}

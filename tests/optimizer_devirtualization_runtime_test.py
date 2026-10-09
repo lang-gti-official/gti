@@ -10,7 +10,8 @@ def invoke(command):
     return subprocess.run(command, capture_output=True, text=True, timeout=120)
 
 def main():
-    compiler, source, cxx = sys.argv[1:]
+    compiler, source, cxx = sys.argv[1:4]
+    proof = sys.argv[4] if len(sys.argv) > 4 else 'exact-receiver'
     with tempfile.TemporaryDirectory(prefix='gti-exact-receiver-') as temporary:
         root = Path(temporary)
         reference = {}
@@ -36,6 +37,7 @@ def main():
                     data = json.loads(report.read_text())
                     proofs = [r for r in data['transformations'] if r['kind']=='devirtualize-call']
                     assert len(proofs) == (0 if level=='0' else 1), (name, proofs)
+                    assert all(r['proof'] == proof for r in proofs), (name, proofs)
         print('12 exact-dispatch C++20/C++23 O0/O2/O3 success/failure executions passed')
     return 0
 

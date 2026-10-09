@@ -168,13 +168,14 @@ def supported_llvm(directory):
     if not (directory / "LLVMConfig.cmake").is_file() or not version_file.is_file():
         return False
     version = re.search(r'set\(PACKAGE_VERSION\s+"(\d+)\.', version_file.read_text())
-    return version is not None and 18 <= int(version.group(1)) <= 22
+    return version is not None and int(version.group(1)) >= 18
 
 
 def discover_llvm():
     if not shutil.which("brew"):
         return None
-    for formula in ("llvm", "llvm@22", "llvm@21", "llvm@20", "llvm@19", "llvm@18"):
+    for formula in ("llvm", "llvm@23", "llvm@22", "llvm@21", "llvm@20", "llvm@19",
+                    "llvm@18"):
         result = subprocess.run(["brew", "--prefix", formula], capture_output=True, text=True)
         if result.returncode != 0:
             continue
@@ -202,9 +203,9 @@ def configure_command(build, llvm_dir):
         if values.get("CMAKE_BUILD_TYPE") != "Release" or values.get("GTI_BUILD_LSP") != "ON":
             raise ValueError("existing build must be Release with GTI_BUILD_LSP=ON; "
                              "use a fresh --build-dir")
-        cached_llvm = pathlib.Path(values.get("LLVM_DIR", "")).resolve()
-        if llvm_dir and cached_llvm != llvm_dir and supported_llvm(cached_llvm):
-            raise ValueError("--llvm-dir conflicts with the existing build cache")
+        # A selected dependency may change after a package-manager upgrade.
+        # CMake refreshes include/link inputs and rebuilds affected targets;
+        # keep the source, optimized-build and generator safety checks above.
         # Refresh install rules after updates, without switching the generator.
         command = ["cmake", "-S", ROOT, "-B", build]
     else:
@@ -287,13 +288,18 @@ def main():
     if llvm_dir:
         llvm_dir = pathlib.Path(llvm_dir).expanduser().resolve()
         if not supported_llvm(llvm_dir):
-            parser.error("--llvm-dir/LLVM_DIR must select supported LLVM 18 through 22")
-    elif (values := cache_values(build)) is None or not supported_llvm(
-            pathlib.Path(values.get("LLVM_DIR", ""))):
-        llvm_dir = discover_llvm()
+            parser.error("--llvm-dir/LLVM_DIR must select LLVM 18 or newer")
+    else:
+        values = cache_values(build)
+        cached = (pathlib.Path(values["LLVM_DIR"])
+                  if values and values.get("LLVM_DIR") else None)
+        # Resolve a moving Homebrew opt alias on every configuration, including
+        # an existing cache, and select its matching Clang package as well.
+        llvm_dir = (cached.resolve() if cached and supported_llvm(cached)
+                    else discover_llvm())
         if llvm_dir is None:
-            parser.error("no supported LLVM 18 through 22 found; install a supported "
-                         "LLVM (including libclang), for example brew install llvm@22, "
+            parser.error("no LLVM 18 or newer found; install a compatible "
+                         "LLVM (including libclang), for example brew install llvm, "
                          "then pass --llvm-dir. To restore commands from an already "
                          "installed toolchain without rebuilding, use --activate-only")
     configure = configure_command(build, llvm_dir)

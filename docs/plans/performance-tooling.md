@@ -1,5 +1,173 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## RT-AUDIT-01: runtime optimization screen (2026-10-08)
+
+Status: historical audit evidence for the frozen compiler identified below.
+This section changes no compiler, library, or runtime behavior. Subsequent
+implementation results remain separately recorded below; current priorities
+and corrected prerequisites are in the
+[PR #166 disposition](optimization.md#pr-166-audit-disposition-2026-10-09).
+Findings and recommendations are in the
+[runtime optimization audit](optimization.md#runtime-optimization-audit-2026-10-08).
+
+The screen measures ordinary GTI programs, not tuned workloads. The probes and
+the reproducible `compare`/`attribute` tool are in
+[`benchmarks/probes/runtime-audit`](../../benchmarks/probes/runtime-audit/README.md).
+Each probe pairs `main.gti` with an idiomatic C++ twin that prints the same
+checksum. Outputs are compared before any timing is taken.
+
+### Identity and method
+
+- **Compiler under test:** GTI at clean `f0ba8383`, a Release/Ninja host build
+  with AppleClang 21.0.0 (clang-2100.3.34.2) and LLVM 22.1.8.
+- **Machine:** Apple M2 Max, 12 cores, macOS 27.0 (26A428).
+- **Native policy:** GTI programs use `gti -O2`. Twins use
+  `c++ -O2 -std=c++23 -fno-fast-math -ffp-contract=off`, the same native
+  policy GTI applies.
+- **Interference:** other sessions were building on the shared machine
+  throughout, with load averages between 5 and 60.
+  - **Screen:** seven interleaved GTI/C++ sample pairs per probe, started
+    when the one-minute load average fell to 4.96. The load had risen to
+    about 37 by the end of the screen.
+  - **Attribution:** load averages of about 18–25, so each variant reports
+    the minimum of seven samples. These CPU-bound probes only get slower
+    under interference, so treat the attribution as directional ceilings,
+    not precise speedups.
+
+### Screen medians
+
+| Probe | GTI ms | C++ ms | GTI/C++ |
+| --- | ---: | ---: | ---: |
+| `sort` | 1774.3 | 204.9 | 8.66 |
+| `vector-push` | 245.3 | 40.2 | 6.11 |
+| `matrix` | 91.1 | 22.7 | 4.01 |
+| `lambda` | 227.2 | 63.5 | 3.58 |
+| `sort-heap` | 1690.0 | 539.2 | 3.13 |
+| `conversions` | 243.0 | 81.5 | 2.98 |
+| `strings` | 185.1 | 81.0 | 2.29 |
+| `hashmap` | 482.4 | 212.2 | 2.27 |
+| `division` | 337.5 | 240.5 | 1.40 |
+| `calls` | 1221.4 | 934.3 | 1.31 |
+| `expected` | 129.6 | 119.1 | 1.09 |
+| `particles` | 160.8 | 154.8 | 1.04 |
+| `dispatch` | 231.8 | 222.8 | 1.04 |
+| `shifts` | 860.4 | 835.5 | 1.03 |
+
+`sort-heap` builds the same GTI program as `sort`. Its C++ twin runs GTI's exact
+iterative heapsort, so its 539.2 ms against `sort`'s 204.9 ms isolates the
+algorithm (2.63x) from compiler overhead (3.13x).
+
+### Attribution ceilings
+
+The `attribute` mode rebuilds each probe's emitted C++ under one variant at a
+time. `inline` raises the native inline threshold to 2000. `arith`, `bounds`,
+`conv`, and `slots` rewrite one helper guard so that check family always
+succeeds. `all` combines every rewrite with the raised threshold. `coldA` only
+marks the failure-only helpers (incoming-cleanup check and cleanup scope)
+`cold, noinline`, which is the one representation change here with no
+semantic effect. Every variant must reproduce the unmodified output. The guard
+rewrites are unsafe measurement ceilings, never candidate implementations.
+
+| Probe | base | inline | arith | bounds | conv | slots | all | coldA | C++ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `matrix` | 85.8 | 89.4 | 89.7 | 24.5 | 94.8 | 92.7 | 24.6 | 84.9 | 22.7 |
+| `lambda` | 276.8 | 234.9 | 51.3 | 186.3 | 209.4 | 199.5 | 68.6 | 198.7 | 63.5 |
+| `conversions` | 201.6 | 187.4 | 199.0 | 191.6 | 163.5 | 179.5 | 59.2 | 204.8 | 81.5 |
+| `vector-push` | 255.9 | 94.1 | 231.9 | 239.2 | 231.9 | 267.5 | 58.4 | 189.5 | 40.2 |
+| `sort-heap` | 1421.9 | 666.4 | 1457.4 | 571.6 | 1400.3 | 1430.0 | 657.9 | 1159.8 | 539.2 |
+| `hashmap` | 437.8 | 233.2 | 374.7 | 353.6 | 456.8 | 405.8 | 165.6 | 268.4 | 212.2 |
+| `strings` | 107.0 | 33.1 | 101.9 | 73.8 | 107.2 | 103.2 | 30.6 | 76.4 | 81.0 |
+| `calls` | 1233.7 | 922.8 | 940.1 | 1252.9 | 1261.3 | 1245.5 | 939.7 | 1309.0 | 934.3 |
+| `division` | 235.5 | 235.5 | 236.8 | 232.1 | 245.5 | 245.4 | 208.0 | 240.4 | 240.5 |
+| `expected` | 111.7 | 104.2 | 93.2 | 107.3 | 106.3 | 104.1 | 93.3 | 111.4 | 119.1 |
+
+Minimum milliseconds of seven samples. The C++ column is the screen median
+of the idiomatic twin; for `sort-heap` it is the exact-heapsort twin. Values
+within about 10% of `base` are not distinguishable from interference.
+`lambda`'s 276.8 ms `base` reflects that interference; its screen median is
+227.2 ms.
+
+### Supporting observations
+
+- **Clang inline remarks on the unchanged `vector-push` C++:**
+  `vector::push_back` is not inlined into the entry loop (cost 370, threshold
+  225). `ensure_capacity_for_one` is not inlined into `push_back` (cost 530).
+  `string::push_back` costs 720 at several call sites.
+- **`noexcept` experiment:** adding `noexcept` to every failure sibling lowers
+  those costs to 335 and 420, still above threshold. Outlining failure-record
+  construction into one cold writer did not change timings beyond `coldA`.
+  Forcing `always_inline` on short siblings shrank executables (about 394 KB
+  to 309 KB for `vector-push`) but was not uniformly faster under load.
+- **Code size:** GTI probe executables are about 400 KB against about 35 KB
+  for their twins. The `inline` variant grows them by about 12%.
+- **`sizeof(gti_failure_record_v2)`:** 568 bytes, assigned in full at each
+  failure site.
+- **Sampled profiles (`sample`):**
+  - `sort` is dominated by the out-of-line `sort_less_at`, `swap_elements`,
+    and `sort` failure siblings.
+  - `vector-push` is dominated by `ensure_capacity_for_one`, `push_back`, and
+    the entry loop.
+  - `lambda`'s `count_if` and lambda are fully inlined. Their loop retains one
+    checked counter increment per taken element and is not vectorized.
+- **Disassembly:**
+  - The `matrix` inner loop keeps two `cmp`/`csel`/`tst`/`b.ne` bounds checks
+    per element and is not vectorized.
+  - The `vector-push` push loop is one `bl push_back__gti_mir_failure` per
+    element, plus a reload of the local slot's `engaged_` byte.
+- **GTI remarks:**
+  - In `calls`, both checks in `step` are retained when its result is
+    loop-carried, and discharged for a single direct call.
+  - In `conversions`, every narrowing conversion reports `unsupported failure
+    discharge family numeric_conversion_out_of_range/numeric_cast`.
+  - In `matrix`, every index-arithmetic overflow check in `multiply` is
+    discharged, but `vector::operator[]` keeps its public bounds check.
+## Closed-world exact parameter receivers (2026-10-09)
+
+Status: implemented as a proposal; targeted validation only. The full suite is
+deferred to reconciliation. The change adds
+[closed-world call-site facts](../architecture/optimization.md#closed-world-call-site-facts)
+and their first client,
+[exact parameter receivers](../architecture/optimization.md#exact-parameter-receivers).
+
+Both compilers are Release builds from the same LLVM 22.1.8 configuration. The
+baseline is merged main `e659c93f`; the candidate is that tree plus this
+change. The machine is an Apple M2 Max, macOS 27.0 (`26A428`), Apple Clang
+21.0.0 (`clang-2100.3.34.2`), GTI `-O3`, default native flags. Each probe was
+built by both compilers and its complete stdout was hashed. Outputs match
+pairwise. The run had 3 warmups, then 15 seeded interleaved rounds, with no
+concurrent build or test work:
+
+| Probe (`benchmarks/probes/runtime-facilities`) | Baseline median ms | Candidate median ms | Ratio | Binary bytes |
+| --- | ---: | ---: | ---: | --- |
+| `interface` (helper taking `Update&`) | 374.97 | 257.02 | 0.685 | 145488 -> 145600 |
+| `interface-local` (local-receiver slice) | 257.29 | 257.41 | 1.000 | unchanged |
+| `interface-proxy` (direct-call ceiling) | 237.14 | 237.70 | 1.002 | unchanged |
+| `callback` | 518.48 | 517.18 | 0.997 | unchanged |
+| `soa` | 558.27 | 560.57 | 1.004 | unchanged |
+
+`interface` now matches the existing local-receiver result. Its only C++
+difference is the one refined call:
+`static_cast<const Linear &>(*p).::Linear::run__gti_mir_failure(...)`. The
+`interface-local`, `interface-proxy`, `callback`, `callback-proxy`, `soa`,
+`cross-unit`, `vector-checked-loop` and `game-update-stage` sources emit
+byte-identical C++. `owner` and `checked-scalar-chain` differ only in
+`__gti_inst_`/`__gti_type_` digests. Internal-linkage identities hash their
+source path, and the two checkouts differ, so executable hashes differ even
+for these controls.
+
+GTI-only compile time (`-O3 --emit-cpp`, 7 interleaved samples after one
+warmup) shows no measurable change. Ratios are 0.980-0.996 on `interface.gti`,
+`examples/128-inline-object-pool.gti`, `examples/121-programmable-allocators.gti`
+and the `game-update-stage` workload. A first `examples/86-owning-callbacks.gti`
+sample read 1.044; a dedicated rerun read 0.996. That example has 7 virtual-call
+candidates, none refined: its receivers are allocated `std::function` models
+reached through owning pointers. They are the next client for this fact
+family, not a regression.
+
+Limits: one machine and one native compiler. The probe is a source proxy, not
+a production application. The canonical `interface-exact-dispatch` workload
+measures the local form and is unchanged.
+
 ## RT-1: source-storage failure-path cost
 
 Status: complete bounded implementation; frozen before/after measurements,

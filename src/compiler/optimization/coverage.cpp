@@ -564,6 +564,7 @@ MirOptimizationCoverage optimizationCoverage(MirTransformProofKind kind) {
   case MirTransformProofKind::BoundsRange:
   case MirTransformProofKind::ArithmeticRange:
   case MirTransformProofKind::ExactReceiver:
+  case MirTransformProofKind::ExactParameterReceiver:
     return supported(
         "independent typed proof replay from canonical source MIR");
   case MirTransformProofKind::Count:

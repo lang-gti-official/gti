@@ -2701,7 +2701,11 @@ A call resolved to a concrete override initially remains virtual in MIR; the
 C++ backend does not infer devirtualization. The bounded optimizer
 `exact-receiver-dispatch` proof may refine it to a static source override,
 which backend admission accepts and emits with explicit qualification from
-the sealed MIR target. It preserves the existing failure/status contract,
+the sealed MIR target. A closed-world parameter refinement keeps the
+interface-typed receiver place. `isMirExactReceiverPresentation` admits it
+only when `dispatchOwner` names the target's owner and that owner directly
+implements the receiver's interface. The backend then spells
+`static_cast<const Owner &>(receiver)` before the qualified call. It preserves the existing failure/status contract,
 argument staging, and cleanup; native type analysis is not proof authority.
 For a conservatively failure-capable virtual
 call, the backend validates the exact contract roots and candidate owners, then
