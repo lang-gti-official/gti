@@ -1365,9 +1365,14 @@ the member name, receiver/result/parameter types, receiver access, and explicit
 unsafe-call permission. Both direct boolean queries and named concept leaves use
 the same semantic signature check. Composition
 remaps the arguments and preserves the name; disjunction must not merge facts
-for different methods or erase an unsafe obligation. Symbolic bodies can call a
-guaranteed exact member under its receiver and safety contract, but concrete
-instance analysis must resolve the real method before HIR. Query results become
+for different methods or erase an unsafe obligation. A compiler-private member
+is admitted only under the call-admission rule of the requirement's member
+token: direct queries and trailing-clause leaves record that trust
+(`AppliedConceptRequirement::trustedMemberAccess`), and named-concept leaves
+never do, so public concept satisfaction cannot depend on a compiler-private
+member. Symbolic bodies can call a guaranteed exact member under its receiver
+and safety contract, but concrete instance analysis must resolve the real
+method before HIR. Query results become
 ordinary boolean HIR/MIR literals, never
 synthetic runtime calls. Neither the constant evaluator nor the backend decides
 whether a type supports cloning. `std::clone` and vector element duplication

@@ -4690,6 +4690,102 @@ int main() {
          "cloning must not make exclusive owners implicitly copyable");
 }
 
+void testCompilerPrivateMemberRequirements() {
+  // Trusted source may name a compiler-private probe type, so its direct
+  // member queries must see that type's members exactly as a call written
+  // there would, including a member constrained by a raw compiler-bound
+  // concept rather than its public alias.
+  const auto trusted =
+      analyzeTrustedPreludeFixture("compiler-private-member-probe.gti", R"(
+namespace gti_internal {
+@compiler_constraint("enum_underlying")
+concept probe_enum_underlying<E, U>;
+struct plain_probe<T> {
+  bool matches() { return true; }
+};
+struct underlying_probe<E, U> {
+  bool matches() requires gti_internal::probe_enum_underlying<E, U> {
+    return true;
+  }
+};
+}
+enum class small : uint8_t { low, high };
+int inline_width<E>() { return 8; }
+int boxed_width<E>() { return 0; }
+int underlying_width<E>() {
+  if constexpr (requires(gti_internal::underlying_probe<E, uint8_t>& probe) {
+                  { probe.matches() } -> bool;
+                }) {
+    return inline_width<E>();
+  } else {
+    return boxed_width<E>();
+  }
+}
+bool call_matches<P>(P& probe)
+    requires requires(P& item) { { item.matches() } -> bool; } {
+  return probe.matches();
+}
+int main() {
+  static_assert(requires(gti_internal::plain_probe<int>& probe) {
+    { probe.matches() } -> bool;
+  });
+  static_assert(requires(gti_internal::underlying_probe<small, uint8_t>& probe) {
+    { probe.matches() } -> bool;
+  });
+  static_assert(
+      !(requires(gti_internal::underlying_probe<small, int32_t>& probe) {
+        { probe.matches() } -> bool;
+      }));
+  gti_internal::plain_probe<int> probe{};
+  return call_matches(probe) ? underlying_width<small>() - 8 : 1;
+}
+)");
+  for (const auto &diagnostic : trusted.diagnostics) {
+    std::cerr << "Compiler-private member probe diagnostic: "
+              << diagnostic.message << '\n';
+  }
+  expect(trusted.canGenerateCode(),
+         "trusted direct member requirements must select compiler-private "
+         "members, including through a requires-requires clause");
+  const auto instantiated = [&](std::string_view name) {
+    return std::any_of(trusted.hir.functionInstances().begin(),
+                       trusted.hir.functionInstances().end(),
+                       [&](const lang::HirFunctionInstance &instance) {
+                         return instance.source != nullptr &&
+                                instance.source->name().lexeme == name;
+                       });
+  };
+  expect(instantiated("inline_width") && !instantiated("boxed_width"),
+         "a raw compiler-bound member constraint must select the satisfied "
+         "if-constexpr probe branch, not silently fall back");
+
+  // A named concept is a public predicate: it never observes a
+  // compiler-private member, even when trusted source declares and applies
+  // it, and the failure names the reason instead of claiming the member is
+  // not public.
+  const auto named =
+      analyzeTrustedPreludeFixture("compiler-private-member-concept.gti", R"(
+namespace gti_internal {
+struct plain_probe<T> {
+  bool matches() { return true; }
+};
+}
+concept probe_matches<P> = requires(P& item) { { item.matches() } -> bool; };
+bool call_named<P>(P& probe) requires probe_matches<P> {
+  return probe.matches();
+}
+int main() {
+  gti_internal::plain_probe<int> probe{};
+  return call_named(probe) ? 0 : 1;
+}
+)");
+  expect(!named.canGenerateCode() &&
+             hasDiagnosticCode(named.diagnostics, "GTI-S2029") &&
+             hasRelatedDiagnostic(named.diagnostics,
+                                  "Member 'matches()' is compiler-private"),
+         "named concepts must not admit compiler-private members");
+}
+
 void testExactMemberSignatureConcepts() {
   const auto analyze = [](const std::string &source) {
     return lang::Frontend().analyze("member-signatures.gti", source,
@@ -11466,6 +11562,8 @@ constexpr NamedTest kTests[] = {
     {"testConcurrencyTypeCapabilities", testConcurrencyTypeCapabilities},
     {"testSourceDefinedConcepts", testSourceDefinedConcepts},
     {"testMemberRequirementConcepts", testMemberRequirementConcepts},
+    {"testCompilerPrivateMemberRequirements",
+     testCompilerPrivateMemberRequirements},
     {"testExactMemberSignatureConcepts", testExactMemberSignatureConcepts},
     {"testConstraintFailureProvenance", testConstraintFailureProvenance},
     {"testRequiresDisjunction", testRequiresDisjunction},

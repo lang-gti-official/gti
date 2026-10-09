@@ -694,6 +694,10 @@ struct AppliedConceptRequirement {
   std::vector<SemanticType> arguments;
   const ConstraintExpression *expression = nullptr;
   std::size_t expressionApplication = ConstraintExpressionNode::invalidIndex;
+  // A direct member requirement written in compiler-trusted source may select
+  // a compiler-private member, exactly as a call written there could. Named
+  // concept leaves never set it: concept satisfaction is a public predicate.
+  bool trustedMemberAccess = false;
 };
 
 [[nodiscard]] std::optional<CheckedIntegerDomain>
