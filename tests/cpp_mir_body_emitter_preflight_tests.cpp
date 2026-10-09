@@ -1010,24 +1010,6 @@ int main() { return 0; }
       return function != 0 && producer != 0 && stage != 0 && consumer != 0;
     }
   };
-  struct DirectShape {
-    lang::HirFunctionInstanceId function = 0;
-    lang::MirInstructionId move = 0;
-    lang::MirInstructionId consumer = 0;
-
-    [[nodiscard]] explicit operator bool() const {
-      return function != 0 && move != 0 && consumer != 0;
-    }
-  };
-  struct DirectFreshShape {
-    lang::HirFunctionInstanceId function = 0;
-    lang::MirInstructionId producer = 0;
-    lang::MirInstructionId consumer = 0;
-
-    [[nodiscard]] explicit operator bool() const {
-      return function != 0 && producer != 0 && consumer != 0;
-    }
-  };
   struct DirectFreshReturnShape {
     lang::HirFunctionInstanceId function = 0;
     lang::MirInstructionId producer = 0;
@@ -1041,8 +1023,9 @@ int main() { return 0; }
   StagedShape namedShape;
   StagedShape freshShape;
   StagedShape directConstructorShape;
-  DirectShape directShape;
-  DirectFreshShape directFreshShape;
+  // Exact typed lambda invocations use the same ordered CallInput schedule.
+  StagedShape lambdaShape;
+  StagedShape lambdaFreshShape;
   DirectFreshReturnShape directFreshReturnShape;
   for (const lang::MirFunctionInstance &function :
        frontend.mir.functionInstances()) {
@@ -1087,7 +1070,15 @@ int main() { return 0; }
                               .producer = producer->id,
                               .stage = instruction.id,
                               .consumer = consumer->id};
-            if (producer->kind == lang::MirInstructionKind::Move) {
+            if (consumer->lambdaTarget &&
+                producer->kind == lang::MirInstructionKind::Move) {
+              lambdaShape = shape;
+            } else if (consumer->lambdaTarget &&
+                       producer->kind == lang::MirInstructionKind::Compute &&
+                       producer->operation ==
+                           lang::MirOperation::PayloadConstruct) {
+              lambdaFreshShape = shape;
+            } else if (producer->kind == lang::MirInstructionKind::Move) {
               if (consumer->kind == lang::MirInstructionKind::Construct &&
                   instruction.destination &&
                   instruction.preparedParameterDrop) {
@@ -1102,46 +1093,16 @@ int main() { return 0; }
             }
           }
         }
-        if (instruction.kind != lang::MirInstructionKind::Call ||
-            !instruction.callableInvocation || !instruction.lambdaTarget ||
-            !instruction.result || !owningPayload(instruction.info.type)) {
-          continue;
-        }
-        for (const lang::MirOperand &operand : instruction.operands) {
-          const lang::MirValue *value =
-              operand.kind == lang::MirOperandKind::Value
-                  ? function.body.findValue(operand.value)
-                  : nullptr;
-          const lang::MirInstruction *producer =
-              value == nullptr
-                  ? nullptr
-                  : findInstruction(function.body, value->definition);
-          if (producer != nullptr &&
-              producer->kind == lang::MirInstructionKind::Move &&
-              owningPayload(operand.type)) {
-            directShape = {.function = function.id,
-                           .move = producer->id,
-                           .consumer = instruction.id};
-          } else if (producer != nullptr &&
-                     producer->kind == lang::MirInstructionKind::Compute &&
-                     producer->operation ==
-                         lang::MirOperation::PayloadConstruct &&
-                     owningPayload(operand.type)) {
-            directFreshShape = {.function = function.id,
-                                .producer = producer->id,
-                                .consumer = instruction.id};
-          }
-        }
       }
     }
   }
-  expect(namedShape && freshShape && directConstructorShape && directShape &&
-             directFreshShape && directFreshReturnShape,
+  expect(namedShape && freshShape && directConstructorShape && lambdaShape &&
+             lambdaFreshShape && directFreshReturnShape,
          "the transport fixture should retain prepared named and constructor, "
-         "staged-fresh, both direct-lambda, and direct fresh-return owning "
-         "payload-enum schedules");
-  if (!namedShape || !freshShape || !directConstructorShape || !directShape ||
-      !directFreshShape || !directFreshReturnShape) {
+         "staged-fresh, both staged exact-lambda, and direct fresh-return "
+         "owning payload-enum schedules");
+  if (!namedShape || !freshShape || !directConstructorShape || !lambdaShape ||
+      !lambdaFreshShape || !directFreshReturnShape) {
     return;
   }
 
@@ -1164,8 +1125,8 @@ int main() { return 0; }
   expect(admits(namedShape.function, "named call") &&
              admits(freshShape.function, "fresh call") &&
              admits(directConstructorShape.function, "direct constructor") &&
-             admits(directShape.function, "named exact lambda") &&
-             admits(directFreshShape.function, "fresh exact lambda") &&
+             admits(lambdaShape.function, "named exact lambda") &&
+             admits(lambdaFreshShape.function, "fresh exact lambda") &&
              admits(directFreshReturnShape.function, "direct fresh return"),
          "all canonical owning payload-enum transport bodies should pass "
          "failure-form admission");
@@ -1542,110 +1503,106 @@ int main() { return 0; }
                  "a payload-enum CallInput targeting a polymorphic-owner "
                  "constructor must fail admission");
 
-  const lang::MirProgram wrongDirectTransfer =
-      forge(directShape.function, [&](lang::MirBody &body) {
-        lang::MirInstruction *move =
-            findMutableInstruction(body, directShape.move);
-        lang::MirInstruction *call =
-            findMutableInstruction(body, directShape.consumer);
-        expect(move != nullptr && move->lifecycle.size() == 1 &&
-                   call != nullptr,
-               "the exact lambda argument should retain its move and call "
-               "lifecycle records");
-        if (move == nullptr || move->lifecycle.size() != 1 || call == nullptr) {
-          return;
-        }
-        const lang::MirDropObligationId movedDrop =
-            move->lifecycle.front().target;
-        const auto transfer = std::find_if(
-            call->lifecycle.begin(), call->lifecycle.end(),
-            [&](const lang::MirLifecycleEvent &candidate) {
-              return candidate.kind ==
-                         lang::MirLifecycleEventKind::TransferOut &&
-                     candidate.source == movedDrop;
-            });
-        expect(transfer != call->lifecycle.end(),
-               "the exact lambda call should transfer the moved argument");
-        if (transfer != call->lifecycle.end()) {
-          transfer->kind = lang::MirLifecycleEventKind::Initialize;
-        }
-      });
-  expectRejected(wrongDirectTransfer, directShape.function,
-                 "an exact lambda argument without its unique TransferOut "
-                 "edge must fail admission");
+  // The staged exact-lambda schedule closes the same lifecycle proof as an
+  // ordinary call: the prepared parameter drop leaves only at the invocation.
+  const auto forgeLambdaTransfer = [&](const StagedShape &shape) {
+    return forge(shape.function, [&](lang::MirBody &body) {
+      lang::MirInstruction *stage = findMutableInstruction(body, shape.stage);
+      lang::MirInstruction *call = findMutableInstruction(body, shape.consumer);
+      expect(stage != nullptr && stage->preparedParameterDrop &&
+                 call != nullptr,
+             "the exact lambda argument should retain its prepared stage and "
+             "call");
+      if (stage == nullptr || !stage->preparedParameterDrop ||
+          call == nullptr) {
+        return;
+      }
+      const auto transfer = std::find_if(
+          call->lifecycle.begin(), call->lifecycle.end(),
+          [&](const lang::MirLifecycleEvent &candidate) {
+            return candidate.kind == lang::MirLifecycleEventKind::TransferOut &&
+                   candidate.source == *stage->preparedParameterDrop;
+          });
+      expect(transfer != call->lifecycle.end(),
+             "the exact lambda call should transfer the prepared argument");
+      if (transfer != call->lifecycle.end()) {
+        transfer->kind = lang::MirLifecycleEventKind::Initialize;
+      }
+    });
+  };
+  expectRejected(forgeLambdaTransfer(lambdaShape), lambdaShape.function,
+                 "a staged exact-lambda argument without its unique "
+                 "TransferOut edge must fail admission");
+  expectRejected(forgeLambdaTransfer(lambdaFreshShape),
+                 lambdaFreshShape.function,
+                 "a staged fresh exact-lambda argument without its unique "
+                 "TransferOut edge must fail admission");
 
-  const lang::MirProgram wrongDirectMoveLifecycle =
-      forge(directShape.function, [&](lang::MirBody &body) {
+  const lang::MirProgram wrongLambdaMoveLifecycle =
+      forge(lambdaShape.function, [&](lang::MirBody &body) {
         lang::MirInstruction *move =
-            findMutableInstruction(body, directShape.move);
+            findMutableInstruction(body, lambdaShape.producer);
         expect(move != nullptr && move->lifecycle.size() == 1,
-               "the direct exact-lambda move should retain one lifecycle "
+               "the exact-lambda argument move should retain one lifecycle "
                "edge");
         if (move != nullptr && move->lifecycle.size() == 1) {
           move->lifecycle.front().kind =
               lang::MirLifecycleEventKind::Initialize;
         }
       });
-  expectRejected(wrongDirectMoveLifecycle, directShape.function,
+  expectRejected(wrongLambdaMoveLifecycle, lambdaShape.function,
                  "an exact lambda argument whose Move producer has the "
                  "wrong lifecycle kind must fail admission");
 
-  const lang::MirProgram wrongDirectFreshTransfer =
-      forge(directFreshShape.function, [&](lang::MirBody &body) {
+  const lang::MirProgram wrongLambdaFreshProducer =
+      forge(lambdaFreshShape.function, [&](lang::MirBody &body) {
         lang::MirInstruction *producer =
-            findMutableInstruction(body, directFreshShape.producer);
-        lang::MirInstruction *call =
-            findMutableInstruction(body, directFreshShape.consumer);
-        expect(producer != nullptr && call != nullptr,
-               "the direct fresh lambda argument should retain its producer "
-               "and call");
-        if (producer == nullptr || call == nullptr) {
-          return;
-        }
-        const auto initialization =
-            std::find_if(producer->lifecycle.begin(), producer->lifecycle.end(),
-                         [](const lang::MirLifecycleEvent &candidate) {
-                           return candidate.kind ==
-                                      lang::MirLifecycleEventKind::Initialize &&
-                                  candidate.target != 0;
-                         });
-        expect(initialization != producer->lifecycle.end(),
-               "the direct fresh lambda argument should arm one value drop");
-        if (initialization == producer->lifecycle.end()) {
-          return;
-        }
-        const auto transfer = std::find_if(
-            call->lifecycle.begin(), call->lifecycle.end(),
-            [&](const lang::MirLifecycleEvent &candidate) {
-              return candidate.kind ==
-                         lang::MirLifecycleEventKind::TransferOut &&
-                     candidate.source == initialization->target;
-            });
-        expect(transfer != call->lifecycle.end(),
-               "the direct fresh lambda call should consume that value drop");
-        if (transfer != call->lifecycle.end()) {
-          transfer->kind = lang::MirLifecycleEventKind::Initialize;
-        }
-      });
-  expectRejected(wrongDirectFreshTransfer, directFreshShape.function,
-                 "a direct fresh lambda argument without its producer-to-call "
-                 "TransferOut pairing must fail admission");
-
-  const lang::MirProgram wrongDirectFreshProducer =
-      forge(directFreshShape.function, [&](lang::MirBody &body) {
-        lang::MirInstruction *producer =
-            findMutableInstruction(body, directFreshShape.producer);
+            findMutableInstruction(body, lambdaFreshShape.producer);
         expect(producer != nullptr &&
                    producer->operation == lang::MirOperation::PayloadConstruct,
-               "the direct fresh lambda argument should retain its exact "
+               "the fresh exact-lambda argument should retain its exact "
                "PayloadConstruct producer");
         if (producer != nullptr) {
           producer->operation = lang::MirOperation::Identity;
         }
       });
-  expectRejected(wrongDirectFreshProducer, directFreshShape.function,
-                 "a direct fresh lambda argument produced by a different MIR "
+  expectRejected(wrongLambdaFreshProducer, lambdaFreshShape.function,
+                 "a fresh exact-lambda argument produced by a different MIR "
                  "operation must fail admission");
+
+  // The lambda transport boundary is the exact captureless closure that the
+  // invocation names; a capture lifecycle could observe the argument.
+  lang::MirProgram capturingLambda = frontend.mir;
+  {
+    const auto &functions = capturingLambda.functionInstances();
+    const auto caller =
+        std::find_if(functions.begin(), functions.end(),
+                     [&](const lang::MirFunctionInstance &function) {
+                       return function.id == lambdaShape.function;
+                     });
+    const lang::MirInstruction *consumer =
+        caller == functions.end()
+            ? nullptr
+            : findInstruction(caller->body, lambdaShape.consumer);
+    auto &lambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
+        capturingLambda.lambdaInstances());
+    const auto target =
+        consumer != nullptr && consumer->lambdaTarget
+            ? std::find_if(lambdas.begin(), lambdas.end(),
+                           [&](const lang::MirLambdaInstance &lambda) {
+                             return lambda.id == *consumer->lambdaTarget;
+                           })
+            : lambdas.end();
+    expect(target != lambdas.end() && target->captureTypes.empty(),
+           "the named exact-lambda transport should retain its captureless "
+           "lambda target");
+    if (target != lambdas.end()) {
+      target->captureTypes.push_back(lang::SemanticType::Int32);
+    }
+  }
+  expectRejected(capturingLambda, lambdaShape.function,
+                 "a payload-enum CallInput consumed by a capturing lambda "
+                 "invocation must fail admission");
 
   const lang::MirProgram wrongFreshReturnPlace =
       forge(directFreshReturnShape.function, [&](lang::MirBody &body) {

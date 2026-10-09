@@ -9,6 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.394.2 — Lambda base-reference arguments
+
+- Fix an internal compiler error when a lambda is called with a derived class
+  object for a base-class reference parameter, such as
+  `[](Operation& s, int v) { ... }` invoked as `l(concrete, 40)`, for
+  read-only and `mut` references and inside generic functions. The call now
+  binds the argument exactly as a direct call to a function with that
+  parameter does.
+- Fix internal compiler errors in related lambda calls: an immediately invoked
+  lambda given a `mut` object for a read-only reference parameter, a fresh
+  class temporary passed by value, a moved capture-free lambda parameter called
+  with an argument pack (`std::move(callback)(args...)`), and a moved
+  capture-free lambda passed to `expected::transform`.
+
 ## 0.394.0 — Static dispatch through interface parameters
 
 - At `-O2` and `-O3`, a call through an interface reference parameter becomes
