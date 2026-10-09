@@ -120,6 +120,14 @@ def main():
         "bad_vacant_native": "bad_vacant_native(first.data(), second.data())",
         "bad_vacant_lifetime": "bad_vacant_lifetime(first.data(), second.data())",
     }, "return *pointer + 1;")
+    run_fixture(compiler, "optimizer_record_pointees.gti", {
+        "bad_record_broad": "bad_record_broad(storage.data(), owner)",
+        "bad_record_native": "bad_record_native(storage.data(), owner)",
+        "bad_record_field_borrow": "bad_record_field_borrow(storage.data(), owner)",
+        "bad_record_lifetime": "bad_record_lifetime(storage.data(), owner)",
+        "bad_record_argument": "bad_record_argument(storage.data(), owner)",
+        "bad_record_other": "bad_record_other(storage.data(), &other, owner)",
+    }, "return value.narrow + 1;")
 
 
 if __name__ == "__main__":
