@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.395.0 — Editor profiles and inactive-code highlighting
+
+- Select a project build profile in the editor with `settings.gti.profile` or
+  initialization options. Neovim provides `:GTIProfile release`,
+  `:GTIProfile dev` and `:GTIProfile!` to restore the default without restarting
+  the server. Defines, diagnostics, completion, execution and warning policies
+  follow the same driver-owned profile; dirty buffers and generation checks
+  remain authoritative.
+- Inactive compiler-directive branches now have a default grey Neovim style
+  that takes precedence over regular semantic colors, including punctuation.
+  Colorscheme changes restore the default without overwriting custom styling;
+  switching profiles removes obsolete grey overlays.
+
 ## 0.394.2 — Lambda base-reference arguments
 
 - Fix an internal compiler error when a lambda is called with a derived class

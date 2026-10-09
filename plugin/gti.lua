@@ -111,13 +111,82 @@ for group, target in pairs({
   vim.api.nvim_set_hl(0, group, { default = true, link = target })
 end
 
+local function inactive_code_highlight()
+  -- inactiveCode is a server extension, not a built-in Neovim style. A
+  -- language-specific default preserves theme/user overrides and does not
+  -- change other languages' semantic token groups.
+  vim.api.nvim_set_hl(0, "@lsp.mod.inactiveCode.gti", { default = true, link = "Comment" })
+end
+
+inactive_code_highlight()
+vim.api.nvim_create_autocmd("ColorScheme", {
+  group = vim.api.nvim_create_augroup("gti_inactive_code_style", { clear = true }),
+  callback = inactive_code_highlight,
+})
+
+vim.api.nvim_create_autocmd("LspTokenUpdate", {
+  group = vim.api.nvim_create_augroup("gti_inactive_code_tokens", { clear = true }),
+  callback = function(args)
+    local data = args.data
+    local client = data and vim.lsp.get_client_by_id(data.client_id) or nil
+    if not client or client.name ~= "gti_lsp" or not data.token.modifiers.inactiveCode then
+      return
+    end
+    -- Apply above type+modifier styles, which otherwise have higher priority
+    -- than a modifier alone. All authority comes from the server's token.
+    vim.lsp.semantic_tokens.highlight_token(
+      data.token, args.buf, data.client_id, "@lsp.mod.inactiveCode.gti"
+    )
+  end,
+})
+
+local function requested_profile(client)
+  local profile
+  if type(client.settings.gti) == "table" then
+    profile = client.settings.gti.profile
+  else
+    local options = client.config.init_options
+    profile = type(options) == "table" and options.profile or nil
+  end
+  return type(profile) == "string" and profile or "project default"
+end
+
+vim.api.nvim_create_user_command("GTIProfile", function(args)
+  local clients = vim.lsp.get_clients({ name = "gti_lsp", bufnr = 0 })
+  if #clients == 0 then
+    vim.notify("No GTI language server is attached to this buffer", vim.log.levels.WARN, { title = "GTI" })
+    return
+  end
+  if args.args == "" and not args.bang then
+    vim.notify("Editor profile: " .. requested_profile(clients[1]), vim.log.levels.INFO, { title = "GTI" })
+    return
+  end
+  if (args.bang and args.args ~= "")
+    or (not args.bang and not args.args:match("^[A-Za-z][A-Za-z0-9_-]*$")) then
+    vim.notify("Use :GTIProfile <profile-name> or :GTIProfile! to reset", vim.log.levels.ERROR, { title = "GTI" })
+    return
+  end
+  for _, client in ipairs(clients) do
+    client.settings.gti = type(client.settings.gti) == "table" and client.settings.gti or {}
+    client.settings.gti.profile = args.bang and vim.NIL or args.args
+    client:notify("workspace/didChangeConfiguration", { settings = client.settings })
+  end
+end, {
+  nargs = "?",
+  bang = true,
+  complete = function() return { "dev", "release" } end,
+  desc = "Select the GTI editor build profile (without building)",
+})
+
 vim.api.nvim_create_user_command("GTIInfo", function()
   local info = toolchain.version_info()
   local active_versions = {}
+  local active_profiles = {}
   local problems = vim.deepcopy(info.problems)
   for _, client in ipairs(vim.lsp.get_clients({ name = "gti_lsp" })) do
     local version = client.server_info and client.server_info.version or "unknown"
     table.insert(active_versions, version)
+    table.insert(active_profiles, requested_profile(client))
     if info.expected and version ~= info.expected then
       table.insert(problems, string.format(
         "running language server is %s but the plugin expects %s",
@@ -141,6 +210,7 @@ vim.api.nvim_create_user_command("GTIInfo", function()
       info.language_server_version or info.language_server_problem or "unknown"
     ),
     "Running LSP: " .. (#active_versions > 0 and table.concat(active_versions, ", ") or "not attached"),
+    "Editor profile: " .. (#active_profiles > 0 and table.concat(active_profiles, ", ") or "project default"),
     "Tree-sitter parser: " .. (info.parser or "not found (using regex fallback)"),
     "Status: " .. (#problems == 0 and "versions agree" or table.concat(problems, "; ")),
   }
