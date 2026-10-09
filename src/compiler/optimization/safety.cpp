@@ -4206,8 +4206,17 @@ void applyInstruction(const MirBody &body,
     std::optional<IntegerFact> value;
     std::optional<ObjectFact> record;
     std::optional<std::size_t> parameter;
-    if (instruction.operands.size() == 2) {
-      pointer = scalarAddressForOperand(body, state, instruction.operands[0]);
+    pointer = scalarAddressForOperand(body, state, instruction.operands[0]);
+    if (isMirScalarFinalAddressConstruction(instruction) &&
+        instruction.operands.size() == 1) {
+      // The sealed zero-argument scalar construction value-initializes its
+      // exact pointee. This is a successful construction postcondition, not
+      // a claim that vacant bytes or neighbouring elements contain zero.
+      value = IntegerFact{.domain = *constantIntegerDomain(
+                              instruction.operands[0].type.arguments.front()),
+                          .lower = {},
+                          .upper = {}};
+    } else if (instruction.operands.size() == 2) {
       if (isMirScalarFinalAddressConstruction(instruction)) {
         value = integerForOperand(body, state, instruction.operands[1]);
         parameter = readonlyIntegerParameter(program, address, body,

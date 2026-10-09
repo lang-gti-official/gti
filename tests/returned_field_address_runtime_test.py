@@ -136,6 +136,12 @@ def main():
         "bad_prefix_value": "bad_prefix_value()",
         "bad_prefix_lifetime": "bad_prefix_lifetime(sequence)",
     }, "return value + 1;")
+    run_fixture(compiler, "optimizer_default_scalar_construction.gti", {
+        "bad_default_explicit": "bad_default_explicit(first.data())",
+        "bad_default_native": "bad_default_native(first.data())",
+        "bad_default_other": "bad_default_other(first.data(), second.data())",
+        "bad_default_lifetime": "bad_default_lifetime(first.data())",
+    }, "return *pointer + 1;")
 
 
 if __name__ == "__main__":
