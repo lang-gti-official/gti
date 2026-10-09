@@ -81,11 +81,12 @@
       ]
     },
     "c118_memory_resource_growth_panic": {
+      "native_sources": ["native/unbuffered_output.c"],
       "cases": [
         {
-          "exit": 70,
-          "stderr": "<std/resource_vector>:143: runtime error\\[GTI-R0017\\]: panic: \"resource_vector\\ could\\ not\\ grow\"\\n",
-          "stdout": "full\ndrop 5\ndrop 4\ndrop 3\ndrop 2\ndrop 1\nrelease 1\ndrop 100\ndrop 200\n"
+          "exit": "abort",
+          "stderr": "<std/memory>:343: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
+          "stdout": "full\n"
         }
       ]
     },
