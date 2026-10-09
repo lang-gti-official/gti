@@ -121,6 +121,47 @@ within about 10% of `base` are not distinguishable from interference.
     discharge family numeric_conversion_out_of_range/numeric_cast`.
   - In `matrix`, every index-arithmetic overflow check in `multiply` is
     discharged, but `vector::operator[]` keeps its public bounds check.
+## Checked integer arithmetic through overflow builtins (2026-10-09)
+
+Status: implemented. A probe screen against C++ that performs the same
+overflow and bounds checks found that GTI's own scalar loop was the dominant
+gap. Before this change, the direct-call `interface-proxy` loop took 241 ms
+against 159 ms for the checked C++ twin, which uses `__builtin_*_overflow`.
+The cause was the backend's portable overflow predicates. Each was a chain of
+limit comparisons, and checked multiplication divided by a runtime operand.
+That made `step` too large for the native inliner. See
+[backend.md](../architecture/backend.md#defined-failure) for the
+representation.
+
+Same machine and settings as the entry below. The baseline is merged main
+`c659c557`; the candidate is that tree plus this change. Outputs match on
+every pair. There were 3 warmups and 15 interleaved rounds:
+
+| Program | Baseline median ms | Candidate median ms | Ratio |
+| --- | ---: | ---: | ---: |
+| `interface-proxy` | 235.92 | 145.07 | 0.615 |
+| `interface` | 253.46 | 120.97 | 0.477 |
+| `interface-local` | 253.42 | 141.21 | 0.557 |
+| `callback` | 517.71 | 368.60 | 0.712 |
+| `callback-proxy` | 238.56 | 122.44 | 0.513 |
+| `soa` | 557.99 | 320.56 | 0.574 |
+| `soa-proxy` | 557.04 | 319.22 | 0.573 |
+| `owner` | 2778.16 | 2629.05 | 0.946 |
+| `vector-checked-loop` workload | 79.21 | 79.47 | 1.003 |
+| `game-update-stage` workload | 85.22 | 85.09 | 0.998 |
+| `checked-scalar-chain` workload | 454.13 | 455.61 | 1.003 |
+| `fixed-array-loop-proof` workload | 137.45 | 136.92 | 0.996 |
+| `scalar-fp-update` workload | 146.46 | 146.30 | 0.999 |
+
+The direct scalar loop is now faster than the checked C++ twin (159 ms), and
+`interface` matches idiomatic unchecked C++ (124 ms). The workloads are
+controls. Their checks are already discharged, or they are latency-bound
+chains where the check form is off the critical path. Probe binaries grow by
+at most 0.5%. Full `-O3` build time was within noise on three programs.
+`soa` remains 7.5x slower than idiomatic C++, which vectorizes the
+unchecked loop. The remaining gap is the checks themselves: proving them
+away (RT-5/RT-6) or vectorizing checked arithmetic is separate work.
+
 ## Closed-world exact parameter receivers (2026-10-09)
 
 Status: implemented as a proposal; targeted validation only. The full suite is
