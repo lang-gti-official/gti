@@ -32,6 +32,11 @@ for what minor and patch releases mean.
   a derived class object to the function's base-class reference parameter.
   The call now binds the argument exactly as a direct `apply(concrete, 40)`
   does, for read-only and `mut` references.
+- Rejecting runaway generic recursion is fast again. Polymorphic recursion
+  such as `depth<T>` calling `depth<Box<T>>` reported `GTI-S2105` only after
+  about 20 seconds of instance discovery; it now fails in under a second. The
+  cost came from re-resolving and rediscovering nested generic types at every
+  depth.
 
 ## 0.393.0 — Standard-library modules and reachable compilation
 
