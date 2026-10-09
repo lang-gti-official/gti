@@ -3623,6 +3623,57 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
                 movedCarrier = true;
                 resolved = callInputSource(producer->operands.front());
               }
+              if (producer != nullptr &&
+                  producer->kind == MirInstructionKind::Construct &&
+                  producer->constructorTarget && producer->loan &&
+                  producer->result == resolved->value &&
+                  instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                  instruction.borrowArgument <
+                      instruction.parameterTypes.size() &&
+                  instruction.parameterTypes[instruction.borrowArgument] ==
+                      producer->info.type &&
+                  producer->info.type.kind == SemanticType::Class) {
+                const auto *stage =
+                    operand.kind == MirOperandKind::Value
+                        ? mir_detail::definitionFor(body, operand.value)
+                        : nullptr;
+                const auto *retained = body.findLoan(*producer->loan);
+                const auto &result = body.loans[loan - 1];
+                // Consuming a fresh owning carrier transfers its exact
+                // external ancestry, just like consuming a named carrier.
+                // The prepared parameter must own this same SSA producer;
+                // overlapping places or an arbitrary stored loan are not
+                // sufficient evidence of that transfer.
+                if (stage != nullptr &&
+                    stage->kind == MirInstructionKind::CallInput &&
+                    stage->callSite == instruction.hirValue &&
+                    stage->callInputRole == MirCallInputRole::Argument &&
+                    stage->callInputIndex == instruction.borrowArgument &&
+                    stage->callInputKind == HirCallInputKind::MoveValue &&
+                    stage->preparedParameterDrop &&
+                    stage->operands.size() == 1 &&
+                    stage->operands.front() == *resolved &&
+                    std::any_of(
+                        instruction.lifecycle.begin(),
+                        instruction.lifecycle.end(),
+                        [&](const auto &event) {
+                          return event.kind ==
+                                     MirLifecycleEventKind::TransferOut &&
+                                 event.source ==
+                                     *stage->preparedParameterDrop &&
+                                 !event.conditional && !event.failureCleanup;
+                        }) &&
+                    retained != nullptr &&
+                    retained->kind == MirLoanKind::Stored && !retained->entry &&
+                    !retained->escapes &&
+                    retained->producedBy == producer->hirValue &&
+                    retained->parent == parent &&
+                    retained->source == result.source &&
+                    retained->access == result.access &&
+                    active[retained->id - 1] == MirLoanFlowState::Active &&
+                    result.kind == MirLoanKind::Stored)
+                  return true;
+              }
               if (producer != nullptr && producer->loan &&
                   abstractStoredEntry(body, body.loans[parent - 1])) {
                 const auto *retained = body.findLoan(*producer->loan);

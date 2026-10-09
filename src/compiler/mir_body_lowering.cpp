@@ -2030,6 +2030,54 @@ private:
           {.kind = MirInstructionKind::EndBorrow, .loan = failedLoan->id});
       failureEndedLoans.push_back(failedLoan->id);
     }
+    // A fresh constructor argument has already transferred its owning slot to
+    // the callee before this Invoke. On failure the callee has drained that
+    // parameter, so its caller-local dependency must end before any external
+    // parent is retired. It has no remaining temporary drop to trigger the
+    // ordinary lifecycle endpoint. Borrowed/copied arguments do not transfer
+    // this capability and must retain their existing cleanup schedule.
+    std::vector<MirLoanId> consumedConstructedLoans;
+    if (failedProducer &&
+        failedProducer->kind == MirInstructionKind::Construct) {
+      for (const auto &operand : failedProducer->operands) {
+        const auto *stage =
+            operand.kind == MirOperandKind::Value
+                ? mir_detail::definitionFor(output, operand.value)
+                : nullptr;
+        if (!stage || stage->kind != MirInstructionKind::CallInput ||
+            stage->callSite != failedProducer->callSite ||
+            stage->callInputRole != MirCallInputRole::Argument ||
+            stage->callInputKind != HirCallInputKind::MoveValue ||
+            !stage->preparedParameterDrop || stage->operands.size() != 1 ||
+            stage->operands.front().kind != MirOperandKind::Value ||
+            !std::any_of(
+                failedProducer->lifecycle.begin(),
+                failedProducer->lifecycle.end(), [&](const auto &event) {
+                  return event.kind == MirLifecycleEventKind::TransferOut &&
+                         event.source == *stage->preparedParameterDrop;
+                }))
+          continue;
+        const auto *argument =
+            mir_detail::definitionFor(output, stage->operands.front().value);
+        const auto *dependency = argument && argument->loan
+                                     ? output.findLoan(*argument->loan)
+                                     : nullptr;
+        if (argument && argument->kind == MirInstructionKind::Construct &&
+            dependency && dependency->kind == MirLoanKind::Stored &&
+            dependency->lifecycleBound && !dependency->entry &&
+            !dependency->escapes &&
+            dependency->producedBy == argument->hirValue &&
+            loanIsActive(scopes, dependency->id))
+          consumedConstructedLoans.push_back(dependency->id);
+      }
+    }
+    for (const auto loan : childFirstMirLoans(consumedConstructedLoans)) {
+      if (!containsLoan(failureEndedLoans, loan)) {
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = loan});
+        failureEndedLoans.push_back(loan);
+      }
+    }
     // Return-expression evaluation may already have formed its exported loan
     // when a later local destructor fails. No reference is published on that
     // edge, so retire a non-owning return capability before draining locals.

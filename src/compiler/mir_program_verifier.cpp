@@ -4197,15 +4197,80 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   if (!child || child->parameter >= producer->operands.size() ||
       child->parameter >= producer->parameterTypes.size())
     return std::nullopt;
-  const auto origin =
-      borrowSourceForOperand(body, producer->operands[child->parameter]);
-  const auto parameter = origin ? formal(*origin) : std::nullopt;
-  if (!parameter || *parameter >= instance.parameterTypes.size() ||
-      instance.parameterTypes[*parameter] !=
-          producer->parameterTypes[child->parameter])
+
+  // A child formal can receive another constructed carrier, not just one
+  // enclosing parameter. Replay that argument's selected field through its
+  // executable producer before testing the final enclosing formal. Looking at
+  // a carrier loan's primary source here would lose reordered sibling fields
+  // and compare the referent's type with the intermediate carrier's type.
+  const auto argumentOrigin =
+      [&](const auto &self, const MirOperand &argument,
+          const SemanticType &parameterType,
+          const std::vector<SymbolId> &fields,
+          std::size_t argumentDepth) -> std::optional<BorrowedFieldOrigin> {
+    if (argumentDepth > body.values.size())
+      return std::nullopt;
+    const auto paths = findStoredCarrierReferences(program, parameterType);
+    const bool exactPath =
+        parameterType.kind == SemanticType::Reference
+            ? fields.empty() && parameterType == path.reference
+            : std::any_of(paths.begin(), paths.end(),
+                          [&](const auto &candidate) {
+                            return candidate.fields == fields &&
+                                   candidate.reference == path.reference;
+                          });
+    if (!exactPath)
+      return std::nullopt;
+    const auto *definition = definitionFor(body, argument.value);
+    if (definition && definition->kind == MirInstructionKind::CallInput) {
+      if (definition->operands.size() != 1 ||
+          definition->result != argument.value)
+        return std::nullopt;
+      return self(self, definition->operands.front(), parameterType, fields,
+                  argumentDepth + 1);
+    }
+    const auto origin = borrowSourceForOperand(body, argument);
+    const auto parameter = origin ? formal(*origin) : std::nullopt;
+    if ((!definition || definition->kind != MirInstructionKind::Construct) &&
+        parameter && *parameter < instance.parameterTypes.size() &&
+        instance.parameterTypes[*parameter] == parameterType)
+      return BorrowedFieldOrigin{.resultFields = fields,
+                                 .origin = BorrowOriginKind::Argument,
+                                 .parameter = *parameter,
+                                 .sourceFields = fields,
+                                 .access = path.reference.referenceAccess};
+
+    if (!definition || definition->kind != MirInstructionKind::Construct ||
+        !definition->constructorTarget || !definition->loan ||
+        definition->result != argument.value ||
+        definition->info.type != parameterType)
+      return std::nullopt;
+    const auto *retained = body.findLoan(*definition->loan);
+    const auto *target =
+        program.findConstructorInstance(*definition->constructorTarget);
+    const auto *targetClass =
+        target ? program.findClassInstance(target->owner) : nullptr;
+    if (!retained || retained->kind != MirLoanKind::Stored || retained->entry ||
+        retained->escapes || retained->producedBy != definition->hirValue ||
+        !targetClass || targetClass->type != parameterType)
+      return std::nullopt;
+    const auto mapping = constructorFieldOrigin(
+        program, *target, {.fields = fields, .reference = path.reference},
+        depth + 1);
+    if (!mapping || mapping->parameter >= definition->operands.size() ||
+        mapping->parameter >= definition->parameterTypes.size())
+      return std::nullopt;
+    return self(self, definition->operands[mapping->parameter],
+                definition->parameterTypes[mapping->parameter],
+                mapping->sourceFields, argumentDepth + 1);
+  };
+  const auto origin = argumentOrigin(
+      argumentOrigin, producer->operands[child->parameter],
+      producer->parameterTypes[child->parameter], child->sourceFields, 0);
+  if (!origin)
     return std::nullopt;
-  result.parameter = *parameter;
-  result.sourceFields = child->sourceFields;
+  result.parameter = origin->parameter;
+  result.sourceFields = origin->sourceFields;
   return result;
 }
 
