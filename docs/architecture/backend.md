@@ -100,18 +100,23 @@ types and excludes `char` from the public C ABI.
 
 Scalar unique allocation uses a status-returning native allocation helper
 selected from the verified MIR instruction. It performs the exact zero/one
-scalar initialization, publishes only on success, and routes exhaustion through
-the instruction's failure edge. A direct allocation-function call prevents
-C++ new-expression allocation elision from deleting this observable detector.
-The helper contains no constructor dispatch or source-level type selection.
+scalar initialization and publishes only on success. The instruction's exact
+allocation outcome produces a bounded record and calls the allocation-free
+abort entry point; exhaustion has no cleanup/containment edge. Its native
+nothrow new-expression permits process allocation/release elision under ADR
+022's revised policy. This does not permit deleting application resource
+calls. The helper contains no constructor dispatch or source-level selection.
 Selected ordinary class construction uses MIR's separate `AllocateObject`
 resource and exact constructor call. Raw storage has no live pointee cleanup;
 its MIR failure Drop only frees bytes. Prepared owning class arguments occupy
-lifetime slots before allocation, so exhaustion can destroy them. A successful
+lifetime slots before allocation; exhaustion aborts without destroying them.
+A successful
 constructor publishes the owner, while a failed constructor retains its
 original record and follows the explicit raw-storage cleanup edge. The
-existing bounded constructor rollback proof remains mandatory; targetless
-generated construction and broader subobject rollback remain migration work.
+existing constructor rollback proof remains mandatory. Targetless generated
+default/copy/move construction uses the same explicit storage protocol; a
+generated default requiring a field/base schedule must retain its exact
+constructor target. There is no fallback native `make_unique` execution path.
 
 ## Opt-in Source Debug Locations
 

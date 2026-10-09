@@ -3370,12 +3370,22 @@ void testCollectionCleanupContracts() {
             });
         if (prefix && !checkedPrefix &&
             lang::mirDropMayRaiseDefinedFailure(frontend.mir, step)) {
+          auto expected = lang::mirUniqueCleanupType(frontend.mir, step.type);
+          if (expected) {
+            expected->uniqueOwnerField = step.uniqueOwnerField;
+            expected->uniqueOwnerBase = step.uniqueOwnerBase;
+            expected->captureIndex = step.captureIndex;
+            expected->payloadVariant = step.payloadVariant;
+            expected->payloadField = step.payloadField;
+          }
           expect(step.type.kind == lang::SemanticType::Class &&
-                     step.destructor && step.aggregate.empty(),
-                 "source prefix policy has an ordinary destructor, not a "
-                 "hidden element recipe");
+                     step.destructor && step.aggregate.size() == 1 &&
+                     step.aggregate.front().uniqueOwnerField != 0 &&
+                     step.aggregate.front().classInstance && expected == step,
+                 "source prefix cleanup is its ordinary destructor followed "
+                 "by the exact owned raw-buffer field recipe");
           checkedPrefix = true;
-          for (int mutation = 0; mutation < 5; ++mutation) {
+          for (int mutation = 0; mutation < 6; ++mutation) {
             auto forged = frontend.mir;
             auto *changed = &lang::findMirBody(forged, address)
                                  ->dropObligations[drop.id - 1]
@@ -3390,8 +3400,10 @@ void testCollectionCleanupContracts() {
               changed->type = lang::SemanticType::Int32;
             else if (mutation == 3)
               changed->aggregate.push_back({.type = lang::SemanticType::Int32});
-            else
+            else if (mutation == 4)
               changed->requiresActiveCleanup = false;
+            else
+              changed->aggregate.clear();
             expect(!lang::verifyMirProgram(forged).valid(),
                    "missing, mistyped, forged, or inactive source-owner "
                    "cleanup must fail verification");
@@ -3424,8 +3436,8 @@ void testCollectionCleanupContracts() {
     if (!mir || !mir->effectSummary.traits.dropsValue ||
         !mir->effectSummary.traits.invokesUserCode)
       continue;
-    checkedPop |= function.source->name().lexeme == "pop";
-    checkedErase |= function.source->name().lexeme == "erase";
+    checkedPop |= function.source->name().lexeme == "pop_unchecked";
+    checkedErase |= function.source->name().lexeme == "erase_unchecked";
   }
   expect(checkedDestroy && checkedPop && checkedErase && checkedRelocation,
          "slot destruction, prefix pop/erase and generated relocation require "
@@ -3692,14 +3704,22 @@ int main() { auto owner = std::make_unique<Derived>(); return owner->read(); }
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc == 3 && std::string_view(argv[1]) == "--test" &&
-      std::string_view(argv[2]) == "testCleanupSpinePredecessorIndex") {
-    testCleanupSpinePredecessorIndex();
+  if (argc == 3 && std::string_view(argv[1]) == "--test") {
+    const std::string_view name(argv[2]);
+    if (name == "testCleanupSpinePredecessorIndex")
+      testCleanupSpinePredecessorIndex();
+    else if (name == "testCollectionCleanupContracts")
+      testCollectionCleanupContracts();
+    else if (name == "testImplicitUniqueAllocationContracts")
+      testImplicitUniqueAllocationContracts();
+    else {
+      std::cerr << "unknown test: " << name << '\n';
+      return 2;
+    }
     return passed ? 0 : 1;
   }
   if (argc != 1) {
-    std::cerr << "usage: " << argv[0]
-              << " [--test testCleanupSpinePredecessorIndex]\n";
+    std::cerr << "usage: " << argv[0] << " [--test <name>]\n";
     return 2;
   }
   testCanonicalMetadataAndMirSites();

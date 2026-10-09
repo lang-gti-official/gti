@@ -2038,7 +2038,8 @@ detail. Failure follows ordinary loan ending and reverse owner cleanup;
 callers propagate the original record without re-siting it.
 
 Scalar unique allocation likewise requires a local `allocation_failure` /
-`unique_owner` detector and an `Invoke` before owner activation. Independent
+`unique_owner` detector, but no exhaustion `Invoke`. The operation either aborts
+or completes and arms its owner obligation directly. Independent
 verification checks its scalar pointee, zero/one exact initializer, result,
 absence of constructor dispatch, and failure metadata. Named native callback
 values are passive ordered by-value inputs, including expanded packs; an
@@ -2046,10 +2047,10 @@ ordinary callback parameter may also receive the already-admitted null value.
 Native invocation uses the separate exact-signature call contract below; null
 transport does not make invocation safe or admit foreign-thread entry.
 
-Class unique allocation with a selected ordinary constructor evaluates and
-prepares arguments first, then issues `AllocateObject`. Its local allocation
-failure edge owns argument cleanup. Success arms one `ObjectAllocation`
-obligation for unconstructed storage. The following allocation intrinsic call
+Class unique allocation evaluates and prepares arguments first, then issues
+`AllocateObject`. Its allocation outcome aborts without argument cleanup;
+completion directly arms one `ObjectAllocation` obligation for unconstructed
+storage. The immediately following allocation intrinsic call
 retains the exact constructor target and normalized constructor-failure effect,
 transferring prepared arguments only at constructor entry. Constructor failure
 drains the raw allocation without invoking a pointee destructor; successful
@@ -2072,8 +2073,18 @@ parameter publication is distinct from permission to create an empty value of
 the whole class: the latter additionally requires a complete cleanup recipe,
 generated move assignment, recursively empty-representable fields, and explicit
 guard disarming in the private tag constructor. Broader
-rollback, targetless generated default/copy/move allocation, and other
-terminal allocation capabilities remain separate migration work.
+rollback retains its existing structural admission. Targetless generated
+copy/move and trivial generated default construction share this protocol;
+independent verification checks the class's special-member policy and requires
+a selected constructor schedule when default fields/bases need one.
+
+`DefinedFailureOperation::mayUnwind()` distinguishes contained failures from
+allocation-only terminal outcomes without erasing their canonical sites.
+`mayAbortAllocation()` identifies detector-time reporting before publication.
+Mixed-outcome operations retain their non-allocation failure edges. Unknown
+outcomes stay conservative and are rejected by ordinary metadata verification.
+Allocation remains an optimizer effect/barrier unless a transformation proves
+the applicable process-elision rule; absence of a cleanup edge is not purity.
 
 The current `MirPrinter` schema includes each body domain, carried place key,
 constant or dynamic index metadata, ownership event, complete cleanup-relevant
