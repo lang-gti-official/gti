@@ -661,8 +661,17 @@ below. Reusable mutable temporary permission remains confined to
 ordinary methods and reusable `operator()`; consuming value operators also
 receive a temporary stage with exact `Once` capability. Non-borrowing read-only
 operators selected on an admitted fresh temporary also receive a plan so MIR
-does not reconstruct their receiver. Lambdas, unresolved deferred callables,
-and unsupported construction remain outside the slice. A concretely selected
+does not reconstruct their receiver. Unresolved deferred callables and
+unsupported construction remain outside the slice. A fixed-arity lambda
+invocation receives a plan as well: the lambda's selected signature orders
+each argument, so a derived class object for a base-reference parameter is
+the same ordered borrow input as in a direct call. Its closure receiver is a
+`ReadBorrow` of a closure place, a `Value` stage of a fresh closure or of an
+explicitly moved cleanup-free environment, or a `MoveValue` of an explicitly
+moved environment whose full-expression obligation retains capture cleanup.
+A final pack expansion keeps MIR's shared pack schedule, and an argument type
+outside the ordered-argument vocabulary leaves the invocation unplanned, as
+it does an ordinary call. A concretely selected
 `operator()` uses the same exact target even when its
 generic source call still has a deferred-callable base record. Its receiver is
 a read or mutable borrow for a place, a value for a reusable value receiver, or
