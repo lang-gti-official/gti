@@ -45,6 +45,8 @@ python3 benchmarks/probes/runtime-audit/screen.py attribute \
 and for attribution variants. The original dated measurements predate this
 argument-forwarding correction. Check its protocol with
 `python3 benchmarks/probes/runtime-audit/screen_test.py`.
+The `expected` reference uses C++23 `std::expected`, so comparing that probe
+requires `--std c++23`; other probes such as `shifts` also support C++20.
 
 `compare` builds GTI and C++ with the same native policy GTI uses (`-std=c++23
 -fno-fast-math -ffp-contract=off`), requires identical stdout, and reports
