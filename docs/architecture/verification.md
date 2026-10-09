@@ -168,6 +168,36 @@ The unmodified source-owner acceptance assertions retain six safety and three
 object-context failures. Those outstanding proof requirements still prevent
 optimizer and whole-migration acceptance.
 
+The source-prefix census refresh is independently reviewed against per-body
+source origins, not inferred from a passing count update. The new raw-text
+owner example contributes 438 declarations, 39 bodies and six generated items.
+Source allocation, leases, raw buffers, prefix drains, concrete element
+lifecycles and their string/vector clients replace private operations; their
+ordinary generic closures explain the larger affected inventories. Prelude-only
+examples instead lose eight declarations without changing their bodies. The
+existing data-only body differences for examples 76 and 84 are unchanged.
+All 131 examples pass both native endpoints against the candidate inventory:
+11,468 emitted body identities, identical ownership and observable behavior.
+The independent LoweredProgram census reports 60,028 declarations, 11,471
+bodies and 6,023 generated items. The complete emitter corpus admits 27,723
+bodies and matches all 17,499 general-emission comparisons. Per-body origins
+are retained in `/private/tmp/gti-s08-s09-body-origins`; this is checkpoint
+evidence, not the final combined-head acceptance run.
+
+The corresponding vector comparison exposes an unresolved runtime regression.
+Five warmups and 25 shuffled interleaved rounds on the same M4 Pro runner give
+medians of 961.37 ms for source-prefix GTI, 55.82 ms for private-prefix GTI,
+523.00 ms for semantic C++ and 52.16 ms for idiomatic C++. No competing compiler
+appears in the measurement snapshots; ordinary desktop services remain active.
+The candidate executable is smaller (128,080 versus 142,064 bytes), and separate
+instrumented runs both allocate one 20,000-byte region with matching release
+identity. Full-state output agrees across all four variants (12,421 bytes,
+SHA-256 `6b0f544170d832790c37dc01fe0f039b651da00ab5391fd58534e06d2be203a9`).
+Candidate/private peak resident observations are 1,835,008/1,818,624 bytes.
+Artifacts, exact identities, raw samples and reports are retained in
+`/private/tmp/gti-vector-migration-6AEK9k`. The remaining hot-loop proof/transport
+gap is a release blocker; string improvements do not waive vector acceptance.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both

@@ -58,6 +58,13 @@ int main() {
     return 1;
   }
 
+#ifdef FULL_STATE
+  std::cout << values.size() << '\n';
+  for (const std::int32_t value : values) {
+    std::cout << value << '\n';
+  }
+  std::cout << final_sum << '\n';
+#endif
   print_record(digest);
   return 0;
 }
