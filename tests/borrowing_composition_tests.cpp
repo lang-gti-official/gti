@@ -236,6 +236,68 @@ void checkNestedOwningArguments() {
                 "formal origins");
 }
 
+void checkNestedArgumentRejections() {
+  const auto reject = [](const lang::FrontendResult &frontend,
+                         std::string_view code, const std::string &message) {
+    const bool rejected =
+        !frontend.canGenerateCode() &&
+        std::any_of(frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                    [&](const auto &diagnostic) {
+                      return diagnostic.severity ==
+                                 lang::DiagnosticSeverity::Error &&
+                             diagnostic.code == code;
+                    });
+    if (!rejected)
+      for (const auto &diagnostic : frontend.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(rejected, message);
+    expect(std::none_of(frontend.diagnostics.begin(),
+                        frontend.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-B0001";
+                        }),
+           message + " is a source diagnostic, not an internal compiler error");
+  };
+  reject(analyzeBorrowFixture("nested_carrier_argument_loan_rejected.gti"),
+         "GTI-S2017",
+         "nested shared arguments retain the reordered second owner");
+  reject(analyzeBorrowFixture("nested_carrier_argument_alias_rejected.gti"),
+         "GTI-S2045", "nested exclusive arguments cannot duplicate an owner");
+  const auto owning = lang::Frontend().analyze(
+      "nested-owning-owner-write.gti", R"(
+#include <std/utility>
+struct View {
+  int& value;
+  View(int& value) : value(value) {}
+};
+class Lease {
+  View view;
+public:
+  Lease(View view) : view(view) {}
+  ~Lease() { int observed = this.view.value; }
+};
+class Buffer {
+  Lease lease;
+public:
+  Buffer(Lease lease) : lease(std::move(lease)) {}
+};
+class Owner {
+  Buffer buffer;
+public:
+  Owner(int& value) : buffer(Buffer(Lease(View(value)))) {}
+};
+int main() {
+  mut int resource = 7;
+  Owner owner{resource};
+  resource = 9;
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  reject(owning, "GTI-S2017",
+         "nested owning arguments retain their source through destruction");
+}
+
 void checkIndependentDependencies() {
   const auto frontend = lang::Frontend().analyze("composed-borrows.gti", R"(
 struct View {
@@ -1078,6 +1140,7 @@ constexpr NamedTest kTests[] = {
     {"nested_constructor_arguments", checkNestedConstructorArguments},
     {"nested_resource_construction", checkNestedResourceConstruction},
     {"nested_owning_arguments", checkNestedOwningArguments},
+    {"nested_argument_rejections", checkNestedArgumentRejections},
     {"independent_dependencies", checkIndependentDependencies},
     {"mixed_dependencies", checkMixedDependencies},
     {"mixed_access_rules", checkMixedAccessRules},
