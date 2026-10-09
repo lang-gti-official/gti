@@ -5270,7 +5270,24 @@ same behavior, invalid-input, replay and performance guarantees.
   only after successful construction; six replacement/alias/hole/lifetime
   controls retain checks and reject forged proofs. Constructor receivers,
   stored-reference paths and unknown incoming contents are not admitted.
-  The next slice must export these actual typed field addresses and prove
+  A subsequent bounded prerequisite now exports exact returned entry-pointer
+  fields through the same input-address descriptor used for construction
+  postconditions. Caller substitution requires an existing current typed field
+  fact; distinct/ambiguous fields, native pointee mutation and opaque calls
+  retain checks. Unrelated receiver and checked-reference owners pass O0/O2/O3
+  replay, forged negatives and a 35-case native/sanitizer matrix. This does not
+  yet seed unrepresented caller fields or export initialized-region coverage.
+  The migration safety suite retains the same ten failures reproduced with the
+  exact prerequisite checkpoint, including missing indexed-element envelopes;
+  those acceptance assertions are unchanged.
+  Wrapping integer updates now retain ordinary value/entry-relative facts only
+  under a proved non-wrapping input envelope. An unrelated four-step bounded
+  counter recovers its exact final value; real modular-wrap negatives retain
+  downstream failures and reject forged proofs. This supplies the transfer
+  needed by the source prefix's failure-free counter increments, not an
+  initialized-region invariant or completed performance acceptance.
+  The next slice must transport these actual typed field addresses through
+  unrepresented caller fields and prove
   successful initialized-index construction coverage before exporting element
   facts, without equating a witness with an
   allocation or assuming an indexed write initializes its complete interval.

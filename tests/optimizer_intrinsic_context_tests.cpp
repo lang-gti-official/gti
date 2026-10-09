@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimizer.h"
 
@@ -15,6 +16,7 @@ int main() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto entry = standardLibrary / "optimizer-bounds-context.gti";
   const std::string source = R"gti(
+#include <std/numeric>
 class BoundsClient {
 public:
   mut int value;
@@ -48,7 +50,54 @@ int changed(mut BoundsClient& object, uint64_t index, uint64_t length) {
   return object.value + 1;
 }
 
+int wrapping_add_bounded(int input) {
+  if (input < 0 || input > 8) return 0;
+  int value = gti_internal::integer_wrapping_add(input, 2);
+  return value + 1;
+}
+int wrapping_sub_bounded(int input) {
+  if (input < 4 || input > 8) return 0;
+  int value = gti_internal::integer_wrapping_sub(input, 3);
+  return value + 1;
+}
+int wrapping_mul_bounded(int input) {
+  if (input < 0 || input > 8) return 0;
+  int value = gti_internal::integer_wrapping_mul(input, 2);
+  return value + 1;
+}
+int wrapping_add_limit(int input) {
+  int value = gti_internal::integer_wrapping_add(input, 2147483647);
+  return value - 1;
+}
+int wrapping_sub_limit(int input) {
+  int value = gti_internal::integer_wrapping_sub(input, 1);
+  return value + 1;
+}
+int wrapping_mul_limit(int input) {
+  int value = gti_internal::integer_wrapping_mul(input, 2);
+  return value + 2;
+}
+
+class SmallCounter {
+public:
+  mut uint64_t count = 0;
+  void append() mut {
+    if (this.count >= uint64_t(4)) return;
+    this.count = gti_internal::integer_wrapping_add(this.count, uint64_t(1));
+  }
+};
+uint64_t observe_counter(SmallCounter& counter) { return counter.count; }
+
 int main() {
+  mut SmallCounter counter{};
+  counter.append(); counter.append(); counter.append(); counter.append();
+  if (observe_counter(counter) != uint64_t(4)) return 4;
+  [[discard]] wrapping_add_bounded(7);
+  [[discard]] wrapping_sub_bounded(7);
+  [[discard]] wrapping_mul_bounded(7);
+  [[discard]] wrapping_add_limit(1);
+  [[discard]] wrapping_sub_limit(int32_t(-2147483648));
+  [[discard]] wrapping_mul_limit(-1073741825);
   mut BoundsClient object{7};
   int value = checked(object, uint64_t(0), uint64_t(2));
   if (value != 8) return 1;
@@ -82,6 +131,12 @@ int main() {
     return lang::HirFunctionInstanceId{};
   };
   const auto contextual = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
+  const auto *counter = contextual.find({.kind = lang::MirBodyKind::Function,
+                                         .owner = function("observe_counter")});
+  expect(counter && counter->returnInterval &&
+             counter->returnInterval->lower.magnitude == 4 &&
+             counter->returnInterval->upper.magnitude == 4,
+         "proved non-wrapping updates retain the caller-relative counter");
   const auto *checked = contextual.find(
       {.kind = lang::MirBodyKind::Function, .owner = function("checked")});
   expect(
@@ -108,6 +163,21 @@ int main() {
       return result;
     };
     const std::size_t expected = level == lang::OptimizationLevel::O0 ? 0 : 1;
+    for (const auto name : {"wrapping_add_bounded", "wrapping_sub_bounded",
+                            "wrapping_mul_bounded"})
+      expect(count(name, lang::MirSafetyCheckFamily::ArithmeticOverflow) ==
+                 expected,
+             "non-wrapping integer envelopes preserve downstream arithmetic "
+             "facts");
+    for (const auto name :
+         {"wrapping_add_limit", "wrapping_sub_limit", "wrapping_mul_limit"}) {
+      if (count(name, lang::MirSafetyCheckFamily::ArithmeticOverflow) != 0)
+        std::cerr << "wrapped negative " << name << " discharges="
+                  << count(name, lang::MirSafetyCheckFamily::ArithmeticOverflow)
+                  << '\n';
+      expect(count(name, lang::MirSafetyCheckFamily::ArithmeticOverflow) == 0,
+             "actual modular wrap cannot masquerade as checked arithmetic");
+    }
     expect(
         count("checked", lang::MirSafetyCheckFamily::Bounds) == expected &&
             count("checked", lang::MirSafetyCheckFamily::ArithmeticOverflow) ==
@@ -132,6 +202,35 @@ int main() {
            "a pure boolean detector preserves unrelated facts without hiding "
            "an overflowing mutation");
   }
+  std::size_t forgedWrapping = 0;
+  for (const auto name :
+       {"wrapping_add_limit", "wrapping_sub_limit", "wrapping_mul_limit"}) {
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function(name)};
+    const auto *body = lang::findMirBody(frontend.mir, address);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        for (std::size_t origin = 0;
+             origin < instruction.definedFailure.localOrigins.size(); ++origin)
+          for (const auto outcome :
+               instruction.definedFailure.localOrigins[origin].outcomes) {
+            if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+              continue;
+            auto forged = frontend.mir;
+            lang::MirEditor editor(forged, "forged-wrapping-envelope");
+            editor.queueSafetyDischarge(
+                {.body = address, .instruction = instruction.id},
+                {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                 .origin = origin,
+                 .outcome = outcome});
+            const auto rejected = editor.apply();
+            expect(!rejected.valid() && !rejected.changed,
+                   "wrapping inputs cannot forge an ordinary arithmetic proof");
+            ++forgedWrapping;
+          }
+  }
+  expect(forgedWrapping == 3,
+         "each wrapping boundary rejects its forged proof");
   const auto guardPath = std::filesystem::path(__FILE__).parent_path() /
                          "fixtures/optimizer_boolean_guards.gti";
   const std::ifstream guardFile(guardPath);
