@@ -1,0 +1,57 @@
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Datum {
+public:
+  mut int value = 0;
+  expected<void, int> publish() mut { this.value = 7; return; }
+};
+
+class Ledger {
+  mut Datum datum{};
+  mut int stamp = 0;
+  mut int* alias = nullptr;
+public:
+  int sibling_publication() mut {
+    {
+      auto status = this.datum.publish();
+      if (!status) return 0;
+    }
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_native() mut {
+    [[discard]] this.datum.publish();
+    unsafe { opaque_pointer_effect(&this.datum.value); }
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_indirect() mut {
+    [[discard]] this.datum.publish();
+    this.alias = &this.datum.value;
+    unsafe { *this.alias = 2147483647; }
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_borrow() mut {
+    [[discard]] this.datum.publish();
+    mut int& reference = this.datum.value;
+    reference = 2147483647;
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+  int bad_sibling_direct() mut {
+    [[discard]] this.datum.publish();
+    this.datum.value = 2147483647;
+    this.stamp = 1;
+    return this.datum.value + 1;
+  }
+};
+
+int main() {
+  mut Ledger ledger{};
+  if (false) return ledger.bad_sibling_native();
+  if (false) return ledger.bad_sibling_indirect();
+  if (false) return ledger.bad_sibling_borrow();
+  if (false) return ledger.bad_sibling_direct();
+  return ledger.sibling_publication() == 8 ? 0 : 1;
+}

@@ -2158,24 +2158,6 @@ void invalidatePlaceRoot(const MirBody &body,
     }
     return true;
   });
-  // Zero is an analysis-only implicit receiver root, not a MIR identity.
-  // A projected This write invalidates overlapping field paths; other writes
-  // have no alias proof for an unmaterialized root and conservatively kill it.
-  std::optional<ObjectFact> implicitReceiver;
-  const MirPlace receiver{.root = MirPlaceRootKind::This};
-  if (const auto path = fieldPath(receiver, *written)) {
-    if (const auto found = state.objects.find(0);
-        found != state.objects.end()) {
-      implicitReceiver = found->second;
-      std::erase_if(implicitReceiver->integers, [&](const auto &field) {
-        const auto prefix = std::min(path->size(), field.first.size());
-        return std::equal(path->begin(), path->begin() + prefix,
-                          field.first.begin());
-      });
-      implicitReceiver->elements.reset();
-      implicitReceiver->elementIntegers.clear();
-    }
-  }
   std::erase_if(state.integerPlaces, [&](const auto &entry) {
     const auto relation = aliases.relation(destination, entry.first);
     return relation != MirAliasRelation::NoAlias &&
@@ -2188,10 +2170,33 @@ void invalidatePlaceRoot(const MirBody &body,
                 [&](const auto &entry) { return overlaps(entry.first); });
   std::erase_if(state.aggregateElementIntegers,
                 [&](const auto &entry) { return overlaps(entry.first); });
-  std::erase_if(state.objects,
-                [&](const auto &entry) { return overlaps(entry.first); });
-  if (implicitReceiver)
-    state.objects.insert_or_assign(0, std::move(*implicitReceiver));
+  for (auto iterator = state.objects.begin();
+       iterator != state.objects.end();) {
+    if (iterator->first != 0 && !overlaps(iterator->first)) {
+      ++iterator;
+      continue;
+    }
+    // Materialized and implicit receiver roots describe the same owned
+    // storage. A direct field store invalidates its subtree, not its siblings.
+    // No stored/raw reference projection receives this disjointness rule.
+    const auto path = fieldPath(body, iterator->first, destination);
+    if (written->root != MirPlaceRootKind::This || !path ||
+        !std::all_of(written->projections.begin(), written->projections.end(),
+                     [](const auto &projection) {
+                       return projection.kind == MirProjectionKind::Field;
+                     })) {
+      iterator = state.objects.erase(iterator);
+      continue;
+    }
+    std::erase_if(iterator->second.integers, [&](const auto &field) {
+      const auto prefix = std::min(path->size(), field.first.size());
+      return std::equal(path->begin(), path->begin() + prefix,
+                        field.first.begin());
+    });
+    iterator->second.elements.reset();
+    iterator->second.elementIntegers.clear();
+    ++iterator;
+  }
   std::erase_if(state.aggregateOrigins,
                 [&](const auto &entry) { return overlaps(entry.second); });
   std::erase_if(state.loadedOrigins,
