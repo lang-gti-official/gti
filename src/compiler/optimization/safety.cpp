@@ -59,18 +59,21 @@ struct FieldOrigin {
 enum class AddressOriginKind { ExistingPlace, EntryPointer, EntryPointerField };
 
 // One symbolic element displacement, equal to an owned receiver field at
-// entry plus a bounded checked offset. This names one slot, not every element
-// in the field's calling-context interval.
+// entry or a readonly integer formal plus a bounded checked offset. This names
+// one slot, not every element in the input's calling-context interval.
 struct EntryIndex {
   FieldPath field;
   CheckedIntegerDomain domain;
   CheckedIntegerValue offset;
+  std::optional<std::size_t> parameter;
   friend bool operator==(const EntryIndex &, const EntryIndex &) = default;
   friend auto operator<=>(const EntryIndex &left, const EntryIndex &right) {
-    return std::tie(left.field, left.domain.width, left.domain.signedValue,
-                    left.offset.negative, left.offset.magnitude) <=>
-           std::tie(right.field, right.domain.width, right.domain.signedValue,
-                    right.offset.negative, right.offset.magnitude);
+    return std::tie(left.parameter, left.field, left.domain.width,
+                    left.domain.signedValue, left.offset.negative,
+                    left.offset.magnitude) <=>
+           std::tie(right.parameter, right.field, right.domain.width,
+                    right.domain.signedValue, right.offset.negative,
+                    right.offset.magnitude);
   }
 };
 
@@ -2495,6 +2498,70 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   return true;
 }
 
+[[nodiscard]] std::optional<ScalarAddress> applyInputAddressOffset(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
+    const MirInstruction &instruction, const InputAddress &input,
+    ScalarAddress pointer) {
+  if (input.index) {
+    if (pointer.index)
+      return std::nullopt;
+    const auto &index = *input.index;
+    const EntryRelativeField update{
+        .field = index.field, .domain = index.domain, .offset = index.offset};
+    std::optional<IntegerFact> currentValue;
+    std::optional<EntryRelativeField> relative;
+    std::optional<std::size_t> parameter;
+    if (index.parameter) {
+      if (*index.parameter >= instruction.operands.size())
+        return std::nullopt;
+      const auto &operand = instruction.operands[*index.parameter];
+      if (constantIntegerDomain(operand.type) != index.domain)
+        return std::nullopt;
+      currentValue = integerForOperand(body, state, operand);
+      relative = entryRelativeValue(state, operand);
+      parameter = readonlyIntegerParameter(&program, address, body, operand);
+    } else {
+      const auto origin = receiverFieldOrigin(program, address, body, aliases,
+                                              state, instruction, index.field);
+      if (!origin)
+        return std::nullopt;
+      if (const auto object =
+              extractObjectFact(body, aliases, origin->root, state))
+        if (const auto field = object->integers.find(origin->path);
+            field != object->integers.end())
+          currentValue = field->second;
+      const auto *root = body.findPlace(origin->root);
+      if (!origin->root || (root && root->root == MirPlaceRootKind::This &&
+                            root->projections.empty()))
+        if (const auto current = state.entryRelativeFields.find(origin->path);
+            current != state.entryRelativeFields.end())
+          relative = current->second;
+    }
+    const auto value =
+        currentValue ? applyEntryRelative(*currentValue, update) : std::nullopt;
+    if (parameter) {
+      pointer.index = EntryIndex{{}, index.domain, index.offset, parameter};
+    } else if (value && singleton(*value) && !value->lower.negative) {
+      auto displaced = offsetAddress(pointer, value->lower.magnitude, false);
+      if (!displaced)
+        return std::nullopt;
+      pointer = std::move(*displaced);
+      pointer.evidence = merged(pointer.evidence, value->evidence);
+    } else if (relative && relative->domain == index.domain) {
+      const auto composed = shiftEntryRelative(*relative, index.offset);
+      if (!composed)
+        return std::nullopt;
+      pointer.index =
+          EntryIndex{composed->field, composed->domain, composed->offset};
+      pointer.evidence = merged(pointer.evidence, composed->evidence);
+    } else {
+      return std::nullopt;
+    }
+  }
+  return offsetAddress(std::move(pointer), input.elementOffset, false);
+}
+
 // Substitute the actual current input address before applying a call's effects.
 // A field path is not a fresh allocation or a license to recreate an entry
 // identity after mutation. Both return transport and construction
@@ -2512,8 +2579,14 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
           : (instruction.receiver ? &*instruction.receiver : nullptr);
   if (!operand)
     return std::nullopt;
+  const auto displaced = [&](std::optional<ScalarAddress> pointer) {
+    return pointer
+               ? applyInputAddressOffset(program, address, body, aliases, state,
+                                         instruction, input, *pointer)
+               : std::nullopt;
+  };
   if (input.field.empty())
-    return scalarAddressForOperand(body, state, *operand);
+    return displaced(scalarAddressForOperand(body, state, *operand));
   const auto root = objectOriginForOperand(body, aliases, state, *operand);
   if (!root)
     return std::nullopt;
@@ -2521,7 +2594,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                                  aliases, root, input.field))
     if (const auto found = state.fieldAddresses.find(*field);
         found != state.fieldAddresses.end())
-      return found->second;
+      return displaced(found->second);
   for (const auto &place : body.places) {
     const auto path = fieldPath(body, root, place.id);
     if (!path || *path != input.field)
@@ -2529,7 +2602,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
     if (const auto found =
             state.scalarAddressPlaces.find(canonicalPlace(aliases, place.id));
         found != state.scalarAddressPlaces.end())
-      return found->second;
+      return displaced(found->second);
   }
   return std::nullopt;
 }
@@ -2617,52 +2690,6 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     auto pointer =
         inputAddressForCall(closedCalls->program, address, body, aliases, state,
                             instruction, destination);
-    if (!pointer)
-      continue;
-    if (destination.index) {
-      // Substitute the callee's entry field before applying any of its
-      // receiver updates. A joined interval of call inputs is not coverage.
-      const auto origin =
-          receiverFieldOrigin(closedCalls->program, address, body, aliases,
-                              state, instruction, destination.index->field);
-      if (!origin || pointer->index)
-        continue;
-      const EntryRelativeField update{.field = destination.index->field,
-                                      .domain = destination.index->domain,
-                                      .offset = destination.index->offset};
-      bool substituted = false;
-      if (const auto object =
-              extractObjectFact(body, aliases, origin->root, state))
-        if (const auto field = object->integers.find(origin->path);
-            field != object->integers.end())
-          if (const auto value = applyEntryRelative(field->second, update);
-              value && singleton(*value) && !value->lower.negative) {
-            pointer = offsetAddress(*pointer, value->lower.magnitude, false);
-            if (pointer)
-              pointer->evidence = merged(pointer->evidence, value->evidence);
-            substituted = true;
-          }
-      if (!substituted) {
-        const auto *root = body.findPlace(origin->root);
-        if (origin->root && (!root || root->root != MirPlaceRootKind::This ||
-                             !root->projections.empty()))
-          continue;
-        const auto current = state.entryRelativeFields.find(origin->path);
-        if (current == state.entryRelativeFields.end() ||
-            current->second.domain != update.domain)
-          continue;
-        const auto composed =
-            shiftEntryRelative(current->second, update.offset);
-        if (!composed)
-          continue;
-        pointer->index =
-            EntryIndex{composed->field, composed->domain, composed->offset};
-        pointer->evidence = merged(pointer->evidence, composed->evidence);
-      }
-    }
-    if (!pointer)
-      continue;
-    pointer = offsetAddress(*pointer, destination.elementOffset, false);
     if (!pointer)
       continue;
     auto value = rebased(postcondition.value, block.id, instruction.id);
@@ -3413,6 +3440,32 @@ void applyInstruction(const MirBody &body,
   }
   if (inertLifecycleMarker(instruction))
     return;
+  // Preparing an already evaluated pointer SSA value does not repeat the
+  // source expression's unsafe operation. Keep this exact staging transfer
+  // before the raw-operation barrier; the original operation is unchanged.
+  if (instruction.kind == MirInstructionKind::CallInput && instruction.result &&
+      instruction.operands.size() == 1 &&
+      instruction.operands[0].kind == MirOperandKind::Value &&
+      instruction.operands[0].type.kind == SemanticType::RawPointer &&
+      instruction.info.type.kind == SemanticType::RawPointer &&
+      instruction.operands[0].type.arguments ==
+          instruction.info.type.arguments &&
+      !instruction.rawMemoryAccess && instruction.lifecycle.empty() &&
+      !instruction.destination && !instruction.receiver &&
+      instruction.operation == MirOperation::None &&
+      instruction.intrinsic == IntrinsicKind::None && !effect.writesPlace &&
+      !effect.readsUnknownMemory && !effect.writesUnknownMemory &&
+      !effect.invokesUserCode && !effect.invokesRuntime &&
+      !effect.maySynchronize && !effect.movesValue && !effect.dropsValue) {
+    if (auto pointer =
+            scalarAddressForOperand(body, state, instruction.operands[0])) {
+      add(pointer->evidence, block.id);
+      addInstruction(pointer->evidence, instruction.id);
+      addValue(pointer->evidence, *instruction.result);
+      state.scalarAddressValues[*instruction.result] = std::move(*pointer);
+    }
+    return;
+  }
   if (program ? isMirStructuralFinalAddressConstruction(*program, instruction)
               : isMirScalarFinalAddressConstruction(instruction)) {
     std::optional<ScalarAddress> pointer;
@@ -3467,7 +3520,9 @@ void applyInstruction(const MirBody &body,
       const auto offset =
           integerForOperand(body, state, instruction.operands[1]);
       if (pointer && offset && !offset->lower.negative &&
-          instruction.info.type == instruction.operands[0].type) {
+          instruction.info.type.kind == SemanticType::RawPointer &&
+          instruction.info.type.arguments ==
+              instruction.operands[0].type.arguments) {
         const auto relative =
             entryRelativeValue(state, instruction.operands[1]);
         if (relative && !pointer->index &&
@@ -3475,6 +3530,11 @@ void applyInstruction(const MirBody &body,
           pointer->index =
               EntryIndex{relative->field, relative->domain, relative->offset};
           pointer->evidence = merged(pointer->evidence, relative->evidence);
+        } else if (const auto parameter = readonlyIntegerParameter(
+                       program, address, body, instruction.operands[1]);
+                   parameter && !pointer->index &&
+                   instruction.operation == MirOperation::PointerAdd) {
+          pointer->index = EntryIndex{{}, offset->domain, {}, parameter};
         } else if (singleton(*offset)) {
           pointer = offsetAddress(*pointer, offset->lower.magnitude,
                                   instruction.operation ==
@@ -5902,10 +5962,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
                 block.terminator.value->loan);
             found != transferred.output.borrowedAddresses.end())
           pointer = found->second;
-      if (pointer &&
-          (pointer->kind == AddressOriginKind::EntryPointer ||
-           pointer->kind == AddressOriginKind::EntryPointerField) &&
-          pointer->elementOffset == 0 && !pointer->index) {
+      if (pointer && (pointer->kind == AddressOriginKind::EntryPointer ||
+                      pointer->kind == AddressOriginKind::EntryPointerField)) {
         const auto *origin = body->findPlace(pointer->place);
         const auto bindings = parameterBindings(program, address);
         const auto types = parameterTypes(program, address);
@@ -5915,12 +5973,16 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
                index < bindings.size() && index < types.size(); ++index)
             if (bindings[index] == origin->binding &&
                 types[index] == origin->type)
-              returnedPointer = InputAddress{index, pointer->field, 0, {}};
+              returnedPointer =
+                  InputAddress{index, pointer->field, pointer->elementOffset,
+                               pointer->index};
         if (pointer->kind == AddressOriginKind::EntryPointerField &&
             (!pointer->place ||
              (origin && origin->root == MirPlaceRootKind::This &&
               origin->projections.empty())))
-          returnedPointer = InputAddress{std::nullopt, pointer->field, 0, {}};
+          returnedPointer =
+              InputAddress{std::nullopt, pointer->field, pointer->elementOffset,
+                           pointer->index};
       }
       returnPointers.push_back(borrowed ? std::nullopt : returnedPointer);
       returnBorrows.push_back(borrowed ? returnedPointer : std::nullopt);

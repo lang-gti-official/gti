@@ -65,6 +65,10 @@ def main():
         "bad_borrow_opaque": "bad_borrow_opaque(storage.data(), owner)",
         "bad_borrow_write": "bad_borrow_write(storage.data(), owner)",
     }, "return value + 1;")
+    run_fixture(compiler, "optimizer_indexed_borrows.gti", {
+        "bad_index_mismatch": "bad_index_mismatch(&pair[0], uint64_t(0), uint64_t(1), owner)",
+        "bad_index_hole": "bad_index_hole(&pair[0], owner)",
+    }, "return value + 1;")
 
 
 if __name__ == "__main__":

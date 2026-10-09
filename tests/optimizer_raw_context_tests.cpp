@@ -358,5 +358,8 @@ int main() {
       "optimizer_constructed_borrows.gti",
       {"constructed_borrow", "returned_borrow", "constructed_mut_borrow"}, 5,
       false);
+  checkAddressFixture("optimizer_indexed_borrows.gti",
+                      {"indexed_borrow", "initialized_indexed_borrow"}, 2,
+                      false);
   return failures == 0 ? 0 : 1;
 }
