@@ -1790,6 +1790,18 @@ parameter cleanup, lowers prologue/construction values, lowers statements,
 synthesizes a legal terminal edge, rebuilds reachability and value uses, then
 verifies structure.
 
+Verification runs on every body several times per compilation, so its checks
+index a body once rather than rescanning it for each instruction, loan or
+failure record they examine: block predecessors, full-expression roots and
+the values and open instructions that realize them, prepared call-argument
+sites by staged value, blocks by active failure record, drop obligations by
+full expression, loan producers and ends, and failure-origin assignments,
+which verified failure metadata keeps strictly ordered by source range. Each
+index lists candidates in the order the scan would visit them, so the first
+reported violation is unchanged. The lifecycle dataflow still carries one
+state per drop obligation into every block; a sparse representation remains
+future work for very long bodies.
+
 Program verification also requires each function, constructor, destructor and
 lambda body to retain its enclosing instance's exact body kind and return
 type. Constructors and destructors return `void`. A well-formed body-local

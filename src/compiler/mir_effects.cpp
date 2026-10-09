@@ -1790,7 +1790,15 @@ MirEffectTraits effects(const MirProgram &program,
   if (body == nullptr) {
     return effects(instruction);
   }
-  const ExactTargets targets = exactTargets(program, *body, instruction);
+  return effects(program, *body, instruction);
+}
+
+MirEffectTraits effects(const MirProgram &program, const MirBody &body,
+                        const MirInstruction &instruction) {
+  if (!isInvocation(instruction)) {
+    return effects(instruction);
+  }
+  const ExactTargets targets = exactTargets(program, body, instruction);
   if (targets.boundary || targets.addresses.empty()) {
     return cleanupEffects(effects(instruction), targets);
   }
