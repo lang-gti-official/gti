@@ -335,6 +335,19 @@ private:
     const SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
+    // An existing instance discovered its arguments when it was created, and
+    // admission is monotone, so revisiting them can only propagate a first
+    // instantiation site. Re-walking them on every hit made each lookup of a
+    // nested generic proportional to its whole argument tree.
+    if (resolvedType.kind == SemanticType::Class && resolvedType.classId != 0) {
+      if (const std::optional<std::size_t> existing = instanceIndex.findClass(
+              resolvedType.classId, resolvedType.arguments,
+              resolvedType.valueArguments);
+          existing &&
+          (!site || output.program.classes[*existing - 1].instantiationSite)) {
+        return *existing;
+      }
+    }
     for (const SemanticType &argument : resolvedType.arguments) {
       (void)enqueueClass(argument, site);
     }
