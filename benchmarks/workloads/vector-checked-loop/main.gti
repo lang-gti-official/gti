@@ -1,5 +1,14 @@
 #include <std/vector>
 
+#ifdef ALLOCATION_COUNTS
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+  uint64_t adoption_bytes();
+}
+#endif
+
 void scale(mut std::vector<int32_t>& values, int32_t multiplier) {
   for (mut std::size_t index = 0; index < values.size(); index++) {
     values[index] *= multiplier;
@@ -79,6 +88,9 @@ void print_digest(uint64_t digest) {
 }
 
 int main() {
+#ifdef ALLOCATION_COUNTS
+  adoption_count_begin();
+#endif
   std::size_t element_count = std::size_t(5000);
   std::size_t round_count = std::size_t(240000);
   uint64_t digest_modulus = uint64_t(1000000007);
@@ -114,8 +126,22 @@ int main() {
     return 1;
   }
 
+#ifdef FULL_STATE
+  std::println(values.size());
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    std::println(values[index]);
+  }
+  std::println(final_sum);
+#endif
   std::print("GTI-BENCH-1 digest:");
   print_digest(digest);
   std::println(" work-units:2400000000");
+#ifdef ALLOCATION_COUNTS
+  adoption_count_end();
+  std::print("allocations ");
+  std::println(adoption_allocations());
+  std::print("bytes ");
+  std::println(adoption_bytes());
+#endif
   return 0;
 }
