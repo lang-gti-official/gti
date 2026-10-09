@@ -5095,6 +5095,16 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   still rejects a forged stale overflow discharge. This is a prerequisite
   correction, not completion of the remaining original optimizer requirements
   or migration acceptance.
+  The next handover prerequisite admits exact generated scalar-record copy/move
+  through ordinary by-value calls and nested construction. Shared MIR effects
+  classify this structural transport and no-user-code record cleanup; selected
+  destructors, unsupported state and raw pointees remain conservative. Prepared
+  copies retain independent snapshots, source movement retires old storage, and
+  only reference formals export caller postconditions. Unrelated nested records,
+  later-argument mutation, copy mutation and real destructor execution have
+  focused replay/native coverage. Raw initialized-element coverage and returned
+  element provenance remain separate open prerequisites; the original six
+  optimizer and three native-evidence acceptance failures remain unchanged.
   A further general prerequisite distinguishes inert address arithmetic and
   typed pointer conversion from actual pointee/lifetime operations, and avoids
   repeating an operation at an empty full-expression marker. Selected unsafe

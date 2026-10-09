@@ -1909,11 +1909,14 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   const std::optional<MirBodyAddress> target =
       closedCallTarget(closedCalls->program, instruction);
-  const bool owningArgument =
-      std::any_of(instruction.operands.begin(), instruction.operands.end(),
-                  [&](const MirOperand &operand) {
-                    return owningCallOperand(body, operand);
-                  });
+  const bool owningArgument = std::any_of(
+      instruction.operands.begin(), instruction.operands.end(),
+      [&](const MirOperand &operand) {
+        const auto *input = definingInstruction(body, operand.value);
+        return owningCallOperand(body, operand) &&
+               (!input ||
+                !isMirStructuralValueTransfer(closedCalls->program, *input));
+      });
   if (!target || closedCalls->rejected.contains(*target) || owningArgument) {
     // A permanently unsupported edge is an opaque transfer, not a pending
     // source summary. The caller still has an ordinary successful continuation
@@ -2302,12 +2305,11 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
       state.liveMemoryBarrier, LiveMemoryBarrier::VacantScalarConstruction);
 }
 
-[[nodiscard]] bool independentIntegerParameter(const MirProgram *program,
-                                               MirBodyAddress address,
-                                               const MirPlace &place) {
+[[nodiscard]] bool independentValueParameter(const MirProgram *program,
+                                             MirBodyAddress address,
+                                             const MirPlace &place) {
   if (!program || place.root != MirPlaceRootKind::Binding || !place.binding ||
-      !place.projections.empty() || !constantIntegerDomain(place.type) ||
-      place.traits.containsBorrowedState)
+      !place.projections.empty() || place.traits.containsBorrowedState)
     return false;
   const MirFunctionInstance *function =
       address.kind == MirBodyKind::Function
@@ -2330,9 +2332,44 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
       std::find(bindings->begin(), bindings->end(), place.binding);
   const auto index = static_cast<std::size_t>(parameter - bindings->begin());
   // The selected formal, not a reference's projected pointee type, proves
-  // that this body owns independent scalar parameter storage.
+  // that this body owns independent parameter storage. Callers still prove
+  // the particular scalar/generated operation touches only that storage.
   return (*types)[index] == place.type &&
-         constantIntegerDomain((*types)[index]).has_value();
+         (constantIntegerDomain((*types)[index]).has_value() ||
+          (*types)[index].kind == SemanticType::Class);
+}
+
+void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
+                            const MirBody &body,
+                            const MirPlaceAliasEscapeAnalysis &aliases,
+                            AbstractState &state, MirPlaceId source) {
+  const auto *place = body.findPlace(source);
+  std::map<MirPlaceId, ObjectFact> receivers;
+  std::map<MirPlaceId, IntegerFact> fields;
+  if (place && independentValueParameter(program, address, *place)) {
+    for (const auto &[root, object] : state.objects) {
+      const auto *storage = body.findPlace(root);
+      if (root && (!storage || storage->root != MirPlaceRootKind::This))
+        continue;
+      ObjectFact receiver = object;
+      std::erase_if(receiver.integers, [&](const auto &entry) {
+        return !liveScalarPath(program, address, body, root, entry.first);
+      });
+      receiver.elements.reset();
+      receiver.elementIntegers.clear();
+      receivers.emplace(root, std::move(receiver));
+    }
+    for (const auto &[root, fact] : state.integerPlaces)
+      if (const auto *storage = body.findPlace(root);
+          storage && storage->root == MirPlaceRootKind::This &&
+          liveScalarPath(program, address, body, root))
+        fields.emplace(root, fact);
+  }
+  invalidatePlaceRoot(body, aliases, state, source);
+  for (auto &[root, object] : receivers)
+    state.objects.insert_or_assign(root, std::move(object));
+  for (auto &[root, fact] : fields)
+    state.integerPlaces.insert_or_assign(root, std::move(fact));
 }
 
 [[nodiscard]] bool scalarResultMove(const MirInstruction &instruction,
@@ -2429,26 +2466,12 @@ void applyInstruction(const MirBody &body,
     const auto &source = instruction.operands.front();
     const auto fact =
         integerForPlace(body, state, canonicalPlace(aliases, source.place));
-    std::optional<ObjectFact> implicitReceiver;
-    if (independentIntegerParameter(program, address,
-                                    *body.findPlace(source.place))) {
-      if (const auto receiver = state.objects.find(0);
-          receiver != state.objects.end()) {
-        implicitReceiver = receiver->second;
-        std::erase_if(implicitReceiver->integers, [&](const auto &entry) {
-          return !liveScalarPath(program, address, body, 0, entry.first);
-        });
-        implicitReceiver->elements.reset();
-        implicitReceiver->elementIntegers.clear();
-      }
-    }
     // Movement retires the source. Do not retain place-derived origins or
     // make a later source read usable; only the independent result SSA value
     // receives the old scalar envelope. Exact by-value integer parameters
     // cannot overlap owned receiver fields, including an unmaterialized This.
-    invalidatePlaceRoot(body, aliases, state, source.place);
-    if (implicitReceiver)
-      state.objects.insert_or_assign(0, std::move(*implicitReceiver));
+    invalidateValueStorage(program, address, body, aliases, state,
+                           source.place);
     state.loadedOrigins.erase(*instruction.result);
     state.fieldOrigins.erase(*instruction.result);
     state.aggregateOrigins.erase(*instruction.result);
@@ -2458,6 +2481,28 @@ void applyInstruction(const MirBody &body,
     if (fact)
       state.integers[*instruction.result] = rebased(
           *fact, block.id, instruction.id, *instruction.result, source.place);
+    return;
+  }
+  if (program && isMirStructuralValueTransfer(*program, instruction)) {
+    const auto &source = instruction.operands.front();
+    const auto object = objectForOperand(body, aliases, state, source);
+    // Prepared values own an independent snapshot. In particular a later
+    // argument may modify the source without modifying this earlier copy.
+    // Movement retires its old place; no source correlation crosses transport.
+    if (source.kind == MirOperandKind::Move && source.place)
+      invalidateValueStorage(program, address, body, aliases, state,
+                             source.place);
+    if (instruction.destination)
+      invalidatePlaceRoot(body, aliases, state, *instruction.destination);
+    state.loadedOrigins.erase(*instruction.result);
+    state.fieldOrigins.erase(*instruction.result);
+    state.aggregateOrigins.erase(*instruction.result);
+    state.objectValues.erase(*instruction.result);
+    if (object) {
+      state.objectValues[*instruction.result] = *object;
+      if (instruction.destination)
+        seedObjectFact(body, aliases, *instruction.destination, *object, state);
+    }
     return;
   }
   if (instruction.kind == MirInstructionKind::Compute) {
@@ -2747,6 +2792,11 @@ void applyInstruction(const MirBody &body,
     return;
   }
   if (instruction.kind == MirInstructionKind::Drop && instruction.destination) {
+    if (program && isMirStructuralValueDrop(*program, instruction)) {
+      invalidateValueStorage(program, address, body, aliases, state,
+                             *instruction.destination);
+      return;
+    }
     const MirEffectTraits effect = effects(instruction);
     if (effect.writesUnknownMemory || effect.invokesUserCode ||
         effect.maySynchronize) {
@@ -4445,7 +4495,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   const std::vector<SemanticType> types = parameterTypes(program, address);
   result.summary.argumentObjects.resize(bindings.size());
   for (std::size_t index = 0; index < bindings.size(); ++index) {
-    if (index >= context.argumentObjects.size() ||
+    if (index >= types.size() || types[index].kind != SemanticType::Reference ||
+        index >= context.argumentObjects.size() ||
         !context.argumentObjects[index].observed) {
       continue;
     }

@@ -108,14 +108,20 @@ int main() {
   };
   const auto analysis = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
   expect(analysis.converged, "raw contextual safety must converge");
-  for (const auto name : {"before_raw", "after_raw", "after_call",
-                          "stable_after_raw", "after_owning_argument"}) {
+  for (const auto name :
+       {"before_raw", "after_raw", "after_call", "stable_after_raw"}) {
     const auto *body = analysis.find(
         {.kind = lang::MirBodyKind::Function, .owner = function(name)});
     expect(body && body->reached && !body->closed,
            "raw execution must not export an effect-closed body summary");
   }
   const lang::OptimizationPipeline pipeline;
+  const auto *owning =
+      analysis.find({.kind = lang::MirBodyKind::Function,
+                     .owner = function("after_owning_argument")});
+  expect(
+      owning && owning->reached && owning->closed,
+      "generated scalar-record copy and cleanup have a closed effect summary");
   const auto *declared = analysis.find({.kind = lang::MirBodyKind::Function,
                                         .owner = function("declared_step")});
   const auto *declaredRaw =
@@ -153,9 +159,10 @@ int main() {
            "readonly scalar copies retain their exact facts after raw writes");
     expect(discharges("after_owning_argument") ==
                    (level == lang::OptimizationLevel::O0 ? 0 : 1) &&
-               discharges("consume") == 0,
-           "an unsupported owning argument supplies no callee facts but does "
-           "not hide the caller's independent continuation");
+               discharges("consume") ==
+                   (level == lang::OptimizationLevel::O0 ? 0 : 1),
+           "a generated scalar-record copy supplies independent callee facts "
+           "without hiding the caller's continuation");
     expect(discharges("after_raw") == 0 && discharges("after_call") == 0 &&
                discharges("conflicting") == 0 && discharges("unreached") == 0,
            "raw access and its invocation invalidate later mutable facts; "
