@@ -141,7 +141,9 @@ def main():
         "bad_default_native": "bad_default_native(first.data())",
         "bad_default_other": "bad_default_other(first.data(), second.data())",
         "bad_default_lifetime": "bad_default_lifetime(first.data())",
-    }, "return *pointer + 1;")
+        "bad_modified_prefix": "bad_modified_prefix(sequence)",
+        "bad_modified_native": "bad_modified_native(sequence)",
+    }, " + 1;")
 
 
 if __name__ == "__main__":

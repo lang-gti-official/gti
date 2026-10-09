@@ -4860,6 +4860,38 @@ void applyInstruction(const MirBody &body,
     if (compoundCheckedOperation(instruction.operation)) {
       fact = compoundIntegerFact(body, program, aliases, state, instruction);
     }
+    if (checkedAddress && fact && writtenDomain &&
+        (instruction.operation == MirOperation::None ||
+         instruction.operation == MirOperation::Assign) &&
+        fact->domain == *writtenDomain) {
+      // A checked scalar assignment changes an existing live element, not
+      // the region's coverage. Retain only prefixes with this exact current
+      // base and subobject, and weakly join the stored value with all previous
+      // elements. Different pointer fields are never assumed disjoint.
+      for (const auto &[root, object] : state.objects) {
+        for (const auto &[path, envelope] : object.prefixes) {
+          if (path.subobject != checkedAddress->subobject ||
+              envelope.domain != fact->domain)
+            continue;
+          const auto base = state.fieldAddresses.find({root, path.pointer});
+          const auto end = object.integers.find(path.end);
+          if (base == state.fieldAddresses.end() || base->second.index ||
+              !base->second.subobject.empty() || end == object.integers.end() ||
+              end->second.domain.width == writtenDomain->width)
+            continue;
+          auto compared = addressKey(*checkedAddress);
+          compared.index.reset();
+          compared.elementOffset = base->second.elementOffset;
+          compared.subobject.clear();
+          if (compared != addressKey(base->second))
+            continue;
+          auto updated = joinedElementFact(envelope, *fact);
+          updated.evidence = merged(updated.evidence, checkedAddress->evidence);
+          addInstruction(updated.evidence, instruction.id);
+          retainedPrefixes[root].insert_or_assign(path, std::move(updated));
+        }
+      }
+    }
     const std::optional<IntegerFact> sourceArray =
         arrayForOperand(state, aliases, source);
     std::optional<ObjectFact> sourceObject =
