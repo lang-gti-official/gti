@@ -501,6 +501,22 @@ structural construction cannot overwrite a previously live non-byte object
 under the existing GTI non-overlap contract. It therefore preserves that
 object's value; it does not infer disjointness merely from different bases.
 
+An ordinary pointer-bearing object can also publish the scalar contents at one
+exact pointer-field value. Extraction requires the stored address to match a
+successful scalar-construction fact on every exit. Constructor-result
+publication retains that snapshot only at its verified matching destination;
+ordinary shell copying, movement and replacement do not transport it. Later
+member/checked-reference contexts bind it to the current typed entry pointer
+field, checking the integer domain. These mutable-memory facts are distinct
+from the shell's own integer fields and are limited to 64 paths per object.
+Writes retire transported snapshots conservatively; raw/native/global,
+borrowed writes, synchronization and lifetime changes retain their barriers.
+An exact later postcondition can establish a new snapshot. No neighbouring
+slot, initialized prefix, allocation extent, or pointer-field disjointness is
+inferred. The unrelated `Cell` regression retains its actual unsafe load and
+checks overwrite, retargeting, native/global aliases, a checked mutable borrow
+and destroy/reconstruct negatives with forged-proof rejection.
+
 Exact source summaries export constructed addresses rooted in raw-pointer
 formals or an ordinary pointer field of a receiver/checked-reference formal,
 relative to the receiver or formal ordinal, owned field path and element
