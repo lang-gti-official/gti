@@ -8369,6 +8369,7 @@ exactRestoringIndexedSwapContract(const MirProgram &program,
 
 [[nodiscard]] bool
 exactScalarUniqueAllocationContract(const MirProgram &program,
+                                    const MirBody &body,
                                     const MirInstruction &instruction) {
   if (instruction.info.type.kind != SemanticType::UniqueOwner ||
       instruction.info.type.arguments.size() != 1) {
@@ -8436,7 +8437,7 @@ exactScalarUniqueAllocationContract(const MirProgram &program,
       instruction.lambdaTarget || instruction.callableInvocation ||
       !instruction.callableArguments.empty() || instruction.loan ||
       instruction.borrowOrigin != BorrowOriginKind::None ||
-      !instruction.lifecycle.empty() ||
+      instruction.successResultDrop || instruction.lifecycle.size() != 1 ||
       instruction.synchronization.kind != SynchronizationOperationKind::None ||
       instruction.info.category != ValueCategory::Value ||
       instruction.info.traits.drop != DropKind::Lexical ||
@@ -8447,6 +8448,14 @@ exactScalarUniqueAllocationContract(const MirProgram &program,
       !instruction.safetyDischarges.empty()) {
     return false;
   }
+  const auto &event = instruction.lifecycle.front();
+  const auto *drop = body.findDropObligation(event.target);
+  if (!drop || drop->kind != MirDropObligationKind::Value ||
+      drop->value != instruction.hirValue ||
+      drop->dropType.type != instruction.info.type ||
+      event != MirLifecycleEvent{.kind = MirLifecycleEventKind::Initialize,
+                                 .target = drop->id})
+    return false;
   const std::vector<DefinedFailureOutcome> expected{
       {DefinedFailureCode::AllocationFailure,
        DefinedFailureDetail::UniqueOwner}};
@@ -10215,10 +10224,12 @@ verifyMirProgramContracts(const MirProgram &program) {
             instruction.intrinsic == IntrinsicKind::ObjectAlignment;
         if ((instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
              instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
+             instruction.intrinsic == IntrinsicKind::ObjectRelocateRange ||
              instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
              instruction.unsafeOperation ==
                  UnsafeOperationKind::ObjectLifetime) &&
-            !(instruction.intrinsic == IntrinsicKind::ObjectRelocate
+            !((instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
+               instruction.intrinsic == IntrinsicKind::ObjectRelocateRange)
                   ? mir_detail::objectRelocate(program, instruction)
               : instruction.intrinsic == IntrinsicKind::ObjectConstruct
                   ? mir_detail::objectConstruct(program, instruction)
@@ -10327,7 +10338,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                           "operation-specific synchronization contract"});
         }
         if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
-            !exactScalarUniqueAllocationContract(program, instruction)) {
+            !exactScalarUniqueAllocationContract(program, body, instruction)) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,

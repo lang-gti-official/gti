@@ -20,11 +20,14 @@ class span_iterator<std::storage_element T> {
 
 public:
   span_iterator(std::detail::prefix_owner<T>& source, size_t position, size_t end)
-      : data(source), current_position(position), final_position(end) {}
+      : data(source), current_position(position), final_position(end) {
+    if (position > end) { gti_internal::index_bounds_check(position, end); }
+    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
+  }
 
   T& operator*() {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
-    return this.data.read(this.current_position);
+    unsafe { return this.data.read_unchecked(this.current_position); }
   }
 
   void operator++() mut {
@@ -48,14 +51,17 @@ class mutable_span_iterator<std::storage_element T> {
 public:
   mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
                         size_t begin, size_t end)
-      : data(source), current_position(begin), final_position(end) {}
+      : data(source), current_position(begin), final_position(end) {
+    if (begin > end) { gti_internal::index_bounds_check(begin, end); }
+    if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
+  }
   T& operator*() {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
-    return this.data.read(this.current_position);
+    unsafe { return this.data.read_unchecked(this.current_position); }
   }
   mut T& operator*() mut {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
-    return this.data.read_mut(this.current_position);
+    unsafe { return this.data.read_mut_unchecked(this.current_position); }
   }
   void operator++() mut {
     gti_internal::index_bounds_check(this.current_position, this.final_position);
@@ -90,7 +96,11 @@ public:
   // The source owner, not a raw address, retains the checked dependency.
   // Public containers provide as_span() factories over this same contract.
   span(std::detail::prefix_owner<T>& source, size_t offset, size_t count)
-      : data(source), first_position(offset), element_count(count) {}
+      : data(source), first_position(offset), element_count(count) {
+    if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
+    size_t remaining = source.length() - offset;
+    if (count > remaining) { gti_internal::index_bounds_check(count, remaining); }
+  }
 
   /// Returns the number of elements in this view.
   size_t size() {
@@ -116,7 +126,15 @@ public:
 
   T& at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
-    return this.data.read(this.first_position + index);
+    unsafe { return this.get_unchecked(index); }
+  }
+
+  /// The caller proves index < size(); the view's owner loan is retained.
+  unsafe T& get_unchecked(size_t index) {
+    unsafe {
+      return this.data.read_unchecked(
+          gti_internal::integer_wrapping_add(this.first_position, index));
+    }
   }
 
   T& operator[](size_t index) {
@@ -172,18 +190,35 @@ public:
 
   mutable_span(mut std::detail::prefix_owner<T>& source,
                size_t offset, size_t count)
-      : data(source), first_position(offset), element_count(count) {}
+      : data(source), first_position(offset), element_count(count) {
+    if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
+    size_t remaining = source.length() - offset;
+    if (count > remaining) { gti_internal::index_bounds_check(count, remaining); }
+  }
 
   size_t size() { return this.element_count; }
   bool empty() { return this.element_count == 0; }
 
   T& at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
-    return this.data.read(this.first_position + index);
+    unsafe { return this.get_unchecked(index); }
   }
   mut T& at(size_t index) mut {
     gti_internal::index_bounds_check(index, this.element_count);
-    return this.data.read_mut(this.first_position + index);
+    unsafe { return this.get_unchecked_mut(index); }
+  }
+  /// The caller proves index < size(); the view's owner loan is retained.
+  unsafe T& get_unchecked(size_t index) {
+    unsafe {
+      return this.data.read_unchecked(
+          gti_internal::integer_wrapping_add(this.first_position, index));
+    }
+  }
+  unsafe mut T& get_unchecked_mut(size_t index) mut {
+    unsafe {
+      return this.data.read_mut_unchecked(
+          gti_internal::integer_wrapping_add(this.first_position, index));
+    }
   }
   T& operator[](size_t index) { return this.at(index); }
   mut T& operator[](size_t index) mut { return this.at(index); }

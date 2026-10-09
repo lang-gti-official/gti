@@ -155,9 +155,8 @@ namespace std {
       terminated_prefix_owner() {}
       terminated_prefix_owner(size_t capacity) {
         if (capacity != size_t(0)) {
-          gti_internal::require_allocation(capacity != uint64_t(18446744073709551615));
           this.data = prefix_owner<char>(capacity + size_t(1));
-          this.data.append('\0');
+          unsafe { this.data.append_unchecked('\0'); }
         }
       }
       terminated_prefix_owner(terminated_prefix_owner& other) = delete;
@@ -173,11 +172,17 @@ namespace std {
       }
       char& read(size_t index) {
         gti_internal::index_bounds_check(index, this.length());
-        return this.data.read(index);
+        unsafe { return this.data.read_unchecked(index); }
       }
       mut char& read_mut(size_t index) mut {
         gti_internal::index_bounds_check(index, this.length());
-        return this.data.read_mut(index);
+        unsafe { return this.data.read_mut_unchecked(index); }
+      }
+      unsafe char& read_unchecked(size_t index) {
+        unsafe { return this.data.read_unchecked(index); }
+      }
+      unsafe mut char& read_mut_unchecked(size_t index) mut {
+        unsafe { return this.data.read_mut_unchecked(index); }
       }
       prefix_owner<char>& prefix() { return this.data; }
       mut prefix_owner<char>& prefix_mut() mut { return this.data; }
@@ -187,27 +192,32 @@ namespace std {
         }
         unsafe { return this.data.address(); }
       }
-      void append(char value) mut {
-        gti_internal::require_relocation_capacity(this.length() < this.capacity());
+      unsafe void append(char value) mut {
         size_t last = this.length();
-        this.data.read_mut(last) = value;
-        this.data.append('\0');
+        unsafe {
+          this.data.read_mut_unchecked(last) = value;
+          this.data.append_unchecked('\0');
+        }
       }
-      void pop() mut {
-        gti_internal::require_live_storage(this.length() > size_t(0));
-        this.data.pop();
-        this.data.read_mut(this.data.length() - size_t(1)) = '\0';
+      unsafe void pop() mut {
+        unsafe {
+          this.data.pop_unchecked();
+          this.data.read_mut_unchecked(this.data.length() - size_t(1)) = '\0';
+        }
       }
       void clear() mut {
         this.data.clear();
-        if (this.data.capacity() != size_t(0)) { this.data.append('\0'); }
+        if (this.data.capacity() != size_t(0)) {
+          unsafe { this.data.append_unchecked('\0'); }
+        }
       }
       void reserve(size_t requested) mut {
         if (requested <= this.capacity()) { return; }
-        gti_internal::require_allocation(requested != uint64_t(18446744073709551615));
         mut prefix_owner<char> replacement{requested + size_t(1)};
-        this.data.relocate_to(replacement);
-        if (replacement.length() == size_t(0)) { replacement.append('\0'); }
+        unsafe { this.data.relocate_to_unchecked(replacement); }
+        if (replacement.length() == size_t(0)) {
+          unsafe { replacement.append_unchecked('\0'); }
+        }
         this.data = std::move(replacement);
       }
       void shrink_to_fit() mut {
@@ -218,7 +228,7 @@ namespace std {
           return;
         }
         mut prefix_owner<char> replacement{length + size_t(1)};
-        this.data.relocate_to(replacement);
+        unsafe { this.data.relocate_to_unchecked(replacement); }
         this.data = std::move(replacement);
       }
       void swap(mut terminated_prefix_owner& other) mut {
@@ -247,12 +257,18 @@ namespace std {
     class storage_iterator<std::storage_element T> {
       prefix_owner<T>& data;
       mut size_t current_position;
+      size_t final_position;
 
     public:
-      storage_iterator(prefix_owner<T>& source, size_t position) : data(source), current_position(position) {}
+      storage_iterator(prefix_owner<T>& source, size_t position, size_t end)
+          : data(source), current_position(position), final_position(end) {
+        if (position > end) { gti_internal::index_bounds_check(position, end); }
+        if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
+      }
 
       T& operator*() {
-        return this.data.read(this.current_position);
+        gti_internal::index_bounds_check(this.current_position, this.final_position);
+        unsafe { return this.data.read_unchecked(this.current_position); }
       }
 
       void operator++() mut {
@@ -278,8 +294,8 @@ namespace std {
         return false;
       }
       for (mut size_t index = 0; index < this.data.length(); index++) {
-        if (this.data.read(index) != other[index]) {
-          return false;
+        unsafe {
+          if (this.data.read_unchecked(index) != other[index]) { return false; }
         }
       }
       return true;
@@ -290,8 +306,8 @@ namespace std {
         return false;
       }
       for (mut size_t index = 0; index < this.data.length(); index++) {
-        if (this.data.read(index) != other[index]) {
-          return false;
+        unsafe {
+          if (this.data.read_unchecked(index) != other.get_unchecked(index)) { return false; }
         }
       }
       return true;
@@ -301,10 +317,12 @@ namespace std {
       mut size_t shared = this.data.length();
       if (other.size() < shared) { shared = other.size(); }
       for (mut size_t index = 0; index < shared; index++) {
-        uint8_t left = uint8_t(this.data.read(index));
-        uint8_t right = uint8_t(other[index]);
-        if (left < right) { return -1; }
-        if (left > right) { return 1; }
+        unsafe {
+          uint8_t left = uint8_t(this.data.read_unchecked(index));
+          uint8_t right = uint8_t(other[index]);
+          if (left < right) { return -1; }
+          if (left > right) { return 1; }
+        }
       }
       if (this.data.length() < other.size()) { return -1; }
       if (this.data.length() > other.size()) { return 1; }
@@ -316,7 +334,9 @@ namespace std {
         return false;
       }
       for (mut size_t offset = 0; offset < value.size(); offset++) {
-        if (this[position + offset] != value[offset]) { return false; }
+        unsafe {
+          if (this.data.read_unchecked(position + offset) != value[offset]) { return false; }
+        }
       }
       return true;
     }
@@ -337,13 +357,13 @@ namespace std {
 
     string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {
       for (mut size_t index = 0; index < value.size(); index++) {
-        this.data.append(value[index]);
+        unsafe { this.data.append(value[index]); }
       }
     }
 
     string<uint64_t N>(char values[N]) : data(detail::terminated_prefix_owner(N)) {
       while (this.data.length() < N) {
-        this.data.append(values[this.data.length()]);
+        unsafe { this.data.append(values[this.data.length()]); }
       }
     }
 
@@ -372,7 +392,7 @@ namespace std {
       }
       this.reserve(end - begin);
       for (mut size_t index = begin; index < end; index++) {
-        this.push_back(other[index]);
+        unsafe { this.data.append(other.get_unchecked(index)); }
       }
     }
 
@@ -407,7 +427,7 @@ namespace std {
 
     size_t find(char needle, size_t position) {
       for (mut size_t index = position; index < this.data.length(); index++) {
-        if (this[index] == needle) { return index; }
+        unsafe { if (this.data.read_unchecked(index) == needle) { return index; } }
       }
       return string::npos;
     }
@@ -433,7 +453,7 @@ namespace std {
       mut size_t index = this.data.length() - 1;
       if (position < index) { index = position; }
       while (true) {
-        if (this[index] == needle) { return index; }
+        unsafe { if (this.data.read_unchecked(index) == needle) { return index; } }
         if (index == 0) { return string::npos; }
         index--;
       }
@@ -443,7 +463,9 @@ namespace std {
     bool contains(string_view needle) { return this.find(needle) != string::npos; }
     bool contains(char needle) { return this.find(needle) != string::npos; }
     bool starts_with(string_view prefix) { return this.matches_at(size_t(0), prefix); }
-    bool starts_with(char prefix) { return this.data.length() != 0 && this[0] == prefix; }
+    bool starts_with(char prefix) {
+      unsafe { return this.data.length() != 0 && this.data.read_unchecked(size_t(0)) == prefix; }
+    }
 
     bool ends_with(string_view suffix) {
       if (suffix.size() > this.data.length()) { return false; }
@@ -451,7 +473,9 @@ namespace std {
     }
 
     bool ends_with(char suffix) {
-      return this.data.length() != 0 && this[this.data.length() - 1] == suffix;
+      unsafe {
+        return this.data.length() != 0 && this.data.read_unchecked(this.data.length() - 1) == suffix;
+      }
     }
 
     int compare(string_view other) { return this.compare_bytes(other); }
@@ -480,22 +504,22 @@ namespace std {
 
     char& front() {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
-      return this.data.read(size_t(0));
+      unsafe { return this.data.read_unchecked(size_t(0)); }
     }
 
     mut char& front() mut {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
-      return this.data.read_mut(size_t(0));
+      unsafe { return this.data.read_mut_unchecked(size_t(0)); }
     }
 
     char& back() {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
-      return this.data.read(this.data.length() - 1);
+      unsafe { return this.data.read_unchecked(this.data.length() - 1); }
     }
 
     mut char& back() mut {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
-      return this.data.read_mut(this.data.length() - 1);
+      unsafe { return this.data.read_mut_unchecked(this.data.length() - 1); }
     }
 
     /// Returns the number of characters that fit without growing storage.
@@ -504,7 +528,7 @@ namespace std {
     }
 
     detail::storage_iterator<char> begin() {
-      return detail::storage_iterator<char>(this.data.prefix(), size_t(0));
+      return detail::storage_iterator<char>(this.data.prefix(), size_t(0), this.data.length());
     }
 
     detail::storage_sentinel end() {
@@ -527,8 +551,10 @@ namespace std {
     /// nullptr when the logical string contains an embedded NUL character.
     c_string try_c_string() {
       for (mut size_t index = 0; index < this.size(); index++) {
-        if (this[index] == '\0') {
-          unsafe { return std::assume_c_string(nullptr, this); }
+        unsafe {
+          if (this.data.read_unchecked(index) == '\0') {
+            return std::assume_c_string(nullptr, this);
+          }
         }
       }
       unsafe { return std::assume_c_string(this.data.address(), this); }
@@ -547,42 +573,51 @@ namespace std {
 
     char& at(int index) {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
-      return this.data.read(uint64_t(index));
+      unsafe { return this.data.read_unchecked(uint64_t(index)); }
     }
 
     mut char& at(int index) mut {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
-      return this.data.read_mut(uint64_t(index));
+      unsafe { return this.data.read_mut_unchecked(uint64_t(index)); }
     }
 
     char& at(size_t index) {
       gti_internal::index_bounds_check(index, this.data.length());
-      return this.data.read(index);
+      unsafe { return this.data.read_unchecked(index); }
     }
 
     mut char& at(size_t index) mut {
       gti_internal::index_bounds_check(index, this.data.length());
-      return this.data.read_mut(index);
+      unsafe { return this.data.read_mut_unchecked(index); }
     }
 
     char& operator[](int index) {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
-      return this.data.read(uint64_t(index));
+      unsafe { return this.data.read_unchecked(uint64_t(index)); }
     }
 
     mut char& operator[](int index) mut {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
-      return this.data.read_mut(uint64_t(index));
+      unsafe { return this.data.read_mut_unchecked(uint64_t(index)); }
     }
 
     char& operator[](size_t index) {
       gti_internal::index_bounds_check(index, this.data.length());
-      return this.data.read(index);
+      unsafe { return this.data.read_unchecked(index); }
     }
 
     mut char& operator[](size_t index) mut {
       gti_internal::index_bounds_check(index, this.data.length());
-      return this.data.read_mut(index);
+      unsafe { return this.data.read_mut_unchecked(index); }
+    }
+
+    /// The caller proves index < size(); the trailing NUL is not an element.
+    unsafe char& get_unchecked(size_t index) {
+      unsafe { return this.data.read_unchecked(index); }
+    }
+
+    unsafe mut char& get_unchecked_mut(size_t index) mut {
+      unsafe { return this.data.read_mut_unchecked(index); }
     }
 
     void reserve(size_t requested) mut {
@@ -591,11 +626,11 @@ namespace std {
 
     void resize(size_t requested) mut {
       while (this.data.length() > requested) {
-        this.data.pop();
+        unsafe { this.data.pop(); }
       }
       this.reserve(requested);
       while (this.data.length() < requested) {
-        this.data.append('\0');
+        unsafe { this.data.append('\0'); }
       }
     }
 
@@ -611,20 +646,20 @@ namespace std {
         }
         this.reserve(grown);
       }
-      this.data.append(value);
+      unsafe { this.data.append(value); }
     }
 
     void pop_back() mut {
       if (this.data.length() == 0) {
         return;
       }
-      this.data.pop();
+      unsafe { this.data.pop(); }
     }
 
     void append(string_view value) mut {
       this.reserve(this.data.length() + value.size());
       for (mut size_t index = 0; index < value.size(); index++) {
-        this.data.append(value[index]);
+        unsafe { this.data.append(value[index]); }
       }
     }
 
@@ -645,18 +680,22 @@ namespace std {
         mut size_t source = old_count;
         while (source > tail_start) {
           source--;
-          char copied = this[source];
-          this[source + (value.size() - removed)] = copied;
+          unsafe {
+            char copied = this.data.read_unchecked(source);
+            this.data.read_mut_unchecked(source + (value.size() - removed)) = copied;
+          }
         }
       } else {
         for (mut size_t source = tail_start; source < old_count; source++) {
-          char copied = this[source];
-          this[source - (removed - value.size())] = copied;
+          unsafe {
+            char copied = this.data.read_unchecked(source);
+            this.data.read_mut_unchecked(source - (removed - value.size())) = copied;
+          }
         }
         this.resize(new_count);
       }
       for (mut size_t index = 0; index < value.size(); index++) {
-        this[position + index] = value[index];
+        unsafe { this.data.read_mut_unchecked(position + index) = value[index]; }
       }
     }
 
@@ -684,7 +723,7 @@ namespace std {
       mut string result = string();
       result.reserve(this.data.length());
       for (mut size_t index = 0; index < this.data.length(); index++) {
-        result.push_back(this.data.read(index));
+        unsafe { result.data.append(this.data.read_unchecked(index)); }
       }
       return std::move(result);
     }

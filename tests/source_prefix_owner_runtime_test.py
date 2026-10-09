@@ -2,6 +2,10 @@
 """Ordinary prefix lifetime policy, exact cleanup, relocation and views."""
 
 from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
 
 from lambda_pack_invocation_runtime_test import main as runtime_matrix
 
@@ -42,12 +46,15 @@ if __name__ == "__main__":
                "source_prefix_complete_elements", "generic_payload_enum",
                "raw_text_owner_example",
                "source_prefix_drain_failure", "source_prefix_forwarded_result_cleanup",
-               "source_prefix_payload_return_cleanup"),
+               "source_prefix_payload_return_cleanup", "sequence_unchecked_access",
+               "nested_carrier_arguments"),
         cases={
             "source_prefix_owner": [((), (0, "2\n1\n4\n3\n", ""))],
             "source_prefix_vector": [((), (0, "", ""))],
             "source_prefix_expected_range": [((), (0, "", ""))],
             "source_prefix_complete_elements": [((), (0, "", ""))],
+            "sequence_unchecked_access": [((), (0, "", ""))],
+            "nested_carrier_arguments": [((), (0, "", ""))],
             "generic_payload_enum": [((), (0, "1\n4\n3\n2\n", ""))],
             "raw_text_owner_example": [((), (0, "hello\nHello\n", ""))],
             "source_prefix_drain_failure": [
@@ -72,3 +79,28 @@ if __name__ == "__main__":
         fixture_paths={"raw_text_owner_example":
                        Path(__file__).resolve().parent.parent /
                        "examples/133-raw-text-owner-views.gti"})
+
+    compiler = Path(sys.argv[1]).resolve()
+    rejected = {
+        "sequence_unchecked_requires_unsafe": ("return values.get_unchecked", "GTI-S2055"),
+        "sequence_unchecked_loan_rejected": ("values.push_back(3);", "GTI-S2017"),
+        "sequence_unchecked_mutation_rejected": ("text.clear();", "GTI-S2017"),
+        "nested_carrier_argument_loan_rejected": ("right = 11;", "GTI-S2017"),
+    }
+    with tempfile.TemporaryDirectory(prefix="gti-unchecked-negatives-") as temporary:
+        for name, (operation, code) in rejected.items():
+            source = Path(__file__).parent / "fixtures" / f"{name}.gti"
+            line = next(index for index, text in enumerate(source.read_text().splitlines(), 1)
+                        if operation in text)
+            pattern = re.escape(f"{source.name}:{line}:") + rf"\d+: error\[{code}\]"
+            for audit in ("off", "warn"):
+                artifact = Path(temporary) / f"{name}-{audit}.mir"
+                result = subprocess.run(
+                    [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
+                     f"--raw-pointer-audit={audit}", "--progress", "never"],
+                    capture_output=True, text=True, timeout=60)
+                assert result.returncode == 65, (name, audit, result)
+                assert re.search(pattern, result.stderr), (name, audit, result.stderr)
+                assert "GTI-B0001" not in result.stderr, (name, audit, result.stderr)
+                assert not artifact.exists(), (name, audit, artifact)
+                print(f"PASS {name}/{audit}", flush=True)

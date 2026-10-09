@@ -2399,10 +2399,15 @@ int main() {
           continue;
         }
         ++allocations;
-        expect(block.terminator.kind == lang::MirTerminatorKind::Invoke &&
-                   block.terminator.invokeInstruction == instruction.id &&
-                   instruction.successResultDrop.has_value(),
-               "allocation must publish an owner only after its success edge");
+        expect(block.terminator.invokeInstruction != instruction.id &&
+                   !instruction.successResultDrop &&
+                   instruction.lifecycle.size() == 1 &&
+                   instruction.lifecycle.front().kind ==
+                       lang::MirLifecycleEventKind::Initialize &&
+                   instruction.definedFailure.mayAbortAllocation() &&
+                   !instruction.definedFailure.mayUnwind(),
+               "allocation must publish on completion without an exhaustion "
+               "cleanup edge");
         for (int mutation = 0; mutation < 6; ++mutation) {
           auto forged = frontend.mir;
           auto *body = functionBody(forged, function.id);
@@ -2414,8 +2419,7 @@ int main() {
                                         });
           switch (mutation) {
           case 0:
-            changedBlock.terminator = {.kind = lang::MirTerminatorKind::Goto,
-                                       .target = block.terminator.target};
+            changed.lifecycle.clear();
             break;
           case 1:
             changed.definedFailure.localOrigins.clear();
@@ -2544,20 +2548,34 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
         ++allocations;
         const auto *raw =
             function.body.findDropObligation(allocate.objectAllocation);
-        const auto &construction =
-            function.body.blocks[block.terminator.target - 1];
-        const auto &call = construction.instructions.front();
+        const auto &construction = block;
+        const auto callIterator = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &candidate) {
+              return candidate.kind == lang::MirInstructionKind::Call &&
+                     candidate.objectAllocation == allocate.objectAllocation;
+            });
+        expect(callIterator != block.instructions.end(),
+               "allocation must be followed by its exact construction");
+        if (callIterator == block.instructions.end())
+          continue;
+        const auto &call = *callIterator;
         expect(
             raw && raw->kind == lang::MirDropObligationKind::ObjectAllocation &&
-                !allocate.result && allocate.successResultDrop == raw->id &&
+                !allocate.result && !allocate.successResultDrop &&
+                allocate.lifecycle ==
+                    std::vector<lang::MirLifecycleEvent>{
+                        {.kind = lang::MirLifecycleEventKind::Initialize,
+                         .target = raw->id}} &&
+                !allocate.definedFailure.mayUnwind() &&
                 call.objectAllocation == raw->id &&
                 call.intrinsic == lang::IntrinsicKind::AllocateUniqueOwner &&
                 call.definedFailure.localOrigins.empty() &&
                 call.definedFailure.propagation ==
                     lang::FailurePropagationKind::Constructor &&
                 construction.terminator.kind == lang::MirTerminatorKind::Invoke,
-            "raw allocation and exact constructor require separate failure "
-            "edges");
+            "raw allocation aborts, while a failing constructor retains its "
+            "cleanup edge");
         for (int mutation = 0; mutation < 14; ++mutation) {
           auto forged = frontend.mir;
           auto *body = functionBody(forged, function.id);
@@ -2567,7 +2585,10 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
               allocationBlock.instructions.end(),
               [&](const auto &value) { return value.id == allocate.id; });
           auto &constructorBlock = body->blocks[construction.id - 1];
-          auto &constructor = constructorBlock.instructions.front();
+          auto &constructor = *std::find_if(
+              constructorBlock.instructions.begin(),
+              constructorBlock.instructions.end(),
+              [&](const auto &candidate) { return candidate.id == call.id; });
           auto &retirement = body->blocks[construction.terminator.target - 1]
                                  .instructions.front();
           switch (mutation) {
@@ -2580,7 +2601,7 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
                 .detail = lang::DefinedFailureDetail::PrivateStorage;
             break;
           case 2:
-            changed.successResultDrop.reset();
+            changed.lifecycle.clear();
             break;
           case 3:
             constructor.objectAllocation = 0;
@@ -2599,7 +2620,7 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
             retirement.lifecycle.front().conditional = true;
             break;
           case 8:
-            allocationBlock.terminator.target = construction.terminator.target;
+            allocationBlock.terminator.invokeInstruction = changed.id;
             break;
           case 9:
             body->places[*changed.destination - 1].initiallyAvailable = true;

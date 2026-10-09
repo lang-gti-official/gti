@@ -1004,3 +1004,25 @@ extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v2(
   (void)writeCleanupNative(failure, primary_artifact, secondary_artifact);
   completeTerminal();
 }
+
+extern "C" [[noreturn]] void gti_rt_failure_abort_allocation_v2(
+    const gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 *artifact) {
+  // Do not enter terminal arbitration or managed-task containment. Exhaustion
+  // may occur inside an observer or during cleanup; waiting for that same
+  // thread to finish reporting would deadlock, and handing off would resume a
+  // caller despite the process-terminal allocation contract.
+  ResolvedFailure resolved;
+  if (record != nullptr &&
+      record->code == GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1 &&
+      resolveFailure(record, artifact, resolved)) {
+    (void)writeOrdinaryNative(record, artifact);
+  } else {
+    const gti_failure_record_v2 fallback{
+        .abi_version = GTI_FAILURE_ABI_VERSION_V2,
+        .code = GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
+        .detail = GTI_FAILURE_DETAIL_PRIVATE_STORAGE_V1};
+    (void)writeOrdinaryNative(&fallback, nullptr);
+  }
+  std::abort();
+}

@@ -347,6 +347,7 @@ enum class IntrinsicKind {
   ObjectDestroy,
   ObjectConstruct,
   ObjectRelocate,
+  ObjectRelocateRange,
   RequireVacantStorage,
   RequireLiveStorage,
   RequireRelocationCapacity,

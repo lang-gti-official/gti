@@ -1288,8 +1288,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
     std::span<const SemanticType> parameterTypes) const
     -> std::vector<StoredReferenceBinding> {
   // Summaries are needed before constructor bodies are analyzed. Compose only
-  // explicit nominal constructor calls whose complete argument list consists
-  // of exact enclosing parameters. Ordinary concrete call analysis still owns
+  // explicit nominal constructor calls whose argument trees terminate in
+  // exact enclosing parameters. Ordinary concrete call analysis still owns
   // overload viability, access, movement and exact initialized-field typing.
   // Factories, defaults, packs, arbitrary expressions and recursive summaries
   // deliberately do not acquire a guessed dependency contract here.
@@ -1336,6 +1336,101 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
           return index;
       return std::nullopt;
     };
+    struct ArgumentBindings {
+      bool valid = false;
+      std::vector<StoredReferenceBinding> bindings;
+    };
+    const auto argumentBindings =
+        [&](const auto &argumentSelf, const ExprPtr &expression,
+            const SemanticType &expected, std::size_t depth) -> ArgumentBindings {
+      if (depth >= 64)
+        return {};
+      if (const auto parameter = parameterSource(expression, expected)) {
+        ArgumentBindings result{.valid = true};
+        if (expected.kind == SemanticType::Reference) {
+          result.bindings.push_back(
+              {.destination = {.fields = {}, .reference = expected},
+               .parameter = *parameter,
+               .sourceFields = {}});
+        } else {
+          for (const auto &path : storedReferencePaths(expected))
+            result.bindings.push_back({.destination = path,
+                                       .parameter = *parameter,
+                                       .sourceFields = path.fields});
+        }
+        return result;
+      }
+      const Call *call = directCall(expression);
+      const ClassInfo *nested = classInfo(expected);
+      if (call == nullptr || nested == nullptr ||
+          expected.kind != SemanticType::Class ||
+          storedReferencePaths(expected).empty())
+        return {};
+      std::optional<ClassId> target;
+      if (const auto *name = exprAs<Variable>(call->callee().get())) {
+        if (owner->members.contains(name->name().lexeme) ||
+            std::any_of(constructor->parameters().begin(),
+                        constructor->parameters().end(), [&](const auto &p) {
+                          return p.name.lexeme == name->name().lexeme;
+                        }))
+          return {};
+        target = resolveClassPathGlobally(NamePath(name->name()),
+                                          owner->namespaceScope);
+      } else if (const auto *name =
+                     exprAs<QualifiedName>(call->callee().get())) {
+        target = resolveClassPathGlobally(name->name(), owner->namespaceScope);
+      }
+      // Call analysis checks visibility and exact generic arguments. This
+      // declaration summary must still find a private implementation type
+      // when queried from a caller in a different source unit.
+      if (!target || *target != nested->id)
+        return {};
+      ArgumentBindings result;
+      bool matched = false;
+      for (const auto &candidate : nested->constructors) {
+        if (candidate.declaration == nullptr || candidate.parameterPack ||
+            !candidate.genericParameters.empty() ||
+            candidate.parameterTypes.size() != call->arguments().size())
+          continue;
+        auto nestedTypes = candidate.parameterTypes;
+        std::vector<ArgumentBindings> arguments;
+        for (auto &parameter : nestedTypes) {
+          parameter = substituteType(parameter, classSubstitution(expected));
+          auto argument = argumentSelf(argumentSelf,
+              call->arguments()[arguments.size()], parameter, depth + 1);
+          if (!argument.valid)
+            break;
+          arguments.push_back(std::move(argument));
+        }
+        if (arguments.size() != nestedTypes.size())
+          continue;
+        if (matched)
+          return {}; // Do not select an ambiguous dependency producer.
+        matched = true;
+        const auto childBindings =
+            self(self, expected, candidate.declaration, nestedTypes);
+        if (childBindings.empty())
+          return {};
+        for (const auto &child : childBindings) {
+          if (child.parameter >= arguments.size())
+            return {};
+          const auto &argument = arguments[child.parameter];
+          const auto origin = std::find_if(
+              argument.bindings.begin(), argument.bindings.end(),
+              [&](const auto &binding) {
+                return binding.destination.fields == child.sourceFields &&
+                       binding.destination.reference == child.destination.reference;
+              });
+          if (origin == argument.bindings.end())
+            return {};
+          result.bindings.push_back({.destination = child.destination,
+                                     .parameter = origin->parameter,
+                                     .sourceFields = origin->sourceFields});
+        }
+        result.valid = true;
+      }
+      return result;
+    };
     std::vector<StoredReferenceBinding> result;
     for (const StoredReferencePath &path : paths) {
       if (path.fields.empty()) {
@@ -1362,71 +1457,20 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
         while (const auto *group = exprAs<Grouping>(argument->get())) {
           argument = &group->expression();
         }
-        selected = parameterSource(*argument, fieldType);
-        if (selected)
-          continue;
-        const Call *call = directCall(*argument);
-        const ClassInfo *nested = classInfo(fieldType);
-        if (call == nullptr || nested == nullptr ||
-            fieldType.kind != SemanticType::Class || path.fields.size() < 2)
+        const auto bindings = argumentBindings(argumentBindings, *argument,
+                                                fieldType, 0);
+        if (!bindings.valid)
           return {};
-        std::optional<ClassId> target;
-        if (const auto *name = exprAs<Variable>(call->callee().get())) {
-          // Do not mistake a shadowing callable parameter/field for a type.
-          if (owner->members.contains(name->name().lexeme) ||
-              std::any_of(constructor->parameters().begin(),
-                          constructor->parameters().end(), [&](const auto &p) {
-                            return p.name.lexeme == name->name().lexeme;
-                          }))
-            return {};
-          target = resolveClassPathGlobally(NamePath(name->name()),
-                                            owner->namespaceScope);
-        } else if (const auto *name =
-                       exprAs<QualifiedName>(call->callee().get())) {
-          target =
-              resolveClassPathGlobally(name->name(), owner->namespaceScope);
-        }
-        // This is the constructor declaration's dependency summary, queried
-        // again from callers in other source units. Caller visibility must not
-        // hide a private implementation type used in that declaration. Its
-        // ordinary body analysis still validates visibility/access at the use.
-        if (!target || *target != nested->id)
+        const auto origin = std::find_if(
+            bindings.bindings.begin(), bindings.bindings.end(),
+            [&](const auto &binding) {
+              return binding.destination.fields == sourceFields &&
+                     binding.destination.reference == path.reference;
+            });
+        if (origin == bindings.bindings.end())
           return {};
-        bool matched = false;
-        for (const auto &candidate : nested->constructors) {
-          if (candidate.declaration == nullptr || candidate.parameterPack ||
-              !candidate.genericParameters.empty() ||
-              candidate.parameterTypes.size() != call->arguments().size())
-            continue;
-          auto nestedTypes = candidate.parameterTypes;
-          std::vector<std::size_t> arguments;
-          for (auto &parameter : nestedTypes) {
-            parameter = substituteType(parameter, classSubstitution(fieldType));
-            const auto source =
-                parameterSource(call->arguments()[arguments.size()], parameter);
-            if (!source)
-              break;
-            arguments.push_back(*source);
-          }
-          if (arguments.size() != nestedTypes.size())
-            continue;
-          if (matched)
-            return {}; // Never choose among ambiguous dependency producers.
-          matched = true;
-          const auto childBindings =
-              self(self, fieldType, candidate.declaration, nestedTypes);
-          const auto child = std::find_if(
-              childBindings.begin(), childBindings.end(),
-              [&](const auto &binding) {
-                return binding.destination.fields == sourceFields &&
-                       binding.destination.reference == path.reference;
-              });
-          if (child == childBindings.end() ||
-              child->parameter >= arguments.size())
-            return {};
-          selected = arguments[child->parameter];
-          sourceFields = child->sourceFields;
-        }
+        selected = origin->parameter;
+        sourceFields = origin->sourceFields;
       }
       if (!selected) {
         return {};
@@ -1942,6 +1986,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "object_relocate") {
       return IntrinsicKind::ObjectRelocate;
     }
+    if (name == "object_relocate_range") {
+      return IntrinsicKind::ObjectRelocateRange;
+    }
     if (name == "text_view_from_address") {
       return IntrinsicKind::TextViewFromAddress;
     }
@@ -2108,6 +2155,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   }
   if (name == "require_allocation") {
     return IntrinsicKind::RequireAllocation;
+  }
+  if (name == "integer_wrapping_add") {
+    return IntrinsicKind::IntegerWrappingAdd;
   }
   if (name == "integer_wrapping_sub") {
     return IntrinsicKind::IntegerWrappingSubtract;
@@ -6848,7 +6898,9 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
-  if (intrinsic == IntrinsicKind::ObjectRelocate) {
+  if (intrinsic == IntrinsicKind::ObjectRelocate ||
+      intrinsic == IntrinsicKind::ObjectRelocateRange) {
+    const bool range = intrinsic == IntrinsicKind::ObjectRelocateRange;
     std::vector<SemanticType> arguments;
     for (const ExprPtr &argument : expr.arguments())
       arguments.push_back(analyze(argument));
@@ -6857,16 +6909,21 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
                   "Relocating a raw object");
     const bool pointerShape =
-        arguments.size() == 2 && expr.typeArguments().empty() &&
+        arguments.size() == (range ? 3 : 2) && expr.typeArguments().empty() &&
         arguments[0] == arguments[1] &&
         arguments[0].kind == SemanticType::RawPointer &&
         arguments[0].pointerAccess == AccessMode::Mutable &&
-        arguments[0].arguments.size() == 1;
+        arguments[0].arguments.size() == 1 &&
+        (!range || arguments[2] == SemanticType::UInt64);
     if (!pointerShape) {
-      report(expr.paren(),
-             "Object relocation requires two writable pointers to the same "
-             "complete object type.",
-             "GTI-S2019");
+      report(
+          expr.paren(),
+          range
+              ? "Range relocation requires two writable pointers to the "
+                "same complete object type and a size_t count."
+              : "Object relocation requires two writable pointers to the same "
+                "complete object type.",
+          "GTI-S2019");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -6874,10 +6931,15 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     if (!containsOpenTypeParameter(element) &&
         (!runtimeObjectLayoutType(element) ||
          typeTraits(element).containsBorrowedState ||
-         typeTraits(element).relocation == RelocationKind::Unavailable)) {
+         typeTraits(element).relocation == RelocationKind::Unavailable ||
+         (range &&
+          typeTraits(element).relocation != RelocationKind::Bitwise))) {
       report(expr.paren(),
-             "Object relocation requires a complete relocatable type without "
-             "checked borrowed state.",
+             range ? "Range relocation requires a complete bitwise-relocatable "
+                     "type without checked borrowed state."
+                   : "Object relocation requires a complete relocatable type "
+                     "without "
+                     "checked borrowed state.",
              "GTI-S2019");
       currentType = SemanticType::Unknown;
       return;

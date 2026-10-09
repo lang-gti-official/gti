@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from allocation_abort_runtime_test import ABORT_STATUS
 
 def run(command, *, timeout=300):
     result = subprocess.run(command, text=True, capture_output=True,
@@ -49,8 +50,8 @@ def main():
                              if "gti_internal::index_bounds_check" in vector_lines[i])
     memory_lines = (repository / "stdlib/std/memory.gti").read_text().splitlines()
     allocation_line = next(i + 1 for i, text in enumerate(memory_lines)
-                           if "require_allocation(allocated.has_value())" in text)
-    url_failure = (70, "90\nlive=0\n",
+                           if "require_allocation(false)" in text)
+    url_failure = (ABORT_STATUS, "",
                    f"<std/memory>:{allocation_line}: runtime error[GTI-R0011]: allocation_failure in private_storage\n")
     cases = {
         "url-failure": (fixtures / "http_url_allocation_failure.gti", [

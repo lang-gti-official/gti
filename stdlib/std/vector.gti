@@ -145,7 +145,7 @@ public:
   vector(size_t initial_size)
       : data(std::detail::prefix_owner<T>(initial_size)) {
     while (this.data.length() < initial_size) {
-      this.data.append();
+      unsafe { this.data.append_unchecked(); }
     }
   }
 
@@ -153,7 +153,7 @@ public:
       : data(std::detail::prefix_owner<T>(N)) {
     while (this.data.length() < N) {
       size_t index = this.data.length();
-      this.data.append_value(initial[index]);
+      unsafe { this.data.append_value_unchecked(initial[index]); }
     }
   }
 
@@ -175,7 +175,7 @@ public:
     requires std::relocatable<T> {
     gti_internal::index_bounds_check(left, this.size());
     gti_internal::index_bounds_check(right, this.size());
-    this.data.swap_elements(left, right);
+    unsafe { this.data.swap_elements_unchecked(left, right); }
   }
 
   /// Returns whether the vector contains no elements.
@@ -187,14 +187,14 @@ public:
     size_t live = this.data.length();
     size_t index = size_t(0);
     gti_internal::index_bounds_check(index, live);
-    return this.data.read(index);
+    unsafe { return this.data.read_unchecked(index); }
   }
 
   mut T& front() mut {
     size_t live = this.data.length();
     size_t index = size_t(0);
     gti_internal::index_bounds_check(index, live);
-    return this.data.read_mut(index);
+    unsafe { return this.data.read_mut_unchecked(index); }
   }
 
   T& back() {
@@ -204,7 +204,7 @@ public:
       index = live - 1;
     }
     gti_internal::index_bounds_check(index, live);
-    return this.data.read(index);
+    unsafe { return this.data.read_unchecked(index); }
   }
 
   mut T& back() mut {
@@ -214,31 +214,41 @@ public:
       index = live - 1;
     }
     gti_internal::index_bounds_check(index, live);
-    return this.data.read_mut(index);
+    unsafe { return this.data.read_mut_unchecked(index); }
   }
 
   T& at(size_t index) {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return this.data.read(index);
+    unsafe { return this.data.read_unchecked(index); }
   }
 
   mut T& at(size_t index) mut {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return this.data.read_mut(index);
+    unsafe { return this.data.read_mut_unchecked(index); }
   }
 
   T& operator[](size_t index) {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return this.data.read(index);
+    unsafe { return this.data.read_unchecked(index); }
   }
 
   mut T& operator[](size_t index) mut {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
-    return this.data.read_mut(index);
+    unsafe { return this.data.read_mut_unchecked(index); }
+  }
+
+  /// The caller proves index < size(); the result still borrows this vector.
+  unsafe T& get_unchecked(size_t index) {
+    unsafe { return this.data.read_unchecked(index); }
+  }
+
+  /// The caller proves index < size(); exclusive loans still apply.
+  unsafe mut T& get_unchecked_mut(size_t index) mut {
+    unsafe { return this.data.read_mut_unchecked(index); }
   }
 
   const_iterator begin() {
@@ -273,29 +283,29 @@ public:
 
     mut std::detail::prefix_owner<T> replacement =
         std::detail::prefix_owner<T>(requested);
-    this.data.relocate_to(replacement);
+    unsafe { this.data.relocate_to_unchecked(replacement); }
     this.data = std::move(replacement);
   }
 
   void resize(size_t requested) mut
     requires std::default_initializable<T> {
     while (this.data.length() > requested) {
-      this.data.pop();
+      unsafe { this.data.pop_unchecked(); }
     }
     this.reserve(requested);
     while (this.data.length() < requested) {
-      this.data.append();
+      unsafe { this.data.append_unchecked(); }
     }
   }
 
   void resize(size_t requested, T value) mut
     requires std::copyable<T> {
     while (this.data.length() > requested) {
-      this.data.pop();
+      unsafe { this.data.pop_unchecked(); }
     }
     this.reserve(requested);
     while (this.data.length() < requested) {
-      this.data.append_value(value);
+      unsafe { this.data.append_value_unchecked(value); }
     }
   }
 
@@ -306,43 +316,44 @@ public:
     }
     mut std::detail::prefix_owner<T> replacement =
         std::detail::prefix_owner<T>(live);
-    this.data.relocate_to(replacement);
+    unsafe { this.data.relocate_to_unchecked(replacement); }
     this.data = std::move(replacement);
   }
 
   void push_back(T value) mut {
     this.ensure_capacity_for_one();
-    this.data.append_value(std::move(value));
+    unsafe { this.data.append_value_unchecked(std::move(value)); }
   }
 
   void insert(size_t index, T value) mut {
+    if (index > this.size()) { gti_internal::index_bounds_check(index, this.size()); }
     this.ensure_capacity_for_one();
-    this.data.insert( index, std::move(value));
+    unsafe { this.data.insert_unchecked(index, std::move(value)); }
   }
 
   mut T& emplace_back<Args...>(Args... args) mut {
     this.ensure_capacity_for_one();
     size_t index = this.data.length();
-    this.data.append(args...);
-    return this.data.read_mut(index);
+    unsafe {
+      this.data.append_unchecked(args...);
+      return this.data.read_mut_unchecked(index);
+    }
   }
 
   void pop_back() mut {
     if (this.data.length() == 0) {
       return;
     }
-    this.data.pop();
+    unsafe { this.data.pop_unchecked(); }
   }
 
   void erase(size_t index) mut {
     gti_internal::index_bounds_check(index, this.size());
-    this.data.erase(index);
+    unsafe { this.data.erase_unchecked(index); }
   }
 
   void clear() mut {
-    while (this.data.length() > 0) {
-      this.data.pop();
-    }
+    this.data.clear();
   }
 
   /// Exchanges storage and capacity without allocating or moving elements.
@@ -357,8 +368,9 @@ public:
     size_t live = this.data.length();
     result.reserve(live);
     for (mut size_t index = 0; index < live; index++) {
-      result.push_back(
-          std::clone(this.data.read(index)));
+      unsafe {
+        result.data.append_value_unchecked(std::clone(this.data.read_unchecked(index)));
+      }
     }
     return std::move(result);
   }

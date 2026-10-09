@@ -146,6 +146,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectConstruct:
     return barrier("unsafe final-address construction and ownership handoff");
   case IntrinsicKind::ObjectRelocate:
+  case IntrinsicKind::ObjectRelocateRange:
     return barrier("unsafe destructive relocation and raw ownership transfer");
   case IntrinsicKind::ObjectSize:
   case IntrinsicKind::ObjectAlignment:

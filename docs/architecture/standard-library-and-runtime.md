@@ -59,7 +59,7 @@ obtain metadata releases the object region before returning an error.
 | Allocation family | Current owner and rationale |
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
-| Prefix storage used by strings/vectors and related clients | Source prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. The native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are removed on the S-ALLOC-08 branch; full regression migration and campaign acceptance remain in progress. |
+| Prefix storage used by strings/vectors and related clients | Source prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. The native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are removed on the S-ALLOC-09 task branch; revised raw-buffer layering, full regression migration and campaign acceptance remain in progress. |
 | Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Shared ownership additionally uses its native control block. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
 | Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
 | Compiler and tool memory | C++ containers in compiler, driver, LSP and tooling are host implementation state, outside GTI-program allocation policy. |
@@ -73,7 +73,7 @@ provide a deterministic test seam for exhaustion, rollback and matching release.
 ## Operation Ownership Ledger
 
 Initial evidence snapshot: 2026-10-08, reviewed against `14caa023`; prefix rows
-now include the in-progress S-ALLOC-08 branch cutover. This ledger
+now include the in-progress S-ALLOC-09 branch cutover. This ledger
 classifies current ownership and remaining boundaries; it does not approve or
 schedule migrations. The [implementation sequence](../plans/implementation-sequence.md)
 remains the sole work queue. Source and owning tests take precedence when an
@@ -146,16 +146,16 @@ does not claim a new test run.
 
 ### B. Source-Policy Migrations And Remaining Prerequisites
 
-These entries distinguish migration work from complete acceptance. S-ALLOC-08
-is authorized and implemented on its task branch, but its retirement/admission
-campaign is not complete. Other rows remain candidates, not implicitly approved
-or completed migrations.
+These entries distinguish migration work from complete acceptance. The source
+prefix cutover is implemented on its task branch, but S-ALLOC-09's revised
+raw-buffer/checking contract and retirement/admission campaign are not complete.
+Other rows remain candidates, not implicitly approved or completed migrations.
 "Prerequisite" means a fact that must be established before retiring a path,
 not permission to weaken existing safety or reject previously supported users.
 
 | ID | Operation to move | Current owner | Prerequisite/acceptance boundary |
 | --- | --- | --- | --- |
-| M01 | Prefix allocation, length and live-prefix bookkeeping | Source `prefix_slots<T>` and matching leases; private native/prelude/IR/representation/optimizer family removed. | S-ALLOC-08 final admission, corpus and measured performance acceptance. One authoritative count, no sparse metadata, allocation rollback and exactly-once cleanup. |
+| M01 | Prefix allocation, length and live-prefix bookkeeping | Source `prefix_slots<T>` and matching leases; private native/prelude/IR/representation/optimizer family removed. | S-ALLOC-09 raw-buffer layering, final admission, corpus and measured performance acceptance. One authoritative count, no sparse metadata, allocation rollback and exactly-once cleanup. |
 | M02 | Prefix append, pop, insertion, erasure and reserve | Source prefix-owner policy using general object construction/destruction/relocation. | Preserve final-address emplacement, failure-free relocation bounds, ordered arguments, mutation exclusion and all existing element shapes. Complete campaign evidence remains required; first/secondary failure fixtures already exercise source drains. |
 | M03 | Character trailing-NUL policy | Source terminated-prefix owner and embedded-NUL scan. | Empty static sentinel and hidden initialized terminator; checked views retain actual owner. Primitive text/C-string carrier conversion remains an identity-bound general compiler bridge, not a private string-storage engine. |
 | M04 | Views and iterators over migrated storage | Span/vector/string wrappers borrow ordinary source prefix owners through general carrier contracts. | Full corpus/installed-consumer evidence remains required. Raw text conversion uses an exact checked owner witness; primitive text representation itself is not claimed source-defined. |
@@ -176,7 +176,8 @@ This follows Rust's `RawVec`/`Vec` layering, and is recorded in
 [ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
 and planned as
 [`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
-They remain unimplemented. The rows above still describe today's owners.
+The revised layering and unchecked API remain incomplete; the rows above
+describe the existing source-prefix implementation that this task is extending.
 
 Evidence: [vector](../../stdlib/std/vector.gti),
 [string](../../stdlib/std/string.gti),
@@ -1094,6 +1095,15 @@ field must be zero. A nonzero record identity and one-based site must match the
 artifact descriptor and the site's exact allowed `(code, detail)` set. The
 all-zero identity with site zero is the sole descriptor-free runtime sentinel
 and resolves to `"<runtime>":0@0..0`.
+
+The S-ALLOC-08 branch adds `gti_rt_failure_abort_allocation_v2` as the runtime
+primitive for infallible exhaustion. It reports a validated allocation record
+without allocating, then calls native abort directly: no observer, managed-task
+handoff, stream flush or terminal-arbitration wait. A malformed native record
+falls back to a descriptor-free allocation report. This primitive must be
+called at the detector, before cleanup; adding it alone does not change the
+compiler's existing allocation failure edges. Compiler wiring and complete
+source-family acceptance remain in progress under S-ALLOC-08.
 
 Only `panic` / `explicit_panic` (`GTI-R0017`, detail 37) admits a message.
 Generated code prepares its exact record header, then calls

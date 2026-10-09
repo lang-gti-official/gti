@@ -8,16 +8,14 @@ concept resource_vector_element<T> = std::movable<T> && std::relocatable<T>
     && std::storage_element<T>;
 
 namespace detail {
-// Resource-backed prefix ownership uses one object region and one authoritative
-// live length. The lease precedes the slot engine so reverse field cleanup
-// destroys every element before returning bytes to the original resource.
+// The same raw-buffer/length policy retains a checked resource lease. Prefix
+// cleanup runs before raw-buffer field cleanup releases its one object region.
 class resource_prefix_owner<std::storage_element T, std::memory_resource R> {
-  mut resource_lease<R> lease;
-  mut gti_internal::prefix_slots<T> data;
+  mut gti_internal::prefix_slots<T, resource_lease<R>> data;
 
 public:
   resource_prefix_owner(resource_ref<R> resource)
-      : lease(resource_lease<R>(resource)), data(gti_internal::prefix_slots<T>()) {}
+      : data(gti_internal::prefix_slots<T, resource_lease<R>>(resource_lease<R>(resource))) {}
   resource_prefix_owner(resource_prefix_owner<T, R>& other) = delete;
   resource_prefix_owner(resource_prefix_owner<T, R>&& other) = default;
 
@@ -27,39 +25,38 @@ public:
   expected<void, alloc_errc> try_reserve(size_t requested) mut
       requires std::movable<T> && std::relocatable<T> {
     if (requested <= this.capacity()) { return; }
-    mut size_t selected = this.lease.alignment();
+    mut size_t selected = this.data.buffer.lease.alignment();
     if (selected == size_t(0)) { selected = layout_of<T>().alignment; }
-    mut resource_prefix_owner<T, R> candidate{this.lease.binding()};
-    auto attempt = gti_internal::try_allocate_prefix(
-        candidate.lease, candidate.data, requested, selected);
+    resource_ref<R> resource = this.data.buffer.lease.binding();
+    mut resource_prefix_owner<T, R> candidate{resource};
+    auto attempt = candidate.data.try_allocate(requested, selected);
     if (!attempt) { return unexpected(attempt.error()); }
-    this.data.relocate_to(candidate.data);
-    gti_internal::prefix_slots<T> previous = std::move(this.data);
-    this.data = std::move(candidate.data);
-    candidate.data = std::move(previous);
-    raw_allocation previous_allocation = this.lease.take();
     unsafe {
-      this.lease.attach(candidate.lease.take());
-      candidate.lease.attach(previous_allocation);
+      this.data.relocate_to_unchecked(candidate.data);
+      this.data.swap(candidate.data);
     }
     return;
   }
 
-  void append<Args...>(Args... args) mut { this.data.append(args...); }
-  void append_value(T value) mut { this.data.append_value(std::move(value)); }
+  unsafe void append<Args...>(Args... args) mut { unsafe { this.data.append_unchecked(args...); } }
+  unsafe void append_value(T value) mut {
+    unsafe { this.data.append_value_unchecked(std::move(value)); }
+  }
   T& get(size_t index) { return this.data.read(index); }
   mut T& get_mut(size_t index) mut { return this.data.read_mut(index); }
-  void pop() mut { this.data.pop(); }
+  unsafe T& get_unchecked(size_t index) { unsafe { return this.data.read_unchecked(index); } }
+  unsafe mut T& get_unchecked_mut(size_t index) mut {
+    unsafe { return this.data.read_mut_unchecked(index); }
+  }
+  unsafe void pop() mut { unsafe { this.data.pop_unchecked(); } }
   void clear() mut { this.data.clear(); }
 
   void release() mut {
     // Detach before element cleanup. If a destructor fails, ordinary cleanup
     // still drains the retired prefix before releasing this exact descriptor.
-    raw_allocation allocation = this.lease.take();
-    resource_lease<R> previous_lease{
-        gti_internal::resource_binding::trusted, this.lease.binding(), allocation};
-    gti_internal::prefix_slots<T> previous = std::move(this.data);
-    this.data = gti_internal::prefix_slots<T>();
+    resource_ref<R> resource = this.data.buffer.lease.binding();
+    mut resource_prefix_owner<T, R> previous{resource};
+    unsafe { this.data.swap(previous.data); }
   }
 };
 
@@ -128,41 +125,56 @@ public:
   }
 
   void reserve(size_t requested) mut {
-    this.try_reserve(requested).expect("resource_vector could not reserve storage");
+    auto attempt = this.try_reserve(requested);
+    if (!attempt) { gti_internal::fail_allocation(attempt.error()); }
   }
 
   /// The argument is consumed even if allocation fails; existing elements stay.
   expected<void, alloc_errc> try_push_back(T value) mut {
     auto grown = this.try_grow_for_one();
     if (!grown) { return unexpected(grown.error()); }
-    this.slots.append_value(std::move(value));
+    unsafe { this.slots.append_value(std::move(value)); }
     return;
   }
 
   void push_back(T value) mut {
-    this.try_push_back(std::move(value)).expect("resource_vector could not grow");
+    // Keep the prepared value in this frame until growth completes. Forwarding
+    // it to the try_ wrapper would destroy it before reporting exhaustion.
+    auto grown = this.try_grow_for_one();
+    if (!grown) { gti_internal::fail_allocation(grown.error()); }
+    unsafe { this.slots.append_value(std::move(value)); }
   }
 
   /// A failing constructor keeps its original failure and publishes no element.
   expected<void, alloc_errc> try_emplace_back<Args...>(Args... args) mut {
     auto grown = this.try_grow_for_one();
     if (!grown) { return unexpected(grown.error()); }
-    this.slots.append(args...);
+    unsafe { this.slots.append(args...); }
     return;
   }
 
   void emplace_back<Args...>(Args... args) mut {
-    this.try_emplace_back(args...).expect("resource_vector could not grow");
+    auto grown = this.try_grow_for_one();
+    if (!grown) { gti_internal::fail_allocation(grown.error()); }
+    unsafe { this.slots.append(args...); }
   }
 
   T& get(size_t index) {
     gti_internal::index_bounds_check(index, this.size());
-    return this.slots.get(index);
+    unsafe { return this.slots.get_unchecked(index); }
   }
 
   mut T& get_mut(size_t index) mut {
     gti_internal::index_bounds_check(index, this.size());
-    return this.slots.get_mut(index);
+    unsafe { return this.slots.get_unchecked_mut(index); }
+  }
+
+  /// The caller proves index < size(); the checked resource/owner loan remains.
+  unsafe T& get_unchecked(size_t index) {
+    unsafe { return this.slots.get_unchecked(index); }
+  }
+  unsafe mut T& get_unchecked_mut(size_t index) mut {
+    unsafe { return this.slots.get_unchecked_mut(index); }
   }
 
   T& operator[](size_t index) { return this.get(index); }
@@ -172,17 +184,17 @@ public:
 
   T& back() {
     gti_internal::index_bounds_check(size_t(0), this.size());
-    return this.slots.get(this.size() - size_t(1));
+    unsafe { return this.slots.get_unchecked(this.size() - size_t(1)); }
   }
 
   mut T& back() mut {
     gti_internal::index_bounds_check(size_t(0), this.size());
-    return this.slots.get_mut(this.size() - size_t(1));
+    unsafe { return this.slots.get_unchecked_mut(this.size() - size_t(1)); }
   }
 
   void pop_back() mut {
     gti_internal::index_bounds_check(size_t(0), this.size());
-    this.slots.pop();
+    unsafe { this.slots.pop(); }
   }
 
   void clear() mut {

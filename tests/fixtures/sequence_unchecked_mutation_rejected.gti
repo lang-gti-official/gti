@@ -1,0 +1,11 @@
+#include <std/string>
+
+int main() {
+  mut std::string text{"loan"};
+  unsafe {
+    mut char& first = text.get_unchecked_mut(std::size_t(0));
+    text.clear();
+    first = 'L';
+  }
+  return 0;
+}

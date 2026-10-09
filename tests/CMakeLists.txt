@@ -304,6 +304,11 @@ add_executable("gti_runtime_failure_helper"
 target_link_libraries("gti_runtime_failure_helper"
                       PRIVATE gti_runtime Threads::Threads)
 
+add_executable("gti_allocation_abort_helper"
+               "${PROJECT_SOURCE_DIR}/tests/allocation_abort_helper.cpp")
+target_link_libraries("gti_allocation_abort_helper"
+                      PRIVATE gti_runtime Threads::Threads)
+
 add_executable("gti_compiler_library_smoke"
                "${PROJECT_SOURCE_DIR}/tests/compiler_library_smoke.cpp")
 target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
@@ -1365,6 +1370,12 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/runtime_failure_test.py"
             "$<TARGET_FILE:gti_runtime_failure_helper>"
+  )
+  add_test(
+    NAME allocation_abort_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/allocation_abort_runtime_test.py"
+            "$<TARGET_FILE:gti_allocation_abort_helper>"
   )
   add_test(
     NAME panic_runtime

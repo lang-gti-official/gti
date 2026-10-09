@@ -1381,13 +1381,16 @@ private:
          .dropType = {.type = call.info.type, .requiresActiveCleanup = true}});
     DefinedFailureOperation failure = call.definedFailure;
     failure.propagation = FailurePropagationKind::None;
-    (void)appendInstruction({.kind = MirInstructionKind::AllocateObject,
-                             .hirValue = call.id,
-                             .successResultDrop = id,
-                             .destination = place,
-                             .definedFailure = std::move(failure),
-                             .objectAllocation = id,
-                             .info = call.info});
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::AllocateObject,
+         .hirValue = call.id,
+         .destination = place,
+         .definedFailure = std::move(failure),
+         .objectAllocation = id,
+         .info = call.info,
+         .lifecycle = {
+             {.kind = MirLifecycleEventKind::Initialize, .target = id}}});
+    registerTemporary(id);
     return id;
   }
 
@@ -6143,7 +6146,7 @@ private:
     // later CallInput reparents it or full-expression cleanup drops it.
     const bool successEdgeResult =
         resultDrop != 0 && routeFailureEdgesHere() &&
-        !call.definedFailure.empty() && !call.destination &&
+        call.definedFailure.mayUnwind() && !call.destination &&
         (!call.loan || transferableBorrowedResult ||
          borrowedTemporaryTransfers.contains(value.id)) &&
         !value.ownership;

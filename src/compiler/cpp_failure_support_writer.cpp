@@ -620,19 +620,20 @@ public:
 };
 
 // Scalar initialization cannot execute user code. Allocation is the sole
-// detector here; the caller's MIR owns its record, cleanup, and publication.
+// detector here; the caller's MIR owns its abort record and publication.
 template <typename T, typename... Args>
 inline mir_failure_status_v1
 mir_allocate_unique_scalar_v1(std::unique_ptr<T> *result, Args... args) noexcept {
   static_assert((std::is_scalar_v<T> || is_raw_address_v<T>) && sizeof...(Args) <= 1);
-  // A direct allocation-function call cannot be elided as a C++ new-expression;
-  // GTI's allocation outcome must remain observable at this MIR instruction.
-  void *storage = ::operator new(sizeof(T), std::nothrow);
+  // GTI permits process allocation elision. Preserve a native new-expression
+  // so the native optimizer can eliminate a nonescaping allocation/release
+  // pair; application resource calls never use this allocation capability.
+  T *storage = new (std::nothrow) T(args...);
   if (storage == nullptr) {
     return {GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1,
             GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1};
   }
-  result->reset(std::construct_at(static_cast<T *>(storage), args...));
+  result->reset(storage);
   return mir_failure_success_v1;
 }
 
