@@ -11779,7 +11779,8 @@ void testFixedArrayPackForwarding() {
           if (element.type == array && function.source) {
             sparseArrayForwarding |=
                 function.source->name().lexeme == "emplace";
-            prefixArrayForwarding |= function.source->name().lexeme == "append";
+            prefixArrayForwarding |=
+                function.source->name().lexeme == "append_unchecked";
           }
           expect(element.kind == lang::HirCallInputKind::Value &&
                      element.traits.copyable &&

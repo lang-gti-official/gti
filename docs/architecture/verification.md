@@ -63,6 +63,25 @@ SIMD instructions and the scalar reference has none. The c115/c116 storage
 failure corpus cases also pass with reviewed source-line changes only: exact
 categories, status 70 and cleanup order are unchanged in all seven cases.
 
+The reconciled `eb3529da` compiler builds all targets in Release with LLVM
+23.1.2. Its focused rerun passes shared-owner MIR contracts, public checked
+swap/private unchecked relocation, all final-slot construction and generated
+transport modes, operator diagnostics, lambda/function-item transport, and the
+loopback registry/HTTP/example and LLDB gates. Those environment-dependent
+gates were rerun with the required local permissions, not skipped. The generic
+array-forwarding assertion is updated to inspect the new unchecked internal
+append; its exact passive array, construction and rejection checks still pass.
+The eleven-test allocation/control selection passes in 65.81 seconds, including
+scalar/class/inherited/existing-value exhaustion, allocation elision, source
+strings, reverse storage drains and process resource policy. Combined full-suite,
+resource-constructor and optimizer performance acceptance remains open.
+
+The resource-growth corpus oracle now requires portable exact abort status,
+not merely nonzero termination. A C17 helper makes its cleanup witnesses
+unbuffered before execution. The harness rejects status 70 and unrelated
+signals, and the c118 fixture still fails until its backend resource-constructor
+prerequisite is implemented; its new expectation is not evidence of a pass.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both

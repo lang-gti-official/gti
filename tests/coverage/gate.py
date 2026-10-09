@@ -33,6 +33,8 @@ on how often a text may appear (for example a duplicated error), and a compile
 `flags`. A program may instead list `cases`, each running the built program
 with `args` and comparing its `exit`, exact `stdout`, and a `stderr` regular
 expression; this checks defined runtime failure reports and cleanup order.
+The `exit` value `"abort"` requires the platform's exact abort status, not just
+a nonzero result; it distinguishes allocation exhaustion from contained failure.
 `native_sources` may name C17 fixtures beneath this directory's `native/`
 folder. The gate compiles them as C, then links their objects into the GTI
 program; invalid paths or C compiler failures are test-infrastructure errors,
@@ -53,6 +55,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -76,6 +79,14 @@ UNLOCATED = re.compile(r"^<source>:", re.MULTILINE)
 
 class CoverageInfrastructureError(RuntimeError):
     pass
+
+
+def runtime_exit_status(value: int | str) -> int:
+    if value == "abort":
+        return 3 if os.name == "nt" else -signal.SIGABRT
+    if type(value) is not int:
+        raise CoverageInfrastructureError("runtime exit must be an integer or 'abort'")
+    return value
 
 
 def native_objects(output: Path, expectation: dict) -> list[str]:
@@ -207,6 +218,7 @@ def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[
     if compiled.returncode == 0:
         cases = expectation.get("cases", [{"exit": expected_exit}])
         for index, case in enumerate(cases):
+            case_exit = runtime_exit_status(case.get("exit", 0))
             try:
                 # Run from the output directory so programs that write
                 # relative files never touch the source tree.
@@ -214,8 +226,8 @@ def classify(gti: Path, source: Path, output: Path, expectation: dict) -> tuple[
                                      text=True, timeout=RUN_SECONDS, cwd=output.parent)
             except subprocess.TimeoutExpired:
                 return "hang", f"case {index} exceeded {RUN_SECONDS}s"
-            if ran.returncode != case.get("exit", 0):
-                return "runtime", f"case {index}: exit {ran.returncode}, expected {case.get('exit', 0)}"
+            if ran.returncode != case_exit:
+                return "runtime", f"case {index}: exit {ran.returncode}, expected {case_exit}"
             if "stdout" in case and ran.stdout != case["stdout"]:
                 return "runtime", f"case {index}: stdout {ran.stdout!r}"
             if "stderr" in case and not re.fullmatch(case["stderr"], ran.stderr, re.DOTALL):
