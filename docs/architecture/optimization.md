@@ -164,16 +164,16 @@ inheritance/override identities, and authoritative function effects. It does
 not infer a closed world from the number of implementations or recognize
 public library names. Unrelated user-defined interfaces exercise the same rule.
 
-The admitted receiver is one immutable, complete, initialized local class
+The admitted local receiver is one immutable, complete, initialized local class
 object, optionally seen through one non-escaping read-only local interface
 loan. Its single direct base is a root interface. The exact source-defined,
 read-only override accepts and returns scalars and retains its defined-failure
-channel. The object requires no active/custom cleanup. Formal receivers,
-mutable or projected objects, multiple/escaping loans, complex inheritance,
-borrowed/callable arguments or results, native/recursive/unknown target
-effects, allocation, synchronization, and unsupported failure/cleanup shapes
-remain conservative. This is a deliberately bounded client, not a general
-devirtualizer or interprocedural specialization engine.
+channel. The object requires no active/custom cleanup. Mutable or projected
+objects, multiple/escaping loans, complex inheritance, borrowed/callable
+arguments or results, native/recursive/unknown target effects, allocation,
+synchronization, and unsupported failure/cleanup shapes remain conservative.
+Formal reference-parameter receivers use the closed-world form described
+below. Neither form is a general devirtualizer or a specialization engine.
 
 `MirEditor::queueExactReceiver` re-derives the proof on a candidate snapshot,
 refines the existing receiver borrow to the concrete place, and changes only
@@ -197,6 +197,68 @@ from 223.175 to 120.008 ms without a material control regression. Exact
 identities, candidate selection, compiler-time/size/memory controls, and the
 arm64 macOS/workload limitations are recorded in the
 [performance campaign](../plans/performance-tooling.md#o-measure-02-exact-head-runtime-facility-campaign-2026-10-01).
+
+### Closed-World Call-Site Facts
+
+`optimization/closed_world` is the first interprocedural fact family and the
+closed-world contract that interprocedural work is gated on. A function is
+**closed** when every runtime invocation is a visible static MIR `Call` in some
+program body. It is **open** when anything else may invoke it: an entry or
+hosted-startup root, an embedding export, a native-callback or thread-task
+adapter, a `FunctionItem` value, a callable-parameter signature or forwarding
+binding, an intrinsic or native-callee call, virtual dispatch (virtual,
+override, and pure-virtual methods), non-GTI linkage, or a non-source
+definition. Tombstoned references still open a function. The analysis reads
+verified MIR only: it never counts implementations, recognizes public library
+names, or trusts backend emission. Library programs are closed except for
+their embedding exports.
+
+The first fact is the **exact referent class** of a class-reference parameter.
+Each visible call contributes to a three-point lattice (unset, exact class,
+unknown). An argument borrowed from a binding or temporary object, or a field
+of one, contributes its static class, which is its dynamic class: a complete
+object or member subobject cannot be a more-derived object. An argument that
+reborrows the caller's own reference parameter contributes that parameter's
+current fact, so exactness flows through forwarding chains and recursion. A
+reference parameter forwards only when its body never replaces it, borrows it
+mutably, or takes its address. Every other argument shape, a conflicting class,
+a parameter with no visible call, or an unstable reference is unknown. The
+solver is monotone and stabilizes after at most `2 * |parameters| + 1` rounds.
+It runs once per pass, once more in `MirEditor::apply`, and once in coherence
+replay. Each run reads a single program snapshot, and refining a receiver
+changes no direct call's arguments or a function's openness.
+
+### Exact Parameter Receivers
+
+The `exact-receiver-dispatch` pass also admits a virtual call whose receiver is
+the enclosing function's own reference parameter, when the closed-world fact
+gives that parameter an exact class. Inheritance, override selection, target
+signature, effects and failure-channel limits are shared with the local form.
+The referent's cleanup is irrelevant, because the receiver borrow, its place
+and its loans are unchanged. The rewrite makes the call static to the exact
+override, records the owner in `dispatchOwner`, and switches failure
+propagation to `DirectCall`. The result is an **exact receiver presentation**:
+a static member call whose receiver place has a direct interface base of the
+target's owner as its type. Semantics never selects such a member.
+`isMirExactReceiverPresentation` is the shared admission: the MIR verifier
+requires one read-only interface borrow, and the backend emits
+`static_cast<const Owner &>(receiver).Owner::method(...)`. The transformation
+record is `devirtualize-call` / `exact-parameter-receiver`, with the
+`closedWorld` required analysis. Coherence replay re-derives the closed-world
+facts from the folded canonical candidate, then replays the record.
+
+On the `interface.gti` runtime probe (an interface helper taking `Update&`,
+called with a local `Linear`), arm64 macOS O3 medians drop from 374.97 to
+257.02 ms. That equals the local-receiver variant (257.41 ms) and is within 9%
+of the direct-call proxy (237.70 ms). Control probes emit byte-identical C++
+modulo checkout-path instance digests. GTI-only compile time is unchanged
+within noise. See
+[performance-tooling.md](../plans/performance-tooling.md#closed-world-exact-parameter-receivers-2026-10-09).
+
+Still conservative: receivers reached through pointers, owning pointees (the
+allocated `std::function` models), `this`, base subobjects, local reference
+bindings, unknown or mixed callers, and function-item or callback escapes. The
+same inheritance limits as the local form also remain.
 
 ### Local Scalar Transformations
 

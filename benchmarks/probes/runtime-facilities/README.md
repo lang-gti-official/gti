@@ -14,7 +14,7 @@ Compare saved time per 1,024-lane tick, not raw durations across those scales.
 | Candidate | Source proxy and retained semantics |
 | --- | --- |
 | Callback/accessor chain | Direct known scalar call, retaining construction and destruction of the same nonempty owning callback. |
-| Interface helper | Direct known scalar call, retaining the same concrete receiver; tests the ceiling of interprocedural receiver propagation, not just the implemented local slice. `interface-local.gti` isolates that local slice. |
+| Interface helper | Direct known scalar call, retaining the same concrete receiver; the ceiling of interprocedural receiver propagation. Since 0.394.0 the closed-world exact-parameter receiver refines `interface.gti` itself; `interface-local.gti` isolates the local slice. |
 | Owner flow | Return the computed scalar directly but retain the allocation and destruction. GTI allocation failure is observable, so deleting the allocation would be an invalid proxy. |
 | SoA | Expose the two distinct vector origins by placing the helper body at its caller; retain arithmetic and access checks. |
 | Cross-translation-unit | ThinLTO on the native object and final link, with exactly the same source and checked arithmetic. No unchecked flags or undefined behavior. |

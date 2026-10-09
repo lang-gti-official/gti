@@ -1,5 +1,52 @@
 # GTI Performance Measurement And Optimization Tooling Proposal
 
+## Closed-world exact parameter receivers (2026-10-09)
+
+Status: implemented as a proposal; targeted validation only. The full suite is
+deferred to reconciliation. The change adds
+[closed-world call-site facts](../architecture/optimization.md#closed-world-call-site-facts)
+and their first client,
+[exact parameter receivers](../architecture/optimization.md#exact-parameter-receivers).
+
+Both compilers are Release builds from the same LLVM 22.1.8 configuration. The
+baseline is merged main `e659c93f`; the candidate is that tree plus this
+change. The machine is an Apple M2 Max, macOS 27.0 (`26A428`), Apple Clang
+21.0.0 (`clang-2100.3.34.2`), GTI `-O3`, default native flags. Each probe was
+built by both compilers and its complete stdout was hashed. Outputs match
+pairwise. The run had 3 warmups, then 15 seeded interleaved rounds, with no
+concurrent build or test work:
+
+| Probe (`benchmarks/probes/runtime-facilities`) | Baseline median ms | Candidate median ms | Ratio | Binary bytes |
+| --- | ---: | ---: | ---: | --- |
+| `interface` (helper taking `Update&`) | 374.97 | 257.02 | 0.685 | 145488 -> 145600 |
+| `interface-local` (local-receiver slice) | 257.29 | 257.41 | 1.000 | unchanged |
+| `interface-proxy` (direct-call ceiling) | 237.14 | 237.70 | 1.002 | unchanged |
+| `callback` | 518.48 | 517.18 | 0.997 | unchanged |
+| `soa` | 558.27 | 560.57 | 1.004 | unchanged |
+
+`interface` now matches the existing local-receiver result. Its only C++
+difference is the one refined call:
+`static_cast<const Linear &>(*p).::Linear::run__gti_mir_failure(...)`. The
+`interface-local`, `interface-proxy`, `callback`, `callback-proxy`, `soa`,
+`cross-unit`, `vector-checked-loop` and `game-update-stage` sources emit
+byte-identical C++. `owner` and `checked-scalar-chain` differ only in
+`__gti_inst_`/`__gti_type_` digests. Internal-linkage identities hash their
+source path, and the two checkouts differ, so executable hashes differ even
+for these controls.
+
+GTI-only compile time (`-O3 --emit-cpp`, 7 interleaved samples after one
+warmup) shows no measurable change. Ratios are 0.980-0.996 on `interface.gti`,
+`examples/128-inline-object-pool.gti`, `examples/121-programmable-allocators.gti`
+and the `game-update-stage` workload. A first `examples/86-owning-callbacks.gti`
+sample read 1.044; a dedicated rerun read 0.996. That example has 7 virtual-call
+candidates, none refined: its receivers are allocated `std::function` models
+reached through owning pointers. They are the next client for this fact
+family, not a regression.
+
+Limits: one machine and one native compiler. The probe is a source proxy, not
+a production application. The canonical `interface-exact-dispatch` workload
+measures the local form and is unchanged.
+
 ## RT-1: source-storage failure-path cost
 
 Status: complete bounded implementation; frozen before/after measurements,
