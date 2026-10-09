@@ -9,6 +9,11 @@ general language facilities. The reference C++ backend implements GTI semantics;
 it does not define them. [ADR 012](decisions/012-outcome-first-systems-readiness.md)
 records this direction and the goal-oriented planning policy.
 
+Runtime performance is a first-class design and delivery requirement.
+[ADR 012's performance revision](decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
+removes benchmark-first permission gates for optimization architecture work;
+measurement still validates results and performance acceptance.
+
 Read historical decisions and bounded implementation slices in their original
 scope. Their assumptions may need explicit revision as the language grows;
 neither an old restriction nor a current backend limitation automatically defines

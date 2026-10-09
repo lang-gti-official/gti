@@ -3981,7 +3981,19 @@ terminal status 70 plus its report. The installed-library workflow repeats the
 runtime/compiler header-coexistence gate from one staged include directory so
 neither public contract can overwrite the other.
 
-Performance measurements are never ordinary CI timing gates. The
+Runtime performance is a required acceptance dimension under
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09),
+not an optional consequence of passing the functional suite. A benchmark is
+not required to authorize architectural work. Changes affecting execution must
+validate representative optimized runtime and report allocation, code-size and
+relevant build/memory costs, with an equivalent-contract baseline where one
+exists. New facilities require an explicit cost model and controls instead of
+an invented historical baseline. A material regression requires correction or
+explicit owner acceptance of the documented tradeoff; recording a follow-up
+does not itself satisfy acceptance. Earlier completion records retain their
+historical meaning and are not retroactively reclassified by this policy.
+
+Performance measurements are not ordinary shared-CI wall-time gates. The
 repository-owned `scripts/benchmark_compare.py` first validates versioned
 descriptors, builds every declared variant beneath a controlled output root,
 and requires one matching `GTI-BENCH-1` correctness record before collecting

@@ -33,6 +33,26 @@ files under `docs/plans/`. The documents under
 [`docs/third-party-audit/`](../third-party-audit/) are evidence and review
 input, not a second implementation queue.
 
+## Runtime Performance Requirement: 2026-10-09
+
+Runtime performance is now a first-class design and delivery requirement under
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09).
+This explicitly supersedes benchmark/proxy-first admission restrictions in the
+older O-PERF, O-MIR and RT rows below. General optimization architecture can be
+designed and implemented from a reasoned cost model and the needs of systems
+operation families; no previously benchmarked regression, individual hot client
+or minimum proxy speedup is required to start. Technical prerequisites, phase
+authority, correctness proofs and task scope still apply.
+
+Measurements remain implementation acceptance evidence, not permission to work.
+Validate optimized representative execution and its runtime, allocation,
+code-size and relevant compile/memory tradeoffs. Material regressions require
+correction or explicit owner acceptance; functional success plus a follow-up
+issue no longer suffices. Historical completed campaigns and their measurements
+remain historical facts, not proof that runtime performance is finished or that
+new architecture must wait for another regression. This documentation revision
+does not itself implement an optimizer or storage migration.
+
 ## Runtime audit follow-up: 2026-10-09
 
 `RT-1` is complete as a bounded client: reduce source-storage success-path costs
@@ -1652,7 +1672,7 @@ Every row has one of these states:
 | **planned** | A goal is identified; named prerequisites or design work remain before its acceptance criteria can pass. |
 | **active** | One task owns the row and has recorded its bounded scope. |
 | **done** | The implementation, tests, and canonical documentation passed the exit gate. |
-| **measured defer** | No demonstrated client or payoff justifies the work yet. |
+| **measured defer** | A prior measurement deferred that slice. For runtime architecture, this is historical evidence, not a benchmark prerequisite to renewed work under ADR 012. |
 | **later breadth** | No current systems-readiness workload requires the broader form; evidence may move it earlier. |
 
 Readiness role is separate from dependency state:
@@ -8395,8 +8415,9 @@ complete.
   Verification rejects under-approximation and permits conservative
   over-approximation. The older defined-failure facts remain their separate
   exact failure contract.
-- **Remaining scope:** add precision only with a measured transformation that
-  can prove an existing conservative boundary more exactly.
+- **Remaining scope:** add precision for general transformations that can prove
+  an existing conservative boundary more exactly. Define consumers and validate
+  their performance; no prior measured speedup is required.
 - **Exit gate:** separate-compilation assumptions are not invented; unknown or
   recursive calls remain safe barriers; focused optimizer tests cover each
   effect dimension.
@@ -8726,10 +8747,10 @@ in [`performance-tooling.md`](performance-tooling.md).
 
 ### O-PERF-04: Exact Fast Path For Undischargeable Checked Loops
 
-- **State/role:** measured defer on exact clean commit `4dbb50bd`; the required
-  source-proxy gate rejected a transform. Re-enter only with a benchmark whose
-  hot inputs remain genuinely opaque after the static rows and whose exact
-  proxy demonstrates at least 30% available value.
+- **State/role:** historically measured-defer on exact clean commit `4dbb50bd`;
+  the then-required source-proxy gate rejected a transform. ADR 012 now permits
+  renewed architectural work without a proxy or 30% entry threshold. Preserve
+  this row's opaque-input and exact-failure correctness requirements.
 - **Rejected audit shape:** PR #164's wrapping block plus sticky predicate and
   replay is not accepted as semantics-preserving as written. Its own
   side-effect-free legality rule excludes the flagship `scale` loop because
@@ -8746,9 +8767,9 @@ in [`performance-tooling.md`](performance-tooling.md).
   or may-alias mutation unless a complete snapshot/commit proof exists.
   Reordered integer evaluation must prove all introduced intermediates and the
   exact result, not just the original sequential prefixes.
-- **Entry/exit gate:** a disposable source-MIR proxy on the opaque workload
-  improves median runtime by at least 30% before infrastructure lands. The
-  implementation then preserves exact successful output, first-failure site
+- **Entry/exit gate:** identify the legality and cost model for the opaque-input
+  fast path; a disposable proxy is optional investigation, not an admission
+  gate. The implementation preserves exact successful output, first-failure site
   and record, partial mutation trace, cleanup, O0 identity, fallback behavior,
   and every rejected near miss. It must bring the checked-vector/core-loop gate
   to at most 1.5x idiomatic C++ or close as measured-defer with the next cause
@@ -8847,24 +8868,24 @@ admitted. Exact report identity and raw samples live in
 - **Bounded scope:** consume only `O-MIR-06` single-latch affine facts to prove
   one existing fixed-array bounds family over a reducible loop. Reuse the
   existing safety-discharge transform and replay path; add no loop rewrite.
-- **Entry/exit gate:** reconsider only when source MIR produces replayable
-  loop-carried affine facts and an upper-bound proxy demonstrates material
-  runtime value after native optimization. Then a representative checked loop
-  must show removed operations and an end-to-end improvement; every induction,
+- **Entry/exit gate:** establish replayable source-MIR loop-carried affine facts;
+  no upper-bound proxy is required to begin architecture work. A representative
+  checked loop must show removed operations and an end-to-end improvement; every induction,
   bound, overflow, early-exit, mutation, and irreducible near-miss retains
   checks; O0/O2/O3 runtime and failure-origin parity passes.
 
 ### O-MIR-09: Alias-Safe Local Memory Client
 
 - **State/role:** measured defer; not implemented.
-- **Bounded scope:** choose exactly one redundant-load or store-to-load family
-  only after a benchmark demonstrates value. Add the smallest explicit local
+- **Bounded scope:** begin with a redundant-load or store-to-load family based
+  on its semantic and execution-cost model. Add the smallest explicit local
   memory-version fact needed to prove no intervening write using `O-MIR-07`
   and exact call effects.
 - **Entry/exit gate:** projected aliases, calls, raw memory, borrows, moves,
   drops, synchronization, and lifetime boundaries retain the operation unless
-  proved safe. Introduce MemorySSA only if this measured family cannot remain
-  sound and maintainable with bounded local versions.
+  proved safe. Introduce MemorySSA when general memory reasoning cannot remain
+  sound and maintainable with bounded local versions; a measured client is not
+  a prerequisite. Validate the production transforms and their runtime costs.
 
 ### O-MIR-10: First Interprocedural Transform
 
@@ -8875,8 +8896,10 @@ admitted. Exact report identity and raw samples live in
   identity, cleanup, provenance, failure, and deterministic cost gates there.
   A distinct return-range summary remains value analysis rather than an effect
   flag. Devirtualization remains outside the campaign.
-- **Entry/exit gate:** the row may reopen only for a new measured client not
-  already served by the completed `O-PERF-02` summary mechanism.
+- **Entry/exit gate:** the row may reopen for general interprocedural
+  optimization needs not already served by the completed `O-PERF-02` summary
+  mechanism, without a benchmark-first gate. Verify and measure the resulting
+  production implementation.
 
 Incremental dominance and LLVM bit-vector adoption remain measured/client-
 gated. A future LLVM backend requires complete MIR layout, ABI,
@@ -9032,12 +9055,12 @@ owned by the rows and domain plans above.
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
 | Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
-| Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
-| Runtime performance | **exclusive campaign complete** | `O-PERF-00` through `O-PERF-05` and `O-GAME-01` closed in exact order; later work requires a new measured client and bounded row |
+| Associative containers | **systems-readiness work with performance acceptance** | `L-CONT-02`, exact capabilities, allocator proposal; no benchmark-first design gate |
+| Runtime performance | **ongoing design and delivery requirement** | Earlier O-PERF/O-GAME campaigns are historical completions; ADR 012 permits proactive general optimization architecture and requires performance acceptance |
 | MIR transformations | **bounded local production pipeline** | `O-MIR-01` through `O-MIR-07` provide current transforms/analyses; `O-MIR-08/09` are measured-defer; the closed interprocedural client was subsumed by `O-PERF-02` |
 | MIR-backed C++ emission | **ADR 016 complete** | every body in `tests/mir_census_baseline.json` uses the verified-MIR route; every backend consumes the self-contained `LoweredProgram` contract |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
-| Natural-loop/range facts | **complete bounded analysis; transform measured-defer** | `O-MIR-06`; `O-MIR-08` reopens only for a source-MIR client with demonstrated native runtime value |
+| Natural-loop/range facts | **complete bounded analysis; transform not implemented** | `O-MIR-06`; `O-MIR-08` may proceed from architectural need with replayable source-MIR facts and performance acceptance |
 | Place alias/escape facts | **complete bounded analysis** | `O-MIR-07`; first standalone memory transform is gated by `O-MIR-09` |
 | Incremental dominance | **measured defer** | add only when a measured transform makes full recomputation material |
 | Compiler structural ownership | **exclusive campaign complete** | `R-STRUCT-00` through `R-STRUCT-05`; [archived closure report](archive/compiler-structural-refactor.md) |

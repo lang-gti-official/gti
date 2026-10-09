@@ -16,11 +16,21 @@ Produce an evidence-based ownership review, not another architecture reference.
    documentation contradiction.
 3. State the concrete problem, the user-facing program/API/workflow it
    unlocks, and the invariant the proposal must preserve. For
-   infrastructure-only work, name the imminent client or correctness defect.
+   infrastructure-only work, name the correctness defect, systems operation
+   families or optimization architecture requirement it serves. A benchmarked
+   regression or imminent individual client is not required.
 4. Map each relevant fact to its producer, owner, lifetime, consumers, and
    invalidation rule.
 5. Compare the smallest change that solves the current problem with the
    proposal. Do not add a subsystem only because a mature compiler has one.
+
+Apply [ADR 012's runtime-performance requirement](../../../docs/decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09).
+Review successful-path cost, metadata/allocation policy, failure-path isolation
+and whether ordinary source abstractions expose the facts optimization needs.
+Architectural reasoning can justify general infrastructure before a benchmark
+exists; measurements validate its results rather than grant permission to start.
+Do not classify necessary performance architecture as deferred merely because
+no workload has already demonstrated a slowdown.
 
 ## Questions To Answer
 
@@ -79,10 +89,11 @@ Classify findings as:
 - **fix now** — correctness, duplicated authority, broken ownership, or an
   imminent prerequisite of a named user outcome;
 - **systems-ready** — a capability needed by the accepted systems-readiness
-  workloads;
+  workloads, including general architecture for efficient runtime execution;
 - **prepare for** — preserve a seam/interface without implementing the future
   subsystem;
-- **defer** — no demonstrated current problem or readiness client.
+- **defer** — no identified correctness, runtime-efficiency or readiness need;
+  absence of benchmark evidence alone is not a reason.
 
 For an implementation request, make the smallest coherent change and update
 the canonical architecture doc. For a review-only request, cite concrete
