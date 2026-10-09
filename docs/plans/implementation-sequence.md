@@ -1584,6 +1584,15 @@ The subsequent explicit release authorization covers both completed rows.
 
 ### C-TIME-01: Bounded Compiler Latency Investigation
 
+Current follow-up: `C-TIME-04` reduces optimizer bookkeeping cost for optimized
+HTTP/JSON and other library-heavy builds. CPU sampling identifies repeated
+proof-vector allocation/sorting and SCCP whole-state copies. Preserve exact
+facts, evidence ordering, convergence and independent verification; validate
+paired clean emission/full-build times, byte-equivalent output and owning
+optimizer/runtime gates. This is an active bounded slice, not a claim that
+compile-time performance has reached its limit. Results belong in
+[`performance-tooling.md`](performance-tooling.md).
+
 **State:** bounded investigation and small improvement complete; general
 compile-time comparability remains an open target, not a claimed plateau.
 Nine focused gates and all 355 Release CTest gates pass on local arm64 macOS.
