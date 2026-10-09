@@ -34,9 +34,10 @@ rules. Reconciling the two inventories is follow-up work.
 The reviewed proposal is `1636c1df`, not an implementation authority. Its
 screen is useful for finding clients, but minimum-of-seven timings under
 competing builds, non-interleaved attribution samples, and unsafe check-removal
-ceilings do not establish a production speedup. Its runner also fails to
-forward the selected C++ compiler/standard to the GTI build. Do not import that
-runner as the canonical measurement path. Reuse the existing benchmark and
+ceilings do not establish a production speedup. The original runner also failed
+to forward the selected C++ compiler/standard to the GTI build; PR reconciliation
+corrects that plumbing with a two-mode protocol test. It remains a historical
+screening harness, not the canonical measurement path. Reuse the existing benchmark and
 frozen-storage comparison harnesses with complete-state oracles, exact source
 and tool identities, warmups and interleaved samples.
 

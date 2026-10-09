@@ -70,6 +70,7 @@ def compare(arguments):
         out.mkdir(parents=True, exist_ok=True)
         gti_exe, cpp_exe = out / "gti", out / "cpp"
         build([str(arguments.gti), str(HERE / name / "main.gti"), f"-O{arguments.level}",
+               "--cxx", arguments.cxx, "--std", arguments.std,
                "-o", str(gti_exe), "--progress=never", "--color=never"])
         build([arguments.cxx, f"-O{arguments.level}", f"-std={arguments.std}", *STRICT,
                str(HERE / name / "idiomatic.cpp"), "-o", str(cpp_exe)])
@@ -112,6 +113,7 @@ def attribute(arguments):
         out.mkdir(parents=True, exist_ok=True)
         emitted = out / "emitted.cpp"
         build([str(arguments.gti), str(HERE / name / "main.gti"), f"-O{arguments.level}",
+               "--cxx", arguments.cxx, "--std", arguments.std,
                "--emit-cpp", "-o", str(emitted), "--progress=never", "--color=never"])
         source = emitted.read_text()
         row, reference = {"probe": name}, None

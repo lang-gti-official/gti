@@ -41,6 +41,11 @@ python3 benchmarks/probes/runtime-audit/screen.py attribute \
   --output /tmp/gti-rt-audit-attribute matrix lambda vector-push
 ```
 
+`--cxx` and `--std` select the same native compiler/standard for both sides
+and for attribution variants. The original dated measurements predate this
+argument-forwarding correction. Check its protocol with
+`python3 benchmarks/probes/runtime-audit/screen_test.py`.
+
 `compare` builds GTI and C++ with the same native policy GTI uses (`-std=c++23
 -fno-fast-math -ffp-contract=off`), requires identical stdout, and reports
 medians and minimums of interleaved samples. On a shared machine, prefer the
