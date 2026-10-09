@@ -1138,7 +1138,9 @@ host-language temporary is allowed to shorten that lifetime to the invocation.
 Pack-expanded invocations retain the same slot through an ordered receiver
 stage. A cleanup-free moved local environment instead aliases its already
 materialized immutable storage, but only after proving the exact single-use
-Move/optional value-stage/invocation chain. Its available-to-moved event remains
+Move/optional value-stage/invocation chain. A cleanup-free moved concrete
+callable parameter or receiver field spells its place through the same
+single-use Move/value-stage chain; the stage itself has no representation. Its available-to-moved event remains
 in MIR; this representation erasure does not permit source reuse.
 
 Nested callable invocations consume only their own prepared receiver and
@@ -1625,7 +1627,9 @@ call/return is admitted only through an exact verified-MIR transport shape.
 Named and fresh arguments are moved from their one lifetime slot into the
 native by-value parameter, parameter entry moves into its lexical slot, and a
 transformed function, method, or exact lambda placement-constructs its result
-in the caller's value-rooted slot. The paired success edge arms that slot;
+in the caller's value-rooted slot. An exact captureless lambda invocation
+stages named and fresh arguments through the same ordered `CallInput` proof
+as a function call. The paired success edge arms that slot;
 failure leaves it empty and retains MIR's cleanup order. Representation-only
 moved-from shells are destroyed immediately after their verified transfer.
 Constructor arguments use the same proof, including fresh unit variants.
