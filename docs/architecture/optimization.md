@@ -346,6 +346,18 @@ address relay from raw reads, raw writes and an unsafe callee's write. The
 source-prefix client's original exact bounds-and-read proof is recovered;
 raw-backed element envelopes are not implied by this preparation rule.
 
+Exact owner-witness reference formation reuses the verifier's raw-borrow
+query. It preserves memory facts because forming the checked loan does not
+modify memory; its lifetime/access assertion supplies neither an address
+identity nor a pointee value. The result receives no value/field/aggregate
+origin from its witness. Checked Borrow/ActivateBorrow/EndBorrow bookkeeping
+with no raw access or modifying effects likewise preserves memory, even when
+it retains its producer's unsafe source classification. The actual reference
+write still invalidates may-alias storage. No loan schedule is removed or
+reordered. Unrelated user-defined witnesses exercise read-only and mutable
+formation, mutation through the alias, and a different pointee under the same
+witness; forged arithmetic proofs for the latter two are rejected.
+
 The trusted scalar bounds detector has no memory transfer: its exact void
 call takes two staged `uint64_t` values, compares them and may raise its defined
 failure. Successful execution therefore preserves unrelated scalar/object
@@ -388,6 +400,17 @@ may survive this operation. Byte fields, arrays/indexes, union overlap, stored
 reference traversal, compiler-capability backing carriers, unresolved roots
 and loaded-origin/element facts are discarded. No pointer validity, region
 extent, fresh allocation or initialized-element fact is inferred.
+
+That same profile admits exact generated copy/move construction of ordinary
+scalar-field records into vacant final storage. The shared MIR-effects query
+reuses the verifier's complete construction shape and the same recursive
+generated-record transport classifier used for prepared values. A selected
+source constructor, replacement, unsupported state or extra raw access cannot
+claim this profile. Only represented transfer-out events may accompany the
+construction; argument staging and actual cleanup retain their own effects.
+It preserves the same unrelated non-byte live-field facts, not a value envelope
+for the newly constructed region. Source wrappers can relay this profile;
+destroy/reconstruct still invalidates the old object's facts.
 
 The interpreter records whether a successful path contains only that supported
 opaque lifetime transfer or an unknown live-memory barrier. Reachable joins

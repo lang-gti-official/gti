@@ -160,7 +160,8 @@ int main() {
   for (const auto name :
        {"optimizer_nested_write", "optimizer_reference_write",
         "optimizer_nested_raw", "optimizer_scalar_construction",
-        "optimizer_scalar_construction_paths"}) {
+        "optimizer_scalar_construction_paths",
+        "optimizer_record_construction"}) {
     const auto path = sourcePath.parent_path() / (std::string(name) + ".gti");
     const std::ifstream file(path);
     const std::string text{std::istreambuf_iterator<char>(file.rdbuf()), {}};
@@ -175,6 +176,43 @@ int main() {
       for (const auto &diagnostic : changed.diagnostics)
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
       continue;
+    }
+    if (name == std::string_view("optimizer_record_construction")) {
+      std::size_t constructions = 0;
+      for (const auto address : lang::enumerateMirBodyAddresses(changed.mir))
+        for (const auto &block :
+             lang::findMirBody(changed.mir, address)->blocks)
+          for (const auto &instruction : block.instructions) {
+            if (lang::isMirScalarFinalAddressConstruction(instruction) ||
+                !lang::isMirStructuralFinalAddressConstruction(changed.mir,
+                                                               instruction))
+              continue;
+            ++constructions;
+            const auto effects = lang::effects(changed.mir, instruction);
+            expect(effects.writesUnknownMemory && effects.initializesValue &&
+                       !effects.invokesUserCode && !effects.maySynchronize &&
+                       !effects.removableWhenUnused,
+                   "generated final-address construction retains raw lifetime "
+                   "effects without inventing source execution");
+            auto malformed = instruction;
+            malformed.lifecycle.push_back(
+                {.kind = lang::MirLifecycleEventKind::Replace});
+            expect(!lang::isMirStructuralFinalAddressConstruction(changed.mir,
+                                                                  malformed),
+                   "replacement is not vacant record construction");
+            malformed = instruction;
+            malformed.constructorTarget = 1;
+            expect(!lang::isMirStructuralFinalAddressConstruction(changed.mir,
+                                                                  malformed),
+                   "a selected constructor cannot claim generated transport");
+            malformed = instruction;
+            malformed.rawMemoryAccess = true;
+            expect(!lang::isMirStructuralFinalAddressConstruction(changed.mir,
+                                                                  malformed),
+                   "raw memory access is not vacant record construction");
+          }
+      expect(constructions > 0,
+             "the record fixture must exercise the shared profile");
     }
     for (const auto level :
          {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
@@ -209,10 +247,98 @@ int main() {
             proved ==
                 (construction && level != lang::OptimizationLevel::O0 ? 1 : 0),
             "nested, returned and borrowed-field aliases cannot retain "
-            "stale constructor envelopes after mutation; scalar vacant "
-            "construction preserves unrelated active fields");
+            "stale constructor envelopes after mutation; structural vacant "
+            "construction preserves unrelated active fields: " +
+                std::string(name) + "/" + std::string(functionName) + "=" +
+                std::to_string(proved));
       }
     }
+  }
+  const auto witnessPath =
+      sourcePath.parent_path() / "optimizer_witness_formation.gti";
+  const std::ifstream witnessFile(witnessPath);
+  const std::string witnessSource{
+      std::istreambuf_iterator<char>(witnessFile.rdbuf()), {}};
+  const auto witness = lang::Frontend().analyze(witnessPath, witnessSource);
+  expect(witness.canGenerateCode(), "owner-witness formation must lower");
+  if (witness.canGenerateCode()) {
+    const auto contexts = lang::analyzeMirClosedCallSafetyChecks(witness.mir);
+    expect(contexts.converged, "owner-witness contexts must converge");
+    for (const auto &function : witness.hir.functionInstances()) {
+      if (!function.source)
+        continue;
+      const auto name = function.source->name().lexeme;
+      if (name != "formed" && name != "changed" && name != "other_value")
+        continue;
+      const auto *context = contexts.find(
+          {.kind = lang::MirBodyKind::Function, .owner = function.id});
+      expect(context && context->reached,
+             "witness positives and negatives must have actual call contexts");
+    }
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
+          lang::OptimizationLevel::O3}) {
+      const auto optimized = lang::OptimizationPipeline().run(
+          {.hir = witness.hir, .mir = witness.mir, .level = level});
+      expect(optimized.valid(), "witness formation proofs must replay");
+      if (level == lang::OptimizationLevel::O0)
+        expect(optimized.report.transformations.empty(),
+               "witness formation leaves O0 transformation-free");
+      for (const auto &function : witness.hir.functionInstances()) {
+        if (!function.source)
+          continue;
+        const auto name = function.source->name().lexeme;
+        if (name != "formed" && name != "changed" && name != "other_value")
+          continue;
+        std::size_t proofs = 0;
+        const auto *body = optimized.mir.findFunctionInstance(function.id);
+        for (const auto &block : body->body.blocks)
+          for (const auto &instruction : block.instructions)
+            proofs += std::count_if(
+                instruction.safetyDischarges.begin(),
+                instruction.safetyDischarges.end(), [](const auto &proof) {
+                  return proof.family ==
+                         lang::MirSafetyCheckFamily::ArithmeticOverflow;
+                });
+        expect(
+            proofs == (name == "formed" && level != lang::OptimizationLevel::O0
+                           ? 1
+                           : 0),
+            std::string("witness formation preserves only unrelated memory: ") +
+                std::string(name));
+      }
+    }
+    std::size_t negatives = 0;
+    for (const auto &function : witness.hir.functionInstances()) {
+      if (!function.source || (function.source->name().lexeme != "changed" &&
+                               function.source->name().lexeme != "other_value"))
+        continue;
+      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                         .owner = function.id};
+      const auto *body = lang::findMirBody(witness.mir, address);
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          for (std::size_t origin = 0;
+               origin < instruction.definedFailure.localOrigins.size();
+               ++origin)
+            for (const auto outcome :
+                 instruction.definedFailure.localOrigins[origin].outcomes) {
+              if (outcome.code != lang::DefinedFailureCode::IntegerOverflow)
+                continue;
+              auto forged = witness.mir;
+              lang::MirEditor editor(forged, "forged-witness-pointee-value");
+              editor.queueSafetyDischarge(
+                  {.body = address, .instruction = instruction.id},
+                  {.family = lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   .origin = origin,
+                   .outcome = outcome});
+              const auto result = editor.apply();
+              expect(!result.valid() && !result.changed,
+                     "witness identity alone cannot prove its pointee's value");
+              ++negatives;
+            }
+    }
+    expect(negatives == 2, "both witness negatives require replay rejection");
   }
   const auto ownedPath =
       sourcePath.parent_path() / "optimizer_owned_value_transfer.gti";

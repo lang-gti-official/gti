@@ -153,7 +153,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
                      "interpretation overdefined");
   case IntrinsicKind::RawBorrow:
   case IntrinsicKind::RawBorrowMut:
-    return barrier("unsafe raw address to owner-witness checked loan");
+    return supported("verified owner-witness formation preserves memory; "
+                     "pointee value/address unknown; loan schedule unchanged");
   case IntrinsicKind::None:
     return inapplicable("ordinary instruction/call effects");
   case IntrinsicKind::NumericTypeParameterConversion:

@@ -5105,6 +5105,24 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   focused replay/native coverage. Raw initialized-element coverage and returned
   element provenance remain separate open prerequisites; the original six
   optimizer and three native-evidence acceptance failures remain unchanged.
+  Owner-witness formation now preserves memory without inventing pointee facts,
+  reusing the verifier's checked-loan shape; non-mutating loan bookkeeping does
+  not reexecute its producer's unsafe operation. Actual alias writes and a
+  different pointee under the same witness remain checked. Generated ordinary
+  scalar-record final-address construction also uses shared structural effects
+  and the existing vacant-storage transfer. It preserves unrelated live fields,
+  not raw initialized-element coverage. The six original optimizer and three
+  native-evidence requirements remain open; these corrections are prerequisites,
+  not migration acceptance.
+  A plain-counter reduction also reproduces lost precision after four ordinary
+  increment-method calls: subtracting four from the observed unsigned count
+  retains its check despite the exact call sequence. The next call-summary
+  prerequisite must preserve a proved entry-relative field update across
+  repeated calls, with alias/mutation and conditional-update negatives; context
+  joining alone must not invent an arbitrary number of successful updates.
+  This is separate from the required raw-region initialization/element-value
+  provenance, which still needs coverage, actual address identity, and
+  conservative invalidation rather than a witness-to-pointee equivalence.
   A further general prerequisite distinguishes inert address arithmetic and
   typed pointer conversion from actual pointee/lifetime operations, and avoids
   repeating an operation at an empty full-expression marker. Selected unsafe

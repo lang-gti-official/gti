@@ -88,11 +88,13 @@ struct MirClosedCallSafetyAnalysis {
 // Actual raw pointee/lifetime operations and unsupported unsafe calls are
 // per-instruction opaque barriers, not a reason to discard earlier proofs.
 // Inert address computations/markers preserve unrelated facts without proving
-// pointee invariants. Selected unsafe source functions use actual body effects;
+// pointee invariants. Verified owner-witness formation and non-mutating checked
+// loan boundaries likewise preserve memory, not the pointee's value or address.
+// Selected unsafe source functions use actual body effects;
 // a successful path with a raw barrier cannot export effect closure.
-// The exact vacant integer-scalar construction profile can preserve unrelated
-// active non-byte owned-field facts through source wrappers. It stays opaque;
-// byte/array/union/stored-reference/backing paths and actual unknown
+// Exact vacant integer-scalar/generated scalar-record construction preserves
+// unrelated active non-byte owned-field facts through source wrappers. It stays
+// opaque; byte/array/union/stored-reference/backing paths and actual unknown
 // live-memory effects remain conservative. This supplies no raw-region/element
 // invariant.
 [[nodiscard]] MirClosedCallSafetyAnalysis
