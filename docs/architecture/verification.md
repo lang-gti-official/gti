@@ -76,6 +76,30 @@ scalar/class/inherited/existing-value exhaustion, allocation elision, source
 strings, reverse storage drains and process resource policy. Combined full-suite,
 resource-constructor and optimizer performance acceptance remains open.
 
+The `eb3529da` operator suites also pass together (190.07 seconds). The next
+combined checkpoint (`0d51b56c`) builds all targets in Release and passes
+optimizer foundation/raw/intrinsic context and source-prefix contracts, plus
+terminal-call and exact returned-address native matrices (99.47 seconds).
+The unmodified optimizer
+acceptance assertions still report seven safety and four object-context
+failures. These are not waived by the passing prerequisite gates.
+
+`string-growth-search` adds the missing string client to the maintained
+threshold-free runtime workload smoke. It uses the existing audit's 400 rounds
+of 50,000 appended characters and complete `find('q')` traversal. The benchmark
+harness and expanded workload smoke both pass (28.63 seconds). Its separate
+full-state build produces identical 24,444,917-byte output for the candidate,
+preserved private-prefix compiler/library and both C++ twins. Separate
+instrumented GTI builds each request 6,800 allocations and 52,435,200 bytes;
+the observer checks original allocation/release identity. Raw evidence is
+preserved under `gti-string-migration-state-ah2afqew` in the host temporary
+directory, including source/tool hashes and build provenance. The instrumented
+candidate executables are larger than the preserved private-path executables;
+that is a signal to investigate with the uninstrumented binaries, not code-size
+acceptance. Quiet interleaved timing, uninstrumented code-size attribution and
+peak-memory comparison remain required before claiming string performance
+parity. Full-state and allocation-observer execution is not timing evidence.
+
 The resource-growth corpus oracle now requires portable exact abort status,
 not merely nonzero termination. A C17 helper makes its cleanup witnesses
 unbuffered before execution. The harness rejects status 70 and unrelated

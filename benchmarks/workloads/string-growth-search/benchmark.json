@@ -1,0 +1,27 @@
+{
+  "schema": 2,
+  "name": "string-growth-search",
+  "description": "Repeated string growth and complete character search over deterministic text",
+  "work_units": 20000000,
+  "minimum_sample_seconds": 0.05,
+  "variants": [
+    {
+      "name": "gti",
+      "kind": "gti",
+      "source": "main.gti",
+      "execution_profile": "single-threaded"
+    },
+    {
+      "name": "cpp-semantic",
+      "kind": "cpp",
+      "source": "semantic.cpp",
+      "execution_profile": null
+    },
+    {
+      "name": "cpp-idiomatic",
+      "kind": "cpp",
+      "source": "idiomatic.cpp",
+      "execution_profile": null
+    }
+  ]
+}
