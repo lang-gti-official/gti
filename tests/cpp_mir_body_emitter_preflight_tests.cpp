@@ -1886,6 +1886,238 @@ int main() { return 0; }
                  "different value must fail admission");
 }
 
+// A returned owning payload-enum call result constructs in the caller's
+// result storage, from an ordinary function or an exact lambda, including
+// across a fallible drop that keeps it an unpublished obligation. An exact
+// lambda's prepared class argument stays real storage when a later argument
+// can fail. The resource has a field and a printing destructor, so each
+// shape carries active, fallible cleanup.
+void testLambdaOwningTransportAdmission() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/lambda_owning_transport.gti";
+  std::ifstream input(path);
+  expect(input.good(), "the lambda owning transport fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(),
+         "the lambda owning transport fixture must pass the frontend");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the lambda owning transport fixture needs a complete backend "
+         "representation");
+
+  const auto owningPayload = [&](const lang::SemanticType &type) {
+    const lang::MirPayloadEnum *enumeration =
+        type.kind == lang::SemanticType::Enum
+            ? frontend.mir.findPayloadEnum(type)
+            : nullptr;
+    return enumeration != nullptr && enumeration->requiresActiveCleanup;
+  };
+  struct Shape {
+    lang::HirFunctionInstanceId function = 0;
+    lang::MirInstructionId instruction = 0;
+
+    [[nodiscard]] explicit operator bool() const {
+      return function != 0 && instruction != 0;
+    }
+  };
+  Shape functionReturn;
+  Shape lambdaReturn;
+  Shape pendingLambdaReturn;
+  Shape preparedArgument;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.definitionKind != lang::MirDefinitionKind::Source)
+      continue;
+    const lang::MirBody &body = function.body;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const auto returned = [&](lang::MirValueId value) {
+          return std::any_of(body.blocks.begin(), body.blocks.end(),
+                             [&](const lang::MirBlock &candidate) {
+                               return candidate.terminator.kind ==
+                                          lang::MirTerminatorKind::Return &&
+                                      candidate.terminator.value &&
+                                      candidate.terminator.value->kind ==
+                                          lang::MirOperandKind::Value &&
+                                      candidate.terminator.value->value ==
+                                          value;
+                             });
+        };
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.result && owningPayload(instruction.info.type) &&
+            returned(*instruction.result)) {
+          const bool pending = std::any_of(
+              body.dropObligations.begin(), body.dropObligations.end(),
+              [&](const lang::MirDropObligation &drop) {
+                const lang::MirPlace *place = body.findPlace(drop.place);
+                return drop.kind == lang::MirDropObligationKind::ReturnResult &&
+                       place != nullptr &&
+                       place->root == lang::MirPlaceRootKind::Value &&
+                       place->value == *instruction.result;
+              });
+          Shape &shape = !instruction.lambdaTarget ? functionReturn
+                         : pending                 ? pendingLambdaReturn
+                                                   : lambdaReturn;
+          shape = {.function = function.id, .instruction = instruction.id};
+        }
+        if (instruction.kind == lang::MirInstructionKind::CallInput &&
+            instruction.callInputKind == lang::HirCallInputKind::MoveValue &&
+            instruction.result && instruction.destination &&
+            instruction.preparedParameterDrop &&
+            instruction.info.type.kind == lang::SemanticType::Class) {
+          const auto &uses = body.usesOf(*instruction.result);
+          const lang::MirInstruction *consumer =
+              uses.size() == 1
+                  ? findPreflightInstruction(body, uses.front().instruction)
+                  : nullptr;
+          const bool failureCleanup = std::any_of(
+              body.blocks.begin(), body.blocks.end(),
+              [&](const lang::MirBlock &candidate) {
+                return std::any_of(
+                    candidate.instructions.begin(),
+                    candidate.instructions.end(),
+                    [&](const lang::MirInstruction &member) {
+                      return member.kind == lang::MirInstructionKind::Drop &&
+                             member.lifecycle.size() == 1 &&
+                             member.lifecycle.front().failureCleanup &&
+                             member.lifecycle.front().source ==
+                                 *instruction.preparedParameterDrop;
+                    });
+              });
+          if (consumer != nullptr && consumer->lambdaTarget && failureCleanup) {
+            preparedArgument = {.function = function.id,
+                                .instruction = instruction.id};
+          }
+        }
+      }
+    }
+  }
+  expect(functionReturn && lambdaReturn && pendingLambdaReturn &&
+             preparedArgument,
+         "the fixture should retain returned function, exact-lambda, and "
+         "pending exact-lambda payload-enum results and a prepared lambda "
+         "class argument with failure cleanup");
+  if (!functionReturn || !lambdaReturn || !pendingLambdaReturn ||
+      !preparedArgument) {
+    return;
+  }
+
+  const auto address = [](lang::HirFunctionInstanceId function) {
+    return lang::MirBodyAddress{.kind = lang::MirBodyKind::Function,
+                                .owner = function};
+  };
+  const lang::CppMirBodyEmitter canonical(frontend.mir, map);
+  for (const Shape &shape :
+       {functionReturn, lambdaReturn, pendingLambdaReturn, preparedArgument}) {
+    expect(canonical.supportsFailureBodyText(address(shape.function)),
+           "each canonical owning lambda transport body should pass "
+           "failure-form admission");
+  }
+
+  const auto forge = [&](lang::HirFunctionInstanceId functionId,
+                         const auto &mutation) {
+    lang::MirProgram forged = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        forged.functionInstances());
+    const auto found =
+        std::find_if(functions.begin(), functions.end(),
+                     [&](const lang::MirFunctionInstance &function) {
+                       return function.id == functionId;
+                     });
+    if (found != functions.end()) {
+      mutation(found->body);
+      expect(lang::rebuildMirValueUses(found->body),
+             "the forged owning lambda transport body should retain a "
+             "rebuildable use index");
+    }
+    return forged;
+  };
+  const auto expectRejected = [&](const lang::MirProgram &forged,
+                                  lang::HirFunctionInstanceId function,
+                                  std::string_view message) {
+    expect(!lang::CppMirBodyEmitter(forged, map)
+                .supportsFailureBodyText(address(function)),
+           message);
+  };
+
+  // Without the exact TransferOut the call cannot publish into the caller's
+  // storage, and assigning the value would overwrite a nonexistent object.
+  for (const Shape &shape : {functionReturn, lambdaReturn}) {
+    const lang::MirProgram missingTransfer =
+        forge(shape.function, [&](lang::MirBody &body) {
+          const lang::MirInstruction *call =
+              findPreflightInstruction(body, shape.instruction);
+          const lang::MirDropObligationId result =
+              call != nullptr && call->successResultDrop
+                  ? *call->successResultDrop
+                  : 0;
+          std::size_t erased = 0;
+          for (lang::MirBlock &block : body.blocks) {
+            for (lang::MirInstruction &member : block.instructions) {
+              if (member.kind != lang::MirInstructionKind::Lifecycle)
+                continue;
+              erased += std::erase_if(
+                  member.lifecycle, [&](const lang::MirLifecycleEvent &event) {
+                    return event.kind ==
+                               lang::MirLifecycleEventKind::TransferOut &&
+                           event.source == result;
+                  });
+            }
+          }
+          expect(result != 0 && erased == 1,
+                 "the returned payload-enum call result should transfer its "
+                 "drop out exactly once");
+        });
+    expectRejected(missingTransfer, shape.function,
+                   "a returned payload-enum call result without its exact "
+                   "TransferOut must fail admission");
+  }
+
+  // The pending result must be reparented exactly once before the fallible
+  // drop, or its rollback has no proven caller-storage object.
+  const lang::MirProgram missingReparent =
+      forge(pendingLambdaReturn.function, [&](lang::MirBody &body) {
+        std::size_t changed = 0;
+        for (lang::MirBlock &block : body.blocks) {
+          for (lang::MirInstruction &member : block.instructions) {
+            for (lang::MirLifecycleEvent &event : member.lifecycle) {
+              const lang::MirDropObligation *target =
+                  body.findDropObligation(event.target);
+              if (event.kind == lang::MirLifecycleEventKind::Reparent &&
+                  target != nullptr &&
+                  target->kind == lang::MirDropObligationKind::ReturnResult) {
+                event.target = event.source;
+                ++changed;
+              }
+            }
+          }
+        }
+        expect(changed == 1, "the pending lambda result should be "
+                             "reparented into its return obligation once");
+      });
+  expectRejected(missingReparent, pendingLambdaReturn.function,
+                 "a pending payload-enum lambda result without its exact "
+                 "return-obligation reparent must fail admission");
+
+  // The prepared slot proof binds the exact lambda parameter type.
+  const lang::MirProgram driftedParameter =
+      forge(preparedArgument.function, [&](lang::MirBody &body) {
+        const lang::MirInstruction *stage =
+            findPreflightInstruction(body, preparedArgument.instruction);
+        const auto &uses = body.usesOf(*stage->result);
+        lang::MirInstruction *consumer =
+            findPreflightInstruction(body, uses.front().instruction);
+        consumer->parameterTypes[stage->callInputIndex] =
+            lang::SemanticType::Int32;
+      });
+  expectRejected(driftedParameter, preparedArgument.function,
+                 "a prepared lambda class argument whose parameter type "
+                 "drifts must fail admission");
+}
+
 void testProgramPlanValidationIsOperationScoped() {
   const lang::FrontendResult frontend =
       analyze("cpp-mir-operation-scoped-validation.gti", R"(
@@ -5443,6 +5675,7 @@ constexpr NamedTest kTests[] = {
      testOwningPayloadEnumRepresentationAdmission},
     {"testOwningPayloadEnumTransportAdmissionFailsClosed",
      testOwningPayloadEnumTransportAdmissionFailsClosed},
+    {"testLambdaOwningTransportAdmission", testLambdaOwningTransportAdmission},
     {"testFreshClassPayloadOperandStaging",
      testFreshClassPayloadOperandStaging},
     {"testDischargedCompoundOperatorVocabulary",

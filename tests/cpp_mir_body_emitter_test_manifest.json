@@ -66,6 +66,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testLambdaOwningTransportAdmission",
+      "suite": "preflight"
+    },
+    {
       "name": "testFreshClassPayloadOperandStaging",
       "suite": "preflight"
     },
