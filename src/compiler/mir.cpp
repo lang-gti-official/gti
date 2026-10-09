@@ -5079,6 +5079,26 @@ namespace {
                                     MirValueUseKind::InstructionOperand,
                                     definition->id, 0, depth + 1);
   }
+  // A cleanup-free moved environment has no full-expression obligation to
+  // retain, so its receiver stage is an ordinary value alias rather than a
+  // MoveValue. The stage transfers nothing; its source must still be the
+  // exact ownership Move that consumed the closure.
+  if (definition->kind == MirInstructionKind::CallInput &&
+      definition->callInputRole == MirCallInputRole::Receiver &&
+      definition->callInputKind == HirCallInputKind::Value &&
+      definition->info.type.kind == SemanticType::Lambda &&
+      definition->operands.front().kind == MirOperandKind::Value &&
+      definition->operands.front().type == definition->info.type &&
+      !definition->preparedParameterDrop && !definition->destination &&
+      definition->lifecycle.empty()) {
+    const MirInstruction *move =
+        linearValueDefinition(body, definition->operands.front().value);
+    return expectedUseKind == MirValueUseKind::InstructionReceiver &&
+           move != nullptr && move->kind == MirInstructionKind::Move &&
+           consumedCallableReceiver(body, definition->operands.front(),
+                                    MirValueUseKind::InstructionOperand,
+                                    definition->id, 0, depth + 1);
+  }
   return definition->kind == MirInstructionKind::Compute &&
          definition->operation == MirOperation::Identity &&
          consumedCallableReceiver(body, definition->operands.front(),

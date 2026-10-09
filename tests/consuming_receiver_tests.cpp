@@ -2,7 +2,7 @@
 #include "compiler_test_fixture.h"
 #include "gti/mir_printer.h"
 
-void checkConsumingLambda(const std::string &name, bool staged) {
+void checkConsumingLambda(const std::string &name, bool pack) {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     ("fixtures/" + name + ".gti");
   std::ifstream input(path);
@@ -24,7 +24,8 @@ void checkConsumingLambda(const std::string &name, bool staged) {
         const auto *value = function.body.findValue(call.receiver->value);
         if (value && value->info.traits.drop != lang::DropKind::Lexical)
           continue;
-        if (staged && value) {
+        // Fixed-arity and pack invocations both stage the moved owner.
+        if (value) {
           const lang::MirInstruction *stage = nullptr;
           for (const auto &candidate : function.body.blocks)
             for (const auto &instruction : candidate.instructions)
@@ -34,7 +35,7 @@ void checkConsumingLambda(const std::string &name, bool staged) {
                      stage->callInputKind ==
                          lang::HirCallInputKind::MoveValue &&
                      !stage->preparedParameterDrop && stage->lifecycle.empty(),
-                 "pack receiver stage retains the moved environment lifetime");
+                 "receiver stage retains the moved environment lifetime");
           if (!stage || stage->operands.size() != 1)
             continue;
           value = function.body.findValue(stage->operands.front().value);
@@ -83,7 +84,7 @@ void checkConsumingLambda(const std::string &name, bool staged) {
   } catch (const std::exception &error) {
     expect(false, error.what());
   }
-  if (staged)
+  if (pack)
     return;
   auto reused = source;
   const auto insertion = reused.find("  std::println(5);");
@@ -100,6 +101,251 @@ void checkConsumingLambda(const std::string &name, bool staged) {
                                 std::string::npos;
                        }),
            "lambda reuse is rejected by move-state analysis");
+  }
+}
+
+// A lambda Call operand prepared by an argument CallInput that borrows a
+// derived class place for an exact base-reference parameter.
+struct LambdaBaseReferenceArgument {
+  lang::HirFunctionInstanceId function = 0;
+  lang::MirInstructionId call = 0;
+  std::size_t index = 0;
+  lang::MirOperand borrow;
+};
+
+std::vector<LambdaBaseReferenceArgument>
+lambdaBaseReferenceArguments(const lang::MirProgram &program) {
+  std::vector<LambdaBaseReferenceArgument> result;
+  for (const auto &function : program.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &block : body.blocks) {
+      for (const auto &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call || !call.lambdaTarget)
+          continue;
+        for (std::size_t index = 0;
+             index < call.operands.size() && index < call.parameterTypes.size();
+             ++index) {
+          const auto &operand = call.operands[index];
+          const auto &parameter = call.parameterTypes[index];
+          const auto *value = operand.kind == lang::MirOperandKind::Value
+                                  ? body.findValue(operand.value)
+                                  : nullptr;
+          const lang::MirInstruction *input = nullptr;
+          for (const auto &candidate : body.blocks)
+            for (const auto &instruction : candidate.instructions)
+              if (value && instruction.id == value->definition)
+                input = &instruction;
+          if (input == nullptr ||
+              input->kind != lang::MirInstructionKind::CallInput ||
+              input->callInputRole != lang::MirCallInputRole::Argument ||
+              input->operands.size() != 1 ||
+              parameter.kind != lang::SemanticType::Reference ||
+              parameter.arguments.size() != 1)
+            continue;
+          const auto &borrow = input->operands.front();
+          const auto *place = body.findPlace(borrow.place);
+          if (place != nullptr && operand.type == parameter &&
+              borrow.type == parameter &&
+              place->type.kind == lang::SemanticType::Class &&
+              place->type != parameter.arguments.front())
+            result.push_back({.function = function.id,
+                              .call = call.id,
+                              .index = index,
+                              .borrow = borrow});
+        }
+      }
+    }
+  }
+  return result;
+}
+
+void checkLambdaBaseReferenceArguments() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/lambda_base_reference_arguments.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend =
+      analyzeTrustedPreludeFixture("lambda-base-reference.gti", source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "a lambda accepts a derived class object for an exact base-reference "
+         "parameter");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(lang::verifyHirProgramPlans(frontend.semantics, frontend.hir).valid(),
+         "HIR plans verify for derived lambda reference arguments");
+
+  // Every fixed-arity invocation is planned; only the final pack expansion
+  // keeps MIR's shared pack schedule.
+  std::size_t unplanned = 0, readPlans = 0, mutablePlans = 0;
+  std::size_t placeReceivers = 0, valueReceivers = 0, movedReceivers = 0;
+  for (const auto &instance : frontend.hir.functionInstances()) {
+    for (const auto &value : instance.body.values) {
+      if (value.kind != lang::HirValueKind::Call || !value.lambdaTarget)
+        continue;
+      const bool pack = std::any_of(
+          value.operands.begin(), value.operands.end(), [&](auto id) {
+            const auto *operand = instance.body.findValue(id);
+            return operand &&
+                   operand->kind == lang::HirValueKind::PackExpansion;
+          });
+      if (pack)
+        continue;
+      if (!value.callPlan || !value.callPlan->receiver) {
+        ++unplanned;
+        continue;
+      }
+      switch (value.callPlan->receiver->kind) {
+      case lang::HirCallInputKind::ReadBorrow:
+        ++placeReceivers;
+        break;
+      case lang::HirCallInputKind::Value:
+        ++valueReceivers;
+        break;
+      case lang::HirCallInputKind::MoveValue:
+        ++movedReceivers;
+        break;
+      default:
+        break;
+      }
+      for (const auto &argument : value.callPlan->arguments) {
+        const auto *operand = instance.body.findValue(argument.value);
+        if (operand == nullptr ||
+            argument.parameterType.kind != lang::SemanticType::Reference ||
+            argument.parameterType.arguments.size() != 1 ||
+            argument.parameterType.arguments.front() == operand->info.type)
+          continue;
+        readPlans += argument.kind == lang::HirCallInputKind::ReadBorrow;
+        mutablePlans += argument.kind == lang::HirCallInputKind::MutableBorrow;
+      }
+    }
+  }
+  expect(unplanned == 0 && readPlans == 7 && mutablePlans == 2,
+         "fixed-arity lambda invocations plan each derived argument as an "
+         "ordered borrow of its exact base-reference parameter");
+  // Closure places are borrowed; a literal and a cleanup-free moved
+  // environment keep value stages; a moved owning environment is MoveValue.
+  expect(placeReceivers == 6 && valueReceivers == 2 && movedReceivers == 1,
+         "lambda call plans stage each closure receiver by its ownership");
+
+  const auto verified = lang::verifyMirProgram(frontend.mir);
+  for (const auto &error : verified.errors)
+    std::cerr << "MIR: " << error.message << '\n';
+  expect(verified.valid(),
+         "verified MIR accepts staged derived-to-base lambda arguments");
+  const auto staged = lambdaBaseReferenceArguments(frontend.mir);
+  const auto stagedWith = [&](lang::MirOperandKind kind) {
+    return std::count_if(staged.begin(), staged.end(), [&](const auto &entry) {
+      return entry.borrow.kind == kind;
+    });
+  };
+  expect(stagedWith(lang::MirOperandKind::BorrowRead) == 8 &&
+             stagedWith(lang::MirOperandKind::BorrowWrite) == 2,
+         "each lambda invocation, including the pack prefix, receives a "
+         "prepared exact base reference borrowed from the derived place");
+  if (!staged.empty()) {
+    auto forged = frontend.mir;
+    auto *body = lang::findMirBody(
+        forged, {lang::MirBodyKind::Function, staged.front().function});
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == staged.front().call)
+          instruction.operands[staged.front().index] = staged.front().borrow;
+    expect(hasMirVerificationError(lang::verifyMirProgram(forged),
+                                   "direct reference argument does not match"),
+           "MIR still rejects a derived place passed directly as a lambda's "
+           "base reference operand");
+  }
+
+  // A once invocation of a cleanup-free moved parameter has an ordinary value
+  // receiver stage. Its proof still requires the exact ownership Move.
+  bool checkedOnce = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    const auto definition = [&](lang::MirValueId id) {
+      const auto *value = body.findValue(id);
+      const lang::MirInstruction *found = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (value && instruction.id == value->definition)
+            found = &instruction;
+      return found;
+    };
+    for (const auto &block : body.blocks) {
+      for (const auto &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call || !call.lambdaTarget ||
+            !call.receiver ||
+            call.receiver->kind != lang::MirOperandKind::Value)
+          continue;
+        const auto *stage = definition(call.receiver->value);
+        const auto *move = stage && stage->operands.size() == 1
+                               ? definition(stage->operands.front().value)
+                               : nullptr;
+        if (stage == nullptr ||
+            stage->callInputRole != lang::MirCallInputRole::Receiver ||
+            stage->callInputKind != lang::HirCallInputKind::Value ||
+            move == nullptr || move->kind != lang::MirInstructionKind::Move)
+          continue;
+        checkedOnce = true;
+        auto forged = frontend.mir;
+        auto *mutated = lang::findMirBody(
+            forged, {lang::MirBodyKind::Function, function.id});
+        for (auto &candidate : mutated->blocks)
+          for (auto &instruction : candidate.instructions)
+            if (instruction.id == move->id)
+              instruction.ownership.reset();
+        expect(hasMirVerificationError(
+                   lang::verifyMirProgram(forged),
+                   "once-callable invocation is not rooted in an exact "
+                   "ownership move"),
+               "a once invocation's value receiver stage requires its exact "
+               "ownership Move");
+      }
+    }
+  }
+  expect(checkedOnce, "the fixture invokes a moved cleanup-free closure once");
+
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+    const auto optimized =
+        lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                          .mir = frontend.mir,
+                                          .level = level,
+                                          .target = lang::TargetInfo::host()});
+    expect(optimized.valid(), "derived lambda reference arguments survive "
+                              "verified optimization");
+    if (optimized.valid()) {
+      const auto lowered = gti_test::lowerProgram(
+          frontend, optimized.sourceMir, optimized.mir,
+          lang::TargetInfo::host(), optimized.report.transformations);
+      expect(lang::verifyLoweredProgram(lowered).empty(),
+             "derived lambda reference arguments lower to one closed program");
+    }
+  }
+
+  const std::string declarations = R"(
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + 1; }
+};
+class Unrelated { public: Unrelated() {} };
+)";
+  for (const std::string invocation :
+       {"int main() { auto read = [](Operation& s, int v) -> int { "
+        "return s.run(v); }; Unrelated other{}; return read(other, 40); }",
+        "int main() { auto write = [](mut Operation& s, int v) -> int { "
+        "return s.run(v); }; Increment concrete{}; "
+        "return write(concrete, 40); }"}) {
+    const auto invalid = analyzeTrustedPreludeFixture(
+        "invalid-lambda-base-reference.gti", declarations + invocation);
+    expect(!invalid.canGenerateCode() &&
+               countDiagnosticCode(invalid.diagnostics, "GTI-B0001") == 0 &&
+               !invalid.diagnostics.empty(),
+           "an unrelated class or read-only derived object for a lambda's "
+           "base reference fails in semantics, not in MIR");
   }
 }
 
@@ -961,6 +1207,7 @@ int main() {
 }
 
 int main() {
+  checkLambdaBaseReferenceArguments();
   checkRetainedLambdaFieldReceiver();
   checkRetainedConsumingFieldReceiver();
   checkScalarPrefixBeforeOwnedFieldMove();
