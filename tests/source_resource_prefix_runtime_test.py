@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from allocation_abort_runtime_test import ABORT_STATUS
 
 
 if __name__ == "__main__":
@@ -17,6 +18,11 @@ if __name__ == "__main__":
     failure = (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                "division_by_zero in integer_division\n")
     policy = fixture.parent / "source_resource_prefix_policy.gti"
+    memory = fixture.parents[2] / "stdlib/std/memory.gti"
+    allocation_line = next(index for index, text in enumerate(memory.read_text().splitlines(), 1)
+                           if "require_allocation(false)" in text)
+    exhaustion = (f"<std/memory>:{allocation_line}: runtime error[GTI-R0011]: "
+                  "allocation_failure in private_storage\n")
     policy_lines = policy.read_text().splitlines()
     def rejected_release(marker, message):
         sites = [index for index, text in enumerate(policy_lines, 1)
@@ -34,7 +40,8 @@ if __name__ == "__main__":
             ("duplicate", "duplicate-release", "duplicate resource release")):
         policy_cases.append(((argument,), rejected_release(marker, message)))
     run_runtime_matrix(
-        names=("source_resource_prefix_policy", "source_resource_prefix_cleanup"),
+        names=("source_resource_prefix_policy", "source_resource_prefix_cleanup",
+               "source_resource_prefix_exhaustion"),
         cases={
             "source_resource_prefix_policy": policy_cases,
             "source_resource_prefix_cleanup": [
@@ -43,7 +50,14 @@ if __name__ == "__main__":
                 (("fail", "release"), (70, "2\n1\n900\n901\n", failure)),
                 (("success", "release"), (0, "2\n1\n900\n901\n", "")),
             ],
-        })
+            "source_resource_prefix_exhaustion": [
+                ((), (ABORT_STATUS, "11\n", exhaustion)),
+                (("push",), (ABORT_STATUS, "8\n11\n", exhaustion)),
+                (("emplace", "item"), (ABORT_STATUS, "11\n", exhaustion)),
+                (("try", "push", "item"), (0, "8\n11\n88\n91\n", "")),
+            ],
+        }, native_inputs_by_name={"source_resource_prefix_exhaustion":
+            [str(fixture.parent / "unique_scalar_allocation_fault.cpp")]})
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     fixtures = fixture.parent
