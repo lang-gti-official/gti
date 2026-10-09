@@ -103,10 +103,9 @@ int main() {
   expect(cpp.find("mir_storage_relocate_v1") == std::string::npos &&
              cpp.find("::gti_internal::backend::mir_object_relocate_v1(") !=
                  std::string::npos &&
-             cpp.find("mir_prefix_relocate_v1<true>(") != std::string::npos &&
-             cpp.find("mir_prefix_relocate_v1<false>(") != std::string::npos,
-         "source sparse storage uses general typed relocation while vector "
-         "growth retains its verified prefix strategy");
+             cpp.find("mir_prefix_relocate_v1") == std::string::npos,
+         "sparse and prefix source storage both use general typed relocation "
+         "without a private prefix fallback");
   for (int mutation = 0; mutation != 5; ++mutation) {
     auto malformed = frontend.mir;
     auto *passive = const_cast<lang::MirClassInstance *>(
@@ -180,6 +179,63 @@ int main() {
              "constraint diagnostic anchors the rejected source use");
     }
   };
+  const std::string dependent = R"(
+    struct Parcel<T> { T item; };
+    enum Choice<T> { empty, item(T value) };
+    void require_relocation<std::relocatable U>() {}
+    void require_bitwise<std::bitwise_relocatable U>() {}
+    void check<T>() requires std::relocatable<T> {
+      require_relocation<Parcel<T>>();
+      require_relocation<Choice<T>>();
+      require_relocation<Parcel<Choice<T>>>();
+    }
+    void check_bits<std::bitwise_relocatable T>() {
+      require_bitwise<Parcel<T>>();
+    }
+    class Resource {
+    public:
+      Resource() {}
+      Resource(Resource& source) = delete;
+      Resource(Resource&& source) = default;
+      ~Resource() {}
+    };
+    int main() { check<Resource>(); check_bits<int>(); return 0; }
+  )";
+  const auto dependentResult =
+      analyzeWithStandardLibrary("dependent-relocation.gti", dependent);
+  expect(dependentResult.canGenerateCode(),
+         "dependent fields preserve declared and active relocation guarantees");
+  if (dependentResult.canGenerateCode())
+    expect(!gti_test::emitCppText(dependentResult).empty(),
+           "concrete dependent relocation remains verified through MIR");
+  for (const std::string constraint :
+       {"std::move_constructible<T>",
+        "std::relocatable<T> || std::move_constructible<T>"}) {
+    requireRejected("struct Parcel<T> { T item; }; "
+                    "void accept<std::relocatable U>() {} "
+                    "void check<T>() requires " +
+                        constraint +
+                        " { accept<Parcel<T>>(); } int main() { return 0; }",
+                    "relocatable");
+  }
+  requireRejected(R"(
+    struct Parcel<T> { T item; };
+    void accept<std::bitwise_relocatable U>() {}
+    void check<T>() requires std::relocatable<T> { accept<Parcel<T>>(); }
+    int main() { return 0; }
+  )",
+                  "bitwise_relocatable");
+  requireRejected(R"(
+    struct Parcel<T> {
+      T item;
+      int& loan;
+      Parcel(T item, int& loan) : item(std::move(item)), loan(loan) {}
+    };
+    void accept<std::relocatable U>() {}
+    void check<T>() requires std::relocatable<T> { accept<Parcel<T>>(); }
+    int main() { return 0; }
+  )",
+                  "relocatable");
   requireRejected(R"(
     class Fixed { public: Fixed() {} Fixed(Fixed&& source) = delete; };
     void accept<std::relocatable T>() {}

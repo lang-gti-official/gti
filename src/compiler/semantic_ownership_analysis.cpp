@@ -542,6 +542,23 @@ auto SemanticVisitor::Impl::typeCapabilities(
 auto SemanticVisitor::Impl::typeTraits(
     const SemanticType &type, std::vector<SemanticType> &visiting) const
     -> SemanticTypeTraits {
+  if (type.kind == SemanticType::TypeParameter) {
+    SemanticTypeTraits traits = semanticTraits(type);
+    // A dependent field keeps the guarantees of its declaration and active
+    // requires clause. Without this, an aggregate containing a relocatable T
+    // loses that guarantee even though a direct use of T satisfies the concept.
+    // Concrete instances are still reanalysed from their actual field types.
+    const GenericConstraintSet constraints = constraintOf(type);
+    if (!invalidConstraintSet(constraints)) {
+      if (constraintImplies(constraints,
+                            GenericConstraintKind::BitwiseRelocatable))
+        traits.relocation = RelocationKind::Bitwise;
+      else if (constraintImplies(constraints,
+                                 GenericConstraintKind::Relocatable))
+        traits.relocation = RelocationKind::Structural;
+    }
+    return traits;
+  }
   if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
     SemanticTypeTraits traits;
     const SemanticTypeTraits element = typeTraits(type.arguments[0], visiting);

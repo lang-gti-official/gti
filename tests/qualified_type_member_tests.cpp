@@ -122,7 +122,7 @@ int main() {
         "with borrow-origin and later-use locations");
   const auto wrapper = analyze(R"(
 #include <std/vector>
-struct CursorTraits<std::move_constructible T> {
+struct CursorTraits<std::vector_element T> {
   using iterator = std::vector<T>::const_iterator;
   using sentinel = std::vector<T>::sentinel;
 };

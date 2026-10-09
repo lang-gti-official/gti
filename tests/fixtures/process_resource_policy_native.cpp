@@ -108,7 +108,7 @@ extern "C" void *gti_rt_aligned_malloc_v1(std::uint64_t bytes,
     ++calls;
     requested_bytes.at(calls - 1) = bytes;
   }
-  if (mode >= 2 || calls == fail_on_call)
+  if (mode >= 2 || (observing && fail_on_call > 0 && calls == fail_on_call))
     return nullptr;
   if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
     std::abort();
@@ -134,7 +134,7 @@ extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
     ++calls;
     requested_bytes.at(calls - 1) = bytes;
   }
-  if (calls == fail_on_call) {
+  if (observing && fail_on_call > 0 && calls == fail_on_call) {
     *status = ENOMEM;
     return nullptr;
   }

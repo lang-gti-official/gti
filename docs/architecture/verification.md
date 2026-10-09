@@ -635,6 +635,37 @@ inventory now passes. This is focused evidence for the pending 0.394.1
 candidate, not acceptance of the still-open optimizer, full corpus,
 installed-consumer and performance gates.
 
+The next integration audit repairs dependent relocation guarantees and enum
+identities used only as generic arguments. The optimized structural-relocation,
+qualified-member and contextual-collection unit gates pass, including weak and
+disjunctive constraints, borrowed fields, and forbidden bitwise upgrades. Native
+recursive-generic validation against the newly linked compiler is still pending.
+Existing source generic fixtures now name the vector's actual element contract.
+
+The migrated provider observer retains allocation-free swap assertions and adds
+exact allocation positive controls. Its seven-mode native matrix and borrow
+rejections pass. Composable I/O passes all 48 native cases after its source-site
+lookup stops depending on obsolete unconstrained declaration spelling. Resource
+vector rollback passes all eight modes with one exact provider release; sparse
+storage still expects two. The process-provider matrix passes all eight modes
+and Off/Warn parity after correcting its disabled failure-injection sentinel for
+pre-main argv allocations. Optional native tests pass after bounding their
+representation inspection by the optional class, not the removed prefix helper.
+
+The reviewed library surface inventory is 76 entries and 150 cases. Its first
+complete run passes 147 cases; two stale observer/rollback expectations are
+repaired, and the JSON O3 build exceeds the unchanged 300-second per-case limit
+under concurrent full-suite load. An isolated retry is pending. The full 582-gate
+audit completes in 1548.68 seconds with 550 passes and 32 failures (including
+the stale tests corrected during that audit). It is not final acceptance:
+optimizer proofs, aggregate-projection emission,
+stale structural expectations, example inventories and sandbox-only network/
+debugger restrictions must be resolved or rerun appropriately. The object-context
+matrix's missing bounded-worker registration is repaired; all 96 shared-harness
+clients now pass scheduler inventory and mutation checks. None of this is final
+migration/release acceptance; the combined optimized full run, native corpus,
+installed consumers and measured performance remain required for 0.394.2.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
