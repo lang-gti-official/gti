@@ -280,6 +280,29 @@ source. Regenerate both example inventories with the combined optimized
 compiler and source library before final validation; retaining either branch's
 old counts alone does not establish the new representation inventory.
 
+Combined checkpoint `805e3e73` builds all Release targets on the Mac mini in
+146.23 seconds with six build workers. Eight of twelve focused integration
+gates pass, including the new formatting matrix, LSP protocol, raw/intrinsic/
+object context and optimizer analyses. The six optimizer safety requirements
+remain unmet. Both census failures are limited to one additional formatting
+body in each of examples 106, 110 and 134; they remain pending independent
+inventory review rather than being updated from arithmetic alone. Logs are
+retained in `/private/tmp/gti-combined-integration-805e3e73.log` and its JUnit
+record; this is not an unfiltered combined-head acceptance run.
+
+The native-evidence follow-up revises an obsolete zero-proof expectation after
+source allocation: closed-call analysis now reaches the independent vector
+context in both call orders. It must recover the same increment and element
+multiplication proofs as the original order, while O0 retains both checks.
+Negative controls now inspect both `Multiply` and `MultiplyAssign`, and require
+an actual multiplication, preventing a lowering change from making rejection
+tests pass vacuously. Against the same optimized compiler, the revised gate
+finishes in 13.68 seconds with five assertion failures, all identifying the
+still-missing multiplication proof. The strengthened conflicting/recursive/
+cleanup/native/virtual negatives, exact runtime cleanup and O0/O2/O3 parity
+checks pass. This deliberately preserves the unmet performance requirement;
+it does not waive it or claim that the full suite passes.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both
