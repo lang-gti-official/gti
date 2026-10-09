@@ -153,6 +153,11 @@ verifyCppMirControlFlowPlan(const MirBody &body,
 const CppMirControlFlowBlock *
 findCppMirControlFlowBlock(const CppMirControlFlowPlan &plan,
                            MirBlockId block) {
+  // A plan lists MIR's blocks in order, and MIR block ids are positions.
+  if (block != 0 && block <= plan.blocks.size() &&
+      plan.blocks[block - 1].block == block) {
+    return &plan.blocks[block - 1];
+  }
   const auto found =
       std::find_if(plan.blocks.begin(), plan.blocks.end(),
                    [block](const auto &row) { return row.block == block; });

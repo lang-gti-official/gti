@@ -5904,15 +5904,88 @@ checkedIntegerFailureContract(const MirBody &body,
   return contract;
 }
 
+[[nodiscard]] std::tuple<const SourceUnitId &, const std::size_t &,
+                         const std::size_t &>
+failureOriginRange(const FailureOriginAssignment &assignment) {
+  return std::tie(assignment.sourceUnit, assignment.start, assignment.end);
+}
+
+// Finds the first failure-origin assignment covering an origin's exact
+// source range. Verified failure metadata orders assignments strictly by that
+// range, so a binary search finds the one candidate; metadata out of that
+// order, which its own verification rejects, is searched in order instead.
+class FailureOriginAssignmentLookup {
+public:
+  explicit FailureOriginAssignmentLookup(const FailureMetadata &metadata)
+      : assignments(metadata.assignments()),
+        ordered(std::adjacent_find(assignments.begin(), assignments.end(),
+                                   [](const FailureOriginAssignment &left,
+                                      const FailureOriginAssignment &right) {
+                                     return !(failureOriginRange(left) <
+                                              failureOriginRange(right));
+                                   }) == assignments.end()) {}
+
+  [[nodiscard]] const FailureOriginAssignment *
+  find(const DefinedFailureOrigin &origin) const {
+    const auto key = std::tie(origin.sourceUnit, origin.start, origin.end);
+    const auto found =
+        ordered
+            ? std::lower_bound(assignments.begin(), assignments.end(), key,
+                               [](const FailureOriginAssignment &candidate,
+                                  const auto &target) {
+                                 return failureOriginRange(candidate) < target;
+                               })
+            : std::find_if(assignments.begin(), assignments.end(),
+                           [&](const FailureOriginAssignment &candidate) {
+                             return failureOriginRange(candidate) == key;
+                           });
+    return found == assignments.end() || failureOriginRange(*found) != key
+               ? nullptr
+               : &*found;
+  }
+
+private:
+  const std::vector<FailureOriginAssignment> &assignments;
+  bool ordered = false;
+};
+
 [[nodiscard]] MirVerificationResult verifyMirCheckedIntegerFailureContracts(
-    const MirProgram &program, const MirBody &body, std::size_t owner) {
+    const FailureOriginAssignmentLookup &origins, const MirBody &body,
+    std::size_t owner) {
+  // Indexed on the first checked operation: full-expression roots, failure
+  // records by producing instruction in body order, and the number of
+  // terminal endpoints that route each record.
+  std::unordered_set<HirValueId> fullExpressionRoots;
+  std::unordered_map<MirInstructionId, std::vector<const MirFailureRecord *>>
+      recordsByProducer;
+  std::unordered_map<MirFailureRecordId, std::size_t> recordEndpoints;
+  bool indexed = false;
+  const auto index = [&] {
+    if (indexed) {
+      return;
+    }
+    indexed = true;
+    for (const MirFullExpression &expression : body.fullExpressions) {
+      fullExpressionRoots.insert(expression.roots.begin(),
+                                 expression.roots.end());
+    }
+    for (const MirFailureRecord &record : body.failureRecords) {
+      recordsByProducer[record.producerInstruction].push_back(&record);
+    }
+    for (const MirBlock &candidate : body.blocks) {
+      const bool exactKind =
+          body.kind == MirBodyKind::HostedStartup
+              ? candidate.terminator.kind == MirTerminatorKind::ContainFailure
+              : candidate.terminator.kind ==
+                    MirTerminatorKind::PropagateFailure;
+      if (exactKind &&
+          candidate.activeFailure == candidate.terminator.failureRecord) {
+        ++recordEndpoints[candidate.activeFailure];
+      }
+    }
+  };
   const auto fullExpressionRoot = [&](const MirInstruction &instruction) {
-    return std::any_of(
-        body.fullExpressions.begin(), body.fullExpressions.end(),
-        [&](const MirFullExpression &expression) {
-          return std::find(expression.roots.begin(), expression.roots.end(),
-                           instruction.hirValue) != expression.roots.end();
-        });
+    return fullExpressionRoots.contains(instruction.hirValue);
   };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
@@ -5921,6 +5994,7 @@ checkedIntegerFailureContract(const MirBody &body,
       if (!contract.applicable) {
         continue;
       }
+      index();
       if (!contract.validShape) {
         return verificationFailure(
             body, owner,
@@ -5948,12 +6022,10 @@ checkedIntegerFailureContract(const MirBody &body,
             block.id, instruction.id);
       }
 
-      std::vector<const MirFailureRecord *> records;
-      for (const MirFailureRecord &record : body.failureRecords) {
-        if (record.producerInstruction == instruction.id) {
-          records.push_back(&record);
-        }
-      }
+      static const std::vector<const MirFailureRecord *> noRecords;
+      const auto produced = recordsByProducer.find(instruction.id);
+      const std::vector<const MirFailureRecord *> &records =
+          produced == recordsByProducer.end() ? noRecords : produced->second;
       if (contract.outcomes.empty()) {
         if (!records.empty()) {
           return verificationFailure(
@@ -5968,16 +6040,9 @@ checkedIntegerFailureContract(const MirBody &body,
       const DefinedFailureOrigin &origin =
           instruction.definedFailure.localOrigins.front();
       const FailureSiteId site = instruction.localFailureSites.front();
-      const auto assignment =
-          std::find_if(program.failureMetadata().assignments().begin(),
-                       program.failureMetadata().assignments().end(),
-                       [&](const FailureOriginAssignment &candidate) {
-                         return candidate.sourceUnit == origin.sourceUnit &&
-                                candidate.start == origin.start &&
-                                candidate.end == origin.end;
-                       });
-      if (assignment == program.failureMetadata().assignments().end() ||
-          assignment->line != origin.line || assignment->site != site ||
+      const FailureOriginAssignment *assignment = origins.find(origin);
+      if (assignment == nullptr || assignment->line != origin.line ||
+          assignment->site != site ||
           std::any_of(contract.outcomes.begin(), contract.outcomes.end(),
                       [&](DefinedFailureOutcome outcome) {
                         return std::find(assignment->outcomes.begin(),
@@ -6004,18 +6069,9 @@ checkedIntegerFailureContract(const MirBody &body,
         const MirFailureRecord &record = *records.front();
         const MirBlock *producer = body.findBlock(record.producerBlock);
         const MirBlock *parameter = body.findBlock(record.parameterBlock);
-        const auto endpointCount = static_cast<std::size_t>(std::count_if(
-            body.blocks.begin(), body.blocks.end(),
-            [&](const MirBlock &candidate) {
-              const bool exactKind =
-                  body.kind == MirBodyKind::HostedStartup
-                      ? candidate.terminator.kind ==
-                            MirTerminatorKind::ContainFailure
-                      : candidate.terminator.kind ==
-                            MirTerminatorKind::PropagateFailure;
-              return exactKind && candidate.activeFailure == record.id &&
-                     candidate.terminator.failureRecord == record.id;
-            }));
+        const auto endpoints = recordEndpoints.find(record.id);
+        const std::size_t endpointCount =
+            endpoints == recordEndpoints.end() ? 0 : endpoints->second;
         if (producer == nullptr || parameter == nullptr || producer != &block ||
             record.producerInstruction != instruction.id ||
             producer->terminator.kind != MirTerminatorKind::Invoke ||
@@ -9223,21 +9279,100 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
                ? instance
                : nullptr;
   };
-  const auto producerFor = [&](MirLoanId loan) {
-    std::optional<InstructionLocation> result;
-    for (const auto &[_, location] : locations) {
-      if (location.instruction->loan != loan ||
-          (location.instruction->kind != MirInstructionKind::Call &&
-           location.instruction->kind != MirInstructionKind::Construct &&
-           location.instruction->kind != MirInstructionKind::Borrow)) {
-        continue;
-      }
-      if (result) {
-        return std::optional<InstructionLocation>{};
-      }
-      result = location;
+  // The Call, Construct or Borrow that produces each loan, absent when none
+  // or several do.
+  std::unordered_map<MirLoanId, std::optional<InstructionLocation>> producers;
+  for (const auto &[_, location] : locations) {
+    if (!location.instruction->loan ||
+        (location.instruction->kind != MirInstructionKind::Call &&
+         location.instruction->kind != MirInstructionKind::Construct &&
+         location.instruction->kind != MirInstructionKind::Borrow)) {
+      continue;
     }
-    return result;
+    const auto [entry, first] =
+        producers.try_emplace(*location.instruction->loan, location);
+    if (!first) {
+      entry->second.reset();
+    }
+  }
+  const auto producerFor = [&](MirLoanId loan) {
+    const auto found = producers.find(loan);
+    return found == producers.end() ? std::optional<InstructionLocation>{}
+                                    : found->second;
+  };
+  // Indexes for the per-loan checks below. Lists over instructions keep the
+  // order of `locations`, so each check visits its candidates in the order a
+  // scan of `locations` would.
+  std::unordered_map<MirInstructionId, std::vector<const MirBlock *>>
+      invokeBlocks;
+  // Move, Reparent and Replace targets by source obligation.
+  std::unordered_map<MirDropObligationId, std::vector<MirDropObligationId>>
+      obligationTransfers;
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.kind == MirTerminatorKind::Invoke) {
+      invokeBlocks[block.terminator.invokeInstruction].push_back(&block);
+    }
+    const auto addTransfers =
+        [&](const std::vector<MirLifecycleEvent> &events) {
+          for (const MirLifecycleEvent &event : events) {
+            if (event.kind == MirLifecycleEventKind::Move ||
+                event.kind == MirLifecycleEventKind::Reparent ||
+                event.kind == MirLifecycleEventKind::Replace) {
+              obligationTransfers[event.source].push_back(event.target);
+            }
+          }
+        };
+    for (const MirInstruction &instruction : block.instructions) {
+      addTransfers(instruction.lifecycle);
+    }
+    addTransfers(block.terminator.successLifecycle);
+  }
+  // Drops that retire, and instructions that transfer out, an obligation.
+  std::unordered_map<MirDropObligationId, std::vector<InstructionLocation>>
+      dropsBySource;
+  std::unordered_map<MirDropObligationId, std::vector<InstructionLocation>>
+      transfersOutBySource;
+  // EndBorrows of a loan, and Borrows whose single operand forwards a loan.
+  std::unordered_map<MirLoanId, std::vector<InstructionLocation>> loanEnds;
+  std::unordered_map<MirLoanId, std::vector<InstructionLocation>> loanForwards;
+  for (const auto &[_, location] : locations) {
+    const MirInstruction &instruction = *location.instruction;
+    for (const MirLifecycleEvent &event : instruction.lifecycle) {
+      if (event.kind == MirLifecycleEventKind::Drop &&
+          instruction.kind == MirInstructionKind::Drop) {
+        std::vector<InstructionLocation> &drops = dropsBySource[event.source];
+        if (drops.empty() || drops.back().instruction != &instruction) {
+          drops.push_back(location);
+        }
+      }
+      if (event.kind == MirLifecycleEventKind::TransferOut) {
+        std::vector<InstructionLocation> &transfers =
+            transfersOutBySource[event.source];
+        if (transfers.empty() || transfers.back().instruction != &instruction) {
+          transfers.push_back(location);
+        }
+      }
+    }
+    if (instruction.kind == MirInstructionKind::EndBorrow && instruction.loan) {
+      loanEnds[*instruction.loan].push_back(location);
+    }
+    if (instruction.kind == MirInstructionKind::Borrow &&
+        instruction.operands.size() == 1 &&
+        instruction.operands.front().kind == MirOperandKind::Loan) {
+      loanForwards[instruction.operands.front().loan].push_back(location);
+    }
+  }
+  std::unordered_map<MirFailureRecordId, std::vector<const MirFailureRecord *>>
+      failureRecordsById;
+  for (const MirFailureRecord &record : body.failureRecords) {
+    failureRecordsById[record.id].push_back(&record);
+  }
+  static const std::vector<InstructionLocation> noLocations;
+  const auto listed =
+      [&](const auto &index,
+          const auto &key) -> const std::vector<InstructionLocation> & {
+    const auto found = index.find(key);
+    return found == index.end() ? noLocations : found->second;
   };
 
   for (const MirLoan &loan : body.loans) {
@@ -9525,36 +9660,35 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
           seed(event.target);
         }
       }
-    for (const MirBlock &block : body.blocks) {
-      if (!producer || block.terminator.kind != MirTerminatorKind::Invoke ||
-          block.terminator.invokeInstruction != producer->instruction->id) {
-        continue;
-      }
-      for (const MirLifecycleEvent &event : block.terminator.successLifecycle) {
-        if (event.kind == MirLifecycleEventKind::Initialize) {
-          seed(event.target);
+    if (const auto invokes = producer
+                                 ? invokeBlocks.find(producer->instruction->id)
+                                 : invokeBlocks.end();
+        invokes != invokeBlocks.end()) {
+      for (const MirBlock *block : invokes->second) {
+        for (const MirLifecycleEvent &event :
+             block->terminator.successLifecycle) {
+          if (event.kind == MirLifecycleEventKind::Initialize) {
+            seed(event.target);
+          }
         }
       }
     }
-    for (bool changed = true; changed;) {
-      changed = false;
-      const auto follow = [&](const std::vector<MirLifecycleEvent> &events) {
-        for (const MirLifecycleEvent &event : events) {
-          if ((event.kind == MirLifecycleEventKind::Move ||
-               event.kind == MirLifecycleEventKind::Reparent ||
-               event.kind == MirLifecycleEventKind::Replace) &&
-              carrierObligations.contains(event.source)) {
-            const std::size_t before = carrierObligations.size();
-            seed(event.target);
-            changed = changed || carrierObligations.size() != before;
-          }
+    // Close the carrier obligations under Move, Reparent and Replace.
+    std::vector<MirDropObligationId> pendingObligations(
+        carrierObligations.begin(), carrierObligations.end());
+    while (!pendingObligations.empty()) {
+      const MirDropObligationId source = pendingObligations.back();
+      pendingObligations.pop_back();
+      const auto targets = obligationTransfers.find(source);
+      if (targets == obligationTransfers.end()) {
+        continue;
+      }
+      for (const MirDropObligationId target : targets->second) {
+        const std::size_t before = carrierObligations.size();
+        seed(target);
+        if (carrierObligations.size() != before) {
+          pendingObligations.push_back(target);
         }
-      };
-      for (const MirBlock &block : body.blocks) {
-        for (const MirInstruction &instruction : block.instructions) {
-          follow(instruction.lifecycle);
-        }
-        follow(block.terminator.successLifecycle);
       }
     }
     if (carrierObligations.empty()) {
@@ -9588,29 +9722,31 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
       }
     }
 
+    // Drops of the carrier type that retire a carrier obligation, and calls
+    // that transfer one out; only the latter can complete an owned handoff.
     std::vector<InstructionLocation> carrierDrops;
-    for (const auto &[_, location] : locations) {
-      if (location.instruction->kind != MirInstructionKind::Drop ||
-          location.instruction->info.type != carrierType) {
-        continue;
-      }
-      if (std::any_of(location.instruction->lifecycle.begin(),
-                      location.instruction->lifecycle.end(),
-                      [&](const MirLifecycleEvent &event) {
-                        return event.kind == MirLifecycleEventKind::Drop &&
-                               carrierObligations.contains(event.source);
-                      })) {
-        carrierDrops.push_back(location);
+    std::vector<InstructionLocation> carrierTransfersOut;
+    {
+      std::unordered_set<const MirInstruction *> seenDrops;
+      std::unordered_set<const MirInstruction *> seenTransfers;
+      for (const MirDropObligationId obligation : carrierObligations) {
+        for (const InstructionLocation &location :
+             listed(dropsBySource, obligation)) {
+          if (location.instruction->info.type == carrierType &&
+              seenDrops.insert(location.instruction).second) {
+            carrierDrops.push_back(location);
+          }
+        }
+        for (const InstructionLocation &location :
+             listed(transfersOutBySource, obligation)) {
+          if (seenTransfers.insert(location.instruction).second) {
+            carrierTransfersOut.push_back(location);
+          }
+        }
       }
     }
 
-    std::vector<InstructionLocation> ends;
-    for (const auto &[_, location] : locations) {
-      if (location.instruction->kind == MirInstructionKind::EndBorrow &&
-          location.instruction->loan == loan.id) {
-        ends.push_back(location);
-      }
-    }
+    const std::vector<InstructionLocation> &ends = listed(loanEnds, loan.id);
     if (ends.empty()) {
       return verificationFailure(
           body, owner,
@@ -9619,20 +9755,26 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
           producer ? producer->instruction->id : 0);
     }
     for (const InstructionLocation &end : ends) {
-      const bool producerFailure = std::any_of(
-          body.failureRecords.begin(), body.failureRecords.end(),
-          [&](const MirFailureRecord &record) {
-            return producer && record.producerBlock == producer->block->id &&
-                   record.producerInstruction == producer->instruction->id &&
-                   end.block->activeFailure == record.id &&
-                   dominance->dominates(record.parameterBlock, end.block->id);
-          });
+      const auto activeRecords =
+          failureRecordsById.find(end.block->activeFailure);
+      const bool producerFailure =
+          activeRecords != failureRecordsById.end() &&
+          std::any_of(activeRecords->second.begin(),
+                      activeRecords->second.end(),
+                      [&](const MirFailureRecord *record) {
+                        return producer &&
+                               record->producerBlock == producer->block->id &&
+                               record->producerInstruction ==
+                                   producer->instruction->id &&
+                               dominance->dominates(record->parameterBlock,
+                                                    end.block->id);
+                      });
       const bool afterCarrierDrop = std::any_of(
           carrierDrops.begin(), carrierDrops.end(),
           [&](const InstructionLocation &drop) { return precedes(drop, end); });
       const bool afterOwnedCall = std::any_of(
-          locations.begin(), locations.end(), [&](const auto &item) {
-            const auto &callLocation = item.second;
+          carrierTransfersOut.begin(), carrierTransfersOut.end(),
+          [&](const InstructionLocation &callLocation) {
             const auto &call = *callLocation.instruction;
             // Generated movement has no callee/CallInput: the already-moved
             // SSA object hands its exact obligation and every dependency to
@@ -9746,9 +9888,11 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
           constructor != nullptr &&
           verifyMirConstructorBorrowSummary(program, *constructor).valid() &&
           std::any_of(
-              locations.begin(), locations.end(), [&](const auto &item) {
-                const auto &publication = *item.second.instruction;
-                if (!precedes(item.second, end) ||
+              listed(loanForwards, loan.id).begin(),
+              listed(loanForwards, loan.id).end(),
+              [&](const InstructionLocation &location) {
+                const auto &publication = *location.instruction;
+                if (!precedes(location, end) ||
                     publication.kind != MirInstructionKind::Borrow ||
                     !publication.loan || publication.operands.size() != 1 ||
                     publication.operands.front().kind != MirOperandKind::Loan ||
@@ -9763,10 +9907,12 @@ verifyLifecycleBoundLoanContracts(const MirProgram &program,
                        fieldLoan->access == loan.access;
               });
       const bool returned = std::any_of(
-          locations.begin(), locations.end(), [&](const auto &item) {
-            const auto &candidate = *item.second.instruction;
+          listed(loanForwards, loan.id).begin(),
+          listed(loanForwards, loan.id).end(),
+          [&](const InstructionLocation &location) {
+            const auto &candidate = *location.instruction;
             if (candidate.kind != MirInstructionKind::Borrow ||
-                !precedes(item.second, end) || !candidate.loan ||
+                !precedes(location, end) || !candidate.loan ||
                 candidate.operands.size() != 1 ||
                 candidate.operands.front().kind != MirOperandKind::Loan ||
                 candidate.operands.front().loan != loan.id) {
@@ -10135,6 +10281,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         "library MIR retains hosted startup or process-lifetime callbacks");
   }
 
+  const FailureOriginAssignmentLookup failureOrigins(program.failureMetadata());
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
     const auto verifyStorageType = [&](const SemanticType &type) {
       if (!storageOwnershipTypeValid(program, type))
@@ -10158,8 +10305,8 @@ verifyMirProgramContracts(const MirProgram &program) {
         for (const auto &parameter : constructor->parameterTypes)
           verifyStorageType(parameter);
     }
-    appendVerification(
-        result, verifyMirCheckedIntegerFailureContracts(program, body, owner));
+    appendVerification(result, verifyMirCheckedIntegerFailureContracts(
+                                   failureOrigins, body, owner));
     appendVerification(result,
                        verifyLifecycleBoundLoanContracts(program, body, owner));
     const std::vector<HirBindingId> *parameters = nullptr;

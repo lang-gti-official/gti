@@ -3359,6 +3359,13 @@ if(Python3_Interpreter_FOUND)
                  "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${PROJECT_SOURCE_DIR}/vendor/expected_lite/include"
   )
   add_test(
+    NAME single_body_compile_scaling
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/single_body_compile_scaling_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(single_body_compile_scaling PROPERTIES TIMEOUT 900)
+  add_test(
     NAME runtime_performance_workloads
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/runtime_performance_workloads_test.py"

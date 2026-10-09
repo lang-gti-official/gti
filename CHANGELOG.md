@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.395.7 — Long function bodies compile in linear time
+
+- Fix compile time that grew with the cube of a single function body's
+  length. For a `main()` of about 1,100 `std::try_format` or `std::format`
+  statements, GTI ran for more than 18 CPU-minutes; it now finishes its part
+  in about two seconds, no slower than for the same statements split into
+  small functions. Generated C++ is unchanged.
+
 ## 0.395.4 — Fewer allocations in std::format
 
 - `std::format`, `try_format`, `print` and `println` with a pattern now

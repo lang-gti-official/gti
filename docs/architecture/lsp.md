@@ -464,8 +464,16 @@ compiler work.
 - `didOpen`/`didChange` replace the full synchronized source, advance the
   document and canonical-source generations, erase the prior learned digest,
   invalidate affected dependants, and schedule analysis over all open-buffer
-  overlays. A stale result snapshot may remain allocated until its replacement
-  is published, but generation checks make it inaccessible to requests.
+  overlays. Generation checks make a stale result snapshot inaccessible to
+  requests, so advancing a root's analysis generation also releases that
+  snapshot's frontend result instead of keeping it until the replacement
+  publishes. A dedicated reclamation worker destroys released results, so
+  neither the protocol thread nor `stateMutex` pays for tearing down a large
+  frontend graph, and a request that already holds a result keeps it alive.
+  The snapshot keeps its generation and include-discovery flag for
+  diagnostic aggregation and dependency invalidation. Before this, a
+  shared-dependency edit held a stale and a new whole-program result for
+  every dependant at once.
 - Each published analysis records, for every dependency it loaded, the
   digest of the exact text it read (`lang::sourceTextDigest`, the identity the
   frontend cache already uses for loaded text). Opening a document is not a
@@ -531,7 +539,8 @@ snapshot-local identities and records. The benchmark exposes exact loaded,
 lexed, parsed, semantically analysed, and cache-hit unit lists plus phase times
 through the opt-in `GTI_LSP_FRONTEND_TRACE` stream. Each record also carries a
 monotonic `finishedMicroseconds` time since server start, so concurrent work
-can be ordered. The same report records the configured cache limits and
+can be ordered, and analysis records carry `retainedFrontends`, the number of
+published snapshots still holding a whole-program result. The same report records the configured cache limits and
 observed estimated occupancy.
 
 Analysis and completion have separate bounded worker queues. This keeps the
@@ -564,10 +573,11 @@ Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
 compiler-owned discovery point for concrete generic instances, so stopping at
 symbolic semantics made valid editor snapshots omit diagnostics that
 `gti check` reports for instantiated generic bodies and dependent
-`static_assert` declarations. The LSP does not query HIR directly, and it still
-does not build failure metadata or MIR; retaining the HIR result is the current
-cost of publishing the compiler's complete source-level semantic diagnostic
-set. Code generation remains disabled.
+`static_assert` declarations. The LSP does not query HIR, and it does not
+build failure metadata or MIR. It releases the HIR program as soon as the
+analysis returns, once HIR's diagnostics are in the result, so retained
+snapshots hold syntax, semantics, and source identity only. Code generation
+remains disabled.
 
 Before analysis and completion, the LSP asks the driver for immutable
 `ProjectFacts` for the package containing the entry document. The facts select

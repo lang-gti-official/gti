@@ -2328,14 +2328,13 @@ private:
   }
 
   [[nodiscard]] bool isFullExpressionRoot(HirValueId value) const {
-    return value != 0 &&
-           std::any_of(source.fullExpressions.begin(),
-                       source.fullExpressions.end(),
-                       [&](const HirFullExpression &expression) {
-                         return std::find(expression.roots.begin(),
-                                          expression.roots.end(),
-                                          value) != expression.roots.end();
-                       });
+    if (!fullExpressionRoots) {
+      std::unordered_set<HirValueId> &roots = fullExpressionRoots.emplace();
+      for (const HirFullExpression &expression : source.fullExpressions) {
+        roots.insert(expression.roots.begin(), expression.roots.end());
+      }
+    }
+    return value != 0 && fullExpressionRoots->contains(value);
   }
 
   [[nodiscard]] bool hasSingleArrayInitializerConsumer(HirValueId value) const {
@@ -11074,6 +11073,8 @@ private:
   std::optional<std::pair<HirValueId, std::string>> firstRejection;
   const FailureMetadata &failureMetadata;
   const HirBody &source;
+  // Every root of the source body's full expressions, gathered on first use.
+  mutable std::optional<std::unordered_set<HirValueId>> fullExpressionRoots;
   std::unordered_set<HirValueId> borrowedTemporaryTransfers;
   MirLoanId pendingReturnLoan = 0;
   MirDropObligationId pendingReturnDrop = 0;

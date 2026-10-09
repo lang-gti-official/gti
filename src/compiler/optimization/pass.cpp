@@ -185,7 +185,12 @@ analyzeScalarPromotion(const MirProgram &program, MirBodyAddress address,
       eligible = false;
     }
 
+    // Every access check below applies only while the place is still
+    // eligible, so stop at the first disqualifying access.
     for (const MirBlock &block : body.blocks) {
+      if (!eligible) {
+        break;
+      }
       for (const MirInstruction &instruction : block.instructions) {
         if (!eligible || instruction.tombstone) {
           continue;
@@ -448,7 +453,7 @@ MirBodyAnalysisManager::effects(const MirProgram &program,
       for (const MirInstruction &instruction : block.instructions) {
         cached.effects->push_back(
             {.instruction = instruction.id,
-             .effects = lang::effects(program, instruction)});
+             .effects = lang::effects(program, *body, instruction)});
       }
     }
   }

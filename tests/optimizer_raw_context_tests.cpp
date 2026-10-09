@@ -46,6 +46,24 @@ void checkAddressFixture(std::string_view filename,
   const auto addressContexts =
       lang::analyzeMirClosedCallSafetyChecks(addresses.mir);
   expect(addressContexts.converged, "typed address contexts must converge");
+  std::size_t structuralEffects = 0;
+  for (const auto address : lang::enumerateMirBodyAddresses(addresses.mir)) {
+    const auto &body = *lang::findMirBody(addresses.mir, address);
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (lang::isMirStructuralFinalAddressConstruction(addresses.mir,
+                                                          instruction) ||
+            lang::isMirStructuralValueTransfer(addresses.mir, instruction) ||
+            lang::isMirStructuralValueDrop(addresses.mir, instruction)) {
+          ++structuralEffects;
+          expect(lang::effects(addresses.mir, body, instruction) ==
+                     lang::effects(addresses.mir, instruction),
+                 "body-aware effects retain the identical structural profile");
+        }
+  }
+  if (filename == "optimizer_default_scalar_construction.gti")
+    expect(structuralEffects > 0,
+           "the body-aware effect parity probe must exercise construction");
   if (inspectResultDrops) {
     std::size_t passive = 0, active = 0;
     for (const auto address : lang::enumerateMirBodyAddresses(addresses.mir))
