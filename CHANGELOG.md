@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.393.1 — Function-item base-reference arguments
+
+- Fix an internal compiler error when a generic callable parameter holding a
+  function item, such as `call(apply)` invoking `function(concrete, 40)`, passes
+  a derived class object to the function's base-class reference parameter.
+  The call now binds the argument exactly as a direct `apply(concrete, 40)`
+  does, for read-only and `mut` references.
+
 ## 0.393.0 — Standard-library modules and reachable compilation
 
 - Builds lower, optimize and natively compile only code reachable from the
