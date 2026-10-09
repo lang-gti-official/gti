@@ -212,6 +212,23 @@ gap. Reconciliation also registers the new lambda matrix's bounded workers and
 formats the previously integrated constructor-origin lambda with the pinned
 formatter; neither change relaxes its assertions.
 
+The subsequent source-policy and disjoint-field checkpoint (`2fdffa17`, with
+the reviewed library fingerprint published as `88762fc8`) passes the optimized
+all-target build and 22 of 24 combined suites in 541.08 seconds. The full stdlib
+surface, compiler aggregate, source/resource/string cleanup, resource-audit
+independence, returned-address native matrix and relocated macOS toolchain all
+pass. Object-context assertions now pass; the original six optimizer safety
+assertions and three native proof/emission assertions remain unsatisfied in
+the two failing suites. This is partial evidence, not full-suite acceptance.
+Both complete example inventories remain unchanged: 11,468 emitted body
+identities and 60,028 lowered declarations/11,471 bodies/6,023 generated items.
+The five resource corpus fixtures again pass all eight modes, including
+sanitizers, after reviewing the seven-line source-location shift in c115/c116;
+their failure categories, exit status and cleanup traces are unchanged. Raw
+results are retained in `/private/tmp/gti-resource-corpus-zfrntseh/report.json`.
+All thirteen external SDK consumers pass against a clean temporary stage at
+`/private/tmp/gti-s08-s09-sdk.Bx3eeV`; this does not update the user's installation.
+
 `process_allocation_elision` forces one escaping allocation as a positive
 control and checks that a nonescaping scalar owner's allocation/release vanish
 at O3 in both C++20/C++23, preserving the computed value. O0 retains both
