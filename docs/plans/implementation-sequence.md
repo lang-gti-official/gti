@@ -7958,6 +7958,10 @@ consumer, and release refreshes remain outstanding for the full campaign.
   flow proof in primary analysis; independent assertions and ordinary name/type
   checks remain active. Concrete analysis reruns return, movement,
   receiver-restoration and borrow checks, and HIR rejects an unselected branch.
+  Staged closures publish exact rows for enums, including generic enums, named
+  only by an instance's type arguments. Their absence previously failed MIR
+  verification and fell back to the AST driver, which cannot select dependent
+  branches; member-requires probes over enum arguments cover this path.
   Nested required predicates stage from the canonical base snapshot with a
   shared execution budget and bounded staging depth. Focused fixtures cover
   recursive generic calls, discarded invalid code, constructors, methods and
