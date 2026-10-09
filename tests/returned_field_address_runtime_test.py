@@ -88,6 +88,12 @@ def main():
         "bad_borrowed": "cell.bad_borrowed()",
         "bad_lifetime": "cell.bad_lifetime()",
     }, "return *this.address + 1;", "optimizer_pointer_field_contents_native.cpp")
+    run_fixture(compiler, "optimizer_sibling_field_publication.gti", {
+        "bad_sibling_native": "ledger.bad_sibling_native()",
+        "bad_sibling_indirect": "ledger.bad_sibling_indirect()",
+        "bad_sibling_borrow": "ledger.bad_sibling_borrow()",
+        "bad_sibling_direct": "ledger.bad_sibling_direct()",
+    }, "return this.datum.value + 1;")
 
 
 if __name__ == "__main__":
