@@ -22,7 +22,7 @@ void expect(bool condition, std::string_view message) {
 }
 void checkAddressFixture(std::string_view filename,
                          std::initializer_list<std::string_view> positiveNames,
-                         std::size_t negativeCount) {
+                         std::size_t negativeCount, bool rawReads = true) {
   const lang::OptimizationPipeline pipeline;
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     ("fixtures/" + std::string(filename));
@@ -68,10 +68,12 @@ void checkAddressFixture(std::string_view filename,
              "all address controls must be reached");
       expect(context && !context->closed,
              "actual raw reads remain opaque despite value postconditions");
-      std::size_t discharges = 0, rawLoads = 0;
+      std::size_t discharges = 0, rawLoads = 0, loads = 0;
       const auto *body = optimized.mir.findFunctionInstance(instance.id);
       for (const auto &block : body->body.blocks)
         for (const auto &instruction : block.instructions) {
+          loads += !instruction.tombstone &&
+                   instruction.kind == lang::MirInstructionKind::Load;
           rawLoads += !instruction.tombstone && instruction.rawMemoryAccess &&
                       instruction.kind == lang::MirInstructionKind::Load;
           discharges += std::count_if(
@@ -81,7 +83,8 @@ void checkAddressFixture(std::string_view filename,
                        lang::MirSafetyCheckFamily::ArithmeticOverflow;
               });
         }
-      expect(rawLoads > 0, "value evidence must not erase actual raw access");
+      expect(rawReads ? rawLoads > 0 : loads > 0,
+             "value evidence must not erase the original memory reads");
       if (discharges !=
           (positive && level != lang::OptimizationLevel::O0 ? 1 : 0))
         std::cerr << "address control " << name << " discharges=" << discharges
@@ -351,5 +354,9 @@ int main() {
                       {"returned_field", "returned_reference_field",
                        "nested_returned_field", "nested_reference_field"},
                       6);
+  checkAddressFixture(
+      "optimizer_constructed_borrows.gti",
+      {"constructed_borrow", "returned_borrow", "constructed_mut_borrow"}, 5,
+      false);
   return failures == 0 ? 0 : 1;
 }
