@@ -23,6 +23,23 @@ permission to build the architecture. Current conservative analyses remain
 sound implementation boundaries, not permanent reasons to defer generality.
 This changes development policy, not the implemented pass inventory above.
 
+## Canonical Proof-Evidence Bookkeeping
+
+SCCP and safety analysis maintain their internally produced block, instruction,
+value and place evidence IDs in sorted unique vectors. The private
+`optimization/evidence_set.h` helpers insert by ordered position and merge by
+set union; repeated/subset evidence does not grow or re-sort the destination.
+Only analysis-owned canonical sets use this path. External evidence and loan
+source lists do not acquire a new canonicality assumption. Public proof
+records retain their existing vectors, ordering and complete identities.
+
+SCCP joins detect changes per fact instead of copying the entire destination
+state for a final comparison. Equality includes type, lattice
+value and all evidence; equal constants with different provenance still merge
+their evidence and schedule propagation. Unknown/constant/overdefined rules,
+fixed-point budgets and failure edges are unchanged. These are compiler-cost
+changes, not new transformations or permission to skip independent replay.
+
 ## Language-Growth Conformance Gate
 
 `optimization/coverage.h` and `optimization/coverage.cpp` own one exhaustive
