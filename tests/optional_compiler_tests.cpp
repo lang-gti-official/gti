@@ -493,14 +493,22 @@ public:
     const auto frontend = lang::Frontend().analyze(
         "borrowed-storage-admission.gti", source, {standardLibraryPrelude()},
         {}, {standardLibraryRoot()});
+    if (declaration.find("optional") == std::string::npos) {
+      expect(!frontend.canGenerateCode() &&
+                 hasDiagnosticCode(frontend.diagnostics, "GTI-S2029") &&
+                 hasDiagnostic(frontend.diagnostics, "View") &&
+                 hasDiagnostic(frontend.diagnostics, "vector_element") &&
+                 !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
+             "source-defined owning storage rejects borrowed payloads through "
+             "its declared element constraint, without a private handle rule");
+      continue;
+    }
     expect(!frontend.canGenerateCode() &&
                hasDiagnosticCode(frontend.diagnostics, "GTI-S2019") &&
                hasDiagnostic(frontend.diagnostics, "borrowed state") &&
                !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
            "trusted owning storage rejects a reference-carrying element even "
            "when no payload accessor or mutation is used");
-    if (declaration.find("optional") == std::string::npos)
-      continue;
     expect(countDiagnosticCode(frontend.diagnostics, "GTI-S2019") == 1,
            "class-owned optional payload validation is published once, not "
            "again for the constructor's field-model reanalysis");
@@ -821,9 +829,10 @@ int main() {
            "payload, and borrowed payload even when its class flag is erased");
     if (mutation >= 2)
       expect(hasMirVerificationError(
-                 verification, "storage field payload retains borrowed state"),
-             "prefix storage independently checks the same concrete payload "
-             "instead of trusting its owning handle or an allocation call");
+                 verification,
+                 "class relocation traits do not match its structural"),
+             "source storage's payload independently retains structural "
+             "relocation coherence, without a retired prefix-handle rule");
   }
 }
 

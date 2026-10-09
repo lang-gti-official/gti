@@ -3660,6 +3660,19 @@ cleanupFreeExpectedClassExtractionProducer(const MirBody &body,
              : nullptr;
 }
 
+// The extraction's address also represents its ordinary field projections.
+// Admission validates the exact field rows; declaration and operand emission
+// must agree that these places are views, never additional native objects.
+[[nodiscard]] bool expectedClassExtractionFieldPlace(const MirBody &body,
+                                                     const MirPlace &place) {
+  return place.root == MirPlaceRootKind::Value && !place.projections.empty() &&
+         std::all_of(place.projections.begin(), place.projections.end(),
+                     [](const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Field;
+                     }) &&
+         expectedClassExtractionPlace(body, place.value) != nullptr;
+}
+
 // An Expected-valued conditional has no default active alternative. Its one or
 // two normal arms construct one shared temporary; a terminal arm publishes
 // nothing. The join's transport
@@ -28924,6 +28937,9 @@ public:
           expectedClassExtractionPlace(facts.body, place.value) == &place) {
         continue;
       }
+      if (expectedClassExtractionFieldPlace(facts.body, place)) {
+        continue;
+      }
       if (place.root == MirPlaceRootKind::Value &&
           expectedScalarExtractionPlace(facts.body, place.value) == &place) {
         continue;
@@ -40809,12 +40825,7 @@ private:
       output << "(*__gti_mir_ref_v_" << place.value << ')';
       return;
     }
-    if (place.root == MirPlaceRootKind::Value && !place.projections.empty() &&
-        std::all_of(place.projections.begin(), place.projections.end(),
-                    [](const MirPlaceProjection &projection) {
-                      return projection.kind == MirProjectionKind::Field;
-                    }) &&
-        expectedClassExtractionPlace(facts.body, place.value) != nullptr) {
+    if (expectedClassExtractionFieldPlace(facts.body, place)) {
       // A field view over the published payload pointer.
       const MirValue *extraction = facts.body.findValue(place.value);
       if (extraction == nullptr) {
@@ -47544,12 +47555,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // value carrier; this place is the lvalue view over that pointer.
       continue;
     }
-    if (place.root == MirPlaceRootKind::Value && !place.projections.empty() &&
-        std::all_of(place.projections.begin(), place.projections.end(),
-                    [](const MirPlaceProjection &projection) {
-                      return projection.kind == MirProjectionKind::Field;
-                    }) &&
-        expectedClassExtractionPlace(body, place.value) != nullptr) {
+    if (expectedClassExtractionFieldPlace(body, place)) {
       // A field view over the published payload pointer.
       const MirValue *extraction = body.findValue(place.value);
       if (extraction == nullptr ||

@@ -134,7 +134,7 @@ namespace std {
   concept equality_comparable<T> = gti_internal::equality_comparable_capability<T>;
   concept totally_ordered<T> = std::equality_comparable<T> && gti_internal::relationally_ordered_capability<T>;
   concept ordered<T> = std::totally_ordered<T>;
-  concept numeric<T> = gti_internal::numeric_capability<T> && std::totally_ordered<T> && std::copyable<T> && std::default_initializable<T>;
+  concept numeric<T> = gti_internal::numeric_capability<T> && std::totally_ordered<T> && std::copyable<T> && std::default_initializable<T> && std::bitwise_relocatable<T>;
   concept signed_numeric<T> = gti_internal::signed_numeric_capability<T> && std::numeric<T>;
   concept integral<T> = gti_internal::integral_capability<T> && std::numeric<T>;
   /// A scoped enum with fixed-width integer values, excluding payload enums.

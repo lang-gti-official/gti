@@ -2072,8 +2072,10 @@ private:
   [[nodiscard]] static bool containsExactType(const SemanticType &type,
                                               const SemanticType &candidate);
 
-  [[nodiscard]] bool containsDisallowedCallableCaptureState(
-      const SemanticType &type, std::unordered_set<ClassId> &visiting) const;
+  [[nodiscard]] bool
+  containsDisallowedCallableCaptureState(const SemanticType &type,
+                                         std::unordered_set<ClassId> &visiting,
+                                         bool reviewedRawState = false) const;
 
   [[nodiscard]] bool
   containsDisallowedCallableCaptureState(const SemanticType &type) const;

@@ -2803,6 +2803,74 @@ int main() {
   }
 }
 
+void testExpectedFieldHasOnlyPayloadStorage() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/expected_field_no_phantom.gti";
+  std::ifstream input(path);
+  expect(input.good(), "Expected projected field fixture must exist");
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(), "Expected projected fields must lower");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind != lang::ProgramEntryKind::None;
+      });
+  expect(entry != frontend.mir.functionInstances().end(),
+         "Expected projected field fixture has an entry body");
+  if (entry == frontend.mir.functionInstances().end())
+    return;
+  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                     .owner = entry->id};
+  for (const auto standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const lang::CppMirBodyEmissionMap map(
+        buildRows(frontend, frontend.mir, standard));
+    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+    const auto text =
+        emitter.emitFailureBodyText(address, "expected-fields", 1);
+    expect(text.emitted(), "Expected projected field body must emit");
+    std::size_t fields = 0;
+    bool nested = false;
+    for (const auto &place : entry->body.places) {
+      if (place.root != lang::MirPlaceRootKind::Value ||
+          place.projections.empty())
+        continue;
+      const auto *value = entry->body.findValue(place.value);
+      const auto *producer =
+          value ? findPreflightInstruction(entry->body, value->definition)
+                : nullptr;
+      if (!producer ||
+          producer->intrinsic != lang::IntrinsicKind::ExpectedValue)
+        continue;
+      ++fields;
+      nested |= place.projections.size() == 2;
+      expect(text.text.find("__gti_mir_p_" + std::to_string(place.id)) ==
+                 std::string::npos,
+             "a payload field must not declare or access independent storage");
+      expect(text.text.find("(*__gti_mir_ref_v_" + std::to_string(place.value) +
+                            ").") != std::string::npos,
+             "a payload field must access its checked extraction address");
+      for (int mutation = 0; mutation != 2; ++mutation) {
+        auto forged = frontend.mir;
+        auto *body = lang::findMirBody(forged, address);
+        auto *field = const_cast<lang::MirPlace *>(body->findPlace(place.id));
+        if (mutation == 0)
+          field->projections.back().field = 0;
+        else
+          field->type = lang::SemanticType::Bool;
+        const lang::CppMirBodyEmitter malformed(forged, map);
+        expect(!malformed.supportsFailureBodyText(address),
+               "field storage elision cannot hide a forged projection or type");
+      }
+    }
+    expect(fields >= 4 && nested,
+           "direct and nested Expected field projections must be exercised");
+  }
+}
+
 void testNativeExpectedCopyPublication() {
   auto frontend = analyze("cpp-mir-native-expected-copy.gti", R"(
 [[c_abi]] struct Native { const int* pointer; int value; };
@@ -5374,6 +5442,8 @@ constexpr NamedTest kTests[] = {
      testPlainExpectedPayloadConstruction},
     {"testExpectedReferenceHasOnlyLoanStorage",
      testExpectedReferenceHasOnlyLoanStorage},
+    {"testExpectedFieldHasOnlyPayloadStorage",
+     testExpectedFieldHasOnlyPayloadStorage},
     {"testConcreteClassStaticStorage", testConcreteClassStaticStorage},
     {"testDischargedArrayReadAnalysis", testDischargedArrayReadAnalysis},
     {"testDefaultPrefixConstructorStatusAdmission",

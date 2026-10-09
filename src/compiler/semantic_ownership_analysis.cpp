@@ -6299,7 +6299,8 @@ auto SemanticVisitor::Impl::analyzeThreadIntrinsicCall(
       diagnostic.hints.emplace_back(
           "Pass a fresh task value or std::move(task); captures must own "
           "their state and cannot contain references, tracked borrows, or "
-          "raw pointers. A result must satisfy the same cross-thread "
+          "unreviewed raw pointers. A result must satisfy the same "
+          "cross-thread "
           "transfer boundary.");
       diagnostics.emplace_back(std::move(diagnostic));
     }

@@ -264,6 +264,14 @@ the checked extraction helper against caller storage; it supplies neither
 implicit construction nor native unwinding. The state check still precedes
 construction, and MIR alone decides whether to destroy or publish the result.
 
+Ordinary field chains projected from a checked class-payload extraction share
+that extraction's address. Admission checks every typed field projection;
+local declaration planning and operand emission use the same view predicate.
+No field gets a second default-constructed object, even when its class has a
+default constructor: that would invent construction, state and cleanup absent
+from MIR. Nested fields and non-default-constructible owning fields follow the
+same rule.
+
 Results from consuming source members use the ordinary owning-call result
 staging and replacement proof. The exact `Once` receiver must resolve to its
 selected consuming member and materialized receiver place. Receiver cleanup

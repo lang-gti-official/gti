@@ -5268,6 +5268,14 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   The broader failing audit gates still require acceptance. Test observers now follow the
   real process provider and approved one-region vector policy, without weakening
   zero-allocation swaps, reverse cleanup or sparse-storage's two-region contract.
+  The subsequent corpus repair restores numeric generic storage and reviewed
+  raw-state owned callbacks, while preserving tracked-borrow and unsafe-contract
+  boundaries. Expected payload field views no longer invent native default
+  objects; unrelated nested-owner tests cover real construction/destruction and
+  forged projection rejection. All 20 previously failing targeted corpus cases,
+  the eight-mode Expected publication matrix and updated examples pass. Current
+  full-suite/inventory, installed-consumer and performance evidence and the six
+  original optimizer safety/three native proof requirements remain open.
 - **Prerequisites:** completed `S-ALLOC-06/07` layout, final-address construction,
   destruction, relocation, owner-witness references, process leases and resource
   leases. Shared vector/string spans use the same source owner. The general

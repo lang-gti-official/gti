@@ -2927,6 +2927,13 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
             "origin",
             block.id, instruction.id);
       }
+      if (loan->kind != MirLoanKind::CallResult &&
+          loan->kind != MirLoanKind::Stored) {
+        return verificationFailure(
+            body, owner,
+            "call or construct result must retain a CallResult or Stored loan",
+            block.id, instruction.id);
+      }
 
       std::vector<MirLoanDependency> mappedCallSources;
       for (const auto &mapping : instruction.borrowFields) {

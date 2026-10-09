@@ -1257,6 +1257,12 @@ rejects ending either kind of authority before its dependents.
 Read-only structural range elements retain the exact iterator dereference
 `CallResult` chain when it terminates at the semantic range loan, including
 a range reached through a borrowed-success carrier and reference accessor.
+Source-defined iterators can carry that exact owner through a separate
+`storedDependency` rather than a parent reborrow; both relations retain their
+independent identity and child-first endpoint checks. The program verifier
+requires a borrowing call or constructor's result loan to remain `CallResult`
+or `Stored`, matching the producer, rather than accepting a forged `Local` loan
+with otherwise unchanged source metadata.
 They do not retire that chain and replace it with a `Local` loan against the
 coarser shared range. The selected returned address and child-first lifetime
 therefore survive through each iteration's last use, break, continue, return

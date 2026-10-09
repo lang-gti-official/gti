@@ -134,6 +134,10 @@
       "suite": "preflight"
     },
     {
+      "name": "testExpectedFieldHasOnlyPayloadStorage",
+      "suite": "preflight"
+    },
+    {
       "name": "testConcreteClassStaticStorage",
       "suite": "preflight"
     },
