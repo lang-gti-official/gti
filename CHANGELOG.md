@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.395.4 — Long function bodies compile in linear time
+
+- Fix compile time that grew with the cube of a single function body's
+  length. A `main()` of about 1,100 `std::try_format` or `std::format`
+  statements ran for more than 18 CPU-minutes; it now compiles in about two
+  seconds, no slower than the same statements split into small functions.
+  Generated C++ is unchanged.
+
 ## 0.395.2 — Owning arguments before conditional arguments
 
 - Fix an internal compiler error when a method or lambda call passes an
