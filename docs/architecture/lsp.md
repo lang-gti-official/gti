@@ -453,7 +453,7 @@ lock lifetime, or concurrency from public spelling.
 ## Document State
 
 `LanguageServer` still owns protocol handling, open overlays, client versions,
-analysis generations, dependency relationships, immutable result snapshots,
+analysis and content generations, dependency relationships, immutable result snapshots,
 diagnostic sets, and semantic-token caches. Exact reusable-frontend input state
 is extracted behind `FrontendSnapshotState` in `src/lsp/`. That component owns
 the shared `FrontendCache`, per-canonical-source generations, and exact digests
@@ -470,9 +470,19 @@ compiler work.
   the overlay source identity and pending work, and reanalyzes dependants whose
   view changes. The next analysis must read the disk source before learning its
   new digest.
-- Completed analysis is published only if the document and dependency
-  generations still match. Only then may its source digests be learned. Stale
-  semantic requests and stale digest publications are rejected.
+- Each open document has two generations. Its analysis generation advances
+  whenever its own analysis is rescheduled, including when only a dependency
+  changed, and identifies the result a request may use. Its content generation
+  advances only when its own overlay text or presence changes (`didOpen`,
+  `didChange`, `didClose`). A request captures the content generations of
+  every open document.
+- Completed analysis is published only if the root's analysis generation and
+  the content generation of each open dependency still match. Only then may its
+  source digests be learned. Stale semantic requests and stale digest
+  publications are rejected. Dependency staleness never compares analysis
+  generations: re-analysing an unchanged dependant then invalidated every
+  dependant above it in an include chain, so one shared-file edit re-analysed
+  a five-file chain up to eleven times instead of five.
   Diagnostic aggregation also excludes retained roots whose snapshot generation
   is obsolete, rather than republishing their old errors under a newer document
   version while replacement analysis is queued.
@@ -516,6 +526,10 @@ configured cache limits and observed estimated occupancy.
 Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
 requests without adopting clangd's per-translation-unit scheduler complexity.
+The analysis queue is first-in first-out, except that a root with a queued
+semantic request (hover, definition, references, and similar) runs before
+dependants queued ahead of it, so the document under the cursor is not
+answered last after a shared-dependency edit.
 Both queues use one long-lived LLVM thread with an explicit 8 MiB stack. That
 avoids Darwin's 512 KiB secondary-thread default and ensures the compiler's
 bounded-depth recovery runs before native stack exhaustion in debug builds,
