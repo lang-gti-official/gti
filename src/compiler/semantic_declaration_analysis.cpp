@@ -2684,6 +2684,15 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
     return type;
   }
   type.classId = selectSignatureClassDefinition(type.classId, type.arguments);
+  // The root is already a primary, so only its own recorded specializations
+  // can match; skip canonicalizing the full key for every nested class.
+  if (std::none_of(exactClassSpecializations.begin(),
+                   exactClassSpecializations.end(),
+                   [&](const ExactClassSpecialization &candidate) {
+                     return candidate.primary == type.classId;
+                   })) {
+    return type;
+  }
   const SemanticType key = canonicalExactSpecializationType(type);
   const auto found = std::find_if(
       exactClassSpecializations.begin(), exactClassSpecializations.end(),

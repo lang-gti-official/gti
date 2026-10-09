@@ -11,6 +11,24 @@ records remain evidence, not permission barriers to reopening the architecture.
 This revision does not claim the proposed facilities are implemented or waive
 their semantic proofs, independent verification and performance acceptance.
 
+## Closed-world call-site facts (2026-10-09)
+
+`optimization/closed_world` now provides the closed-world contract that
+interprocedural rows need (see
+[the architecture](../architecture/optimization.md#closed-world-call-site-facts)).
+Its first fact, exact referent classes of reference parameters, devirtualizes
+interface calls through forwarded parameters. Later clients should extend
+this fact family rather than add a second notion of a closed function:
+
+- argument scalar ranges for RT-2;
+- exact `this` classes for member helpers;
+- exact owned-pointee classes from allocation origins, for owning callback
+  models;
+- the callee-set inventory that RT-10 inlining and specialization need.
+
+The existing closed-call safety analysis keeps its own root and rejection
+rules. Reconciling the two inventories is follow-up work.
+
 ## PR #166 audit disposition (2026-10-09)
 
 The reviewed proposal is `1636c1df`, not an implementation authority. Its
@@ -576,7 +594,7 @@ verbosity are also independent of semantic optimization level.
 | redundant load/store removal | analysis gates partly complete; transform absent | MIR places | place alias/escape; exact call effects; memory versions or a proved local substitute; lifetime boundaries |
 | bounds/check elimination | bounded read/storage/arithmetic families implemented | MIR checked operations | integer semantics; range/predicate analysis; explicit check identity; proof reporting |
 | loop optimization | analysis gate complete; transform absent | MIR loops and values | natural-loop forest; invariants/inductions; transform-specific legality and replay; cost evidence |
-| devirtualization | bounded local exact-receiver slice implemented; general/contextual forms deferred | verified MIR calls, local loans, concrete instances and override identities | exact confined receiver, initialization dominance, authoritative effects, failure/cleanup compatibility, independent replay |
+| devirtualization | bounded local and closed-world reference-parameter exact-receiver slices implemented; owned-pointee, `this`, pointer and specialization forms deferred | verified MIR calls, local loans, closed-world call-site facts, concrete instances and override identities | exact confined or closed-world receiver, initialization dominance or exact caller facts, authoritative effects, failure/cleanup compatibility, independent replay |
 | inlining/specialization | one candidate among the `O-PERF-02` choices; transform absent | HIR call graph plus MIR bodies | conservative call effects; recursion handling; cost model; provenance composition; cleanup and temporary lifetime correctness; exact profile/proxy evidence |
 
 Do not implement a pass when one of its gates is represented only by C++
