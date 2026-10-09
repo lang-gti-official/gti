@@ -163,9 +163,14 @@ def main():
         assert installer.supported_llvm(llvm)
         with cache.open("a") as output:
             output.write(f"LLVM_DIR:PATH={llvm}\n")
-        rejected(lambda: installer.configure_command(build, root / "other-llvm"))
+        switched = installer.configure_command(build, root / "other-llvm")
+        assert "-G" not in switched and f"-DLLVM_DIR={root / 'other-llvm'}" in switched
         (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "23.1.2")')
-        assert not installer.supported_llvm(llvm)
+        assert installer.supported_llvm(llvm)
+        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "24.0.0")')
+        assert installer.supported_llvm(llvm), "new majors must not hit an arbitrary ceiling"
+        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "17.0.6")')
+        assert not installer.supported_llvm(llvm), "the required minimum remains enforced"
         assert "-G" not in installer.configure_command(build, root / "other-llvm")
         retained = root / "Cellar/llvm/22.1.8/lib/cmake/llvm"
         retained.mkdir(parents=True)
@@ -180,6 +185,43 @@ def main():
         with mock.patch.object(installer.shutil, "which", return_value="brew"), \
                 mock.patch.object(installer.subprocess, "run", side_effect=brew):
             assert installer.discover_llvm() == retained.resolve()
+            (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "23.1.2")')
+            assert installer.discover_llvm() == llvm.resolve(), "prefer installed current LLVM"
+        clang = llvm.parent / "clang"
+        clang.mkdir()
+        (clang / "ClangConfig.cmake").write_text("")
+        selected = installer.configure_command(build, llvm.resolve())
+        assert f"-DLLVM_DIR={llvm.resolve()}" in selected
+        assert f"-DClang_DIR={clang.resolve()}" in selected
+        assert "-G" not in selected
+        project = (root / "project").resolve()
+        project.mkdir()
+        upgrade_build = project / "build-release"
+        upgrade_build.mkdir()
+        alias = root / "llvm-opt"
+        alias.symlink_to(llvm)
+        (upgrade_build / "CMakeCache.txt").write_text(
+            f"CMAKE_HOME_DIRECTORY:INTERNAL={project}\n"
+            "CMAKE_GENERATOR:INTERNAL=Unix Makefiles\n"
+            "CMAKE_BUILD_TYPE:STRING=Release\nGTI_BUILD_LSP:BOOL=ON\n"
+            f"LLVM_DIR:PATH={alias}\nClang_DIR:PATH=/old/clang\n")
+        configure = installer.configure_command
+        with mock.patch.object(installer, "ROOT", project), \
+                mock.patch.object(installer.shutil, "which", return_value="fixture"), \
+                mock.patch.object(installer, "run", return_value=mock.Mock(stdout='"unused"')), \
+                mock.patch.object(installer, "discover_llvm", side_effect=AssertionError(
+                    "valid cached LLVM must not need discovery")), \
+                mock.patch.object(installer, "configure_command", wraps=configure) as refreshed, \
+                mock.patch.dict(installer.os.environ, {"LLVM_DIR": ""}), \
+                mock.patch.object(sys, "argv", ["installer", "--dry-run", "--no-terminal",
+                                                "--build-dir", str(upgrade_build),
+                                                "--config", str(project / "gti.lua")]):
+            installer.main()
+            refreshed.assert_called_once_with(upgrade_build.resolve(), llvm.resolve())
+            resolved = configure(upgrade_build.resolve(), llvm.resolve())
+            assert f"-DClang_DIR={clang.resolve()}" in resolved
+            assert "-G" not in resolved
+        assert not (project / "gti.lua").exists(), "dry run must not activate configuration"
         cache.write_text("CMAKE_HOME_DIRECTORY:INTERNAL=/different/source\n")
         rejected(lambda: installer.configure_command(build, None))
     print("Local terminal activation, Neovim configuration and build safety passed")
