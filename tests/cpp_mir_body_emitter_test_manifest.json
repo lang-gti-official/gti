@@ -126,11 +126,19 @@
       "suite": "preflight"
     },
     {
+      "name": "testPlainExpectedPayloadConstruction",
+      "suite": "preflight"
+    },
+    {
+      "name": "testExpectedReferenceHasOnlyLoanStorage",
+      "suite": "preflight"
+    },
+    {
       "name": "testConcreteClassStaticStorage",
       "suite": "preflight"
     },
     {
-      "name": "testDischargedStorageReadAnalysis",
+      "name": "testDischargedArrayReadAnalysis",
       "suite": "preflight"
     },
     {
@@ -150,7 +158,7 @@
       "suite": "preflight"
     },
     {
-      "name": "testPrefixStorageCStringAdmissionFailsClosed",
+      "name": "testSourceStringCStringAdmissionFailsClosed",
       "suite": "preflight"
     },
     {

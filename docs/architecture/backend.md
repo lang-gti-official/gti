@@ -775,14 +775,28 @@ selected initializer, source HIR root, full-expression boundary, unique
 consumer, and adjacent producer or Invoke-success edge. Owning input transfer
 and construction-rollback activation must match the verified MIR obligations;
 this path cannot replace a live field or invent a local-binding lifetime.
-An exact nonraising zero-argument source constructor still executes at its
-`Construct` instruction in the originating lexical context. Publication moves
-the completed payload into the field, retires only its moved-from native shell,
-and leaves semantic cleanup to MIR. The local Expected join writer explicitly
+An exact nonraising source constructor still executes at its `Construct`
+instruction in the originating lexical context, consuming its complete prepared
+argument schedule. The same payload-slot proof supports local Expected bindings
+and conditional destinations as well as fields. The sole adjacent `Initialize`
+must transfer the exact payload drop and activate the destination obligation.
+Publication moves the completed payload into that owner, retires only its
+moved-from native shell, and leaves semantic cleanup to MIR. The local Expected join writer explicitly
 excludes these proved field publications, since an actual field is not a
 temporary lifetime slot. Missing or mismatched targets, activation, source
 boundaries, or transfer events reject admission rather than selecting a native
 fallback.
+
+An otherwise unused reference-call SSA result identifies a referent; its paired
+CallResult loan already supplies the physical pointer. The declaration loop
+therefore emits no extra value object, irrespective of the referent type.
+This includes Expected and payload-enum referents: default-constructing an
+unused native value could either fail to compile or introduce a second object's
+constructor/destructor effects. Selected source return types distinguish actual
+references from by-value borrowed carriers; synthesized operator destinations
+may carry their enclosing assignment's contextual value category. Intrinsic
+reference results retain their place category and verified producer/loan shape.
+Actual by-value carriers keep their existing storage and cleanup representation.
 
 The passive default-body proof recurses through resolved, zero-argument generated
 class defaults with cycle detection. It does not admit source calls, selected

@@ -618,6 +618,23 @@ native cases across eight modes (six workers, 136.89 seconds). Formatting and ve
 checks pass. This remains an internal checkpoint of the pending 0.394.0
 migration, not a separately completed feature or release.
 
+The following backend checkpoint repairs nonraising owning payload publication
+and removes phantom native objects for checked reference-call results. The
+optimized compiler aggregate, full preflight and lifecycle suites pass together
+in 52.11 seconds. The expanded source-owner matrix passes all 72 native cases
+(24.62 seconds), including `source_prefix_complete_elements`; the Expected
+publication matrix passes all 48 cases (15.80 seconds). Both use six workers
+and cover C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan. New controls
+observe argument ordering, exact primary/secondary cleanup, and absence of
+spurious default construction/destruction. Mutated payload activation,
+publication, call staging and detached loan producers reject admission.
+Resource-prefix, terminated-string, borrowed-Expected extraction/native and
+passive-publication gates also pass. The named-test census initially exposed
+two stale migration-era names and the two newly added tests; its reviewed
+inventory now passes. This is focused evidence for the pending 0.394.1
+candidate, not acceptance of the still-open optimizer, full corpus,
+installed-consumer and performance gates.
+
 ## Indexed and returned views, range fields and existing-value allocation (candidate)
 
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
