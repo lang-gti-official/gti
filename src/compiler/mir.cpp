@@ -2203,6 +2203,41 @@ successors(const MirTerminator &terminator) {
   return {};
 }
 
+// Each block's predecessors in body order, each listed once.
+using MirBlockPredecessors =
+    std::unordered_map<MirBlockId, std::vector<const MirBlock *>>;
+
+[[nodiscard]] MirBlockPredecessors blockPredecessors(const MirBody &body) {
+  MirBlockPredecessors predecessors;
+  for (const MirBlock &candidate : body.blocks) {
+    const std::vector<MirBlockId> outgoing = successors(candidate.terminator);
+    for (auto target = outgoing.begin(); target != outgoing.end(); ++target) {
+      if (std::find(outgoing.begin(), target, *target) == target) {
+        predecessors[*target].push_back(&candidate);
+      }
+    }
+  }
+  return predecessors;
+}
+
+// A cleanup drain may continue backward only through a block's sole
+// predecessor, and only when that predecessor is an Invoke whose normal edge
+// enters the block under the same active failure.
+[[nodiscard]] const MirBlock *
+soleInvokePredecessor(const MirBlockPredecessors &predecessors,
+                      const MirBlock &block) {
+  const auto incoming = predecessors.find(block.id);
+  if (incoming == predecessors.end() || incoming->second.size() != 1) {
+    return nullptr;
+  }
+  const MirBlock *candidate = incoming->second.front();
+  return candidate->terminator.kind == MirTerminatorKind::Invoke &&
+                 candidate->terminator.target == block.id &&
+                 candidate->activeFailure == block.activeFailure
+             ? candidate
+             : nullptr;
+}
+
 // Reference formals and receivers have caller-owned dependencies, not an
 // owning formal carrier. Local value copies may retain the same dependency:
 // whole-program verification independently proves each exact publication,
@@ -4077,6 +4112,14 @@ joinLifecycleState(const MirLifecycleState &left,
     }
   }
 
+  // Drop obligations by the full expression that retires them, in order.
+  std::unordered_map<HirFullExpressionId,
+                     std::vector<const MirDropObligation *>>
+      fullExpressionObligations;
+  for (const MirDropObligation &obligation : body.dropObligations) {
+    fullExpressionObligations[obligation.fullExpression].push_back(&obligation);
+  }
+
   MirLifecycleState initial(body.dropObligations.size(),
                             OwnershipStateSet::Uninitialized);
   for (const MirDropObligation &obligation : body.dropObligations) {
@@ -4215,17 +4258,18 @@ joinLifecycleState(const MirLifecycleState &left,
         }
         }
       }
-      if (validate && instruction.fullExpressionEnd != 0) {
-        for (const MirDropObligation &obligation : body.dropObligations) {
-          if (obligation.fullExpression != instruction.fullExpressionEnd) {
-            continue;
-          }
-          if (!state[obligation.id - 1].definitely(
+      if (const auto retired = validate && instruction.fullExpressionEnd != 0
+                                   ? fullExpressionObligations.find(
+                                         instruction.fullExpressionEnd)
+                                   : fullExpressionObligations.end();
+          retired != fullExpressionObligations.end()) {
+        for (const MirDropObligation *obligation : retired->second) {
+          if (!state[obligation->id - 1].definitely(
                   OwnershipState::Uninitialized)) {
             return failure(
                 body, owner,
                 "full-expression boundary retains active drop obligation " +
-                    std::to_string(obligation.id),
+                    std::to_string(obligation->id),
                 block.id, instruction.id);
           }
         }
@@ -6693,6 +6737,7 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
     }
   }
 
+  const MirBlockPredecessors predecessors = blockPredecessors(body);
   std::unordered_map<MirInstructionId, std::size_t> failureDropCoverage;
   for (const MirBlock &block : body.blocks) {
     for (std::size_t markerIndex = 0; markerIndex < block.instructions.size();
@@ -6727,23 +6772,9 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
         if (cursorIndex != 0) {
           break;
         }
-        const MirBlock *predecessor = nullptr;
-        std::size_t predecessorCount = 0;
-        for (const MirBlock &candidate : body.blocks) {
-          const std::vector<MirBlockId> outgoing =
-              successors(candidate.terminator);
-          if (std::find(outgoing.begin(), outgoing.end(), cursor->id) ==
-              outgoing.end()) {
-            continue;
-          }
-          ++predecessorCount;
-          if (candidate.terminator.kind == MirTerminatorKind::Invoke &&
-              candidate.terminator.target == cursor->id &&
-              candidate.activeFailure == cursor->activeFailure) {
-            predecessor = &candidate;
-          }
-        }
-        if (predecessorCount != 1 || predecessor == nullptr) {
+        const MirBlock *predecessor =
+            soleInvokePredecessor(predecessors, *cursor);
+        if (predecessor == nullptr) {
           break;
         }
         cursor = predecessor;
@@ -11281,6 +11312,12 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       ++failurePredecessorCounts[parameter - 1];
     }
   }
+  std::unordered_map<MirFailureRecordId, std::vector<const MirBlock *>>
+      blocksByActiveFailure;
+  for (const MirBlock &candidate : body.blocks) {
+    blocksByActiveFailure[candidate.activeFailure].push_back(&candidate);
+  }
+  static const std::vector<const MirBlock *> noBlocks;
   for (const MirFailureRecord &record : body.failureRecords) {
     const MirBlock *parameter = body.findBlock(record.parameterBlock);
     if (parameter == nullptr) {
@@ -11374,15 +11411,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      cursor->id);
     }
 
-    for (const MirBlock &candidate : body.blocks) {
-      const bool primaryState = candidate.activeFailure == record.id &&
-                                (candidate.failureParameter == 0 ||
-                                 candidate.failureParameter == record.id);
-      if (primaryState && !primaryChain.contains(candidate.id)) {
+    const auto active = blocksByActiveFailure.find(record.id);
+    for (const MirBlock *candidate :
+         active == blocksByActiveFailure.end() ? noBlocks : active->second) {
+      const bool primaryState = candidate->failureParameter == 0 ||
+                                candidate->failureParameter == record.id;
+      if (primaryState && !primaryChain.contains(candidate->id)) {
         return failure(body, owner,
                        "active primary failure block is disconnected from "
                        "its parameter-to-endpoint chain",
-                       candidate.id);
+                       candidate->id);
       }
     }
   }
@@ -11409,6 +11447,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     return failure(body, owner,
                    "cleanup sequence must have exactly one boundary marker");
   }
+  const MirBlockPredecessors predecessors = blockPredecessors(body);
   std::unordered_map<MirInstructionId, std::size_t> bindingDropCoverage;
   const auto temporaryDependencyEnd = [&](const MirInstruction &instruction) {
     if (instruction.kind != MirInstructionKind::EndBorrow || !instruction.loan)
@@ -11470,23 +11509,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       if (cursorIndex != 0) {
         return std::nullopt;
       }
-      const MirBlock *predecessor = nullptr;
-      std::size_t predecessorCount = 0;
-      for (const MirBlock &candidate : body.blocks) {
-        const std::vector<MirBlockId> outgoing =
-            successors(candidate.terminator);
-        if (std::find(outgoing.begin(), outgoing.end(), cursor->id) ==
-            outgoing.end()) {
-          continue;
-        }
-        ++predecessorCount;
-        if (candidate.terminator.kind == MirTerminatorKind::Invoke &&
-            candidate.terminator.target == cursor->id &&
-            candidate.activeFailure == cursor->activeFailure) {
-          predecessor = &candidate;
-        }
-      }
-      if (predecessorCount != 1 || predecessor == nullptr) {
+      const MirBlock *predecessor =
+          soleInvokePredecessor(predecessors, *cursor);
+      if (predecessor == nullptr) {
         return std::nullopt;
       }
       cursor = predecessor;
@@ -11997,13 +12022,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      "materialization");
     }
   }
+  std::unordered_set<HirValueId> fullExpressionRoots;
+  for (const MirFullExpression &expression : body.fullExpressions) {
+    fullExpressionRoots.insert(expression.roots.begin(),
+                               expression.roots.end());
+  }
   const auto isFullExpressionRoot = [&](const MirInstruction &instruction) {
-    return std::any_of(
-        body.fullExpressions.begin(), body.fullExpressions.end(),
-        [&](const MirFullExpression &expression) {
-          return std::find(expression.roots.begin(), expression.roots.end(),
-                           instruction.hirValue) != expression.roots.end();
-        });
+    return fullExpressionRoots.contains(instruction.hirValue);
   };
   std::unordered_map<HirValueId, std::size_t> orderedInvocationCounts;
   for (const auto &block : body.blocks) {
@@ -12455,54 +12480,74 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   struct PreparedCallArgumentContext {
     std::vector<MirDropObligationId> priorPreparedDrops;
   };
+  // Every invocation operand staged by a single-value call input, keyed by
+  // the staged value and kept in body order. A detector consults only the
+  // sites that stage its own result instead of rescanning every invocation.
+  struct PreparedArgumentSite {
+    const MirInstruction *invocation = nullptr;
+    std::size_t index = 0;
+    const MirInstruction *argument = nullptr;
+  };
+  std::unordered_map<MirValueId, std::vector<PreparedArgumentSite>>
+      preparedArgumentSites;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &invocation : block.instructions) {
+      if ((invocation.kind != MirInstructionKind::Call &&
+           invocation.kind != MirInstructionKind::Construct) ||
+          invocation.callSite == 0) {
+        continue;
+      }
+      for (std::size_t index = 0; index < invocation.operands.size(); ++index) {
+        const MirInstruction *argument =
+            callInputFor(invocation.operands[index]);
+        if (argument == nullptr || argument->operands.size() != 1 ||
+            argument->operands.front().kind != MirOperandKind::Value) {
+          continue;
+        }
+        preparedArgumentSites[argument->operands.front().value].push_back(
+            {.invocation = &invocation, .index = index, .argument = argument});
+      }
+    }
+  }
   const auto preparedCallArgumentContext = [&](const MirInstruction &detector)
       -> std::optional<PreparedCallArgumentContext> {
     if (!detector.result || isFullExpressionRoot(detector)) {
       return std::nullopt;
     }
-    for (const MirBlock &block : body.blocks) {
-      for (const MirInstruction &invocation : block.instructions) {
-        if ((invocation.kind != MirInstructionKind::Call &&
-             invocation.kind != MirInstructionKind::Construct) ||
-            invocation.callSite == 0) {
-          continue;
+    const auto sites = preparedArgumentSites.find(*detector.result);
+    if (sites == preparedArgumentSites.end()) {
+      return std::nullopt;
+    }
+    for (const PreparedArgumentSite &site : sites->second) {
+      const MirInstruction &invocation = *site.invocation;
+      const std::size_t index = site.index;
+      const MirInstruction *argument = site.argument;
+      if (argument->hirValue != detector.hirValue ||
+          (argument->callInputKind != HirCallInputKind::Value &&
+           !(argument->callInputKind == HirCallInputKind::MoveValue &&
+             detector.kind == MirInstructionKind::Construct &&
+             detector.info.type.kind == SemanticType::Class)) ||
+          !strictlyPrecedes(detector, *argument)) {
+        continue;
+      }
+      PreparedCallArgumentContext context;
+      const auto addPriorStage = [&](const MirInstruction *input) {
+        if (input != nullptr && input->preparedParameterDrop &&
+            strictlyPrecedes(*input, detector)) {
+          context.priorPreparedDrops.push_back(*input->preparedParameterDrop);
         }
-        for (std::size_t index = 0; index < invocation.operands.size();
-             ++index) {
-          const MirInstruction *argument =
-              callInputFor(invocation.operands[index]);
-          if (argument == nullptr || argument->hirValue != detector.hirValue ||
-              (argument->callInputKind != HirCallInputKind::Value &&
-               !(argument->callInputKind == HirCallInputKind::MoveValue &&
-                 detector.kind == MirInstructionKind::Construct &&
-                 detector.info.type.kind == SemanticType::Class)) ||
-              argument->operands.size() != 1 ||
-              argument->operands.front().kind != MirOperandKind::Value ||
-              argument->operands.front().value != *detector.result ||
-              !strictlyPrecedes(detector, *argument)) {
-            continue;
-          }
-          PreparedCallArgumentContext context;
-          const auto addPriorStage = [&](const MirInstruction *input) {
-            if (input != nullptr && input->preparedParameterDrop &&
-                strictlyPrecedes(*input, detector)) {
-              context.priorPreparedDrops.push_back(
-                  *input->preparedParameterDrop);
-            }
-          };
-          if (invocation.receiver) {
-            addPriorStage(callInputFor(*invocation.receiver));
-          }
-          for (std::size_t prior = 0; prior < index; ++prior) {
-            addPriorStage(callInputFor(invocation.operands[prior]));
-          }
-          if (!context.priorPreparedDrops.empty() ||
-              (detector.kind == MirInstructionKind::Construct &&
-               detector.info.type.kind == SemanticType::Class &&
-               argument->callInputKind == HirCallInputKind::MoveValue)) {
-            return context;
-          }
-        }
+      };
+      if (invocation.receiver) {
+        addPriorStage(callInputFor(*invocation.receiver));
+      }
+      for (std::size_t prior = 0; prior < index; ++prior) {
+        addPriorStage(callInputFor(invocation.operands[prior]));
+      }
+      if (!context.priorPreparedDrops.empty() ||
+          (detector.kind == MirInstructionKind::Construct &&
+           detector.info.type.kind == SemanticType::Class &&
+           argument->callInputKind == HirCallInputKind::MoveValue)) {
+        return context;
       }
     }
     return std::nullopt;
@@ -12682,23 +12727,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         reversed.push_back(&candidate);
         --cursorIndex;
       }
-      const MirBlock *predecessor = nullptr;
-      std::size_t predecessorCount = 0;
-      for (const MirBlock &candidate : body.blocks) {
-        const std::vector<MirBlockId> outgoing =
-            successors(candidate.terminator);
-        if (std::find(outgoing.begin(), outgoing.end(), cursor->id) ==
-            outgoing.end()) {
-          continue;
-        }
-        ++predecessorCount;
-        if (candidate.terminator.kind == MirTerminatorKind::Invoke &&
-            candidate.terminator.target == cursor->id &&
-            candidate.activeFailure == cursor->activeFailure) {
-          predecessor = &candidate;
-        }
-      }
-      if (predecessorCount != 1 || predecessor == nullptr) {
+      const MirBlock *predecessor =
+          soleInvokePredecessor(predecessors, *cursor);
+      if (predecessor == nullptr) {
         break;
       }
       cursor = predecessor;
@@ -12708,6 +12739,21 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     return reversed;
   };
 
+  // Full-expression roots are matched against concrete values by source
+  // identity and against open instructions by HIR value.
+  std::unordered_map<HirValueId, std::vector<const MirValue *>> valuesBySource;
+  for (const MirValue &value : body.values) {
+    valuesBySource[value.sourceValue].push_back(&value);
+  }
+  std::unordered_map<HirValueId, std::vector<const MirInstruction *>>
+      rootDefinitions;
+  for (const MirBlock &definitionBlock : body.blocks) {
+    for (const MirInstruction &definition : definitionBlock.instructions) {
+      if (definition.fullExpressionEnd == 0) {
+        rootDefinitions[definition.hirValue].push_back(&definition);
+      }
+    }
+  }
   std::unordered_map<MirInstructionId, std::size_t> fullExpressionDropCoverage;
   for (const MirBlock &block : body.blocks) {
     for (std::size_t markerIndex = 0; markerIndex < block.instructions.size();
@@ -12752,29 +12798,22 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       for (const HirValueId root : expression.roots) {
         bool rootBeforeBoundary = false;
         bool hasConcreteValue = false;
-        for (const MirValue &value : body.values) {
-          if (value.sourceValue != root) {
-            continue;
-          }
-          hasConcreteValue = true;
-          const auto definition = instructionsById.find(value.definition);
-          if (definition != instructionsById.end()) {
-            rootBeforeBoundary =
-                rootBeforeBoundary ||
-                strictlyPrecedes(*definition->second, firstBoundary);
+        if (const auto values = valuesBySource.find(root);
+            values != valuesBySource.end()) {
+          for (const MirValue *value : values->second) {
+            hasConcreteValue = true;
+            const auto definition = instructionsById.find(value->definition);
+            if (definition != instructionsById.end()) {
+              rootBeforeBoundary =
+                  rootBeforeBoundary ||
+                  strictlyPrecedes(*definition->second, firstBoundary);
+            }
           }
         }
-        for (const MirBlock &definitionBlock : body.blocks) {
-          for (std::size_t definitionIndex = 0;
-               definitionIndex < definitionBlock.instructions.size();
-               ++definitionIndex) {
-            const MirInstruction &definition =
-                definitionBlock.instructions[definitionIndex];
-            if (definition.fullExpressionEnd != 0 ||
-                definition.hirValue != root) {
-              continue;
-            }
-            if (strictlyPrecedes(definition, firstBoundary)) {
+        if (const auto definitions = rootDefinitions.find(root);
+            definitions != rootDefinitions.end()) {
+          for (const MirInstruction *definition : definitions->second) {
+            if (strictlyPrecedes(*definition, firstBoundary)) {
               rootBeforeBoundary = true;
             }
           }
