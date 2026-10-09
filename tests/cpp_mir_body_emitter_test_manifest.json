@@ -542,6 +542,10 @@
       "suite": "lifecycle"
     },
     {
+      "name": "testNestedConstructorArgumentPublication",
+      "suite": "lifecycle"
+    },
+    {
       "name": "testPhysicalCarrierReferencePublication",
       "suite": "lifecycle"
     },

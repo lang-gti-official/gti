@@ -18,7 +18,7 @@
     "106-custom-formatters.gti": 107,
     "107-composable-io.gti": 123,
     "108-mutable-slices.gti": 49,
-    "109-borrowed-aggregates.gti": 23,
+    "109-borrowed-aggregates.gti": 31,
     "11-overloads.gti": 14,
     "110-integral-enums.gti": 95,
     "111-final-address-storage.gti": 85,
@@ -131,5 +131,5 @@
     "98-shared-ownership.gti": 58,
     "99-borrowed-expected.gti": 66
   },
-  "total": 6778
+  "total": 6786
 }

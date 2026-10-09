@@ -8179,7 +8179,12 @@ public:
         // copy or move. The proof already fixed declaration order.
         output << fieldName << '(';
         emitSemanticType(initializer.fieldType);
-        output << '(';
+        const bool sequencedArguments = std::any_of(
+            initializer.constructedArguments.begin(),
+            initializer.constructedArguments.end(), [](const auto &argument) {
+              return argument.constructor.has_value();
+            });
+        output << (sequencedArguments ? '{' : '(');
         if (initializer.statusConstructor != 0) {
           if (!failureForm)
             throw std::logic_error("raising native field requires status form");
@@ -8187,6 +8192,51 @@ public:
                         initializer.statusConstructor)
                  << "{}";
         }
+        const auto emitArgument =
+            [&](const auto &self,
+                const CppMirConstructedFieldInitializerArgument &source)
+            -> void {
+          const unsigned sources = unsigned(source.literal.has_value()) +
+                                   unsigned(source.parameter.has_value()) +
+                                   unsigned(source.constructor.has_value());
+          if (sources != 1)
+            throw std::logic_error(
+                "constructed field initializer has an ambiguous argument");
+          if (source.constructor) {
+            if (source.failureStatus) {
+              if (!failureForm)
+                throw std::logic_error("nested status argument requires a "
+                                       "failure-form constructor");
+              output << "([&]() { bool __gti_nested_success = false; return ";
+            }
+            emitSemanticType(source.type);
+            output << '{';
+            if (source.failureStatus)
+              output << cppMirFailureConstructorTagSpelling(*source.constructor)
+                     << "{}";
+            for (std::size_t index = 0; index < source.arguments.size();
+                 ++index) {
+              if (index || source.failureStatus)
+                output << ", ";
+              self(self, source.arguments[index]);
+            }
+            if (source.failureStatus)
+              output << ", &__gti_nested_success, __gti_mir_failure_record";
+            output << '}';
+            if (source.failureStatus)
+              output << "; }())";
+          } else if (source.literal) {
+            emitMirLiteral(*source.literal, source.type);
+          } else {
+            if (source.moved)
+              output << "std::move(";
+            output << (preparedBase ? "__gti_prepared.parameter_"
+                                    : "__gti_mir_arg_")
+                   << *source.parameter;
+            if (source.moved)
+              output << ')';
+          }
+        };
         for (std::size_t argument = 0;
              argument < initializer.constructedArguments.size(); ++argument) {
           if (argument != 0 || initializer.statusConstructor != 0) {
@@ -8194,27 +8244,11 @@ public:
           }
           const CppMirConstructedFieldInitializerArgument &source =
               initializer.constructedArguments[argument];
-          if (source.literal.has_value() == source.parameter.has_value()) {
-            throw std::logic_error(
-                "constructed field initializer has an ambiguous argument");
-          }
-          if (source.literal) {
-            emitMirLiteral(*source.literal, source.type);
-          } else if (source.parameter) {
-            if (source.moved) {
-              output << "std::move(";
-            }
-            output << (preparedBase ? "__gti_prepared.parameter_"
-                                    : "__gti_mir_arg_")
-                   << *source.parameter;
-            if (source.moved) {
-              output << ')';
-            }
-          }
+          emitArgument(emitArgument, source);
         }
         if (initializer.statusConstructor != 0)
           output << ", __gti_mir_constructor_success, __gti_mir_failure_record";
-        output << "))";
+        output << (sequencedArguments ? "})" : "))");
         continue;
       }
       if (initializer.kind == BindingKind::EmptyField) {
