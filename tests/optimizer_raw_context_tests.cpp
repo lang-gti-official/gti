@@ -419,5 +419,7 @@ int main() {
   checkAddressFixture("optimizer_typed_scalar_stores.gti",
                       {"after_small_store", "after_small_call"}, 4, false,
                       false);
+  checkAddressFixture("optimizer_pointer_field_snapshots.gti",
+                      {"local_snapshot", "after_member_initialization"}, 5);
   return failures == 0 ? 0 : 1;
 }

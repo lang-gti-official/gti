@@ -1,0 +1,108 @@
+#include <std/memory>
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+unsafe void initialize_cell(int* pointer) {
+  unsafe { std::construct_at(pointer, 7); }
+}
+
+class Box {
+  mut int* pointer = nullptr;
+public:
+  Box(int* pointer) : pointer(pointer) {}
+  int* address() { return this.pointer; }
+  unsafe void initialize() mut { unsafe { initialize_cell(this.pointer); } }
+  void retarget(int* pointer) mut { this.pointer = pointer; }
+  void maybe_retarget(bool choose, int* pointer) mut {
+    if (choose) this.pointer = pointer;
+  }
+};
+
+int local_snapshot() {
+  mut std::uninitialized<int> storage{};
+  mut Box box{storage.data()};
+  unsafe {
+    initialize_cell(box.address());
+    int* pointer = box.address();
+    return *pointer + 1;
+  }
+}
+
+int after_member_initialization() {
+  mut std::uninitialized<int> storage{};
+  mut Box box{storage.data()};
+  unsafe {
+    box.initialize();
+    int* pointer = box.address();
+    return *pointer + 1;
+  }
+}
+
+int bad_snapshot_retarget() {
+  mut std::uninitialized<int> storage{};
+  mut int other = 2147483647;
+  mut Box box{storage.data()};
+  unsafe {
+    box.initialize();
+    box.retarget(&other);
+    int* pointer = box.address();
+    return *pointer + 1;
+  }
+}
+
+int bad_snapshot_native() {
+  mut std::uninitialized<int> storage{};
+  mut Box box{storage.data()};
+  unsafe {
+    box.initialize();
+    opaque_pointer_effect(box.address());
+    int* pointer = box.address();
+    return *pointer + 1;
+  }
+}
+
+int bad_snapshot_raw() {
+  mut std::uninitialized<int> storage{};
+  mut Box box{storage.data()};
+  unsafe {
+    box.initialize();
+    *box.address() = 2147483647;
+    int* pointer = box.address();
+    return *pointer + 1;
+  }
+}
+
+int bad_snapshot_loop() {
+  mut std::uninitialized<int> storage{};
+  mut int other = 2147483647;
+  mut Box box{storage.data()};
+  unsafe {
+    box.initialize();
+    for (mut int index = 0; index < 2; index = index == 0 ? 1 : 2) {
+      if (index == 1) box.retarget(&other);
+      int* pointer = box.address();
+      if (index == 1) return *pointer + 1;
+    }
+  }
+  return 0;
+}
+
+int bad_snapshot_conditional(bool choose) {
+  mut std::uninitialized<int> storage{};
+  mut int other = 2147483647;
+  mut Box box{storage.data()};
+  unsafe {
+    box.initialize();
+    box.maybe_retarget(choose, &other);
+    int* pointer = box.address();
+    return *pointer + 1;
+  }
+}
+
+int main() {
+  if (false) return bad_snapshot_retarget();
+  if (false) return bad_snapshot_native();
+  if (false) return bad_snapshot_raw();
+  if (false) return bad_snapshot_loop();
+  if (false) return bad_snapshot_conditional(true);
+  return local_snapshot() == 8 && after_member_initialization() == 8 ? 0 : 1;
+}

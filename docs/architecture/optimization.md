@@ -629,6 +629,18 @@ Independent readonly pointer bindings retain their address across a checked
 referent write; exact replacement still retires the binding's value. Actual
 raw loads and unsafe obligations remain unchanged.
 
+Exact source-call summaries also intersect ordinary owned pointer-field values
+across all successful exits. Callers substitute the actual input addresses
+before applying effects, then republish only those independently proved output
+field identities. An unobserved local field can receive a call-site-versioned
+current-value snapshot; it establishes neither freshness, extent nor initialized
+contents and cannot be exported as the function's original input identity.
+Reobserving that call site after invalidation retires its earlier pointee facts,
+including when the call executes repeatedly in a loop. Retargeting, native/raw
+writes and differing successful exits cannot recover an obsolete cell value.
+Unrelated pointer-holder records exercise both direct and member-mediated
+construction, invalidation, repeated observation and forged-proof rejection.
+
 The remaining source-owner work needs initialized-index coverage through
 repeated calls, record-pointee envelopes, constructor pointer-field transport
 and checked returned-element provenance. A lifetime witness is still never a

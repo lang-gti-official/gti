@@ -108,6 +108,13 @@ def main():
         "bad_raw_width": "int(data.bad_raw_width())",
         "bad_lifetime_width": "int(data.bad_lifetime_width())",
     }, "return this.wide + uint64_t(1);", "optimizer_typed_scalar_stores_native.cpp")
+    run_fixture(compiler, "optimizer_pointer_field_snapshots.gti", {
+        "bad_snapshot_retarget": "bad_snapshot_retarget()",
+        "bad_snapshot_native": "bad_snapshot_native()",
+        "bad_snapshot_raw": "bad_snapshot_raw()",
+        "bad_snapshot_loop": "bad_snapshot_loop()",
+        "bad_snapshot_conditional": "bad_snapshot_conditional(true)",
+    }, "return *pointer + 1;")
 
 
 if __name__ == "__main__":
