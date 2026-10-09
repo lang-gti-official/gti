@@ -570,6 +570,9 @@ int main() {
     for (const auto &diagnostic : staged.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   if (staged.canGenerateCode()) {
+    const auto stagingContexts =
+        lang::analyzeMirClosedCallSafetyChecks(staged.mir);
+    expect(stagingContexts.converged, "address staging contexts must converge");
     std::size_t neutralStages = 0;
     bool actualArithmetic = false;
     bool actualRead = false;
@@ -632,12 +635,28 @@ int main() {
                     return proof.family ==
                            lang::MirSafetyCheckFamily::ArithmeticOverflow;
                   });
-        expect(proved == (name == "after_stage" &&
+        // The actual +0 address now remains exact, so the read preserves its
+        // known pointee as well as the unrelated field. It remains a raw,
+        // opaque operation; writes still invalidate the field's old value.
+        expect(proved == ((name == "after_stage" || name == "after_raw_read") &&
                                   level != lang::OptimizationLevel::O0
                               ? 1
                               : 0),
-               "neutral address staging preserves fields; actual raw reads, "
-               "writes and unsafe callee writes remain barriers");
+               "neutral staging and exact reads preserve fields; raw and "
+               "unsafe callee writes still invalidate them");
+        if (name == "after_raw_read") {
+          const auto *context = stagingContexts.find(
+              {.kind = lang::MirBodyKind::Function, .owner = function.id});
+          expect(context && context->reached && !context->closed,
+                 "an exact raw read does not establish effect closure");
+          std::size_t rawLoads = 0;
+          for (const auto &block : body->body.blocks)
+            for (const auto &instruction : block.instructions)
+              rawLoads += !instruction.tombstone &&
+                          instruction.rawMemoryAccess &&
+                          instruction.kind == lang::MirInstructionKind::Load;
+          expect(rawLoads == 1, "the exact raw read must remain executable");
+        }
       }
     }
   }

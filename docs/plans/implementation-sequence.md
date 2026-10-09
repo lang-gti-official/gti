@@ -5147,6 +5147,16 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   expressions to owned fields/indexes and prove successful construction
   coverage before exporting element facts, without equating a witness with an
   allocation or assuming an indexed write initializes its complete interval.
+  The successful scalar-construction prerequisite now records a value at one
+  exact typed address and constant element offset. Source calls relay successful
+  postconditions by pointer-formal ordinal; exact read-only value formals,
+  including concrete pack elements, substitute the caller's staged value.
+  Holes, conditional construction, raw/alias writes, parameter replacement and
+  lifetime replacement do not retain stale facts. Pointer identity is separate
+  from liveness; actual raw reads remain executable and opaque. This is not
+  initialized-region coverage: source-owner pointer-field origins, indexed
+  coverage and checked returned-element provenance remain required before
+  the original container optimization gates can pass.
   A further general prerequisite distinguishes inert address arithmetic and
   typed pointer conversion from actual pointee/lifetime operations, and avoids
   repeating an operation at an empty full-expression marker. Selected unsafe
