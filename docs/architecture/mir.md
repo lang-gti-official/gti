@@ -443,13 +443,15 @@ verification compares the semantic fact against exact generated movement,
 concrete bases, fields, borrowed state, and cleanup; interface bases contribute
 dispatch requirements, not stored value state. Passive primitive kinds are
 explicitly admitted; an unknown or newly added type kind is unavailable until
-classified, including when nested inside a fixed array. General typed and
-prefix-storage relocation select their bulk candidate only from this verified
-proof. Prefix intrinsics retain their checked liveness/capacity protocol;
-general raw relocation instead requires explicit unsafe validity. Both preserve
-source/destination lifetime behavior. There is no backend-only relocation
-operation. C++ representation traits may
-decline the bytewise candidate, never grant language eligibility.
+classified, including when nested inside a fixed array. General typed
+relocation selects its implementation only from this verified proof. The
+former private prefix-relocation family is retired: source owners now prove
+their capacity/live-prefix preconditions before general unsafe relocation.
+The separate bulk-range operation additionally requires independently verified
+bitwise-relocatable elements; a source concept chooses bulk or structural
+per-element relocation. Both preserve source/destination lifetime behavior.
+There is no backend-only relocation operation, and native representation traits
+never grant language eligibility.
 
 Restoring exchange and swap are separate sealed call intrinsics, bound to
 private prelude declarations. Semantics requires exact matching relocatable

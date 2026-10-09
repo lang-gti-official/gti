@@ -1100,14 +1100,16 @@ artifact descriptor and the site's exact allowed `(code, detail)` set. The
 all-zero identity with site zero is the sole descriptor-free runtime sentinel
 and resolves to `"<runtime>":0@0..0`.
 
-The S-ALLOC-08 branch adds `gti_rt_failure_abort_allocation_v2` as the runtime
+`gti_rt_failure_abort_allocation_v2` is the runtime
 primitive for infallible exhaustion. It reports a validated allocation record
 without allocating, then calls native abort directly: no observer, managed-task
 handoff, stream flush or terminal-arbitration wait. A malformed native record
 falls back to a descriptor-free allocation report. This primitive must be
-called at the detector, before cleanup; adding it alone does not change the
-compiler's existing allocation failure edges. Compiler wiring and complete
-source-family acceptance remain in progress under S-ALLOC-08.
+called at the detector, before cleanup. Verified MIR distinguishes allocation
+abort from contained failures; scalar/class/shared allocation and source
+infallible growth use that terminal path without an exhaustion cleanup edge.
+Mixed outcomes retain their other cleanup edges. Combined source-family,
+corpus and performance acceptance remains in progress under S-ALLOC-08/09.
 
 Only `panic` / `explicit_panic` (`GTI-R0017`, detail 37) admits a message.
 Generated code prepares its exact record header, then calls

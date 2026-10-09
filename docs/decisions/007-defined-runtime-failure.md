@@ -297,9 +297,10 @@ to clean; it is not a catch-all internal-error category.
 
 ## Allocation Exhaustion Revision (2026-10-09)
 
-Status: accepted direction; not yet implemented. Until
+Status: implemented on the allocation/container task branch; combined
+acceptance and integration remain in progress under
 [`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model)
-lands, the rule above remains the shipped behavior.
+and S-ALLOC-09. This revision supersedes the earlier contained-exhaustion rule.
 
 Allocation exhaustion in an infallible operation leaves contained,
 cleanup-preserving termination. Following Rust's default `handle_alloc_error`,

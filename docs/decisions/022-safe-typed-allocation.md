@@ -521,12 +521,12 @@ cross-platform, installed-consumer or publication gates.
 
 ## Revision: Rust allocation-failure model (2026-10-09)
 
-Status: accepted direction from the owner. Not yet implemented; the current
-contract below remains in force until the implementation work in
+Status: implemented on the allocation/container task branch; combined
+acceptance and integration remain in progress under
 [`S-ALLOC-08`](../plans/implementation-sequence.md#s-alloc-08-rust-allocation-failure-model)
-lands.
+and S-ALLOC-09. This revision supersedes the earlier contained-exhaustion rule.
 
-GTI will no longer make allocation failure observable everywhere. It adopts
+GTI no longer makes allocation failure observable everywhere. It adopts
 Rust's split between fallible and infallible allocation, and Rust's rule that
 process allocations are not observable effects:
 
