@@ -1,0 +1,74 @@
+// A returned owning payload-enum call result is constructed directly in the
+// caller's result storage, from an ordinary function or an exact lambda, and
+// a lambda stages an owning class argument before a later argument that can
+// fail, exactly as a direct function call does.
+#include <std/string>
+#include <std/vector>
+
+class resource {
+  int32_t id;
+public:
+  resource(int32_t id) : id(id) {}
+  resource(resource&& other) = default;
+  ~resource() { std::println(this.id); }
+};
+
+enum class holder { one(resource value), none };
+
+holder transfer(holder inner, int32_t divisor) {
+  int32_t checked = int32_t(1) / divisor;
+  return std::move(inner);
+}
+
+holder fresh_function(int32_t divisor) {
+  return transfer(holder::one(resource(4)), divisor);
+}
+
+holder fresh_exact_lambda(int32_t divisor) {
+  auto invoke = [](holder inner, int32_t divisor) -> holder {
+    int32_t fresh_check = int32_t(1) / divisor;
+    return std::move(inner);
+  };
+  return invoke(holder::one(resource(2)), divisor);
+}
+
+// The moved-from parameter is dropped after the call, so the result remains
+// an unpublished obligation until the return.
+holder named_exact_lambda(holder value, int32_t divisor) {
+  auto invoke = [](holder inner, int32_t divisor) -> holder {
+    int32_t named_check = int32_t(1) / divisor;
+    return std::move(inner);
+  };
+  return invoke(std::move(value), divisor);
+}
+
+class Token {
+  int32_t identity;
+public:
+  Token(int32_t identity) : identity(identity) {}
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.identity); }
+  int32_t read() { return this.identity; }
+};
+
+int32_t divide(int32_t divisor) { return 12 / divisor; }
+
+// The argument count selects one failure site: 2 fails the later lambda
+// argument, 3 fails inside the fresh lambda, and 4 inside the named lambda.
+int main(int argc, std::vector<std::string> argv) {
+  int32_t argument_divisor = argc == 2 ? 0 : 1;
+  int32_t fresh_divisor = argc == 3 ? 0 : 1;
+  int32_t named_divisor = argc == 4 ? 0 : 1;
+  holder first = fresh_function(1);
+  holder second = fresh_exact_lambda(fresh_divisor);
+  std::println(20);
+  holder third = named_exact_lambda(holder::one(resource(1)), named_divisor);
+  std::println(10);
+  auto take = [](Token token, int32_t divisor) -> int32_t {
+    return token.read() + divisor;
+  };
+  Token token{3};
+  int32_t total = take(std::move(token), divide(argument_divisor));
+  std::println(total);
+  return 0;
+}
