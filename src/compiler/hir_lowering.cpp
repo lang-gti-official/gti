@@ -5801,6 +5801,10 @@ private:
                             {}, resolved->returnType, resolved->parameterTypes);
       }
     }
+    // A function target is this instance's exact selection. A generic
+    // callable call inherits its deferred record from the primary analysis,
+    // but once the instance selects operator() or a function item, that
+    // signature's argument conversions are planned like any ordinary call.
     if (const auto *call = exprAs<Call>(raw);
         call != nullptr && kind == HirValueKind::Call &&
         value.intrinsic == IntrinsicKind::None && !value.constructorTarget &&
@@ -5808,8 +5812,6 @@ private:
         (model.findOperator(*call) == nullptr ||
          model.findOperator(*call)->kind == OverloadedOperator::Call) &&
         model.findLambdaCall(*call) == nullptr &&
-        (model.findDeferredCallableCall(*call) == nullptr ||
-         model.findOperator(*call) != nullptr) &&
         value.parameterTypes.size() >= call->arguments().size() &&
         value.parameterTypes.size() <= value.operands.size()) {
       const std::size_t argumentCount = value.parameterTypes.size();
