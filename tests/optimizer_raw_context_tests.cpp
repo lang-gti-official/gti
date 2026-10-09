@@ -416,5 +416,12 @@ int main() {
                       {"sibling_publication"}, 4, false, false);
   checkAddressFixture("optimizer_checked_address_store.gti",
                       {"checked_write", "checked_compound"}, 4);
+  checkAddressFixture("optimizer_typed_scalar_stores.gti",
+                      {"after_small_store", "after_small_call"}, 4, false,
+                      false);
+  checkAddressFixture("optimizer_pointer_field_snapshots.gti",
+                      {"local_snapshot", "after_member_initialization"}, 5);
+  checkAddressFixture("optimizer_vacant_sequence.gti", {"consecutive_vacant"},
+                      3);
   return failures == 0 ? 0 : 1;
 }

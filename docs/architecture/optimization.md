@@ -536,6 +536,19 @@ unresolved addresses retain the conservative path. The checked-address-store
 fixture tests replacement, compound assignment, overflow, native mutation and
 a distinct target, including forged-discharge rejection and O0 parity.
 
+Checked non-byte integer stores additionally preserve facts about live ordinary
+scalar fields of a different integer width. This relies on GTI's exact live
+pointee and non-overlapping-object obligations, not the C++ backend's aliasing
+rules. Equal-width types (including signedness variants and transparent/native
+aliases) receive no disjointness inference. A source-call profile replays all
+operations and nested selected source calls, admitting one nonlocal integer
+write width while excluding independent scalar locals. Raw/native, byte,
+aggregate, unknown and lifetime-changing writes, unsupported calls and
+synchronization reject that profile. Only owned non-byte scalar field facts
+survive; no region, allocation or initialized-element fact follows. The
+unrelated metadata fixture covers direct and called writes, with same-width,
+raw, native and destruction/reconstruction negatives and forged-proof replay.
+
 Exact source summaries export constructed addresses rooted in raw-pointer
 formals or an ordinary pointer field of a receiver/checked-reference formal,
 relative to the receiver or formal ordinal, owned field path and element
@@ -615,6 +628,18 @@ an invented disjointness proof. Callee-local field roots never enter a summary.
 Independent readonly pointer bindings retain their address across a checked
 referent write; exact replacement still retires the binding's value. Actual
 raw loads and unsafe obligations remain unchanged.
+
+Exact source-call summaries also intersect ordinary owned pointer-field values
+across all successful exits. Callers substitute the actual input addresses
+before applying effects, then republish only those independently proved output
+field identities. An unobserved local field can receive a call-site-versioned
+current-value snapshot; it establishes neither freshness, extent nor initialized
+contents and cannot be exported as the function's original input identity.
+Reobserving that call site after invalidation retires its earlier pointee facts,
+including when the call executes repeatedly in a loop. Retargeting, native/raw
+writes and differing successful exits cannot recover an obsolete cell value.
+Unrelated pointer-holder records exercise both direct and member-mediated
+construction, invalidation, repeated observation and forged-proof rejection.
 
 The remaining source-owner work needs initialized-index coverage through
 repeated calls, record-pointee envelopes, constructor pointer-field transport
@@ -705,6 +730,17 @@ construction; argument staging and actual cleanup retain their own effects.
 It preserves the same unrelated non-byte live-field facts, not a value envelope
 for the newly constructed region. Source wrappers can relay this profile;
 destroy/reconstruct still invalidates the old object's facts.
+
+The closed typed-store profile can combine vacant structural construction with
+checked non-byte scalar bookkeeping writes of one width. Independent scalar
+parameter moves affect only their own invocation storage. Existing non-byte
+pointee facts of a different width survive that exact profile, just as live
+ordinary fields do; a construction-only profile preserves all such live scalar
+pointees. This follows the existing nonoverlapping-live-object contract, not an
+assumption that different pointers name different allocations. Same-width live
+writes, unknown/native access, destructive lifetime changes and unsupported
+operations prevent preservation. The successive-publication regression includes
+replacement, native mutation and destroy/reconstruct failure controls.
 
 The interpreter records whether a successful path contains only that supported
 opaque lifetime transfer or an unknown live-memory barrier. Reachable joins
