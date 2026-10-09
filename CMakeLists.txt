@@ -190,13 +190,12 @@ else()
   if(NOT LLVM_FOUND)
     message(
       FATAL_ERROR
-        "GTI requires LLVM 18 through 22. Set LLVM_DIR to a supported LLVM CMake package or configure with -DGTI_BUNDLE_LLVM=ON.")
+        "GTI requires LLVM 18 or newer. Set LLVM_DIR to an LLVM CMake package or configure with -DGTI_BUNDLE_LLVM=ON.")
   endif()
-  if(LLVM_PACKAGE_VERSION VERSION_LESS 18 OR
-     LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 23)
+  if(LLVM_PACKAGE_VERSION VERSION_LESS 18)
     message(
       FATAL_ERROR
-        "GTI requires LLVM 18 through 22, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a supported installation or configure with -DGTI_BUNDLE_LLVM=ON.")
+        "GTI requires LLVM 18 or newer, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a compatible installation or configure with -DGTI_BUNDLE_LLVM=ON.")
   endif()
   # Without this check the mismatch surfaces as an undefined `typeinfo for
   # llvm::ErrorInfoBase` at link time, which does not name its own cause.
@@ -211,7 +210,8 @@ else()
   # libclang ships in the Clang CMake package beside the LLVM one (Debian
   # libclang-*-dev, Homebrew llvm@*). The hint covers installations whose
   # clang package directory sits beside the LLVM package directory.
-  find_package(Clang CONFIG QUIET HINTS "${LLVM_DIR}/../clang")
+  find_package(Clang ${GTI_LLVM_VERSION} EXACT CONFIG QUIET
+               HINTS "${LLVM_DIR}/../clang")
   if(NOT Clang_FOUND)
     message(
       FATAL_ERROR
@@ -387,6 +387,7 @@ add_library(
   "src/compiler/native_header.cpp"
   "src/compiler/optimization/alias.cpp"
   "src/compiler/optimization/coverage.cpp"
+  "src/compiler/optimization/closed_world.cpp"
   "src/compiler/optimization/devirtualization.cpp"
   "src/compiler/mir_effects.cpp"
   "src/compiler/optimization/loops.cpp"

@@ -688,6 +688,8 @@ public:
     outcome.report.name = std::string(name());
     MirEditor editor(context.program, std::string(name()));
     bool queued = false;
+    const MirClosedWorldFacts closedWorld =
+        analyzeMirClosedWorldFacts(context.program);
     for (const auto address : enumerateMirBodyAddresses(context.program)) {
       const auto *body = findMirBody(context.program, address);
       if (!body)
@@ -701,7 +703,7 @@ public:
           ++outcome.report.candidates;
           std::string reason;
           if (proveMirExactReceiver(context.program, address, instruction.id,
-                                    &reason)) {
+                                    &reason, &closedWorld)) {
             editor.queueExactReceiver({address, instruction.id});
             queued = true;
           } else {

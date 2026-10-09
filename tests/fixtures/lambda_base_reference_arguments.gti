@@ -1,0 +1,98 @@
+// A lambda invocation binds a derived class object to a base-reference
+// parameter exactly as a direct function call does, for read-only and mut
+// references and for every closure receiver shape.
+interface Operation { int32_t run(int32_t value); };
+
+class Increment : public Operation {
+  int32_t step;
+public:
+  Increment(int32_t step) : step(step) {}
+  int32_t run(int32_t value) override { return value + this.step; }
+};
+
+class Token {
+  int32_t identity;
+public:
+  Token(int32_t identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int32_t read() { return this.identity; }
+};
+
+int32_t invoke<Function>(Function function) {
+  Increment concrete{1};
+  return function(concrete, 40);
+}
+
+int32_t invoke_mut<Function>(Function function) {
+  mut Increment concrete{2};
+  return function(concrete, 40);
+}
+
+// Moving the parameter makes this a once-callable invocation.
+int32_t invoke_once<Function>(Function function) {
+  Increment concrete{3};
+  return std::move(function)(concrete, 40);
+}
+
+int32_t invoke_pack<Args...>(Args... args) {
+  auto callback = [](Operation& selected, int32_t value,
+                     bool enabled) -> int32_t {
+    return enabled ? selected.run(value) : 0;
+  };
+  Increment concrete{4};
+  return callback(concrete, args...);
+}
+
+int main() {
+  Increment one{1};
+  mut Increment two{2};
+  auto read = [](Operation& selected, int32_t value) -> int32_t {
+    return selected.run(value);
+  };
+  auto write = [](mut Operation& selected, int32_t value) -> int32_t {
+    return selected.run(value);
+  };
+  int32_t offset = 100;
+  auto captured = [offset](Operation& selected, int32_t value) -> int32_t {
+    return selected.run(value) + offset;
+  };
+  auto passive = [](Operation& selected, int32_t value) -> int32_t {
+    return selected.run(value) * 2;
+  };
+  Token token{7};
+  auto owning = [token = std::move(token)](Operation& selected,
+                                           int32_t value) -> int32_t {
+    return selected.run(value) + token.read();
+  };
+  if (read(one, 40) != 41) {
+    return 1;
+  }
+  if (write(two, 40) != 42) {
+    return 2;
+  }
+  if (captured(one, 1) != 102) {
+    return 3;
+  }
+  if ((read)(two, 2) != 4) {
+    return 4;
+  }
+  if ([](Operation& selected, int32_t value) -> int32_t {
+        return selected.run(value);
+      }(two, 3) != 5) {
+    return 5;
+  }
+  if (invoke(read) != 41 || invoke_mut(write) != 42) {
+    return 6;
+  }
+  if (invoke_once(std::move(passive)) != 86) {
+    return 7;
+  }
+  if (invoke_pack(40, true) != 44) {
+    return 8;
+  }
+  // The moved environment's capture is destroyed at the end of this full
+  // expression, before the result is printed.
+  int32_t moved = std::move(owning)(one, 10);
+  std::println(moved);
+  return moved == 18 ? 0 : 9;
+}

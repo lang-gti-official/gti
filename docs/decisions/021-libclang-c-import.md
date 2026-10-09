@@ -45,8 +45,8 @@ the plan's one-active-implementation rule.
    enforces both halves in every build. A future C++ import that needs more
    than libclang requires a new decision, not incremental drift.
 4. **Acquisition.** System builds locate the Clang CMake package beside the
-   already-required LLVM package (`find_package(Clang CONFIG)`; Debian
-   `libclang-XX-dev`, Homebrew `llvm@*`) in the supported LLVM 18–22 range.
+   already-required LLVM package (`find_package(Clang <LLVM-version> EXACT CONFIG)`;
+   Debian `libclang-XX-dev`, Homebrew `llvm@*`) with LLVM 18 or newer.
    Bundled builds (`GTI_BUNDLE_LLVM`, forced by `GTI_RELEASE_BUILD`) add the
    clang project to the pinned LLVM source build and ship the shared
    `libclang` beside the bundled LLVM archives; the installed `gti` binary

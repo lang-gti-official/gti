@@ -1218,7 +1218,9 @@ host-language temporary is allowed to shorten that lifetime to the invocation.
 Pack-expanded invocations retain the same slot through an ordered receiver
 stage. A cleanup-free moved local environment instead aliases its already
 materialized immutable storage, but only after proving the exact single-use
-Move/optional value-stage/invocation chain. Its available-to-moved event remains
+Move/optional value-stage/invocation chain. A cleanup-free moved concrete
+callable parameter or receiver field spells its place through the same
+single-use Move/value-stage chain; the stage itself has no representation. Its available-to-moved event remains
 in MIR; this representation erasure does not permit source reuse.
 
 Nested callable invocations consume only their own prepared receiver and
@@ -1705,7 +1707,9 @@ call/return is admitted only through an exact verified-MIR transport shape.
 Named and fresh arguments are moved from their one lifetime slot into the
 native by-value parameter, parameter entry moves into its lexical slot, and a
 transformed function, method, or exact lambda placement-constructs its result
-in the caller's value-rooted slot. The paired success edge arms that slot;
+in the caller's value-rooted slot. An exact captureless lambda invocation
+stages named and fresh arguments through the same ordered `CallInput` proof
+as a function call. The paired success edge arms that slot;
 failure leaves it empty and retains MIR's cleanup order. Representation-only
 moved-from shells are destroyed immediately after their verified transfer.
 Constructor arguments use the same proof, including fresh unit variants.
@@ -2689,7 +2693,11 @@ A call resolved to a concrete override initially remains virtual in MIR; the
 C++ backend does not infer devirtualization. The bounded optimizer
 `exact-receiver-dispatch` proof may refine it to a static source override,
 which backend admission accepts and emits with explicit qualification from
-the sealed MIR target. It preserves the existing failure/status contract,
+the sealed MIR target. A closed-world parameter refinement keeps the
+interface-typed receiver place. `isMirExactReceiverPresentation` admits it
+only when `dispatchOwner` names the target's owner and that owner directly
+implements the receiver's interface. The backend then spells
+`static_cast<const Owner &>(receiver)` before the qualified call. It preserves the existing failure/status contract,
 argument staging, and cleanup; native type analysis is not proof authority.
 For a conservatively failure-capable virtual
 call, the backend validates the exact contract roots and candidate owners, then

@@ -1,0 +1,17 @@
+#include <std/algorithm>
+#include <std/string>
+#include <std/vector>
+int main() {
+  mut std::vector<int32_t> values{};
+  for (mut int32_t i = 0; i < 1000000; i++) { values.push_back(int32_t((int64_t(i) * int64_t(7919)) % int64_t(10007))); }
+  mut int64_t total = 0;
+  for (mut int32_t round = 0; round < 300; round++) {
+    int32_t threshold = round * 33;
+    total += int64_t(std::count_if(values, [threshold](int32_t& value) -> bool {
+      return value > threshold;
+    }));
+  }
+  std::print("checksum ");
+  std::println(std::to_string(total));
+  return 0;
+}

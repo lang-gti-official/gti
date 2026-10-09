@@ -1,0 +1,54 @@
+interface Transform {
+  int run(int value, int bias);
+};
+
+class Offset : public Transform {
+public:
+  Offset() {}
+  int run(int value, int bias) override { return value + bias + this.adjustment; }
+private:
+  int adjustment = 0;
+};
+
+class Negate : public Transform {
+public:
+  Negate() {}
+  int run(int value, int bias) override { return 0 - value - bias; }
+};
+
+class Observer {
+public:
+  Observer() {}
+  ~Observer() { std::println("cleanup"); }
+};
+
+int argument() {
+  std::println("argument");
+#ifdef FAIL_RUNTIME
+  return 2147483647;
+#else
+  return 40;
+#endif
+}
+
+int bias() { std::println("bias"); return 2; }
+
+// Every visible call passes the complete local `Offset` as `selected`,
+// directly or through `relay`'s own reference parameter, so `apply`
+// dispatches statically. The `Negate` beside it fixes the parameter index:
+// binding the wrong parameter's class would print -42.
+int apply(Transform& other, Transform& selected) {
+  return selected.run(argument(), bias());
+}
+
+int relay(Transform& other, Transform& selected) {
+  return apply(other, selected);
+}
+
+int main() {
+  Observer observer{};
+  Negate other{};
+  Offset object{};
+  std::println(relay(other, object));
+  return 0;
+}
