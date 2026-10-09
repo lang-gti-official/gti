@@ -5256,6 +5256,14 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   ownership, with one authoritative initialized length and no sparse bitmap.
   Companion resource-vector shares the engine and retains the original bound
   provider through cleanup, including while empty.
+- **Integration audit follow-up:** dependent aggregate trait queries now retain
+  the type parameter's declared/active relocation guarantees without granting
+  unconstrained or disjunctive permission. HIR retains exact enum identities
+  occurring only in generic arguments in both complete and reachable lowering.
+  Focused structural tests pass; recursive native composition and the broader
+  failing audit gates still require acceptance. Test observers now follow the
+  real process provider and approved one-region vector policy, without weakening
+  zero-allocation swaps, reverse cleanup or sparse-storage's two-region contract.
 - **Prerequisites:** completed `S-ALLOC-06/07` layout, final-address construction,
   destruction, relocation, owner-witness references, process leases and resource
   leases. Shared vector/string spans use the same source owner. The general

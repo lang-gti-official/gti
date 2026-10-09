@@ -828,12 +828,13 @@ private:
     return concrete;
   }
 
-  // An alias needs an exact enum identity for declaration spelling, but is
-  // not itself a request for a concrete class layout or executable lifecycle.
+  // An alias or type-only generic argument needs an exact enum identity for
+  // declaration spelling, but is not itself a request for a concrete class
+  // layout or executable lifecycle.
   // Walk its argument graph without using the representation-bearing class
   // discovery path. An enum's actual alternative fields still discover their
   // required class layouts through enqueueEnum.
-  bool seedAliasEnumIdentities(const SemanticType &type) {
+  bool seedTypeEnumIdentities(const SemanticType &type) {
     bool concrete =
         type != SemanticType::Unknown &&
         type.kind != SemanticType::TypeParameter &&
@@ -842,7 +843,7 @@ private:
     for (const CompileTimeValue &value : type.valueArguments)
       concrete = concrete && value.kind != CompileTimeValue::Parameter;
     for (const SemanticType &argument : type.arguments) {
-      const bool argumentConcrete = seedAliasEnumIdentities(argument);
+      const bool argumentConcrete = seedTypeEnumIdentities(argument);
       concrete = concrete && argumentConcrete;
     }
     if (concrete && type.kind == SemanticType::Enum)
@@ -970,6 +971,11 @@ private:
   void seedInstanceSignatureClasses(std::vector<SemanticType> typeArguments,
                                     SemanticType returnType,
                                     std::vector<SemanticType> parameterTypes) {
+    // Both complete and reachable lowering retain generic argument identities.
+    // Even when no value/signature uses the enum, MIR must have its exact row.
+    // Do not instantiate otherwise unused class layouts merely to find enums.
+    for (const SemanticType &argument : typeArguments)
+      seedTypeEnumIdentities(argument);
     if (!reachablePrefixRequested) {
       return;
     }
@@ -1007,7 +1013,7 @@ private:
         seedRootDeclarations(externC->declarations(), roots, templateContext);
       } else if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
         if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
-          seedAliasEnumIdentities(info->type);
+          seedTypeEnumIdentities(info->type);
       } else if (const auto *classDeclaration =
                      stmtAs<ClassDecl>(statement.get())) {
         const ClassTypeInfo *info = baseModel->findClassType(*classDeclaration);
@@ -1083,7 +1089,7 @@ private:
       }
       if (const auto *alias = stmtAs<TypeAliasDecl>(statement.get())) {
         if (const TypeAliasInfo *info = baseModel->findTypeAlias(*alias))
-          seedAliasEnumIdentities(info->type);
+          seedTypeEnumIdentities(info->type);
         continue;
       }
       if (const auto *classDeclaration = stmtAs<ClassDecl>(statement.get())) {
@@ -1611,7 +1617,7 @@ private:
       // Naming an alias is not a layout or construction use. Preserve its
       // exact type catalog without discovering executable class bodies;
       // actual fields/calls/signatures enqueue their concrete types below.
-      seedAliasEnumIdentities(alias->type);
+      seedTypeEnumIdentities(alias->type);
     }
     output.program.classes[index].typeAliases = std::move(aliases);
     std::vector<HirClassField> fields;

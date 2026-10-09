@@ -120,8 +120,7 @@ int main() {
   const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
   const std::size_t optionalBegin =
       artifact.contents.find("template <typename T>\nclass optional_storage {");
-  const std::size_t optionalEnd =
-      artifact.contents.find("// Prefix-initialized storage", optionalBegin);
+  const std::size_t optionalEnd = artifact.contents.find("\n};", optionalBegin);
   const std::string optionalRepresentation =
       optionalBegin == std::string::npos || optionalEnd == std::string::npos
           ? std::string{}
