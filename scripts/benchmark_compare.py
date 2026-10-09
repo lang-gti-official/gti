@@ -80,6 +80,14 @@ BACKEND_NAMESPACE_OPEN = "namespace gti_internal::backend {"
 BACKEND_NAMESPACE_CLOSE = "} // namespace gti_internal::backend"
 ARITHMETIC_OVERFLOW_GUARD = "if (overflow) {"
 ARITHMETIC_SUCCESS_GUARD = "if (false) {"
+ARITHMETIC_VALUE_OVERFLOW_GUARDS = {
+    f"mir_checked_{operation}_v1": (
+        f"if (integer_{operation}_overflows(promoted_left, promoted_right, &value)) {{",
+        f"value = static_cast<Target>(promoted_left {operator} promoted_right);\n"
+        f"  {ARITHMETIC_SUCCESS_GUARD}",
+    )
+    for operation, operator in (("add", "+"), ("subtract", "-"), ("multiply", "*"))
+}
 
 
 class BenchmarkError(RuntimeError):
@@ -811,25 +819,49 @@ def arithmetic_success_proxy_source(
             )
         body_close = matching_cpp_delimiter(source, cursor, "{", "}")
         body = source[cursor : body_close + 1]
-        guard_count = body.count(ARITHMETIC_OVERFLOW_GUARD)
+        value_guard, value_replacement = ARITHMETIC_VALUE_OVERFLOW_GUARDS[helper_name]
+        guard_count = body.count(ARITHMETIC_OVERFLOW_GUARD) + body.count(value_guard)
         if guard_count != 1:
             raise BenchmarkError(
                 f"compiler-owned helper '{qualified_name}' must contain exactly one "
-                f"'{ARITHMETIC_OVERFLOW_GUARD}' guard, found {guard_count}"
+                f"recognized overflow guard, found {guard_count}"
             )
-        guard_index = cursor + body.index(ARITHMETIC_OVERFLOW_GUARD)
+        guard = ARITHMETIC_OVERFLOW_GUARD
+        replacement = ARITHMETIC_SUCCESS_GUARD
+        if value_guard in body:
+            # The detector also computes the successful result. Removing its
+            # invocation would silently publish the zero-initialized staging
+            # value. Compute the ordinary successful-path result explicitly;
+            # this remains a non-semantic proxy, never overflow-safe execution.
+            initialization = "Target value{};"
+            publication = "*result = value;"
+            if (
+                body.count(initialization) != 1
+                or body.count(publication) != 1
+                or not (
+                    body.index(initialization) < body.index(value_guard)
+                    < body.index(publication)
+                )
+            ):
+                raise BenchmarkError(
+                    f"compiler-owned helper '{qualified_name}' has an unexpected "
+                    "value-computing overflow shape"
+                )
+            guard = value_guard
+            replacement = value_replacement
+        guard_index = cursor + body.index(guard)
         edits.append(
             (
                 guard_index,
-                guard_index + len(ARITHMETIC_OVERFLOW_GUARD),
-                ARITHMETIC_SUCCESS_GUARD,
+                guard_index + len(guard),
+                replacement,
             )
         )
         replacements.append(
             {
                 "function": qualified_name,
-                "from": ARITHMETIC_OVERFLOW_GUARD,
-                "to": ARITHMETIC_SUCCESS_GUARD,
+                "from": guard,
+                "to": replacement,
                 "count": 1,
             }
         )
