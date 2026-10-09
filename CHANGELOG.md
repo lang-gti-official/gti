@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.395.1 — Faster checked integer arithmetic
+## 0.395.1 — Faster checked arithmetic and lambda owning arguments
 
 - Checked `+`, `-` and `*` on integers, compound assignments, the `expected`-
   returning `std::checked_add`/`checked_sub`/`checked_mul` and the
@@ -20,6 +20,20 @@ for what minor and patch releases mean.
   native compilers keep the portable checks. Loops that check every element
   run 28-52% faster on the runtime probes, and a direct scalar loop now beats
   C++ that performs the same checks.
+
+### Fixes
+
+- Fix generated C++ that failed to compile with "use of undeclared
+  identifier" when a function returns the result of a call that produces an
+  enum with an owning payload, such as `return invoke(holder::one(r), 1);`
+  for a lambda or `return transfer(holder::one(r), 1);` for a function. The
+  callee now constructs the result directly in the caller's storage.
+- Fix an internal compiler error when such a returned call takes a moved
+  parameter, as in `return invoke(std::move(value), 1);`.
+- Fix an internal compiler error when a lambda takes an owning class argument
+  by value followed by an argument that can fail, such as
+  `take(std::move(token), divide(1))`. If the later argument fails, the
+  prepared argument is destroyed exactly once.
 
 ## 0.395.0 — Editor profiles and inactive-code highlighting
 
