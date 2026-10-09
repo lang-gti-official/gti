@@ -7193,7 +7193,11 @@ public:
     prepareLoweredModuleInitialization();
 
     capture(plan, CppProgramTextRole::DeclarationTypeMemberLifecycle, [&] {
-      output << "namespace __gti_program {\n";
+      // Ordinary GTI identities are implementation details of this complete
+      // lowered program, not a native C++ ABI. Keep them translation-unit-local
+      // so the native compiler can discard unused bodies and data. Native
+      // imports retain their separately selected external link labels.
+      output << "namespace {\nnamespace __gti_program {\n";
       ++indentation;
       emitLoweredTypeForwardDeclarations(0);
       emitLoweredConcreteClassForwardDeclarations();
@@ -7221,6 +7225,7 @@ public:
       }
       --indentation;
       output << "} // namespace __gti_program\n";
+      output << "} // anonymous namespace\n";
     });
     capture(plan, CppProgramTextRole::NativeAndThreadAdapter,
             [&] { emitThreadTaskAdapterDefinitions(); });

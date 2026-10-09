@@ -111,6 +111,29 @@ panic and source-string gates pass (138.54 seconds). This is a measured partial
 reduction, not code-size or overall performance acceptance: the remaining
 private-path gap, quiet repeated timings and peak-memory comparison are open.
 
+Program-local native linkage subsequently reduces the uninstrumented candidate
+to 127,920 bytes versus 146,096 for the preserved private-path compiler. This
+does not remove or change MIR operations: ordinary generated identities were
+unnecessarily externally visible C++ implementation symbols. A disposable
+same-linkage experiment also yields 127,936 candidate bytes versus 135,264
+private-path bytes, so the result is not solely an unmatched linker setting.
+Production recompilation preserves all four full-state outputs and both exact
+allocation traces; artifacts, compiler/source hashes, build reports and the
+candidate diff are retained in `/private/tmp/gti-string-linkage-final-fka0qeq4`.
+Native text and metadata remain separately measurable costs; these size and
+state checks do not replace quiet interleaved timings or peak-memory evidence.
+
+`cpp_program_linkage` links two independently generated units with deliberately
+identical ordinary function/storage identities and one shared native C symbol.
+Only their hosted adapters are renamed for this test. It fails before internal
+linkage with duplicate ordinary symbols and passes at O0/O3 in C++20/C++23.
+Program-plan, descriptor compilation, native indirect callbacks, C-record
+interop, source debug information and LLDB gates pass. The registration census
+also passes after accounting for the upstream lambda-base-reference matrix's
+bounded workers. The combined `af12b553` precursor separately passes all ten
+resource/borrow/optimizer checks (170.89 seconds), including the previously
+blocked source-resource-prefix matrix and exact nested-constructor mutations.
+
 The resource-growth corpus oracle now requires portable exact abort status,
 not merely nonzero termination. A C17 helper makes its cleanup witnesses
 unbuffered before execution. The harness rejects status 70 and unrelated
