@@ -466,6 +466,13 @@ compiler work.
   invalidate affected dependants, and schedule analysis over all open-buffer
   overlays. A stale result snapshot may remain allocated until its replacement
   is published, but generation checks make it inaccessible to requests.
+- Each published analysis records, for every dependency it loaded, the
+  digest of the exact text it read (`lang::sourceTextDigest`, the identity the
+  frontend cache already uses for loaded text). Opening a document is not a
+  change for a dependant that read exactly the opened text from disk, so that
+  dependant keeps its result; going to a definition in another project file
+  then costs one analysis, not one per open dependant. A dependant that read
+  different text is reanalysed as before.
 - `didClose` removes the overlay and snapshot, clears diagnostics, invalidates
   the overlay source identity and pending work, and reanalyzes dependants whose
   view changes. The next analysis must read the disk source before learning its
@@ -477,7 +484,9 @@ compiler work.
   `didChange`, `didClose`). A request captures the content generations of
   every open document.
 - Completed analysis is published only if the root's analysis generation and
-  the content generation of each open dependency still match. Only then may its
+  the content generation of each open dependency still match. A dependency
+  that opened after the request was made is also current when its overlay has
+  the digest of the text the analysis read. Only then may its
   source digests be learned. Stale semantic requests and stale digest
   publications are rejected. Dependency staleness never compares analysis
   generations: re-analysing an unchanged dependant then invalidated every

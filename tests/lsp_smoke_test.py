@@ -775,6 +775,95 @@ def test_analysis_pool_runs_one_analysis_per_document(executable, root):
             session.close()
 
 
+def test_opening_unchanged_dependencies_keeps_dependants(executable, root):
+    # Opening a file whose editor text is exactly what its dependants already
+    # read from disk changes nothing they analysed. A burst of opens therefore
+    # costs one analysis per document, while an opened overlay that differs
+    # from disk still reanalyses its dependants.
+    names = ["open-a", "open-b", "open-d", "open-e"]
+    sources = {
+        "open-a": "int open_a() { return 1; }\n",
+        "open-b": '#include "open-a.gti"\nint open_b() { return open_a(); }\n',
+        "open-d": "int open_d() { return 2; }\n",
+        "open-e": "int open_e() { return 3; }\n",
+        "open-c": (
+            '#include "open-b.gti"\n#include "open-d.gti"\n'
+            '#include "open-e.gti"\n'
+            "int open_c() { return open_b() + open_d() + open_e(); }\n"
+        ),
+    }
+    uris = {}
+    for name, source in sources.items():
+        path = root / f"{name}.gti"
+        path.write_text(source, encoding="utf-8")
+        uris[name] = path.resolve().as_uri()
+    trace_path = root / "open-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+
+    def open_text(name, text):
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uris[name],
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": text,
+                    }
+                },
+            }
+        )
+
+    session = LspSession(
+        executable,
+        environment=dict(os.environ, GTI_LSP_FRONTEND_TRACE=str(trace_path)),
+    )
+    closed = False
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        burst = ["open-c", "open-a", "open-b", "open-d"]
+        for name in burst:
+            open_text(name, sources[name])
+        published = set()
+        while published != {uris[name] for name in burst}:
+            message = session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+            )
+            published.add(message["params"]["uri"])
+
+        # This overlay differs from disk, so the root that read the disk text
+        # must analyse again.
+        open_text("open-e", "int open_e() { return 4; }\n")
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uris["open-e"]
+        )
+        session.close()
+        closed = True
+        analysed = [
+            pathlib.Path(json.loads(line)["uri"]).stem
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line)["kind"] == "analysis"
+        ]
+        assert sorted(analysed) == sorted(burst + ["open-e", "open-c"]), analysed
+    finally:
+        if not closed:
+            session.close()
+
+
 def test_duplicate_dependency_diagnostics_keep_include_context(executable, root):
     dependency_path = root / "shared-invalid-dependency.gti"
     first_path = root / "first-diagnostic-root.gti"
@@ -10121,6 +10210,10 @@ def main():
                 test_analysis_pool_runs_one_analysis_per_document(
                     sys.argv[1], pathlib.Path(root)
                 )
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-open-") as root:
+                test_opening_unchanged_dependencies_keeps_dependants(
+                    sys.argv[1], pathlib.Path(root)
+                )
             print("GTI dependency chain reanalysis LSP test passed")
         elif sys.argv[2] == "io":
             with tempfile.TemporaryDirectory(prefix="gti-lsp-io-") as root:
@@ -11099,6 +11192,7 @@ def main():
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
     test_dependency_chain_reanalysis_count(sys.argv[1], root)
     test_analysis_pool_runs_one_analysis_per_document(sys.argv[1], root)
+    test_opening_unchanged_dependencies_keeps_dependants(sys.argv[1], root)
     test_duplicate_dependency_diagnostics_keep_include_context(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)
