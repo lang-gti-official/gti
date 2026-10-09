@@ -28905,6 +28905,8 @@ public:
                                  std::string_view familyLabel) {
     currentBody = &facts.body;
     currentFacts = &facts;
+    cleanupAdapters.clear();
+    cleanupAdapterPreludePosition.reset();
     const auto *sourceFunction = facts.kind == MirBodyKind::Function
                                      ? program.findFunctionInstance(facts.id)
                                      : nullptr;
@@ -30465,6 +30467,12 @@ public:
       throw std::logic_error(
           "verified MIR C++ control-flow plan lost its entry label");
     }
+    // Adapters are discovered only by the existing exact Drop emission routes.
+    // Insert their complete prelude once, before any label can bypass native
+    // initialization, rather than respelling or shifting the body per Drop.
+    cleanupAdapterPreludePosition =
+        static_cast<std::size_t>(output.tellp());
+    cleanupAdapterPreludeIndentation = indentation;
     writeIndent();
     output << "goto " << entry->label << ";\n";
     for (const CppMirControlFlowBlock &plannedBlock : controlFlow.blocks) {
@@ -30574,8 +30582,64 @@ public:
   }
 
 private:
+  struct CleanupAdapter {
+    MirDropType recipe;
+    std::string nativeType;
+    std::string expression;
+  };
+
+  [[nodiscard]] std::string cleanupAdapterSpelling(
+      const ScalarBodyFacts &facts, const MirDropType &recipe,
+      const MirPlace &slot) {
+    const auto *canonical =
+        facts.body.findPlace(canonicalSlotPlaceId(facts.body, slot));
+    if (canonical == nullptr)
+      throw std::logic_error("MIR cleanup adapter lost its canonical slot");
+    // This is the same sealed type spelling used by that lifetime slot's
+    // declaration. Equal text alone is not a cleanup proof: the complete
+    // verified MIR recipe must also match, including children and identities.
+    const std::string nativeType =
+        bodyLocalTypeSpelling(facts.body, canonical->type);
+    const auto found = std::find_if(
+        cleanupAdapters.begin(), cleanupAdapters.end(),
+        [&](const CleanupAdapter &adapter) {
+          return adapter.recipe == recipe && adapter.nativeType == nativeType;
+        });
+    const auto index = static_cast<std::size_t>(
+        std::distance(cleanupAdapters.begin(), found));
+    if (found == cleanupAdapters.end()) {
+      cleanupAdapters.push_back(
+          {.recipe = recipe,
+           .nativeType = nativeType,
+           .expression = cppMirCleanupValueExpression(
+               program, recipe, "__gti_cleanup_value", "__gti_record",
+               "__gti_unwinding")});
+    }
+    return "__gti_mir_cleanup_adapter_" + std::to_string(index);
+  }
+
   std::string completedText() const {
-    const std::string text = output.str();
+    std::string text = output.str();
+    if (!cleanupAdapters.empty()) {
+      if (!cleanupAdapterPreludePosition)
+        throw std::logic_error("MIR cleanup adapter lost its body prelude");
+      std::ostringstream declarations;
+      for (std::size_t index = 0; index < cleanupAdapters.size(); ++index) {
+        declarations << indentationPlaceholder;
+        for (std::size_t level = 0; level < cleanupAdapterPreludeIndentation;
+             ++level)
+          declarations << "  ";
+        // Private captureless callback identities are not GTI callable values.
+        // The slot still receives its original record/conditional/unwinding
+        // arguments and invokes the exact typed cleanup recipe at every Drop.
+        declarations << "const auto __gti_mir_cleanup_adapter_" << index
+                     << " = [](auto &__gti_cleanup_value, "
+                        "::gti_failure_record_v2 *__gti_record, bool "
+                        "__gti_unwinding) { return "
+                     << cleanupAdapters[index].expression << "; };\n";
+      }
+      text.insert(*cleanupAdapterPreludePosition, declarations.str());
+    }
     if (debugBodies.empty())
       return text;
     // An operation can expand to many C++ lines. Do not let those physical
@@ -33276,13 +33340,10 @@ private:
                    << canonicalSlotPlaceId(facts.body, *unexpected.slot)
                    << ".destroy_cleanup_with_failure(&__gti_mir_cleanup_"
                       "failure_record"
-                   << ", false, true, [](auto &__gti_cleanup_value, "
-                      "::gti_failure_record_v2 *__gti_record, bool "
-                      "__gti_unwinding) { return "
-                   << cppMirCleanupValueExpression(
-                          program, drop->dropType, "__gti_cleanup_value",
-                          "__gti_record", "__gti_unwinding")
-                   << "; }); // GTI MIR unpublished Unexpected cleanup\n";
+                   << ", false, true, "
+                   << cleanupAdapterSpelling(facts, drop->dropType,
+                                             *unexpected.slot)
+                   << "); // GTI MIR unpublished Unexpected cleanup\n";
             return;
           }
           output << "__gti_mir_p_"
@@ -33569,12 +33630,9 @@ private:
                << ".destroy_cleanup_with_failure(" << record << ", "
                << (drop.conditional ? "true" : "false") << ", "
                << (block.activeFailure != 0 ? "true" : "false")
-               << ", [](auto &__gti_cleanup_value, ::gti_failure_record_v2 "
-                  "*__gti_record, bool __gti_unwinding) { return "
-               << cppMirCleanupValueExpression(
-                      program, obligation->dropType, "__gti_cleanup_value",
-                      "__gti_record", "__gti_unwinding")
-               << "; });\n";
+               << ", "
+               << cleanupAdapterSpelling(facts, obligation->dropType, *slot)
+               << ");\n";
         return;
       }
       const bool unique =
@@ -33629,12 +33687,9 @@ private:
                  << ".destroy_cleanup_with_failure(nullptr, "
                  << (event.conditional ? "true" : "false") << ", "
                  << (event.failureCleanup ? "true" : "false")
-                 << ", [](auto &__gti_cleanup_value, ::gti_failure_record_v2 "
-                    "*__gti_record, bool __gti_unwinding) { return "
-                 << cppMirCleanupValueExpression(
-                        program, drop->dropType, "__gti_cleanup_value",
-                        "__gti_record", "__gti_unwinding")
-                 << "; });\n";
+                 << ", "
+                 << cleanupAdapterSpelling(facts, drop->dropType, *place)
+                 << ");\n";
         } else {
           output << "[&](auto &__gti_cleanup_value) { return "
                  << cppMirCleanupValueExpression(
@@ -41723,6 +41778,11 @@ private:
   // Exact immutable-body queries only; reset for each emission and never
   // shared across MIR revisions, representation snapshots, or body copies.
   mutable std::vector<std::optional<bool>> lifetimeSlotCache;
+  // Emission-local, typed representation sharing only. Never survives a body,
+  // plain/failure/deduced variant, or immutable representation snapshot.
+  std::vector<CleanupAdapter> cleanupAdapters;
+  std::optional<std::size_t> cleanupAdapterPreludePosition;
+  std::size_t cleanupAdapterPreludeIndentation = 0;
   std::ostringstream output;
 };
 
