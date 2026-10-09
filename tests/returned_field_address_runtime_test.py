@@ -76,6 +76,9 @@ def main():
         "bad_native_call": "bad_native_call(ticket)",
         "bad_cached_tag": "bad_cached_tag(ticket)",
     }, "return ticket.count + 1;")
+    run_fixture(compiler, "optimizer_passive_result_cleanup.gti", {
+        "bad_active_result": "counter.bad_active_result()",
+    }, "return this.count + 1;")
 
 
 if __name__ == "__main__":
