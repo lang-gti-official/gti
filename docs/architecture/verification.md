@@ -720,6 +720,40 @@ outstanding; the completion evidence above now covers that integration. Native
 platform limitations remain explicit. The independent provider tests alone are
 not the evidence for the combined sparse-metadata and default-factory migration.
 
+## Typed native cleanup adapter sharing
+
+`testTypedCleanupAdapterInterning` uses unrelated source-defined error classes
+and distinct Expected payload types under C++20/C++23. It requires one private
+adapter per complete typed recipe, separate native types even when cleanup
+expressions match, deterministic detached body plans, unchanged canonical MIR,
+every original block and every second-failure termination edge. The Release
+compiler at `f5a4b043` passes this regression, all three emitter suites
+(47.07 seconds), and the named-test census. Three Expected/pending-error/field
+rollback fixtures pass all eight native modes (144 observations, 28.13 seconds),
+including no-elide and ASan/UBSan. The aggregate and inherited-cleanup matrix
+passes 91 exact success/first/second-failure observations in seven modes.
+
+A disposable generated-C++ JSON experiment preserves every original block,
+drop status and failure operation. Same-native-type/same-recipe sharing replaces
+22,957 callback definitions with 35 per-body adapters (22,760 with seven in the
+entry body). On a quiet M4 Pro runner, three alternating native O3/C++23 build
+pairs reduce median wall time from 91.720 to 80.722 seconds and median native
+compiler peak RSS from 3,191,308,288 to 1,174,601,728 bytes. Generated source
+shrinks from 40,872,813 to 34,693,383 bytes; executable size from 9,018,824 to
+1,906,008 bytes. All six executables produce identical full stdout/stderr.
+Twenty-five shuffled process executions per variant have medians 2.038 and
+2.101 ms; process startup dominates this small fixture, so this is not runtime
+parity or speedup evidence. The change introduces no runtime allocation or
+cleanup metadata. Exact compiler/runtime/input hashes, commands, samples and
+snapshots remain in `/tmp/gti-cleanup-adapter-proxy.z2ATsB` on the runner and
+`/private/tmp/gti-json-native-cost-audit.Ty3dI2` locally.
+
+These are proxy cost and focused production correctness results, not final
+combined release or whole-GTI-compilation performance acceptance. The large
+63,001-block JSON entry graph remains unchanged; MIR cleanup-tail sharing is
+not implemented. Final combined corpus/inventory, installed-consumer and
+production JSON cost evidence belong to the integration run.
+
 ## Source prefix ownership (candidate; acceptance still open)
 
 The source-prefix task's Release/AppleClang/LLVM 22.1.8 snapshot on macOS arm64
