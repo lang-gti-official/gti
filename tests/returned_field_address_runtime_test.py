@@ -8,11 +8,12 @@ import sys
 import tempfile
 
 
-def run_fixture(compiler, filename, negatives, marker):
+def run_fixture(compiler, filename, negatives, marker,
+                native_filename="optimizer_returned_field_address_native.cpp"):
     fixtures = Path(__file__).parent / "fixtures"
     fixture = fixtures / filename
     original = fixture.read_text()
-    native = fixtures / "optimizer_returned_field_address_native.cpp"
+    native = fixtures / native_filename
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O2", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],
@@ -79,6 +80,14 @@ def main():
     run_fixture(compiler, "optimizer_passive_result_cleanup.gti", {
         "bad_active_result": "counter.bad_active_result()",
     }, "return this.count + 1;")
+    run_fixture(compiler, "optimizer_pointer_field_contents.gti", {
+        "bad_changed": "cell.bad_changed()",
+        "bad_native": "cell.bad_native()",
+        "bad_retarget": "cell.bad_retarget(&other)",
+        "bad_global": "cell.bad_global()",
+        "bad_borrowed": "cell.bad_borrowed()",
+        "bad_lifetime": "cell.bad_lifetime()",
+    }, "return *this.address + 1;", "optimizer_pointer_field_contents_native.cpp")
 
 
 if __name__ == "__main__":

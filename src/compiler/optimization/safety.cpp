@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <compare>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -171,6 +172,10 @@ void publishFieldFact(const MirBody &body, AbstractState &state,
 
 struct ObjectFact {
   std::map<FieldPath, IntegerFact> integers;
+  // Mutable contents at exact ordinary owned pointer-field values. Only
+  // successful scalar construction supplies these facts; they imply neither
+  // allocation extent nor disjointness from other pointer fields.
+  IntegerFieldFacts scalarPointees;
   std::optional<IntegerFact> elements;
   IntegerFieldFacts elementIntegers;
 
@@ -970,6 +975,10 @@ void stabilize(ObjectFact &object) {
     (void)path;
     stabilize(fact);
   }
+  for (auto &[path, fact] : object.scalarPointees) {
+    (void)path;
+    stabilize(fact);
+  }
 }
 
 [[nodiscard]] IntegerFact joinedInteger(const IntegerFact &left,
@@ -1697,6 +1706,13 @@ extractObjectFact(const MirBody &body,
       FieldPath suffix(path.begin() + prefix->size(), path.end());
       result.integers.insert_or_assign(std::move(suffix), fact);
     }
+    for (const auto &[path, fact] : object.scalarPointees) {
+      if (path.size() <= prefix->size() ||
+          !std::equal(prefix->begin(), prefix->end(), path.begin()))
+        continue;
+      FieldPath suffix(path.begin() + prefix->size(), path.end());
+      result.scalarPointees.insert_or_assign(std::move(suffix), fact);
+    }
   }
   bool observedElements = false;
   std::optional<IntegerFact> derivedElements;
@@ -1736,7 +1752,28 @@ extractObjectFact(const MirBody &body,
         combined.insert(combined.end(), suffix.begin(), suffix.end());
         result.integers.insert_or_assign(std::move(combined), fact);
       }
+      for (const auto &[suffix, fact] : nested->second.scalarPointees) {
+        FieldPath combined = *path;
+        combined.insert(combined.end(), suffix.begin(), suffix.end());
+        result.scalarPointees.insert_or_assign(std::move(combined), fact);
+      }
     }
+  }
+  for (const auto &[field, pointer] : state.fieldAddresses) {
+    const auto prefix = root == field.root
+                            ? std::optional<FieldPath>{FieldPath{}}
+                            : fieldPath(body, root, field.root, true);
+    if (!prefix)
+      continue;
+    auto path = *prefix;
+    path.insert(path.end(), field.path.begin(), field.path.end());
+    const auto current = state.constructedScalars.find(addressKey(pointer));
+    if (current == state.constructedScalars.end()) {
+      result.scalarPointees.erase(path);
+      continue;
+    }
+    if (result.scalarPointees.size() < 64)
+      result.scalarPointees.insert_or_assign(path, current->second.value);
   }
   if (const auto aggregateElements = state.aggregateElements.find(root);
       aggregateElements != state.aggregateElements.end()) {
@@ -1755,8 +1792,10 @@ extractObjectFact(const MirBody &body,
     result.elements = std::move(derivedElements);
     result.elementIntegers = std::move(derivedElementIntegers);
   }
-  if (result.integers.empty() && !result.elements &&
-      result.elementIntegers.empty()) {
+  while (result.scalarPointees.size() > 64)
+    result.scalarPointees.erase(std::prev(result.scalarPointees.end()));
+  if (result.integers.empty() && result.scalarPointees.empty() &&
+      !result.elements && result.elementIntegers.empty()) {
     return std::nullopt;
   }
   return result;
@@ -1936,12 +1975,27 @@ aggregateArrayFact(const MirBody &body, const AbstractState &state,
   return elements;
 }
 
+void retireScalarPointeeSnapshots(AbstractState &state) {
+  for (auto &[root, object] : state.objects) {
+    (void)root;
+    object.scalarPointees.clear();
+  }
+  for (auto &[value, object] : state.objectValues) {
+    (void)value;
+    object.scalarPointees.clear();
+  }
+}
+
 void invalidatePlaceRoot(const MirBody &body,
                          const MirPlaceAliasEscapeAnalysis &aliases,
                          AbstractState &state, MirPlaceId destination) {
   // This bounded address relay does not infer reference/write disjointness.
   state.resultAlternatives.clear();
   state.placeAlternatives.clear();
+  // A shell copy does not freeze memory reached through its pointers. Without
+  // an exact pointee write/disjointness proof, any storage change retires all
+  // transported snapshots; newly proved postconditions may be published later.
+  retireScalarPointeeSnapshots(state);
   state.borrowedAddresses.clear();
   const MirPlace *written = body.findPlace(destination);
   if (written == nullptr) {
@@ -3366,6 +3420,7 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
     });
     object.elements.reset();
     object.elementIntegers.clear();
+    object.scalarPointees.clear();
   }
   state.arrayElements.clear();
   state.aggregateElements.clear();
@@ -3495,6 +3550,7 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
       });
       receiver.elements.reset();
       receiver.elementIntegers.clear();
+      receiver.scalarPointees.clear();
       receivers.emplace(root, std::move(receiver));
     }
     for (const auto &[root, fact] : state.integerPlaces)
@@ -3801,7 +3857,9 @@ void applyInstruction(const MirBody &body,
   }
   if (program && isMirStructuralValueTransfer(*program, instruction)) {
     const auto &source = instruction.operands.front();
-    const auto object = objectForOperand(body, aliases, state, source);
+    auto object = objectForOperand(body, aliases, state, source);
+    if (object)
+      object->scalarPointees.clear();
     // Prepared values own an independent snapshot. In particular a later
     // argument may modify the source without modifying this earlier copy.
     // Movement retires its old place; no source correlation crosses transport.
@@ -4170,13 +4228,26 @@ void applyInstruction(const MirBody &body,
     }
     const std::optional<IntegerFact> sourceArray =
         arrayForOperand(state, aliases, source);
-    const std::optional<ObjectFact> sourceObject =
+    std::optional<ObjectFact> sourceObject =
         objectForOperand(body, aliases, state, source);
+    const auto *producer = source.kind == MirOperandKind::Value
+                               ? definingInstruction(body, source.value)
+                               : nullptr;
+    const bool publishesConstructedResult =
+        instruction.kind == MirInstructionKind::Initialize && producer &&
+        producer->kind == MirInstructionKind::Construct &&
+        producer->successResultDestination == instruction.destination &&
+        producer->info.type == source.type;
+    // Verified final-address publication does not copy the shell again.
+    // Ordinary copies, moves and replacement receive no pointee snapshots.
+    if (sourceObject && !publishesConstructedResult)
+      sourceObject->scalarPointees.clear();
     // Even exact indexed writes which retain aggregate envelopes retire
     // conditional memory correlations. Independent local initialization may
     // restore only its producer's freshly captured alternatives below.
     state.resultAlternatives.clear();
     state.placeAlternatives.clear();
+    retireScalarPointeeSnapshots(state);
     if (!referenceCarrierInitialization &&
         (!indexed || (!previousAggregateElements && !previousAggregateField))) {
       invalidatePlaceRoot(body, aliases, state, destination);
@@ -5727,6 +5798,7 @@ void sanitizeObject(const MirProgram &, const SemanticType &type,
                                bool widen) {
   const ObjectFact before = target;
   joinIntegers(target.integers, incoming.integers, widen);
+  joinIntegers(target.scalarPointees, incoming.scalarPointees, widen);
   joinOptionalInteger(target.elements, incoming.elements, widen);
   joinIntegers(target.elementIntegers, incoming.elementIntegers, widen);
   return target != before;
@@ -5935,6 +6007,20 @@ entryStateForContext(const MirProgram &program, MirBodyAddress address,
     }
     stabilize(object);
     seedObjectFact(body, aliases, root, object, entry);
+  }
+  // Contexts describe memory at the current input's pointer-field value, not
+  // the field's own storage. Entry identities are generated above from typed
+  // owned paths; no arbitrary load recreates an identity after a write.
+  for (const auto &[field, pointer] : entry.fieldAddresses) {
+    const auto object = entry.objects.find(field.root);
+    if (object == entry.objects.end())
+      continue;
+    const auto fact = object->second.scalarPointees.find(field.path);
+    if (fact == object->second.scalarPointees.end() ||
+        constantIntegerDomain(pointer.fieldPointee) != fact->second.domain)
+      continue;
+    publishConstructedScalar(entry, addressKey(pointer),
+                             ConstructedScalar{rebased(fact->second)});
   }
   // Identity with an entry field does not require a known numerical envelope.
   // Seed from the same typed owned-path profile even when one calling context

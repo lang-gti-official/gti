@@ -411,5 +411,6 @@ int main() {
   checkAddressFixture("optimizer_passive_result_cleanup.gti",
                       {"after_local_result", "after_record_result"}, 1, false,
                       false, true);
+  checkAddressFixture("optimizer_pointer_field_contents.gti", {"observe"}, 6);
   return failures == 0 ? 0 : 1;
 }
