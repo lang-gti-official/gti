@@ -710,6 +710,15 @@ add_test(NAME optimizer_devirtualization_runtime
                  "${PROJECT_SOURCE_DIR}/tests/fixtures/optimizer_exact_receiver.gti"
                  "${CMAKE_CXX_COMPILER}")
 set_tests_properties(optimizer_devirtualization_runtime PROPERTIES TIMEOUT 180)
+add_test(NAME optimizer_devirtualization_parameter_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_devirtualization_runtime_test.py"
+                 "$<TARGET_FILE:gti>"
+                 "${PROJECT_SOURCE_DIR}/tests/fixtures/optimizer_exact_parameter_receiver.gti"
+                 "${CMAKE_CXX_COMPILER}"
+                 "exact-parameter-receiver")
+set_tests_properties(optimizer_devirtualization_parameter_runtime
+                     PROPERTIES TIMEOUT 180)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT MSVC)
   add_test(NAME optimizer_coverage_growth
            COMMAND "${Python3_EXECUTABLE}"
