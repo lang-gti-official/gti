@@ -535,6 +535,13 @@ failure edge or cleanup schedule is removed by these summary rules: even a
 net-zero update cannot erase an overflowing intermediate operation. Independent
 canonical replay derives the relation again; O0 remains transformation-free.
 
+CFG argument transfer snapshots every incoming fact before publishing any
+destination block parameter. This includes integer intervals, loaded/field
+origins, entry-relative updates and actual addresses. A backedge may swap
+parameters; sequential publication would lose an old input and could produce
+an unsound safety proof. Only the argument facts are copied, not the whole
+abstract memory state.
+
 Context discovery is also bounded by complete summaries: an earlier
 source-allocation or raw object-lifetime call can prevent completion of a
 required closed-call summary, leaving later call contexts on that path

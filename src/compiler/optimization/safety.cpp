@@ -3573,41 +3573,62 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
   if (block == nullptr || block->parameters.size() != arguments.size()) {
     return;
   }
-  for (std::size_t index = 0; index < arguments.size(); ++index) {
-    const MirValueId parameter = block->parameters[index].value;
-    const MirOperand &argument = arguments[index];
-    if (const std::optional<IntegerFact> fact =
-            integerForOperand(body, state, argument)) {
-      IntegerFact bound = *fact;
-      addValue(bound.evidence, parameter);
-      state.integers[parameter] = std::move(bound);
-    } else {
-      state.integers.erase(parameter);
-    }
+  // Block arguments are simultaneous assignments. In particular, a backedge
+  // may swap two parameters; publishing the first before reading the second
+  // would substitute the new value for the old one. Snapshot just the argument
+  // facts, not the entire (potentially large) abstract memory state.
+  struct ArgumentFacts {
+    std::optional<IntegerFact> integer;
+    std::optional<MirPlaceId> loadedOrigin;
+    std::optional<FieldOrigin> fieldOrigin;
+    std::optional<EntryRelativeField> relative;
+    std::optional<ScalarAddress> address;
+  };
+  std::vector<ArgumentFacts> inputs;
+  inputs.reserve(arguments.size());
+  for (const MirOperand &argument : arguments) {
+    ArgumentFacts facts{.integer = integerForOperand(body, state, argument),
+                        .relative = entryRelativeValue(state, argument),
+                        .address =
+                            scalarAddressForOperand(body, state, argument)};
     const auto loadedOrigin = argument.kind == MirOperandKind::Value
                                   ? state.loadedOrigins.find(argument.value)
                                   : state.loadedOrigins.end();
-    if (loadedOrigin != state.loadedOrigins.end()) {
-      state.loadedOrigins[parameter] = loadedOrigin->second;
-    } else {
-      state.loadedOrigins.erase(parameter);
-    }
+    if (loadedOrigin != state.loadedOrigins.end())
+      facts.loadedOrigin = loadedOrigin->second;
     const auto fieldOrigin = argument.kind == MirOperandKind::Value
                                  ? state.fieldOrigins.find(argument.value)
                                  : state.fieldOrigins.end();
     if (fieldOrigin != state.fieldOrigins.end())
-      state.fieldOrigins[parameter] = fieldOrigin->second;
+      facts.fieldOrigin = fieldOrigin->second;
+    inputs.push_back(std::move(facts));
+  }
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    const MirValueId parameter = block->parameters[index].value;
+    ArgumentFacts &facts = inputs[index];
+    if (facts.integer) {
+      addValue(facts.integer->evidence, parameter);
+      state.integers[parameter] = std::move(*facts.integer);
+    } else {
+      state.integers.erase(parameter);
+    }
+    if (facts.loadedOrigin)
+      state.loadedOrigins[parameter] = *facts.loadedOrigin;
+    else
+      state.loadedOrigins.erase(parameter);
+    if (facts.fieldOrigin)
+      state.fieldOrigins[parameter] = *facts.fieldOrigin;
     else
       state.fieldOrigins.erase(parameter);
-    if (auto relative = entryRelativeValue(state, argument)) {
-      addValue(relative->evidence, parameter);
-      state.entryRelativeValues[parameter] = std::move(*relative);
+    if (facts.relative) {
+      addValue(facts.relative->evidence, parameter);
+      state.entryRelativeValues[parameter] = std::move(*facts.relative);
     } else {
       state.entryRelativeValues.erase(parameter);
     }
-    if (auto origin = scalarAddressForOperand(body, state, argument)) {
-      addValue(origin->evidence, parameter);
-      state.scalarAddressValues[parameter] = std::move(*origin);
+    if (facts.address) {
+      addValue(facts.address->evidence, parameter);
+      state.scalarAddressValues[parameter] = std::move(*facts.address);
     } else {
       state.scalarAddressValues.erase(parameter);
     }
