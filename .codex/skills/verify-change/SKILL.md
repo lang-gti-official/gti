@@ -48,6 +48,13 @@ not a second semantic or test-selection authority.
   to shipped behavior.
 - For documentation-only changes, do not build by default unless examples,
   commands, generated material, or claimed behavior require execution.
+- For changes affecting runtime execution, apply
+  [ADR 012's performance acceptance](../../../docs/decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09).
+  Verify representative optimized execution and report runtime, allocations,
+  code-size and relevant build/memory tradeoffs. Structural architecture work
+  does not need a benchmark to begin, but functional passes alone do not prove
+  performance acceptance. A material regression needs correction or explicit
+  owner acceptance of the documented tradeoff, not merely a follow-up issue.
 
 ## Run Checks
 
