@@ -728,14 +728,34 @@ enum class StructuralValueOperation { Copy, Move, Drop };
 bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
                             StructuralValueOperation operation) {
   std::unordered_set<HirClassInstanceId> visiting;
+  std::size_t remaining = 1024;
   const auto structural = [&](const auto &self,
                               const SemanticType &type) -> bool {
+    if (remaining == 0)
+      return false;
+    --remaining;
     if (constantIntegerDomain(type) || type.kind == SemanticType::Float ||
         type.kind == SemanticType::Double || type.kind == SemanticType::Bool ||
         type.kind == SemanticType::Char || type.kind == SemanticType::NullPtr ||
         type.kind == SemanticType::RawPointer ||
         (type.kind == SemanticType::Enum && program.findIntegralEnum(type)))
       return true;
+    if (operation == StructuralValueOperation::Drop &&
+        (type.kind == SemanticType::Expected ||
+         type.kind == SemanticType::Unexpected)) {
+      if (type.arguments.size() !=
+          (type.kind == SemanticType::Expected ? 2 : 1))
+        return false;
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        const auto &part = type.arguments[index];
+        if (index == 0 && type.kind == SemanticType::Expected &&
+            part.kind == SemanticType::Void)
+          continue;
+        if (!self(self, part))
+          return false;
+      }
+      return true;
+    }
     if (type.kind != SemanticType::Class)
       return false;
     const MirClassInstance *owner = nullptr;
@@ -766,7 +786,11 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
     visiting.erase(owner->id);
     return fields;
   };
-  return type.kind == SemanticType::Class && structural(structural, type);
+  return (type.kind == SemanticType::Class ||
+          (operation == StructuralValueOperation::Drop &&
+           (type.kind == SemanticType::Expected ||
+            type.kind == SemanticType::Unexpected))) &&
+         structural(structural, type);
 }
 } // namespace
 
