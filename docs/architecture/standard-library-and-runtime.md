@@ -166,6 +166,18 @@ not permission to weaken existing safety or reject previously supported users.
 | M09 | Expected active-alternative storage and ordinary helpers | Built-in expected type/operations. | General sum/inline-carrier, generic API and borrow contracts must preserve owned, void and checked-reference results. Source allocation alone does not retire the built-in path; `?` control flow and loan verification remain language semantics. |
 | M10 | Container guard predicates and formatting of failures | Source computes many predicates but calls private `require_*`/bounds helpers. | Source can own predicates/message policy. Preserve stable failure categories, location, cleanup and optimizer proof identity through a general failure interface; replacing everything with generic panic is not equivalent. |
 
+M01, M02 and M04 now have an accepted target representation:
+- a source-defined raw buffer;
+- an initialized-prefix length with no per-slot metadata;
+- one check per safe operation;
+- `unsafe` unchecked accessors.
+
+This follows Rust's `RawVec`/`Vec` layering, and is recorded in
+[ADR 022](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09)
+and planned as
+[`S-ALLOC-09`](../plans/implementation-sequence.md#s-alloc-09-raw-buffer-vector-and-string).
+They remain unimplemented. The rows above still describe today's owners.
+
 Evidence: [vector](../../stdlib/std/vector.gti),
 [string](../../stdlib/std/string.gti),
 [span](../../stdlib/std/span.gti),
