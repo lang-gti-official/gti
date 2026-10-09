@@ -5298,9 +5298,14 @@ same behavior, invalid-input, replay and performance guarantees.
   unsafe effect. This establishes indexed address equality, not coverage of an
   initialized prefix; constructor/result ownership transport and that coverage
   remain required for the container acceptance gates.
-  The migration safety suite retains the same ten failures reproduced with the
-  exact prerequisite checkpoint, including missing indexed-element envelopes;
-  those acceptance assertions are unchanged.
+  Terminal source calls now stop only their normal analysis path instead of
+  postponing the whole caller indefinitely for a nonexistent return summary.
+  This recovers three later-record-context assertions: the migration safety
+  suite now retains seven of the original ten failures, including missing
+  indexed-element envelopes. The four object-context acceptance failures remain.
+  Those assertions are unchanged. Independent function/constructor terminal
+  alternatives, retained overflow, forged-proof rejection and 28 C++20/23
+  O0/O2/O3/sanitized native cleanup/failure observations cover this prerequisite.
   Wrapping integer updates now retain ordinary value/entry-relative facts only
   under a proved non-wrapping input envelope. An unrelated four-step bounded
   counter recovers its exact final value; real modular-wrap negatives retain
