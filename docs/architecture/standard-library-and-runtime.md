@@ -339,6 +339,24 @@ operation as a representation cast. No public formatter, concept, enum, or
 format-pattern spelling grants compiler behavior. Explicit source
 specializations retain their existing canonical selection and contract checks.
 
+Formatting allocates once per result in the common case:
+- `try_format` reserves the pattern length plus 16 bytes per argument.
+- Every later append goes through `detail::reserve_additional`, which grows
+  capacity at least geometrically. `string::append` itself reserves the exact
+  new size.
+- Integer formatting keeps its sign and base prefix in a three-character
+  array, and its digits in the existing reversed digit buffer. It writes fill,
+  prefix, zero padding and digits straight into the output.
+- Text and `char` values are padded in place, with no temporary string.
+
+Results, spec validation and errors are unchanged. `format_output_matrix_runtime`
+compares a broad spec matrix with the output recorded before this layout, and
+it passes at O0 and O3. A `format("{}:{}", i, j)` result previously cost about
+five allocations: a digits string per integer, an exact-size output regrowth
+per append, and a regrowth for the literal. That drove a 2-5x gap to C++ in
+formatting-heavy code; see
+[performance-tooling.md](../plans/performance-tooling.md#allocation-lean-formatting-2026-10-09).
+
 `<std/io>` composes source-defined partial reader/writer contracts, memory
 transports, exact transfer/line/copy helpers and owned buffering. Mutable spans
 borrow initialized prefix storage exclusively; byte buffers are ordinary
