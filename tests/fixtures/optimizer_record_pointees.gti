@@ -1,0 +1,130 @@
+#include <std/memory>
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+struct Reading {
+  mut int broad;
+  mut int narrow;
+  Reading() : broad(2147483647), narrow(7) {}
+};
+class Witness { public: int unrelated = 2147483647; };
+
+unsafe void publish_record(Reading* pointer) {
+  Reading value{};
+  unsafe { std::construct_at(pointer, std::move(value)); }
+}
+
+unsafe void publish_second(Reading* pointer, Reading first, Reading second) {
+  unsafe { std::construct_at(pointer, std::move(second)); }
+}
+
+unsafe int read_narrow(Reading* pointer, Witness& owner) {
+  unsafe {
+    publish_record(pointer);
+    Reading& value = std::assume_ref(pointer, owner);
+    return value.narrow + 1;
+  }
+}
+
+unsafe int read_second_argument(Reading* pointer, Witness& owner) {
+  mut Reading first{};
+  first.narrow = 2147483647;
+  Reading second{};
+  unsafe {
+    publish_second(pointer, first, second);
+    Reading& value = std::assume_ref(pointer, owner);
+    return value.narrow + 1;
+  }
+}
+
+unsafe int read_field_borrow(Reading* pointer, mut Witness& owner) {
+  unsafe {
+    publish_record(pointer);
+    mut Reading& record = std::assume_mut(pointer, owner);
+    record.broad = 99;
+    int& narrow = record.narrow;
+    return narrow + 1;
+  }
+}
+
+unsafe int bad_record_broad(Reading* pointer, mut Witness& owner) {
+  unsafe {
+    publish_record(pointer);
+    mut Reading& value = std::assume_mut(pointer, owner);
+    value.narrow = value.broad;
+    return value.narrow + 1;
+  }
+}
+
+unsafe int bad_record_native(Reading* pointer, mut Witness& owner) {
+  unsafe {
+    publish_record(pointer);
+    mut Reading& value = std::assume_mut(pointer, owner);
+    opaque_pointer_effect(&value.narrow);
+    return value.narrow + 1;
+  }
+}
+
+unsafe int bad_record_field_borrow(Reading* pointer, mut Witness& owner) {
+  unsafe {
+    publish_record(pointer);
+    mut Reading& value = std::assume_mut(pointer, owner);
+    mut int& narrow = value.narrow;
+    narrow = 2147483647;
+    return value.narrow + 1;
+  }
+}
+
+unsafe int bad_record_lifetime(Reading* pointer, Witness& owner) {
+  unsafe {
+    publish_record(pointer);
+    std::destroy_at(pointer);
+    mut Reading other{};
+    other.narrow = 2147483647;
+    std::construct_at(pointer, std::move(other));
+    Reading& value = std::assume_ref(pointer, owner);
+    return value.narrow + 1;
+  }
+}
+
+unsafe int bad_record_argument(Reading* pointer, Witness& owner) {
+  Reading first{};
+  mut Reading second{};
+  second.narrow = 2147483647;
+  unsafe {
+    publish_second(pointer, first, second);
+    Reading& value = std::assume_ref(pointer, owner);
+    return value.narrow + 1;
+  }
+}
+
+unsafe int bad_record_other(Reading* pointer, Reading* other, Witness& owner) {
+  unsafe {
+    publish_record(pointer);
+    Reading& value = std::assume_ref(other, owner);
+    return value.narrow + 1;
+  }
+}
+
+int main() {
+  mut Witness owner{};
+  mut std::uninitialized<Reading> storage{};
+  mut std::uninitialized<Reading> packed{};
+  mut std::uninitialized<Reading> borrowed{};
+  mut Reading other{};
+  other.narrow = 2147483647;
+  unsafe {
+    if (false) return bad_record_broad(storage.data(), owner);
+    if (false) return bad_record_native(storage.data(), owner);
+    if (false) return bad_record_field_borrow(storage.data(), owner);
+    if (false) return bad_record_lifetime(storage.data(), owner);
+    if (false) return bad_record_argument(storage.data(), owner);
+    if (false) return bad_record_other(storage.data(), &other, owner);
+    int answer = read_narrow(storage.data(), owner);
+    int selected = read_second_argument(packed.data(), owner);
+    int projected = read_field_borrow(borrowed.data(), owner);
+    std::destroy_at(storage.data());
+    std::destroy_at(packed.data());
+    std::destroy_at(borrowed.data());
+    return answer == 8 && selected == 8 && projected == 8 ? 0 : 1;
+  }
+}

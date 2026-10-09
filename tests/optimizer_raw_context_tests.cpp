@@ -423,5 +423,8 @@ int main() {
                       {"local_snapshot", "after_member_initialization"}, 5);
   checkAddressFixture("optimizer_vacant_sequence.gti", {"consecutive_vacant"},
                       3);
+  checkAddressFixture(
+      "optimizer_record_pointees.gti",
+      {"read_narrow", "read_second_argument", "read_field_borrow"}, 6, false);
   return failures == 0 ? 0 : 1;
 }
