@@ -1618,7 +1618,8 @@ struct PendingSemanticRequest {
 
 struct DocumentAnalysis {
   std::vector<LspDiagnostic> diagnostics;
-  std::unordered_set<std::string> dependencies;
+  // Every loaded dependency's URI and the digest of the exact text read.
+  std::unordered_map<std::string, std::uint64_t> dependencies;
   std::string rootPath;
   std::shared_ptr<const lang::FrontendResult> frontend;
   lang::FrontendWorkMetrics workMetrics;
@@ -1966,6 +1967,7 @@ private:
       const std::lock_guard lock(stateMutex);
       clientUris[uri] = clientUri;
       openClientUris[uri].insert(clientUri);
+      const bool alreadyOpen = documents.contains(uri);
       documents[uri] = stringMember(document, "text");
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
@@ -1985,7 +1987,13 @@ private:
       requests.push_back(
           makeAnalysisRequestLocked(uri, version, ++analysisGenerations[uri]));
       std::unordered_set<std::string> affected;
-      invalidateDependentsLocked(uri, affected, requests);
+      // Dependants read this file from disk while it was closed. Only those
+      // whose text differs from the opened overlay need analysing again.
+      invalidateDependentsLocked(
+          uri, affected, requests,
+          alreadyOpen ? std::nullopt
+                      : std::optional<std::uint64_t>(
+                            lang::sourceTextDigest(documents[uri])));
       publications = publicationsForLocked(affected);
     }
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
@@ -3039,8 +3047,9 @@ private:
               .digest = unit.sourceDigest});
       if (unit.id != analysis.sourceGraph.entryUnit() &&
           loadedSource != rootPath) {
-        result.dependencies.insert(
-            fileUriFromPath(std::filesystem::path(loadedSource)));
+        result.dependencies.emplace(
+            fileUriFromPath(std::filesystem::path(loadedSource)),
+            unit.sourceDigest);
       }
     }
     for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
@@ -3080,16 +3089,25 @@ private:
     return request;
   }
 
-  void invalidateDependentsLocked(const std::string &changedUri,
-                                  std::unordered_set<std::string> &affected,
-                                  std::vector<AnalysisRequest> &requests) {
+  // `openedDigest` is the digest of a newly opened overlay. A root whose
+  // published analysis read exactly that text sees no change and keeps its
+  // result; opening a file the editor merely navigated to is then free.
+  void invalidateDependentsLocked(
+      const std::string &changedUri, std::unordered_set<std::string> &affected,
+      std::vector<AnalysisRequest> &requests,
+      std::optional<std::uint64_t> openedDigest = std::nullopt) {
     for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
       const auto snapshot = analysisSnapshots.find(rootUri);
       const bool discovering =
           snapshot != analysisSnapshots.end() &&
           snapshot->second.frontend->includeSuggestionsRequested;
+      const auto dependency = dependencies.find(changedUri);
       if (rootUri == changedUri ||
-          (!dependencies.contains(changedUri) && !discovering)) {
+          (dependency == dependencies.end() && !discovering)) {
+        continue;
+      }
+      if (openedDigest && dependency != dependencies.end() &&
+          dependency->second != 0 && dependency->second == *openedDigest) {
         continue;
       }
       if (const auto previous = diagnosticsByRoot.find(rootUri);
@@ -3580,11 +3598,19 @@ private:
       bool dependencyChanged =
           analysis.frontend && analysis.frontend->includeSuggestionsRequested &&
           request.includeDiscoveryGeneration != includeDiscoveryGeneration;
-      for (const std::string &dependency : analysis.dependencies) {
-        if (!documents.contains(dependency)) {
+      for (const auto &[dependency, digest] : analysis.dependencies) {
+        const auto overlay = documents.find(dependency);
+        if (overlay == documents.end()) {
           continue;
         }
         const auto snapshot = request.documentGenerations.find(dependency);
+        // The dependency opened after this request was made, so the analysis
+        // read it from disk. That is still its text if the overlay that
+        // opened is exactly what was read.
+        if (snapshot == request.documentGenerations.end() && digest != 0 &&
+            digest == lang::sourceTextDigest(overlay->second)) {
+          continue;
+        }
         const auto current = contentGenerations.find(dependency);
         if (snapshot == request.documentGenerations.end() ||
             current == contentGenerations.end() ||
@@ -3914,7 +3940,7 @@ private:
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
-  std::unordered_map<std::string, std::unordered_set<std::string>>
+  std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
   // Advances only when an open document's own text or overlay presence

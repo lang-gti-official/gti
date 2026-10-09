@@ -1,6 +1,7 @@
 #include "loaded_lexical_unit.h"
 
 #include "gti/lexer.h"
+#include "gti/source_graph.h"
 
 #include <chrono>
 #include <utility>
@@ -9,14 +10,9 @@ namespace lang {
 namespace {
 
 std::uint64_t sourceDigest(std::string_view source) {
-  // Stable FNV-1a identity. Overlay cache hits also compare the exact source
-  // bytes, so a digest collision cannot silently select another overlay.
-  std::uint64_t result = 14695981039346656037ULL;
-  for (const unsigned char byte : source) {
-    result ^= byte;
-    result *= 1099511628211ULL;
-  }
-  return result;
+  // Overlay cache hits also compare the exact source bytes, so a digest
+  // collision cannot silently select another overlay.
+  return sourceTextDigest(source);
 }
 
 } // namespace
