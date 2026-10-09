@@ -594,6 +594,14 @@ target_precompile_headers("gti_optional_compiler_tests"
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME optional_compiler_contract COMMAND gti_optional_compiler_tests)
 
+add_executable("gti_polymorphic_storage_compiler_tests"
+               "${PROJECT_SOURCE_DIR}/tests/polymorphic_storage_compiler_tests.cpp")
+target_link_libraries("gti_polymorphic_storage_compiler_tests" PRIVATE gti_cpp_backend)
+target_precompile_headers("gti_polymorphic_storage_compiler_tests"
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME polymorphic_storage_compiler_contract
+         COMMAND gti_polymorphic_storage_compiler_tests)
+
 add_executable(gti_prefix_constructor_tests prefix_constructor_tests.cpp)
 target_link_libraries(gti_prefix_constructor_tests PRIVATE gti_cpp_backend)
 add_test(NAME prefix_constructor_contract COMMAND gti_prefix_constructor_tests)
@@ -2935,6 +2943,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(owning_function_policy_failure_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME inline_polymorphic_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/inline_polymorphic_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(inline_polymorphic_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME inline_closure_owner_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/inline_closure_owner_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(inline_closure_owner_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME abstract_generic_failure_contract_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -1056,6 +1056,26 @@ std::string cppSemanticTypeSpelling(const LoweredProgram &program,
              spell(type.arguments.front()) + ">";
     }
     if (classInfo->compilerCapability ==
+        CompilerCapabilityTypeKind::PolymorphicStorage) {
+      if (type.arguments.size() != 1 || type.valueArguments.size() != 2)
+        return "void";
+      std::string result = "::gti_internal::backend::polymorphic_storage<" +
+                           spell(type.arguments.front());
+      for (const CompileTimeValue &argument : type.valueArguments) {
+        result += ", ";
+        if (argument.kind == CompileTimeValue::UInt64) {
+          result += std::to_string(argument.value);
+        } else if (argument.kind == CompileTimeValue::Parameter) {
+          const LoweredGenericParameter *parameter =
+              program.findGenericParameter(argument.parameterId);
+          result += parameter == nullptr ? "0" : parameter->name;
+        } else {
+          result += '0';
+        }
+      }
+      return result + '>';
+    }
+    if (classInfo->compilerCapability ==
         CompilerCapabilityTypeKind::UninitializedStorage) {
       if (type.arguments.size() != 1)
         return "void";

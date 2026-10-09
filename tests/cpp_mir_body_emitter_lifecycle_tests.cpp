@@ -11401,6 +11401,14 @@ void testPassiveConstructorFieldPublication() {
          "callback result with a generated passive field must emit");
   std::size_t publications = 0;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
+    // Only the fixture's own record; library owners have their own fields.
+    const auto owner = std::find_if(
+        frontend.hir.classInstances().begin(),
+        frontend.hir.classInstances().end(),
+        [&](const auto &item) { return item.id == constructor.owner; });
+    if (owner == frontend.hir.classInstances().end() || !owner->source ||
+        owner->source->name().lexeme != "Packet")
+      continue;
     for (const auto &block : constructor.body.blocks) {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Initialize ||

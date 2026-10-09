@@ -1016,9 +1016,11 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         isAtomicLibraryUnit(conceptInfo.sourceUnit) &&
         binding.name == "atomic_scalar";
     const bool trustedMemoryConstraint =
-        isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
-        (binding.name == "object_layout" ||
-         binding.name == "independent_object");
+        (isMemoryLibraryUnit(conceptInfo.sourceUnit) &&
+         (binding.name == "object_layout" ||
+          binding.name == "independent_object")) ||
+        (isPolymorphicLibraryUnit(conceptInfo.sourceUnit) &&
+         binding.name == "inline_polymorphic_payload");
     const bool trustedIteratorConstraint =
         isIteratorLibraryUnit(conceptInfo.sourceUnit) &&
         (binding.name == "input_iterator" || binding.name == "sentinel_for" ||
@@ -2461,6 +2463,10 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedOptionalCapabilityScope =
           isOptionalLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
+      const bool trustedPolymorphicCapabilityScope =
+          isPolymorphicLibraryUnit(currentSourceUnit) &&
+          scope == std::vector<std::string>{"gti_internal"};
+      const auto &generics = classDecl->genericParameters();
       if (trustedMemoryCapabilityScope &&
           classDecl->genericParameters().size() == 1 &&
           !classDecl->genericParameters().front().valueType &&
@@ -2478,6 +2484,12 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  !classDecl->genericParameters().front().pack &&
                  classDecl->name().lexeme == "optional_storage") {
         compilerCapability = CompilerCapabilityTypeKind::OptionalStorage;
+      } else if (trustedPolymorphicCapabilityScope && generics.size() == 3 &&
+                 !generics[0].valueType && !generics[0].pack &&
+                 generics[1].valueType && !generics[1].pack &&
+                 generics[2].valueType && !generics[2].pack &&
+                 classDecl->name().lexeme == "polymorphic_storage") {
+        compilerCapability = CompilerCapabilityTypeKind::PolymorphicStorage;
       } else if (trustedPreludeCapabilityScope &&
                  classDecl->genericParameters().empty() &&
                  classDecl->name().lexeme == "text_view") {
@@ -5857,6 +5869,8 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         case IntrinsicKind::UniqueOwnerBorrowMut:
         case IntrinsicKind::OptionalStorageRead:
         case IntrinsicKind::OptionalStorageReadMut:
+        case IntrinsicKind::PolymorphicStorageRead:
+        case IntrinsicKind::PolymorphicStorageReadMut:
           return self(self, call->arguments().front(), context, contextOwner);
         default:
           break;

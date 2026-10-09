@@ -13,6 +13,7 @@
 #include "gti/mir_effects.h"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <iomanip>
 #include <iterator>
@@ -110,6 +111,8 @@ public:
             CompilerCapabilityTypeKind::MutexStorage),
         .mutexLockTokenDeclared = loweredProgramDeclaresCapability(
             CompilerCapabilityTypeKind::MutexLockToken),
+        .polymorphicStorage = loweredProgramDeclaresCapability(
+            CompilerCapabilityTypeKind::PolymorphicStorage),
         .atomics = loweredProgramContainsAtomics(),
         .mutexes = loweredProgramContainsMutexes(),
         .simd = loweredProgramContainsSimd(),
@@ -4769,7 +4772,8 @@ public:
   [[nodiscard]] std::string loweredCallableSignatureCondition(
       const LoweredFunctionDeclaration &function,
       const MirFunctionInstance &instance,
-      const std::vector<const MirFunctionInstance *> &family) const {
+      const std::vector<const MirFunctionInstance *> &family,
+      bool nestedClosures = false) const {
     const auto signature =
         cppMirCallableTemplateSignature(loweredProgram, function, instance);
     if (!signature)
@@ -4815,26 +4819,73 @@ public:
     // alone cannot merge bodies that target different concrete callees.
     std::vector<std::string> closureDimensions;
     std::vector<std::pair<std::string, HirLambdaId>> identities;
+    const auto lambdaIdentity = [&](const SemanticType &type) {
+      const auto lambda = std::find_if(
+          mir.lambdaInstances().begin(), mir.lambdaInstances().end(),
+          [&](const auto &value) { return value.type == type; });
+      if (lambda == mir.lambdaInstances().end())
+        throw std::logic_error("callable selector lost its MIR lambda identity");
+      return lambda->id;
+    };
+    // The first closure in a class argument's native template arguments, as
+    // mir_nested_lambda_identity_v computes it. A class with value arguments
+    // or a nested native pointer slot exposes no type-only argument list.
+    const auto nestedIdentity = [&](const auto &self,
+                                    const SemanticType &type) -> HirLambdaId {
+      if (type.kind == SemanticType::Lambda)
+        return lambdaIdentity(type);
+      if ((type.kind == SemanticType::Class && !type.valueArguments.empty()) ||
+          (type.kind == SemanticType::RawPointer && !type.arguments.empty() &&
+           type.arguments.front().kind == SemanticType::RawPointer) ||
+          (type.kind != SemanticType::Class &&
+           type.kind != SemanticType::UniqueOwner &&
+           type.kind != SemanticType::RawPointer &&
+           type.kind != SemanticType::Reference &&
+           type.kind != SemanticType::Expected &&
+           type.kind != SemanticType::Unexpected))
+        return 0;
+      for (const SemanticType &argument : type.arguments)
+        if (const HirLambdaId identity = self(self, argument))
+          return identity;
+      return 0;
+    };
+    const auto templateParameterName = [](const std::string &spelling) {
+      return !spelling.empty() &&
+             std::all_of(spelling.begin(), spelling.end(), [](char c) {
+               return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+             });
+    };
+    // Nested dimensions are a fallback for a family whose bodies differ only
+    // through a closure inside a class argument, such as a model type whose
+    // inline eligibility depends on its captures.
+    const std::string nestedPrefix = "::gti_internal::backend::"
+                                     "mir_nested_lambda_identity_v<";
     for (const auto *candidate : selectorFamily) {
       CppMirBodyEmissionMapRows rows{.types = generalEmissionMap->types()};
       if (!cppMirApplyCallableTemplateTypeOverlays(
               rows, loweredProgram, standard, function, *candidate))
         continue;
       for (const auto &row : rows.types) {
-        if (!row.bodyTypeOverlay || row.type.kind != SemanticType::Lambda)
+        const bool closure = row.type.kind == SemanticType::Lambda;
+        const bool nested = nestedClosures && !closure &&
+                            row.type.kind == SemanticType::Class &&
+                            loweredContainsLambdaType(row.type) &&
+                            templateParameterName(row.spelling);
+        if (!row.bodyTypeOverlay || (!closure && !nested))
           continue;
+        const std::string dimension =
+            (nested ? nestedPrefix : std::string(
+                                         "::gti_internal::backend::"
+                                         "mir_lambda_identity_v<")) +
+            row.spelling + ">";
         if (std::find(closureDimensions.begin(), closureDimensions.end(),
-                      row.spelling) == closureDimensions.end())
-          closureDimensions.push_back(row.spelling);
+                      dimension) == closureDimensions.end())
+          closureDimensions.push_back(dimension);
         if (candidate->id != instance.id)
           continue;
-        const auto lambda = std::find_if(
-            mir.lambdaInstances().begin(), mir.lambdaInstances().end(),
-            [&](const auto &value) { return value.type == row.type; });
-        if (lambda == mir.lambdaInstances().end())
-          throw std::logic_error(
-              "callable selector lost its MIR lambda identity");
-        identities.emplace_back(row.spelling, lambda->id);
+        identities.emplace_back(dimension,
+                                nested ? nestedIdentity(nestedIdentity, row.type)
+                                       : lambdaIdentity(row.type));
       }
     }
     std::sort(closureDimensions.begin(), closureDimensions.end());
@@ -4843,8 +4894,7 @@ public:
           identities.begin(), identities.end(),
           [&](const auto &entry) { return entry.first == dimension; });
       terms.push_back(
-          "(::gti_internal::backend::mir_lambda_identity_v<" + dimension +
-          "> == " +
+          "(" + dimension + " == " +
           std::to_string(identity == identities.end() ? 0 : identity->second) +
           ")");
     }
@@ -4926,7 +4976,7 @@ public:
   [[nodiscard]] std::string loweredCallableTemplateBody(
       const LoweredFunctionDeclaration &function,
       const std::vector<const MirFunctionInstance *> &instances,
-      bool failure) const {
+      bool failure, bool nestedClosures = false) const {
     if (!generalEmissionMap) {
       throw std::logic_error(
           "lowered callable template emission has no representation rows");
@@ -5085,8 +5135,8 @@ public:
           : cppRequiresIndirectValueTransport(mir, instance->returnType)
               ? ResultChannel::Indirect
               : ResultChannel::Value;
-      const std::string signatureCondition =
-          loweredCallableSignatureCondition(function, *instance, instances);
+      const std::string signatureCondition = loweredCallableSignatureCondition(
+          function, *instance, instances, nestedClosures);
       for (BodyVariant &row : variants) {
         if (row.cleanupShape == cleanupShape &&
             row.resultChannel == resultChannel &&
@@ -5106,6 +5156,9 @@ public:
       if (variant->canonical.empty()) {
         variant->canonical = std::move(body);
       } else if (variant->canonical != body) {
+        if (!nestedClosures)
+          return loweredCallableTemplateBody(function, instances, failure,
+                                             true);
         throw std::logic_error(
             "lowered callable instances do not share one source template "
             "representation");

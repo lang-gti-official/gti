@@ -89,6 +89,10 @@ struct CppMirBodyNameRepresentation {
   // family. Ordinary direct-return calls pass nullptr; byte transport supplies
   // its verified destination instead. This is representation, not a MIR value.
   bool conditionalResultParameter = false;
+  // A generic parameter occurs in no parameter type, but the instance is
+  // closure-bearing, so its arguments cannot be spelled program-wide. Each
+  // call site spells them with its own closure aliases.
+  bool callSiteTemplateArguments = false;
 
   friend bool operator==(const CppMirBodyNameRepresentation &,
                          const CppMirBodyNameRepresentation &) = default;
