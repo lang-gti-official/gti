@@ -159,4 +159,9 @@ private:
   SourceUnitId entry = 0;
 };
 
+// The exact source-text identity recorded as `SourceUnit::sourceDigest` for
+// loaded text. It is a stable FNV-1a digest, never zero in practice; callers
+// that must not accept a collision compare the bytes as well.
+[[nodiscard]] std::uint64_t sourceTextDigest(std::string_view source);
+
 } // namespace lang

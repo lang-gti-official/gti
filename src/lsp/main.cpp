@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +35,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -49,10 +52,32 @@ using SteadyClock = std::chrono::steady_clock;
 
 // Darwin's default secondary-thread stack is too small for the recursive
 // frontend in an unoptimized build: native exhaustion can otherwise precede
-// the compiler's structured 64-level parser diagnostic. Keep the two workers
-// long-lived, but give both compiler-facing queues the same practical stack
-// budget as an ordinary compiler process.
+// the compiler's structured 64-level parser diagnostic. Keep the frontend
+// workers long-lived, but give every compiler-facing worker the same practical
+// stack budget as an ordinary compiler process.
 constexpr unsigned frontendWorkerStackSize = 8U * 1024U * 1024U;
+
+// Every open document is its own whole-program root, so one shared-dependency
+// edit queues an independent analysis per open dependant. A small pool runs
+// them concurrently. Each in-flight analysis holds a complete frontend result,
+// which is why the default stays well below the host's core count.
+constexpr unsigned maximumDefaultAnalysisWorkers = 4;
+constexpr unsigned maximumAnalysisWorkers = 16;
+
+unsigned analysisWorkerCountFromEnvironment() {
+  if (const char *configured = std::getenv("GTI_LSP_ANALYSIS_WORKERS");
+      configured != nullptr && *configured != '\0') {
+    const char *end = configured + std::strlen(configured);
+    unsigned value = 0;
+    const auto [last, error] = std::from_chars(configured, end, value);
+    if (error == std::errc{} && last == end && value >= 1 &&
+        value <= maximumAnalysisWorkers) {
+      return value;
+    }
+  }
+  return std::clamp(std::thread::hardware_concurrency() / 2, 1U,
+                    maximumDefaultAnalysisWorkers);
+}
 
 #if !defined(GTI_BUILD_STDLIB_ROOT)
 #define GTI_BUILD_STDLIB_ROOT ""
@@ -1593,7 +1618,8 @@ struct PendingSemanticRequest {
 
 struct DocumentAnalysis {
   std::vector<LspDiagnostic> diagnostics;
-  std::unordered_set<std::string> dependencies;
+  // Every loaded dependency's URI and the digest of the exact text read.
+  std::unordered_map<std::string, std::uint64_t> dependencies;
   std::string rootPath;
   std::shared_ptr<const lang::FrontendResult> frontend;
   lang::FrontendWorkMetrics workMetrics;
@@ -1734,10 +1760,16 @@ public:
         executionProfileOverride(executionProfileOverride),
         rawPointerAuditOverride(rawPointerAuditOverride),
         frontendTracePath(frontendTracePathFromEnvironment()),
-        analysisWorker(std::optional<unsigned>{frontendWorkerStackSize},
-                       [this] { runAnalysisWorker(); }),
         completionWorker(std::optional<unsigned>{frontendWorkerStackSize},
-                         [this] { runCompletionWorker(); }) {}
+                         [this] { runCompletionWorker(); }) {
+    const unsigned workers = analysisWorkerCountFromEnvironment();
+    analysisWorkers.reserve(workers);
+    for (unsigned index = 0; index < workers; ++index) {
+      analysisWorkers.emplace_back(
+          std::optional<unsigned>{frontendWorkerStackSize},
+          [this] { runAnalysisWorker(); });
+    }
+  }
 
   ~LanguageServer() {
     stopCompletionWorker();
@@ -1935,6 +1967,7 @@ private:
       const std::lock_guard lock(stateMutex);
       clientUris[uri] = clientUri;
       openClientUris[uri].insert(clientUri);
+      const bool alreadyOpen = documents.contains(uri);
       documents[uri] = stringMember(document, "text");
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
@@ -1954,7 +1987,13 @@ private:
       requests.push_back(
           makeAnalysisRequestLocked(uri, version, ++analysisGenerations[uri]));
       std::unordered_set<std::string> affected;
-      invalidateDependentsLocked(uri, affected, requests);
+      // Dependants read this file from disk while it was closed. Only those
+      // whose text differs from the opened overlay need analysing again.
+      invalidateDependentsLocked(
+          uri, affected, requests,
+          alreadyOpen ? std::nullopt
+                      : std::optional<std::uint64_t>(
+                            lang::sourceTextDigest(documents[uri])));
       publications = publicationsForLocked(affected);
     }
     rejectPendingSemanticRequests(requests, -32801, "Content modified");
@@ -3008,8 +3047,9 @@ private:
               .digest = unit.sourceDigest});
       if (unit.id != analysis.sourceGraph.entryUnit() &&
           loadedSource != rootPath) {
-        result.dependencies.insert(
-            fileUriFromPath(std::filesystem::path(loadedSource)));
+        result.dependencies.emplace(
+            fileUriFromPath(std::filesystem::path(loadedSource)),
+            unit.sourceDigest);
       }
     }
     for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
@@ -3049,16 +3089,25 @@ private:
     return request;
   }
 
-  void invalidateDependentsLocked(const std::string &changedUri,
-                                  std::unordered_set<std::string> &affected,
-                                  std::vector<AnalysisRequest> &requests) {
+  // `openedDigest` is the digest of a newly opened overlay. A root whose
+  // published analysis read exactly that text sees no change and keeps its
+  // result; opening a file the editor merely navigated to is then free.
+  void invalidateDependentsLocked(
+      const std::string &changedUri, std::unordered_set<std::string> &affected,
+      std::vector<AnalysisRequest> &requests,
+      std::optional<std::uint64_t> openedDigest = std::nullopt) {
     for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
       const auto snapshot = analysisSnapshots.find(rootUri);
       const bool discovering =
           snapshot != analysisSnapshots.end() &&
           snapshot->second.frontend->includeSuggestionsRequested;
+      const auto dependency = dependencies.find(changedUri);
       if (rootUri == changedUri ||
-          (!dependencies.contains(changedUri) && !discovering)) {
+          (dependency == dependencies.end() && !discovering)) {
+        continue;
+      }
+      if (openedDigest && dependency != dependencies.end() &&
+          dependency->second != 0 && dependency->second == *openedDigest) {
         continue;
       }
       if (const auto previous = diagnosticsByRoot.find(rootUri);
@@ -3364,47 +3413,65 @@ private:
     analysisCondition.notify_one();
   }
 
+  // Takes the next runnable analysis, or nothing. A document already being
+  // analysed is not started again on another worker: its newer request stays
+  // pending until the running analysis finishes, so rapid edits to one file
+  // cannot occupy the whole pool with results that will be discarded.
+  [[nodiscard]] std::optional<AnalysisRequest> takeNextAnalysisLocked() {
+    const auto take = [this](std::unordered_map<std::string,
+                                                AnalysisRequest>::iterator
+                                 pending) {
+      AnalysisRequest request = std::move(pending->second);
+      pendingAnalyses.erase(pending);
+      activeAnalysisUris.insert(request.uri);
+      return request;
+    };
+    // A queued hover, definition, or similar request waits for its
+    // document's analysis. Run that analysis before dependants queued
+    // ahead of it; the order entry it leaves behind is skipped later.
+    for (const PendingSemanticRequest &waiting : pendingSemanticRequests) {
+      const auto pending = pendingAnalyses.find(waiting.uri);
+      if (pending != pendingAnalyses.end() &&
+          !activeAnalysisUris.contains(waiting.uri)) {
+        return take(pending);
+      }
+    }
+    for (auto entry = analysisOrder.begin(); entry != analysisOrder.end();) {
+      const auto pending = pendingAnalyses.find(*entry);
+      if (pending == pendingAnalyses.end()) {
+        entry = analysisOrder.erase(entry);
+        continue;
+      }
+      if (activeAnalysisUris.contains(*entry)) {
+        ++entry;
+        continue;
+      }
+      analysisOrder.erase(entry);
+      return take(pending);
+    }
+    return std::nullopt;
+  }
+
   void runAnalysisWorker() {
     while (true) {
       AnalysisRequest request;
       {
         std::unique_lock lock(stateMutex);
-        analysisCondition.wait(lock, [this] {
-          return stoppingAnalysis || !analysisOrder.empty();
+        std::optional<AnalysisRequest> next;
+        analysisCondition.wait(lock, [this, &next] {
+          if (stoppingAnalysis) {
+            return true;
+          }
+          next = takeNextAnalysisLocked();
+          return next.has_value();
         });
         if (stoppingAnalysis) {
+          if (next) {
+            activeAnalysisUris.erase(next->uri);
+          }
           return;
         }
-
-        // A queued hover, definition, or similar request waits for its
-        // document's analysis. Run that analysis before dependants queued
-        // ahead of it; the order entry it leaves behind is skipped later.
-        for (const PendingSemanticRequest &waiting : pendingSemanticRequests) {
-          const auto pending = pendingAnalyses.find(waiting.uri);
-          if (pending == pendingAnalyses.end()) {
-            continue;
-          }
-          request = std::move(pending->second);
-          pendingAnalyses.erase(pending);
-          ++activeAnalyses;
-          break;
-        }
-        while (request.uri.empty() && !analysisOrder.empty()) {
-          const std::string uri = std::move(analysisOrder.front());
-          analysisOrder.pop_front();
-          const auto pending = pendingAnalyses.find(uri);
-          if (pending == pendingAnalyses.end()) {
-            continue;
-          }
-          request = std::move(pending->second);
-          pendingAnalyses.erase(pending);
-          ++activeAnalyses;
-          break;
-        }
-        if (request.uri.empty()) {
-          analysisCondition.notify_all();
-          continue;
-        }
+        request = std::move(*next);
       }
 
       // Driver resolution runs on the worker but outside the crash guard. The
@@ -3458,8 +3525,10 @@ private:
 
       {
         const std::lock_guard lock(stateMutex);
-        --activeAnalyses;
+        activeAnalysisUris.erase(request.uri);
       }
+      // Wakes idle workers for a newer request of this document and lets
+      // `flushAnalyses` observe the pool becoming idle.
       analysisCondition.notify_all();
     }
   }
@@ -3529,11 +3598,19 @@ private:
       bool dependencyChanged =
           analysis.frontend && analysis.frontend->includeSuggestionsRequested &&
           request.includeDiscoveryGeneration != includeDiscoveryGeneration;
-      for (const std::string &dependency : analysis.dependencies) {
-        if (!documents.contains(dependency)) {
+      for (const auto &[dependency, digest] : analysis.dependencies) {
+        const auto overlay = documents.find(dependency);
+        if (overlay == documents.end()) {
           continue;
         }
         const auto snapshot = request.documentGenerations.find(dependency);
+        // The dependency opened after this request was made, so the analysis
+        // read it from disk. That is still its text if the overlay that
+        // opened is exactly what was read.
+        if (snapshot == request.documentGenerations.end() && digest != 0 &&
+            digest == lang::sourceTextDigest(overlay->second)) {
+          continue;
+        }
         const auto current = contentGenerations.find(dependency);
         if (snapshot == request.documentGenerations.end() ||
             current == contentGenerations.end() ||
@@ -3725,8 +3802,7 @@ private:
   void flushAnalyses() {
     std::unique_lock lock(stateMutex);
     analysisCondition.wait(lock, [this] {
-      return pendingAnalyses.empty() && analysisOrder.empty() &&
-             activeAnalyses == 0;
+      return pendingAnalyses.empty() && activeAnalysisUris.empty();
     });
   }
 
@@ -3743,6 +3819,13 @@ private:
         {"uri", std::string(uri)},
         {"generation", static_cast<std::int64_t>(generation)},
         {"elapsedMicroseconds", static_cast<std::int64_t>(elapsedMicroseconds)},
+        // Monotonic time since server start, so concurrent work can be
+        // ordered: the work ran over [finished - elapsed, finished].
+        {"finishedMicroseconds",
+         static_cast<std::int64_t>(
+             std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - serverStart)
+                 .count())},
         {"sourceBytes", static_cast<std::int64_t>(metrics.sourceBytes)},
         {"sourceLoadMicroseconds",
          static_cast<std::int64_t>(metrics.sourceLoadMicroseconds)},
@@ -3831,8 +3914,10 @@ private:
       abandoned.swap(pendingSemanticRequests);
     }
     analysisCondition.notify_all();
-    if (analysisWorker.joinable()) {
-      analysisWorker.join();
+    for (llvm::thread &worker : analysisWorkers) {
+      if (worker.joinable()) {
+        worker.join();
+      }
     }
   }
 
@@ -3842,6 +3927,8 @@ private:
   // Protected by stateMutex; workers consume only their captured request value.
   std::optional<std::string> projectProfile;
   std::optional<std::filesystem::path> frontendTracePath;
+  const std::chrono::steady_clock::time_point serverStart =
+      std::chrono::steady_clock::now();
   mutable std::mutex frontendTraceMutex;
   lang::lsp::FrontendSnapshotState frontendSnapshots;
   mutable std::mutex stateMutex;
@@ -3853,7 +3940,7 @@ private:
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
-  std::unordered_map<std::string, std::unordered_set<std::string>>
+  std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
   // Advances only when an open document's own text or overlay presence
@@ -3871,7 +3958,8 @@ private:
   std::deque<PendingSemanticRequest> pendingSemanticRequests;
   std::unordered_set<std::string> activeCompletionRequests;
   std::unordered_set<std::string> canceledRequests;
-  std::size_t activeAnalyses = 0;
+  // Documents whose analysis is running on a pool worker.
+  std::unordered_set<std::string> activeAnalysisUris;
   std::size_t activeCompletions = 0;
   bool stoppingAnalysis = false;
   bool stoppingCompletion = false;
@@ -3891,8 +3979,8 @@ private:
   bool preferredCodeActions = false;
   bool hierarchicalDocumentSymbols = false;
   std::atomic<std::uint64_t> nextServerRequestId{1};
-  llvm::thread analysisWorker;
   llvm::thread completionWorker;
+  std::vector<llvm::thread> analysisWorkers;
 };
 
 } // namespace
