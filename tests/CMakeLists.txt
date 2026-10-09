@@ -478,6 +478,10 @@ if(Python3_Interpreter_FOUND)
       $<TARGET_FILE:gti> "${CMAKE_CXX_COMPILER}" $<TARGET_FILE:gti_runtime>
       $<TARGET_FILE:gti_runtime_thread_tests>)
   set_tests_properties(cleanup_context_scope_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME propagation_only_context_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/propagation_only_context_runtime_test.py"
+      $<TARGET_FILE:gti>)
+  set_tests_properties(propagation_only_context_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME many_fallible_scope_guards_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/many_fallible_scope_guards_runtime_test.py"
       $<TARGET_FILE:gti>)
@@ -675,6 +679,14 @@ add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
 add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
 target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)
+add_test(NAME returned_field_address_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(returned_field_address_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME wrapping_context_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wrapping_context_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(wrapping_context_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_intrinsic_context_tests optimizer_intrinsic_context_tests.cpp)
 target_link_libraries(gti_optimizer_intrinsic_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_intrinsic_context COMMAND gti_optimizer_intrinsic_context_tests)

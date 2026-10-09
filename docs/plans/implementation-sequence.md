@@ -5070,7 +5070,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
   The contract is
   [ADR 022's raw-buffer revision](../decisions/022-safe-typed-allocation.md#revision-initialized-prefix-sequences-over-a-raw-buffer-2026-10-09).
   It covers migration candidates M01, M02 and M04 in the
-  [standard-library ledger](../architecture/standard-library-and-runtime.md#b-source-policy-candidates-still-using-private-machinery).
+  [standard-library ledger](../architecture/standard-library-and-runtime.md#b-source-policy-migrations-and-remaining-prerequisites).
   M03, string's terminator, follows it.
 - **Outcome:** `std::vector` and `std::string` use Rust's `RawVec`/`Vec`
   layering in ordinary GTI, and the private `prefix_storage` capability is
@@ -5270,7 +5270,29 @@ same behavior, invalid-input, replay and performance guarantees.
   only after successful construction; six replacement/alias/hole/lifetime
   controls retain checks and reject forged proofs. Constructor receivers,
   stored-reference paths and unknown incoming contents are not admitted.
-  The next slice must export these actual typed field addresses and prove
+  A subsequent bounded prerequisite now exports exact returned entry-pointer
+  fields through the same input-address descriptor used for construction
+  postconditions. Caller substitution requires an existing current typed field
+  fact; distinct/ambiguous fields, native pointee mutation and opaque calls
+  retain checks. Unrelated receiver and checked-reference owners pass O0/O2/O3
+  replay, forged negatives and a 35-case native/sanitizer matrix. This does not
+  yet export initialized-region coverage. A following bounded typed field map
+  carries current addresses through nested member/reference getter wrappers
+  even when no corresponding projected place occurs in the forwarding body.
+  It seeds only ordinary owned receiver/checked-reference paths, intersects
+  exact addresses at joins and retires overlapping/unknown writes. Constructor
+  entry and raw pointee contents remain unproved. Unrelated nested controls and
+  pointer-replacement/native-mutation negatives accompany this transport.
+  The migration safety suite retains the same ten failures reproduced with the
+  exact prerequisite checkpoint, including missing indexed-element envelopes;
+  those acceptance assertions are unchanged.
+  Wrapping integer updates now retain ordinary value/entry-relative facts only
+  under a proved non-wrapping input envelope. An unrelated four-step bounded
+  counter recovers its exact final value; real modular-wrap negatives retain
+  downstream failures and reject forged proofs. This supplies the transfer
+  needed by the source prefix's failure-free counter increments, not an
+  initialized-region invariant or completed performance acceptance.
+  The next slice must prove
   successful initialized-index construction coverage before exporting element
   facts, without equating a witness with an
   allocation or assuming an indexed write initializes its complete interval.

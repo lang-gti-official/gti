@@ -7894,20 +7894,29 @@ int32_t main() {
           if (emitter.supportsFailureBodyText(allocationAddress)) {
             const auto allocationText = emitter.emitFailureBodyText(
                 allocationAddress, "scalar-allocation-test-v0", 1);
-            expect(allocationText.text.find("mir_allocate_unique_scalar_v1<") !=
-                           std::string::npos &&
-                       allocationText.text.find(
-                           ".code == GTI_FAILURE_CODE_NONE_V1") !=
-                           std::string::npos &&
-                       allocationText.text.find("*__gti_mir_failure_record = "
-                                                "::gti_failure_record_v2{") !=
-                           std::string::npos &&
-                       allocationText.text.find("return false;") !=
-                           std::string::npos &&
-                       allocationText.text.find("::backend::make_unique<") ==
-                           std::string::npos,
-                   "scalar allocation must inspect status and retain its "
-                   "failure return");
+            const auto allocate = allocationText.text.find(
+                "mir_allocate_unique_scalar_v1<");
+            const auto check = allocationText.text.find(
+                ".code == GTI_FAILURE_CODE_ALLOCATION_FAILURE_V1");
+            const auto record = allocationText.text.find(
+                "__gti_allocation_record = ::gti_failure_record_v2{");
+            const auto abort = allocationText.text.find(
+                "::gti_rt_failure_abort_allocation_v2(");
+            const auto publication = allocationText.text.find(
+                "construct_representation_at(__gti_mir_out_result,");
+            expect(
+                allocate != std::string::npos && check != std::string::npos &&
+                    record != std::string::npos && abort != std::string::npos &&
+                    publication != std::string::npos && allocate < check &&
+                    check < record && record < abort && abort < publication &&
+                    allocationText.text.find("return false;") ==
+                        std::string::npos &&
+                    allocationText.text.find("*__gti_mir_failure_record =") ==
+                        std::string::npos &&
+                    allocationText.text.find("::backend::make_unique<") ==
+                        std::string::npos,
+                "scalar exhaustion must report its exact local record and "
+                "abort before publication, without a cleanup failure return");
           }
         }
         if (instruction.intrinsic != lang::IntrinsicKind::UniqueOwnerBorrow &&

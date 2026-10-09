@@ -109,14 +109,15 @@ checked references. C++-style `new` and `delete` are not GTI syntax. See
 Intrinsic capabilities are ordinary bodyless functions declared either in the
 implicit prelude when shared across modules or in the one canonical
 standard-library unit that owns them. Unique ownership and object-lifetime
-operations live in `<std/memory>`; prefix storage and the public logical-bounds check remain
-shared prelude facilities. Semantic registration marks only those exact
+operations live in `<std/memory>`; the public logical-bounds check remains a
+shared prelude facility. Prefix allocation and live-length policy are ordinary
+source classes, not prelude capabilities. Semantic registration marks only those exact
 trusted declarations, and a call receives intrinsic behavior from its selected
 `FunctionId`. Reusing the same spelling in application source creates an
 ordinary function and grants no compiler behavior. No source attribute,
 keyword, or public wrapper name selects an intrinsic.
 
-The private owner, uninitialized-storage, prefix-storage, and text-view types
+The private owner, uninitialized-storage, and text-view types
 have ordinary nominal declarations in those same owning units. Their selected `ClassId`
 receives a compiler-capability kind only for the exact trusted declaration.
 Application source cannot enter or alias `gti_internal`; doing so is

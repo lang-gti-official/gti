@@ -347,5 +347,9 @@ int main() {
        "constructed_metadata_relay", "constructed_field_metadata",
        "constructed_reference_metadata"},
       11);
+  checkAddressFixture("optimizer_returned_field_address.gti",
+                      {"returned_field", "returned_reference_field",
+                       "nested_returned_field", "nested_reference_field"},
+                      6);
   return failures == 0 ? 0 : 1;
 }
