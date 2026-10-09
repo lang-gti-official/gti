@@ -870,24 +870,12 @@ inline mir_failure_status_v1 mir_checked_add_v1(Left left, Right right,
                 std::is_integral_v<Right>);
   const Target promoted_left = static_cast<Target>(left);
   const Target promoted_right = static_cast<Target>(right);
-  bool overflow = false;
-  if constexpr (std::is_unsigned_v<Target>) {
-    overflow = promoted_left >
-               (std::numeric_limits<Target>::max)() - promoted_right;
-  } else {
-    overflow =
-        (promoted_right > 0 &&
-         promoted_left >
-             (std::numeric_limits<Target>::max)() - promoted_right) ||
-        (promoted_right < 0 &&
-         promoted_left <
-             (std::numeric_limits<Target>::min)() - promoted_right);
-  }
-  if (overflow) {
+  Target value{};
+  if (integer_add_overflows(promoted_left, promoted_right, &value)) {
     return {GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
             GTI_FAILURE_DETAIL_ADDITION_V1};
   }
-  *result = static_cast<Target>(promoted_left + promoted_right);
+  *result = value;
   return mir_failure_success_v1;
 }
 
@@ -898,23 +886,12 @@ inline mir_failure_status_v1 mir_checked_subtract_v1(Left left, Right right,
                 std::is_integral_v<Right>);
   const Target promoted_left = static_cast<Target>(left);
   const Target promoted_right = static_cast<Target>(right);
-  bool overflow = false;
-  if constexpr (std::is_unsigned_v<Target>) {
-    overflow = promoted_left < promoted_right;
-  } else {
-    overflow =
-        (promoted_right > 0 &&
-         promoted_left <
-             (std::numeric_limits<Target>::min)() + promoted_right) ||
-        (promoted_right < 0 &&
-         promoted_left >
-             (std::numeric_limits<Target>::max)() + promoted_right);
-  }
-  if (overflow) {
+  Target value{};
+  if (integer_subtract_overflows(promoted_left, promoted_right, &value)) {
     return {GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
             GTI_FAILURE_DETAIL_SUBTRACTION_V1};
   }
-  *result = static_cast<Target>(promoted_left - promoted_right);
+  *result = value;
   return mir_failure_success_v1;
 }
 
@@ -925,40 +902,12 @@ inline mir_failure_status_v1 mir_checked_multiply_v1(Left left, Right right,
                 std::is_integral_v<Right>);
   const Target promoted_left = static_cast<Target>(left);
   const Target promoted_right = static_cast<Target>(right);
-  bool overflow = false;
-  if constexpr (std::is_unsigned_v<Target>) {
-    overflow = promoted_right != 0 &&
-               promoted_left >
-                   (std::numeric_limits<Target>::max)() / promoted_right;
-  } else if (promoted_left != 0 && promoted_right != 0) {
-    if ((promoted_left == -1 &&
-         promoted_right == (std::numeric_limits<Target>::min)()) ||
-        (promoted_right == -1 &&
-         promoted_left == (std::numeric_limits<Target>::min)())) {
-      overflow = true;
-    } else if (promoted_left > 0) {
-      overflow =
-          (promoted_right > 0 &&
-           promoted_left >
-               (std::numeric_limits<Target>::max)() / promoted_right) ||
-          (promoted_right < 0 &&
-           promoted_right <
-               (std::numeric_limits<Target>::min)() / promoted_left);
-    } else {
-      overflow =
-          (promoted_right > 0 &&
-           promoted_left <
-               (std::numeric_limits<Target>::min)() / promoted_right) ||
-          (promoted_right < 0 &&
-           promoted_left <
-               (std::numeric_limits<Target>::max)() / promoted_right);
-    }
-  }
-  if (overflow) {
+  Target value{};
+  if (integer_multiply_overflows(promoted_left, promoted_right, &value)) {
     return {GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1,
             GTI_FAILURE_DETAIL_MULTIPLICATION_V1};
   }
-  *result = static_cast<Target>(promoted_left * promoted_right);
+  *result = value;
   return mir_failure_success_v1;
 }
 
