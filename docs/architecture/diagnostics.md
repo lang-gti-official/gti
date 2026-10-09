@@ -979,8 +979,9 @@ unsafe context. Generic calls still need that context, independently of which
 concrete implementation satisfies the requirement.
 Semantic viability preserves the outer-to-inner concrete concept applications
 and the read-member failure. The read-member selection routine supplies the
-reason (missing member, invalid shape, ambiguity, access, unsafe access,
-inexact/borrowed result, unproven contract, or recursive/dependent requirement)
+reason (missing member, invalid shape, ambiguity, access, compiler-private
+access, unsafe access, inexact/borrowed result, unproven contract, or
+recursive/dependent requirement)
 to the reporter; the reporter does not repeat lookup or evaluate requirements.
 When an otherwise matching member fails its own `requires` clause, the reason
 identifies that unsatisfied member contract; it does not yet recursively expose
