@@ -398,7 +398,12 @@ still clears mutable facts for every later instruction. A permanently
 unsupported call is an opaque transfer with a normal continuation, rather
 than a pending summary that prevents discovery of subsequent clients. It
 supplies no callee result/postcondition facts. Only an admitted source summary
-not yet available postpones and retries its caller. Opaque synchronizing
+not yet available postpones and retries its caller. A verified terminal source
+call is still discovered for analysis of its own instructions, but ends only
+that normal path. It never waits for a successful-return postcondition or
+prevents summarizing a separate successful branch. Its original failure edges,
+cleanup and terminal behavior remain in MIR; no successful result is invented.
+Opaque synchronizing
 effects invalidate mutable memory even when the effect summary reports no
 direct write; they cannot establish a closed recurrence edge. Recursive SCCs, native
 or virtual calls, unsupported owning-argument transfers, synchronization, raw/unsafe
