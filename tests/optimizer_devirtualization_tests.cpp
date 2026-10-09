@@ -275,10 +275,9 @@ int main() { Increment concrete{}; return apply(concrete, 40) - 41; }
     }
     return analyzeMirClosedWorldFacts(changed);
   };
-  const auto virtualReference =
-      mutateCall([](MirBody &, MirInstruction &call) {
-        call.dispatch = CallDispatch::Virtual;
-      });
+  const auto virtualReference = mutateCall([](MirBody &, MirInstruction &call) {
+    call.dispatch = CallDispatch::Virtual;
+  });
   expect(!virtualReference.closed(apply->id) &&
              !virtualReference.exactParameterClass(apply->id, 0),
          "a reference other than a plain direct call opens the function");
@@ -336,19 +335,22 @@ int main() {
   testParameterReceiver("parameter", R"(
 int apply(Operation& selected, int value) { return selected.run(value); }
 int main() { Increment concrete{}; return apply(concrete, 40) - 41; }
-)", 1);
+)",
+                        1);
   testParameterReceiver("forwarded-parameter", R"(
 int inner(Operation& selected, int value) { return selected.run(value); }
 int outer(Operation& selected, int value) { return inner(selected, value) + selected.run(0); }
 int main() { Increment first{}; Increment second{}; return outer(first, 40) + inner(second, 1) - 44; }
-)", 2);
+)",
+                        2);
   testParameterReceiver("recursive-parameter", R"(
 int repeat(Operation& selected, int value, int count) {
   if (count > 0) { return repeat(selected, selected.run(value), count - 1); }
   return value;
 }
 int main() { Increment concrete{}; return repeat(concrete, 37, 3) - 40; }
-)", 1);
+)",
+                        1);
   testParameterReceiver("observable-cleanup-parameter", R"(
 extern "C" { void record_drop(); }
 class Resource : public Operation {
@@ -359,7 +361,8 @@ public:
 };
 int apply(Operation& selected, int value) { return selected.run(value); }
 int main() { Resource concrete{}; return apply(concrete, 40) - 41; }
-)", 1);
+)",
+                        1);
   testParameterReceiver("member-and-position", R"(
 class Runner {
 public:
@@ -369,7 +372,8 @@ public:
 int pair(Operation& first, int value, Operation& second) { return second.run(first.run(value)); }
 int main() { Increment up{}; Decrement down{}; Runner runner{};
   return pair(up, 3, down) + runner.both(3, down, up) - 6; }
-)", 4);
+)",
+                        4);
   testConservative("mixed-parameter", R"(
 int apply(Operation& selected, int value) { return selected.run(value); }
 int main() { Increment up{}; Decrement down{}; return apply(up, 40) + apply(down, 2) - 42; }

@@ -152,7 +152,7 @@ publication, and request freshness only when a concrete feature or testability
 problem warrants it. Preserve the existing worker model during that
 extraction.
 
-### 5. Consume resolved project configuration - implemented for default host analysis
+### 5. Consume resolved project configuration - implemented for selected-profile host analysis
 
 Driver-owned `ProjectFacts` subsume the earlier bounded nearest-manifest
 integration for `[build].defines` and the default profile's execution model.
@@ -165,15 +165,21 @@ the protocol adapter does not duplicate it.
 
 The LSP now consumes the driver's read-only `ProjectFacts` for the package
 containing each entry document. Analysis and completion receive the same
-default-profile configuration and exact dependency source-root graph as
+default/explicitly selected profile configuration and exact dependency source-root graph as
 project compilation. Resolution never builds or fetches; locked-Git failures
 remain structured driver diagnostics; standalone files retain their prior
 defaults; and canonical dirty source overlays remain authoritative across the
 resolved graph. Manifest and lockfile watcher events invalidate every open
 snapshot.
 
+Named profile selection is implemented through initialization options and
+`settings.gti.profile`, with generation-bound analysis/completion, token refresh,
+dirty overlay preservation, malformed-setting rejection and unknown-profile
+diagnostics. The bundled Neovim plugin exposes `:GTIProfile` and supplies
+theme-safe, high-priority inactive-code styling.
+
 Explicit client selection of a different workspace package, target,
-non-default profile, or cross target remains a future client-configuration
+or cross target remains a future client-configuration
 contract rather than part of this row.
 
 ## Project Index Boundary

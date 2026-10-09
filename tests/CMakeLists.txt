@@ -3428,6 +3428,31 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
+      NAME lsp_configuration
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_configuration_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_configuration PROPERTIES TIMEOUT 120)
+    find_program(GTI_NEOVIM_EXECUTABLE nvim)
+    if(GTI_NEOVIM_EXECUTABLE)
+      add_test(
+        NAME neovim_lsp_configuration
+        COMMAND "${CMAKE_COMMAND}" -E env
+                "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+                "GTI_TEST_LSP=$<TARGET_FILE:gti_lsp>"
+                "GTI_TEST_COMPILER=$<TARGET_FILE:gti>"
+                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
+                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
+                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
+                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test.log"
+                "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+                -l "${PROJECT_SOURCE_DIR}/tests/nvim_lsp_configuration_test.lua"
+      )
+      set_tests_properties(neovim_lsp_configuration PROPERTIES TIMEOUT 90
+                                                            SKIP_RETURN_CODE 77)
+    endif()
+    add_test(
       NAME lsp_protocol
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>"

@@ -46,9 +46,9 @@ struct Contribution {
   if (type.kind != SemanticType::Class)
     return false;
   const auto &classes = program.classInstances();
-  const auto found =
-      std::find_if(classes.begin(), classes.end(),
-                   [&](const MirClassInstance &row) { return row.type == type; });
+  const auto found = std::find_if(
+      classes.begin(), classes.end(),
+      [&](const MirClassInstance &row) { return row.type == type; });
   return found != classes.end() && !found->abstract &&
          (found->kind == ClassKind::Class || found->kind == ClassKind::Struct);
 }
@@ -135,15 +135,16 @@ public:
         Fact incoming = contribution.fact;
         if (contribution.forwarded) {
           const auto found = facts.find(*contribution.forwarded);
-          incoming =
-              found == facts.end() ? Fact{.kind = FactKind::Unknown} : found->second;
+          incoming = found == facts.end() ? Fact{.kind = FactKind::Unknown}
+                                          : found->second;
         }
         changed |= join(facts[contribution.parameter], incoming);
       }
     }
     result.closed = closed;
     for (const auto &[key, fact] : facts) {
-      const MirFunctionInstance *function = program.findFunctionInstance(key.first);
+      const MirFunctionInstance *function =
+          program.findFunctionInstance(key.first);
       if (fact.kind == FactKind::Exact && stable(*function, key.second))
         result.exact.emplace(key, fact.type);
     }
@@ -166,7 +167,8 @@ private:
         open(function.id);
       if (function.entryArgumentAppendTarget)
         open(*function.entryArgumentAppendTarget);
-      for (const MirCallableParameter &parameter : function.callableParameters) {
+      for (const MirCallableParameter &parameter :
+           function.callableParameters) {
         for (const MirCallableSignature &signature : parameter.signatures)
           if (signature.functionTarget)
             open(*signature.functionTarget);
@@ -215,7 +217,8 @@ private:
     return instruction.kind == MirInstructionKind::Call &&
            instruction.dispatch == CallDispatch::Static &&
            instruction.intrinsic == IntrinsicKind::None &&
-           !instruction.nativeCalleeType && !instruction.nativeCallbackAdapter &&
+           !instruction.nativeCalleeType &&
+           !instruction.nativeCallbackAdapter &&
            !instruction.threadTaskAdapter && !instruction.lambdaTarget &&
            !instruction.constructorTarget && !instruction.bodyTarget;
   }
@@ -251,17 +254,17 @@ private:
       }
   }
 
-  void classify(
-      const MirBody &body,
-      const std::unordered_map<MirInstructionId, const MirInstruction *>
-          &definitions,
-      const MirFunctionInstance *caller, const MirOperand &operand,
-      Contribution &contribution) {
+  void classify(const MirBody &body,
+                const std::unordered_map<MirInstructionId,
+                                         const MirInstruction *> &definitions,
+                const MirFunctionInstance *caller, const MirOperand &operand,
+                Contribution &contribution) {
     const MirValue *value = operand.kind == MirOperandKind::Value
                                 ? body.findValue(operand.value)
                                 : nullptr;
-    const auto definition =
-        value == nullptr ? definitions.end() : definitions.find(value->definition);
+    const auto definition = value == nullptr
+                                ? definitions.end()
+                                : definitions.find(value->definition);
     const MirInstruction *input =
         definition == definitions.end() ? nullptr : definition->second;
     if (input == nullptr || input->tombstone ||
@@ -299,9 +302,9 @@ private:
     const auto key = ParameterKey{function.id, parameter};
     if (const auto found = stability.find(key); found != stability.end())
       return found->second;
-    const bool result = parameter < function.parameterBindings.size() &&
-                        stableReference(function.body,
-                                        function.parameterBindings[parameter]);
+    const bool result =
+        parameter < function.parameterBindings.size() &&
+        stableReference(function.body, function.parameterBindings[parameter]);
     stability.emplace(key, result);
     return result;
   }

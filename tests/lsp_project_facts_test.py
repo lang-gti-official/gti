@@ -15,16 +15,19 @@ def write(path, text):
     path.write_text(text, encoding="utf-8")
 
 
-def initialize(session, watched_files=False):
+def initialize(session, watched_files=False, initialization_options=None):
     workspace = {}
     if watched_files:
         workspace["didChangeWatchedFiles"] = {"dynamicRegistration": True}
+    params = {"capabilities": {"workspace": workspace}}
+    if initialization_options is not None:
+        params["initializationOptions"] = initialization_options
     session.send(
         {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
-            "params": {"capabilities": {"workspace": workspace}},
+            "params": params,
         }
     )
     initialized = session.receive_until(lambda message: message.get("id") == 1)

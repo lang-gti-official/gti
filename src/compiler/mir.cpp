@@ -43,7 +43,8 @@ bool isMirExactReceiverPresentation(const MirProgram &program,
                      [&](const HirBaseInstance &base) {
                        const MirClassInstance *instance =
                            program.findClassInstance(base.instance);
-                       return base.type == receiverType && instance != nullptr &&
+                       return base.type == receiverType &&
+                              instance != nullptr &&
                               instance->kind == ClassKind::Interface;
                      });
 }
