@@ -564,10 +564,11 @@ public:
     std::memcpy(&native_slot_, &value, sizeof(native_slot_));
   }
 
-  T *native_address() const noexcept {
-    const std::uintptr_t bits = address_bits();
-    return bits == 0 ? nullptr : reinterpret_cast<T *>(bits);
-  }
+  // Evaluation happens only at MIR-admitted unsafe access, arithmetic or a
+  // foreign boundary, where the slot must hold a usable address. A typed load
+  // of the slot keeps that pointer's provenance and its distinct type visible
+  // to native alias analysis, unlike an integer round trip through its bytes.
+  T *native_address() const noexcept { return native_slot_; }
   operator T *() const noexcept { return this->native_address(); }
 
   // Native pointer storage may contain an expired address. Transferring its

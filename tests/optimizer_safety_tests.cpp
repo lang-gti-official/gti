@@ -1550,6 +1550,133 @@ int32_t main() {
          "envelopes before arithmetic mutation");
 }
 
+void testSourceRecordSequenceEnvelopes() {
+  // An unrelated record sequence built by the public vector size
+  // constructor. Each element runs the record's own source constructor in
+  // final storage; a write to one field leaves its sibling field envelope
+  // intact; a caller-local loop index reads one element of the initialized
+  // region without naming an exact cell.
+  const std::string source = R"(
+#include <std/vector>
+extern "C" {
+  void analysis_barrier();
+}
+
+struct particle {
+  particle() {}
+
+  mut int32_t speed = 3;
+  mut int32_t heat = 0;
+};
+
+struct noisy_particle {
+  noisy_particle() { analysis_barrier(); }
+
+  mut int32_t speed = 3;
+  mut int32_t heat = 0;
+};
+
+int32_t settle(mut std::vector<particle>& values) {
+  for (mut int32_t tick = 0; tick < 1000; tick++) {
+    for (mut std::size_t index = 0; index < values.size(); index++) {
+      mut particle& item = values[index];
+      item.heat = (item.heat * 3 + item.speed) % 101 - 50;
+    }
+  }
+  return values[std::size_t(0)].heat;
+}
+
+int32_t settle_with_barrier(mut std::vector<particle>& values) {
+  for (mut int32_t tick = 0; tick < 1000; tick++) {
+    for (mut std::size_t index = 0; index < values.size(); index++) {
+      mut particle& item = values[index];
+      analysis_barrier();
+      item.heat = (item.heat * 3 + item.speed) % 101 - 50;
+    }
+  }
+  return values[std::size_t(0)].heat;
+}
+
+int32_t settle_noisy() {
+  mut std::vector<noisy_particle> values =
+      std::vector<noisy_particle>(std::size_t(16));
+  for (mut int32_t tick = 0; tick < 1000; tick++) {
+    for (mut std::size_t index = 0; index < values.size(); index++) {
+      mut noisy_particle& item = values[index];
+      item.heat = (item.heat * 3 + item.speed) % 101 - 50;
+    }
+  }
+  return values[std::size_t(0)].heat;
+}
+
+int32_t sum_speeds(std::vector<particle>& values) {
+  mut int32_t total = 0;
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    total += values[index].speed;
+  }
+  return total;
+}
+
+int32_t sum_past_end(std::vector<particle>& values) {
+  mut int32_t total = 0;
+  for (mut std::size_t index = 0; index <= values.size(); index++) {
+    total += values[index].speed;
+  }
+  return total;
+}
+
+int32_t main() {
+  mut std::vector<particle> values = std::vector<particle>(std::size_t(16));
+  int32_t speeds = sum_speeds(values);
+  int32_t settled = settle(values);
+  int32_t barrier = settle_with_barrier(values);
+  return settled + barrier + speeds + settle_noisy() + sum_past_end(values);
+}
+)";
+  const lang::FrontendResult frontend =
+      analyzeTrusted("optimizer-record-sequence.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the record sequence fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const lang::OptimizedProgram optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    const auto overflow = [&](std::string_view name) {
+      return functionDischarges(frontend, optimized, name,
+                                lang::MirSafetyCheckFamily::ArithmeticOverflow);
+    };
+    const std::string counts =
+        " settle=" + std::to_string(overflow("settle")) +
+        " sum_speeds=" + std::to_string(overflow("sum_speeds")) +
+        " barrier=" + std::to_string(overflow("settle_with_barrier")) +
+        " noisy=" + std::to_string(overflow("settle_noisy")) +
+        " past_end=" + std::to_string(overflow("sum_past_end"));
+    expect(optimized.valid() && overflow("settle") == 5 &&
+               overflow("sum_speeds") == 2,
+           "constructor-built record envelopes must prove both counters and "
+           "every field operation:" +
+               counts);
+    expect(overflow("settle_with_barrier") == 1 &&
+               overflow("settle_noisy") == 2,
+           "an opaque call before the write, or an opaque element "
+           "constructor, must retain the field checks:" +
+               counts);
+    expect(overflow("sum_past_end") == 0,
+           "an index reaching the initialized length must not read the "
+           "element envelope:" +
+               counts);
+    expect(lang::verifyMirOptimizationCoherence(
+               frontend.mir, optimized.mir, optimized.report.transformations)
+               .valid(),
+           "record sequence proofs must independently replay");
+  }
+}
+
 void testGuardedClosedCallContextWidening() {
   const std::string source = R"(
 #include <std/memory>
@@ -1814,6 +1941,7 @@ int main() {
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();
+  testSourceRecordSequenceEnvelopes();
   testChainedFixedArrayDimensionBounds();
   if (failures != 0) {
     std::cerr << failures << " optimizer safety test(s) failed\n";

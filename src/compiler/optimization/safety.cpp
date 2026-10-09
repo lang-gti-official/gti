@@ -2842,6 +2842,45 @@ closedCallTarget(const MirProgram &program, const MirInstruction &instruction) {
   return std::nullopt;
 }
 
+// Final-address construction that runs one exact source constructor of an
+// ordinary record. Its operands after the address are the constructor's.
+[[nodiscard]] std::optional<MirBodyAddress>
+closedObjectConstructTarget(const MirProgram &program,
+                            const MirInstruction &instruction) {
+  if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      !instruction.constructorTarget || instruction.elementCleanup ||
+      instruction.receiver || instruction.result ||
+      instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+      instruction.rawMemoryAccess || !instruction.lifecycle.empty() ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.dispatch != CallDispatch::Static ||
+      instruction.constructorKind != ConstructorKind::Ordinary ||
+      instruction.operation != MirOperation::None ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.operands.empty())
+    return std::nullopt;
+  const auto &address = instruction.operands.front().type;
+  const MirConstructorInstance *constructor =
+      program.findConstructorInstance(*instruction.constructorTarget);
+  const MirClassInstance *owner =
+      constructor ? program.findClassInstance(constructor->owner) : nullptr;
+  if (address.kind != SemanticType::RawPointer ||
+      address.arguments.size() != 1 ||
+      address.pointerAccess != AccessMode::Mutable || !constructor ||
+      constructor->definitionKind != MirDefinitionKind::Source ||
+      constructor->parameterTypes.size() + 1 != instruction.operands.size() ||
+      !owner || owner->type != address.arguments.front() ||
+      owner->kind == ClassKind::Union || owner->unionLayout ||
+      owner->traits.containsBorrowedState || owner->polymorphic ||
+      owner->abstract || !owner->bases.empty() ||
+      !owner->structuralBases.empty() ||
+      owner->compilerCapability != CompilerCapabilityTypeKind::None)
+    return std::nullopt;
+  return MirBodyAddress{.kind = MirBodyKind::Constructor,
+                        .owner = *instruction.constructorTarget};
+}
+
 [[nodiscard]] bool owningCallOperand(const MirBody &body,
                                      const MirOperand &operand) {
   const MirInstruction *input = definingInstruction(body, operand.value);
@@ -4343,6 +4382,62 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
          !effect.invokesRuntime && !effect.maySynchronize;
 }
 
+// Constructing an ordinary record in vacant final storage with an exact source
+// constructor applies that constructor's closed summary. Its exit field facts
+// become constructed cells at the exact pointee; vacant storage cannot
+// overwrite a live object. A pending summary postpones the caller like any
+// other closed call, and an unsupported one keeps the general barrier.
+[[nodiscard]] bool applyClosedObjectConstruction(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const MirBlock &block, const MirInstruction &instruction,
+    AbstractState &state, ClosedCallRound *closedCalls,
+    MirBodyAddress address) {
+  if (closedCalls == nullptr)
+    return false;
+  const MirProgram *program = &closedCalls->program;
+  const auto target = closedObjectConstructTarget(*program, instruction);
+  if (!target)
+    return false;
+  const auto pointer =
+      scalarAddressForOperand(body, state, instruction.operands.front());
+  MirInstruction constructor = instruction;
+  constructor.kind = MirInstructionKind::Construct;
+  constructor.intrinsic = IntrinsicKind::None;
+  constructor.unsafeOperation = UnsafeOperationKind::None;
+  constructor.operands.erase(constructor.operands.begin());
+  constructor.info.type = instruction.operands.front().type.arguments.front();
+  if (!applyClosedCall(body, aliases, block, constructor, state, closedCalls,
+                       address))
+    return false;
+  const auto summary = closedCalls->summaries.find(*target);
+  if (!state.reachable || summary == closedCalls->summaries.end() ||
+      !summary->second.complete)
+    return true;
+  preserveLiveScalarFactsForConstruction(program, address, body, state);
+  const auto &constructed = summary->second.constructed;
+  if (!pointer || !constructed.observed || !constructed.fact)
+    return true;
+  const auto disjoint =
+      liveScalarFields(program, address, body, aliases, state);
+  for (const auto &[path, field] : constructed.fact->integers) {
+    auto cell = projectPointee(program, body, *pointer, path);
+    const auto *type = cell ? addressPointeeType(body, *cell) : nullptr;
+    if (path.empty() || !type || field.domain.width <= 8 ||
+        constantIntegerDomain(*type) != field.domain)
+      continue;
+    auto fact = field;
+    stabilize(fact);
+    fact = rebased(std::move(fact), block.id, instruction.id);
+    fact.evidence = merged(fact.evidence, pointer->evidence);
+    add(fact.evidence, block.id);
+    addInstruction(fact.evidence, instruction.id);
+    publishConstructedScalar(
+        state, addressKey(*cell),
+        ConstructedScalar{std::move(fact), std::nullopt, disjoint});
+  }
+  return true;
+}
+
 void applyInstruction(const MirBody &body,
                       const MirPlaceAliasEscapeAnalysis &aliases,
                       const MirBlock &block, const MirInstruction &instruction,
@@ -4465,6 +4560,9 @@ void applyInstruction(const MirBody &body,
     }
     return;
   }
+  if (applyClosedObjectConstruction(body, aliases, block, instruction, state,
+                                    closedCalls, address))
+    return;
   if (program ? isMirStructuralFinalAddressConstruction(*program, instruction)
               : isMirScalarFinalAddressConstruction(instruction)) {
     std::optional<ScalarAddress> pointer;
@@ -5151,19 +5249,29 @@ void applyInstruction(const MirBody &body,
       fact = compoundIntegerFact(body, program, address, aliases, state,
                                  instruction);
     }
-    if (checkedBase && fact && writtenDomain &&
+    if (checkedBase && writtenDomain &&
         (instruction.operation == MirOperation::None ||
          instruction.operation == MirOperation::Assign ||
-         compoundCheckedOperation(instruction.operation)) &&
-        fact->domain == *writtenDomain) {
+         compoundCheckedOperation(instruction.operation))) {
       // A checked scalar assignment changes an existing live element, not
-      // the region's coverage. Retain only prefixes with this exact current
-      // base and subobject, and weakly join the stored value with all previous
-      // elements. Different pointer fields are never assumed disjoint.
+      // the region's coverage. Prefixes with this exact current base and
+      // subobject weakly join the stored value with all previous elements.
+      // Owned record fields which neither contain nor lie within the written
+      // subobject are other storage of every element and stay unchanged.
+      // Different pointer fields are never assumed disjoint.
+      const auto disjointSubobject = [&](const FieldPath &other) {
+        const auto &written = checkedBase->subobject;
+        const auto common = std::min(other.size(), written.size());
+        return !written.empty() && !other.empty() &&
+               !std::equal(other.begin(), other.begin() + common,
+                           written.begin());
+      };
       for (const auto &[root, object] : state.objects) {
         for (const auto &[path, envelope] : object.prefixes) {
-          if (path.subobject != checkedBase->subobject ||
-              envelope.domain != fact->domain)
+          const bool joined = path.subobject == checkedBase->subobject &&
+                              fact && envelope.domain == fact->domain &&
+                              fact->domain == *writtenDomain;
+          if (!joined && !disjointSubobject(path.subobject))
             continue;
           const auto base = state.fieldAddresses.find({root, path.pointer});
           const auto end = object.integers.find(path.end);
@@ -5177,7 +5285,7 @@ void applyInstruction(const MirBody &body,
           compared.subobject.clear();
           if (compared != addressKey(base->second))
             continue;
-          auto updated = joinedElementFact(envelope, *fact);
+          auto updated = joined ? joinedElementFact(envelope, *fact) : envelope;
           updated.evidence = merged(updated.evidence, checkedBase->evidence);
           addInstruction(updated.evidence, instruction.id);
           retainedPrefixes[root].insert_or_assign(path, std::move(updated));
@@ -7320,7 +7428,11 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
 [[nodiscard]] ScalarStoreProfile
 scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
                    const MirBody &body, const ClosedCallRound &round) {
-  if (address.kind != MirBodyKind::Function)
+  // Construction bodies initialize their own vacant receiver; that is not a
+  // store to live memory. Their other effects follow the ordinary profile.
+  const bool construction = address.kind == MirBodyKind::Constructor ||
+                            address.kind == MirBodyKind::FieldInitializers;
+  if (address.kind != MirBodyKind::Function && !construction)
     return {};
   ScalarStoreProfile result{.supported = true};
   const auto addWidth = [&](unsigned width) {
@@ -7329,6 +7441,46 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
     result.width = width;
     return true;
   };
+  const auto closedProfile = [&](MirBodyAddress target) {
+    const auto callee = round.summaries.find(target);
+    return !round.rejected.contains(target) &&
+           callee != round.summaries.end() && callee->second.complete &&
+           callee->second.scalarStoresOnly &&
+           (!callee->second.scalarStoreWidth ||
+            addWidth(*callee->second.scalarStoreWidth));
+  };
+  if (address.kind == MirBodyKind::Constructor)
+    if (const auto *constructor =
+            program.findConstructorInstance(address.owner))
+      if (const MirBodyAddress initializers{.kind =
+                                                MirBodyKind::FieldInitializers,
+                                            .owner = constructor->owner};
+          findMirBody(program, initializers) && !closedProfile(initializers))
+        return {};
+  const auto vacantReceiverField = [&](const MirInstruction &instruction) {
+    const auto *destination = instruction.destination
+                                  ? body.findPlace(*instruction.destination)
+                                  : nullptr;
+    const auto effect = effects(program, instruction);
+    return construction && instruction.kind == MirInstructionKind::Initialize &&
+           destination && destination->root == MirPlaceRootKind::This &&
+           !destination->projections.empty() &&
+           std::all_of(destination->projections.begin(),
+                       destination->projections.end(),
+                       [](const MirPlaceProjection &projection) {
+                         return projection.kind == MirProjectionKind::Field;
+                       }) &&
+           std::all_of(
+               instruction.lifecycle.begin(), instruction.lifecycle.end(),
+               [](const MirLifecycleEvent &event) {
+                 return event.kind == MirLifecycleEventKind::Initialize ||
+                        event.kind == MirLifecycleEventKind::Reparent;
+               }) &&
+           !instruction.rawMemoryAccess &&
+           instruction.unsafeOperation == UnsafeOperationKind::None &&
+           !effect.writesUnknownMemory && !effect.invokesUserCode &&
+           !effect.invokesRuntime && !effect.maySynchronize;
+  };
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
       if (instruction.tombstone || inertLifecycleMarker(instruction) ||
@@ -7336,8 +7488,15 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
           ownerWitnessFormation(body, instruction) ||
           inertRawAddressOperation(instruction) ||
           initializesReferenceCarrier(body, instruction) ||
-          isMirStructuralFinalAddressConstruction(program, instruction))
+          isMirStructuralFinalAddressConstruction(program, instruction) ||
+          vacantReceiverField(instruction))
         continue;
+      if (const auto constructor =
+              closedObjectConstructTarget(program, instruction)) {
+        if (!closedProfile(*constructor))
+          return {};
+        continue;
+      }
       if (scalarResultMove(instruction, body)) {
         const auto *source = body.findPlace(instruction.operands.front().place);
         if (source && source->root == MirPlaceRootKind::Binding &&
@@ -7943,6 +8102,9 @@ analyzeMirClosedCallSafetyChecks(const MirProgram &program) {
       for (const auto &instruction : block.instructions)
         if (const auto target = closedCallTarget(program, instruction))
           dependents[*target].insert(address);
+        else if (const auto constructor =
+                     closedObjectConstructTarget(program, instruction))
+          dependents[*constructor].insert(address);
     if (address.kind == MirBodyKind::Constructor) {
       const auto *constructor = program.findConstructorInstance(address.owner);
       if (constructor)
