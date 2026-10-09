@@ -9,6 +9,32 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.396.0 — Small std::function targets stay inline
+
+- `std::function` and `std::move_only_function` with read-only or `mut`
+  signatures now keep a small target inside the wrapper instead of
+  allocating. A lambda with up to 24 bytes of scalar or pointer captures, a
+  function item, or a small callable object with no destructor or owning
+  state is constructed, replaced, cloned and moved without allocation;
+  building and calling such a callback is about 2.7 times as fast, and
+  cloning one 2.4 times as fast. Other targets are boxed as before, and a
+  failed boxed replacement still keeps the current target. The wrappers grow
+  from 8 to 56 bytes, and a call is about 7% slower in a tight loop. The
+  `R(Args...) &&` forms are unchanged.
+- New `<std/polymorphic>` provides `std::inline_polymorphic<Interface, Bytes,
+  Align>`, an owner of one object of any type derived from `Interface`. Small
+  objects that satisfy the new `std::inline_polymorphic_payload` concept live
+  inline, and moving the owner moves them through their own generated move;
+  others are boxed.
+- A lambda is now `std::bitwise_relocatable` when all of its captures are.
+- Raw pointers to closure-bearing objects can now be passed to generic
+  helpers such as `std::construct_at`, `std::assume_ref` and
+  `std::destroy_at`, so application code can keep a closure in its own inline
+  storage. References to closures stay restricted.
+- Fix invalid generated C++ for `std::layout_of` and other generic calls whose
+  closure-bearing type argument appears in no parameter, such as
+  `std::layout_of<holder<Callable>>()`.
+
 ## 0.395.7 — Long function bodies compile in linear time
 
 - Fix compile time that grew with the cube of a single function body's
