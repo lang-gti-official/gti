@@ -429,5 +429,9 @@ int main() {
   checkAddressFixture("optimizer_prefix_frontier.gti",
                       {"prefix_frontier", "prefix_last", "prefix_parameter"}, 6,
                       false, false);
+  checkAddressFixture("optimizer_default_scalar_construction.gti",
+                      {"default_scalar", "default_forwarded",
+                       "default_unsigned", "default_sequence"},
+                      4, false, false);
   return failures == 0 ? 0 : 1;
 }

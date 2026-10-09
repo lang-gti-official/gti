@@ -495,6 +495,11 @@ unchanged. CFG joins intersect exact addresses and join their value envelopes.
 Each abstract state retains at most 1,024 such addresses; excess distinct
 addresses remain unproved. This bounds expansion through source call trees
 without treating missing entries as an initialized interval.
+The sealed zero-argument integer construction establishes zero at that same
+exact address, including through an ordinary source wrapper. It does not infer
+the contents of vacant bytes; explicit-value construction retains its selected
+value, and wrong-address, native-write and destroy/reconstruct controls retain
+their arithmetic checks.
 Raw writes, unknown effects, synchronization, destruction and potentially
 aliasing checked writes invalidate constructed values. A subsequent vacant
 structural construction cannot overwrite a previously live non-byte object
